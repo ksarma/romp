@@ -1504,11 +1504,11 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     export of the name sits anywhere in the file; the one write accepted is a plain assignment of `new WebSocket(...)`
 //     that is a statement of its own, and every other write refuses (another assignment, one inside another expression, a
 //     compound assignment, ++ or --, a destructuring target, a loop head, a write whose name resolves to nothing, as
-//     inside a with statement); and a socket is bound at least once. The refusal names the site. The proof trusts
-//     `new WebSocket(...)` because the name WebSocket is refused below; a global WebSocket replaced through an object
-//     built elsewhere with a computed key and copied onto the window is on the list of what the rules cannot see, and
-//     through it a socket the census accepts can be the window. A window other than this page's own is refused whatever
-//     the value. On every other receiver the census resolves to neither this page's window nor a socket (the body
+//     inside a with statement or in another case clause of the declaration's switch); and a socket is bound at least
+//     once. The refusal names the site. The proof trusts `new WebSocket(...)` because the name WebSocket is refused
+//     below; a global WebSocket replaced through an object built elsewhere with a computed key and copied onto the
+//     window is on the list of what the rules cannot see, and through it a socket the census accepts can be the window.
+//     A window other than this page's own is refused whatever the value. On every other receiver the census resolves to neither this page's window nor a socket (the body
 //     element, a parameter, a call's result, an object's property, a MessagePort, a worker, a channel), a value that sets
 //     a handler is refused;
 //   - a message or messageerror listener added to a window other than this page's own (parent.addEventListener(...)),
@@ -1837,7 +1837,8 @@ function writeOf(n: any): { kind: string; assign?: any } | null {
  *  3. The one write accepted is a plain `=` that assigns new WebSocket(...), a statement of its own, to a name declOf
  *     resolves to the declaration. Every other write refuses (writeOf): an assignment of anything else or inside another
  *     expression, a compound assignment, ++ or --, a destructuring target, a loop head; so does a write inside the
- *     declaration's scope whose name declOf resolves to nothing (one inside a with statement).
+ *     declaration's scope whose name declOf resolves to nothing (one inside a with statement, or one in another case
+ *     clause of the switch whose case block holds the declaration, since declOf reads only the clause the name sits in).
  *  4. A socket is bound at least once: the initialiser, or an accepted assignment.
  *  A member or key name, a label, a type's name and a name in a type are no binding and no reference (namesNoBinding).
  *  The proof trusts new WebSocket(...) because the road census refuses the name WebSocket other than as the constructor a
@@ -2198,6 +2199,8 @@ test("the road census reads what it claims: every road around the spelled regist
     ["var ws = window; function g() { const ws = new WebSocket(u); ws.onmessage = f; } g();", "webview/probe.js", 0],
     ["namespace N { var ws: any = new WebSocket(u); export function arm() { ws.onmessage = f; } } (N as any).ws = window; N.arm();", undefined, 0],
     ["const ws = new WebSocket(u); namespace N { var ws: any = window; } namespace N { ws.onmessage = f; }", undefined, 0],
+    ["const ws = new WebSocket(u); namespace N { ws.onmessage = f; }", undefined, 0],
+    ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: } arm();", "webview/probe.js", 0],
     ["const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;", undefined, 0],
     ["document.body.onmessage = null; x.onmessage = undefined; y.onmessageerror = z.onmessage = null;", undefined, 0],
     ["window.onmessageerror = f; document.defaultView.onmessage = g; const w = window; w.onmessage = h;", undefined, 3],
@@ -2296,6 +2299,10 @@ test("the road census reads what it claims: every road around the spelled regist
       ["var ws = new WebSocket(u); function ws() {} ws.onmessage = f;", "webview/probe.js"],
       ["function ws() {} if (0) { var ws = new WebSocket(u); } ws.onmessage = f;", "webview/probe.js"],
       ["var ws = new WebSocket(u); enum ws { A } ws.onmessage = f;"],
+      // an import alias of the name in a namespace block that holds the receiver but not the declaration: declOf does not
+      // read the alias, so the receiver resolves to the outer socket, while at run time the alias is what it names
+      ["const ws = new WebSocket(u); namespace W { export var w: any = window; } namespace N { import ws = W.w; ws.onmessage = f; }"],
+      ["const ws = new WebSocket(u); namespace W { export var w: any = window; } namespace N { import ws = W.w; export function arm() { ws.onmessage = f; } } N.arm();"],
       // a write other than a statement of its own assigning new WebSocket(...), a declaration that is no let, const or var
       // statement's own (a for head's, or a catch clause's parameter, whichever side of the handler the assignment of
       // new WebSocket(...) sits), and a name never bound to a socket
@@ -2309,6 +2316,10 @@ test("the road census reads what it claims: every road around the spelled regist
       ["try { throw window; } catch (ws) { ws.onmessage = f; ws = new WebSocket(u); }", "webview/probe.js"],
       ["let ws = pick(); ws.onmessage = f;", "webview/probe.js"],
       ["let ws; ws.onmessage = f;", "webview/probe.js"],
+      // a write in another case clause of the switch whose case block holds the declaration, whose name declOf resolves
+      // to nothing (it reads only the clause the name sits in), refuses as a write inside the declaration's scope
+      ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: ws = window; } arm();", "webview/probe.js"],
+      ["switch (0) { case 0: let ws: any = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: ws = window; } arm();"],
       // an ambient declaration, which binds nothing at run time (an ambient var's name is a property of the global object)
       ["declare var ws: any = new WebSocket(u); (window as any).ws = window; ws.onmessage = f;"],
       ["declare let ws: any = new WebSocket(u); (window as any).ws = window; ws.onmessage = f;"],
@@ -2415,8 +2426,9 @@ test("the road census reads what it claims: every road around the spelled regist
     }
   }
   // a refusal on a receiver the census cannot prove a socket names the site: where the name is bound again or written, by
-  // what, or why its declaration proves nothing (socketRefusal), one row per kind, and for a declaration that is no let,
-  // const or var statement's own one row per shape (a for head's, a catch clause's parameter, none)
+  // what, or why its declaration proves nothing (socketRefusal), one row per kind, an assignment's second row a write
+  // whose name declOf resolves to nothing (in another case clause of the declaration's switch), and for a declaration
+  // that is no let, const or var statement's own one row per shape (a for head's, a catch clause's parameter, none)
   const UNPROVED = "an onmessage handler on a receiver the census cannot resolve to this page's window or to a socket: ";
   const named: Array<[string, string, string?]> = [
     ["var ws = new WebSocket(u);\nvar ws = new WebSocket(u2);\nws.onmessage = f;", "ws is bound again at :2 by a second declaration", "webview/probe.js"],
@@ -2432,6 +2444,7 @@ test("the road census reads what it claims: every road around the spelled regist
     ["let ws = new WebSocket(u);\n[ws] = [window];\nws.onmessage = f;", "ws is written at :2 by a destructuring target", "webview/probe.js"],
     ["let ws = new WebSocket(u);\nfor (ws of [window]) {}\nws.onmessage = f;", "ws is written at :2 by a for...in or for...of head", "webview/probe.js"],
     ["let ws = new WebSocket(u);\nws = window;\nws.onmessage = f;", "ws is written at :2 by an assignment other than a statement of its own assigning new WebSocket(...)", "webview/probe.js"],
+    ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; };\ncase 1: ws = window; } arm();", "ws is written at :2 by an assignment other than a statement of its own assigning new WebSocket(...)", "webview/probe.js"],
     ["let ws = new WebSocket(u);\nws ||= window;\nws.onmessage = f;", "ws is written at :2 by a compound assignment", "webview/probe.js"],
     ["let ws = new WebSocket(u);\nws++;\nws.onmessage = f;", "ws is written at :2 by ++ or --", "webview/probe.js"],
     ["\nfor (let ws = new WebSocket(u); ; ) {\n  ws.onmessage = f; break;\n}", "ws is not declared by a let, const or var statement of its own (:2)", "webview/probe.js"],
