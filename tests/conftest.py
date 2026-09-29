@@ -723,7 +723,7 @@ def pytest_configure(config):
     PytestConfigWarning, which is: every xdist worker whose interpreter has no SDK, which on a box is every
     worker, until the emitting module inserts the venv path; a controller whose interpreter has no SDK,
     which on a box is every controller; and the CI steps that install
-    no SDK, today the vscode-extension job's served-page pytest step, which loads this conftest (the Python matrix
+    no SDK, today the served-pages job's served-page pytest step, which loads this conftest (the Python matrix
     cells' interpreter, the five Linux cells and the two macOS cells on a weekly or dispatch run, imports the class
     since the SDK install step, in the controller and, on the Linux cells' two workers since batch 917, in each
     worker, since the package is installed in that interpreter rather than added to the path at import). A
@@ -2819,7 +2819,7 @@ def _session_end_thread_guard(item):
 # tests/test_*_served.py boot a hermetic kernel and drive the real dashboard pages in playwright's Chromium; on a machine
 # without the extension's node deps or a browser they skip, and say why. CI's Python matrix jobs are such machines, so a
 # served-page regression never turned them red (the deep-link landing pin, T307, red on main while CI stayed green). The
-# extension job installs that browser and runs these files with ROMP_SERVED_TESTS_REQUIRE=1: any skip in them (a class
+# served-pages job installs that browser and runs these files with ROMP_SERVED_TESTS_REQUIRE=1: any skip in them (a class
 # setUp that finds no deps, a driver that exits 3 for a missing browser, a kernel that never served) is reported as a
 # FAILURE carrying the skip's own reason, the stance the pane bench takes with ROMP_UI_BENCH_REQUIRE. One exception a
 # test can claim for itself: a skip whose reason begins with "optional:" stays a skip, for a leg the runner has declared

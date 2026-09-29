@@ -8033,8 +8033,8 @@ pass against the two link passes over the adopted box and not against the adopti
 tools/file-review-viewer-recipe.test.mjs, tools/upstream-ledger-figure-gate-before-adoption.test.mjs and
 tools/markdown-viewer-plan-gate-adopt.test.mjs hold presence pins that name the seam test for it (the round-2 review
 found a raw-text compare in each of the last two, and a `//`-line filter standing in for a stripper in the plan pin),
-and the tools modules, which run in CI's shell job with no node_modules, cannot reach the compiler; the ledger entry's
-file count is derived by `git diff --name-only origin/main...HEAD`, the merge-base form, at the head.
+and the tools modules, which run in CI's vendored-tooling job with no node_modules, cannot reach the compiler; the
+ledger entry's file count is derived by `git diff --name-only origin/main...HEAD`, the merge-base form, at the head.
 
 **Scope.** Unreachable through the VS Code panes, whose CSP blocks remote figures (`img-src ${webview.cspSource} data:`,
 extension.ts). Reachable through the kernel-served dashboard and the iOS web app. What leaks is the IP address, the

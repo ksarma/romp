@@ -63,7 +63,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   3.12 cell of run 35518107329), so the pin does not catch a bad transitive
   release, and one of those packages, anyio, ships a pytest plugin that every
   pytest process a cell runs would auto-load, which both pytest lines in `ci.yml`
-  (the "Run pytest" step and the extension job's served-page step) and every
+  (the "Run pytest" step and the served-pages job's served-page step) and every
   pytest the suite starts from a test in a form the launcher census reads, as a
   child or in process through `pytest.main`, block with `-p no:anyio`, so no
   pytest process that `tests/test_ci_sdk_pin.py` reads loads a plugin the box's
@@ -123,7 +123,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   with a PytestConfigWarning (every xdist worker whose interpreter has no SDK, which
   on a box is every worker, until the emitting module inserts the venv path; a
   controller whose interpreter has no SDK, which on a box is every controller; and
-  the CI steps that install no SDK, today the vscode-extension job's served-page
+  the CI steps that install no SDK, today the served-pages job's served-page
   pytest step, which loads this conftest; the Python matrix cells' interpreter (the
   five Linux cells, and the two macOS cells on a weekly or dispatch run) imports the
   class since the SDK install step, in the controller and, on the Linux cells'

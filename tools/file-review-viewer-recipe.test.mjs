@@ -34,7 +34,7 @@
 // filled, or one of two named lines: the contrast anchor-map-cells-formulas.test.ts draws with the tree the viewer built before
 // the rule, and md-config-footnote-paint.test.ts's HTML-string oracle; so a stand-in filled from marked.parse in one statement
 // or two goes red; and every module that calls `viewerHtml(` imports it from file-view.ts. Source reads only, no marked (the
-// CI shell job runs no npm ci), so this module runs wherever node does. Run: node --test tools/file-review-viewer-recipe.test.mjs
+// CI vendored-tooling job runs no npm ci), so this module runs wherever node does. Run: node --test tools/file-review-viewer-recipe.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -75,7 +75,7 @@ test('file-view.ts exports viewerHtml, the five statements in order and nothing 
   assert.equal((view.match(/literalizeUnclosedTags\(/g) || []).length, 1, 'one call in the viewer, the recipe\'s');
   assert.ok(view.includes('\n  const clean = sanitizeMd(dirty, mintHeadingIds);'), 'the sanitizer stays mdBlock\'s own step after the recipe');
   // a presence pin: where the figure chain sits relative to the adoption is ui/webview/file-view-seam.test.ts's to check, on
-  // comment-stripped code (this module runs in CI's shell job with no node_modules, so it cannot read through that stripper)
+  // comment-stripped code (this module runs in CI's vendored-tooling job with no node_modules, so it cannot read through that stripper)
   assert.ok(view.includes('\n  box.replaceChildren(...Array.from(clean.childNodes));\n'), 'and its body is adopted as a step of its own (2026-09-20)');
   assert.ok(view.includes('import { marked, type Token, type Tokens } from "marked";'), 'the walk\'s parameter type comes from marked');
 });
