@@ -567,7 +567,8 @@ jobs:
     # since past an hour a hung cell holds the dispatch): the rule's figure for this step, 70 to 76
     # minutes, is already past that hour, so a hung macOS cell here holds a dispatch for up to 90
     # minutes. The first macOS run (a dispatch or the weekly schedule) measures the step, and the
-    # cap is re-read from it. The PR checks run the Linux cell alone, so they are not affected.
+    # cap is re-read from it. A batch push's run starts the Linux cell alone, so batches are not
+    # affected.
     # Follow-ups, in this order: (1) make the hook's per-paren case check linear (skipNested in
     # hooks/romp-track-bash-guard.mjs tests /\bcase\b/ over the whole slice read so far at every
     # `)`: about 210 s of this step on CI, and a stall of about 16 s in the hook itself on a command
@@ -575,8 +576,9 @@ jobs:
     # node runs its parts side by side.
     # The manager handshake step stays in the Shell job for T224's reason (upstream's ruleset
     # requires that job's check). This step is the fork's alone (upstream's ci.yml has no such
-    # step), and the fork has no ruleset or branch protection: a batch reads every check of a PR,
-    # this job's among them, so a red here holds a batch as any other red does.
+    # step), and the fork has no ruleset or branch protection: scripts/batch.py land reads the batch
+    # push's run of this workflow and refuses a batch whose run is red or has a job with no passing
+    # job run, this job among them, so a red here holds a batch as any other red does.
     # Placed between the secrets job and the vscode-extension job: tests/test_ci_sdk_pin.py splices
     # its synthetic Shell-job steps in before the secrets job's key and appends others at the end of
     # the file, where the served-pages job, the job of the served-page step, must stay last.
@@ -774,9 +776,10 @@ jobs:
     # No strategy key: the job has no matrix, so fail-fast would have no effect (it cancels a
     # matrix's other cells when one fails, and this job has one cell).
     # Last in the file: tests/test_ci_sdk_pin.py appends synthetic steps at the end of the file and
-    # reads them as this job's, the served step's. The fork has no ruleset or branch protection: a
-    # batch reads every check of a PR, this job's among them, so a red here holds a batch as any
-    # other red does.
+    # reads them as this job's, the served step's. The fork has no ruleset or branch protection:
+    # scripts/batch.py land reads the batch push's run of this workflow and refuses a batch whose
+    # run is red or has a job with no passing job run, this job among them, so a red here holds a
+    # batch as any other red does.
     # tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal (every key,
     # step and field, the cap included), so a change here changes that literal too, on purpose.
     timeout-minutes: 50
