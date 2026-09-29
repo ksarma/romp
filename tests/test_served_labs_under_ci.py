@@ -36,6 +36,10 @@ CORNERS = os.path.join(HERE, "test_federated_capability_corners_served.py")
 # the shared browser-legs step and its roster, by the names the shared change fixed (the reviewer's ruling of 2026-09-21: the step
 # that runs browser legs after the Chromium install lands once, as its own change, and each PR adds its leg's roster line)
 BROWSER_LEGS_STEP = "Browser legs (node --test over ci-browser-legs.txt)"
+# the gating job the step sits in, after that job's Chromium install
+BROWSER_LEGS_JOB = "vscode-extension"
+# a job's key line under jobs: two spaces, a bare key and a colon (the workflow's own spelling of every job key)
+JOB_KEY_LINE = re.compile(r"  ([A-Za-z0-9_-]+):\s*(#.*)?")
 ROSTER = os.path.join(ROOT, "vscode-extension", "ci-browser-legs.txt")
 GEAR_LEG = "out-tests/ui/webview/gear-sub-focus-browser.test.js"
 GEAR_SRC = os.path.join(ROOT, "ui", "webview", "gear-sub-focus-browser.test.ts")
@@ -114,26 +118,34 @@ def ci_served_files():
 
 
 def ci_steps():
-    """Every step of the workflow file in order, read by text (the runner installs no YAML reader): its name and its lines up to
-    the next step's name line, whichever job it sits in."""
+    """Every step of the workflow file in order, read by text (the runner installs no YAML reader): its name, the job it sits in
+    and its lines up to the next step's name line or the next job's key line, whichever comes first. The job is the key of the
+    nearest job key line above the step (JOB_KEY_LINE, below the one top-level `jobs:` line); a step above every job key, or a
+    file without exactly one `jobs:` line, has the job None, so a caller that asks for a job fails on it."""
     with open(CI_YML, encoding="utf-8") as f:
         lines = f.read().split("\n")
+    top = [i for i, l in enumerate(lines) if re.match(r"jobs:\s*(#.*)?$", l)]
+    keys = [(i, JOB_KEY_LINE.fullmatch(l).group(1)) for i, l in enumerate(lines)
+            if len(top) == 1 and i > top[0] and JOB_KEY_LINE.fullmatch(l)]
     starts = [(i, l.split("- name:", 1)[1].strip()) for i, l in enumerate(lines) if re.match(r"\s+- name: ", l)]
     steps = []
     for k, (i, name) in enumerate(starts):
-        end = starts[k + 1][0] if k + 1 < len(starts) else len(lines)
-        steps.append({"name": name, "lines": lines[i:end]})
+        end = min([starts[k + 1][0] if k + 1 < len(starts) else len(lines)] + [j for j, _ in keys if j > i])
+        above = [key for j, key in keys if j < i]
+        steps.append({"name": name, "job": above[-1] if above else None, "lines": lines[i:end]})
     return steps
 
 
 def ci_browser_legs_step():
-    """The shared browser-legs step's place, by the exact name the shared change fixed: the indexes of the steps of that name (a
-    list, so a missing or a doubled step shows) and of the steps whose lines install playwright's Chromium, over ci_steps()'s
-    order."""
+    """The shared browser-legs step's place, by the exact name the shared change fixed, as indexes over ci_steps()'s order: the
+    steps of that name anywhere in the file (a list, so a missing or a doubled step shows), and the steps of BROWSER_LEGS_JOB whose
+    lines install playwright's Chromium. The install count is that job's own: the served-pages job installs Chromium for its labs
+    too (fork PR 928 moved the served step there, 2026-09-28), and the browser legs run after the gating job's install."""
     steps = ci_steps()
     return {"steps": steps,
             "named": [k for k, s in enumerate(steps) if s["name"] == BROWSER_LEGS_STEP],
-            "install": [k for k, s in enumerate(steps) if any("npx playwright install chromium" in l for l in s["lines"])]}
+            "install": [k for k, s in enumerate(steps) if s["job"] == BROWSER_LEGS_JOB
+                        and any("npx playwright install chromium" in l for l in s["lines"])]}
 
 
 def roster_lines(path):
@@ -223,8 +235,9 @@ class ServedLabsUnderCI(unittest.TestCase):
         gate's read is the pins alone (the maintainer's round 5, tests-1); the browser legs run in a job with a browser only
         through the shared browser-legs step, which the reviewer's ruling of 2026-09-21 landed once as its own change, each PR
         adding its leg's line to the roster. Rostering is opt-in: nothing checks that every browser leg is rostered (the roster's
-        header says so), so this pin is what holds this leg's line. It requires the step named BROWSER_LEGS_STEP once, directly
-        after the one Chromium install step (before it every leg skips, or fails under the switch), the roster
+        header says so), so this pin is what holds this leg's line. It requires the step named BROWSER_LEGS_STEP once in the file,
+        in the vscode-extension job (BROWSER_LEGS_JOB), directly after that job's one Chromium install step (before it every leg
+        skips, or fails under the switch; the served-pages job's own install, for its labs, is outside the count), the roster
         vscode-extension/ci-browser-legs.txt, and the leg's bundle listed in it exactly once; a missing step, roster or line is a
         refusal naming what is missing. The leg launches through the shared helper, where the switch is read, and holds no private
         launch and no switch read of its own."""
@@ -234,12 +247,17 @@ class ServedLabsUnderCI(unittest.TestCase):
                                                 "this pin's name with it)" % (len(step["named"]), BROWSER_LEGS_STEP))
         self.assertIsNotNone(roster, "vscode-extension/ci-browser-legs.txt does not exist: the step %r reads the roster, so a step without "
                                      "one runs nothing" % BROWSER_LEGS_STEP)
-        self.assertEqual(len(step["install"]), 1, "ci.yml holds %d steps installing playwright's Chromium; the pin places the "
-                                                  "browser-legs step after the one" % len(step["install"]))
-        k, i = step["named"][0], step["install"][0]
+        k = step["named"][0]
+        self.assertEqual(step["steps"][k]["job"], BROWSER_LEGS_JOB, "the step %r sits in the %r job, the gating job whose Chromium "
+                                                                    "install it follows; ci.yml has it in %r"
+                         % (BROWSER_LEGS_STEP, BROWSER_LEGS_JOB, step["steps"][k]["job"]))
+        self.assertEqual(len(step["install"]), 1, "the %s job holds %d steps installing playwright's Chromium; the pin places the "
+                                                  "browser-legs step after the one (the served-pages job's own install is outside "
+                                                  "this count)" % (BROWSER_LEGS_JOB, len(step["install"])))
+        i = step["install"][0]
         after = step["steps"][i + 1]["name"] if i + 1 < len(step["steps"]) else None
-        self.assertEqual(k, i + 1, "the browser-legs step sits directly after the Chromium install step (before it every leg skips, or "
-                                   "fails under the switch); the step after the install is %r" % after)
+        self.assertEqual(k, i + 1, "the browser-legs step sits directly after the %s job's Chromium install step (before it every leg "
+                                   "skips, or fails under the switch); the step after the install is %r" % (BROWSER_LEGS_JOB, after))
         count = roster.count(GEAR_LEG)
         self.assertEqual(count, 1, "%s is listed %d times in ci-browser-legs.txt; the roster lists the leg once (the step runs each line "
                                    "once; a missing line leaves the leg's browser legs in no CI job with a browser: add it, with the "

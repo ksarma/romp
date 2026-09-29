@@ -59,9 +59,9 @@ step's margin from that record and this cap, so the cap is re-read once a run on
 measures it, and the literal changes with it.
 
 Not held here: the served step's pytest invocation is also read by tests/test_ci_sdk_pin.py (the flag, the switch's
-listing and its premises, keyed on this job and the step's name) and its globs by tests/test_served_labs_under_ci.py; the
-Browser legs step's margin by tools/ci-browser-legs.test.mjs; the extension job's cap floor by
-tests/test_ci_bats_bound.py::ExtensionJobCeiling.
+listing and its premises, keyed on this job and the step's name) and its globs, the module its pytest line names by file
+and the two-host lab's knob in its env by tests/test_served_labs_under_ci.py; the Browser legs step's margin by
+tools/ci-browser-legs.test.mjs; the extension job's cap floor by tests/test_ci_bats_bound.py::ExtensionJobCeiling.
 
 EachCheckRedsOnItsDefect runs every check against a synthetic workflow built from the same constants: green as built, and red
 on each change it plants, so a check that stopped reading would be red there."""
@@ -125,10 +125,11 @@ EXPECTED_SERVED_JOB = (
     "        env:",
     '          ROMP_SERVED_TESTS_REQUIRE: "1"',
     "          ROMP_SERVED_TESTS_ENGINES: chromium",
+    '          ROMP_CORNER_TWO_HOSTS: "1"',
     "        run: |",
     "          python -m pip install --upgrade pip pytest pytest-timeout cryptography",
-    "          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider -p no:anyio "
-    "--durations=20 --timeout=600 --timeout-method=thread",
+    "          python -m pytest tests/test_*_browser.py tests/test_*_served.py tests/test_relay_dial_declares_held_pair.py "
+    "-q -rs -p no:cacheprovider -p no:anyio --durations=20 --timeout=600 --timeout-method=thread",
     "",
 )
 # The vscode-extension job as ci.yml writes it, read the same way, down to the blank line before the served-pages job.
