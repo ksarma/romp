@@ -3040,10 +3040,13 @@ def main(argv=None):
                                    "comment on any that does not, retarget still-open dependents to %s, delete the member "
                                    "branches and `batch/<name>`, remove the worktree, run scripts/pr-orphans.sh, and report one "
                                    "line naming the batch head's CI run (the push run land gated on, and its case). Then it "
-                                   "checks that the merge commit's first parent is the %s verify read: no CI runs on the merge "
-                                   "to %s, so a batch merged after %s moved lands a tree nothing tested, and finish cannot undo "
-                                   "that; it exits 1 naming both shas and the sweep at the merge commit that is owed. Safe to "
-                                   "re-run: what it observed the first time is kept." % (MAIN, MAIN, MAIN, MAIN))
+                                   "checks that the merge commit's first parent is the %s verify read, and its second parent "
+                                   "the batch head verify read (a commit pushed after verify and merged by the button): no CI "
+                                   "runs on the merge to %s, so a batch merged after %s moved, or with a head the sweep did not "
+                                   "read, lands a tree nothing tested, and finish cannot undo that; it exits 1 naming both shas "
+                                   "and the sweep at the merge commit that is owed. It exits 1 too when it cannot tell: no "
+                                   "merge commit reported, or no %s or head recorded by verify. Safe to re-run: what it "
+                                   "observed the first time is kept." % (MAIN, MAIN, MAIN, MAIN, MAIN))
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--no-notify", action="store_true", help=HELP_NO_NOTIFY + " (members that did not read merged)")
     p.add_argument("--keep-worktree", action="store_true", help="leave ../romp-batch-<name> and the local batch branch in place")

@@ -3752,6 +3752,11 @@ class Helpers(unittest.TestCase):
         p = run("pull", "--help")
         self.assertIn("the member PR's number", p.stdout)
         self.assertIn("--reason TEXT", p.stdout)
+        # round 2, extra9-7: finish's help names both parent checks, in the contracts' words, and the cases it cannot tell
+        p = " ".join(run("finish", "--help").stdout.split())
+        self.assertIn("checks that the merge commit's first parent is the main verify read, and its second parent the batch "
+                      "head verify read (a commit pushed after verify and merged by the button)", p)
+        self.assertIn("It exits 1 too when it cannot tell: no merge commit reported, or no main or head recorded by verify", p)
 
 
 if __name__ == "__main__":
