@@ -1050,7 +1050,9 @@ const bindsName = (b: any, name: string): boolean => !!b && (ts.isIdentifier(b) 
 const isVarScope = (n: any): boolean => ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n) || ts.isModuleDeclaration(n) || ts.isSourceFile(n);
 /** A declaration of `name` that is hoisted to the var scope `scope` from anywhere inside it, not inside a nested var scope:
  *  a `var` in any block or loop head (it binds the name for the whole function, whatever block it sits in), or a function
- *  declared inside a block (a script hoists it to the function too, as a var). Null when there is none. */
+ *  declared inside a block. Sloppy-mode code hoists such a function to the function too, as a var, but only when no let,
+ *  const or class of the name sits in a block in between, and strict code never does; ownBlock gives the block it binds
+ *  in for certain. Null when there is none. */
 function hoistedDecl(scope: any, name: string): any {
   let hit: any = null;
   const visit = (n: any): void => {
@@ -1506,11 +1508,13 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     compound assignment, ++ or --, a destructuring target, a loop head); so does a write inside the declaration's scope
 //     that the census resolves to no binding, to one outside that scope, or to a function declared in a block that does
 //     not hold the write (a function that is an if statement's clause or a label's statement counts as a block of its
-//     own, as esbuild wraps it in one): a write inside a with statement, or in another case clause of the declaration's
-//     switch, where at run time it sets the declaration's name; and a socket is bound at least once. The refusal names
-//     the site. The proof trusts `new WebSocket(...)` because the name WebSocket is refused below; a global
-//     WebSocket replaced through an object built elsewhere with a computed key and copied onto the window is on the list
-//     of what the rules cannot see, and through it a socket the census accepts can be the window.
+//     own, as esbuild wraps it in one), since the census has not shown that such a write misses the declaration: a
+//     write inside a with statement, in another case clause of the declaration's switch, or outside that block in the
+//     function, class static block or namespace the census takes the block's function as hoisted to (a function nested
+//     in the declaration's scope, say); and a socket is bound at least once. The refusal names the site. The proof
+//     trusts `new WebSocket(...)` because the name WebSocket is refused below; a global WebSocket replaced through an
+//     object built elsewhere with a computed key and copied onto the window is on the list of what the rules cannot see,
+//     and through it a socket the census accepts can be the window.
 //     A window other than this page's own is refused whatever the value. On every other receiver the census resolves
 //     to neither this page's window nor a socket (the body element, a parameter, a call's result, an object's property,
 //     a MessagePort, a worker, a channel), a value that sets a handler is refused;
@@ -1838,10 +1842,9 @@ const ownBlock = (f: any): any => {
 };
 /** What socketRefusal names a write by when the write sits inside the declaration's scope and declOf resolves its name to
  *  nothing, to a binding outside that scope, or to a function declaration whose own block (ownBlock) does not hold the
- *  write (rule 3): the cause, whatever the write's form. */
+ *  write (rule 3): the cause, whatever the write's form. It names no place; rule 3 says where such writes sit. */
 const UNPLACED_WRITE = "a write whose name the census resolves to no declaration, to one outside the declaration's scope, or"
-  + " to a function whose own block does not hold the write (inside a with statement, or in another case clause of the"
-  + " declaration's switch)";
+  + " to a function whose own block does not hold the write";
 /** Why the road census cannot prove `recv` a WebSocket, whose own onmessage handler only its server posts to, naming the
  *  site; null when it can. The proof fails closed:
  *  1. `recv` is a name, and the declaration declOf finds for it is a let, const or var statement's own, with a plain name
@@ -1859,12 +1862,21 @@ const UNPLACED_WRITE = "a write whose name the census resolves to no declaration
  *     expression, a compound assignment, ++ or --, a destructuring target, a loop head. So does a write inside the
  *     declaration's scope whose name declOf resolves to nothing, to a binding outside that scope, or to a function
  *     declaration whose own block (ownBlock) does not hold the write: the census has not shown that such a write misses
- *     the declaration. That is a write inside a with statement, and a write in another case clause of the switch whose
- *     case block holds the declaration: declOf reads only the clause the name sits in, so from there it finds an outer
- *     binding of the name, a function declared in some other block (which hoistedDecl takes as hoisted), or none, where
- *     at run time the write sets the declaration's. A write declOf resolves to any other binding inside the
- *     declaration's scope (an inner let, a parameter, a function declared in the block that holds the write) sets that
- *     binding, not the socket. A refused write is named by its cause, whatever its form.
+ *     the declaration. declOf gives those answers for a write inside the declaration's scope in three places:
+ *     - inside a with statement, whose object can answer the name, so declOf resolves it to nothing;
+ *     - in another case clause of the switch whose case block holds the declaration: declOf reads only the clause the
+ *       name sits in, so from there it finds an outer binding of the name, a function declared in some other block, or
+ *       none;
+ *     - outside a block that declares a function of the name, in the function, class static block or namespace that
+ *       hoistedDecl takes that function as hoisted to: a write inside a function nested in the declaration's scope, say,
+ *       where that function declares one of the name in a block the write is not in.
+ *     Each place holds writes that set the declaration's name at run time: a with statement's object may lack the name,
+ *     a write in the other clause reaches the case block's let, and a function declared in a block can bind in that
+ *     block only (strict code, as every module is, never hoists it, and sloppy code does not hoist it past a let, const
+ *     or class of the name in a block in between), so a write outside the block reaches past it. A write declOf
+ *     resolves to any other binding inside the declaration's scope (an inner let, a parameter, a function declared in
+ *     the block that holds the write) sets that binding, not the socket. A refused write is named by its cause, whatever
+ *     its form.
  *  4. A socket is bound at least once: the initialiser, or an accepted assignment.
  *  A member or key name, a label, a type's name and a name in a type are no binding and no reference (namesNoBinding).
  *  The proof trusts new WebSocket(...) because the road census refuses the name WebSocket other than as the constructor a
@@ -2490,8 +2502,7 @@ test("the road census reads what it claims: every road around the spelled regist
   // the kind named for a write rule 3 refuses by its cause, spelled out here rather than read from UNPLACED_WRITE, so
   // that a change to that text reds these rows
   const UNPLACED = "a write whose name the census resolves to no declaration, to one outside the declaration's scope, or"
-    + " to a function whose own block does not hold the write (inside a with statement, or in another case clause of the"
-    + " declaration's switch)";
+    + " to a function whose own block does not hold the write";
   const named: Array<[string, string, string?]> = [
     ["var ws = new WebSocket(u);\nvar ws = new WebSocket(u2);\nws.onmessage = f;", "ws is bound again at :2 by a second declaration", "webview/probe.js"],
     ["var ws = new WebSocket(u);\nvar [ws] = [window];\nws.onmessage = f;", "ws is bound again at :2 by a destructuring target", "webview/probe.js"],
