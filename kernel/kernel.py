@@ -70663,11 +70663,11 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // 0 px leaves 24, and a pan to the share after a no-pan re-raise under a light zoom opened a band under the composer, 2.67 px at
 // 1.008, 3.33 px at 1.01 and 16 px at 1.05; node cells). It bounds from the hold, not from a re-raise bound rp above the hold: a
 // keyboard raised again with the visual viewport deep under the zoom, where rp is the reading less the share and exceeds the hold,
-// and then panned back up publishes the smaller hold, so a band opens under the composer where rp would leave none (disclosed, the
-// re-bound source being the maintainer's call: a hold of 83 from scale 1, the keyboard down under a zoom of 2 and raised again at
-// offsetTop 590, rp 168, then a pan to 422, publishes 83, a band of 85 px; 29 px at 1.5, raised again at 495.2, rp 214, a pan to
-// 281.33; 20.82 px at 1.1, raised again at 250, rp 173, a pan to 150; node cells, test_kernel_mobile's reraiseDeep cells pin
-// them). Any other report inside
+// and then panned back up publishes the smaller hold, so a band can open under the composer where rp would leave none
+// (disclosed, the re-bound source being the maintainer's call: a hold of 83 from scale 1, the keyboard down under a zoom of 2
+// and raised again at offsetTop 590, rp 168, then a pan to 422, publishes 83, a band of 85 px; 29 px at 1.5, raised again at
+// 495.2, rp 214, a pan to 281.33; 20.82 px at 1.1, raised again at 250, rp 173, a pan to 150; node cells, test_kernel_mobile's
+// reraiseDeep cells pin them). Any other report inside
 // the layout viewport takes the stance: where the zoom's share is below the value, the value bounded into the reading's interval;
 // where the share reaches it, the larger of the value and kbPx, so a zoom alone never re-lays the shell there (the pinch-aware
 // note above: its share is the whole of its pan), except after a pan the rule re-bounded: the rule's value is published and not
@@ -70680,7 +70680,7 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // alone, for example, or over a value a drag wrote), a pan of the same keyboard above the value keeps it where the share reaches it, the composer below the band's bottom by
 // the drag until the keyboard goes down (a hold of 83 from scale 1, pinched to 2 and dragged to the top: 83 px published where the
 // reading allows 0, the composer 337 px below the band's bottom where 0 px leaves 254; node cells); and after a zoom alone a pan
-// of the same keyboard DOWN inside the new zoom's share keeps the value too, so a band opens under the composer, the class the
+// of the same keyboard DOWN inside the new zoom's share keeps the value too, so a band can open under the composer, the class the
 // pan rule closes for a keyboard raised at the current zoom (a keyboard re-raised with no pan under a light zoom, the value in
 // force its re-raise bound 0, then a zoom alone about the band's top and a pan down to the new zoom's share: 30.55 px from 1.05
 // to 1.1, 19.02 px from 1.05 to 1.06, 6.59 px from 1.01 to 1.02 and 3.33 px from 1.003 to 1.01, and the same bands for a hold
@@ -70723,7 +70723,7 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // changes is a design call not taken here; the harness's swapZoom and swapRefit cells drive a swap). That value stands until the
 // zoom ends or the keyboard goes down only where the pan rule does not govern the next run. Where the value in force was written
 // at a raise or a re-raise under the current zoom (kz the scale), the next run at the SAME report is a pan by the test above (the
-// scale and h unchanged since the swap's run) and publishes the pan rule's value, so --app-top moves with no new information, and
+// scale and h unchanged since the swap's run) and publishes the pan rule's value, so --app-top can move with no new information, and
 // fit() runs again on ordinary events (a visual viewport resize or scroll, a window resize, focus and focusout among them).
 // Disclosed, whether a report identical to the previous one is a pan being the maintainer's call: a 471 px keyboard raised at
 // scale 2 with offsetTop 657.5 publishes 236, and the 508 px keyboard swapped in at offsetTop 40 publishes 236 on the swap's run,

@@ -1797,12 +1797,13 @@ class MobileFitExecutes(unittest.TestCase):
     def test_a_pan_down_after_a_zoom_alone_keeps_the_value_and_opens_a_band(self):
         # DISCLOSED, the stance's third cost, and these cells are its witness (the fit() comment names them): the pan rule governs a
         # pan of a keyboard raised at the current zoom, and a zoom alone ends that, so a pan of the same keyboard down inside the new
-        # zoom's share takes the stance and keeps the value, and a band opens under the composer. The keyboard re-raised with no
-        # pan under a light zoom (the value in force its re-raise bound, 0), a zoom alone about the band's top, then the pan down to
-        # the new zoom's share: 30.55 px from 1.05 to 1.1, 19.02 from 1.05 to 1.06, 6.59 from 1.01 to 1.02 and 3.33 from 1.003 to
-        # 1.01, the same with no hold and with a hold of 83 from scale 1. Whether the rule governs a pan after a zoom alone over a
-        # re-raise bound is the maintainer's call; these cells pin the built behaviour so a change to it is made on purpose (the
-        # pan rule without its current-zoom and zoom-alone gates publishes the hold bounded into the reading's interval there, no band).
+        # zoom's share takes the stance and keeps the value, and at the share a band opens under the composer. The keyboard
+        # re-raised with no pan under a light zoom (the value in force its re-raise bound, 0), a zoom alone about the band's top,
+        # then the pan down to the new zoom's share: 30.55 px from 1.05 to 1.1, 19.02 from 1.05 to 1.06, 6.59 from 1.01 to 1.02 and
+        # 3.33 from 1.003 to 1.01, the same with no hold and with a hold of 83 from scale 1. Whether the rule governs a pan after a
+        # zoom alone over a re-raise bound is the maintainer's call; these cells pin the built behaviour so a change to it is made
+        # on purpose (the pan rule without its current-zoom and zoom-alone gates publishes the hold bounded into the reading's
+        # interval there, no band).
         px = self._r6_px
 
         def band(st):   # how far the composer's bottom sits above the visible band's bottom: the band under the composer
