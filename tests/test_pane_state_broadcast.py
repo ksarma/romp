@@ -2040,16 +2040,20 @@ def _route_table_renderers(tree, scopes):
     with a starred argument, which can carry a default, and a membership test chained past the table, which hands the table to the
     next operand's `__contains__`, among them), a `**` entry or a renderer that is not a plain name. The roads that write the table
     without naming it where this walk reads a name are loud too, each by one syntactic check that no line of kernel.py meets today
-    (the reviewer's round-7 findings extra8-1 and extra8-2): a star import (`from m import *` binds whatever m's `__all__` lists); a
+    (the reviewer's round-7 findings extra8-1 and extra8-2, and the builtins roads the check on the reviewer's round-7 fix pass found
+    still passing): a star import (`from m import *` binds whatever m's `__all__` lists); a
     reference to `globals` other than a `globals().get(...)` read with one string-constant key (the two live reads, of
     `_JUDGE_MODEL_VALUES` and `_MODEL_VALUES`, are that shape; a computed key could fetch the table and write through it); any
-    reference to `vars`, `locals`, `exec` or `eval`, a name or an attribute `.exec` or `.eval` (keyed on references, not calls, so
-    `e = exec` and `builtins.exec(...)` are read); and the table reached as an attribute or by its name as a string (the
-    module-object road: `sys.modules[__name__]._PAGE_RENDERERS`, `setattr(m, '_PAGE_RENDERERS', ...)`). THE BOUND, the roads no one
-    syntactic check refuses and this census does not read: a getattr or setattr whose name is computed or names a builtin such as
-    exec, a `__dict__` write with a computed name, the `__import__` and importlib roads, and a write from another module (sys.modules
-    has 10 live uses in kernel.py and `__dict__` 1, a read of glob's module dict, so neither can be refused by name). Returns
-    (renderer names, ids of the `.get` calls)."""
+    reference to `vars`, `locals`, `exec` or `eval`, and any attribute `.globals`, `.vars`, `.locals`, `.exec` or `.eval` (keyed on
+    references, not calls, so `e = exec`, `builtins.exec(...)` and `builtins.globals()[k] = v` are read); an import of the builtins
+    module, or of any of those five names from any module (`import builtins as b`, `from builtins import exec as run`, which bind
+    them under another name); the builtins namespace reached as `__builtins__`, a name or an attribute, or by the string
+    `'builtins'` or `'__builtins__'` (`__builtins__['exec']`, `sys.modules['builtins']`); and the table reached as an attribute or
+    by its name as a string (the module-object road: `sys.modules[__name__]._PAGE_RENDERERS`, `setattr(m, '_PAGE_RENDERERS', ...)`).
+    THE BOUND, the roads no one syntactic check refuses and this census does not read: a getattr or setattr whose name is computed or
+    names a builtin such as exec, a `__dict__` write with a computed name, the `__import__` and importlib roads, and a write from
+    another module (sys.modules has 10 live uses in kernel.py and `__dict__` 1, a read of glob's module dict, so neither can be
+    refused by name). Returns (renderer names, ids of the `.get` calls)."""
     defs = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == _ROUTE_TABLE for t in n.targets)]
     if len(defs) != 1 or len(defs[0].targets) != 1 or not isinstance(defs[0].value, ast.Dict):
         raise AssertionError("kernel.py: %s is not one module-level dict literal (%d bindings); classify it here" % (_ROUTE_TABLE, len(defs)))
@@ -2079,6 +2083,8 @@ def _route_table_renderers(tree, scopes):
 
 
 _NAMESPACE_ROADS = ("vars", "locals", "exec", "eval")   # a reference to any of these can write the module's namespace or run code that does
+_NAMESPACE_ATTRS = ("globals",) + _NAMESPACE_ROADS   # the same five as attributes (builtins.globals, builtins.exec) and as imported names
+_BUILTINS_NAMES = ("builtins", "__builtins__")   # the builtins module and the builtins namespace, spelled as strings (sys.modules['builtins'])
 
 
 def _refuse_dynamic_table_roads(tree, parent):
@@ -2101,9 +2107,21 @@ def _refuse_dynamic_table_roads(tree, parent):
         if isinstance(n, ast.Name) and n.id in _NAMESPACE_ROADS:
             raise AssertionError("kernel.py line %d: a reference to %s, which can write the module's namespace or run code that writes %s by "
                                  "name; classify it here" % (n.lineno, n.id, _ROUTE_TABLE))
-        if isinstance(n, ast.Attribute) and n.attr in ("exec", "eval"):
-            raise AssertionError("kernel.py line %d: an attribute .%s (builtins.%s runs code that can write %s by name); classify it here"
-                                 % (n.lineno, n.attr, n.attr, _ROUTE_TABLE))
+        if isinstance(n, ast.Attribute) and n.attr in _NAMESPACE_ATTRS:
+            raise AssertionError("kernel.py line %d: an attribute .%s (builtins.%s reaches the module's namespace or runs code that can write "
+                                 "%s by name); classify it here" % (n.lineno, n.attr, n.attr, _ROUTE_TABLE))
+        if ((isinstance(n, ast.Import) and any(al.name.split(".")[0] == "builtins" for al in n.names))
+                or (isinstance(n, ast.ImportFrom) and (n.module or "").split(".")[0] == "builtins")):
+            raise AssertionError("kernel.py line %d: an import of builtins, whose globals, vars, locals, exec and eval it binds under "
+                                 "names this census does not read; classify it here" % n.lineno)
+        if isinstance(n, ast.ImportFrom) and any(al.name in _NAMESPACE_ATTRS for al in n.names):
+            raise AssertionError("kernel.py line %d: an import of globals, vars, locals, exec or eval from %s, which binds it under a name "
+                                 "this census does not read; classify it here" % (n.lineno, n.module or "."))
+        if ((isinstance(n, ast.Name) and n.id == "__builtins__") or (isinstance(n, ast.Attribute) and n.attr == "__builtins__")
+                or (isinstance(n, ast.Constant) and n.value in _BUILTINS_NAMES)):
+            raise AssertionError("kernel.py line %d: the builtins namespace reached as __builtins__ or by its name as a string "
+                                 "(__builtins__['exec'], sys.modules['builtins']), whose exec, eval and globals can write %s; "
+                                 "classify it here" % (n.lineno, _ROUTE_TABLE))
         if (isinstance(n, ast.Attribute) and n.attr == _ROUTE_TABLE) or (isinstance(n, ast.Constant) and n.value == _ROUTE_TABLE):
             raise AssertionError("kernel.py line %d: %s reached as an attribute or by its name as a string (a module-object write: "
                                  "sys.modules[__name__].%s, setattr(m, '%s', ...)); classify it here" % (n.lineno, _ROUTE_TABLE, _ROUTE_TABLE, _ROUTE_TABLE))
@@ -2549,9 +2567,9 @@ class StampCensusResolvesByBinding(unittest.TestCase):
                     self._census("_x_page", "def do_GET(self):\n    " + use + "\n    _page = _PAGE_RENDERERS.get(self.path)\n    return self._send(200, _page(), \"text/html\")\n")
 
     def test_a_dynamic_write_to_the_table_is_refused_naming_its_road(self):
-        # the reviewer's round-7 findings extra8-1 and extra8-2: every road below writes the table without naming it where the use
-        # classification reads a name, and each is refused by one syntactic check at 0 live uses in kernel.py; the one globals() read
-        # kernel.py makes, a .get with a string-constant key, is the control and passes
+        # the reviewer's round-7 findings extra8-1 and extra8-2, and the builtins roads the check on the fix pass found: every road below
+        # writes the table without naming it where the use classification reads a name, and each is refused by one syntactic check at 0
+        # live uses in kernel.py; the one globals() read kernel.py makes, a .get with a string-constant key, is the control and passes
         roads = (("from _tables import *", None, r"a star import \(`from _tables import \*`\)"),
                  (None, "globals().get(_key)['/x'] = _x_page", r"a reference to globals other than a globals\(\)\.get read with one string-constant key"),
                  (None, "globals()[_key] = _PAGES", r"a reference to globals other than a globals\(\)\.get read with one string-constant key"),
@@ -2562,8 +2580,24 @@ class StampCensusResolvesByBinding(unittest.TestCase):
                  (None, "exec(_code)", r"a reference to exec, which can write the module's namespace"),
                  (None, "_e = exec", r"a reference to exec, which can write the module's namespace"),
                  (None, "eval(_code)", r"a reference to eval, which can write the module's namespace"),
-                 (None, "builtins.exec(_code)", r"an attribute \.exec \(builtins\.exec runs code"),
-                 (None, "builtins.eval(_code)", r"an attribute \.eval \(builtins\.eval runs code"),
+                 (None, "builtins.exec(_code)", r"an attribute \.exec \(builtins\.exec reaches the module's namespace"),
+                 (None, "builtins.eval(_code)", r"an attribute \.eval \(builtins\.eval reaches the module's namespace"),
+                 # the check on the reviewer's round-7 fix pass: each road below passed the census there; each is refused by one more syntactic check
+                 (None, "builtins.globals()[_key] = _PAGES", r"an attribute \.globals \(builtins\.globals reaches the module's namespace"),
+                 (None, "builtins.globals().update(_PAGES)", r"an attribute \.globals \(builtins\.globals reaches the module's namespace"),
+                 (None, "builtins.vars()[_key] = _PAGES", r"an attribute \.vars \(builtins\.vars reaches the module's namespace"),
+                 (None, "builtins.locals()[_key] = _PAGES", r"an attribute \.locals \(builtins\.locals reaches the module's namespace"),
+                 (None, "import builtins as _b; _b.globals()[_key] = _PAGES", r"an import of builtins, whose globals, vars, locals, exec and eval"),
+                 (None, "import builtins as _b; getattr(_b, 'exec')(_code)", r"an import of builtins, whose globals, vars, locals, exec and eval"),
+                 (None, "from builtins import exec as _run; _run(_code)", r"an import of builtins, whose globals, vars, locals, exec and eval"),
+                 (None, "from builtins import globals as _g; _g()[_key] = _PAGES", r"an import of builtins, whose globals, vars, locals, exec and eval"),
+                 (None, "from builtins import eval as _ev; _ev(_code)", r"an import of builtins, whose globals, vars, locals, exec and eval"),
+                 (None, "from _compat import exec as _run; _run(_code)", r"an import of globals, vars, locals, exec or eval from _compat"),
+                 (None, "__builtins__['exec'](_code)", r"the builtins namespace reached as __builtins__ or by its name as a string"),
+                 (None, "__builtins__['globals']()[_key] = _PAGES", r"the builtins namespace reached as __builtins__ or by its name as a string"),
+                 (None, "sys.modules[__name__].__builtins__['exec'](_code)", r"the builtins namespace reached as __builtins__ or by its name as a string"),
+                 (None, "getattr(sys.modules['builtins'], 'exec')(_code)", r"the builtins namespace reached as __builtins__ or by its name as a string"),
+                 (None, "getattr(sys.modules[__name__], '__builtins__')['exec'](_code)", r"the builtins namespace reached as __builtins__ or by its name as a string"),
                  (None, "sys.modules[__name__]._PAGE_RENDERERS['/x'] = _x_page", r"_PAGE_RENDERERS reached as an attribute or by its name as a string"),
                  (None, "setattr(sys.modules[__name__], '_PAGE_RENDERERS', _PAGES)", r"_PAGE_RENDERERS reached as an attribute or by its name as a string"))
         do_get = "    _page = _PAGE_RENDERERS.get(self.path)\n    return self._send(200, _page(), \"text/html\")\n"
