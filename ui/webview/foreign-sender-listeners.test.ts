@@ -628,8 +628,8 @@ function uiSources(): string[] {
   return uiPartition()["modules"];
 }
 /** The files whose window listeners take the shell's own check, not windowSender's: palette-main.ts, bundled as
- *  palette-main.js, which only the shell page loads (the test after the census holds that), so its two listeners hear
- *  only the shell's panes. Their gate is `if (!paneSourceOk(<its event>)) return;`, paneSourceOk being pane-source.ts's
+ *  palette-main.js, which only the shell page loads (the test "the shell's bundle is loaded by the shell page alone"
+ *  holds that), so its two listeners hear only the shell's panes. Their gate is `if (!paneSourceOk(<its event>)) return;`, paneSourceOk being pane-source.ts's
  *  fail-closed reader of the shell's window.__rompPaneSourceOk. headCheck refuses a windowSender gate in such a file, and
  *  the pane gate in any other: a pane's listeners hear their embedder, their own dispatch and the VS Code host, which the
  *  shell's check admits none of, and no pane page defines it. */
@@ -769,7 +769,7 @@ const EXEMPT: Array<[string, number, string]> = [];
  *  text `window`, keeps the census red whatever else it carries. */
 const spelledAsGated = (s: Site): boolean => s.receiver === "window" && s.kind === "addEventListener";
 
-test("census: every window message listener in ui/ has the foreign-sender check, preceded by nothing but reads of the message and early returns the census judges to run no code, and is one of the gated sites", () => {
+test("census: every window message listener in ui/ has its check (windowSender's foreign-sender check, or the pane check in the shell's bundle), preceded by nothing but reads of the message and early returns the census judges to run no code, and is one of the gated sites", () => {
   const sites = uiSources().flatMap(messageSites);
   const exempt = new Set(EXEMPT.map(([f, line]) => f + ":" + line));
   const counted = new Map<string, number>();
@@ -778,7 +778,7 @@ test("census: every window message listener in ui/ has the foreign-sender check,
     "the window message listeners in ui/ are not the gated sites: a new one is gated at its head, given an executed leg in this file and added to GATED");
   const bad = sites.filter((s) => !exempt.has(s.file + ":" + s.line)).map((s) => [s, headCheck(s)] as const).filter(([, why]) => why !== null)
     .map(([s, why]) => s.file + ":" + s.line + " (" + s.receiver + "): " + why);
-  assert.deepEqual(bad, [], "a window message listener acts before it rules out a foreign sender:\n" + bad.join("\n"));
+  assert.deepEqual(bad, [], "a window message listener acts before its check (windowSender's foreign-sender check, or the pane check in the shell's bundle):\n" + bad.join("\n"));
   assert.ok(sites.every(spelledAsGated),
     "every census site is window.addEventListener(\"message\", ...), the one spelling the gated sites use");
 });
@@ -2182,9 +2182,9 @@ test("the road census reads what it claims: every road around the spelled regist
   // own declaration, bound to new WebSocket(...) by its initialiser or by an assignment that is a statement of its own,
   // with no other binding of the name in its scope or a scope inside it that holds the receiver or the declaration, and
   // no other write; a binding of the name in an unrelated function, or in an outer scope the declaration shadows, is no
-  // other binding, and neither is a namespace's name that is no export); a message listener on this page's own window is
-  // a census site, no road. Each row's last column is how many onmessage census sites it holds: a handler on this page's
-  // own window is one, and every other accepted handler (a socket, a detach, a tested read) is none
+  // other binding, and neither is a name a namespace declares without exporting it); a message listener on this page's
+  // own window is a census site, no road. Each row's last column is how many onmessage census sites it holds: a handler
+  // on this page's own window is one, and every other accepted handler (a socket, a detach, a tested read) is none
   const handlerOk: Array<[string, string | undefined, number]> = [
     ["const ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };", undefined, 0],
     ["let ws: WebSocket; ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };", undefined, 0],
@@ -2297,13 +2297,16 @@ test("the road census reads what it claims: every road around the spelled regist
       ["function ws() {} if (0) { var ws = new WebSocket(u); } ws.onmessage = f;", "webview/probe.js"],
       ["var ws = new WebSocket(u); enum ws { A } ws.onmessage = f;"],
       // a write other than a statement of its own assigning new WebSocket(...), a declaration that is no let, const or var
-      // statement's own, and a name never bound to a socket
+      // statement's own (a for head's, or a catch clause's parameter, whichever side of the handler the assignment of
+      // new WebSocket(...) sits), and a name never bound to a socket
       ["let ws; ws = new WebSocket(u), ws = window; ws.onmessage = f;", "webview/probe.js"],
       ["let ws, w2; ws = w2 = new WebSocket(u); w2 = window; ws.onmessage = f;", "webview/probe.js"],
       ["let ws = new WebSocket(u); ws++; ws.onmessage = f;", "webview/probe.js"],
       ["let ws = new WebSocket(u); function h() { ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
       ["let ws; go(ws = new WebSocket(u)); ws.onmessage = f;", "webview/probe.js"],
       ["for (let ws = new WebSocket(u); ; ) { ws.onmessage = f; break; }", "webview/probe.js"],
+      ["try { throw window; } catch (ws) { if (0) ws = new WebSocket(u); ws.onmessage = f; }", "webview/probe.js"],
+      ["try { throw window; } catch (ws) { ws.onmessage = f; ws = new WebSocket(u); }", "webview/probe.js"],
       ["let ws = pick(); ws.onmessage = f;", "webview/probe.js"],
       ["let ws; ws.onmessage = f;", "webview/probe.js"],
       // an ambient declaration, which binds nothing at run time (an ambient var's name is a property of the global object)
@@ -2412,7 +2415,8 @@ test("the road census reads what it claims: every road around the spelled regist
     }
   }
   // a refusal on a receiver the census cannot prove a socket names the site: where the name is bound again or written, by
-  // what, or why its declaration proves nothing (socketRefusal), one row per kind
+  // what, or why its declaration proves nothing (socketRefusal), one row per kind, and for a declaration that is no let,
+  // const or var statement's own one row per shape (a for head's, a catch clause's parameter, none)
   const UNPROVED = "an onmessage handler on a receiver the census cannot resolve to this page's window or to a socket: ";
   const named: Array<[string, string, string?]> = [
     ["var ws = new WebSocket(u);\nvar ws = new WebSocket(u2);\nws.onmessage = f;", "ws is bound again at :2 by a second declaration", "webview/probe.js"],
@@ -2431,6 +2435,7 @@ test("the road census reads what it claims: every road around the spelled regist
     ["let ws = new WebSocket(u);\nws ||= window;\nws.onmessage = f;", "ws is written at :2 by a compound assignment", "webview/probe.js"],
     ["let ws = new WebSocket(u);\nws++;\nws.onmessage = f;", "ws is written at :2 by ++ or --", "webview/probe.js"],
     ["\nfor (let ws = new WebSocket(u); ; ) {\n  ws.onmessage = f; break;\n}", "ws is not declared by a let, const or var statement of its own (:2)", "webview/probe.js"],
+    ["try { throw window; }\ncatch (ws) { if (0) ws = new WebSocket(u); ws.onmessage = f; }", "ws is not declared by a let, const or var statement of its own (:2)", "webview/probe.js"],
     ["ws.onmessage = f;", "ws is not declared by a let, const or var statement of its own", "webview/probe.js"],
     ["\nlet ws = pick();\nws.onmessage = f;", "ws is declared at :2 bound to something other than new WebSocket(...)", "webview/probe.js"],
     ["\ndeclare var ws: any;\nif (0) ws = new WebSocket(u); ws.onmessage = f;", "ws is declared at :2 by an ambient declaration (declare), which binds nothing at run time"],
