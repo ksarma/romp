@@ -250,7 +250,8 @@ or of the run's invalid mark, lets that write finish before the runner stops (_w
 alone would remove its temp file and the record with it. A stop in the moments between a leg's exit and the
 runner filling in its record (the reap of what the leg left running, which reap_descendants bounds at its 30 s
 timeout, then the reading of its log for the summary and the test count) still loses the rc: the run records that leg
-as never finished, and the next run needs no flake for it. Writing the rc before the record is whole would not close
+as never finished, and the next run needs no flake for it. So does a stop in those moments after a setup's npm ci
+exits: the group's legs it would block are recorded as never finished. Writing the rc before the record is whole would not close
 this, since a stop of the runner's whole scope kills the leg with the same signal, and its rc would then read as a
 failure.
 A --leg re-run refuses unless the newest run finished, is valid, and failed that leg, so the flake a failure in an
@@ -259,8 +260,12 @@ job, grouped as a full run groups them, so it may name legs of several jobs (pyt
 with npm ci first where that job runs it before the leg and deps is not re-run with it (round 2, decision 13): a
 re-run of pytest, or of a leg whose job runs no npm ci, has no setup, and deps named with a later leg of its own job
 runs as a leg, not a setup. A setup that fails, or changes the checkout, refuses the run when nothing is recorded yet
-(the run's first group), and otherwise blocks its group's legs after it, each red naming the setup, or makes the run
-invalid. A --leg re-run of served also runs the tests the newest pytest leg at the sha skipped for want of the deps.
+(a --leg re-run's first group). Otherwise, in a full run or a --leg re-run, a setup that fails marks its group's legs
+from the one it runs before on blocked, each red naming the setup with a finished stamp, and writes them all as soon as
+npm ci exits, before the setup's re-read, so a stop during that re-read keeps them as failures (round 2, the owner's
+build question 1), and the group ends there; a setup that changes the checkout makes the run invalid, and the legs it
+blocked, when it also failed, are that invalid run's failures, which count. A --leg re-run of served also runs the
+tests the newest pytest leg at the sha skipped for want of the deps.
 
 The runner calls no nice, ionice, systemd-run, flock or slot script itself: a machine that runs legs
 under such wrappers passes them with --wrap. It imports nothing beyond the standard library.
@@ -3610,19 +3615,62 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         leg_tmp = None
         return left
 
-    def run_setup(where, where_before, grec, known):
+    def run_setup(where, where_before, grec, known, on_fail=None):
         """npm ci as the group's setup (leg_groups' setup_before), run as the deps leg runs, in the group's checkout and in
         a scratch of its own: its record goes in the group's (grec), and the faults the re-read after it finds, read as
-        after the deps leg (an ignored file outside vscode-extension/node_modules counts), are returned."""
+        after the deps leg (an ignored file outside vscode-extension/node_modules counts), are returned. A setup that did
+        not pass is handed to `on_fail` as soon as run_leg returns, before its scratch is removed and before the re-read
+        (the owner's build question 1), as a leg that did not pass is written then."""
         setup = {"owed": True, "cmd": list(DEPS_CMD), "cwd": "vscode-extension", "rc": None}
         print("sweep %s: setup (npm ci) for %s ..." % (short(sha), group_label(grec)), flush=True)
         lctx = scratch()
         run_leg(where, "deps", setup, wraps, lctx, logdir)
+        grec["setup"] = setup
+        if on_fail is not None and not passed("deps", setup):
+            on_fail(setup)
         left = scratch_end(lctx)
         if left:
             setup["home_left"] = left
-        grec["setup"] = setup
         return recheck_checkout(where, sha, entries, where_before, only_under=DEPS_PRODUCTS, known=known)
+
+    def plan_served(rec):
+        """The served leg's command, set before it runs or is marked blocked: the tests outside the served globs that the
+        pytest leg skipped for want of the deps join it (this run's pytest leg, or for a --leg re-run the newest one
+        recorded at this sha). A set that is not known blocks the leg, which is then red naming why (run_leg). Returns the
+        tests, or None when the set is not known."""
+        also, why = served_also(run["legs"]["pytest"] if "pytest" in run["legs"] else base_legs.get("pytest"))
+        rec.pop("blocked", None)
+        rec["cmd"] = served_cmd(served_vpy, served_files, also or ())
+        if why is None:
+            rec["also"] = {"tests": also, "count": len(also), "why": DEPS_SKIP_WHY}
+        else:
+            rec["also"] = {"error": why}
+            rec["blocked"] = why
+        return also
+
+    def block_rest(where, grec, rest, setup):
+        """The owner's build question 1: a group's setup (npm ci) did not pass, so each leg of the group from the one it
+        runs before on (`rest`) is marked blocked, naming the setup, with a finished stamp (run_leg runs nothing for a
+        blocked leg), and all of them are written at once, before the setup's scratch is removed and before its re-read,
+        so a stop in either keeps them as failures. A stop inside the marking or the write lets both finish before it is
+        raised (_finish), as _write_under_stop does for one write."""
+        why = ("its checkout's setup, npm ci as %s runs it, %s (log %s), so the leg did not run"
+               % (group_label(grec), _rc_text("deps", setup), setup.get("log")))
+
+        def mark():
+            for name in rest:
+                rec = run["legs"][name]
+                if name == SERVED_LEG:
+                    plan_served(rec)
+                rec["blocked"] = why
+                run_leg(where, name, rec, wraps, ctx, logdir)
+            write_result(path, data)
+        stopped = []
+        _finish(mark, stopped)
+        for name in rest:
+            print("sweep %s: %s %s" % (short(sha), name, _rc_text(name, run["legs"][name])), flush=True)
+        if stopped:
+            raise stopped[0]
 
     try:
         checkout, marker, create_s = make_checkout(tree, sha)
@@ -3754,14 +3802,18 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                     break
                 before = git_state(checkout)
                 grec.update(path=checkout, create_s=create_s, verify_s=round(time.monotonic() - t0, 2))
-            blocked_by_setup = None
             for name in g["legs"]:
                 rec = run["legs"][name]
                 if name == g["setup_before"] and not (gi == 0 and early):
-                    # npm ci where this group's job runs it (leg_groups), after the run is recorded: a setup that fails
-                    # blocks the group's legs after it, each red naming it; one that changes the checkout makes the run
-                    # invalid, as the deps leg's re-read does.
-                    after = run_setup(checkout, before, grec, ignored_now(checkout, entries))
+                    # npm ci where this group's job runs it (leg_groups), after the run is recorded. A setup that does not
+                    # pass blocks the group's legs from this one on: each is marked blocked, naming it, with a finished
+                    # stamp, and all are written as soon as the setup's run_leg returns, before its re-read (block_rest, the
+                    # owner's build question 1), so a stop in that re-read keeps them, and the group ends there. A setup
+                    # that changes the checkout makes the run invalid, as the deps leg's re-read does; the legs it blocked,
+                    # if it also failed, are that invalid run's failures, which count.
+                    rest = g["legs"][g["legs"].index(name):]
+                    after = run_setup(checkout, before, grec, ignored_now(checkout, entries),
+                                      on_fail=lambda s, where=checkout, grec=grec, rest=rest: block_rest(where, grec, rest, s))
                     setup = grec["setup"]
                     if after:
                         run["invalid"] = ("after the setup (npm ci) of %s the checkout is not the sha's tree: %s; the legs "
@@ -3769,24 +3821,12 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                         _write_under_stop(path, data)
                         break
                     if not passed("deps", setup):
-                        blocked_by_setup = ("its checkout's setup, npm ci as %s runs it, %s (log %s), so the leg did not run"
-                                            % (group_label(grec), _rc_text("deps", setup), setup.get("log")))
+                        break
                 if name == SERVED_LEG:
-                    # The tests outside the served globs that the pytest leg skipped for want of the deps join the served
-                    # leg's command: this run's pytest leg, or for a --leg re-run the newest one recorded at this sha. A set
-                    # that is not known blocks the leg, which is then red naming why (run_leg).
-                    also, why = served_also(run["legs"]["pytest"] if "pytest" in run["legs"] else base_legs.get("pytest"))
-                    rec.pop("blocked", None)
-                    rec["cmd"] = served_cmd(served_vpy, served_files, also or ())
-                    if why is None:
-                        rec["also"] = {"tests": also, "count": len(also), "why": DEPS_SKIP_WHY}
+                    also = plan_served(rec)
+                    if also is not None:
                         print("sweep %s: served also runs %d test%s the pytest leg skipped for want of the deps"
                               % (short(sha), len(also), "" if len(also) == 1 else "s"), flush=True)
-                    else:
-                        rec["also"] = {"error": why}
-                        rec["blocked"] = why
-                if blocked_by_setup:
-                    rec["blocked"] = blocked_by_setup
                 # before deps, the ignored files the legs before it in its checkout left, which its re-read excuses as long
                 # as it leaves them (none in a fresh checkout, where the deps leg is first)
                 known = ignored_now(checkout, entries) if name == "deps" else None

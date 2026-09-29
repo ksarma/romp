@@ -606,6 +606,20 @@ jobs:
 SEED_ORDER = [PYTEST_LEG, "bats", "manager", "tools", "deps", "typecheck", "npm-test", "build", "served", "ledger"]
 SEED_GROUPS = [("python", [PYTEST_LEG]), ("shell", ["bats", "manager", "tools"]),
                ("vscode-extension", ["deps", "typecheck", "npm-test", "build", "served"]), (None, ["ledger"])]
+# The seed's ci.yml in the shape main's ci.yml has had since fork PR 928 for the served step: a served-pages job of its
+# own that runs npm ci before it, so the served leg runs in that job's checkout after npm ci as the group's setup, while
+# the deps leg stays in the extension job (the first job that holds npm ci).
+SEED_928_CI = SEED_CI.replace(SEED_SERVED_PYTHON + SEED_SERVED_STEP, "") + """  served-pages:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: npm ci
+""" + SEED_SERVED_PYTHON + SEED_SERVED_STEP
+assert SEED_CI.count(SEED_SERVED_PYTHON + SEED_SERVED_STEP) == 1 and SEED_928_CI.count(SEED_SERVED_STEP) == 1
 SEED_HOST = 'SDK_TESTED_VERSION = "%s"\n' % SEED_PIN
 # The files the seed's served step selects, in the order its globs expand them (one glob after the other).
 SEED_SERVED_FILES = ["tests/test_b_browser.py", "tests/test_a_served.py"]
@@ -2195,6 +2209,130 @@ class Checkout(_Base):
         self.assertIn("the checkout is not the sha's tree: ignored outside vscode-extension/node_modules 1 "
                       "(kernel/__pycache__/other.cpython-399.pyc)", run.get("invalid") or "")
         self.assertEqual(run["legs"][PYTEST_LEG].get("rc"), 0)
+
+    # A --wrap for the deps leg that counts its calls: the first (the extension job's deps leg) runs npm ci as given; the
+    # second (the served-pages job's npm ci setup) makes its checkout's .git/info/exclude a FIFO, so the setup's re-read
+    # waits in its read, and fails without running npm ci.
+    SECOND_NPM_CI_FAILS = r'''#!%(python)s
+import os, subprocess, sys
+count = %(count)r
+n = int(open(count).read()) + 1 if os.path.exists(count) else 1
+open(count, "w").write(str(n))
+if n == 1:
+    sys.exit(subprocess.call(sys.argv[1:]))
+exclude = os.path.join(os.path.dirname(os.getcwd()), ".git", "info", "exclude")
+os.makedirs(os.path.dirname(exclude), exist_ok=True)
+if os.path.lexists(exclude):
+    os.remove(exclude)
+os.mkfifo(exclude)
+print("npm ERR! a synthetic failed npm ci")
+sys.exit(1)
+'''
+
+    def test_a_failed_setup_blocks_its_groups_legs_before_its_re_read_so_a_stop_there_keeps_them(self):
+        """Round 2, the owner's build question 1 (the adversary's SETUP-STOP and SETUP928-STOP probes): a group's npm ci
+        setup fails and leaves its checkout's .git/info/exclude a FIFO, and the runner is stopped while the setup's re-read
+        waits on it. The legs the setup blocks were marked blocked, naming it, with finished stamps, and written as soon
+        as npm ci exited, so the stopped run keeps them as failures: the served leg, red in run 1 and blocked in run 2, has
+        failed twice, and the next run with served's flake is refused. Once for a --leg re-run of pytest and served at the
+        seed's ci.yml (the served leg in the extension job, where the re-run's npm ci is its setup), and once for a full
+        run at main's layout since fork PR 928 (the served leg in a served-pages job that runs npm ci first; the deps leg
+        passes in the extension job, and a --wrap fails the second npm ci). Before, a blocked leg was written only when
+        its turn came, after the setup's re-read, so the stopped run lost served's second failure and the next run with
+        served's flake passed."""
+        self.maxDiff = None
+        flake = Runner.FLAKE
+        for layout in ("a --leg re-run, the seed's ci.yml", "a full run, main's layout since PR 928"):
+            with self.subTest(layout):
+                if layout.startswith("a --leg"):
+                    w, job = World(), "vscode-extension"
+                    self.addCleanup(w.close)
+                    w.ctl({"rc": {PYTEST_LEG: 1, "served": 1}})
+                    w.run(check=1)
+                    w.ctl({"rc": {"deps": 1}, "action": {"deps": "fifo"}})
+                    extra = ("--leg", PYTEST_LEG, "--leg", "served", "--flake", flake)
+                else:
+                    w, job = World(dict(SEED, **{".github/workflows/ci.yml": SEED_928_CI})), "served-pages"
+                    self.addCleanup(w.close)
+                    w.ctl({"rc": {"served": 1}})
+                    w.run(check=1)
+                    w.ctl({})
+                    wrap = os.path.join(w.tmp, "deps-wrap")
+                    with open(wrap, "w") as f:
+                        f.write(self.SECOND_NPM_CI_FAILS % {"python": sys.executable, "count": os.path.join(w.tmp, "deps-count")})
+                    os.chmod(wrap, 0o755)
+                    extra = ("--wrap", "deps=" + wrap, "--flake", "served=" + flake)
+                rc, out, err = self.stop_in_the_re_read(w, *extra)
+                self.assertEqual(rc, 128 + 15, out + err)
+                self.assertIn("setup (npm ci) for the %s job's legs ..." % job, out)
+                run = w.data()["runs"][1]
+                setup = [g for g in run["runner"]["checkout"]["groups"] if g["job"] == job][0]["setup"] or {}
+                served = run["legs"]["served"]
+                w.ctl({})
+                p = w.run("--flake", "served=" + flake)
+                # every clause at once, so a red names each that failed
+                self.assertEqual({"the stopped run's finish": run["finished"], "its setup's rc": setup.get("rc"),
+                                  "served finished": bool(served.get("finished")), "served rc": served.get("rc"),
+                                  "served's error": served.get("error"), "the next run's exit": p.returncode,
+                                  "the next run's refusal": "no run at %s can pass: served failed in runs 1 and 2" % w.head()[:10]
+                                                            in p.stderr},
+                                 {"the stopped run's finish": None, "its setup's rc": 1, "served finished": True, "served rc": None,
+                                  "served's error": "its checkout's setup, npm ci as the %s job's legs runs it, rc 1 (log %s), "
+                                                    "so the leg did not run" % (job, setup.get("log")),
+                                  "the next run's exit": 2, "the next run's refusal": True},
+                                 "the next run:\n%s%s" % (p.stdout, p.stderr))
+
+    def test_a_failed_setup_blocks_every_leg_of_its_group_after_it(self):
+        """The control, not stopped: a --leg re-run of pytest, typecheck and build after a red of all three, whose npm ci
+        setup (before typecheck, in the extension job's group) fails. Typecheck and build are each recorded blocked,
+        naming the setup, with finished stamps; the setup ran once; typecheck and build have each failed twice, so the
+        runner exits 1 and the reader reads the sha red."""
+        self.maxDiff = None
+        flake = Runner.FLAKE
+        w = self.w
+        w.ctl({"rc": {PYTEST_LEG: 1, "typecheck": 1, "build": 1}})
+        w.run(check=1)
+        w.ctl({"rc": {"deps": 1}})
+        before = len(w.calls())
+        p = w.run("--leg", PYTEST_LEG, "--leg", "typecheck", "--leg", "build", "--flake", flake)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertEqual(w.legs_called()[before:], [PYTEST_LEG, "deps"], "npm ci ran once, as the setup; neither blocked leg ran")
+        run = w.data()["runs"][1]
+        setup = [g for g in run["runner"]["checkout"]["groups"] if g["job"] == "vscode-extension"][0]["setup"]
+        why = "its checkout's setup, npm ci as the vscode-extension job's legs runs it, rc 1 (log %s), so the leg did not run" % setup["log"]
+        self.assertEqual({n: (run["legs"][n].get("rc"), bool(run["legs"][n].get("finished")), run["legs"][n].get("error"))
+                          for n in ("typecheck", "build")}, {"typecheck": (None, True, why), "build": (None, True, why)})
+        self.assertIn("FAIL sweep red at %s: typecheck failed in runs 1 and 2" % w.head()[:10], p.stdout)
+
+    def test_a_failed_setup_that_changes_the_checkout_makes_an_invalid_run_whose_blocked_legs_count(self):
+        """Round 2, the owner's build question 1: a setup that failed and changed its checkout makes the run invalid, and
+        the legs it blocked are that invalid run's failures, which count. A --leg re-run of pytest and served after a red
+        of both, whose npm ci setup leaves bytecode outside vscode-extension/node_modules and fails: the run is invalid
+        naming the bytecode, the served leg is recorded blocked by the setup, served has failed in runs 1 and 2, and the
+        runner exits 1 with the sha unable to pass. Before, the invalid mark came first and the blocked leg was never
+        recorded: the run exited 3, served's second failure lost."""
+        self.maxDiff = None
+        flake = Runner.FLAKE
+        w = self.deps_plants('[ -e "$R/../../plant-now" ] && mkdir -p "$R/kernel/__pycache__" && '
+                             'printf x > "$R/kernel/__pycache__/other.cpython-399.pyc"; true')
+        w.ctl({"rc": {PYTEST_LEG: 1, "served": 1}})
+        w.run(check=1)
+        with open(os.path.join(w.xdg, "romp", "sweeps", "plant-now"), "w") as f:
+            f.write("1\n")
+        w.ctl({"rc": {"deps": 1}})
+        p = w.run("--leg", PYTEST_LEG, "--leg", "served", "--flake", flake)
+        run = w.data()["runs"][1]
+        setup = [g for g in run["runner"]["checkout"]["groups"] if g["job"] == "vscode-extension"][0]["setup"]
+        served = run["legs"]["served"]
+        self.assertEqual({"exit": p.returncode, "verdict": run["verdict"], "served": (served.get("rc"), bool(served.get("finished")),
+                                                                                         served.get("error")),
+                          "the reader": "FAIL sweep red at %s: served failed in runs 1 and 2" % w.head()[:10] in p.stdout},
+                         {"exit": 1, "verdict": "invalid",
+                          "served": (None, True, "its checkout's setup, npm ci as the vscode-extension job's legs runs it, rc 1 "
+                                                 "(log %s), so the leg did not run" % setup["log"]),
+                          "the reader": True}, p.stdout + p.stderr)
+        self.assertIn("after the setup (npm ci) of the vscode-extension job's legs the checkout is not the sha's tree: ignored "
+                      "outside vscode-extension/node_modules 1 (kernel/__pycache__/other.cpython-399.pyc)", run["invalid"])
 
     def test_a_stale_checkout_of_a_run_that_is_gone_is_removed_and_named(self):
         """A5: every run removes the checkouts under <state dir>/sweeps/trees whose sha's lock no run holds, whatever
