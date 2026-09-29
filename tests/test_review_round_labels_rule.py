@@ -378,12 +378,15 @@ class RoundLabelRule(unittest.TestCase):
         is not one, and a further number after the date is still refused; (c) the unqualified "review round N", "Review round N"
         and the bare round, an unqualified ordinal before the word and a round numbered in words are the reviewer's by DEFAULT,
         credits() saying so with the stated reason, which names the convention and calls itself a default with a stated reason, and
-        which the refusal of an unqualified round past the set carries while an explicit credit's does not; (d) a round outside the
+        which the refusal of an unqualified round past the set carries while an explicit credit's does not (an explicit ordinal
+        credit among them, the maintainer's and the reviewer's, in digits and in words, "review" on either side of the ordinal and
+        a list too, whose credits() reason is None); (d) a round outside the
         caller's set is refused naming the number, the two things it can be and the caller's set, qualified or not; (e) a pass
         credited to the reviewer or the maintainer is refused naming the wrong party and the caller's author form, a list too, the
         apostrophe either, at its own line among the round offences, while an unnumbered pass and the author's pass are not read;
         (f) a round credited to the author is refused, "review" between the qualifier and the word too, a list too, an ordinal
-        between the qualifier and the word and a number in words too, while the author's pass beside the maintainer's round is
+        between the qualifier and the word and a number in words too, and an ordinal list there, with a bare comma or a serial
+        comma, in words and in digits, while the author's pass beside the maintainer's round is
         clean; (g) a number the form did not consume that is not a date is still refused; (h) every unresolvable form is still
         refused with its reason, never passed, the READ direction's among them (punctuation before a number word, an ordinal after
         the word, the singular's comma followed by "or", a number before an ordinal run, a plural naming one ordinal, markup
@@ -418,6 +421,10 @@ class RoundLabelRule(unittest.TestCase):
                 self.assertIn(phrase, rule.__doc__, "the docstring states the default and its reason in the rule's own text: %r" % (phrase,))
             self.assertIn(rule.DEFAULT, rule.offences("review %s %d" % (R, hi + 1), SET)[0][3], "the refusal of an unqualified round past the set states the default it was read under")
             self.assertNotIn(rule.DEFAULT, rule.offences("%s %s %d" % (M, R, hi + 1), SET)[0][3], "an explicit credit's refusal carries no default")
+            for text in ("%s %s %s" % (M, NTH[hi + 2], R), "%s %s %s" % (M, nth(hi + 2), R), "%s %s %s" % (V, NTH[hi + 3], R), "%s %s %s" % (V, nth(hi + 3), R),
+                         "%s review %s %s" % (M, NTH[hi + 1], R), "%s %s review %s" % (V, nth(hi + 1), R), "%s %s and %s %ss" % (M, NTH[lo], NTH[hi + 1], R)):
+                self.assertEqual([c[2:] for c in rule.credits(text)], [("reviewer", None)], "an explicit ordinal credit is the qualifier's, with no default reason: %r" % (text,))
+                self.assertNotIn(rule.DEFAULT, rule.offences(text, SET)[0][3], "an explicit ordinal credit's refusal past the set carries no default: %r" % (text,))
         with self.subTest(clause="d: a round outside the caller's set is refused"):
             for text in ("review %s %d" % (R, hi + 1), "%s %s %d" % (M, R, hi + 1), "%s %s %d" % (V, R, hi + 1), "%s %d" % (R, hi + 1)):
                 o = rule.offences(text, SET)
@@ -442,7 +449,9 @@ class RoundLabelRule(unittest.TestCase):
             self.assertEqual([x[1] for x in rule.offences("a\nreview %s %d\nthe maintainer's pass %d\n" % (R, hi + 1, hi), SET)], [2, 3], "and after it in the text, after it in the offences")
         with self.subTest(clause="f: a round credited to the author is refused"):
             for text in ("%s %s %d" % (A, R, lo), "%s review %s %d" % (A, R, lo), "%s %ss %d and %d" % (A, R, lo, hi), "the author’s %s %d" % (R, hi), "%s %s %d" % (A, R, hi + 1),
-                         "%s %s %s" % (A, NTH[lo], R), "%s review %s %s" % (A, nth(hi), R), "the author’s %s %s" % (NTH[hi], R), "%s %s %s" % (A, R, WORDS[hi])):
+                         "%s %s %s" % (A, NTH[lo], R), "%s review %s %s" % (A, nth(hi), R), "the author’s %s %s" % (NTH[hi], R), "%s %s %s" % (A, R, WORDS[hi]),
+                         "%s %s, %s %ss" % (A, NTH[lo], NTH[lo + 1], R), "%s %s, %s, and %s %ss" % (A, NTH[lo], NTH[lo + 1], NTH[hi], R), "%s %s, %s %ss" % (A, nth(lo), nth(hi), R),
+                         "%s %s, %s, or %s %ss" % (A, nth(lo), nth(lo + 1), nth(hi), R)):
                 o = rule.offences(text, SET)
                 self.assertEqual(len(o), 1, text)
                 self.assertIn("a round credited to the author", o[0][3], text)
