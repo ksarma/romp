@@ -3101,8 +3101,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   reaches 1,024 tokens stops, and its click takes nothing. Nothing else is read: no other event type (a keydown, which the
   //   gate's own listener hears, is admitted anywhere in a chain, so the chain listener does not hear it; no focusin, focusout,
   //   gotpointercapture, lostpointercapture, wheel or scroll), and no coordinate, pressure, size or time. A click takes the slot
-  //   only where ownChain admits the chain under the slot's pointer type, the grammar WALL that the execution check of the file
-  //   review's round 20 wrote and the coordinator ruled: a mouse's or a pen's press is its pointerdown with a button down, the
+  //   only where ownChain admits the chain under the slot's pointer type, the grammar that the execution check of the file review's
+  //   round 20 wrote and the coordinator ruled: a mouse's or a pen's press is its pointerdown with a button down, the
   //   focus arriving (a focus of the document, the window or an element, or an element's blur that an element's focus follows), its
   //   mousedown of the left button, then only its own moves and its boundary events to an element with the button down (a pen's
   //   also the mouse-typed ones Chromium sends) and the focus arriving, then its pointerup and a mouseup of detail 1 or 2; a tap by
@@ -3303,8 +3303,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // chain and 2 with its boundary events); and Chromium's still pointer with the fixup's element blur and the focus back before
   // the covered pointerup, 119, whose chain two own gestures make, the viewer's own press held while the top page hides and shows
   // the frame (the fixup's blur, then retakeAfterHide's focus) and a plain click on the picture while a text input of the viewer's
-  // document holds the focus (the input's blur, the focus moving on), admitted by the coordinator's decision 2 and closed only by
-  // option A at its cost. There, the pointer still, this window hears the events its own click would send, and no event of the
+  // document holds the focus (the input's blur, the focus moving on), admitted by the coordinator's decision 2, a decision for the
+  // owner. There, the pointer still, this window hears the events its own click would send, and no event of the
   // allowlist's types tells that click from the viewer's own. One sign comes outside those events, and the gate does not read it:
   // an intersection observer's report of the control leaving the viewport and coming back (in Chromium's still shape it came
   // before the covered pointerup in 28 of the 85 opens of round 19's measurement). By reading and not drivable here, a native context menu that takes a right press's
@@ -3439,7 +3439,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let moveRun = -1;                                       // where the chain's last run of moves (pointermove and mousemove) starts, -1 when its last token is no move
   /** An event's token: its type, and for a pointer event its pointer type's initial and whether a button is down, for an over or an
    *  out whether it has a relatedTarget, for a blur or a focus whether its target is the window, the document or an element, for a
-   *  mousedown its button and for a mouseup its button and its detail capped at 2 (the prototype's tokens, the file review's round 20). */
+   *  mousedown its button and for a mouseup its button and its detail capped at 2 (the tokens the file review's round 20 measured the gestures in). */
   const chainToken = (ev: Event): string => {
     const t = ev.type, e = ev as PointerEvent;
     if (t === "blur" || t === "focus") return t + ":" + (ev.target === window ? "W" : (ev.target as Node | null)?.nodeType === 9 ? "D" : "E");
@@ -3521,7 +3521,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     else ok = false;
     return ok && blursPaired(t);
   };
-  /** The allowlist WALL: whether a chain is one the viewer's own gestures make, the grammar above widened three ways: a tap's mouseup
+  /** The allowlist: whether a chain is one the viewer's own gestures make, the grammar above widened three ways: a tap's mouseup
    *  of detail 1 or 2; the focus arriving anywhere before a press's mousedown and anywhere in a tap before its pointerup; and during a
    *  finger's contact the mouse's pointerout, pointerover, mouseout and mouseover to no element with no button. An element's blur
    *  that no element's focus follows before the pointerup or the mouseup is refused. */
@@ -3579,7 +3579,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (!clickTail) take = null;                          // a click with no primary mouseup of detail above 0 right before it takes no press
     if (slotPen && (slotNeedsMd || (typeof cpid === "number" && !(ctype === "pen" && cpid === slotPid)))) take = null;   // a touch-order pen's slot: after its compatibility mousedown, and by a click that names that pen (a click with no pointerId keeps the arm below)
     if (take && typeof cpid === "number" && ctype === slotType && cpid !== slotPid) take = null;   // a click of the slot's pointer type carries the slot's pointerId
-    if (take && (chain === null || chainFull || !ownChain(chain, slotType))) take = null;   // and its chain from the slot's press is one the viewer's own gestures make (WALL)
+    if (take && (chain === null || chainFull || !ownChain(chain, slotType))) take = null;   // and its chain from the slot's press is one the viewer's own gestures make (ownChain)
     slotted = take;
     slot = null;
     if (ev.detail === 1) refusedRun = false;

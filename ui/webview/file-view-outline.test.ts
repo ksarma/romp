@@ -3047,8 +3047,8 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
 });
 // ── the own-chain allowlist, the guards and rows CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with
 // the coordinator's decisions on them) ── A click takes the slot only when the chain of events this window heard from the slot's
-// press to that click is one the viewer's own gestures make (ownChain in file-view.ts, the grammar WALL the round's execution check
-// wrote, over the tokens chainToken writes). The guards drive an order of each of the round's four findings as its engine sends it,
+// press to that click is one the viewer's own gestures make (ownChain in file-view.ts, the grammar the round's execution check
+// wrote and the coordinator ruled, over the tokens chainToken writes). The guards drive an order of each of the round's four findings as its engine sends it,
 // each open at bef9ff8fc, whose gate read none of the events that tell it apart, and each refused here and revealing the control, the
 // next click opening; the admit rows drive one chain of each family of the viewer's own gestures the round measured, each opening
 // here, and each red under the mutant that drops the clause of the grammar that admits it (the spines, a click, a pen's press and
