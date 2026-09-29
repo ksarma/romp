@@ -4534,6 +4534,92 @@ def _units(tokens):
     return out
 
 
+def root_pytest_config(root, tracked):
+    """[(file, how)] of the pytest configuration the running pytest reads at the root of the tree `root`, whose tracked
+    files are `tracked`: the root's tracked files, and nothing else, are copied into an empty directory, and the running
+    pytest's own lookup (_pytest.config.findpaths.locate_config) is asked what it reads there. pytest keeps its list of
+    candidate names inside that function and exposes no copy of it (pytest 9.1.1: pytest.toml, .pytest.toml, pytest.ini,
+    .pytest.ini, pyproject.toml, tox.ini, setup.cfg, first found wins, each read only with a pytest section except
+    pytest.ini, .pytest.ini and the two pytest.toml names, which are read even empty), so the lookup is asked rather than
+    that list copied here: a name a later pytest reads is found too (round 2, fresh-1, decision 11). A file the lookup
+    refuses is found as well, with pytest's message: setup.cfg's plain [pytest] section, which CI's pytest rejects, or a
+    toml file it cannot parse."""
+    from _pytest.config.findpaths import load_config_dict_from_file, locate_config
+    from _pytest.outcomes import OutcomeException
+    scratch = Path(tempfile.mkdtemp(prefix="rootcfg-")).resolve()
+    try:
+        for name in tracked:
+            if "/" not in name and os.path.isfile(os.path.join(root, name)):
+                shutil.copyfile(os.path.join(root, name), scratch / name)
+        try:
+            found = locate_config(scratch, [scratch])
+        except (Exception, OutcomeException) as e:
+            return [("the root", "the running pytest's lookup refused it: %s" % e)]
+        inifile = found[1]
+        # past the root the lookup reads the scratch directory's parents, which are not the tree's; and a pyproject.toml
+        # with no pytest table is handed back when nothing else is found, configuring nothing
+        if inifile is not None and inifile.parent == scratch and load_config_dict_from_file(inifile) is not None:
+            return [(inifile.name, "read by the running pytest")]
+        return []
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def conftest_outside(tracked):
+    """The tracked conftest.py files outside the root and tests/: CI's Run pytest, collecting from the root, imports one
+    when it collects its directory, and the sweep's pytest leg, collecting tests/, never does. A root conftest.py is
+    imported under both (round 2, fresh-1). Stricter than pytest's norecursedirs, which would skip one under a directory
+    such as node_modules or dist."""
+    return [n for n in tracked if os.path.basename(n) == "conftest.py" and "/" in n and not n.startswith("tests/")]
+
+
+class RootConfigCensus(unittest.TestCase):
+    """Round 2, fresh-1 (decision 11): CiParity's census of the tree reads what the running pytest reads. Each file below,
+    tracked at a root, is found, under whichever name the running pytest's lookup takes it; a file that configures
+    nothing, or one that is not tracked, is not; and a conftest.py outside the root and tests/ is found. Before round 2
+    the census read four names by hand, so a tracked pytest.toml, .pytest.toml or .pytest.ini, a setup.cfg holding a
+    plain [pytest] section, and a tools/conftest.py each passed it, while CI's Run pytest reads or imports every one."""
+
+    # the candidate names pytest 9.1.1's locate_config holds, each with text that makes it configuration
+    CONFIGS = (("pytest.toml", ""), (".pytest.toml", "[pytest]\nxfail_strict = true\n"), ("pytest.ini", ""),
+               (".pytest.ini", "[pytest]\nxfail_strict = true\n"), ("pyproject.toml", "[tool.pytest.ini_options]\nxfail_strict = true\n"),
+               ("pyproject.toml", "[tool.pytest]\nxfail_strict = true\n"), ("tox.ini", "[pytest]\nxfail_strict = true\n"),
+               ("setup.cfg", "[tool:pytest]\nxfail_strict = true\n"))
+
+    def census(self, files, untracked=()):
+        """root_pytest_config over a root holding `files` ({name: text}, tracked) and `untracked` (on disk only)."""
+        root = tempfile.mkdtemp(prefix="rootcfg-")
+        self.addCleanup(shutil.rmtree, root, True)
+        for name, text in list(files.items()) + [(n, "[pytest]\n") for n in untracked]:
+            with open(os.path.join(root, name), "w", encoding="utf-8") as f:
+                f.write(text)
+        return root_pytest_config(root, sorted(files))
+
+    def test_each_file_the_running_pytest_reads_at_the_root_is_found(self):
+        for name, text in self.CONFIGS:
+            with self.subTest(name=name, text=text):
+                self.assertEqual(self.census({name: text, "README.md": "# x\n"}), [(name, "read by the running pytest")])
+
+    def test_a_setup_cfg_holding_a_plain_pytest_section_is_found(self):
+        """CI's pytest rejects a plain [pytest] section in setup.cfg, and the sweep's `-c /dev/null` never reads it: found,
+        with pytest's own message."""
+        found = self.census({"setup.cfg": "[pytest]\nxfail_strict = true\n"})
+        self.assertEqual([f[0] for f in found], ["the root"])
+        self.assertIn("setup.cfg", found[0][1])
+
+    def test_a_file_that_configures_nothing_or_is_not_tracked_is_not_found(self):
+        self.assertEqual(self.census({"tox.ini": "[flake8]\nmax-line-length = 120\n", "setup.cfg": "[metadata]\nname = x\n",
+                                      "pyproject.toml": "[project]\nname = \"x\"\n", ".gitleaks.toml": "[extend]\n",
+                                      "mkdocs.yml": "site_name: x\n"}), [])
+        self.assertEqual(self.census({"README.md": "# x\n"}, untracked=("pytest.ini", "pytest.toml")), [],
+                         "the census reads the tree, not what else is on disk")
+
+    def test_a_conftest_outside_the_root_and_tests_is_found(self):
+        self.assertEqual(conftest_outside(["conftest.py", "tests/conftest.py", "tests/lab/conftest.py", "tools/conftest.py",
+                                           "tools/x.py", "kernel/sub/conftest.py", "tools/conftest.py.orig"]),
+                         ["tools/conftest.py", "kernel/sub/conftest.py"])
+
+
 class CiParity(unittest.TestCase):
     """B6 (fresh-1): the legs' commands are hand copies of ci.yml's, so this reads ci.yml's steps by name and compares
     them with what the runner builds (pytest_cmd, served_cmd, plan_legs' commands, LEG_ENV). Every difference is named
@@ -4614,10 +4700,13 @@ class CiParity(unittest.TestCase):
         return served_pytest_line(self.step(SERVED_LABEL)[2])[1]
 
     def test_the_tree_holds_nothing_the_pytest_legs_two_differences_would_hide(self):
-        """Two of the pytest leg's named differences hold only while the tree keeps two properties, read here from the
-        tree the leg itself runs in (so a change that breaks one turns the leg red): CI's Run pytest collects from the
-        root and the leg from tests/, which differ only if a test module lives outside tests/; and the leg's `-c
-        /dev/null` drops any pytest configuration in the checkout's root, which CI honours, so the root holds none."""
+        """Two of the pytest leg's named differences hold only while the tree keeps three properties, read here from
+        the tree the leg itself runs in (so a change that breaks one turns the leg red). CI's Run pytest collects from
+        the root and the leg from tests/, which differ if a test module lives outside tests/, and if a conftest.py lives
+        outside both the root and tests/, which CI imports while it collects and the leg never does (a root one is
+        imported under both; conftest_outside). And the leg's `-c /dev/null` drops any pytest configuration in the
+        checkout's root, which CI honours, so the root holds none: what counts as one is asked of the running pytest's
+        own lookup over the root's tracked files (root_pytest_config), not read from a list of names here."""
         listing = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], stdout=subprocess.PIPE, check=True).stdout
         tracked = [os.fsdecode(n) for n in listing.split(b"\0") if n]
         self.assertIn("tests/test_sweep_runner.py", tracked, "git ls-files read this tree")
@@ -4625,12 +4714,12 @@ class CiParity(unittest.TestCase):
                                                                                       os.path.basename(n))]
         self.assertEqual(outside, [], "a test module outside tests/ runs in CI's Run pytest (which collects from the root) and "
                                       "not in the sweep's pytest leg (which collects tests/)")
-        sections = {"pytest.ini": None, "tox.ini": "[pytest]", "setup.cfg": "[tool:pytest]", "pyproject.toml": "[tool.pytest"}
-        for name, marker in sections.items():
-            path = ROOT / name
-            if name in tracked and (marker is None or marker in path.read_text(encoding="utf-8")):
-                self.fail("%s configures pytest at the root: CI's Run pytest honours it and the sweep's `-c /dev/null` drops "
-                          "it; name the difference in PYTEST_ISOLATION's comment or pass it to the leg" % name)
+        self.assertEqual(conftest_outside(tracked), [], "a conftest.py outside the root and tests/ is imported by CI's Run "
+                                                        "pytest (which collects from the root) and not by the sweep's pytest "
+                                                        "leg (which collects tests/)")
+        self.assertEqual(root_pytest_config(str(ROOT), tracked), [],
+                         "the root configures pytest: CI's Run pytest honours it and the sweep's `-c /dev/null` drops it; "
+                         "name the difference in PYTEST_ISOLATION's comment or pass it to the leg")
 
     def test_every_step_is_compared_or_named_as_ci_only(self):
         """Every step of every job, named or not and whatever key comes first (ci_job reads each), placed by its name
