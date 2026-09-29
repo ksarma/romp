@@ -87,8 +87,9 @@ to the author (AUTHORS_ROUND), a numbered pass credited to the reviewer or the m
 wrong party; a pass is numbered by digits or a cardinal word after the word pass, with the separators and continuations of a round,
 while an ordinal before the word pass is not read and neither is an unnumbered pass), and every form the classifier cannot place
 (UNCLASSIFIABLE). No message of this module spells a numbered-round form of its own (the unclassifiable refusal quotes the text it
-refused, and that quotation is the writer's), so a quoted refusal reads clean, and in this docstring no number follows the word and
-no ordinal comes before it: a caller that censuses this module's text reads it clean."""
+refused, and that quotation is the writer's), so a quoted refusal reads clean, and every spelling of the word in this module's text,
+this docstring included, is one the reader passes unread, and the text holds no offence under a synthetic set, which the rule's test
+pins by execution: a caller that censuses this module's text reads it clean."""
 import re
 
 # the word, then what follows it: a separator (nothing before digits, spaces, hyphens, a newline, a comment marker, a hash; after a
