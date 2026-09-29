@@ -2,10 +2,18 @@
 // of the wsBytesByHost review, ui-1: the apply-throw refusal's two messages posted the kindless catch-all "error", registered in
 // none of the three tables and with no chip colour, so each landed in the Log unlabelled and unmutable). The tables are READ BY
 // EVALUATION of the shell's JS (kernel.py's KINDS, KINDLBL and DESC, from the declaration to their first use, so a kind registered
-// on a later line of that segment counts as the page counts it) and never by the array literal's spelling; the writers are DERIVED
-// from the sources (every {romp: "notify"} post and every tellShell, notifyShell and __rompNotify call under ui/webview, with a
-// wrapper's parameter resolved through its call sites and feed.ts's forwarded BadgeNotice kinds through badge-mirror.ts), so a new
-// writer, a new kind or a kind in a form this census cannot read reds here until it is registered or classified.
+// on a later line of that segment counts as the page counts it) and never by the array literal's spelling. The writers are DERIVED
+// from the sources of ui/webview's top-level page modules, .ts and .js alike (tests excluded): every object literal holding the
+// property romp: "notify" (the key bare or quoted, the value in either quote), its kind read from the literal's kind property in
+// any position, keyed or shorthand, and every call of the three wrapper names, tellShell, notifyShell and __rompNotify. A wrapper
+// is a function DEFINED under one of those names (a declaration or a method) whose first parameter is kind; its callers are the
+// sites, and only a post or call INSIDE its body may pass that parameter on unread (the exemption is keyed on the enclosing
+// wrapper, never on the file); feed.ts's forwarded BadgeNotice kinds are resolved through badge-mirror.ts. So a new writer, a new
+// kind, or a kind this census cannot read (a shorthand or parameter kind outside a wrapper's body, a spread in the post, a post
+// with no kind, any value that is not a literal) reds here until it is registered or classified. NOT READ, and so not held: a
+// post whose romp value is not the literal word (a constant, a template literal, a computed key, a property assigned after the
+// literal), a wrapper called through another name, and every writer outside ui/webview's top level (its subdirectories,
+// ui/romp-timeline-view.js, the kernel's own inline scripts).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -53,22 +61,79 @@ function callArgs(src: string, open: number): string[] {
   throw new Error("an unbalanced call at " + open);
 }
 
-type Site = { file: string; line: number; form: string; expr: string };
+/** The index of the bracket that closes the one opened at `open`: parentheses, brackets and braces balanced, strings skipped. */
+function closeOf(src: string, open: number): number {
+  let depth = 0, quote = "";
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (quote) { if (c === "\\") i++; else if (c === quote) quote = ""; continue; }
+    if (c === '"' || c === "'" || c === "`") { quote = c; continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") { depth--; if (depth === 0) return i; }
+  }
+  throw new Error("an unbalanced bracket at " + open);
+}
 
-/** Every site under ui/webview (the page modules, not their tests) that posts a notify: the parent post itself, and the three
- *  wrapper names; a wrapper's DEFINITION (its first parameter is `kind: string`) is a site whose kind is its callers'. */
-function writerSites(): Site[] {
-  const out: Site[] = [];
-  for (const f of fs.readdirSync(UI).filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts") && !n.endsWith(".d.ts")).sort()) {
+/** The index of the `{` opening the object literal that holds position `at`, walked back over balanced brackets and whole
+ *  string literals, or -1 when the innermost open bracket is not a brace. */
+function openBrace(src: string, at: number): number {
+  let depth = 0;
+  for (let i = at - 1; i >= 0; i--) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === "`") { i--; while (i >= 0 && !(src[i] === c && src[i - 1] !== "\\")) i--; continue; }
+    if (c === ")" || c === "]" || c === "}") depth++;
+    else if (c === "(" || c === "[" || c === "{") { if (depth === 0) return c === "{" ? i : -1; depth--; }
+  }
+  return -1;
+}
+
+type Site = { file: string; line: number; form: string; expr: string; inWrapper: boolean };
+type Wrapper = { file: string; name: string; param: string; body: [number, number] };
+
+/** Every site in ui/webview's top-level page modules (.ts and .js, not their tests) that posts a notify, and the wrappers: an
+ *  object literal holding romp: "notify" (a `post`, its expr the kind property's value, "kind" for the shorthand, or a marker
+ *  naming why no kind can be read), and each call of a wrapper name (its expr the first argument). A wrapper name followed by
+ *  its parameter list and a body, at the head of a declaration or a method, is a DEFINITION: a wrapper, with its first
+ *  parameter's name and its body's span, and no site. `inWrapper` says a site lies inside the body of a wrapper, in its own
+ *  file, whose first parameter is `kind`. */
+function writerSites(): { sites: Site[]; wrappers: Wrapper[] } {
+  const sites: Site[] = [], wrappers: Wrapper[] = [];
+  const files = fs.readdirSync(UI).filter((n) => /\.(ts|js)$/.test(n) && !/\.test\.(ts|js)$/.test(n) && !n.endsWith(".d.ts")).sort();
+  for (const f of files) {
     const src = code(fs.readFileSync(path.join(UI, f), "utf8"));
     const lineOf = (i: number) => src.slice(0, i).split("\n").length;
-    for (const m of src.matchAll(/romp:\s*"notify",\s*kind:\s*([^,}]+)/g)) out.push({ file: f, line: lineOf(m.index!), form: "post", expr: m[1].trim() });
-    for (const m of src.matchAll(/\b(tellShell|notifyShell|__rompNotify)\(/g)) {
-      const expr = callArgs(src, m.index! + m[0].length - 1)[0] || "";
-      out.push({ file: f, line: lineOf(m.index!), form: m[1], expr });
+    const own: Wrapper[] = [], found: Array<Omit<Site, "inWrapper"> & { at: number }> = [];
+    for (const m of src.matchAll(/\b(tellShell|notifyShell|__rompNotify)\s*\(/g)) {
+      const open = m.index! + m[0].length - 1, close = closeOf(src, open);
+      const head = src.slice(src.lastIndexOf("\n", m.index!) + 1, m.index!);
+      const after = src.slice(close + 1).match(/^\s*(\{|:)/);
+      if (after && /^\s*(?:(?:export|async|private|public|protected|static)\s+)*(?:function\s*)?$/.test(head)) {
+        const brace = after[1] === "{" ? close + 1 + after[0].length - 1 : src.indexOf("{", close + 1);
+        const param = (callArgs(src, open)[0] || "").split(/[\s:=?]/)[0];
+        own.push({ file: f, name: m[1], param, body: [brace, closeOf(src, brace)] });
+        continue;
+      }
+      found.push({ file: f, line: lineOf(m.index!), form: m[1], expr: callArgs(src, open)[0] || "", at: m.index! });
     }
+    for (const m of src.matchAll(/(?:\bromp|"romp"|'romp')\s*:\s*(["'])notify\1/g)) {
+      const open = openBrace(src, m.index!);
+      if (open < 0) { found.push({ file: f, line: lineOf(m.index!), form: "post", expr: "a romp property outside an object literal this census can open", at: m.index! }); continue; }
+      const props = callArgs(src, open);
+      const spread = props.find((q) => q.startsWith("..."));
+      const kinds = props.filter((q) => /^(?:kind|"kind"|'kind')\s*(?::|$)/.test(q));
+      const expr = spread !== undefined ? "a spread in the post: " + spread
+        : kinds.length === 0 ? "no kind property (the kindless catch-all)"
+        : kinds.length > 1 ? "more than one kind property"
+        : kinds[0].includes(":") ? kinds[0].slice(kinds[0].indexOf(":") + 1).trim() : "kind";
+      found.push({ file: f, line: lineOf(m.index!), form: "post", expr, at: m.index! });
+    }
+    for (const s of found) {
+      const inWrapper = own.some((w) => w.param === "kind" && s.at > w.body[0] && s.at < w.body[1]);
+      sites.push({ file: s.file, line: s.line, form: s.form, expr: s.expr, inWrapper });
+    }
+    wrappers.push(...own);
   }
-  return out;
+  return { sites, wrappers };
 }
 
 /** The kinds badge-mirror.ts mints into a BadgeNotice, which feed.ts forwards as `n.kind`: every `kind:` value in the module that is
@@ -116,10 +181,11 @@ test("every notify kind a ui/webview writer posts is registered in all three tab
   assert.deepEqual(Object.keys(KINDLBL).sort(), [...KINDS].sort(), "KINDLBL labels exactly the kinds KINDS lists");
   assert.deepEqual(Object.keys(DESC).sort(), [...KINDS].sort(), "DESC explains exactly the kinds KINDS lists");
   assert.deepEqual(KINDS.filter((k) => !chips.has(k)), [], "every listed kind has a chip colour rule");
-  const sites = writerSites();
+  const { sites, wrappers } = writerSites();
   assert.ok(sites.length >= 14, "the rig: the writers this census read when it was written (" + sites.length + "): " + sites.map((s) => s.file + ":" + s.line).join(" "));
+  assert.deepEqual(wrappers.map((w) => w.file + " " + w.name + "(" + w.param + ")").sort(), ["federation.ts tellShell(kind)", "render.ts notifyShell(kind)", "waiting.ts notifyShell(kind)"],
+    "the rig: the three wrappers this census knows, each found by its definition (a new one is read by the same rule; this line names today's)");
   const posted = new Map<string, string[]>();
-  const wrappers = new Set(sites.filter((s) => /^kind: string\b/.test(s.expr)).map((s) => s.file));
   const unclassified: string[] = [];
   const badge = badgeMirrorKinds();
   assert.deepEqual(badge.unread, [], "a kind value in badge-mirror.ts in a form this census does not read (a literal, a two-literal ternary or add()'s second argument)");
@@ -127,12 +193,11 @@ test("every notify kind a ui/webview writer posts is registered in all three tab
     const where = s.file + ":" + s.line + " " + s.form + "(" + s.expr + ")";
     const lit = /^["']([a-z]+)["']$/.exec(s.expr);
     if (lit) posted.set(lit[1], [...(posted.get(lit[1]) || []), where]);
-    else if (/^kind: string\b/.test(s.expr)) continue;                       // a wrapper's definition: its callers are sites above
-    else if (s.expr === "kind" && wrappers.has(s.file)) continue;            // the wrapper's own post of its parameter
+    else if (s.expr === "kind" && s.inWrapper) continue;                      // a wrapper's own post of its parameter, inside its body: its callers are sites
     else if (s.expr === "n.kind" && s.file === "feed.ts") for (const k of badge.kinds) posted.set(k, [...(posted.get(k) || []), where + " via badge-mirror.ts"]);
     else unclassified.push(where);
   }
-  assert.deepEqual(unclassified, [], "a notify writer whose kind this census cannot read (not a literal, a wrapper's parameter or feed.ts's forwarded BadgeNotice kind): classify it here or make it a literal");
+  assert.deepEqual(unclassified, [], "a notify writer whose kind this census cannot read (not a literal, a wrapper's parameter inside the wrapper's body or feed.ts's forwarded BadgeNotice kind): classify it here or make it a literal");
   t.diagnostic("kinds posted under ui/webview: " + [...posted.keys()].sort().join(",") + " from " + sites.length + " sites; badge-mirror mints " + [...badge.kinds].sort().join(","));
   assert.ok(posted.has("frozen"), "the apply-throw refusal's kind is among the posted kinds: " + [...posted.keys()].sort().join(","));
   assert.equal((posted.get("frozen") || []).length, 2, "posted at its two sites, the wire road's and the local road's: " + (posted.get("frozen") || []).join(" "));
