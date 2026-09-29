@@ -3501,19 +3501,21 @@ def _client_diag_append(fp, line):
 # per-minute figures): the collector sends nav, res, marks
 # and env exactly once per page, and a whole-row marker lost them for the page's life (review find, 2026-09-18). The
 # bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped while
-# its wsBytesByHost map, the one key without a cap, is under the crossing derived below; past it the map alone is
-# shed, whole, as the ladder's first step, and the rest of the row is stored as posted:
+# its wsBytesByHost map, the one key without a cap, is under the crossing derived below (a long-frame key past the
+# string cut is still stored cut to it, the row carrying the cut key naming loaf); past it the map alone is shed,
+# whole, as the ladder's first step, and the rest of the row is stored as the admit leaves it:
 # MAX_FRAME_TYPES named wire types plus their fold and as many `fed:` keys are 66 frame entries, the wire keys at most
 # 38 characters (the `delta:` prefix and a 32-character identifier) and the `fed:` keys at most 42 (`fed:delta:` and the
 # identifier, since federation.ts times a frame as `fed:` plus its classified type), each with a 14-bucket histogram,
-# 16.5 KB at six-digit counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the
-# envelope add about 1.4 KB (17.9 KB share off); the shared fields (MAX_RES named resources and the fold, nav, marks,
+# 16.5 KB at six-digit counts; MAX_TOP long-frame keys past the string cut (stored at it, so the row carries the cut
+# key naming loaf, 17 bytes), the free sample, the slow counts and the envelope add about 1.5 KB (18.0 KB share off,
+# the row as stored); the shared fields (MAX_RES named resources and the fold, nav, marks,
 # env, vis, wsBytes, wsBytesByHost at eight positions and rafGap) add about 3.5 KB (21.5 KB share on); the map has
 # no cap on positions: the worst-case row test states eight at nine digits each, 155 bytes, and reads the count, the
 # bytes and the share-on figure back from this comment against the row it builds. 24 KiB holds that row and leaves
-# 3110 bytes under the bound (today's minute rows run to 2.5 KB). Each further position adds 17 bytes at a one-digit
+# 3093 bytes under the bound (today's minute rows run to 2.5 KB). Each further position adds 17 bytes at a one-digit
 # ordinal, 18 at two and 19 at three (the separator, the quoted key and a nine-digit count), so on that row the map
-# crosses the bound at 177 positions, and on a smaller row later; the ladder test derives the cost and
+# crosses the bound at 176 positions, and on a smaller row later; the ladder test derives the cost and
 # the crossing from the row it builds and reads them back here and from docs/reference.md's copy. Over the bound the ladder (CLIENT_DIAG_MINUTE_SHED)
 # sheds the map first and whole, which returns any row the collector builds to the figures above, under the bound;
 # the frames, the long-frame report, the free sample and the slow counts go next and the whole-row marker last,

@@ -5140,16 +5140,17 @@ frames it received is measured in the panes themselves, by
   open dashboard writes a few MB a day; with the share switch on, the first
   shared row adds about 2 KB of `res`, `env`, `nav` and `marks`. Every row is
   bounded at 24 KiB of JSON, a bound derived from the collector's own caps so
-  that no row it can build is touched while its `wsBytesByHost` map, the one
-  key without a cap, is under the crossing (its worst case, every cap reached at
-  once and eight attached hosts, is about 17.9 KB with share off and 21.5 KB
-  with share on): a `perf`
+  that no row it can build is shed or capped while its `wsBytesByHost` map, the
+  one key without a cap, is under the crossing (a long-frame key past 64
+  characters is still stored cut and the row marked `cut`; its worst case, every
+  cap reached at once and eight attached hosts, stored with that marker, is about
+  18.0 KB with share off and 21.5 KB with share on): a `perf`
   minute row over the bound sheds `wsBytesByHost` whole, then `frames`,
   `loaf`, `free` and `slow`, in that order until it fits, keeps its other
   keys, and carries `capped: {bytes, dropped}` (the line's bytes before the
   shed and the keys shed). The map goes first because it alone can take a row
   the collector builds over the bound (each position adds 17 to 19 bytes, so
-  on that worst-case row the crossing is 177 positions, and on a smaller row
+  on that worst-case row the crossing is 176 positions, and on a smaller row
   later), and shedding it whole returns such a row to its derived size,
   under the bound, so the frames and the once-per-page fields stay; it is
   never cut to the positions that fit, so a stored map is never a partial

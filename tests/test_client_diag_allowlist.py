@@ -1272,7 +1272,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         """The minute row the collector would send with every cap reached at once and eight attached hosts, built from the
         constants as perf-telemetry.ts declares them: (minute, shared, env, consts), `minute` the share-off row, `shared` the
         fields the share switch adds (wsBytesByHost among them at HOSTS positions of nine-digit counts), `env` the kernel's
-        envelope and `consts` the collector's constants read. Shared by the worst-case row test and the ladder test."""
+        envelope and `consts` the collector's constants read. Shared by the worst-case row test and the ladder test. The
+        long-frame keys are posted PAST the string cut, in scriptKey's longest form (a 48-character basename, `:`, a
+        48-character function name, `@` and a character position): the kernel stores each at the cut and marks the row
+        `cut: ["loaf"]` (_client_diag_admit), so the row the bound holds is the STORED one, marker included (_stored below;
+        the maintainer's round 6 derivation had modelled the keys at the cut, 17 bytes short of the stored row)."""
         src = open(os.path.join(UI, "perf-telemetry.ts"), encoding="utf-8").read()
         def const(name):
             m = re.search(r"^export const %s(?:: [^=]+)? = ([^;]+);" % name, src, re.M)
@@ -1294,7 +1298,9 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(len(frames), 2 * (max_types + 1))
         self.assertEqual(max(len(k) for k in frames if not k.startswith("fed:")), 38, "a wire key is at most delta: plus the identifier cap")
         self.assertEqual(max(len(k) for k in frames), 42, "the longest key the collector emits is fed:delta: plus the identifier cap")
-        top = [{"k": "k" * km.CLIENT_DIAG_STR_MAX, "ms": ms, "n": big, "inv": "i" * km.CLIENT_DIAG_STR_MAX} for _ in range(max_top)]
+        long_key = "b" * 48 + ":" + "f" * 48 + "@" + "9" * 8   # scriptKey's longest form: the basename and the function each cut at 48, an 8-digit position
+        self.assertGreater(len(long_key), km.CLIENT_DIAG_STR_MAX, "the rig: a key the collector builds is longer than the string cut")
+        top = [{"k": long_key, "ms": ms, "n": big, "inv": "i" * km.CLIENT_DIAG_STR_MAX} for _ in range(max_top)]
         minute = {"app": "timeline", "since": 1700000000000, "span_ms": 600000, "frames": frames,
                   "free": {"n": free_ring, "p50": ms, "p90": ms, "max": ms},
                   "loaf": {"n": big, "blocking_ms": 600000.0, "worst_ms": ms, "top": top, "src": "longtask"},
@@ -1317,6 +1323,27 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         env = {"t": 1700000000, "wid": WID, "surface": "perf", "what": "minute", "reconnect": False}
         return minute, shared, env, {"max_types": max_types, "hosts": HOSTS}
 
+    @staticmethod
+    def _stored(data):
+        """The minute row's data as the admit stores it, modelled here and not read from the kernel: every long-frame key past
+        the string cut stored at the cut, and, when one was, the kernel's marker `cut: ["loaf"]` after the row's keys. The
+        worst-case builder's other strings sit within the cut. The tests below hold the kernel's stored row equal to this."""
+        out = json.loads(json.dumps(data))
+        cut = False
+        for entry in out.get("loaf", {}).get("top", []):
+            if len(entry["k"]) > km.CLIENT_DIAG_STR_MAX:
+                entry["k"], cut = entry["k"][:km.CLIENT_DIAG_STR_MAX], True
+        if cut:
+            out[km.CLIENT_DIAG_CUT_KEY] = ["loaf"]
+        return out
+
+    def _cut_line_only(self, err, what):
+        """The stderr of one post (the latch cleared before it) is the loaf cut's one line and nothing else: no shed, no cap."""
+        lines = err.splitlines()
+        self.assertEqual(len(lines), 1, "%s: one line, the cut: %r" % (what, err))
+        self.assertIn("key 'loaf', cut", lines[0], what)
+        self.assertIn("is not stored whole", lines[0], what)
+
     def test_the_collectors_worst_case_minute_row_is_stored_whole(self):
         # CLIENT_DIAG_ROW_MAX sat at 8 KiB, below the collector's own worst case, so a share-off minute with 28 or more frame
         # types lost its frames where main stored it whole, and the shared row lost more (review find, 2026-09-18: 16481 B
@@ -1330,7 +1357,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # the eight positions the derivation states; the ladder test below takes it past the bound.
         minute, shared, env, c = self._worst_case_row()
         max_types, HOSTS, by_host = c["max_types"], c["hosts"], shared["wsBytesByHost"]
-        off, on = len(json.dumps(dict(env, data=minute))), len(json.dumps(dict(env, data=dict(minute, **shared))))
+        # the row as STORED (its long-frame keys at the cut and the cut marker), the line the bound is tested against
+        off, on = len(json.dumps(dict(env, data=self._stored(minute)))), len(json.dumps(dict(env, data=self._stored(dict(minute, **shared)))))
         self.assertGreater(off, 16 * 1024, "the share-off worst case is over 16 KiB, so the old 8 KiB bound shed its frames")
         self.assertLess(on, km.CLIENT_DIAG_ROW_MAX, "the share-on worst case fits under the bound (%d of %d bytes)" % (on, km.CLIENT_DIAG_ROW_MAX))
         # The row bound's derivation comment in kernel.py states this map's count, the bytes it adds to the row and the share-on
@@ -1344,7 +1372,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
         self.assertLess(HOSTS, len(words), "state HOSTS as a count word this read knows, or extend the tuple")
         self.assertEqual(stated.group(1), words[HOSTS], "the derivation's count word is the HOSTS this test states")
-        without = len(json.dumps(dict(env, data=dict(minute, **{k: v for k, v in shared.items() if k != "wsBytesByHost"}))))
+        without = len(json.dumps(dict(env, data=self._stored(dict(minute, **{k: v for k, v in shared.items() if k != "wsBytesByHost"})))))
         self.assertEqual(int(stated.group(2)), on - without, "the derivation's byte figure is what the map adds to the row, its key and separator included")
         share_on = re.findall(r"\((\d+\.\d) KB(?: share on\)|; the derivation above\))", ksrc)
         self.assertEqual(len(share_on), 2, "the derivation and CLIENT_DIAG_ROW_MAX's own comment each state the share-on figure once")
@@ -1362,9 +1390,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertIsNotNone(count, "docs/reference.md no longer states the assumed host count beside the figures: re-aim this read")
         self.assertEqual(count.group(1), words[HOSTS], "the docs' host count word is the HOSTS this test states")
         for data in (minute, dict(minute, **shared)):
-            self.assertEqual(self.post("perf", "minute", data), "", "nothing shed, nothing said")
+            km._client_diag_said.clear()
+            self._cut_line_only(self.post("perf", "minute", data), "nothing shed, nothing capped: the long-frame keys' cut is the one thing said")
             row = self.rows()[-1]
-            self.assertEqual(row["data"], data, "stored whole")
+            self.assertEqual(row["data"], self._stored(data), "stored as the admit leaves it: whole but for the long-frame keys at the cut, and marked")
+            self.assertEqual(row["data"][km.CLIENT_DIAG_CUT_KEY], ["loaf"], "the marker names the key the cut fell under")
             self.assertNotIn("capped", row["data"])
             self.assertEqual(len(row["data"]["frames"]), 2 * (max_types + 1), "every frame type intact")
         self.assertEqual(self.rows()[-1]["data"]["wsBytesByHost"], by_host, "the per-host map lands whole: the admit filters top-level keys only, the scrub walks it")
@@ -1383,7 +1413,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         def with_hosts(n):
             return dict(minute, **dict(shared, wsBytesByHost={"h%d" % i: 999999999 for i in range(1, n + 1)}))
         def size(n):
-            return len(json.dumps(dict(env, data=with_hosts(n))))
+            # the STORED row's line (the long-frame keys at the cut and the cut marker), the one _client_diag_line measures
+            return len(json.dumps(dict(env, data=self._stored(with_hosts(n)))))
         n = c["hosts"]
         self.assertLessEqual(size(n), km.CLIENT_DIAG_ROW_MAX, "the stated worst case fits (the test above)")
         while size(n) <= km.CLIENT_DIAG_ROW_MAX:
@@ -1393,7 +1424,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertGreater(crossing, c["hosts"], "derived: the first position count whose row is over the bound")
         for count in (crossing, crossing + 1, 2000):
             data = with_hosts(count)
-            line = json.dumps(dict(env, data=data))
+            stored = self._stored(data)
+            line = json.dumps(dict(env, data=stored))
             self.assertGreater(len(line), km.CLIENT_DIAG_ROW_MAX, count)
             km._client_diag_said.clear()
             err = self.post("perf", "minute", data)
@@ -1402,15 +1434,18 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertNotIn("wsBytesByHost", d, "%d positions: the map is shed whole, never stored truncated" % count)
             self.assertEqual(d["capped"], {"bytes": len(line), "dropped": ["wsBytesByHost"]}, "%d positions: the one step, recorded" % count)
             self.assertEqual(len(d["frames"]), 2 * (c["max_types"] + 1), "%d positions: every frame type intact" % count)
-            for k, v in data.items():
+            for k, v in stored.items():
                 if k != "wsBytesByHost":
-                    self.assertEqual(d[k], v, "%d positions: %s stored as posted" % (count, k))
+                    self.assertEqual(d[k], v, "%d positions: %s stored as the admit leaves it" % (count, k))
             self.assertLessEqual(len(json.dumps(row)), km.CLIENT_DIAG_ROW_MAX)
-            self.assertEqual(len(err.splitlines()), 1, err)
-            self.assertIn("stored without some of its keys (its capped key names them)", err, "the shed's stderr line fires, once, worded for the ladder as a whole (this row lost the map and kept every per-minute figure)")
+            lines = err.splitlines()
+            self.assertEqual(len(lines), 2, "the cut's line and the shed's: %r" % err)
+            self.assertIn("key 'loaf', cut", lines[0], "the long-frame keys' cut is said, as on every row carrying one")
+            self.assertIn("stored without some of its keys (its capped key names them)", lines[1], "the shed's stderr line fires, once, worded for the ladder as a whole (this row lost the map and kept every per-minute figure)")
         data = with_hosts(crossing - 1)
-        self.assertEqual(self.post("perf", "minute", data), "", "one position under the crossing: nothing shed, nothing said")
-        self.assertEqual(self.rows()[-1]["data"], data, "stored whole, the map at %d positions included" % (crossing - 1))
+        km._client_diag_said.clear()
+        self._cut_line_only(self.post("perf", "minute", data), "one position under the crossing: nothing shed, nothing capped")
+        self.assertEqual(self.rows()[-1]["data"], self._stored(data), "stored as the admit leaves it, the map at %d positions included" % (crossing - 1))
         # the per-position cost by the ordinal's digit width (the separator, the quoted key and a nine-digit count), derived
         per = (size(9) - size(8), size(10) - size(9), size(100) - size(99))
         self.assertTrue(all(b > 0 for b in per), per)
