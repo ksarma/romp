@@ -665,7 +665,7 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   const comment = step.comments.join('\n');
   // the three numbers are a property of the comment, not a spelling: a step duration in seconds, a job duration in minutes and the
   // job's cap, read from the job's own timeout-minutes line so a raised cap turns a stale sentence red (a lowered one is already
-  // red in tests/test_ci_bats_bound.py::ExtensionJobCeiling, which floors the cap at 40; this pin is about the SENTENCE matching
+  // red in tests/test_ci_bats_bound.py::ExtensionJobCeiling, which floors the cap at 17; this pin is about the SENTENCE matching
   // the line, not about the cap's value); all three measured on the runner (the first run's placeholder held none of them, and
   // the pin that accepted it by its spelling was the kind that lets a filled sentence go red for its wording)
   const { cap } = jobCap(job);
@@ -677,7 +677,7 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   const minutes = /\b(\d+) min\b/.exec(comment);
   assert.ok(minutes, 'the step\'s comment carries the job\'s minutes');
   // the step comment read for the cap jobCap reads, then -minute cap, a word boundary at each end
-  assert.ok(new RegExp('\\b' + cap + '-minute cap\\b').test(comment), 'the comment names the job\'s cap as ci.yml sets it (' + cap + ' minutes): a cap change rewrites the sentence; this pin holds the sentence to the line, whatever the cap, while a LOWERED cap is tests/test_ci_bats_bound.py::ExtensionJobCeiling\'s red (it floors the cap at 40): two guards, two properties');
+  assert.ok(new RegExp('\\b' + cap + '-minute cap\\b').test(comment), 'the comment names the job\'s cap as ci.yml sets it (' + cap + ' minutes): a cap change rewrites the sentence; this pin holds the sentence to the line, whatever the cap, while a LOWERED cap is tests/test_ci_bats_bound.py::ExtensionJobCeiling\'s red (it floors the cap at 17): two guards, two properties');
   assert.ok(Number(minutes[1]) < cap, 'the stated job minutes (' + minutes[1] + ') sit under the cap (' + cap + ')');
   assert.ok(comment.includes(ROSTER), 'the comment names the roster');
   // every path PATH_TOKEN reads (its docstring) in the comment is in the tree, resolved from the repository root or from
@@ -793,7 +793,7 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   const took = /in a job of (\d+) min (\d+) s/.exec(comment);
   assert.ok(took, 'the step\'s comment states the measured job time as "in a job of N min N s"');
   const marginSeconds = cap * 60 - (Number(took[1]) * 60 + Number(took[2]));
-  assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound and the cap together; a job whose other phases grow under an unchanged cap re-measures the margin the same way');
+  assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound, and the cap with it when the new bound does not fit the margin; a job whose other phases grow under an unchanged cap re-measures the margin the same way');
   // the step comment read for the text "re-measures here" alone, not for what the sentence around it says (a negation
   // passes it)
   assert.ok(comment.includes('re-measures here'), 'the step\'s comment contains the phrase "re-measures here", the words of its re-measure condition for growth outside the roster (the job\'s other phases toward the cap)');
@@ -805,13 +805,14 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   // one space, the text from the first "The Browser legs step below" to the next "in the same PR.". It is read for this
   // file's name, where the margin is derived, and for no figure in the two spellings the step comment gives the measured
   // job time and the margin: N min N s (digits, a space, min, a space, digits, a space and s) and N s (digits, a space and
-  // s, a word boundary at each end). The measured time has one home, the step comment above. A figure spelled otherwise
-  // (12 minutes) is not read, and the N min N s pattern, with no word boundary after its s, also reads N min N before any
-  // word that begins with s (12 min 30 seconds, 2 min 3 sessions), a loud red (the job comment's other sentences record
-  // the served step's own history and are not read here)
+  // s, a word boundary at each end). The measured time the margin is read from has one home, the step comment above. A
+  // figure spelled otherwise (12 minutes) is not read, and the N min N s pattern, with no word boundary after its s, also
+  // reads N min N before any word that begins with s (12 min 30 seconds, 2 min 3 sessions), a loud red (the job comment's
+  // other sentences record the served step's own history and the cap's sizing from the runs they name, and are not read
+  // here)
   const about = /The Browser legs step below[\s\S]*?in the same PR\./.exec(jobComment.replace(/\n\s*#\s?/g, ' '));
   assert.ok(about, 'the job comment holds one passage about the Browser legs step, from "The Browser legs step below" to "in the same PR."');
-  assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s passage about this step carries a figure of the measured job time or the margin, whose one home is the step comment: ' + JSON.stringify((about[0].match(/\d+ min \d+ s|\b\d+ s\b/) || [''])[0]) + ' in ' + about[0]);
+  assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s passage about this step carries a figure of the measured job time the margin is read from, or of the margin, whose one home is the step comment: ' + JSON.stringify((about[0].match(/\d+ min \d+ s|\b\d+ s\b/) || [''])[0]) + ' in ' + about[0]);
   assert.ok(about[0].includes('tools/ci-browser-legs.test.mjs'), 'that passage names this file as where the margin is derived: ' + about[0]);
   // node's per-file bound: above the timeout: values the bound pin reads in a rostered source (else a legitimate slow leg
   // is cut), under the step's bound (else the step is cut nameless first). First the reader, over synthetic sources against
