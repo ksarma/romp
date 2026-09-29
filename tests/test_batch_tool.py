@@ -2195,7 +2195,7 @@ class CiJobs(unittest.TestCase):
                     self.assertEqual(listed, sorted(n[len("Python "):-len(" (ubuntu-latest)")] for n in names))
                 else:
                     for name in names:
-                        self.assertIn("`%s`" % name, para, "docs/batching.md's maintainer section names %s" % name)
+                        self.assertTrue("`%s`" % name in para, "docs/batching.md's maintainer section does not name %s" % name)
 
     def test_a_ci_yml_it_cannot_read_that_way_is_refused(self):
         for label, ci, text in (("no ci.yml", None, "could not read .github/workflows/ci.yml at"),
