@@ -9013,7 +9013,9 @@ them, open since: the focus moved between a mouse click's pointerup and its clic
 19's measurement of the blur's rule, its recorded rows replayed: Chromium 18 and 14, Firefox 14 and WebKit 18, with Firefox's 2
 taps whose own pointerdown took the focus out of the viewer's window, 66 in all, and the first own-gesture adversary's rows at
 d9fb76da0), and on a device with a mouse and a touchscreen, a finger's tap during which the mouse moves in the viewer and a mouse
-click during which a finger resting on the viewer moves (Chromium, touch emulated, that adversary's rows); and by reading, not
+click during which a finger resting on the viewer moves (Chromium, touch emulated, that adversary's rows), in the browser at
+5288151dd, which brought the read-outs, 13 of 13 in each engine, 13 of 13 and 5 of 5 each, the pen's press during which the mouse
+moves 0 of 5 there and 5 of 5 at bef9ff8fc; and by reading, not
 measured, the window's blur alone at a mouse click's release or in a finger's contact, where no element of the viewer's document
 held the focus (every recorded own chain of that focus move carried an element's or the document's blur first, and the read-outs
 take those orders alone), the focus leaving at a pen's click's release or in a touch-order pen's tap, on a device with both a
