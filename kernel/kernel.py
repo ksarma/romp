@@ -70568,8 +70568,11 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // a zoom alone clears it. The 0px road leaves it: the hold it clears is 0, from which the pan rule and the stance publish the same
 // value, kbPx. The hold road re-bounds a pan, from the larger of the hold and the value in force, only where kz is the current zoom
 // (the maintainer's round 6 ruling, 2026-09-29: the reading governs a pan of a keyboard raised at this zoom, the stance a zoom alone
-// and what follows it); that check also refuses a scale that changed in the same report as h (a keyboard swapped in during a
-// pinch), which is no zoom alone and leaves kz standing. Every one of these keys on a run fit() reads, not on a time window.
+// and what follows it). A report that changes the scale and h together is no zoom alone and leaves kz standing (such as a keyboard
+// swapped in during a pinch, h's rounding flipping by a pixel during one with the same keyboard, or the keyboard going down with the
+// visual viewport outside the layout viewport); that check refuses a pan at the zoom such a report moved to, and refuses nothing once a
+// later such report comes back to kz's zoom, which is no pan on its own run while its refit is one (the corner the fit() comment
+// discloses). Every one of these keys on a run fit() reads, not on a time window.
 // Nothing adjusts the hold in place: the clamp is at use (the author's pass 4, 2026-09-20).
 var lastPan=0,held=false,gone=false,rp=null,ps=0,ph=0,kz=0;
 // [fork] the author's pass 8 (2026-09-20): the ONE reading of the pan both writing roads share: the measured road stores it under the cut (at
@@ -70727,19 +70730,25 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // the new keyboard's own height, so a band under the composer can open for a taller keyboard and the body's bottom sit below the
 // band for a shorter one, by up to the height difference (the author's pass 5, 2026-09-20, disclosed: re-measuring under a zoom only
 // when the height changes is a design call not taken here; the harness's swapZoom and swapRefit cells drive a swap). fit() is
-// IDEMPOTENT at an unchanged report, one corner apart (below): a refit with nothing new publishes what the run before it did (the
+// IDEMPOTENT at an unchanged report outside one corner (below): a refit with nothing new publishes what the run before it did (the
 // maintainer's round 6 ruling, 2026-09-29), and fit() runs again on ordinary events (a visual viewport resize or scroll, a window
 // resize, focus and focusout among them). With h unchanged also in the pan test, the swap's own run had taken the stance and a
 // refit the pan rule: a 471 px keyboard raised at scale 2 with offsetTop 657.5 publishes 236, and the 508 px keyboard swapped in at
 // offsetTop 40 had published 236 on the swap's run, the composer 364 px below the band's bottom, and 40 on a refit; it now
 // publishes 40 on both, 168 below, the zoom's own magnification (node cells, test_kernel_mobile's swapRefit cells and its
-// doubled-step fuzz, 48000 steps with no move). One corner is disclosed: a report that zooms as a keyboard of another height
-// comes in is no zoom alone, so kz stands through it, and a second such report back to kz's zoom is no pan on its own run (the
-// scale changed) and takes the stance, while its refit is a pan at kz's zoom and takes the pan rule, so --app-top can move there
-// with no new information (the 508 px keyboard raised at 2 with offsetTop 500 publishes 78; zoomed to 1.5 as the 471 px keyboard
-// comes in and back to 2 with the 508 px keyboard at 40, 78 on that report's run and 40 on its refit; the fuzz does not reach it;
-// test_kernel_mobile's swapZoomBack cells pin it; whether the pan rule governs a report at kz's zoom whatever else changed with
-// it, or a scale change with the keyboard's clears kz, is the maintainer's call). Two roads WRITE the hold and
+// doubled-step fuzz, 48000 steps with no move, a figure for that fuzz's generator only). The corner, disclosed by its condition:
+// kz stands through any report that changes the scale and h together, which is no zoom alone, and a later such report that comes
+// back to kz's zoom is no pan on its own run (the scale changed) and takes the stance, while its refit is a pan at kz's zoom and
+// takes the pan rule, so --app-top can move there with no new information. At least three roads reach it: a keyboard of another
+// height swapped in during a pinch, h's rounding flipping by a pixel during a pinch with the same keyboard, and the keyboard going down
+// with the visual viewport outside the layout viewport, a report the keyboard-down run does not read, so the keyboard's return is
+// no re-raise (the 508 px keyboard raised at 2 with offsetTop 500 publishes 78; after one report at 1.5 that brings in the 471 px
+// keyboard, keeps the 508 px keyboard with h rounding to 337, or puts the keyboard down at offsetTop 300, the report back to 2 with
+// the 508 px keyboard at 40 publishes 78 on its run and 40 on its refit; test_kernel_mobile's swapZoomBack, roundFlip and
+// downOutside cells pin the three roads; the tree's doubled-step fuzz does not reach the corner, and a fuzz weighted to return to
+// earlier scales exactly reaches it at 1 of 1,008,000 steps, and at 5 when it also flips h's rounding, node cells; whether the pan
+// rule governs a report at kz's zoom whatever else changed with it, or any scale change clears kz, is the maintainer's call). Two
+// roads WRITE the hold and
 // each writes the value it publishes: the measured road its measurement less the zoom's share (kbPx, the measurement itself below
 // the cut; under a pinch only where no hold is held), and the 0px road a zero, only in a true no-pan state, one the measured road would
 // store as 0: no visual viewport, or one under the cut, taken at the layout viewport L on both roads (the author's pass 9, 2026-09-20: the
