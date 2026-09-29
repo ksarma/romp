@@ -1052,7 +1052,7 @@ for (const [s, deep, pan] of [[2, 590, 422], [1.5, 495.2, 281.33], [1.1, 250, 15
 // (the scale changed since the previous run) and takes the stance, while its refit, the same report again, is a pan at kz's zoom
 // and takes the pan rule. Each family raises the 508 px keyboard under a zoom of s0 with no hold (the measured road writes the
 // reading less the share, and kz is s0), then drives ONE report at s1 that changes h too, then ONE report back to s0 with the
-// 508 px keyboard, then the refit. The report at s1 takes one of three roads: the 471 px keyboard comes in (swapZoomBack), the same
+// 508 px keyboard, then the refit. The report at s1 takes one of three measured roads: the 471 px keyboard comes in (swapZoomBack), the same
 // keyboard's band rounds a pixel over, a visual viewport 336.6/s1 tall and h 337 (roundFlip), or the keyboard goes down with the
 // visual viewport outside the layout viewport, a report the keyboard-down run does not read, so the return is no re-raise
 // (downOutside)
@@ -1910,7 +1910,7 @@ class MobileFitExecutes(unittest.TestCase):
         # stated by its condition: kz, the zoom of the raise that wrote the value in force, stands through any report that changes
         # the scale and h together, which is no zoom alone, and a later such report back at kz's zoom is no pan on its own run (the
         # scale changed since the previous run) and takes the stance, while its refit is a pan at kz's zoom and takes the pan rule.
-        # Three roads to the report away, a family each: the 471 px keyboard swapped in (swapZoomBack), the same keyboard with h
+        # Three of the roads to the report away, a family each: the 471 px keyboard swapped in (swapZoomBack), the same keyboard with h
         # rounding a pixel over (roundFlip), and the keyboard down with the visual viewport outside the layout viewport, a report the
         # keyboard-down run does not read, so the return is no re-raise (downOutside). The 508 px keyboard raised at 2 with the visual
         # viewport at 500 (78), one report at 1.5 by each road, then back at 2 with the 508 px keyboard at 40: 78 on that report's run

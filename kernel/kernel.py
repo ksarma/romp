@@ -70751,8 +70751,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // second case, disclosed: under a pinch with no hold held the measured road publishes kbPx unclamped and writes the hold, and the
 // refit takes the hold road, which clamps at L - h, so where rounding puts kbPx a pixel above L - h the refit publishes a pixel
 // less. That needs the visual viewport within half a pixel of the layout viewport's bottom and the zoom's share of the band's
-// shortfall, (L - h)(1 - 1/s), under about half a pixel, so it is confined to light zooms and small shortfalls (a scan of 35.5
-// million such reports, node cells: every move 1 px, the shortfall up to 280 px under a zoom below 1.002, 35 px from 1.01 to 1.05
+// shortfall, (L - h)(1 - 1/s), under about half a pixel, so it is confined to light zooms, the shortfall it allows shrinking as the
+// zoom grows (a scan of 35.5 million such reports, node cells: every move 1 px, the shortfall up to 280 px under a zoom below 1.002, 35 px from 1.01 to 1.05
 // and 2 px past 1.2, no move past 1.482; the tree's doubled-step fuzz does not reach it, and a fuzz with small keyboards and h's
 // rounding flips reaches it at 16 of 1,008,000 steps). A visual viewport 841.3459 tall at offsetTop 2.6541 under a zoom of
 // 1.00155, h 843, publishes 2 px and then 1 px on its refit, and one 692.4298 tall at 151.5702 under 1.00169, h 694, 151 and then
