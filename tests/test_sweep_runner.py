@@ -3291,10 +3291,12 @@ class LargeLog(unittest.TestCase):
                                        stdin=subprocess.DEVNULL, timeout=600)
                     said = p.stdout + p.stderr[-3000:]
                     rec = w.result()["legs"][leg]
+                    # the rc first: a runner that died before writing the failure left the leg's record as planned, with
+                    # no rc, no finished stamp and no log
+                    self.assertEqual(rec.get("rc"), 1, said)
+                    self.assertTrue(rec.get("finished"), "the failed leg is written finished")
+                    self.assertEqual((rec.get("tests"), rec.get("failed")), counts, said)
                     self.assertGreater(os.path.getsize(rec["log"]), self.LOG, "the leg wrote its large log")
-                    self.assertEqual(rec["rc"], 1, said)
-                    self.assertTrue(rec["finished"], "the failed leg is written finished")
-                    self.assertEqual((rec["tests"], rec["failed"]), counts, said)
                     self.assertEqual(p.returncode, 1, said)
                     self.assertIn("%s (rc 1" % leg, said)
                     self.assertNotIn("MemoryError", said)
