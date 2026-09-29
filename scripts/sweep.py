@@ -38,8 +38,9 @@ legs after it do not run. The batcher's tree is read for its HEAD sha and branch
 be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
-length the deepest session-host socket path depends on, is unchanged. TMPDIR and the checkout are removed on every exit path: SIGTERM and SIGHUP stop
-each leg's process group, and on Linux the runner is a child subreaper that kills whatever a leg left
+length the deepest session-host socket path depends on, is unchanged. TMPDIR and the checkout are removed on every
+exit path: SIGTERM, SIGHUP and SIGINT (Ctrl-C) stop each leg's process group, the runner exiting 128 plus the signal's
+number, and on Linux the runner is a child subreaper that kills whatever a leg left
 running, a descendant that left the group included; each checkout records its sha beside it, and every run
 removes the checkouts of runs that are no longer running. Every orphaned descendant of a leg, in its process group
 or not, is reparented to the runner and reaped as soon as it exits while the leg runs, so it does not stay in the
@@ -1314,8 +1315,15 @@ def _plant_for_tests(path):
 
 # -- stopping: signals, process groups and the subreaper (round 1, A5) --
 
+# The signals that stop a run (STOP_SIGNALS): each raises Stopped, so every exit path runs the cleanup and main prints
+# "stopped by signal N" and exits 128 + N. SIGINT is one of them (round 2, decision 14), so Ctrl-C stops a run the same
+# way instead of raising KeyboardInterrupt, which main does not catch.
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+
+
 class Stopped(BaseException):
-    """SIGTERM or SIGHUP reached the runner: its legs are stopped and TMPDIR and the checkout removed on the way out."""
+    """A stop signal (STOP_SIGNALS) reached the runner: its legs are stopped and TMPDIR and the checkout removed on the
+    way out."""
 
     def __init__(self, signum):
         super().__init__(signum)
@@ -1323,7 +1331,8 @@ class Stopped(BaseException):
 
 
 def _on_stop(signum, _frame):
-    for s in (signal.SIGTERM, signal.SIGHUP):
+    # the first stop signal wins: a second one during the cleanup is ignored
+    for s in STOP_SIGNALS:
         signal.signal(s, signal.SIG_IGN)
     raise Stopped(signum)
 
@@ -1333,11 +1342,13 @@ _subreaper = False
 
 
 def install_stop_handlers():
-    """SIGTERM and SIGHUP raise Stopped, so every exit path runs the cleanup; SIGCHLD gets its default action; and on
-    Linux the runner becomes a child subreaper (PR_SET_CHILD_SUBREAPER), so every orphaned descendant of a leg, in its
-    process group or not (setsid: Playwright's browsers, the kernel's session scopes), is reparented to the runner
-    instead of to init: the runner reaps it as soon as it exits while the leg runs (wait_leg), so it does not stay in
-    the leg's group as a defunct process, and kills it if it is still running when the leg ends (reap_descendants).
+    """SIGTERM, SIGHUP and SIGINT (STOP_SIGNALS) raise Stopped, so every exit path runs the cleanup, whether or not
+    the runner's parent left the signal ignored (nohup ignores SIGHUP, a non-interactive shell's background job
+    SIGINT): each of the three stops a run. SIGCHLD gets its default action; and on Linux the runner becomes a child
+    subreaper (PR_SET_CHILD_SUBREAPER), so every orphaned descendant of a leg, in its process group or not (setsid:
+    Playwright's browsers, the kernel's session scopes), is reparented to the runner instead of to init: the runner
+    reaps it as soon as it exits while the leg runs (wait_leg), so it does not stay in the leg's group as a defunct
+    process, and kills it if it is still running when the leg ends (reap_descendants).
 
     An ignored SIGCHLD survives exec, so a parent that ignores it hands the runner a disposition under which the kernel
     reaps every child itself: every exit status, the leg's and each subprocess.run's, would read 0, and wait_leg, which
@@ -1345,7 +1356,7 @@ def install_stop_handlers():
     until it exited). The default action is set here, before the runner starts any child, and the legs inherit it."""
     global _subreaper
     signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-    for s in (signal.SIGTERM, signal.SIGHUP):
+    for s in STOP_SIGNALS:
         signal.signal(s, _on_stop)
     if sys.platform.startswith("linux"):
         try:

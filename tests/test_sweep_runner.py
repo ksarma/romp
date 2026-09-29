@@ -1500,43 +1500,52 @@ class Checkout(_Base):
                 self.assertIn("after the bats leg the checkout is not the sha's tree: ancestor 1 (%s)" % target, r["invalid"])
                 self.assertEqual(w.legs_called(), [PYTEST_LEG, "deps", "bats"], p.stdout + p.stderr)
 
-    def test_sigterm_stops_the_leg_its_descendants_and_removes_tmpdir_and_the_checkout(self):
-        """A5: SIGTERM during a leg whose children write into TMPDIR, one in the leg's process group and one under
+    def test_a_stop_signal_stops_the_leg_its_descendants_and_removes_tmpdir_and_the_checkout(self):
+        """A5: a stop signal during a leg whose children write into TMPDIR, one in the leg's process group and one under
         setsid. The group gets SIGTERM first (the group writer records it), the subreaper kills the setsid writer, and
-        TMPDIR and the checkout are gone afterwards and stay gone."""
+        TMPDIR and the checkout are gone afterwards and stay gone. Once per stop signal (round 2, extra5-1 and decision
+        14): SIGTERM, SIGHUP and SIGINT each exit 128 plus the signal's number and say so; at the head SIGINT raised
+        KeyboardInterrupt, a traceback and death by the signal, and a runner that handles SIGTERM alone dies by SIGHUP
+        with TMPDIR and the checkout left behind."""
         if not sys.platform.startswith("linux"):
             self.skipTest("the subreaper and /proc are Linux's")
-        w = self.w
-        marks = os.path.join(w.tmp, "marks")
-        os.makedirs(marks)
-        w.ctl({"action": {"bats": "spawn"}, "marks": marks})
-        proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2"],
-                                env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
-        self.addCleanup(lambda: proc.poll() is None and proc.kill())
-        files = [os.path.join(marks, n) for n in ("ready", "group.pid", "setsid.pid")]
-        deadline = time.monotonic() + 60
-        while not all(os.path.exists(f) and open(f).read() for f in files):
-            if proc.poll() is not None:
-                self.fail("the runner ended before the leg was ready: %s" % (proc.communicate(),))
-            if time.monotonic() > deadline:
-                self.fail("the leg never became ready: %s" % sorted(os.listdir(marks)))
-            time.sleep(0.05)
-        pids = [int(open(f).read()) for f in files[1:]]
-        for pid in pids:
-            self.addCleanup(_kill_quietly, pid)
-        call = [c for c in w.calls() if c["leg"] == "bats"][0]
-        tmpdir, checkout = call["values"]["TMPDIR"], call["root"]
-        self.addCleanup(shutil.rmtree, tmpdir, True)      # only if the runner under test left it (a mutant run)
-        proc.send_signal(15)
-        out, err = proc.communicate(timeout=90)
-        self.assertEqual(proc.returncode, 128 + 15, out + err)
-        self.assertIn("stopped by signal 15", err)
-        time.sleep(0.5)
-        self.assertFalse(os.path.exists(tmpdir), "TMPDIR %s is gone and no writer made it again" % tmpdir)
-        self.assertFalse(os.path.exists(checkout), "the checkout is gone")
-        self.assertEqual([pid for pid in pids if _alive(pid)], [], "both writers are gone")
-        self.assertTrue(os.path.exists(os.path.join(marks, "group.pid.term")), "the leg's process group got SIGTERM first")
-        self.assertEqual(w.result()["finished"], None, "the stopped run stays unfinished")
+        for signum in (15, 1, 2):
+            with self.subTest(signal=signum):
+                w = World()
+                self.addCleanup(w.close)
+                marks = os.path.join(w.tmp, "marks")
+                os.makedirs(marks)
+                w.ctl({"action": {"bats": "spawn"}, "marks": marks})
+                proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2"],
+                                        env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+                self.addCleanup(lambda proc=proc: proc.poll() is None and proc.kill())
+                files = [os.path.join(marks, n) for n in ("ready", "group.pid", "setsid.pid")]
+                deadline = time.monotonic() + 60
+                while not all(os.path.exists(f) and open(f).read() for f in files):
+                    if proc.poll() is not None:
+                        self.fail("the runner ended before the leg was ready: %s" % (proc.communicate(),))
+                    if time.monotonic() > deadline:
+                        self.fail("the leg never became ready: %s" % sorted(os.listdir(marks)))
+                    time.sleep(0.05)
+                pids = [int(open(f).read()) for f in files[1:]]
+                for pid in pids:
+                    self.addCleanup(_kill_quietly, pid)
+                # the leg itself, which a runner that dies by the signal (a mutant run) leaves running
+                self.addCleanup(_kill_quietly, int(open(files[0]).read()))
+                call = [c for c in w.calls() if c["leg"] == "bats"][0]
+                tmpdir, checkout = call["values"]["TMPDIR"], call["root"]
+                self.addCleanup(shutil.rmtree, tmpdir, True)      # only if the runner under test left it (a mutant run)
+                self.addCleanup(shutil.rmtree, checkout, True)
+                proc.send_signal(signum)
+                out, err = proc.communicate(timeout=90)
+                self.assertEqual(proc.returncode, 128 + signum, out + err)
+                self.assertIn("stopped by signal %d; the legs were stopped" % signum, err)
+                time.sleep(0.5)
+                self.assertFalse(os.path.exists(tmpdir), "TMPDIR %s is gone and no writer made it again" % tmpdir)
+                self.assertFalse(os.path.exists(checkout), "the checkout is gone")
+                self.assertEqual([pid for pid in pids if _alive(pid)], [], "both writers are gone")
+                self.assertTrue(os.path.exists(os.path.join(marks, "group.pid.term")), "the leg's process group got SIGTERM first")
+                self.assertEqual(w.result()["finished"], None, "the stopped run stays unfinished")
 
     def test_a_stale_checkout_of_a_run_that_is_gone_is_removed_and_named(self):
         """A5: every run removes the checkouts under <state dir>/sweeps/trees whose sha's lock no run holds, whatever
