@@ -1124,7 +1124,13 @@ test("the BOUND on the remote road: after the answering full lands a second thro
     const ws = attached(fm);
     ws.frame(badDelta(2));
     assert.equal(ws.sent.length, 1, "the rig: asked");
+    const beforeFull = feeds(emitted).length;
     ws.frame(poisonedFull(3));   // the full the kernel sent back, itself poisoned: lands (prefixInbound and the merge take a null ask)
+    // the answering full is SHOWN before any stop: emitted once, and what the page shows is that full's own content (its null
+    // ask), not the cards before it; the count alone would read green under a feed arm that skipped the store and kept the
+    // emit, since the emit reads the stored frame (the old cards shown, the message's old clause then true)
+    assert.equal(feeds(emitted).length, beforeFull + 1, "the answering full was emitted");
+    assert.deepEqual(last(feeds(emitted)).asks, [null], "and the page shows that full's content: its one (null) ask");
     const before = feeds(emitted).length;
     assert.equal(fm.conns.get(HOST).feedApply, "answered");
     ws.frame({ type: "feedDelta", now: 520, buildId: 4, asks: [card(SID_A, 2)] });   // well-formed, and it throws in upsertById's walk of the poisoned base
@@ -1135,8 +1141,9 @@ test("the BOUND on the remote road: after the answering full lands a second thro
     const told = notifies(notified);
     assert.equal(told.length, 1, "the shell told once");
     assert.equal(told[0].kind, "frozen", "the registered kind (kernel.py KINDS, KINDLBL, DESC and a chip; notify-kinds-registered.test.ts holds the registration), never the kindless catch-all");
-    assert.match(told[0].text, /^TESTHOST: its cards are frozen at their last update\./, "the message names the host and what the person sees");
-    assert.match(told[0].text, /reconnects\.$/, "and the way out");
+    // the whole message, held to a literal (never derived from federation.ts): it names the host and what the person sees, says
+    // what failed (an update, then another after the fresh copy the machine sent back, which was shown: above) and the way out
+    assert.equal(told[0].text, "TESTHOST: its cards are frozen at their last update. An update from it could not be applied, and another failed after it sent a fresh copy. They refresh when the connection reconnects.", "the wire road's message, whole");
     assert.equal(feeds(emitted).length, before, "nothing emitted for the refused delta");
     ws.frame({ type: "feedDelta", now: 521, buildId: 5, asks: [card(SID_A, 3)] });
     ws.frame(badDelta(6));
@@ -1208,7 +1215,12 @@ test("the LOCAL bound: after the local full landed a second throw stops the aski
     const ws = attached(fm);
     fm.inbound("", { type: "feed", now: 420, buildId: 9, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });
     fm.inbound("", { type: "feedDelta", now: 430, buildId: 10, asks: { not: "a list" } });
+    const beforeFull = feeds(emitted).length;
     fm.inbound("", { type: "feed", now: 440, buildId: 11, asks: [null] });   // the answering full, poisoned
+    // shown before any stop, as on the wire road: emitted once, and the page shows that full's content (the local frame's null
+    // ask first in the merge), not the cards before it
+    assert.equal(feeds(emitted).length, beforeFull + 1, "the answering local full was emitted");
+    assert.equal(last(feeds(emitted)).asks[0], null, "and the page shows that full's content: the local frame's one (null) ask");
     assert.equal(fm.localFeedApply, "answered", "the rig: answered");
     const before = feeds(emitted).length;
     fm.inbound("", { type: "feedDelta", now: 450, buildId: 12, asks: [card(SID_L, 2)] });   // throws in the walk of the poisoned base
@@ -1218,8 +1230,7 @@ test("the LOCAL bound: after the local full landed a second throw stops the aski
     const told = notifies(notified);
     assert.equal(told.length, 1, "the shell told once");
     assert.equal(told[0].kind, "frozen", "the registered kind (kernel.py KINDS, KINDLBL, DESC and a chip; notify-kinds-registered.test.ts holds the registration), never the kindless catch-all");
-    assert.match(told[0].text, /^The cards are frozen at their last update\./);
-    assert.match(told[0].text, /They refresh when the connection reconnects or when you reload the page\.$/, "the local road's two ways out: the shim redials the local socket in-page after a drop and the feed arm shows the full it earns whatever the latch, or the page is reloaded (the author's fixer pass after the maintainer's round 5, refusal-3: the message had named the reload alone, on the premise that the local socket's life is the page's, which the shim's reconnect=1 redial refutes)");
+    assert.equal(told[0].text, "The cards are frozen at their last update. An update from the kernel could not be applied, and another failed after it sent a fresh copy. They refresh when the connection reconnects or when you reload the page.", "the local road's message, whole, held to a literal; its last sentence names the local road's two ways out: the shim redials the local socket in-page after a drop and the feed arm shows the full it earns whatever the latch, or the page is reloaded (the author's fixer pass after the maintainer's round 5, refusal-3: the message had named the reload alone, on the premise that the local socket's life is the page's, which the shim's reconnect=1 redial refutes)");
     assert.equal(feeds(emitted).length, before);
     fm.inbound("", { type: "feedDelta", now: 451, buildId: 13, asks: { not: "a list" } });
     assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1); assert.equal(applyRows(sent).length, 2); assert.equal(notifies(notified).length, 1);

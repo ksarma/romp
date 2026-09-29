@@ -68315,7 +68315,7 @@ undelivered:"something you sent never reached a session. Either the kernel it wa
 // posts (federation.ts refuseRemoteApply and refuseLocalApply), which posted the kindless catch-all before and landed unlabelled;
 // registered in all three tables here, on lines of its own after them, and worn in the warning yellow (its chip rule beside k-refused):
 // the cards are stale, not lost, and the person can act on it, so it is labelled, explained and mutable like every other kind
-KINDS.push('frozen');KINDLBL.frozen='cards frozen';DESC.frozen="a machine's cards stopped updating: a live update could not be applied and neither could the fresh copy the machine sent back, so the cards shown for it are frozen at their last update. Nothing is lost. A remote machine's cards refresh when its connection reconnects; the local machine's when the connection reconnects or the page is reloaded";
+KINDS.push('frozen');KINDLBL.frozen='cards frozen';DESC.frozen="a machine's cards stopped updating and are frozen at their last update: a live update could not be applied, and another failed after the machine sent a fresh copy. Nothing is lost. A remote machine's cards refresh when its connection reconnects; the local machine's when the connection reconnects or the page is reloaded";
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
 if(filtBar)KINDS.forEach(function(k){var b=document.createElement('span');

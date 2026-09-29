@@ -1659,7 +1659,7 @@ export class FederationManager {
       this.diag("feedDelta-apply", { host, buildId: d.buildId, why, road: "wire" });
     }
     if (why === "asked") this.sendRemote(host, { type: "needFullFeed" });
-    else this.tellShell("frozen", host + ": its cards are frozen at their last update. An update from it could not be applied, and neither could the fresh copy it sent back. They refresh when the connection reconnects.");
+    else this.tellShell("frozen", host + ": its cards are frozen at their last update. An update from it could not be applied, and another failed after it sent a fresh copy. They refresh when the connection reconnects.");
   }
 
   /** The LOCAL road's twin (the 19:31Z ruling of the maintainer's round 5: the local road is guarded in this PR, with its own
@@ -1685,7 +1685,7 @@ export class FederationManager {
     if (why === "asked") {
       const s = (window as any).__rompLocalSend;
       if (typeof s === "function") s({ type: "needFullFeed" });
-    } else this.tellShell("frozen", "The cards are frozen at their last update. An update from the kernel could not be applied, and neither could the fresh copy it sent back. They refresh when the connection reconnects or when you reload the page.");
+    } else this.tellShell("frozen", "The cards are frozen at their last update. An update from the kernel could not be applied, and another failed after it sent a fresh copy. They refresh when the connection reconnects or when you reload the page.");
   }
 
   /** A message for the person, through the shell's error center: the {romp: "notify"} post render.ts, waiting.ts and feed.ts make

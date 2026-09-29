@@ -101,8 +101,9 @@ test("the shell's Log knows the `frozen` kind the apply-throw refusal posts: lis
   const { KINDS, KINDLBL, DESC } = tables();
   assert.ok(KINDS.includes("frozen"), "KINDS lists it, so the filter row gets its toggle: " + KINDS.join(","));
   assert.equal(KINDLBL.frozen, "cards frozen", "the chip's text");
-  assert.match(DESC.frozen, /frozen at their last update/, "the tooltip says what the person sees");
-  assert.match(DESC.frozen, /reconnects/, "and the way out");
+  // the whole tooltip, held to a literal: what the person sees, what failed (a live update, then another after the fresh copy the
+  // machine sent back, which the page shows), that nothing is lost, and each road's way out
+  assert.equal(DESC.frozen, "a machine's cards stopped updating and are frozen at their last update: a live update could not be applied, and another failed after the machine sent a fresh copy. Nothing is lost. A remote machine's cards refresh when its connection reconnects; the local machine's when the connection reconnects or the page is reloaded", "the tooltip, whole");
   assert.match(KERNEL, /\.rerr-chip\.k-frozen\{color:#ffd166;border-color:rgba\(255,209,102,0\.6\)\}/, "its chip wears the warning yellow (stale, not lost), a rule of its own");
   // the tables read here are the ones the page renders from: the filter row iterates KINDS and the chip keys on KINDLBL
   assert.ok(KERNEL.includes("if(filtBar)KINDS.forEach(function(k){"), "the filter row is built from KINDS");

@@ -270,9 +270,9 @@ class ErrorCenterExecutes(unittest.TestCase):
         # 'refused' on 2026-09-10 (review round 3), when the kind came to hold a restart the manager refused
         # and a state file that could not be read as well: 'not saved' named one of the three.
         # 'cards frozen' joined on 2026-09-21 (the maintainer's round 6 of the wsBytesByHost review, ui-1): a machine's live
-        # card update that could not be applied, nor the fresh copy it sent back, posted the kindless catch-all and landed here
-        # unlabelled with no toggle; its own kind, registered on fork lines after the tables, so it can be read and muted like
-        # the rest (ui/webview/notify-kinds-registered.test.ts holds every posted kind to the three tables).
+        # card update that could not be applied, and another after the fresh copy it sent back, posted the kindless catch-all
+        # and landed here unlabelled with no toggle; its own kind, registered on fork lines after the tables, so it can be read
+        # and muted like the rest (ui/webview/notify-kinds-registered.test.ts holds every posted kind to the three tables).
         a = self.out["filterBar"]
         self.assertEqual(a["n"], 15)
         self.assertEqual(a["first"], "offline")
