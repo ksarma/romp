@@ -698,10 +698,11 @@ class OpenerIsolation(unittest.TestCase):
 
     def test_a_refusal_whose_request_clears_the_legacy_cookie_carries_the_clear_and_the_policy_once(self):
         # Handler.end_headers writes two headers of its own: the legacy cookie's clear, on every response whose request
-        # carries romp_token beside a valid session cookie, and the opener policy, while send_error runs. The one refusal
-        # http.server writes after reading a request's cookies is the 501 (the 414, the 431s and the 400s are refused
-        # before its headers are parsed), and a navigation never sends PUT or DELETE, so this is a request a script
-        # sends. Such a response carries both, the clear and then the policy, each exactly once, read off the wire.
+        # carries this kernel's token as romp_token beside a valid session cookie, and the opener policy, while
+        # send_error runs. The one refusal http.server writes after reading a request's cookies is the 501 (the 414, the
+        # 431s and the 400s are refused before its headers are parsed), and a navigation never sends PUT or DELETE, so
+        # this is a request a script sends. Such a response carries both, the clear and then the policy, each exactly
+        # once, read off the wire.
         cookie = "%s; romp_token=%s" % (_session_cookie(self.sess), TOK)
         for method in ("PUT", "DELETE"):
             with self.subTest(method=method):

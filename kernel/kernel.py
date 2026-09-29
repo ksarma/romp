@@ -68125,8 +68125,8 @@ else window.__rompPaneToggle('fleet');});})();
 # IMMEDIATE source is an iframe of this document and its origin is this page's location.origin (the origin of the
 # page's URL), so the shell's own window, a window this document does
 # not hold (a page on another origin that opened the dashboard, a popup), a sandboxed frame (origin "null") and a
-# frame nested inside a pane all fail. Its data-protocol=none clause is the project's URL-pane marking, which no
-# iframe on the fork carries, so it refuses nothing here. Defined by this script, which runs ahead of every shell
+# frame nested inside a pane all fail. Its data-protocol=none clause refuses nothing here, since no iframe on the fork
+# carries that attribute. Defined by this script, which runs ahead of every shell
 # listener; each inline listener reads it FAIL-CLOSED as its first statement (no check, no message), spelled as the
 # project spells it, and tests/test_shell_source_check.py takes their census. The shell's bundled palette
 # (palette-main.js, from ui/webview/palette-main.ts) reads it the same way, fail-closed, at the head of its two

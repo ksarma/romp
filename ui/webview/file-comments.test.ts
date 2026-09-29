@@ -278,7 +278,7 @@ test("marker hygiene: the preview neutralizes the path, id, desc and body exactl
 // suite, this suite's pin kept the bare path, and the review found each suite green against its own text
 // (the preview and the sent message would have differed on any such path). Nothing short of running both
 // builders on the same inputs catches that, so this test does: python3 loads bin/romp-kernel (from the runner's
-// environment, ROMP_STATE_DIR removed and seven variables set: XDG_STATE_HOME, a throwaway state root,
+// environment, ROMP_STATE_DIR removed and seven variables set: XDG_STATE_HOME (a throwaway state root),
 // ROMP_MANAGER_PORT=1, ROMP_KERNEL_NO_OPEN=1, ROMP_SERVE_TOKEN, ROMP_CLAUDE_BIN=/bin/false,
 // ROMP_MODEL_CATALOG=off and ROMP_CLI_SCOPE=0) and answers _file_comments_message for each case, with is_text the
 // kernel's own verdict (_is_text_path(p), the dispatcher's call, pinned at source). The cases reach every

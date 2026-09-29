@@ -1366,8 +1366,8 @@ test("census: every file under ui/ is in a named class, and the censuses read th
 
 /** The resolver configurations esbuild reads in a module's directory and in every directory above it: a package.json
  *  (its main or browser field can map a specifier to another file) and a tsconfig.json or jsconfig.json (its paths). Under
- *  ui/ such a file has no class and reds uiPartition; at the repo root, the directory between ui/ and the tree's top, the
- *  test below refuses it; a directory above the repo root is on the road census's list of what it cannot see. */
+ *  ui/ such a file has no class and reds uiPartition; at the repo root, ui/'s parent, the test below refuses it; a
+ *  directory above the repo root is on the road census's list of what it cannot see. */
 const RESOLVER_CONFIGS = ["package.json", "tsconfig.json", "jsconfig.json"];
 test("census: the repo root holds no package.json, tsconfig.json or jsconfig.json, whose browser field or paths esbuild would read to resolve a ui/ module's specifier", () => {
   const root = path.resolve(UI, "..");
@@ -2180,12 +2180,13 @@ test("the road census reads what it claims: every road around the spelled regist
   for (const [src, file] of accepted) assert.deepEqual(roads(src, file), [], "accepted: " + src);
   // an onmessage or onmessageerror handler is accepted on this page's own window (a census site the census above holds),
   // with a value that sets no handler, or on a name socketRefusal proves a WebSocket (one let, const or var statement's
-  // own declaration, bound to new WebSocket(...) by its initialiser or by an assignment that is a statement of its own,
-  // with no other binding of the name in its scope or a scope inside it that holds the receiver or the declaration, and
-  // no other write; a binding of the name in an unrelated function, or in an outer scope the declaration shadows, is no
-  // other binding, and neither is a name a namespace declares without exporting it); a message listener on this page's
-  // own window is a census site, no road. Each row's last column is how many onmessage census sites it holds: a handler
-  // on this page's own window is one, and every other accepted handler (a socket, a detach, a tested read) is none
+  // own declaration, neither ambient nor a namespace's export, bound to new WebSocket(...) by its initialiser or by an
+  // assignment that is a statement of its own, with no other binding of the name in its scope or a scope inside it that
+  // holds the receiver or the declaration, no namespace's export of the name anywhere in the file, and no other write; a
+  // binding of the name in an unrelated function, or in an outer scope the declaration shadows, is no other binding, and
+  // neither is a name a namespace declares without exporting it); a message listener on this page's own window is a
+  // census site, no road. Each row's last column is how many onmessage census sites it holds: a handler on this page's
+  // own window is one, and every other accepted handler (a socket, a detach, a tested read) is none
   const handlerOk: Array<[string, string | undefined, number]> = [
     ["const ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };", undefined, 0],
     ["let ws: WebSocket; ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };", undefined, 0],
