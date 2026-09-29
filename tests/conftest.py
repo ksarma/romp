@@ -7,12 +7,16 @@ top exactly as before."""
 import ast
 import atexit
 import collections
+import concurrent.futures.thread    # the session-end thread guard reads its exit-join table (EXIT_JOIN_TABLES)
 import importlib.util
 import os
 import re
 import shutil
 import sys
 import tempfile
+import threading
+import time
+import traceback
 
 import pytest
 from _pytest._code.code import ReprExceptionInfo, ReprFileLocation, ReprTracebackNative
@@ -675,7 +679,7 @@ def restore_env(name, prior):
 # the incident above names); measured 2026-09-19 over the three files in one run, on the missing road (none of
 # the three is tests/test_host_transport.py), 90 of 108 teardowns end with that one object over a removed root
 # (33, 5 and 52 by file) and the catalog file reads it zero times;
-# eight private names are shared by two or three files each. The blocker, and the order: the same rule
+# nine private names are shared by two or three files each. The blocker, and the order: the same rule
 # looped over every sys.modules name starting with romp_kernel (round 1's proposed fix) is the arm that would
 # cover it, and the loop cannot land here because the private-kernel harnesses carry 90 or more pre-existing
 # teardown leaks (the 90 above are one name's, on the missing road; the round-1 refuters counted 574 would-fail
@@ -1515,11 +1519,13 @@ def _redact_report(rep) -> None:
 def pytest_runtest_makereport(item, call):
     # ONE implementation per hook per module: a second `def` of this name would silently replace this one
     # (it did, for an afternoon on 2026-09-10, and every report printed its values again). Anything else
-    # that shapes a test report joins here: the served-tests switch first, then the never-skips belt (each
-    # message quotes the skip's reason), the redaction last, so whatever any step wrote is read for values
-    # before it is printed.
+    # that shapes a test report joins here: the session-end thread guard's failure first (it marks a report
+    # failed, and the served-tests switch and the never-skips belt act on skips only), the served-tests switch
+    # next, then the never-skips belt (each message quotes the skip's reason), the redaction last, so whatever
+    # any step wrote is read for values before it is printed.
     outcome = yield
     rep = outcome.get_result()
+    _guard_failure_into_report(item, call, rep)
     _require_served_test_ran(item, rep)
     _require_never_skip_ran(item, rep)
     _redact_report(rep)
@@ -1578,6 +1584,413 @@ def wait_for_census(before, timeout=5.0):
         if not extra or time.monotonic() >= deadline:                              # kind already present is a leftover
             return extra
         time.sleep(0.02)
+
+
+# -- session-end thread guard (2026-09-26) -----------------------------------------------------------------------------
+# A NON-DAEMON thread still running when the interpreter exits keeps its process from exiting, because the interpreter
+# joins every non-daemon thread at shutdown. So does a concurrent.futures thread still running a task, WHATEVER ITS
+# DAEMON FLAG: before that join the interpreter calls concurrent.futures' exit hooks, which join every thread in their
+# tables (EXIT_JOIN_TABLES below), and a thread takes its daemon flag from the thread that creates it, so a pool started
+# from a daemon thread has daemon workers that the hooks join all the same. Run serially, the run then hangs until the
+# thread ends or CI's job cap cancels the cell, and a cancelled cell is red. Under pytest-xdist the run passes: the
+# controller kills a worker still alive when the run ends, and the run's status comes from the test reports alone, so
+# the fork's Linux cells lost the signal when they moved to two workers (2026-09-25). Two kinds of thread the guard
+# names do not keep the process from exiting, and the guard fails on them too: an idle concurrent.futures worker and a
+# thread stopped only after the check (both below). This guard restores the signal in every process that runs tests, the
+# one serial process or each worker. When the process's LAST test tears down (nextitem is None), after the runner has
+# finished tearing down every scope, session ones included (this implementation is a wrapper whose check follows its
+# yield, so it runs after the runner's own pytest_runtest_teardown; after one that raised, only when the runner left no
+# fixture for pytest to tear down later, as pytest_runtest_teardown's docstring says), each guarded thread still alive,
+# every non-daemon thread and every thread in those tables, is given until one shared deadline to end, and
+# the threads still alive at the deadline fail that teardown, each named with its target and its stack. Not waited for:
+# daemon threads outside those tables (the interpreter's shutdown joins none of them; an atexit handler may join one,
+# and the guard does not read atexit handlers), the main thread, the thread running this check, and any thread whose
+# name starts with pytest_timeout, or whose target's module, or a Timer's function's module, starts with pytest_timeout.
+# That exclusion exists for pytest-timeout's timer for the running test, a non-daemon threading.Timer that the plugin
+# cancels and joins only after the test's protocol returns, so under CI's --timeout-method=thread it is always alive
+# here.
+# HOW THE REPORT REACHES THE CONTROLLER: by two channels. The first is the teardown phase's test report. A worker sends
+# every test report to the controller over xdist's channel, this one included; the controller prints it as `ERROR at
+# teardown of <that test>` and counts it in the run's exit status. It is the channel that fails the run, since a
+# worker's exit status is not read, and a print to a worker's stdout would not be seen: that stdout goes to /dev/null.
+# Two of pytest's own plugins change that report after the guard has failed the teardown: its skipping plugin makes the
+# error of an xfail-marked test an xfail, which leaves the run green, and its unittest plugin puts a TestCase's second
+# stored error (a body and a cleanup that both fail) into the report in place of the guard's, which then names no
+# thread. So the guard records its failure in the item's stash, and this file's one pytest_runtest_makereport
+# hookwrapper, which runs outside both plugins' report hooks (the order, and why it holds, are in the docstring of
+# _guard_failure_into_report), marks that teardown report failed and, when it carries another outcome
+# (the TestCase's error or skip, or a fixture's teardown error or skip the runner raised before the guard ran, which
+# that teardown then raises), adds the guard's text after that outcome (_guard_failure_into_report); the wrapper then
+# redacts the report as it redacts every report. The second is stderr: the guard writes the same text there
+# (_guard_failure_to_stderr), through the same redaction, and no report hook can change it. A worker's stderr is the
+# controller's, so the text reaches the log serially and under xdist; a line from the terminal reporter at session
+# finish would not, since in a worker the reporter writes to that /dev/null stdout. Run serially, both print before the
+# interpreter exits (stderr at the check, the error in the run's summary), so a serial cell that then hangs at exit on a
+# thread still running (until the thread ends or the cap cancels the cell) names the thread in its log; an idle
+# concurrent.futures worker or a thread stopped only after the check lets the process exit after the error. The test the
+# error names is the process's last, where the check runs, not necessarily the one that started the thread; the thread's
+# target and stack say where it came from.
+# THE CAP, 10 s, from the census of 2026-09-26 on the fork's main (the full suite on 3.12 at -n 2, twice, and at -n 4;
+# every third test module, 314 of 940, serially, twice each on 3.12 and on 3.14t with the GIL off). No non-daemon thread
+# but pytest-timeout's timer was alive at any session end, so no exit latency could be measured there (that census read
+# non-daemon threads only). The tests' own joins measured it instead: the longest time from a stop to a thread's end was
+# 5.03 s, a daemon thread's end under the product's 5 s wait for a session host's hello. The longest join of a
+# non-daemon thread, 2.98 s, was not an exit: it was a concurrency test's hammer threads joined as they finished their
+# work, so it bounds no exit latency. The cap is about twice 5.03 s and exactly twice tests/test_thread_stop_census.py's
+# BOUND_S (5 s, the longest wait that census reads as bounded). A run that leaves no thread pays nothing, since a join
+# returns the moment its thread ends; a run that leaks one pays the cap once per process, then fails. A last test whose
+# own teardown fails or skips (a fixture's teardown raised, and the runner went on to tear down the rest) is checked
+# too, after the runner's teardown: the report carries that outcome with the guard's text after it, and under an xfail
+# mark, which would make that error an xfail, stays an error. A teardown the runner stopped partway with fixtures of a
+# wider scope still set up (a fixture whose node is not the session's raised, at teardown, a BaseException that is
+# neither an Exception nor one of pytest's outcomes: asyncio.CancelledError or SystemExit, say) is not checked: the
+# stopped node's remaining fixtures are never torn down, and those of wider scopes, and their threads, stay up until
+# pytest_sessionfinish. When that node is the session's, nothing is left on the runner's stack and the guard runs.
+# AFTER THE CHECK, which runs at the last test's teardown. A thread STARTED after it, in a pytest_sessionfinish or
+# pytest_unconfigure hook or an atexit handler, is not checked. A thread STOPPED only after it, by a config.add_cleanup
+# callback, pytest_sessionfinish or pytest_unconfigure, is checked and fails the guard, although the process would exit:
+# the guard cannot tell a thread a later hook will stop from one nothing stops. The witness is the leak pins in
+# tests/test_session_end_thread_guard.py: their leaked thread is released at pytest_unconfigure, the run fails, the stop
+# writes a release marker, and every process that ran tests then writes its atexit marker, which the interpreter runs
+# only after concurrent.futures' exit hooks and its join of the non-daemon threads have returned. Nothing in tests/
+# starts or stops a thread there today: its pytest_sessionfinish and pytest_unconfigure hooks and its atexit handlers
+# only remove directories, and it registers no config cleanup.
+# concurrent.futures THREADS fail the guard for either of two causes. A ThreadPoolExecutor's worker (of a pool, or of an
+# asyncio event loop's default executor) or a ProcessPoolExecutor's manager thread may be IDLE, in a pool left without
+# shutdown or a loop never closed: no join ends it, but the interpreter wakes it at exit (threading._register_atexit),
+# so it would not have hung a serial run or kept an xdist worker from exiting, and failing on it is the stricter
+# reading. Or it may be BUSY, with a task still running (in the worker, or in the manager thread's pool), which
+# shutdown(wait=False) and loop.close() (it shuts its default executor down with wait=False) do not end: at exit the
+# process waits for that task like any other thread still running. Either cause holds for a thread of either daemon
+# flag, since the exit hooks wake and join daemon ones too: the guard reads the hooks' tables (EXIT_JOIN_TABLES) and
+# waits for every thread in them, and a loaded concurrent.futures module without its table fails the guard, naming the
+# attribute, rather than leaving its daemon threads unread. A table whose every read raises until the deadline (another
+# thread adding to it without pause) fails the guard by the table's name, and that failure names the non-daemon threads
+# still alive, which need no table; the daemon threads the table would list go unnamed. The report's label names both
+# causes, idle and busy; a ThreadPoolExecutor worker's stack shows which, and a manager thread's stack reads the same
+# either way. A process that leaves one pays the cap once. No non-daemon one was left at a session end on main (the
+# census above, which read non-daemon threads only). CI, running this guard at an earlier head of the pull request that
+# made it read those tables, named one thread: an idle default-executor worker, a daemon thread, left by
+# tests/test_session_move.py's fixture loops, which the same pull request fixes (that module's loop cleanup, _end_loop,
+# now ends it). A run of the full suite on 2026-09-28 at that pull request's head after its merge of the fork's main
+# that day (3.12, two workers, the Run pytest step's flags, -p no:anyio among them; the served-page tests skipped, the
+# extension's node deps absent; the Claude Agent SDK, which CI's Python cells install since that merge, not installed)
+# left none of either flag: the guard named no thread there.
+THREAD_GUARD_CAP_S = 10.0
+_monotonic = time.monotonic   # bound at import: a test's leaked patch of time.monotonic cannot move the guard's deadline
+_enumerate = threading.enumerate    # bound at import too: a test's leaked patch of threading.enumerate cannot empty the
+                                    # guard's list, and a test that patches this name reaches the guard alone
+# The tables concurrent.futures' exit hooks join, as (module, attribute). The two hooks are the only functions the
+# standard library registers with threading._register_atexit (3.10 to 3.14), which threading._shutdown calls before it
+# joins the non-daemon threads; each joins every thread in its module's table, whatever the thread's daemon flag.
+EXIT_JOIN_TABLES = (("concurrent.futures.thread", "_threads_queues"),      # ThreadPoolExecutor workers
+                    ("concurrent.futures.process", "_threads_wakeups"))    # ProcessPoolExecutor manager threads
+# The guard's failure, in the stash of the item whose teardown it failed, for _guard_failure_into_report.
+_GUARD_FAILURE = pytest.StashKey()
+
+
+class _ExitJoinTableKeptChanging(pytest.fail.Exception):
+    """_exit_joined_threads' failure for a table whose every read raised RuntimeError until the deadline passed. It is a
+    pytest.fail failure, so any caller fails the same way; threads_left_at_session_end catches it to add the non-daemon
+    threads still alive, which are guarded whatever the table lists."""
+
+
+def _exit_joined_threads(deadline):
+    """The threads concurrent.futures' exit hooks will join, whatever their daemon flags: every thread in the table of
+    each EXIT_JOIN_TABLES module that is loaded. This file imports concurrent.futures.thread, so its table is always
+    read; a process that never loaded concurrent.futures.process has no ProcessPoolExecutor. A loaded module without its
+    table fails the guard, naming the attribute, rather than leaving unguarded the daemon threads that table would list.
+    A read that raises RuntimeError (another thread added to the table while it was read) is retried at once, until a
+    read succeeds or `deadline`, a time on the guard's clock (_monotonic), passes; a read that raises after that fails
+    the guard, naming the table (_ExitJoinTableKeptChanging), so no read is retried after the deadline. A read already
+    running at the deadline finishes, and a table read first after it is read once. A table keeps a thread that has
+    ended until the thread object is collected; the guard asks it only about listed threads, which are alive."""
+    joined = set()
+    for module, attr in EXIT_JOIN_TABLES:
+        mod = sys.modules.get(module)
+        if mod is None:
+            continue
+        table = getattr(mod, attr, None)
+        if table is None:
+            pytest.fail("tests/conftest.py's session-end thread guard cannot read %s.%s on this Python (%s): "
+                        "that table lists the threads concurrent.futures' exit hook joins at exit whatever their "
+                        "daemon flag, and without it the guard cannot tell which daemon threads hold the process at "
+                        "exit. Find where this Python keeps the table and point EXIT_JOIN_TABLES at it."
+                        % (module, attr, sys.version.split()[0]), pytrace=False)
+        while True:
+            try:
+                joined.update(table)    # a WeakKeyDictionary: iterating it yields its threads
+                break
+            except RuntimeError:        # another thread added to the table while it was read: read it again,
+                if _monotonic() >= deadline:    # up to the deadline
+                    raise _ExitJoinTableKeptChanging(
+                        "tests/conftest.py's session-end thread guard could not read %s.%s before its deadline: every "
+                        "read of it on the guard's last pass raised RuntimeError, as iterating the table does when "
+                        "another thread adds to it mid-read, until the deadline passed. Without the table the guard "
+                        "cannot tell which daemon threads hold the process at exit. Something in this process was "
+                        "still adding to the table, starting concurrent.futures threads, at the end of its session."
+                        % (module, attr), pytrace=False) from None
+    return joined
+
+
+def _pytest_timeout_timer(t):
+    """Whether the guard takes `t` for pytest-timeout's: a thread whose name starts with `pytest_timeout` (the plugin names
+    its timer `pytest_timeout <nodeid>`), or whose callable's module starts with it (a Timer keeps its callable as
+    `function`, a Thread as `_target`). Any such thread matches, not only the running test's timer, which is the thread
+    this exclusion exists for: it is alive through the check. A prefix and not an exact module, because CI installs the
+    plugin unpinned: a release that moved its function into a submodule would otherwise fail every cell on the timer."""
+    fn = getattr(t, "function", None) or getattr(t, "_target", None)
+    mod = (getattr(fn, "__module__", None) or "") if fn is not None else ""
+    return t.name.startswith("pytest_timeout") or mod.startswith("pytest_timeout")
+
+
+def _guarded_thread(t, joined_at_exit=None):
+    """Whether the session-end guard waits for `t`: a non-daemon thread, or a daemon thread in `joined_at_exit` (the
+    threads concurrent.futures' exit hooks join; when it is not given, _exit_joined_threads is read here, its deadline
+    THREAD_GUARD_CAP_S from the call), other than the main thread and the thread running the check, and not one
+    _pytest_timeout_timer matches (a `pytest_timeout` prefix of its name or of its callable's module)."""
+    if t is threading.main_thread() or t is threading.current_thread() or _pytest_timeout_timer(t):
+        return False
+    if not t.daemon:
+        return True
+    if joined_at_exit is None:
+        joined_at_exit = _exit_joined_threads(_monotonic() + THREAD_GUARD_CAP_S)
+    return t in joined_at_exit
+
+
+def threads_left_at_session_end(cap_s):
+    """The guarded threads (_guarded_thread: every non-daemon thread, and every thread concurrent.futures' exit hooks
+    join whatever its daemon flag) still alive once each has had until one deadline, cap_s from the call, to end. Each
+    is joined in turn for the time remaining, and the thread list and the exit-join tables are read again after every
+    pass, so a thread that starts another as it exits is waited for too. Starts no thread. Every wait is a join, which
+    returns when its thread ends, except for two busy loops, each of which stops at its first check after the deadline:
+    past the deadline the guard finishes a read or a join already running and reads the thread list and each exit-join
+    table once more at most, then returns or fails. For a thread caught mid-start, which join refuses, the list is read again
+    at once until that start() returns; that loop spins only while every listed guarded thread is mid-start, since a
+    live one's join blocks the pass instead. For a read of an exit-join table that raises RuntimeError (another thread
+    added to the table mid-read), the table is read again at once until a read succeeds; a read that raises after the
+    deadline fails the guard, naming the table (_exit_joined_threads) and each non-daemon thread of that pass's list
+    still alive, with its stack, since those are guarded whatever the table lists. Returns [] when none is left. A
+    loaded concurrent.futures module without its exit-join table fails the guard (_exit_joined_threads)."""
+    deadline = _monotonic() + cap_s
+    while True:
+        listed = _enumerate()
+        # after the list: a listed worker whose pool's submit returned is in the table
+        try:
+            joined, kept_changing = _exit_joined_threads(deadline), None
+        except _ExitJoinTableKeptChanging as failure:
+            joined, kept_changing = None, failure.msg
+        # failed outside the except block: inside it, the report would print the table's failure a second time, as this
+        # failure's context, under "During handling of the above exception"
+        if kept_changing is not None:
+            alive = [t for t in listed if t.is_alive() and _guarded_thread(t, frozenset())]    # the non-daemon ones
+            frames = sys._current_frames()
+            pytest.fail("%s\n\n%s" % (kept_changing, (
+                "The non-daemon threads still alive then, which hold the process at exit whatever the table lists:"
+                "\n\n" + "\n".join(_thread_report(t, frames) for t in alive)) if alive
+                else "No non-daemon thread was alive then."), pytrace=False)
+        left = [t for t in listed if _guarded_thread(t, joined)]
+        if not left or _monotonic() >= deadline:
+            return left
+        for t in left:
+            try:
+                t.join(max(0.0, deadline - _monotonic()))
+            except RuntimeError:   # listed while another thread's start() was still running: the next pass reads it again
+                pass
+
+
+def _thread_report(t, frames):
+    """One thread for the guard's failure: its name, ident, what it runs and its stack from `frames`
+    (sys._current_frames())."""
+    target = getattr(t, "_target", None) or getattr(t, "function", None)    # a Timer keeps its callable as `function`
+    if target is not None:
+        runs = "%s.%s" % (getattr(target, "__module__", None) or "?", getattr(target, "__qualname__", None) or repr(target))
+    else:
+        runs = "%s.%s.run" % (type(t).__module__, type(t).__qualname__)     # a Thread subclass's own run()
+    if runs.startswith("concurrent.futures.thread."):
+        runs += (" (a ThreadPoolExecutor worker, of a pool or an asyncio loop's default executor: idle in one left without"
+                 " shutdown, or running a task, which shutdown(wait=False) and loop.close() do not end; its stack shows which)")
+    elif runs.startswith("concurrent.futures.process."):
+        runs += (" (a ProcessPoolExecutor's manager thread: a pool left without shutdown, or one shut down with wait=False"
+                 " while a task still runs; its stack reads the same either way)")
+    frame = frames.get(t.ident)
+    stack = "".join(traceback.format_stack(frame)) if frame is not None else "  (no stack: the thread ended as it was read)\n"
+    return "thread %r (ident %s) runs %s\n%s" % (t.name, t.ident, runs, stack)
+
+
+def _guard_failure_into_report(item, call, rep):
+    """The guard's failure kept in its teardown report, for this file's one pytest_runtest_makereport hookwrapper. That
+    wrapper runs outside the report hooks of pytest's skipping and unittest plugins and reads the report as they leave
+    it (the unittest plugin's is not a wrapper, and every wrapper runs around the implementations that are not; the
+    skipping plugin's is a wrapper marked, as this one is, neither tryfirst nor trylast, pluggy calls the later
+    registered of two such wrappers first, and this file registers after that plugin). Pytest's tmpdir plugin's report
+    wrapper, marked tryfirst, runs outside this one; it reads the report, recording whether the phase passed, and
+    changes nothing in it. The skipping and unittest hooks change the report of a teardown the guard failed: pytest's
+    skipping plugin makes the error of an xfail-marked test an xfail, which leaves the run green, and its unittest
+    plugin puts a TestCase's second stored error (a body and a cleanup that both fail) into the report in place of the
+    guard's, which then names no thread. So a teardown report whose item's stash holds the guard's failure
+    (pytest_runtest_teardown records it there) is marked failed, and loses the skipping plugin's wasxfail (pytest's
+    session counts a failed report toward the run's exit status only without one), and when the outcome it carries is
+    not the guard's error, the guard's text is added after that outcome. That is the unittest case (a TestCase's second
+    error, or a skip, in the guard's place), and also a teardown whose runner raised first (a fixture's teardown failed
+    or skipped): pytest_runtest_teardown runs the guard after that, when the runner went on to tear down every fixture,
+    and raises it again, so it is the one the report carries. The wrapper redacts the report after this step, so the
+    added text goes through the same redaction as the rest of the report and the guard's stderr copy."""
+    if call.when != "teardown":
+        return
+    failure = item.stash.get(_GUARD_FAILURE, None)
+    if failure is None:
+        return
+    rep.outcome = "failed"
+    if hasattr(rep, "wasxfail"):
+        del rep.wasxfail
+    if call.excinfo is not None and call.excinfo.value is failure:
+        return                                          # the report's error is the guard's own
+    lr = rep.longrepr
+    parts = [] if lr is None else [lr[2] if isinstance(lr, tuple) and len(lr) == 3 else str(lr)]
+    parts += ["[tests/conftest.py, the session-end thread guard] this teardown also failed the guard. The outcome "
+              "above is the one this report carries (a fixture's teardown that failed or skipped, or an outcome "
+              "pytest's unittest plugin put in the guard's place); the guard's error follows.", str(failure)]
+    # _redacted_longrepr keeps the crash location of the error the report carries, which the short summary's line
+    # reads; the text it is handed is redacted by the wrapper's next step
+    rep.longrepr = _redacted_longrepr(lr, "\n\n".join(parts))
+
+
+def _redact_as_exconly(failure):
+    """The failure's text, str(failure), scrubbed as the report prints a failure raised with a traceback: pytest renders
+    that exception as its exconly does, the type name, a colon and the message (`Failed: <message>` for a pytest.fail
+    failure), on the first line of its error under the `E` marker, and in the report's crash message, which the short
+    test summary prints. The colon puts the message's first word in the pattern net's value position (after `: `), so a
+    token that leads such a failure's message is masked in the report, and the bare message leaves it at the start of a
+    line, where, with more text after it, no rule reads it as a value. So the rendering is scrubbed as the stderr copy
+    is (as it stands, then under the marker, _redact_crash_message), and the type name and colon are taken off again.
+    When the scrub changed them (an environment value or a token in the type name), the scrubbed rendering is returned
+    whole, type name included. A failure raised with pytrace=False is scrubbed the same way here, but the report prints
+    it differently: its error is the bare message, and _redact_report rebuilds the crash message only when the report's
+    text changed, so the report prints a leading token raw and only the stderr copy masks it. That gap is
+    _redact_report's."""
+    message = str(failure)
+    excinfo = pytest.ExceptionInfo.from_exc_info((type(failure), failure, failure.__traceback__))
+    rendered = excinfo.exconly(tryshort=True)
+    stype, sep, _rest = rendered.partition(": ")
+    if not message or not sep:      # an empty message renders as the type name alone, with no colon
+        return message
+    prefix = stype + sep
+    scrubbed = _redact_crash_message(redact_report_text(prefix + message))
+    return scrubbed[len(prefix):] if scrubbed.startswith(prefix) else scrubbed
+
+
+def _guard_failure_to_stderr(item, failure):
+    """The guard's second channel: its failure's text, written to stderr, which no report hook can change (the first,
+    the teardown's report, is kept failed and naming the threads by _guard_failure_into_report). The capture plugin
+    captures stderr during a teardown, so it is suspended for the write, which then reaches this process's own stderr.
+    Under pytest-xdist that is the controller's stderr: execnet, xdist's transport, points a worker's stdout at
+    /dev/null but, outside Windows, does not redirect its stderr (on Windows it moves sys.stderr to a copy of the
+    controller's). Everything written goes through the teardown report's redaction, in the order _redact_report applies
+    it (_note_env_values, then redact_report_text), three ways. The failure's text is scrubbed first as pytest's exconly
+    renders it, the type name, a colon and the message (_redact_as_exconly): for a failure raised with a traceback, the
+    report prints that rendering on the first line of its error and in its crash message, where the colon puts the
+    message's first word in the pattern net's value position and the report masks a token there, and stderr prints the
+    message without the type name. (For a failure raised with pytrace=False the report prints a leading token raw and
+    this copy masks it; _redact_as_exconly's docstring says why.) Then the whole write, the header with its node id and
+    worker name included, is scrubbed as it stands, and then again with each line under pytest's `E` marker
+    (_redact_crash_message): the report prints a failure raised with a traceback (a pytest.fail inside the guard's call,
+    from a Thread subclass's join, say) under that marker, where the pattern net's rules for a failed comparison's diff
+    lines apply, and stderr prints it bare. CI's logs are public, and a value the report masks (a thread named with an
+    environment value, say) must not reach them raw here. One window is left: this copy is scrubbed with the values
+    noted at the guard's check, and the report later, at report time, so a value that enters the environment between the
+    two (written by a thread still running then, say, which is a thread the guard names) is masked in the report and
+    printed raw here."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    _note_env_values()
+    text = ("\n[tests/conftest.py, the session-end thread guard] the teardown of %s, this process's last test%s, fails "
+            "with the error below. It is written to stderr as well as to that teardown's report, as a second channel "
+            "that no report hook can change.\n%s\n"
+            % (item.nodeid, " (pytest-xdist worker %s)" % worker if worker else "", _redact_as_exconly(failure)))
+    # the whole write, nothing below writes any other text: scrubbed as it stands and then marked, as the report's crash
+    # message is (_redact_crash_message), since the report prints a message with a traceback under pytest's `E` marker
+    text = _redact_crash_message(redact_report_text(text))
+    capman = item.config.pluginmanager.getplugin("capturemanager")
+    if capman is None:                          # -p no:capture: nothing captures stderr
+        sys.stderr.write(text)
+        sys.stderr.flush()
+        return
+    with capman.global_and_fixture_disabled():
+        sys.stderr.write(text)
+        sys.stderr.flush()
+
+
+@pytest.hookimpl(wrapper=True, trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """The session-end thread guard (above): at the process's last test only, once the runner has finished tearing
+    down every scope, the guarded threads still alive at THREAD_GUARD_CAP_S fail this teardown, each named with its
+    stack. Every failure of the guard takes two channels: this teardown's report, which this file's
+    pytest_runtest_makereport keeps failed and naming the threads from the failure recorded here in the item's stash
+    (_guard_failure_into_report), and the same text on stderr (_guard_failure_to_stderr). A wrapper, so the guard runs
+    after the runner's teardown (trylast: the innermost wrapper, around the runner's own implementation and inside the
+    capture plugin's). When that teardown raised, the guard runs only if the runner's stack of set-up nodes
+    (item.session._setupstate.stack) is empty, so that no fixture is left for pytest to tear down after this check. The
+    runner collects an Exception or one of pytest's outcomes (pytest.fail's, pytest.skip's) raised by a fixture's
+    teardown, goes on to tear down the rest, and raises it (several as one group) once the stack is empty: that error or
+    skip stays the one this teardown raises, and the report step adds the guard's text after it; under an xfail mark
+    the skipping plugin would otherwise make that error an xfail, and a guard that did not run there left the run green
+    with the threads unnamed. A BaseException that is neither (asyncio.CancelledError, SystemExit) stops the runner at
+    the node whose finalizer raised it: that node's remaining finalizers never run, and the nodes of wider scopes stay
+    on the stack, their fixtures set up and their threads running, until pytest_sessionfinish tears them down after
+    this check. Then the error is raised again without the check, as it is on KeyboardInterrupt or pytest.exit, which
+    end the session at once: a thread such a run leaks goes unnamed, and under an xfail mark, which makes that error an
+    xfail, the run passes. When that node is the session's, the last on the stack, the stack is empty and the guard
+    runs: nothing is left for pytest_sessionfinish, and a thread of a fixture whose finalizer never ran is still running
+    at exit."""
+    try:
+        result = yield
+    except (KeyboardInterrupt, pytest.exit.Exception):
+        raise
+    except BaseException:           # pytest.fail and pytest.skip raise BaseExceptions, not Exceptions
+        # checked only when the runner's teardown finished: a fixture of a wider scope still set up keeps its threads
+        if nextitem is None and not item.session._setupstate.stack:
+            _guard_into_both_channels(item)
+        raise
+    if nextitem is None:
+        failure = _guard_into_both_channels(item)
+        if failure is not None:
+            raise failure
+    return result
+
+
+def _guard_into_both_channels(item):
+    """Runs the guard for pytest_runtest_teardown. Its failure, when it fails, is recorded in the item's stash for the
+    report step (_guard_failure_into_report), written to stderr (_guard_failure_to_stderr), and returned; None when it
+    passes."""
+    try:
+        _session_end_thread_guard(item)
+    except pytest.fail.Exception as failure:
+        item.stash[_GUARD_FAILURE] = failure
+        _guard_failure_to_stderr(item, failure)
+        return failure
+    return None
+
+
+def _session_end_thread_guard(item):
+    """The check itself, for pytest_runtest_teardown: fails, through pytest.fail, naming each guarded thread still
+    alive at THREAD_GUARD_CAP_S with its stack; a table it cannot read fails it too (_exit_joined_threads)."""
+    left = threads_left_at_session_end(THREAD_GUARD_CAP_S)
+    if not left:
+        return
+    frames = sys._current_frames()
+    pytest.fail("threads still running at the end of this process's session, after up to %g s for each to end "
+                "(tests/conftest.py, the session-end thread guard): non-daemon threads, and concurrent.futures "
+                "threads of either daemon flag, which its exit hooks join. A thread a test starts must end before the "
+                "test does. A named thread still running when the interpreter exits keeps the process from exiting: "
+                "run serially, the run hangs until the thread ends or the job cap cancels it; under pytest-xdist the "
+                "controller kills a worker still alive when the run ends, and the run would pass without this report. "
+                "Two kinds of named thread let the process exit and fail this guard all the same: an idle "
+                "concurrent.futures worker, which the interpreter wakes at exit, and a thread stopped only after this "
+                "check (a config cleanup, pytest_sessionfinish or pytest_unconfigure). %s is this process's last test, "
+                "where the check runs, and not necessarily the one that started a thread; each thread's target and "
+                "stack say where it came from."
+                "\n\n%s" % (THREAD_GUARD_CAP_S, item.nodeid, "\n".join(_thread_report(t, frames) for t in left)),
+                pytrace=False)
 
 
 # Browser-backed served-page tests fail loudly where they must run (T308, 2026-09-10). tests/test_*_browser.py and

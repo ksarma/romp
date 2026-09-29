@@ -18,7 +18,15 @@
 // fails, a reconnect event heard before or after the press included; a png whose bytes do not decode keeps DECODE_FAILED
 // with no second fetch; and with the Comments panel open the panel's wait for a reload's bytes ends when they land, while
 // the picture's own load, or the Source view's decode of them, is still out, and a change card keeps its state from the
-// landing until that paint (the deadline is faked with the page's clock, so no case waits 15 s). The
+// landing until that paint (the deadline is faked with the page's clock, so no case waits 15 s). With the panel open the change
+// card is also read along these roads of the card-state rule the Comments panel follows (file-comments.ts, #cardState's doc): a
+// press of the Source toggle over a picture still loading, and a press to the picture and back while a reload under the Source
+// view decodes; before the view's first paint, and a first open whose fetch fails; a landed svg whose re-ask fails, up to the
+// way back's picture; a failed reload of the bytes the Source view shows, with the panel closed and opened or first opened over
+// its pane, and Show changes inline flipped over it; a reload landing under the Source view with its decode held, a second
+// reload's pane, and a render and two flips while a press waits for its picture; a png reload whose bytes do not decode; and a
+// png's landing followed by a status, for its bytes or for the painted bytes whose sidecar moved. A click on the card's link or
+// its Comment on this change over a pane answers in a row under the card and does nothing else (notInView). The
 // chat modal's cases that count probes run with the page's markdown-image heal installed (preview.ts installMdImgHeal, which
 // also hears the picture's error and skips the viewer's picture) and both of render.ts's retry drivers, its romp:wsup line and
 // its retry on every kernel message, so the probes' count of three is measured in the chat page as it runs (the loader's case installs neither). After every road the picture's src is its /file address (the relay's for a remote session) and no object
@@ -26,7 +34,7 @@
 // a playwright browser (CI installs none). Synthetic values only: /repo/notes-api paths, the placeholder sid, host TESTHOST.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, openPanel, frames, ROOT, REPORT, LONG, SID, MT2, type Mode } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, closePanel, frames, ROOT, REPORT, LONG, SID, MT, MT2, type Mode } from "./real-viewer-leg";
 
 const FIG = ROOT + "/figs/a.svg";
 const PNG = ROOT + "/figs/b.png";
@@ -36,7 +44,12 @@ const RELAY_502 = "tunnel to TESTHOST is not answering; re-dialing";
 const SVG_PICTURE_FAILED = "this image failed to load or decode: the connection may have dropped, or the file may be mid-write or truncated";
 const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";
 const REMOTE = "TESTHOST:" + SID;
-/** The picture's /file address for a session: the local route, or the relay's with the bare sid; the key follows. */
+/** The picture's /file address for a session as a page with no page key builds it, with no cap (this leg's page holds no key):
+ *  the local route, or the relay's with the bare sid; the version key follows the sid. The relay route and the version key's
+ *  place in the address are pinned by this leg's no-key address check, not by tests/test_svg_picture_caps_served.py, which is
+ *  the witness only for what it checks: the capped /file address and the load, on the viewer's and the preview's local roads.
+ *  Its cap and version key checks do not depend on order, and this leg's page makes no cap, so neither checks that a signed-in
+ *  page puts the cap before the version key. */
 const address = (sid: string): string => (sid === REMOTE ? "/remote/TESTHOST/file" : "/file") + "?path=" + encodeURIComponent(FIG) + "&sid=" + encodeURIComponent(SID) + "&v=";
 
 type PicMode = "ok" | "bad" | "502" | "refuse" | "hold" | "hold502" | "holdRefuse" | "once502";
@@ -53,7 +66,9 @@ type Pic = { mode: PicMode; seq: PicMode[]; reqs: string[]; release: () => void;
  *  detached pictures of the svg's address the page makes (the way back's probes, counted when each is sent, whether it then
  *  loads from the page's memory or asks the network) and `__probesSettled` those that loaded or failed; `__srcSet` records
  *  whether the viewer's picture was complete the moment its src was set; `__picErrs` counts the viewer picture's error events
- *  once each has run its listeners; `__textGate`, a promise, holds a decode of the fetched bytes (the Source view's).
+ *  once each has run its listeners; `__textGate`, a promise, holds a decode of the fetched bytes (the Source view's). The png's
+ *  GETs answer `__pngBytes` when a case sets it (a picture that decodes), else bytes that do not decode, each at `__mtime`;
+ *  `__pngGate`, a promise, holds the next of them.
  *  `heal`: the chat page's markdown-image heal and render.ts's two retry drivers (its romp:wsup line and its per-message retry;
  *  `__perMessage` counts the latter's runs), installed before the open. `clock`: the page's
  *  clock installed (it flows until a case moves it). */
@@ -80,7 +95,7 @@ async function scene(browser: any, mode: Mode, opts: { heal?: boolean; clock?: b
       document.body.appendChild(frame);
       const pageFetch = (frame.contentWindow as any).fetch.bind(frame.contentWindow);   // the browser's own fetch, which the stub replaced here
       w.__asks = 0; w.__pngAsks = 0; w.__okAsks = Infinity; w.__failTo = Infinity; w.__fail = null; w.__gate = null; w.__gateAt = 0; w.__released = false; w.__objectUrls = []; w.__paneSeen = false; w.__panes = 0; w.__paneLog = [];
-      w.__probes = 0; w.__probesSettled = 0; w.__srcSet = null; w.__picErrs = 0; w.__textGate = null;
+      w.__probes = 0; w.__probesSettled = 0; w.__srcSet = null; w.__picErrs = 0; w.__textGate = null; w.__pngBytes = null; w.__pngGate = null;
       w.fetch = async function (url: string, init?: any) {
         const u = String(url);
         const m = /[?&]path=([^&]*)/.exec(u);
@@ -94,8 +109,8 @@ async function scene(browser: any, mode: Mode, opts: { heal?: boolean; clock?: b
             return new Response(w.__fail.body, { status: w.__fail.status, headers: { "Content-Type": "text/plain" } });
           }
         }
-        if (p === png && get) w.__pngAsks++;
-        if (p === png) return new Response(get ? new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x02]) : null, { status: 200, headers: { "Content-Type": "image/png", "X-Romp-Mtime-Ns": w.__mtime } });   // a png whose bytes do not decode
+        if (p === png && get) { w.__pngAsks++; if (w.__pngGate) { const g = w.__pngGate; w.__pngGate = null; await g; } }
+        if (p === png) return new Response(get ? new Uint8Array(w.__pngBytes || [0x89, 0x50, 0x4e, 0x47, 0x02]) : null, { status: 200, headers: { "Content-Type": "image/png", "X-Romp-Mtime-Ns": w.__mtime } });   // a png whose bytes do not decode, unless a case set __pngBytes
         return stub(url, init);
       };
       const mint = URL.createObjectURL.bind(URL);
@@ -165,9 +180,13 @@ const settled = (page: any): Promise<unknown> => page.waitForFunction(() => {
   const img = body.querySelector("img.fileview-img") as HTMLImageElement | null;
   return !!img && img.complete && img.naturalWidth > 0;
 }, null, { timeout: 10000 });
-/** The property after a road: the picture's src is its /file address, and no object URL was made for the svg. */
+/** The property after a road: the picture's src is its /file address, as a page with no page key builds it (address), and no
+ *  object URL was made for the svg. The relay route and the absence of an object URL are pinned here, by this leg's no-key
+ *  checks, and not by tests/test_svg_picture_caps_served.py: it makes no relay request and does not watch for an object URL
+ *  being made, and it is the witness only for the capped /file address and the load, on the viewer's and the preview's local
+ *  roads under the page key. */
 function onAddress(s: State, sid: string, road: string): void {
-  assert.ok(s.src !== null && s.src.startsWith(address(sid)), road + ": the svg's picture is its /file address, not an object URL; got " + s.src);
+  assert.ok(s.src !== null && s.src.startsWith(address(sid)), road + ": the svg's picture is its /file address as a page with no page key builds it, not an object URL (this leg's no-key check; tests/test_svg_picture_caps_served.py checks only the capped /file address and the load, on the local roads); got " + s.src);
   assert.ok(!s.objectUrls.includes("image/svg+xml"), road + ": no object URL made for the svg: " + JSON.stringify(s.objectUrls));
 }
 /** A kernel message of no kind the way back reads, as the kernel pushes many. */
@@ -532,14 +551,14 @@ test("in a browser, the Files pane with the Comments panel open over an svg pict
       await page.evaluate(([m, f, b, h]: [string, string, string, unknown]) => { const w = window as any; w.__mtime = m; w.__docs[f] = b; w.__status = Object.assign({}, w.__status, { hunks: [h] }); }, [MT2, FIG, SVG2, HUNK]);
       await page.waitForFunction(() => !!document.querySelector('.fileview-aside .fc-load[data-slot="bytes"]') && !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
       const before = await changeCard();
-      assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"], reveal: null }, road + ": the premise: the view's bytes are not the status's, so the card claims no tag, no Reveal and no Comment on this change");
+      assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"], reveal: null }, road + ": the premise: the card claims no tag, no Reveal and no Comment on this change (file-comments.ts, #cardState's doc)");
       await page.evaluate(() => { (window as any).__open(); });
       await page.waitForFunction((m: string) => (window as any).__seam.mtimeNs() === m, MT2, { timeout: 10000 });   // the reload landed
       await frames(page, 2);
       if (under || pending) assert.equal(await page.evaluate(() => (window as any).__seam.mode()), under ? "raw" : "media", road + ": the decode is held: the view the landing found still shows");
       else assert.equal((await state(page)).complete, false, road + ": the bytes landed and the picture's own request is held");
       assert.equal(await bytesWait(), false, road + ": the panel's loader left at the landing");
-      assert.deepEqual(await changeCard(), before, road + ": between the landing and the paint the card keeps its tags and buttons: no Reveal, no not shown tag and no Comment on this change that the paint would take back");
+      assert.deepEqual(await changeCard(), before, road + ": between the landing and the paint the card keeps its tags and buttons (file-comments.ts, #cardState's doc)");
       await page.clock.fastForward(16000);
       await frames(page, 3);
       assert.equal(await lateRow(), false, road + ": 16 s on, the paint still held, no row says the contents have not arrived");
@@ -561,6 +580,715 @@ test("in a browser, the Files pane with the Comments panel open over an svg pict
       assert.deepEqual(errors, [], road + ": no page errors");
       await page.close();
     }
+  });
+});
+
+test("in a browser, a picture still loading when the Source toggle is pressed runs no paint hooks at its load: in the Files pane with the Comments panel open and a pending insertion in a reload that lands while the press waits for its decode, the change card keeps its state through that picture's load and moves once, at the decode; with no landing, the load paints nothing and the decode paints once; pressed to the Source view and back while the picture still loads, the picture shown on the way back paints once when it loads; with no press, the load paints once", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const INS = ' fill="#996633"';
+    const SVG2 = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="120"><rect width="300" height="120"' + INS + '/></svg>';
+    const at = SVG2.indexOf(INS);
+    const HUNK = { id: "h1", author: "api", ts: 1757145600000, kind: "ins", curFrom: at, curTo: at + INS.length, baseFrom: at, baseTo: at, oldText: "", newText: INS, anchor: null };
+    const MT_A = "1757145600000000005";
+    type Card = { tags: string[]; buttons: string[] } | null;
+    /** The seam's paints proper since the open (the probe's onRendered count less its reflows). */
+    const paints = (page: any): Promise<number> => page.evaluate(() => { const w = window as any; return w.__paints - w.__reflows; });
+    const complete = (page: any): Promise<boolean> => page.evaluate(() => { const img = document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement | null; return !!img && img.complete && img.naturalWidth > 0; });
+    const holdDecode = (page: any): Promise<void> => page.evaluate(() => { const w = window as any; w.__textGate = new Promise<void>((r) => { w.__textOpen = r; }); });
+    const openDecode = (page: any): Promise<void> => page.evaluate(() => { const w = window as any; w.__textGate = null; w.__textOpen(); });
+    {
+      const road = "(i) a reload lands while the press waits for its decode";
+      const { page, errors, pic } = await scene(browser, "pane", { clock: true });
+      await page.evaluate(() => { const w = window as any; w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null }); });   // no sidecar or config to watch: the poll watches the file alone
+      await openFig(page);
+      await settled(page);
+      await openPanel(page);
+      const changeCard = (): Promise<Card> => page.evaluate(() => {
+        const c = document.querySelector(".fileview-aside .fc-card.fc-change");
+        return c ? { tags: Array.from(c.querySelectorAll(".fc-card-head .fc-tag")).map((x) => x.textContent || ""), buttons: Array.from(c.querySelectorAll(".fc-actions button")).map((x) => x.textContent || "") } : null;
+      });
+      // a first reload whose picture's own request is held: its bytes land, and the picture is still loading when the person presses
+      await page.evaluate(() => { const w = window as any; w.__gate = new Promise<void>((r) => { w.__open = r; }); });
+      pic.mode = "hold";
+      await page.evaluate((m: string) => { (window as any).__mtime = m; }, MT_A);
+      await page.waitForFunction(() => !!document.querySelector('.fileview-aside .fc-load[data-slot="bytes"]'), null, { timeout: 15000 });
+      await page.evaluate(() => { (window as any).__open(); });
+      await page.waitForFunction((m: string) => { const img = document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement | null; return !!img && (img.getAttribute("src") || "").endsWith("&v=" + m); }, MT_A, { timeout: 10000 });
+      await frames(page, 2);
+      assert.equal(await complete(page), false, road + ": the first reload's picture is still loading");
+      await holdDecode(page);
+      await pressSource(page);                            // the Source view waits for the decode, and the loading picture stays up
+      // the file moves again, with the insertion pending in the new bytes; the viewer's GET is held until the panel's wait is armed
+      await page.evaluate(() => { const w = window as any; w.__gate = new Promise<void>((r) => { w.__open = r; }); });
+      await page.evaluate(([m, f, b, h]: [string, string, string, unknown]) => { const w = window as any; w.__mtime = m; w.__docs[f] = b; w.__status = Object.assign({}, w.__status, { hunks: [h] }); }, [MT2, FIG, SVG2, HUNK]);
+      await page.waitForFunction(() => !!document.querySelector('.fileview-aside .fc-load[data-slot="bytes"]') && !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+      const before = await changeCard();
+      assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"] }, road + ": the premise: the card claims no tag, no Reveal and no Comment on this change (file-comments.ts, #cardState's doc)");
+      await page.evaluate(() => { (window as any).__open(); });
+      await page.waitForFunction((m: string) => (window as any).__seam.mtimeNs() === m, MT2, { timeout: 10000 });   // the reload landed
+      await frames(page, 2);
+      assert.equal(await page.evaluate(() => (window as any).__seam.mode()), "media", road + ": the decode is held: the picture the press was made over still shows");
+      assert.deepEqual(await changeCard(), before, road + ": at the landing the card keeps its state");
+      const p0 = await paints(page);
+      pic.release();                                      // the pressed-over picture's own request ends
+      await page.waitForFunction(() => { const img = document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement | null; return !!img && img.complete; }, null, { timeout: 10000 });
+      await frames(page, 3);
+      assert.equal(await complete(page), true, road + ": the picture painted before the press has loaded, still in the body");
+      assert.deepEqual(await changeCard(), before, road + ": through its load the card keeps its state, with no Reveal (file-comments.ts, #cardState's doc)");
+      assert.equal(await paints(page), p0, road + ": its load runs no paint hook");
+      await openDecode(page);
+      await page.waitForFunction(() => (document.querySelector(".fileview-body code.hljs")?.textContent || "").includes('width="300"'), null, { timeout: 10000 });   // the Source view paints the landed bytes at their decode
+      await frames(page, 2);
+      assert.equal(await paints(page), p0 + 1, road + ": the decode's paint, the one the hooks hear");
+      assert.deepEqual(await changeCard(), { tags: [], buttons: ["Accept", "Reject", "Comment on this change"] }, road + ": at the decode the Source view marks the insertion, and the card moves, once");
+      assert.deepEqual(errors, [], road + ": no page errors");
+      await page.close();
+    }
+    {
+      const road = "(ii) no landing";
+      const { page, errors, pic } = await scene(browser, "pane");
+      pic.mode = "hold";                                  // the open's picture held
+      await openFig(page);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body img.fileview-img"), null, { timeout: 10000 });
+      await frames(page, 2);
+      assert.equal(await complete(page), false, road + ": the open's picture is still loading");
+      await holdDecode(page);
+      await pressSource(page);
+      pic.release();
+      await page.waitForFunction(() => { const img = document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement | null; return !!img && img.complete; }, null, { timeout: 10000 });
+      await frames(page, 3);
+      assert.equal(await complete(page), true, road + ": the picture pressed over has loaded, still in the body");
+      assert.equal(await paints(page), 0, road + ": its load runs no paint hook");
+      await openDecode(page);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body code.hljs"), null, { timeout: 10000 });
+      await frames(page, 2);
+      assert.equal(await paints(page), 1, road + ": the decode's paint runs onRendered once");
+      assert.deepEqual(errors, [], road + ": no page errors");
+      await page.close();
+    }
+    {
+      const road = "(iii) to the Source view and back while the picture still loads";
+      const { page, errors, pic } = await scene(browser, "pane");
+      pic.mode = "hold";
+      await openFig(page);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body img.fileview-img"), null, { timeout: 10000 });
+      await page.evaluate(() => { (window as any).__pressedOver = document.querySelector(".fileview-body img.fileview-img"); });
+      await pressSource(page);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body code.hljs"), null, { timeout: 10000 });
+      await frames(page, 2);
+      assert.equal(await paints(page), 1, road + ": the Source view painted at the decode");
+      await pressSource(page);                            // back to the picture: a new picture at the same address, its request still held
+      const back = await state(page);
+      assert.equal(back.complete, false, road + ": the picture shown on the way back is still loading");
+      assert.equal(await page.evaluate(() => document.querySelector(".fileview-body img.fileview-img") !== (window as any).__pressedOver), true, road + ": the way back paints a new picture");
+      pic.release();
+      await decoded(page);
+      await frames(page, 3);
+      assert.equal(await paints(page), 2, road + ": that picture paints once when it loads, never zero times and never twice");
+      onAddress(await state(page), SID, road);
+      assert.deepEqual(errors, [], road + ": no page errors");
+      await page.close();
+    }
+    {
+      const road = "(iv) no press";
+      const { page, errors } = await scene(browser, "pane");
+      await openFig(page);
+      await settled(page);
+      await frames(page, 3);
+      assert.equal(await paints(page), 1, road + ": the picture's load paints once");
+      onAddress(await state(page), SID, road);
+      assert.deepEqual(errors, [], road + ": no page errors");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, the Files pane with the Comments panel open over an svg picture whose first paint has not come (the page's clock installed): with the open's picture held, a press of the Source toggle and a reload bringing a pending insertion, the change card reads Accept and Reject alone until the view shows the new bytes, through the reload's landing and the pressed-over picture's load, and moves once, at the decode, for a local and a remote session; and with the panel's status in before the open's bytes land, no card moves at the landing and the card takes its Reveal at the picture's paint", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const INS = ' fill="#996633"';
+    const SVG2 = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="120"><rect width="300" height="120"' + INS + '/></svg>';
+    const at = SVG2.indexOf(INS);
+    const HUNK = { id: "h1", author: "api", ts: 1757145600000, kind: "ins", curFrom: at, curTo: at + INS.length, baseFrom: at, baseTo: at, oldText: "", newText: INS, anchor: null };
+    type Card = { tags: string[]; buttons: string[] } | null;
+    const cardOf = (page: any): Promise<Card> => page.evaluate(() => {
+      const c = document.querySelector(".fileview-aside .fc-card.fc-change");
+      return c ? { tags: Array.from(c.querySelectorAll(".fc-card-head .fc-tag")).map((x) => x.textContent || ""), buttons: Array.from(c.querySelectorAll(".fc-actions button")).map((x) => x.textContent || "") } : null;
+    });
+    for (const sid of [SID, REMOTE]) {
+      const road = "the open's picture held, a press, a reload with an insertion, " + (sid === REMOTE ? "a remote" : "a local") + " session";
+      const { page, errors, pic } = await scene(browser, "pane", { clock: true });
+      await page.evaluate(() => { const w = window as any; w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null }); });   // no sidecar or config to watch: the poll watches the file alone
+      pic.mode = "hold";                                  // the open's picture held: the view's first paint has not come
+      await openFig(page, sid);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body img.fileview-img"), null, { timeout: 10000 });
+      await openPanel(page);
+      assert.equal((await state(page)).complete, false, road + ": the open's picture is still loading");
+      await page.evaluate(() => { const w = window as any; w.__textGate = new Promise<void>((r) => { w.__textOpen = r; }); });   // every decode of the fetched bytes held from here
+      await pressSource(page);                            // the Source view waits for the decode, and the loading picture stays up
+      await page.evaluate(() => { const w = window as any; w.__gate = new Promise<void>((r) => { w.__open = r; }); });
+      await page.evaluate(([m, f, b, h]: [string, string, string, unknown]) => { const w = window as any; w.__mtime = m; w.__docs[f] = b; w.__status = Object.assign({}, w.__status, { hunks: [h] }); }, [MT2, FIG, SVG2, HUNK]);
+      await page.waitForFunction(() => !!document.querySelector('.fileview-aside .fc-load[data-slot="bytes"]') && !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+      const before = await cardOf(page);
+      assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"] }, road + ": before the reload lands the card claims no Reveal and no tag (file-comments.ts, #cardState's doc)");
+      await page.evaluate(() => { (window as any).__open(); });
+      await page.waitForFunction((m: string) => (window as any).__seam.mtimeNs() === m, MT2, { timeout: 10000 });   // the reload landed
+      await frames(page, 2);
+      assert.deepEqual(await cardOf(page), before, road + ": at the landing the card keeps its state");
+      pic.release();                                      // the open's picture, pressed over, loads
+      await page.waitForFunction(() => { const img = document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement | null; return !!img && img.complete; }, null, { timeout: 10000 });
+      await frames(page, 3);
+      assert.deepEqual(await cardOf(page), before, road + ": through the pressed-over picture's load too");
+      await page.evaluate(() => { const w = window as any; w.__textGate = null; w.__textOpen(); });
+      await page.waitForFunction(() => (document.querySelector(".fileview-body code.hljs")?.textContent || "").includes('width="300"'), null, { timeout: 10000 });
+      await frames(page, 2);
+      assert.deepEqual(await cardOf(page), { tags: [], buttons: ["Accept", "Reject", "Comment on this change"] }, road + ": at the decode the view shows the new bytes, and the card moves, once");
+      await pressSource(page);                            // back to the picture: the landed bytes' at the session's /file address
+      await settled(page);
+      onAddress(await state(page), sid, road + ", back to the picture");
+      assert.deepEqual(errors, [], road + ": no page errors");
+      await page.close();
+    }
+    {
+      const road = "the panel's status in before the open's bytes land";
+      const { page, errors, pic } = await scene(browser, "pane", { clock: true, docs: { [REPORT]: LONG, [FIG]: SVG2 } });
+      await page.evaluate((h: unknown) => { const w = window as any; w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null, hunks: [h] }); w.__gate = new Promise<void>((r) => { w.__open = r; }); }, HUNK);   // the viewer's first GET held
+      pic.mode = "hold";
+      await openFig(page);
+      await openPanel(page);                              // the status answered, the view's bytes not landed
+      await page.waitForFunction(() => !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+      const before = await cardOf(page);
+      assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), "", road + ": the premise: nothing has landed");
+      await page.evaluate(() => { (window as any).__open(); });
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body img.fileview-img"), null, { timeout: 10000 });   // the bytes landed; the picture's own request is held
+      await frames(page, 3);
+      assert.deepEqual(await cardOf(page), before, road + ": the landing moves no card");
+      assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"] }, road + ": before the first paint the card claims no Reveal and no tag (file-comments.ts, #cardState's doc)");
+      pic.release();
+      await decoded(page);
+      await frames(page, 3);
+      assert.deepEqual(await cardOf(page), { tags: [], buttons: ["Accept", "Reject", "Reveal"] }, road + ": at the picture's paint the card takes its Reveal: the picture marks no change");
+      onAddress(await state(page), SID, road);
+      assert.deepEqual(errors, [], road + ": no page errors");
+      await page.close();
+    }
+  });
+});
+
+/** The change card's tags and buttons, and the fixtures of the pane cases below: a reload's bytes with an insertion pending in them. */
+const PANE_INS = ' fill="#996633"';
+const PANE_SVG2 = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="120"><rect width="300" height="120"' + PANE_INS + '/></svg>';
+const PANE_HUNK = { id: "h1", author: "api", ts: 1757145600000, kind: "ins", curFrom: PANE_SVG2.indexOf(PANE_INS), curTo: PANE_SVG2.indexOf(PANE_INS) + PANE_INS.length, baseFrom: PANE_SVG2.indexOf(PANE_INS), baseTo: PANE_SVG2.indexOf(PANE_INS), oldText: "", newText: PANE_INS, anchor: null };
+const changeCardOf = (page: any): Promise<{ tags: string[]; buttons: string[] } | null> => page.evaluate(() => {
+  const c = document.querySelector(".fileview-aside .fc-card.fc-change");
+  return c ? { tags: Array.from(c.querySelectorAll(".fc-card-head .fc-tag")).map((x) => x.textContent || ""), buttons: Array.from(c.querySelectorAll(".fc-actions button")).map((x) => x.textContent || "") } : null;
+});
+const paneUp = (page: any): Promise<unknown> => page.waitForFunction(() => !!document.querySelector(".fileview-body .fileview-err"), null, { timeout: 10000 });
+
+test("in a browser, the Files pane with the Comments panel open (the page's clock installed): a first open whose fetch fails, the panel's status in first, keeps the change card at Accept and Reject over the pane and moves it once, at the reload's picture (file-comments.ts, #cardState's doc)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const SVG2 = PANE_SVG2, HUNK = PANE_HUNK, cardOf = changeCardOf;
+    {
+      const road = "a first open whose fetch fails, the status in first";
+      const { page, errors } = await scene(browser, "pane", { clock: true, docs: { [REPORT]: LONG, [FIG]: SVG2 } });
+      await page.evaluate(([h, fig]: [unknown, string]) => {
+        const w = window as any;
+        w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null, hunks: [h] });
+        w.__gate = new Promise<void>((r) => { w.__open = r; });   // the open's GET held until the panel's status is in
+        w.__okAsks = 0; w.__failTo = 1; w.__fail = { status: 404, body: "no such file: " + fig };   // and then answering 404
+      }, [HUNK, FIG]);
+      await openFig(page);
+      await openPanel(page);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+      const before = await cardOf(page);
+      await page.evaluate(() => { (window as any).__open(); });
+      await paneUp(page);
+      await frames(page, 3);
+      assert.equal((await state(page)).error, "no such file: " + FIG, road + ": the pane stands, error() its words");
+      assert.deepEqual(await cardOf(page), before, road + ": the pane moves no card (file-comments.ts, #cardState's doc)");
+      assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"] }, road + ": before any content paint, and over the pane, the card claims no Reveal and no tag (file-comments.ts, #cardState's doc)");
+      await page.evaluate(() => { (window as any).__seam.reload(); });   // a reload, whose fetch answers
+      await decoded(page);
+      await frames(page, 3);
+      assert.deepEqual(await cardOf(page), { tags: [], buttons: ["Accept", "Reject", "Reveal"] }, road + ": at the reload's picture the card moves, once: the picture marks no change, so a Reveal");
+      onAddress(await state(page), SID, road + ", the reload's picture");
+      assert.deepEqual(errors, [], road + ": no page errors");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, the Files pane with the Comments panel open (the page's clock installed): a reload whose bytes land and whose picture fails, the address asked again and meeting the relay's 502 too, keeps the change card through that pane and moves it once, at the way back's picture (file-comments.ts, #cardState's doc)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const SVG2 = PANE_SVG2, HUNK = PANE_HUNK, cardOf = changeCardOf;
+    {
+      const road = "a reload whose picture fails and whose re-ask fails too";
+      const { page, errors, pic } = await scene(browser, "pane", { clock: true });
+      await page.evaluate(() => { const w = window as any; w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null }); });   // no sidecar or config to watch: the poll watches the file alone
+      await openFig(page);
+      await settled(page);
+      await openPanel(page);
+      const asks = (await state(page)).asks;
+      // the file moves, with the insertion pending in the new bytes: the reload's GET answers (held until the panel's wait is armed),
+      // its picture meets the relay's 502, and the re-ask's GET meets it too
+      pic.mode = "502";
+      await page.evaluate(([n, b]: [number, string]) => { const w = window as any; w.__gate = new Promise<void>((r) => { w.__open = r; }); w.__okAsks = n + 1; w.__fail = { status: 502, body: b }; }, [asks, RELAY_502]);
+      await page.evaluate(([m, f, b, h]: [string, string, string, unknown]) => { const w = window as any; w.__mtime = m; w.__docs[f] = b; w.__status = Object.assign({}, w.__status, { hunks: [h] }); }, [MT2, FIG, SVG2, HUNK]);
+      await page.waitForFunction(() => !!document.querySelector('.fileview-aside .fc-load[data-slot="bytes"]') && !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+      const before = await cardOf(page);
+      assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"] }, road + ": the premise: the view's bytes are not the status's");
+      await page.evaluate(() => { (window as any).__open(); });
+      await paneUp(page);
+      await frames(page, 3);
+      const s = await state(page);
+      assert.equal(s.pane, RELAY_502, road + ": the re-ask's pane, in the relay's words");
+      assert.equal(s.asks, asks + 2, road + ": the reload's fetch and one re-ask");
+      assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT2, road + ": the reload's bytes landed");
+      assert.deepEqual(await cardOf(page), before, road + ": the pane moves no card (file-comments.ts, #cardState's doc)");
+      pic.mode = "ok";                                    // the address answers again, and this page's socket comes back: the way back
+      await page.evaluate(() => { (window as any).__fail = null; window.dispatchEvent(new Event("romp:wsup")); });
+      await decoded(page);
+      await frames(page, 3);
+      assert.deepEqual(await cardOf(page), { tags: [], buttons: ["Accept", "Reject", "Reveal"] }, road + ": at the way back's picture the card moves, once: the picture marks no change, so a Reveal");
+      onAddress(await state(page), SID, road + ", the way back's picture");
+      assert.deepEqual(errors, [], road + ": no page errors");
+      await page.close();
+    }
+  });
+});
+
+/** The change card's tags, buttons and whether its reference links to a mark in the body. */
+const changeCardLinkOf = (page: any): Promise<{ tags: string[]; buttons: string[]; link: boolean } | null> => page.evaluate(() => {
+  const c = document.querySelector(".fileview-aside .fc-card.fc-change");
+  return c ? { tags: Array.from(c.querySelectorAll(".fc-card-head .fc-tag")).map((x) => x.textContent || ""), buttons: Array.from(c.querySelectorAll(".fc-actions button")).map((x) => x.textContent || ""),
+    link: !!(c.querySelector(".fc-ref") as HTMLElement | null)?.classList.contains("fc-link") } : null;
+});
+
+test("in a browser, the Files pane with the Comments panel open over an svg picture's Source view whose status is current, its pending insertion marked (the page's clock installed): a reload of the same bytes whose fetch answers 404 paints its pane, and over it the change card keeps the state the last content paint gave it, no not shown tag and no Reveal claimed and Comment on this change and the link to the mark kept; the same bytes landing after the pane paint the Source view again and move no card", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const road = "a reload of the Source view's bytes that fails, then the same bytes again";
+    const { page, errors } = await scene(browser, "pane", { clock: true, docs: { [REPORT]: LONG, [FIG]: PANE_SVG2 } });
+    await page.evaluate((h: unknown) => { const w = window as any; w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null, hunks: [h] }); }, PANE_HUNK);   // the status's bytes are the file's, the insertion pending in them; no sidecar or config to watch
+    await openFig(page);
+    await settled(page);
+    await openPanel(page);
+    await pressSource(page);
+    const marked = (): Promise<unknown> => page.waitForFunction(() => !!document.querySelector(".fileview-body code.hljs") && document.querySelectorAll('.fileview-body [data-act="fcchange"]').length > 0, null, { timeout: 10000 });
+    await marked();
+    await frames(page, 3);
+    const before = await changeCardLinkOf(page);
+    assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject", "Comment on this change"], link: true }, road + ": the premise: the Source view marks the insertion, and the card links to the mark");
+    const asks = (await state(page)).asks;
+    await page.evaluate(([n, fig]: [number, string]) => { const w = window as any; w.__okAsks = n; w.__failTo = n + 1; w.__fail = { status: 404, body: "no such file: " + fig }; }, [asks, FIG]);   // the next GET answers 404
+    await page.evaluate(() => { (window as any).__seam.reload(); });   // a reload the panel did not ask
+    await paneUp(page);
+    await frames(page, 3);
+    const s = await state(page);
+    assert.equal(s.error, "no such file: " + FIG, road + ": the pane stands, error() its words");
+    assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT, road + ": the view's mtime is the status's under the pane");
+    assert.deepEqual(await changeCardLinkOf(page), before, road + ": over the pane the card keeps the state the last content paint gave it: no not shown tag and no Reveal claimed, no Comment on this change and no link dropped");
+    await page.evaluate(() => { (window as any).__seam.reload(); });   // a reload whose GET answers: the same bytes
+    await marked();                                       // the Source view paints them again at their decode
+    await frames(page, 3);
+    assert.equal((await state(page)).error, null, road + ": a content paint");
+    assert.deepEqual(await changeCardLinkOf(page), before, road + ": the same bytes' paint moves no card either");
+    await pressSource(page);                              // back to the picture, at its /file address
+    await settled(page);
+    onAddress(await state(page), SID, road + ", back to the picture");
+    assert.deepEqual(errors, [], road + ": no page errors");
+    await page.close();
+  });
+});
+
+test("in a browser, the Files pane with the Comments panel open over a png and a pending insertion in a reload's bytes (the page's clock installed): the reload's bytes do not decode, the view's mtime moving to the landed one before the decode fails and no landing told to the panel, and over the decode-failure pane the change card keeps the state the last content paint gave it; it moves once, at the picture of bytes that decode", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const road = "a png reload whose bytes do not decode, then bytes that do";
+    const { page, errors } = await scene(browser, "pane", { clock: true, docs: { [REPORT]: LONG, [FIG]: SVG, [PNG]: "png" } });
+    // a picture that decodes, made by the page's own canvas; no sidecar or config to watch: the poll watches the file alone
+    await page.evaluate(() => {
+      const w = window as any;
+      const c = document.createElement("canvas"); c.width = 4; c.height = 4;
+      const bin = atob(c.toDataURL("image/png").split(",")[1]);
+      w.__pngOk = Array.from(bin, (ch: string) => ch.charCodeAt(0)); w.__pngBytes = w.__pngOk;
+      w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null });
+    });
+    await openFig(page, SID, PNG);
+    await decoded(page);
+    await openPanel(page);
+    // the file moves, with the insertion pending in the new bytes, which do not decode; the reload's GET held until the panel's wait is armed
+    await page.evaluate(([m, h]: [string, unknown]) => { const w = window as any; w.__pngGate = new Promise<void>((r) => { w.__pngOpen = r; }); w.__pngBytes = null; w.__mtime = m; w.__status = Object.assign({}, w.__status, { hunks: [h] }); }, [MT2, PANE_HUNK]);
+    await page.waitForFunction(() => !!document.querySelector('.fileview-aside .fc-load[data-slot="bytes"]') && !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+    const before = await changeCardLinkOf(page);
+    assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"], link: false }, road + ": the premise: the view's bytes are not the status's");
+    await page.evaluate(() => { (window as any).__pngOpen(); });
+    await paneUp(page);
+    await frames(page, 3);
+    const s = await state(page);
+    assert.equal(s.pane, DECODE_FAILED, road + ": the bytes do not decode: DECODE_FAILED's pane");
+    assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT2, road + ": the view's mtime is the landed one, the status's, under the pane");
+    assert.deepEqual(await changeCardLinkOf(page), before, road + ": the pane moves no card (file-comments.ts, #cardState's doc)");
+    await page.evaluate(() => { const w = window as any; w.__pngBytes = w.__pngOk; w.__seam.reload(); });   // a reload whose bytes decode
+    await decoded(page);
+    await frames(page, 3);
+    assert.deepEqual(await changeCardLinkOf(page), { tags: [], buttons: ["Accept", "Reject", "Reveal"], link: false }, road + ": at the picture of bytes that decode the card moves, once: the picture marks no change, so a Reveal");
+    assert.ok((await state(page)).objectUrls.includes("image/png"), road + ": the png's picture is an object URL of its bytes");
+    assert.deepEqual(errors, [], road + ": no page errors");
+    await page.close();
+  });
+});
+
+test("in a browser, the Files pane with the Comments panel open over an svg picture's Source view and a pending insertion in a reload that lands under it (the page's clock installed): with the landed bytes' decode held, a press to the picture and a press back paint no Source view of the older XML, so the change card keeps its state through both presses and the pressed-over picture's load, and moves once, at the decode, over the landed XML", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const INS = ' fill="#996633"';
+    const SVG2 = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="120"><rect width="300" height="120"' + INS + '/></svg>';
+    const at = SVG2.indexOf(INS);
+    const HUNK = { id: "h1", author: "api", ts: 1757145600000, kind: "ins", curFrom: at, curTo: at + INS.length, baseFrom: at, baseTo: at, oldText: "", newText: INS, anchor: null };
+    type Card = { tags: string[]; buttons: string[] } | null;
+    const cardOf = (page: any): Promise<Card> => page.evaluate(() => {
+      const c = document.querySelector(".fileview-aside .fc-card.fc-change");
+      return c ? { tags: Array.from(c.querySelectorAll(".fc-card-head .fc-tag")).map((x) => x.textContent || ""), buttons: Array.from(c.querySelectorAll(".fc-actions button")).map((x) => x.textContent || "") } : null;
+    });
+    const paints = (page: any): Promise<number> => page.evaluate(() => { const w = window as any; return w.__paints - w.__reflows; });
+    const sourceXml = (page: any): Promise<string | null> => page.evaluate(() => document.querySelector(".fileview-body code.hljs")?.textContent ?? null);
+    const road = "a reload under the Source view, to the picture and back while its decode is held";
+    const { page, errors, pic } = await scene(browser, "pane", { clock: true });
+    await page.evaluate(() => { const w = window as any; w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null }); });   // no sidecar or config to watch: the poll watches the file alone
+    await openFig(page);
+    await settled(page);
+    await openPanel(page);
+    await pressSource(page);
+    await page.waitForFunction(() => !!document.querySelector(".fileview-body code.hljs"), null, { timeout: 10000 });
+    await page.evaluate(() => { const w = window as any; w.__textGate = new Promise<void>((r) => { w.__textOpen = r; }); });   // every decode of the fetched bytes held from here
+    await page.evaluate(() => { const w = window as any; w.__gate = new Promise<void>((r) => { w.__open = r; }); });
+    await page.evaluate(([m, f, b, h]: [string, string, string, unknown]) => { const w = window as any; w.__mtime = m; w.__docs[f] = b; w.__status = Object.assign({}, w.__status, { hunks: [h] }); }, [MT2, FIG, SVG2, HUNK]);
+    await page.waitForFunction(() => !!document.querySelector('.fileview-aside .fc-load[data-slot="bytes"]') && !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+    const before = await cardOf(page);
+    assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"] }, road + ": the premise: the view's bytes are not the status's");
+    await page.evaluate(() => { (window as any).__open(); });
+    await page.waitForFunction((m: string) => (window as any).__seam.mtimeNs() === m, MT2, { timeout: 10000 });   // the reload landed under the Source view
+    await frames(page, 2);
+    assert.ok(((await sourceXml(page)) || "").includes('width="200"'), road + ": the decode is held: the older XML still shows");
+    assert.deepEqual(await cardOf(page), before, road + ": at the landing the card keeps its state");
+    const p0 = await paints(page);
+    pic.mode = "hold";                                    // the landed bytes' picture held
+    await pressSource(page);                              // to the picture
+    await page.waitForFunction((m: string) => { const img = document.querySelector(".fileview-body img.fileview-img"); return !!img && (img.getAttribute("src") || "").endsWith("&v=" + m); }, MT2, { timeout: 10000 });
+    await frames(page, 2);
+    assert.deepEqual(await cardOf(page), before, road + ": after the press to the picture, still loading, the card keeps its state");
+    await pressSource(page);                              // back to the Source view
+    await frames(page, 3);
+    assert.deepEqual(await cardOf(page), before, road + ": after the press back the card keeps its state: no Source view of the older XML was painted at the landed mtime");
+    assert.equal(await sourceXml(page), null, road + ": the press back paints no Source view of the older XML; the picture stays up while the landed bytes decode");
+    pic.release();                                        // the pressed-over picture's own request ends
+    await page.waitForFunction(() => { const img = document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement | null; return !!img && img.complete; }, null, { timeout: 10000 });
+    await frames(page, 3);
+    assert.deepEqual(await cardOf(page), before, road + ": through the pressed-over picture's load too");
+    assert.equal(await paints(page), p0, road + ": no paint yet");
+    await page.evaluate(() => { const w = window as any; w.__textGate = null; w.__textOpen(); });
+    await page.waitForFunction(() => (document.querySelector(".fileview-body code.hljs")?.textContent || "").includes('width="300"'), null, { timeout: 10000 });
+    await frames(page, 3);
+    assert.equal(await paints(page), p0 + 1, road + ": one paint, the Source view's at the decode");
+    assert.deepEqual(await cardOf(page), { tags: [], buttons: ["Accept", "Reject", "Comment on this change"] }, road + ": at the decode the Source view marks the insertion over the landed XML, and the card moves, once");
+    await pressSource(page);                              // back to the picture: the landed bytes' at their /file address
+    await settled(page);
+    onAddress(await state(page), SID, road + ", back to the picture");
+    assert.deepEqual(errors, [], road + ": no page errors");
+    await page.close();
+  });
+});
+
+/** The change card as the person sees it, its Reveal's title with it. */
+const changeCardFullOf = (page: any): Promise<{ tags: string[]; buttons: string[]; link: boolean; reveal: string | null } | null> => page.evaluate(() => {
+  const c = document.querySelector(".fileview-aside .fc-card.fc-change");
+  const rv = c ? c.querySelector('[data-act="fcreveal"]') as HTMLElement | null : null;
+  return c ? { tags: Array.from(c.querySelectorAll(".fc-card-head .fc-tag")).map((x) => x.textContent || ""), buttons: Array.from(c.querySelectorAll(".fc-actions button")).map((x) => x.textContent || ""),
+    link: !!(c.querySelector(".fc-ref") as HTMLElement | null)?.classList.contains("fc-link"), reveal: rv ? rv.title : null } : null;
+});
+/** The panel's status asks so far (the page's __posted). */
+const statusAsks = (page: any): Promise<number> => page.evaluate(() => (window as any).__posted.filter((m: any) => m && m.type === "fileComments" && m.verb === "status").length);
+/** The svg's Source view up over its current status, the insertion marked, the Comments panel open or not. */
+async function markedSource(page: any, open: boolean): Promise<void> {
+  await page.evaluate((h: unknown) => { const w = window as any; w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null, hunks: [h] }); }, PANE_HUNK);   // the status's bytes are the file's, the insertion pending in them; no sidecar or config to watch
+  await openFig(page);
+  await settled(page);
+  if (open) await openPanel(page);
+  await pressSource(page);
+  await page.waitForFunction(() => !!document.querySelector(".fileview-body code.hljs") && document.querySelectorAll('.fileview-body [data-act="fcchange"]').length > 0, null, { timeout: 10000 });
+  await frames(page, 3);
+}
+/** The next GET of the svg answers 404, and a reload the panel did not ask paints its pane. */
+async function reloadTo404(page: any): Promise<void> {
+  const asks = (await state(page)).asks;
+  await page.evaluate(([n, fig]: [number, string]) => { const w = window as any; w.__okAsks = n; w.__failTo = n + 1; w.__fail = { status: 404, body: "no such file: " + fig }; }, [asks, FIG]);
+  await page.evaluate(() => { (window as any).__seam.reload(); });
+  await paneUp(page);
+  await frames(page, 3);
+}
+
+test("in a browser, the Files pane over an svg's Source view whose status is current, its pending insertion marked (the page's clock installed): a reload of the same bytes fails to a pane, and the Comments panel closed and opened over it, its status re-read unchanged, moves no change card; nor does the panel's first open over such a pane; the same bytes painted again move none (file-comments.ts, #cardState's doc)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const marked = (page: any): Promise<unknown> => page.waitForFunction(() => document.querySelectorAll('.fileview-body [data-act="fcchange"]').length > 0, null, { timeout: 10000 });
+    for (const road of ["the panel closed and opened over the pane", "the panel's first open over the pane"]) {
+      const first = road === "the panel's first open over the pane";
+      const { page, errors } = await scene(browser, "pane", { clock: true, docs: { [REPORT]: LONG, [FIG]: PANE_SVG2 } });
+      await markedSource(page, !first);
+      const before = first ? null : await changeCardFullOf(page);
+      if (!first) assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject", "Comment on this change"], link: true, reveal: null }, road + ": the premise: the Source view marks the insertion, and the card links to the mark");
+      await reloadTo404(page);
+      assert.equal((await state(page)).error, "no such file: " + FIG, road + ": the pane stands");
+      if (!first) { assert.deepEqual(await changeCardFullOf(page), before, road + ": the pane moves no card"); await closePanel(page); }
+      const asks = await statusAsks(page);
+      await openPanel(page);
+      await page.waitForFunction((n: number) => (window as any).__posted.filter((m: any) => m && m.type === "fileComments" && m.verb === "status").length > n, asks, { timeout: 10000 });   // the open's re-read of the status
+      await frames(page, 6);                              // and its answer, the same status, applied
+      assert.equal((await state(page)).error, "no such file: " + FIG, road + ": the pane still stands");
+      assert.deepEqual(await changeCardFullOf(page), { tags: [], buttons: ["Accept", "Reject", "Comment on this change"], link: true, reveal: null }, road + ": over the pane, after the open's re-read of the same status, the card shows what the last content paint gave it: Comment on this change and the link, no tag and no Reveal (file-comments.ts, #cardState's doc)");
+      await page.evaluate(() => { (window as any).__seam.reload(); });   // a reload whose GET answers: the same bytes
+      await marked(page);
+      await frames(page, 3);
+      assert.deepEqual(await changeCardFullOf(page), { tags: [], buttons: ["Accept", "Reject", "Comment on this change"], link: true, reveal: null }, road + ": the same bytes' paint moves no card");
+      await pressSource(page);
+      await settled(page);
+      onAddress(await state(page), SID, road + ", back to the picture");
+      assert.deepEqual(errors, [], road + ": no page errors");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, the Files pane with the Comments panel open over a png whose status is current and a pending insertion (the page's clock installed): the file moves, the poll asks the reload and the status together, the reload's bytes land and the status for them arrives while the landed bytes' picture decodes, the bytes then fail to decode, and a reload brings bytes that do: the change card moves at the status and at the paint of the bytes that decode; the landing and the pane move none (file-comments.ts, #cardState's doc)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const road = "a png's landing, the status for its bytes, the decode-failure pane, then bytes that decode";
+    const { page, errors } = await scene(browser, "pane", { clock: true, docs: { [REPORT]: LONG, [FIG]: SVG, [PNG]: "png" } });
+    await page.evaluate((h: unknown) => {
+      const w = window as any;
+      const c = document.createElement("canvas"); c.width = 4; c.height = 4;
+      const bin = atob(c.toDataURL("image/png").split(",")[1]);
+      w.__pngOk = Array.from(bin, (ch: string) => ch.charCodeAt(0)); w.__pngBytes = w.__pngOk;   // a picture that decodes, made by the page's own canvas
+      w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null, hunks: [h] });   // the status of the png's bytes, the insertion pending in them; the poll watches the file alone
+    }, PANE_HUNK);
+    await openFig(page, SID, PNG);
+    await decoded(page);
+    await openPanel(page);
+    await page.waitForFunction(() => !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+    const before = await changeCardFullOf(page);
+    assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject", "Reveal"], link: false, reveal: "Show the change in the Raw view" }, road + ": the premise: the picture shows the status's bytes and marks no change, so a Reveal");
+    // the file moves to bytes that do not decode: the poll's status ask is held unanswered, and the reload's GET until both are out
+    const asks = await statusAsks(page);
+    const gets = await page.evaluate(() => (window as any).__pngAsks);
+    await page.evaluate((m: string) => { const w = window as any; w.__autoReply = false; w.__pngGate = new Promise<void>((r) => { w.__pngOpen = r; }); w.__pngBytes = null; w.__mtime = m; }, MT2);
+    await page.waitForFunction(([n, g]: [number, number]) => { const w = window as any; return w.__posted.filter((m: any) => m && m.type === "fileComments" && m.verb === "status").length > n && w.__pngAsks > g; }, [asks, gets], { timeout: 15000 });
+    // at the landing (the object URL of the new bytes is made after mtimeNs() moved, before the picture is put up): the status
+    // for those bytes is answered there; the panel applies it once the landing's task ends, while the new picture decodes, and
+    // every render of the card from then until the pane is recorded
+    await page.evaluate(() => {
+      const w = window as any;
+      const ask = w.__posted.filter((m: any) => m && m.type === "fileComments" && m.verb === "status").pop();
+      const read = () => { const c = document.querySelector(".fileview-aside .fc-card.fc-change"); return c ? { tags: Array.from(c.querySelectorAll(".fc-card-head .fc-tag")).map((x) => x.textContent || ""), buttons: Array.from(c.querySelectorAll(".fc-actions button")).map((x) => x.textContent || ""), link: !!(c.querySelector(".fc-ref") as HTMLElement | null)?.classList.contains("fc-link"), reveal: (c.querySelector('[data-act="fcreveal"]') as HTMLElement | null)?.title ?? null } : null; };
+      w.__renders = [];
+      const aside = document.querySelector(".fileview-aside")!;
+      const seen = new MutationObserver(() => { if (w.__answered && !document.querySelector(".fileview-body .fileview-err")) w.__renders.push({ card: read(), mtime: w.__seam.mtimeNs() }); });
+      seen.observe(aside, { childList: true, subtree: true, attributes: true, characterData: true });
+      const mint = URL.createObjectURL;
+      URL.createObjectURL = (b: any) => {
+        const u = mint(b);
+        if (b && b.type === "image/png") {
+          URL.createObjectURL = mint;
+          w.__atLanding = { mtime: w.__seam.mtimeNs(), card: read() };
+          w.__answered = true;
+          window.dispatchEvent(new MessageEvent("message", { data: Object.assign({ type: "fileCommentsResult", reqId: ask.reqId, fileMtimeNs: w.__mtime }, w.__status) }));
+        }
+        return u;
+      };
+      w.__pngOpen();
+    });
+    await paneUp(page);
+    await frames(page, 3);
+    const at = await page.evaluate(() => { const w = window as any; return { landing: w.__atLanding, renders: w.__renders }; });
+    assert.equal(at.landing.mtime, MT2, road + ": the landing moved the view's mtime before the status arrived");
+    assert.deepEqual(at.landing.card, before, road + ": the landing moves no card");
+    assert.ok(at.renders.length > 0, road + ": the status was applied, and the card rendered, before the pane");
+    for (const r of at.renders) assert.deepEqual(r.card, { tags: [], buttons: ["Accept", "Reject"], link: false, reveal: null }, road + ": at the status the card moves: no Reveal (file-comments.ts, #cardState's doc; at fe43d2c2a the landed mtime read as shown, and the Reveal stood over the landed bytes' picture, over the pane and past it)");
+    const status = at.renders[at.renders.length - 1].card;
+    assert.equal((await state(page)).pane, DECODE_FAILED, road + ": the bytes do not decode: DECODE_FAILED's pane");
+    assert.deepEqual(await changeCardFullOf(page), status, road + ": the pane moves no card");
+    await page.evaluate(() => { const w = window as any; w.__autoReply = true; w.__pngBytes = w.__pngOk; w.__seam.reload(); });   // a reload whose bytes decode
+    await decoded(page);
+    await frames(page, 3);
+    assert.deepEqual(await changeCardFullOf(page), before, road + ": at the paint of bytes that decode the card moves: the picture marks no change, so a Reveal");
+    assert.deepEqual(errors, [], road + ": no page errors");
+    await page.close();
+  });
+});
+
+test("in a browser, the Files pane with the Comments panel open over an svg's Source view whose status is current, its pending insertion marked (the page's clock installed): Show changes inline off moves the card at once; a reload of the same bytes fails to a pane, and Show changes inline on over the pane moves no change card; the paint of the same bytes takes the flip, marking the insertion again (file-comments.ts, #cardState's doc)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const road = "Show changes inline off, a pane, on over the pane, then the paint";
+    const { page, errors } = await scene(browser, "pane", { clock: true, docs: { [REPORT]: LONG, [FIG]: PANE_SVG2 } });
+    await markedSource(page, true);
+    const inline = (): Promise<void> => page.evaluate(() => { (document.querySelector('.fileview-aside [data-act="fcinline"]') as HTMLElement).click(); });
+    await inline();                                        // off, over the Source view
+    await page.waitForFunction(() => document.querySelectorAll('.fileview-body [data-act="fcchange"]').length === 0, null, { timeout: 10000 });
+    await frames(page, 3);
+    const off = await changeCardFullOf(page);
+    assert.equal(off!.link, false, road + ": off, the mark goes at once, and the link with it");
+    assert.ok(off!.reveal !== null && off!.reveal.startsWith("Open the Raw view at the change") && off!.tags.length === 0, road + ": and the card offers the marks-off Reveal at once: " + JSON.stringify(off));
+    await reloadTo404(page);
+    await inline();                                        // on, over the pane
+    await frames(page, 6);
+    assert.equal((await state(page)).error, "no such file: " + FIG, road + ": the pane still stands");
+    assert.deepEqual(await changeCardFullOf(page), off, road + ": the flip on over the pane moves no card: no not shown tag and no Reveal naming the marks (file-comments.ts, #cardState's doc; at fe43d2c2a both came at the flip, over the pane)");
+    await page.evaluate(() => { (window as any).__seam.reload(); });   // the same bytes land and the Source view paints them
+    await page.waitForFunction(() => document.querySelectorAll('.fileview-body [data-act="fcchange"]').length > 0, null, { timeout: 10000 });
+    await frames(page, 3);
+    assert.deepEqual(await changeCardFullOf(page), { tags: [], buttons: ["Accept", "Reject", "Comment on this change"], link: true, reveal: null }, road + ": the paint takes the flip: the insertion marked again, the card linking to it");
+    await pressSource(page);
+    await settled(page);
+    onAddress(await state(page), SID, road + ", back to the picture");
+    assert.deepEqual(errors, [], road + ": no page errors");
+    await page.close();
+  });
+});
+
+test("in a browser, the Files pane with the Comments panel open over an svg's Source view (the page's clock installed): a reload with a pending insertion lands under it with its decode held, a second reload's fetch fails to a pane, the pane is left by a press of the Source toggle to a picture still loading, and then a render and Show changes inline off and on: no change card moves until the picture's load, the paint of the landed bytes (file-comments.ts, #cardState's doc)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const road = "a landing under the Source view, a pane, a press to the picture, then a render and two flips";
+    const { page, errors, pic } = await scene(browser, "pane", { clock: true });
+    await page.evaluate(() => { const w = window as any; w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null }); });   // no sidecar or config to watch: the poll watches the file alone
+    await openFig(page);
+    await settled(page);
+    await openPanel(page);
+    await pressSource(page);
+    await page.waitForFunction(() => !!document.querySelector(".fileview-body code.hljs"), null, { timeout: 10000 });
+    await page.evaluate(() => { const w = window as any; w.__textGate = new Promise<void>((r) => { w.__textOpen = r; }); w.__gate = new Promise<void>((r) => { w.__open = r; }); });   // every decode held from here, and the reload's GET until the panel's wait is armed
+    await page.evaluate(([m, f, b, h]: [string, string, string, unknown]) => { const w = window as any; w.__mtime = m; w.__docs[f] = b; w.__status = Object.assign({}, w.__status, { hunks: [h] }); }, [MT2, FIG, PANE_SVG2, PANE_HUNK]);
+    await page.waitForFunction(() => !!document.querySelector('.fileview-aside .fc-load[data-slot="bytes"]') && !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+    const before = await changeCardFullOf(page);
+    assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject"], link: false, reveal: null }, road + ": the premise: the view's bytes are not the status's");
+    await page.evaluate(() => { (window as any).__open(); });
+    await page.waitForFunction((m: string) => (window as any).__seam.mtimeNs() === m, MT2, { timeout: 10000 });   // the reload landed under the Source view, its decode held
+    await frames(page, 2);
+    assert.deepEqual(await changeCardFullOf(page), before, road + ": the landing moves no card");
+    await reloadTo404(page);                               // a second reload's GET answers 404: its pane
+    assert.deepEqual(await changeCardFullOf(page), before, road + ": the pane moves no card");
+    pic.mode = "hold";                                     // the landed bytes' picture held
+    await pressSource(page);                               // from the pane to the picture: error() null, the picture still loading
+    await page.waitForFunction(() => { const img = document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement | null; return !!img && !img.complete && !document.querySelector(".fileview-body .fileview-err"); }, null, { timeout: 10000 });
+    await frames(page, 2);
+    assert.equal((await state(page)).error, null, road + ": the press left the pane: error() null, the picture not loaded");
+    assert.deepEqual(await changeCardFullOf(page), before, road + ": the press moves no card");
+    await page.evaluate(() => { (document.querySelector(".fileview-aside .fc-card.fc-change .fc-card-head") as HTMLElement).click(); });   // a render with nothing new: the card's head
+    await frames(page, 2);
+    assert.deepEqual(await changeCardFullOf(page), before, road + ": a render before the picture's load moves no card");
+    for (const flip of ["off", "on"]) {
+      await page.evaluate(() => { (document.querySelector('.fileview-aside [data-act="fcinline"]') as HTMLElement).click(); });
+      await frames(page, 2);
+      assert.deepEqual(await changeCardFullOf(page), before, road + ": Show changes inline " + flip + " before the picture's load moves no card");
+    }
+    pic.release();                                         // the picture's own request ends: its load, the content paint of the landed bytes
+    await decoded(page);
+    await frames(page, 3);
+    assert.deepEqual(await changeCardFullOf(page), { tags: [], buttons: ["Accept", "Reject", "Reveal"], link: false, reveal: "Show the change in the Raw view" }, road + ": at the picture's load the card moves, once: the picture marks no change, so a Reveal");
+    onAddress(await state(page), SID, road + ", the picture");
+    await page.evaluate(() => { const w = window as any; w.__textGate = null; w.__textOpen(); });
+    assert.deepEqual(errors, [], road + ": no page errors");
+    await page.close();
+  });
+});
+
+test("in a browser, the Files pane with the Comments panel open over a png whose status is current and a pending insertion (the page's clock installed): newer bytes land, their picture up and still decoding, and a status for the painted bytes whose sidecar moved arrives then: the change card moves at that status, the insertion's Reveal withheld over the landed bytes' picture, and the decode-failure pane moves it no further (file-comments.ts, #cardState's doc)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const road = "a png's landing, then a status for the painted bytes, then the decode-failure pane";
+    const { page, errors } = await scene(browser, "pane", { clock: true, docs: { [REPORT]: LONG, [FIG]: SVG, [PNG]: "png" } });
+    await page.evaluate((h: unknown) => {
+      const w = window as any;
+      const c = document.createElement("canvas"); c.width = 4; c.height = 4;
+      const bin = atob(c.toDataURL("image/png").split(",")[1]);
+      w.__pngBytes = Array.from(bin, (ch: string) => ch.charCodeAt(0));   // a picture that decodes, made by the page's own canvas
+      w.__status = Object.assign({}, w.__status, { storeMtimeNs: null, configMtimeNs: null, hunks: [h] });   // the status of the png's bytes, the insertion pending in them; the poll watches the file alone
+    }, PANE_HUNK);
+    await openFig(page, SID, PNG);
+    await decoded(page);
+    await openPanel(page);
+    await page.waitForFunction(() => !!document.querySelector(".fileview-aside .fc-card.fc-change"), null, { timeout: 15000 });
+    const before = await changeCardFullOf(page);
+    assert.deepEqual(before, { tags: [], buttons: ["Accept", "Reject", "Reveal"], link: false, reveal: "Show the change in the Raw view" }, road + ": the premise: the picture shows the status's bytes and marks no change, so a Reveal");
+    // the file moves to bytes that do not decode: the poll's status ask is held unanswered, and the reload's GET until both are out
+    const asks = await statusAsks(page);
+    const gets = await page.evaluate(() => (window as any).__pngAsks);
+    await page.evaluate((m: string) => { const w = window as any; w.__autoReply = false; w.__pngGate = new Promise<void>((r) => { w.__pngOpen = r; }); w.__pngBytes = null; w.__mtime = m; }, MT2);
+    await page.waitForFunction(([n, g]: [number, number]) => { const w = window as any; return w.__posted.filter((m: any) => m && m.type === "fileComments" && m.verb === "status").length > n && w.__pngAsks > g; }, [asks, gets], { timeout: 15000 });
+    // at the landing (the object URL of the new bytes is made after mtimeNs() moved, before their picture goes up) the held ask is
+    // answered with a status for the painted bytes, the sidecar moved; the panel applies it once the landing's task ends, while the
+    // landed bytes' picture decodes, and every render of the card from then until the pane is recorded
+    await page.evaluate((mt: string) => {
+      const w = window as any;
+      const ask = w.__posted.filter((m: any) => m && m.type === "fileComments" && m.verb === "status").pop();
+      const read = () => { const c = document.querySelector(".fileview-aside .fc-card.fc-change"); return c ? { tags: Array.from(c.querySelectorAll(".fc-card-head .fc-tag")).map((x) => x.textContent || ""), buttons: Array.from(c.querySelectorAll(".fc-actions button")).map((x) => x.textContent || ""), link: !!(c.querySelector(".fc-ref") as HTMLElement | null)?.classList.contains("fc-link"), reveal: (c.querySelector('[data-act="fcreveal"]') as HTMLElement | null)?.title ?? null } : null; };
+      w.__renders = [];
+      const aside = document.querySelector(".fileview-aside")!;
+      new MutationObserver(() => { if (w.__answered && !document.querySelector(".fileview-body .fileview-err")) w.__renders.push({ card: read(), picture: !!document.querySelector(".fileview-body img.fileview-img") }); })
+        .observe(aside, { childList: true, subtree: true, attributes: true, characterData: true });
+      const mint = URL.createObjectURL;
+      URL.createObjectURL = (b: any) => {
+        const u = mint(b);
+        if (b && b.type === "image/png") {
+          URL.createObjectURL = mint;
+          w.__atLanding = { mtime: w.__seam.mtimeNs(), card: read() };
+          w.__answered = true;
+          window.dispatchEvent(new MessageEvent("message", { data: Object.assign({ type: "fileCommentsResult", reqId: ask.reqId }, w.__status, { fileMtimeNs: mt, storeMtimeNs: "1757145600000000005" }) }));
+        }
+        return u;
+      };
+      w.__pngOpen();
+    }, MT);
+    await paneUp(page);
+    await frames(page, 3);
+    const at = await page.evaluate(() => { const w = window as any; return { landing: w.__atLanding, renders: w.__renders }; });
+    assert.equal(at.landing.mtime, MT2, road + ": the landing moved the view's mtime before the status arrived");
+    assert.deepEqual(at.landing.card, before, road + ": the landing moves no card");
+    assert.ok(at.renders.length > 0 && at.renders.every((r: { picture: boolean }) => r.picture), road + ": the status was applied, and the card rendered, while the landed bytes' picture held the body: " + JSON.stringify(at.renders));
+    for (const r of at.renders) assert.deepEqual(r.card, { tags: [], buttons: ["Accept", "Reject"], link: false, reveal: null }, road + ": at the status the card moves: no Reveal (file-comments.ts, #cardState's doc; as at fe43d2c2a, which read the landed mtime and withheld the Reveal too)");
+    assert.equal((await state(page)).pane, DECODE_FAILED, road + ": the bytes do not decode: DECODE_FAILED's pane");
+    assert.deepEqual(await changeCardFullOf(page), at.renders[at.renders.length - 1].card, road + ": the pane moves no card");
+    assert.deepEqual(errors, [], road + ": no page errors");
+    await page.close();
+  });
+});
+
+const NOT_IN_VIEW_LINK = "This change is not in view right now. Its link works once it is.";   // file-comments.ts NOT_IN_VIEW_LINK
+const NOT_IN_VIEW_COMMENT = "This change is not in view right now. Comment on this change works once it is.";   // file-comments.ts NOT_IN_VIEW_COMMENT
+/** The row under the change card, the composer's visibility, the pane, and the panel's requests so far. */
+const clickState = (page: any): Promise<{ row: string | null; composer: boolean; pane: boolean; posted: number }> => page.evaluate(() => {
+  const r = document.querySelector(".fileview-aside .fc-card.fc-change .fc-err span");
+  const box = document.querySelector(".fileview-aside .fc-composer") as HTMLElement | null;
+  return { row: r ? r.textContent : null, composer: !!box && !box.hidden, pane: !!document.querySelector(".fileview-body .fileview-err"), posted: (window as any).__posted.filter((m: any) => m && m.type === "fileComments").length };
+});
+
+test("in a browser, the Files pane with the Comments panel open over an svg's Source view whose status is current, its pending insertion marked (the page's clock installed): a reload of the same bytes fails to a pane, and a click on the change card's link or on Comment on this change says in a row under the card that the change is not in view and does nothing else; after the same bytes' paint, Comment on this change opens the composer (file-comments.ts, #cardState's doc and notInView)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const road = "a pane over the marked Source view, then clicks on the card's link and its Comment on this change";
+    const { page, errors } = await scene(browser, "pane", { clock: true, docs: { [REPORT]: LONG, [FIG]: PANE_SVG2 } });
+    await markedSource(page, true);
+    await reloadTo404(page);
+    assert.deepEqual(await changeCardFullOf(page), { tags: [], buttons: ["Accept", "Reject", "Comment on this change"], link: true, reveal: null }, road + ": the premise: over the pane the card keeps the link and Comment on this change the last content paint gave it");
+    const before = await clickState(page);
+    assert.deepEqual([before.row, before.composer, before.pane], [null, false, true], road + ": the premise: no row, no composer, the pane standing");
+    await page.evaluate(() => { (document.querySelector(".fileview-aside .fc-card.fc-change .fc-ref") as HTMLElement).click(); });
+    await frames(page, 3);
+    assert.deepEqual(await clickState(page), { ...before, row: NOT_IN_VIEW_LINK }, road + ": the link's click shows the row and nothing else: no composer, the pane standing, no request");
+    await page.evaluate(() => { (document.querySelector('.fileview-aside .fc-card.fc-change [data-act="fcchangecomment"]') as HTMLElement).click(); });
+    await frames(page, 3);
+    assert.deepEqual(await clickState(page), { ...before, row: NOT_IN_VIEW_COMMENT }, road + ": Comment on this change's click shows the row and opens no composer");
+    await page.evaluate(() => { (window as any).__seam.reload(); });   // the same bytes land and the Source view paints them
+    await page.waitForFunction(() => document.querySelectorAll('.fileview-body [data-act="fcchange"]').length > 0, null, { timeout: 10000 });
+    await frames(page, 3);
+    assert.equal((await clickState(page)).row, null, road + ": the content paint takes the row");
+    await page.evaluate(() => { (document.querySelector('.fileview-aside .fc-card.fc-change [data-act="fcchangecomment"]') as HTMLElement).click(); });
+    await frames(page, 3);
+    const after = await clickState(page);
+    assert.deepEqual([after.row, after.composer], [null, true], road + ": after the paint Comment on this change opens the composer");
+    assert.deepEqual(errors, [], road + ": no page errors");
+    await page.close();
   });
 });
 

@@ -329,8 +329,8 @@ const HOLD = "The card stays open while its reply is written; Save or Cancel the
 
 // ── the harness: a mounted panel inside the viewer's body row ──────────────────────────────────────
 type Posted = Record<string, any>;
-const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];   // the panel's sections with the box in its slot
-const NO_SLOT = ["fc-sec-head", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];              // …and with the box away in a card
+const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"];   // the panel's sections with the box in its slot, and its live region
+const NO_SLOT = ["fc-sec-head", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"];              // …and with the box away in a card
 async function harness(over: Partial<FileViewActionCtx> = {}) {
   const fc = await import("./file-comments");
   const main = doc.createElement("div"); main.className = "fileview-main";
@@ -339,7 +339,7 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
   const tracked: Array<TrackedEdit | null> = [];
   const closers: Array<() => void> = [];
   const saved: Array<(info: { mtimeNs: string; logged: boolean }) => void> = [];
-  const rendered: Array<() => void> = [];             // the viewer's repaint hooks (paintAll runs from them)
+  const rendered: Array<() => void> = [];             // the viewer's repaint hooks (#latchCardState's pass runs from them)
   let aside: E | null = null;
   const noop = () => { /* inert */ };
   const ctx: FileViewActionCtx = {
@@ -590,7 +590,7 @@ test("the session rewrites the passage under an open reply: the repaint's locate
   const box = h.box(), card = h.card(passage.id)!;
   draft(box, "Which one, then?", 16, 42);
   assert.equal(card.className, "fc-card open");
-  // the Raw view shows a text that no longer holds the passage or its context; the viewer's repaint hook runs paintAll
+  // the Raw view shows a text that no longer holds the passage or its context; the viewer's repaint hook runs #latchCardState's pass
   txt = DOC.replace("We recommend shipping the cache in v1.2.\n\n", "");
   md = "raw";
   const code = doc.createElement("code"); code.className = "hljs"; code.textContent = txt; h.body.appendChild(code);

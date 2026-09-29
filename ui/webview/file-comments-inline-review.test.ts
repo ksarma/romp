@@ -318,7 +318,8 @@ function rows(code: El, src: string): void {
   }));
 }
 const el = (tag: string, ...kids: Array<El | string>): El => { const e = new El(tag); for (const k of kids) e.appendChild(typeof k === "string" ? new Txt(k) : k); return e; };
-/** A file-authored inline element the sanitizer keeps: `<span data-act=… data-id=…>text</span>`. */
+/** A file-authored inline element carrying the panel's attribute names, `<span data-act=… data-id=…>text</span>`, handed to the
+ *  panel as written: the sanitizer strips an author's data-* (md-sanitize.ts), and the panel's own rule (owns) refuses it too. */
 const fileSpan = (act: string, id: string, text: string): El => { const s = el("span", text); s.dataset.act = act; s.dataset.id = id; return s; };
 /** A link as mdBlock leaves it: marked's <a href>, given target=_blank rel=noopener by the viewer. */
 const link = (href: string, ...kids: Array<El | string>): El => { const a = el("a", ...kids); a.setAttribute("href", href); a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener"); return a; };
