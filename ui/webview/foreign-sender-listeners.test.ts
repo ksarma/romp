@@ -1508,9 +1508,9 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     once. The refusal names the site. The proof trusts `new WebSocket(...)` because the name WebSocket is refused
 //     below; a global WebSocket replaced through an object built elsewhere with a computed key and copied onto the
 //     window is on the list of what the rules cannot see, and through it a socket the census accepts can be the window.
-//     A window other than this page's own is refused whatever the value. On every other receiver the census resolves to neither this page's window nor a socket (the body
-//     element, a parameter, a call's result, an object's property, a MessagePort, a worker, a channel), a value that sets
-//     a handler is refused;
+//     A window other than this page's own is refused whatever the value. On every other receiver the census resolves
+//     to neither this page's window nor a socket (the body element, a parameter, a call's result, an object's property,
+//     a MessagePort, a worker, a channel), a value that sets a handler is refused;
 //   - a message or messageerror listener added to a window other than this page's own (parent.addEventListener(...)),
 //     where a check at its head could not be about this page's senders;
 //   - code run from a string: eval, the Function constructor (by name, or reached through a function's .constructor),
