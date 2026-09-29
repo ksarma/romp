@@ -26,9 +26,10 @@ dispatch queues rather than cancels, and the event name stays in the key so a di
 is never cancelled by a push to the same ref (2026-07-27). CiConcurrency evaluates the stanza's two
 expressions for each kind of run instead of matching their spelling.
 
-Runners (2026-09-28): a batch push gets Linux alone. CiMatrixRunners evaluates both matrix jobs' `os:` expressions
-for each kind of run with the same evaluator, joins every `include:` entry's os, and reads the other two jobs'
-literal `runs-on:`, so macOS on a batch push by any of those roads fails by name.
+Runners (2026-09-28): a batch push gets Linux alone. CiMatrixRunners evaluates each matrix job's `os:` expression
+(python, shell and vendored-tooling) for each kind of run with the same evaluator, joins every `include:` entry's os,
+and reads the other jobs' literal `runs-on:` (secrets, vscode-extension and served-pages), so macOS on a batch push by
+any of those roads fails by name.
 
 No YAML library is in the test deps, so the blocks are read by indentation, and anything the readers
 do not understand fails with "re-anchor" rather than passing."""
@@ -468,14 +469,14 @@ class CiConcurrency(unittest.TestCase):
 
 
 
-MATRIX_JOBS = ("python", "shell")          # runs-on: ${{ matrix.os }}
-FIXED_JOBS = ("secrets", "vscode-extension")   # runs-on: a literal label
+MATRIX_JOBS = ("python", "shell", "vendored-tooling")          # runs-on: ${{ matrix.os }}
+FIXED_JOBS = ("secrets", "vscode-extension", "served-pages")   # runs-on: a literal label
 
 
 class CiMatrixRunners(unittest.TestCase):
-    """Round 1, tests-5: a batch push gets Linux alone. Every job's runners on a push to refs/heads/batch/x: the two
-    matrix jobs' evaluated os: lists joined with every include: entry's os, and the other two jobs' literal runs-on.
-    The weekly schedule and a manual dispatch add macOS to both matrix jobs."""
+    """Round 1, tests-5: a batch push gets Linux alone. Every job's runners on a push to refs/heads/batch/x: each matrix
+    job's (MATRIX_JOBS) evaluated os: list joined with every include: entry's os, and each other job's (FIXED_JOBS)
+    literal runs-on. The weekly schedule and a manual dispatch add macOS to every matrix job."""
 
     def setUp(self):
         self.src = _source()
@@ -508,16 +509,16 @@ class CiMatrixRunners(unittest.TestCase):
         for job in MATRIX_JOBS:
             self.assertEqual(job_value(self.src, job, "runs-on"), "${{ matrix.os }}", "the %s job runs on its matrix's os" % job)
 
-    def test_the_schedule_and_a_dispatch_add_macos_to_both_matrix_jobs(self):
+    def test_the_schedule_and_a_dispatch_add_macos_to_every_matrix_job(self):
         for event in ("schedule", "workflow_dispatch"):
             got = self.runners(event, MAIN)
             for job in MATRIX_JOBS:
                 with self.subTest(event=event, job=job):
                     self.assertEqual(got[job], ["macos-latest", "ubuntu-latest"])
 
-    def test_a_fifth_job_and_a_flow_form_include_are_read(self):
-        """The two ways round 1's verify put a job on macOS for a batch push past the pin: a fifth job with a literal
-        runs-on (the job set was the fixed list of four) and a flow-form include: entry (the include reader read the
+    def test_an_added_job_and_a_flow_form_include_are_read(self):
+        """The two ways round 1's verify put a job on macOS for a batch push past the pin: an added job with a literal
+        runs-on (the job set was then a fixed list of four) and a flow-form include: entry (the include reader read the
         block form only). Both are read now, and an include line that names os: in a form the reader cannot read is a
         re-anchor, not a silent skip."""
         fifth = self.src.rstrip("\n") + "\n\n  late:\n    runs-on: macos-latest\n    steps:\n      - run: true\n"
