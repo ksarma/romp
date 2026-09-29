@@ -5593,6 +5593,11 @@ class Reader(unittest.TestCase):
         d = sweep.sweeps_dir(self.env)
         self.assertIn("in %s (the state dir from XDG_STATE_HOME; the directory does not exist)" % d, line)
         self.assertIn("with the same ROMP_STATE_DIR and XDG_STATE_HOME as this reader", line)
+        # round 2, extra9-8: the remedy names --python (a default python3 of another version is refused for the served
+        # leg's venv), with or without a --tree hint
+        self.assertIn("run `scripts/sweep.py run --python <python>` (%s)" % sweep.PYTHON_REMEDY, line)
+        hinted = sweep.assess(self.SHA, tree_hint="/nonexistent/tree", env=self.env)["line"]
+        self.assertIn("run `scripts/sweep.py run --tree /nonexistent/tree --python <python>` (%s)" % sweep.PYTHON_REMEDY, hinted)
         os.makedirs(d)
         line = self.case()[1]
         self.assertIn("in %s (the state dir from XDG_STATE_HOME)" % d, line, "an existing directory is named without the clause")

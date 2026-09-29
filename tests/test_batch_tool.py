@@ -1739,7 +1739,8 @@ class VerifyReadsTheSweep(_Base):
         head = self.assembled()
         p = self.refused("FAIL sweep missing: no result for the batch head %s in %s (the state dir from XDG_STATE_HOME"
                          % (head, sweep.sweeps_dir(env=fx.env)))
-        self.assertIn("run `scripts/sweep.py run --tree %s` with the same ROMP_STATE_DIR and XDG_STATE_HOME" % fx.wt("b1"), p.stdout)
+        self.assertIn("run `scripts/sweep.py run --tree %s --python <python>` (%s) with the same ROMP_STATE_DIR and XDG_STATE_HOME"
+                      % (fx.wt("b1"), sweep.PYTHON_REMEDY), p.stdout)
 
     def test_the_no_result_case_compares_the_same_under_a_linked_temp_dir(self):
         """Frozen-head ruling 5: the no-result case above failed on macOS, where the temp dir is reached through a link
@@ -1759,7 +1760,8 @@ class VerifyReadsTheSweep(_Base):
         head = self.assembled()
         p = self.refused("FAIL sweep missing: no result for the batch head %s in %s (the state dir from XDG_STATE_HOME"
                          % (head, sweep.sweeps_dir(env=fx.env)))
-        self.assertIn("run `scripts/sweep.py run --tree %s` with the same ROMP_STATE_DIR and XDG_STATE_HOME" % fx.wt("b1"), p.stdout)
+        self.assertIn("run `scripts/sweep.py run --tree %s --python <python>` (%s) with the same ROMP_STATE_DIR and XDG_STATE_HOME"
+                      % (fx.wt("b1"), sweep.PYTHON_REMEDY), p.stdout)
         self.assertEqual(os.path.realpath(fx.wt("b1")), fx.wt("b1"), "the Fixture hands out resolved paths")
         self.assertTrue(fx.tmp.startswith(real + os.sep), fx.tmp)
 
@@ -2038,6 +2040,15 @@ class VerifyReadsTheSweep(_Base):
         for n in sweep.EXTENSION_LEGS:          # the fixture's worlds have no vscode-extension/package.json
             out[n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
         return out
+
+
+class PythonRemedy(unittest.TestCase):
+    """Round 2, extra9-8: the reader's missing line (sweep.py) and finish's merge-commit remedies (batch.py) name
+    `--python <python>` with one explanation, kept as one text in both scripts."""
+
+    def test_the_two_scripts_explain_python_in_one_text(self):
+        self.assertEqual(batch.PYTHON_REMEDY, sweep.PYTHON_REMEDY)
+        self.assertIn("--served-python", batch.PYTHON_REMEDY)
 
 
 class VerifyBehind(_Base):
@@ -2903,8 +2914,8 @@ class LandAndFinish(_Base):
         self.assertIn("FIRST PARENT MISMATCH: batch PR #900's merge commit %s has first parent %s, not %s, the main verify read"
                       % (merge, moved, seen), p.stderr)
         self.assertIn("so the tree on main is not the batch head's tree, and no sweep or CI run tested it", p.stderr)
-        self.assertIn("`git worktree add --detach ../romp-merge-b1 %s`, then `scripts/sweep.py run --tree ../romp-merge-b1`"
-                      % merge, p.stderr)
+        self.assertIn("`git worktree add --detach ../romp-merge-b1 %s`, then `scripts/sweep.py run --tree ../romp-merge-b1 "
+                      "--python <python>` (%s; it owes every leg there)" % (merge, batch.PYTHON_REMEDY), p.stderr)
         self.assertIn("batch #900 landed, ", p.stdout, "the cleanup ran first")
         self.assertEqual(fx.bare_rev("batch/b1"), "")
         self.assertEqual(fx.state("b1")["finished"]["report"]["first_parent"], {"merge": merge, "first_parent": moved, "verified_main": seen, "ok": False})
@@ -2951,7 +2962,8 @@ class LandAndFinish(_Base):
         self.assertIn("HEAD MISMATCH: batch PR #900's merge commit %s has second parent %s, not %s, the batch head verify read: "
                       "a commit reached batch/b1 after verify, so the tree on main is not the tree the sweep read" % (merge, late, verified),
                       p.stderr)
-        self.assertIn("`git worktree add --detach ../romp-merge-b1 %s`" % merge, p.stderr)
+        self.assertIn("`git worktree add --detach ../romp-merge-b1 %s`, then `scripts/sweep.py run --tree ../romp-merge-b1 "
+                      "--python <python>` (%s; it owes every leg there)" % (merge, batch.PYTHON_REMEDY), p.stderr)
         self.assertNotIn("FIRST PARENT", p.stderr, "main did not move")
         self.assertEqual(fx.calls("run", "list")[-1][fx.calls("run", "list")[-1].index("--commit") + 1], late,
                          "the CI run is read at the head that landed")

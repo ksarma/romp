@@ -110,6 +110,10 @@ CI_WORKFLOW_NAME = "CI"    # and its `name:`, which gh reports as a run's workfl
 # The fields land reads of each run gh lists (attempt: the run's latest attempt, whose earlier ones land reads too).
 CI_RUN_FIELDS = "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt,attempt"
 MAIN = "main"
+# What the merge-commit remedies say of `scripts/sweep.py run --python <python>` (round 2, extra9-8): the same text as
+# scripts/sweep.py's PYTHON_REMEDY, which the reader's missing line prints (tests/test_batch_tool.py holds the two equal).
+PYTHON_REMEDY = ("<python>: a Python of the version CI's served step runs, or pass --served-python one as well; "
+                 "docs/batching.md, batcher step 3")
 REMOTE = "origin"
 LABEL_MAJOR = "major-feature"
 LABEL_HOLD = "hold"
@@ -2716,7 +2720,8 @@ def landed_head_report(name, b, lh):
     means, and the remedy, a sweep at the merge commit (as for the first parent)."""
     merge, second, seen = lh.get("merge"), lh.get("second_parent"), lh.get("verified_head")
     remedy = ("Sweep the merge commit now: `git worktree add --detach ../romp-merge-%s %s`, then `scripts/sweep.py run --tree "
-              "../romp-merge-%s` (it owes every leg there), and tell the maintainer what it finds." % (name, merge, name))
+              "../romp-merge-%s --python <python>` (%s; it owes every leg there), and tell the maintainer what it finds."
+              % (name, merge, name, PYTHON_REMEDY))
     if not second or not seen:
         return ("HEAD NOT CHECKED: batch PR #%d's merge commit %s has %s, and verify recorded %s, so no one checked that the "
                 "head that landed is the one the sweep read. %s" % (b, merge, "second parent %s" % second if second else
@@ -2732,7 +2737,8 @@ def first_parent_report(name, b, fp):
     shas, what it means, and the remedy, a sweep at the merge commit, which owes every leg as any head does."""
     merge, parent, seen = fp.get("merge"), fp.get("first_parent"), fp.get("verified_main")
     remedy = ("Sweep the merge commit now: `git worktree add --detach ../romp-merge-%s %s`, then `scripts/sweep.py run --tree "
-              "../romp-merge-%s` (it owes every leg there), and tell the maintainer what it finds." % (name, merge or "<merge>", name))
+              "../romp-merge-%s --python <python>` (%s; it owes every leg there), and tell the maintainer what it finds."
+              % (name, merge or "<merge>", name, PYTHON_REMEDY))
     if not merge:
         return ("FIRST PARENT NOT CHECKED: GitHub reports no merge commit for batch PR #%d, so finish cannot say that the tree "
                 "on %s is the batch head's (verify read %s at %s). Find the merge commit on %s, then: %s"

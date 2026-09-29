@@ -315,6 +315,10 @@ NO_LEDGER_SCRIPT = "no %s in the tree" % LEDGER_SCRIPT
 NOT_OWED_WHY = dict([(n, NO_PACKAGE_JSON) for n in EXTENSION_LEGS] + [("ledger", NO_LEDGER_SCRIPT)])
 NOT_OWED_FILE = {NO_PACKAGE_JSON: "vscode-extension/package.json", NO_LEDGER_SCRIPT: LEDGER_SCRIPT}
 EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
+# What a printed remedy says of `--python <python>` (round 2, extra9-8): the reader's missing line and batch.py's
+# merge-commit remedies name the flag, since a default python3 of another version is refused for the served leg's venv.
+PYTHON_REMEDY = ("<python>: a Python of the version CI's served step runs, or pass --served-python one as well; "
+                 "docs/batching.md, batcher step 3")
 
 # The pytest command the runner builds (pytest_cmd): `<python> -m pytest tests -n <workers>`, then these flags, then
 # PYTEST_ISOLATION and one --ignore per PYTEST_IGNORED entry. Against CI's Run pytest step (.github/workflows/ci.yml,
@@ -869,10 +873,13 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
         # names, so a result written with another ROMP_STATE_DIR or XDG_STATE_HOME is missing here.
         hint = " --tree %s" % tree_hint if tree_hint else ""
         d = sweeps_dir(env)
+        # round 2, extra9-8: the remedy names --python, since a --python of another version than CI's served step runs
+        # needs --served-python too (docs/batching.md, batcher step 3)
         return done("missing", "sweep missing: no result for %s %s in %s (the state dir from %s%s); run `scripts/sweep.py "
-                               "run%s` with the same ROMP_STATE_DIR and XDG_STATE_HOME as this reader, or its result goes to "
-                               "another directory" % (subject, sha, d, state_dir_source(env),
-                                                      "" if os.path.isdir(d) else "; the directory does not exist", hint))
+                               "run%s --python <python>` (%s) with the same ROMP_STATE_DIR and XDG_STATE_HOME as this reader, "
+                               "or its result goes to another directory" % (subject, sha, d, state_dir_source(env),
+                                                                            "" if os.path.isdir(d) else "; the directory does "
+                                                                            "not exist", hint, PYTHON_REMEDY))
     try:
         data = _load(path)
     except (OSError, ValueError) as e:
