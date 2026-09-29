@@ -2054,6 +2054,9 @@ class Checkout(_Base):
         calls = w.calls()
         first = [c["root"] for c in calls if c["leg"] == PYTEST_LEG][0]
         self.assertTrue([c for c in calls if c["root"] != first], "legs of later jobs ran, in checkouts of their own")
+        # the crossing first, so a runner whose clones copy refs is red naming the later job's leg that saw the leaked ones
+        for c in calls:
+            self.assertEqual([r for r in c["refs"] if "leaked" in r], [], "%s's checkout holds a ref the pytest leg wrote" % c["leg"])
         for c in calls:
             self.assertEqual(c["refs"], [], "%s's checkout holds no ref" % c["leg"])
 
