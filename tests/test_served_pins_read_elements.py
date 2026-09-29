@@ -35,7 +35,8 @@ too, judged over the whole text, so a literal a comment spells anywhere in the t
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
 the author's pass 7), or a `self.<attr>` bound to one in any method of the same class (a setUp, or a setUpClass's `cls.<attr>`;
 round 6, CLS: a class attribute had been outside the derivation, 83 rows in four suite modules) or of an in-module base class, nearest
-first (round 6, INHERIT; the textual census does not read inheritance, so such a row is a declined form), or a body FETCHED by a literal path
+first and breadth-first, every base a class lists before any base's own bases (round 6, INHERIT; the textual census does not read
+inheritance, so such a row is a declined form; the order is not Python's, the Reach paragraph below), or a body FETCHED by a literal path
 (the author's pass 8, 2026-09-20: `_, body = _serve_get("/sw.js", ...)`, `page = self._get_text("/")`, through `.read(...)` and
 `.decode(...)`, alone or by tuple unpack, and since round 6 a `.decode(...)` or `.read(...)` of any served text read inline or bound
 from a fetched tuple's position, `body = resp[1].decode()`, a form the textual census declines (PEEL, correctness-1); the fixer pass of the author's pass 8: a FORMATTED url too, `with urllib.request.urlopen(
@@ -167,7 +168,12 @@ binds as the page though it is the headers on the first road), and a name bound 
 (it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it). One form is read and
 judged against another state than the test's: a pin over a getter the test renders after setting kernel state (54 rows at
 97e65ad4e) is judged against the hermetic render and the getter's constant returns, so a literal commented only in the state the test
-sets passes (extra8-4). The unread forms the round measured with live sites, counted at 97e65ad4e: a literal bound by assignment
+sets passes (extra8-4). One form is read against another binding than the one Python resolves: an attribute more than one in-module
+base class binds is read from the nearest of them breadth-first, every base a class lists before any base's own bases (_base_attrs),
+where Python's method resolution order can reach a listed base's own base first (`class Z(M, Q)` with `class M(B)`, B and Q each
+binding the attribute: the census reads Q's, and Python's order puts B before Q), so a pin there is judged against the other base's
+text (at 5a5aab70c the two orders give the same bindings in all 4382 classes of the population; the INHERIT test's i8 is the
+witness). The unread forms the round measured with live sites, counted at 97e65ad4e: a literal bound by assignment
 rather than a loop (3, tests/test_dashboard_auto_reload.py and tests/test_remotes_panel_render.py); a getter called WITH arguments,
 which renders another text (`_shim_core_js("chat")`; 1, tests/test_dashboard_auto_reload.py); a formatted url whose query carries no
 `token=`, answered with the paste-the-token page (1, tests/test_kernel.py); a page from a dynamically resolved getter (`getattr(km,
@@ -997,8 +1003,11 @@ def _loops(fn):
 
 def _base_attrs(cls, by_name, own_attrs, have):
     """{attribute key: served text} the in-module base classes of `cls` bind in their own methods (own_attrs gives one class's
-    self.<attr> and cls.<attr> bindings), nearest base first and on through the bases' bases, for each attribute neither `cls` (the
-    names in `have`) nor a nearer base binds: a subclass reads what its base's setUp or setUpClass bound (round 6, INHERIT: main's
+    self.<attr> and cls.<attr> bindings), nearest base first and on through the bases' bases, breadth-first (every base a class
+    lists, in its order, before any base's own bases), for each attribute neither `cls` (the names in `have`) nor a nearer base
+    binds. Breadth-first is not Python's method resolution order, which can reach a listed base's own base before a later listed
+    base (`class Z(M, Q)` with `class M(B)`: this reads Q's binding, Python's order B's; the module docstring's Reach discloses it,
+    and the INHERIT test's i8 pins it). A subclass reads what its base's setUp or setUpClass bound (round 6, INHERIT: main's
     tests/test_fetch_wrapper_census.py binds the worker in _Served.setUpClass and reads it in the subclasses). An attribute is merged
     by its name, a fetched tuple's position keys (`worker[1]`) with it. A base named otherwise than by a bare Name, or a class the
     module does not define, binds nothing here."""
@@ -3315,8 +3324,13 @@ class T(unittest.TestCase):
         # its own class does not bind (O's own setUp wins over B's). Main's tests/test_fetch_wrapper_census.py binds the worker so
         # and reads it in the subclasses, where no census had read it. A base the module does not define binds nothing (X). The
         # textual census's class bindings end at the next class line, so a row over an inherited attribute is a declined form (i1,
-        # i2), and one over the class's own attribute is not (i3, i4). Dropping INHERIT reds the rows here, and dropping the
-        # declined clause reds i1's form. The rows of both derivations are named, never inferred.
+        # i2), and one over the class's own attribute is not (i3, i4). An attribute two bases bind is read from the nearest: N's
+        # own setUp before B's for P (i6), and the first listed base before the second for R (i7, N's before Q's). The walk is
+        # breadth-first, every listed base before any base's own base, so Z(M, Q) reads Q's binding (i8) where Python's method
+        # resolution order reaches M's base B first: the order the module docstring's Reach discloses, and this row its witness.
+        # Dropping INHERIT reds the rows here, dropping the declined clause reds i1's form, letting a farther base's binding
+        # overwrite a nearer one reds i6 to i8, walking the listed bases last first reds i7, and walking a base's own bases before
+        # the later listed bases reds i8. The rows of both derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 class B(unittest.TestCase):
@@ -3344,6 +3358,21 @@ class O(B):
 class X(Elsewhere):
     def test_c(self):
         self.assertIn("i5", self.html)
+class N(B):
+    def setUp(self):
+        self.html = km._chat_page()
+class P(N):
+    def test_d(self):
+        self.assertIn("i6", self.html)
+class Q(unittest.TestCase):
+    def setUp(self):
+        self.html = km._feed_page()
+class R(N, Q):
+    def test_e(self):
+        self.assertIn("i7", self.html)
+class Z(M, Q):
+    def test_f(self):
+        self.assertIn("i8", self.html)
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3354,9 +3383,11 @@ class X(Elsewhere):
         finally:
             os.unlink(f.name)
         self.assertEqual(rows, [(16, "i1", "_landing", "in", False, False), (17, "i2", "_chat_page", "in", False, True), (18, "i3", "_feed_page", "in", True, False),
-                                (23, "i4", "_chat_page", "in", True, False)])
+                                (23, "i4", "_chat_page", "in", True, False), (32, "i6", "_chat_page", "in", False, False),
+                                (38, "i7", "_chat_page", "in", False, False), (41, "i8", "_feed_page", "in", False, False)])
         self.assertEqual(sites, [(18, "i3", "_feed_page", "in"), (23, "i4", "_chat_page", "in")])
-        self.assertEqual([r[:3] for r in readers], [(16, "assert", "_landing"), (17, "assert", "_chat_page"), (18, "assert", "_feed_page"), (23, "assert", "_chat_page")])
+        self.assertEqual([r[:3] for r in readers], [(16, "assert", "_landing"), (17, "assert", "_chat_page"), (18, "assert", "_feed_page"), (23, "assert", "_chat_page"),
+                                                    (32, "assert", "_chat_page"), (38, "assert", "_chat_page"), (41, "assert", "_feed_page")])
 
 
     def test_a_conversion_of_a_served_text_is_read_as_that_text(self):
