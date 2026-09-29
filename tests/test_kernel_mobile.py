@@ -964,9 +964,9 @@ for (const [s, deep] of [[1.05, false], [2, true]]) {
   r6step(f, 'down', 844 / s, 0, s); r6step(f, 'reNoPan', 508 / s, 0, s);
 }
 // extra10-1: the light-zoom window with no hold (the keyboard's first raise stores the reading less the share), the keyboard
-// down, up with no pan, a pan inside the share, down, and up with its pan again
-for (const s of [1.0007, 1.003, 1.01, 1.05]) {
-  const f = 'lz' + s; r6rest(f);
+// down, up with no pan, a pan inside the share, down, and up with its pan again; from the cut itself (844/843.5) up
+for (const s of [844 / 843.5, 1.0007, 1.003, 1.008, 1.01, 1.05]) {
+  const f = 'lz' + (+s.toFixed(5)); r6rest(f);
   r6step(f, 'A1-kbUpPan', 508 / s, 83, s); r6step(f, 'A2-kbDown', 844 / s, 0, s); r6step(f, 'A3-kbUpNoPan', 508 / s, 0, s);
   r6step(f, 'A4-kbUpPanInShare', 508 / s, r6share(s), s); r6step(f, 'A5-kbDown', 844 / s, 0, s); r6step(f, 'A6-kbUpPanAgain', 508 / s, 83, s);
 }
@@ -1003,10 +1003,25 @@ for (const [p, s, tag] of [[30, 1.05, 'p30-s1.05'], [83, 1.2, 'p83-s1.2'], [83, 
   r6step(f, 'P3-up40', 254, 40, 2); r6step(f, 'P4-at0', 254, 0, 2); }
 { const f = 'nohold'; r6rest(f); r6step(f, 'Z1-kbUpZ', 230, 83, 2); r6step(f, 'Z2-drag500', 230, 500, 2);
   r6step(f, 'Z3-back83', 230, 83, 2); r6step(f, 'Z4-to10', 230, 10, 2); }
-// the drag face where the zoom's share reaches the value: a hold measured at the light zoom (1.05, the zoom unpanned: the
-// reading 60 less the share's 40, 20) and the same keyboard's pan dragged to the top
+// a pan of a keyboard raised at this zoom where the zoom's share reaches the value: a hold measured at the light zoom (1.05,
+// the zoom unpanned: the reading 60 less the share's 40, 20) and the same keyboard's pan dragged to the top
 { const s = 1.05, f = 'lzhold20'; r6rest(f); r6step(f, 'zoom', 844 / s, r6share(s) / 2, s);
   r6step(f, 'kbUpLZ', 508 / s, Math.round(r6share(s)) + 20, s); r6step(f, 'dragTo0', 508 / s, 0, s); }
+// the same hold, then a zoom alone to 1.1 and back to 1.05 with the keyboard up (the band 508 throughout, so no keyboard event),
+// then the same drag to the top: the zoom's scale is the one the raise wrote at again, but a zoom alone came since
+{ const s = 1.05, f = 'zoomBack'; r6rest(f); r6step(f, 'zoom', 844 / s, r6share(s) / 2, s);
+  r6step(f, 'kbUpLZ', 508 / s, Math.round(r6share(s)) + 20, s); r6step(f, 'zoomAway', 508 / 1.1, 60, 1.1);
+  r6step(f, 'zoomBackTo1.05', 508 / s, 60, s); r6step(f, 'dragTo0', 508 / s, 0, s); }
+// a zoom alone after a pan the rule re-bounded (disclosed in the fit() comment): the rule's value is published and not stored, so
+// the zoom alone publishes from the value in force, here the re-raise bound 0. No hold, the keyboard raised at 1.05, down, up with
+// no pan, the pan to the share (40), then a zoom alone to 1.1 about the band's centre, and back to 1.05 at the same pan
+{ const s = 1.05, f = 'zoomAfterPan'; r6rest(f);
+  r6step(f, 'A1-kbUpPan', 508 / s, 83, s); r6step(f, 'A2-kbDown', 844 / s, 0, s); r6step(f, 'A3-kbUpNoPan', 508 / s, 0, s);
+  r6step(f, 'A4-kbUpPanInShare', 508 / s, r6share(s), s);
+  r6step(f, 'zoomAlone1.1', 508 / 1.1, r6share(s) + 0.5 * 508 * (1 / s - 1 / 1.1), 1.1); r6step(f, 'zoomBack1.05', 508 / s, r6share(s), s); }
+// a hold of 83 raised at scale 1, then ONE report that pinches to 2 as a taller keyboard comes in (the band 508 to 460: no zoom
+// alone, since h changed, and no raise, since no keyboard-down run came between), then that keyboard's pan up to 40
+{ const f = 'swapZoom'; r6rest(f); r6step(f, 'kbUp', 508, 83, 1); r6step(f, 'swapPinch2', 230, 200, 2); r6step(f, 'up40', 230, 40, 2); }
 // the 0px road clears the written-hold flag where it clears the hold (the maintainer's round 6 ruling, 2026-09-29, the flag's
 // clearing rule): a hold of 83 at scale 1 (the band 460, the flag set), the pointer fine with the visual viewport at rest (the 0px
 // road clears the hold and the flag), then coarse again under a real pinch with the same keyboard up, the nohold family's three
@@ -1023,6 +1038,32 @@ for (const [p, s, tag] of [[30, 1.05, 'p30-s1.05'], [83, 1.2, 'p83-s1.2'], [83, 
 { const f = 'fineKeep'; r6rest(f); r6step(f, 'kbUp', 460, 83, 1);
   global.matchMedia = () => ({ matches: false }); r6step(f, 'finePan', 460, 83, 1); global.matchMedia = savedMatchMedia;
   r6step(f, 'Z1-kbUpZ', 230, 83, 2); r6step(f, 'Z2-drag500', 230, 500, 2); r6step(f, 'Z3-back83', 230, 83, 2); }
+// the STANCE cells of round 6's extended families (its H1, H2, H4 and H6, first driven by a checker kept outside the tree), so the
+// tree reads the published value of every one: a report under a pinch that no keyboard raised at that zoom governs. Each carries
+// the family's hold, the value the stance keeps. x1: a hold of p at scale 1 pinched about the band's centre to s; x2: a hold of 0
+// pinched, dragged past the share (by 1, by 40, and to the layout viewport's bottom), back to the top and to half the share; x4: a
+// continuous pinch in to 3 and out again about the band's top, centre and bottom; x6: a hold of 83 pinched, dragged to the bottom
+// and back to half the share (the cell the ungated pan rule moved at 1.2, 83 to 70), then the keyboard down and the first field again
+const r6x = (fam, tag, height, offsetTop, scale, hold) => { r6step(fam, tag, height, offsetTop, scale); r6[fam][r6[fam].length - 1].hold = hold; };
+for (const p of [5, 10, 20, 30, 40, 60, 83, 120]) for (const s of [1.0007, 1.003, 1.01, 1.02, 1.05, 1.08, 1.1, 1.11, 1.2, 1.5, 2]) {
+  const f = 'x1-p' + p + '-s' + s; r6rest(f); r6step(f, 'kbUp1', 508, p, 1); r6x(f, 'pinchC', 508 / s, p + 0.5 * 508 * (1 - 1 / s), s, p);
+}
+for (const s of [1.01, 1.05, 1.2, 2]) for (const o of ['share+1', 'share+40', 'deep']) {
+  const f = 'x2-hold0-s' + s + '-' + o; r6rest(f); r6step(f, 'kbUp0', 508, 0, 1); r6x(f, 'pinchC', 508 / s, 0.5 * 508 * (1 - 1 / s), s, 0);
+  r6x(f, 'drag', 508 / s, o === 'deep' ? 844 - 508 / s : Math.min(r6share(s) + (o === 'share+1' ? 1 : 40), 844 - 508 / s), s, 0);
+  r6x(f, 'back0', 508 / s, 0, s, 0); r6x(f, 'backHalf', 508 / s, r6share(s) / 2, s, 0);
+}
+{ const sc = [1.0007, 1.002, 1.005, 1.01, 1.02, 1.05, 1.1, 1.2, 1.5, 2, 3];
+  for (const p of [10, 40, 83, 200]) for (const fp of [0, 0.5, 1]) {
+    const f = 'x4-p' + p + '-f' + fp; r6rest(f); r6step(f, 'kbUp1', 508, p, 1);
+    sc.forEach((s) => r6x(f, 'in' + s, 508 / s, p + fp * 508 * (1 - 1 / s), s, p));
+    sc.slice(0, -1).reverse().forEach((s) => r6x(f, 'out' + s, 508 / s, p + fp * 508 * (1 - 1 / s), s, p));
+  } }
+for (const s of [1.2, 1.5, 2, 3]) {
+  const f = 'x6-deep-s' + s; r6rest(f); r6step(f, 'kbUp1', 508, 83, 1);
+  r6x(f, 'pinchC', 508 / s, 83 + 0.5 * 508 * (1 - 1 / s), s, 83); r6x(f, 'deep', 508 / s, 844 - 508 / s, s, 83);
+  r6x(f, 'backHalf', 508 / s, r6share(s) / 2, s, 83); r6step(f, 'down', 844 / s, 0, s); r6step(f, 'reSame', 508 / s, 83, s);
+}
 out.r6 = r6;
 // extra6-1 (the maintainer's round 6 ruling, 2026-09-29): the coarse road takes the pinch cut at the layout viewport L, not at its
 // own h. A hold of 83 (the keyboard up at scale 1, h 460), then a report BETWEEN the two cuts (scale 1.0008: at or over L/(L - 0.5),
@@ -1548,7 +1589,7 @@ class MobileFitExecutes(unittest.TestCase):
             if got != want:
                 bad.append("%s %s: %d, not %d" % (fam, tag, got, want))
 
-        for s in ("1.0007", "1.003", "1.01", "1.05"):
+        for s in ("1.00059", "1.0007", "1.003", "1.008", "1.01", "1.05"):
             fam = "lz" + s
             for tag in ("A1-kbUpPan", "A3-kbUpNoPan", "A4-kbUpPanInShare", "A6-kbUpPanAgain"):
                 inside(fam, tag)
@@ -1574,27 +1615,131 @@ class MobileFitExecutes(unittest.TestCase):
             for step, want in (("kbUp1", p), ("pinchC", p), ("down1", 0), ("down2", 0), ("down3", 0), ("reNoPan", 0), ("reSameP", p)):
                 expect(fam, step, want)   # reNoPan: no pan, not the hold; reSameP: the first field again finds the hold
             inside(fam, "reInShare")
-        self.assertEqual(len(checked), 41, "every step named above was checked")
+        self.assertEqual(len(checked), 49, "every step named above was checked")
         if bad:
             self.fail("a keyboard raised again under a zoom: inside the reading's interval, and the first field finds its hold; %d cells:\n%s" % (len(bad), "\n".join(bad)))
 
-    def test_a_zoom_alone_and_a_pan_under_a_real_pinch_keep_the_value_where_the_share_reaches_it(self):
-        # a GUARD, green before round 6 too: bounding every pinch report by the reading (the light-zoom bound widened to every scale)
-        # would re-lay the shell under a real pinch dragged above the hold (40 and 0 here, where the stance keeps 83; 10 where no
-        # hold was held and the drag's excess, 78, became the hold). Where the zoom's share reaches the value the hold road keeps
-        # it, and the same keyboard's pan above it keeps it too: the drag face the fit() comment states as a cost (a light-zoom hold
-        # of 20 at 1.05 dragged to the top publishes 20, outside the reading's interval of [0, 0]).
-        px = self._r6_px
-        t = self._r6("stance")
-        self.assertEqual([px(t[k]["appTop"]) for k in ("P1-kbUp", "P2-at200", "P3-up40", "P4-at0")], [83, 83, 83, 83],
-                         "a zoom alone and a pan under a real pinch keep the hold: %r" % (t,))
-        t = self._r6("nohold")
-        self.assertEqual([px(t[k]["appTop"]) for k in ("Z1-kbUpZ", "Z2-drag500", "Z3-back83", "Z4-to10")], [0, 78, 78, 78],
-                         "no hold under the pinch: the drag's excess is stored and kept: %r" % (t,))
+    def test_a_pan_of_a_keyboard_raised_at_this_zoom_follows_the_reading(self):
+        # the maintainer's round 6 ruling (2026-09-29): the reading governs a pan of a keyboard raised at this zoom. A report with the
+        # scale and the band's height unchanged since the previous run and the keyboard up is a pan; where a raise or a re-raise wrote
+        # the value in force under the current zoom, with no zoom alone since, the hold road re-bounds it from the hold into the
+        # reading's interval. Keeping the value there had left the composer 44 px below the visible band's bottom for a light-zoom
+        # hold of 20 dragged to the top (lzhold20), and a pan to the share after a no-pan re-raise under a light zoom had opened a
+        # band under the composer (the A4 cells: 2.67 px at 1.008, 3.33 px at 1.01, 16 px at 1.05). The rule's value is derived here
+        # from the geometry each step drove: the hold bounded into the reading's interval (the reading less the share, up to the
+        # reading). Each keyboard event that arms the rule has a cell a mutant turns red: the raise (lzhold20's dragTo0 stays at 20
+        # when a raise's write is no keyboard event) and the re-raise (the E4 cells, a hold from scale 1 re-raised under the zoom:
+        # they keep the re-raise bound, 0, when the re-raise is no keyboard event). Every cell is checked before the test fails.
+        px, bad = self._r6_px, []
+
+        def rule(st, hold):
+            lo, hi = self._r6_interval(st)
+            return max(lo + 1, min(hold, hi - 1))
+
+        def band(st):   # how far the composer's bottom sits above the visible band's bottom: the band under the composer
+            return (st["offsetTop"] + st["height"]) - (px(st["appTop"]) + px(st["appH"]))
+
+        def expect(fam, tag, hold):
+            st = self._r6(fam)[tag]
+            want = rule(st, hold)
+            if px(st["appTop"]) != want:
+                bad.append("%s %s: %s, not %dpx (the hold %d bounded into the reading's interval)" % (fam, tag, st["appTop"], want, hold))
+            if round(band(st), 2) > 1:
+                bad.append("%s %s: a band of %.2f px under the composer" % (fam, tag, band(st)))
+            return want
+
+        for s in ("1.00059", "1.0007", "1.003", "1.008", "1.01", "1.05"):
+            t = self._r6("lz" + s)
+            expect("lz" + s, "A4-kbUpPanInShare", px(t["A1-kbUpPan"]["appTop"]))   # the raise stored the reading less the share
+        for s in ("1.003", "1.01", "1.05"):
+            st = self._r6("hold83-lz" + s)["E4-kbUpPan2LZ"]
+            self.assertEqual(rule(st, 83), 2, "the cell's premise: the pan of 2 lies inside the reading's interval: %r" % (st,))
+            expect("hold83-lz" + s, "E4-kbUpPan2LZ", 83)
         t = self._r6("lzhold20")
         self.assertEqual(px(t["kbUpLZ"]["appTop"]), 20, "the keyboard raised at the light zoom with no hold stores the reading less the share: %r" % (t,))
         self.assertEqual(self._r6_interval(t["dragTo0"]), (-1, 1), "the cell's premise: the drag reaches the top, where the reading allows no pan")
-        self.assertEqual(px(t["dragTo0"]["appTop"]), 20, "the drag face: the share (40) reaches the hold (20), so the pan keeps it: %r" % (t,))
+        expect("lzhold20", "dragTo0", 20)
+        if bad:
+            self.fail("a pan of a keyboard raised at this zoom: the hold bounded into the reading's interval, no band; %d cells:\n%s" % (len(bad), "\n".join(bad)))
+
+    def test_a_pan_after_a_zoom_alone_or_over_a_drags_write_keeps_the_value_where_the_share_reaches_it(self):
+        # a GUARD of the stance (the maintainer's round 6 ruling, 2026-09-29: the stance governs a zoom alone and what follows it).
+        # Bounding every pan under a pinch by the reading re-lays the shell under a real pinch dragged above the value (40 and 0 here,
+        # where the stance keeps 83; 10 where no hold was held and the drag's excess, 78, became the value), and every ungated form of
+        # the pan rule did. Where the zoom's share reaches the value the hold road keeps it through a pan unless a raise or a re-raise
+        # wrote it under the current zoom with no zoom alone since. Each gate has its cell, the rule's value (derived from the geometry)
+        # differing from the stance's in each: stance (a hold raised at scale 1 and pinched to 2, a zoom alone since); nohold (the value
+        # a drag wrote, no keyboard event: a drag's write counted as one publishes 10 at Z4); zoomBack (a zoom alone away and back to
+        # the scale the raise wrote at: without the zoom-alone reset the drag publishes 0); swapZoom (the scale changed in the same
+        # report as the band's height, so no zoom alone, and only the current-zoom check refuses: without it the pan publishes 40). The
+        # stance's cost, stated in the fit() comment: the composer below the band's bottom by the drag, 83 px where the reading allows 0.
+        px = self._r6_px
+
+        def rule(st, hold):
+            lo, hi = self._r6_interval(st)
+            return max(lo + 1, min(hold, hi - 1))
+
+        t = self._r6("stance")
+        self.assertEqual([px(t[k]["appTop"]) for k in ("P1-kbUp", "P2-at200", "P3-up40", "P4-at0")], [83, 83, 83, 83],
+                         "a zoom alone and a pan under a real pinch keep the hold: %r" % (t,))
+        self.assertEqual((rule(t["P3-up40"], 83), rule(t["P4-at0"], 83)), (40, 0), "the cells' premise: the rule would follow the pan")
+        t = self._r6("nohold")
+        self.assertEqual([px(t[k]["appTop"]) for k in ("Z1-kbUpZ", "Z2-drag500", "Z3-back83", "Z4-to10")], [0, 78, 78, 78],
+                         "no hold under the pinch: the drag's excess is stored and kept: %r" % (t,))
+        self.assertEqual(rule(t["Z4-to10"], 78), 10, "the cell's premise: the rule would follow the pan to 10")
+        t = self._r6("zoomBack")
+        self.assertEqual(t["zoomBackTo1.05"]["scale"], t["kbUpLZ"]["scale"], "the cell's premise: the zoom came back to the raise's own scale")
+        self.assertEqual({round(t[k]["height"] * t[k]["scale"]) for k in ("kbUpLZ", "zoomAway", "zoomBackTo1.05", "dragTo0")}, {508},
+                         "the cell's premise: the same keyboard throughout, so the zooms are zooms alone")
+        self.assertEqual(rule(t["dragTo0"], 20), 0, "the cell's premise: the rule would follow the drag to the top")
+        self.assertEqual([px(t[k]["appTop"]) for k in ("kbUpLZ", "zoomAway", "zoomBackTo1.05", "dragTo0")], [20, 20, 20, 20],
+                         "a zoom alone since the raise, even one that came back to its scale: the pan keeps the value: %r" % (t,))
+        t = self._r6("swapZoom")
+        self.assertEqual([round(t[k]["height"] * t[k]["scale"]) for k in ("kbUp", "swapPinch2", "up40")], [508, 460, 460],
+                         "the cell's premise: the band's height changed in the pinch's own report, and not in the pan's")
+        self.assertEqual(rule(t["up40"], 83), 40, "the cell's premise: the rule would follow the pan to 40")
+        self.assertEqual([px(t[k]["appTop"]) for k in ("kbUp", "swapPinch2", "up40")], [83, 83, 83],
+                         "a scale that changed with the band's height is not the zoom the raise wrote at: the pan keeps the value: %r" % (t,))
+
+    def test_a_zoom_alone_after_a_pan_the_rule_re_bounded_publishes_from_the_value_in_force(self):
+        # DISCLOSED, and this cell is its witness (the fit() comment names it): the pan rule publishes its value and stores nothing, so
+        # a zoom alone after a pan it re-bounded publishes by the stance from the value in force (here the re-raise bound, 0) and the
+        # shell moves by the difference. The pan to the share at 1.05 publishes 40; a zoom alone to 1.1 about the band's centre then
+        # publishes 0, a band of 5 px under the composer, and the zoom back to 1.05 at the same pan 0 again, the 16 px band the rule had
+        # closed. Storing the rule's value would keep 40 through both; that is a design call not taken here, and this cell pins the
+        # built behaviour so a change to it is made on purpose.
+        px, t = self._r6_px, self._r6("zoomAfterPan")
+
+        def band(st):
+            return round((st["offsetTop"] + st["height"]) - (px(st["appTop"]) + px(st["appH"])), 2)
+
+        self.assertEqual({round(t[k]["height"] * t[k]["scale"]) for k in ("A4-kbUpPanInShare", "zoomAlone1.1", "zoomBack1.05")}, {508},
+                         "the cell's premise: the same keyboard up throughout, so both zooms are zooms alone")
+        self.assertEqual([px(t[k]["appTop"]) for k in ("A1-kbUpPan", "A3-kbUpNoPan", "A4-kbUpPanInShare", "zoomAlone1.1", "zoomBack1.05")],
+                         [43, 0, 40, 0, 0], "the rule's pan, then the zooms alone publish from the re-raise bound: %r" % (t,))
+        self.assertEqual([band(t[k]) for k in ("A4-kbUpPanInShare", "zoomAlone1.1", "zoomBack1.05")], [-24.0, 5.0, 16.0],
+                         "the band under the composer: none after the rule's pan, 5 px after the zoom alone, 16 px after the zoom back")
+
+    def test_every_stance_cell_of_the_extended_families_publishes_the_stance_value(self):
+        # round 6's extended families' stance cells (the maintainer's round 6 ruling, 2026-09-29), ported into the driver so the tree
+        # reads the published value of every one: the round's first checker read these cells for a hold overwrite only, and so missed
+        # the one cell every ungated pan rule moved (x6 at 1.2, backHalf: 83 to 70). The stance's value is derived from the geometry
+        # each step drove and the family's hold T alone: where the zoom's share in pixels reaches T, the larger of T and the reading
+        # less the share; where it is below T, T bounded into the reading's interval; clamped at use to L less the band's height.
+        px, bad, fams = self._r6_px, [], {}
+        cells = [(fam, st) for fam, steps in self.out["r6"].items() for st in steps if "hold" in st]
+        for fam, _ in cells:
+            fams[fam.split("-")[0]] = fams.get(fam.split("-")[0], 0) + 1
+        self.assertEqual(fams, {"x1": 88, "x2": 48, "x4": 252, "x6": 12}, "every stance cell of the four families was driven")
+        for fam, st in cells:
+            lo, hi = self._r6_interval(st)
+            kb, pan, T = lo + 1, hi - 1, st["hold"]
+            share = int(math.floor(844 * (1 - 1 / st["scale"]) + 0.5)) if st["scale"] > 1 else 0
+            want = min(max(T, kb) if share >= T else max(kb, min(T, pan)), max(0, 844 - px(st["appH"])))
+            if px(st["appTop"]) != want:
+                bad.append("%s %s: %s, not %dpx (the hold %d, the share %d, the reading's interval [%d, %d])" % (fam, st["tag"], st["appTop"], want, T, share, kb, pan))
+        if bad:
+            self.fail("a stance cell under a pinch: the value the stance keeps; %d of %d cells:\n%s" % (len(bad), len(cells), "\n".join(bad)))
 
     def test_the_0px_road_clears_the_written_hold_flag_with_the_hold(self):
         # the maintainer's round 6 ruling (2026-09-29), the flag's clearing rule: every measured-road write sets the flag held to

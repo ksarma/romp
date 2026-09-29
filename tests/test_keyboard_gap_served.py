@@ -326,10 +326,12 @@ class KeyboardGap(unittest.TestCase):
         had overwritten a standing hold (a drag one pixel past the zoom's share dropped 83 to 1, a continuous pinch lowered it at every
         step, a drag to 590 at scale 2 stored 168 for the re-raise), a hold of 0 read as none, and a keyboard raised again with no pan
         published the stale hold (the composer 81.5 px below the visible band's bottom under a zoom of 1.003; 167.7 and 337 px at
-        scales 1.2 and 2). The values are the rules test_kernel_mobile.MobileFitExecutes derives cell by cell; here the served
-        shell publishes them and lays the body and the composer out at them. Every cell is checked before the leg fails."""
+        scales 1.2 and 2). Since the same ruling a pan of a keyboard raised at this zoom follows the reading (a pan to the share
+        after a no-pan re-raise at 1.05 had left a band of 16 px under the composer), and a pan after a zoom alone keeps the hold (the
+        stance). The values are the rules test_kernel_mobile.MobileFitExecutes derives cell by cell; here the served shell publishes
+        them and lays the body and the composer out at them. Every cell is checked before the leg fails."""
         cells = r["r6"]
-        self.assertEqual(len(cells), 60, where + "the driver ran every cell: %r" % ([(c["fam"], c["tag"]) for c in cells],))
+        self.assertEqual(len(cells), 70, where + "the driver ran every cell: %r" % ([(c["fam"], c["tag"]) for c in cells],))
         top = {(c["fam"], c["tag"]): _px(c["g"]["appTop"]) for c in cells}
         want = {}
         for fam in ("drag423", "drag590"):
@@ -345,6 +347,10 @@ class KeyboardGap(unittest.TestCase):
             want.update({(fam, "kbUp0"): 0, (fam, "pinchC"): 0, (fam, "drag"): excess, (fam, "back0"): 0, (fam, "down"): 0, (fam, "reNoPan"): 0})
         for fam in ("reraise-s1.2", "reraise-s2"):
             want.update({(fam, "kbUp1"): 83, (fam, "pinchC"): 83, (fam, "down1"): 0, (fam, "reNoPan"): 0, (fam, "down2"): 0, (fam, "reSameP"): 83})
+        share105 = round(LAYOUT_H * (1 - 1 / 1.05))   # the zoom's share at 1.05 in pixels, 40
+        want.update({("lz1.05", "kbUpPan"): KB_PAN - share105, ("lz1.05", "kbDown"): 0, ("lz1.05", "kbUpNoPan"): 0,
+                     ("lz1.05", "panInShare"): min(KB_PAN - share105, share105)})   # the pan rule: the hold (43) bounded into [0, 40]
+        want.update({("stance", t): 83 for t in ("kbUp", "at200", "up40", "at0")})   # the stance: a zoom alone since the raise
         self.assertEqual(sorted(k for k in top if k[1] != "rest"), sorted(want), where + "every cell has its expected value")
         bad = ["%s %s: %d, not %d" % (k[0], k[1], top[k], v) for k, v in sorted(want.items()) if top[k] != v]
         for c in cells:
@@ -360,6 +366,11 @@ class KeyboardGap(unittest.TestCase):
                 bad.append(name + ": the body is not the published band: %r" % (g["body"],))
             if abs((t + KB_H - rest_gap) - g["composerBottom"]) > 1:
                 bad.append(name + ": the composer is not at the published band's bottom: %r" % (g,))
+            if c["tag"] == "panInShare":
+                # the pan rule: the composer never sits above the visible band's bottom by more than a pixel, the band the kept value left
+                under = (c["ot"] + c["h"]) - (g["composerBottom"] + rest_gap)
+                if under > 1:
+                    bad.append(name + ": a band of %.2f px under the composer" % under)
             if c["tag"] in ("kbUpNoPan", "reNoPan"):
                 # a keyboard raised with no pan under the zoom: the composer below the visible band's bottom by the zoom's own
                 # magnification at most (the band is 508/s tall from the top), never by a stale hold on top of it

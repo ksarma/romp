@@ -70558,9 +70558,17 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // raised again with no pan under a zoom of 1.003 had put the composer 81.5 px below the visible band's bottom), and a later
 // re-raise of the first field still finds the hold, since every re-raise bounds from the hold itself, which the hold road never
 // writes, and never from rp (the keyboard-down run also drops rp, which reaches only a report outside the layout viewport that
-// follows it before the next re-raise: that report takes the hold). Both key on the run that reads the keyboard, not on a time
-// window. Nothing adjusts the hold in place: the clamp is at use (the author's pass 4, 2026-09-20).
-var lastPan=0,held=false,gone=false,rp=null;
+// follows it before the next re-raise: that report takes the hold). ps and ph are the scale and h of the previous run that
+// took the measured road or the hold road, so a run can tell what changed since: the scale and h unchanged with the keyboard up
+// (L - h > 0) is a PAN of the same keyboard, and the scale changed with h unchanged is a zoom alone. kz is the zoom of the
+// keyboard event that wrote the value in force, 0 where none did: a measured-road write with the keyboard up and h changed since
+// the previous run (a raise) sets it to the scale, and so does the re-raise that writes rp; any other measured-road write (a
+// drag's, h unchanged) sets 0, and a zoom alone clears it. The hold road re-bounds a pan from the hold only where kz is the
+// current zoom (the maintainer's round 6 ruling, 2026-09-29: the reading governs a pan of a keyboard raised at this zoom, the
+// stance a zoom alone and what follows it); that check also refuses a scale that changed in the same report as h (a keyboard
+// swapped in during a pinch), which is no zoom alone and leaves kz standing. Every one of these keys on a run fit() reads, not on
+// a time window. Nothing adjusts the hold in place: the clamp is at use (the author's pass 4, 2026-09-20).
+var lastPan=0,held=false,gone=false,rp=null,ps=0,ph=0,kz=0;
 // [fork] the author's pass 8 (2026-09-20): the ONE reading of the pan both writing roads share: the measured road stores it under the cut (at
 // or above it, it less the zoom's share, kbPx below; the author's pass 9) and the 0px road's no-pan test reads it, so an offsetTop
 // that rounds to no pixel (0.4) is no pan on both roads and one that rounds up (0.5) a pan on both. The 0px road had read the raw offsetTop, so a pan in (0, 0.5) was a standing hold there and a stored 0 here.
@@ -70646,17 +70654,25 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // derived beside it) is never published: the measured road publishes the reading less that share where anything is left
 // (kbPx; the author's pass 9, 2026-09-20: it had stood down at the cut, which with no hold standing published 0 and reopened the band under
 // a light zoom), under a pinch only where no hold is held (held, beside lastPan; the maintainer's round 6 ruling, 2026-09-29), and
-// otherwise the hold road publishes from the hold, or from the re-raise bound rp where one stands (beside lastPan): where the
-// zoom's share is below that value, the value bounded into the reading's interval [kbPx, panPx]; where the share reaches it, the
-// larger of the value and kbPx, so a zoom alone never re-lays the shell there (the pinch-aware note above: its share is the whole
-// of its pan) and a drag past the value plus the share publishes the excess, which nothing stores. Three costs of keeping the
-// value, each measured in round 6: a zoom alone leaves the composer below the visible band's bottom by the zoom's own magnification
-// (12 px at 1.05 about the band's centre, served); where the share reaches the value, a pan of the same keyboard above it leaves
-// the composer below by the drag until the keyboard goes down (a light-zoom hold of 20 at 1.05 dragged to 0: 20 px published, the
-// composer 44 px below the band's bottom where 0 px leaves 24); and where the value is the re-raise bound, a later pan of the
-// same keyboard that moves the visual viewport down but keeps it inside the share keeps the bound too, so a band opens under the
-// composer (node cells: a pan to the share after a no-pan re-raise under a light zoom opens 2.67 px at 1.008, 3.33 px at 1.01 and
-// 16 px at 1.05). Everything the hold road publishes is CLAMPED AT USE to the layout
+// otherwise the hold road publishes from the hold, or from the re-raise bound rp where one stands (beside lastPan). A PAN of a
+// keyboard raised at this zoom (the scale and h unchanged since the previous run with the keyboard up, and the value in force
+// written at a raise or a re-raise under the current zoom with no zoom alone since: ps, ph and kz, beside lastPan) re-bounds from
+// the hold into the reading's interval [kbPx, panPx], so the shell follows that keyboard's pan wherever the reading allows (the
+// maintainer's round 6 ruling, 2026-09-29: keeping the value there left the composer 44 px below the visible band's bottom for a
+// light-zoom hold of 20 at 1.05 dragged to 0, where 0 px leaves 24, and a pan to the share after a no-pan re-raise under a light
+// zoom opened a band under the composer, 2.67 px at 1.008, 3.33 px at 1.01 and 16 px at 1.05; node cells). Any other report inside
+// the layout viewport takes the stance: where the zoom's share is below the value, the value bounded into the reading's interval;
+// where the share reaches it, the larger of the value and kbPx, so a zoom alone never re-lays the shell there (the pinch-aware
+// note above: its share is the whole of its pan), except after a pan the rule re-bounded: the rule's value is published and not
+// stored, so a zoom alone then publishes from the value in force and the shell moves by the difference (disclosed, a design call
+// not taken here: a pan to the share at 1.05 publishes 40 px, and a zoom alone to 1.1 about the band's centre then publishes 0, a
+// band of 5 px under the composer; test_kernel_mobile's zoomAfterPan cell pins it); and a drag past the value plus the share
+// publishes the excess, which nothing stores. Two costs of the stance, each measured in round 6: a zoom alone leaves the composer below the visible band's bottom by
+// the zoom's own magnification (12 px at 1.05 about the band's centre, served); and after a zoom alone, or over a value a drag
+// wrote, a pan of the same keyboard above the value keeps it where the share reaches it, the composer below the band's bottom by
+// the drag until the keyboard goes down (a hold of 83 from scale 1, pinched to 2 and dragged to the top: 83 px published where the
+// reading allows 0, the composer 337 px below the band's bottom where 0 px leaves 254; node cells). Everything the hold road
+// publishes is CLAMPED AT USE to the layout
 // viewport's height less h (the author's pass 2,
 // 2026-09-19): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
 // gone would otherwise place the body's bottom, the composer row, below the layout viewport until the zoom ended. The layout
@@ -70704,7 +70720,7 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // publishes the keyboard's pan and not a 0 the fine window never measured (the author's pass 4 had written the zero on every fine run,
 // and the pinch road then laid the shell out at pan 0 under a keyboard-sized --app-h, the band reopened); a flip with the
 // visual viewport at rest clears it, so a zoom after that republishes no stale pan. The hold road publishes from the hold and
-// writes nothing into it (it sets gone and rp, beside lastPan), so --app-top can differ from the hold until a road WRITES it (the
+// writes nothing into it (it sets gone, rp, ps, ph and kz, beside lastPan), so --app-top can differ from the hold until a road WRITES it (the
 // measured road, or the 0px road in a no-pan state; the 0px road runs without writing under a standing pan or zoom, the author's
 // pass 8, 2026-09-20). The pan is published under
 // the same validity guard as the height it belongs to (the author's pass 4, 2026-09-20,
@@ -70713,8 +70729,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // to belong to and publishes unconditionally (only its write into the hold carries the no-pan condition above). The visual
 // viewport's scroll event, where a pan lands, is already bound below, so no new listener.
 if(!coarse||!vv){if(!vv||(!pinched(vv,L)&&!(panPx(vv)>0))){lastPan=0;held=false;gone=false;rp=null;}document.documentElement.style.setProperty('--app-top','0px');}
-else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;document.documentElement.style.setProperty('--app-top',lastPan+'px');}
-else if(h){if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;}}var H=rp===null?lastPan:rp;document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}
+else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;kz=held&&h!==ph?(vv.scale||1):0;ps=vv.scale||1;ph=h;document.documentElement.style.setProperty('--app-top',lastPan+'px');}
+else if(h){var S=vv.scale||1,pan=S===ps&&h===ph&&L-h>0;if(S!==ps&&h===ph)kz=0;ps=S;ph=h;if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;kz=S;}}var H=rp===null?lastPan:rp;document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:pan&&kz===S?Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv))):zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
 // (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.

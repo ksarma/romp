@@ -209,6 +209,14 @@ try {
     await r6(f, "rest", 844, 0, 1); await r6(f, "kbUp1", 508, 83, 1); await r6(f, "pinchC", 508 / s, o, s);
     await down("down1"); await r6(f, "reNoPan", 508 / s, 0, s); await down("down2"); await r6(f, "reSameP", 508 / s, 83, s);
   }
+  // the pan rule (the maintainer's round 6 ruling, 2026-09-29): a pan of a keyboard raised at this zoom follows the reading. No
+  // hold, the keyboard raised at 1.05, down, up with no pan, then a pan to the zoom's share: the published pan closes the band the
+  // kept value had left (16 px). And the stance the rule leaves standing: a hold raised at scale 1, pinched to 2 and dragged to 40
+  // and to the top, where the shell stays at the hold
+  { const s = 1.05, f = "lz1.05"; await r6(f, "rest", 844, 0, 1); await r6(f, "kbUpPan", 508 / s, 83, s);
+    await r6(f, "kbDown", 844 / s, 0, s); await r6(f, "kbUpNoPan", 508 / s, 0, s); await r6(f, "panInShare", 508 / s, r6share(s), s); }
+  { const f = "stance"; await r6(f, "rest", 844, 0, 1); await r6(f, "kbUp", 508, 83, 1); await r6(f, "at200", 254, 200, 2);
+    await r6(f, "up40", 254, 40, 2); await r6(f, "at0", 254, 0, 2); }
   out.r6Back = await move(844, 0, 1);
   if (cfg.shots) await page.screenshot({ path: cfg.shots + "-settled.png" }).catch(() => {});
   await result({});

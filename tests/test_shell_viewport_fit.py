@@ -815,10 +815,13 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # held (held, a flag kept apart from the hold's value, so a hold of 0 counts; the maintainer's round 6 ruling, 2026-09-29: the
         # write had keyed on any reading past the share, so a drag or a continuous pinch overwrote a standing hold), and otherwise
         # the hold road publishes from the hold, or from the re-raise bound rp that the first keyboard-up run after the held
-        # keyboard's down run keeps apart from the hold (gone marks that down run): bounded into the reading's interval [kbPx, panPx]
-        # where the zoom's share is below that value, the larger of it and kbPx where the share reaches it (a zoom alone pans too and
-        # never re-lays the shell there; a drag past the value plus the share publishes the excess, which nothing stores), CLAMPED AT
-        # USE to the layout viewport less the height the same run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (the author's pass 2,
+        # keyboard's down run keeps apart from the hold (gone marks that down run): a pan of a keyboard raised at this zoom (the scale
+        # and h unchanged since the previous run with the keyboard up, the value in force written at a raise or a re-raise under the
+        # current zoom with no zoom alone since: ps, ph and kz; the maintainer's round 6 ruling, 2026-09-29) re-bounded from the hold
+        # into the reading's interval [kbPx, panPx], and any other report inside the layout viewport by the stance: bounded into that
+        # interval where the zoom's share is below the value, the larger of it and kbPx where the share reaches it (a zoom alone pans
+        # too and never re-lays the shell there; a drag past the value plus the share publishes the excess, which nothing stores),
+        # CLAMPED AT USE to the layout viewport less the height the same run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (the author's pass 2,
         # 2026-09-19); the layout viewport is document.documentElement.clientHeight, the same height in both engine models
         # (the author's pass 7, 2026-09-20: it had read window.innerHeight, which WebKit shrinks to the visual viewport's height under a
         # pinch under the engine model the fit() comment states with its evidence status, the one home (this comment points
@@ -830,7 +833,7 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # measured road would store as 0 (no visual viewport, or one under the cut, taken at the layout viewport on both roads,
         # whose offsetTop rounds to no positive pixel, panPx, the one reading the measured road stores there, so a sub-pixel
         # pan is the same answer on both roads, the author's pass 8, 2026-09-20; the author's pass 6, 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
-        # zoom); the hold road publishes from the hold and writes nothing into it (it sets gone and rp), so --app-top can differ
+        # zoom); the hold road publishes from the hold and writes nothing into it (it sets gone, rp, ps, ph and kz), so --app-top can differ
         # from the hold until a road WRITES it, the measured road or the 0px road in a no-pan state (the author's pass 8, 2026-09-20: the
         # 0px road runs without writing under a standing pan or zoom; the author's pass 6: this comment had said the hold is the last
         # value published on every road, which the hold road contradicts whenever it bounds, and the harness asserts that state).
@@ -840,7 +843,9 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # unconditionally. Behaviour: test_kernel_mobile.MobileFitExecutes; the coarse road's cut at L, and the hold surviving a
         # report between the cut at L and the one at h, is its test_a_report_between_the_two_cuts_is_a_pinch_at_the_layout_viewport_and_the_hold_survives_it
         # (the maintainer's round 6 ruling, extra6-1).
-        self.assertIn("\nvar lastPan=0,held=false,gone=false,rp=null;\n", self.js, "the hold, its written-hold flag, the held keyboard's down run and the re-raise bound, declared before fit()")
+        self.assertIn("\nvar lastPan=0,held=false,gone=false,rp=null,ps=0,ph=0,kz=0;\n", self.js,
+                      "the hold, its written-hold flag, the held keyboard's down run, the re-raise bound, the previous run's scale and h, and "
+                      "the zoom of the keyboard event that wrote the value in force, declared before fit()")
         self.assertIn("\nfunction panPx(vv){return Math.round(vv.offsetTop||0);}\n", self.js, "the one reading of the pan, declared before fit()")
         self.assertIn("\nfunction zoomPx(vv,L){return Math.max(0,Math.round(L*(1-1/(vv.scale||1))));}\n", self.js,
                       "a pure zoom's share of the reading in pixels, over the layout viewport L (the author's pass 9, 2026-09-20), never negative below scale 1 (the fixer pass), declared before fit()")
@@ -856,10 +861,19 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
                       "test_the_0px_road_leaves_the_written_hold_flag_where_it_leaves_the_hold, the no-pan condition in "
                       "test_the_0px_road_clears_the_hold_only_where_no_pan_stands")
         self.assertNotIn("vv.offsetTop>0", self.js, "the 0px road reads the shared rounding, never the raw offsetTop")
-        self.assertIn("else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;document.documentElement.style.setProperty('--app-top',lastPan+'px');}\n"
-                      "else if(h){if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;}}var H=rp===null?lastPan:rp;"
-                      "document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}", self.js,
-                      "the measured road (under a pinch only where no hold is held) and the hold road (the re-raise bound kept apart from the hold, the reading's interval where the share is below the value, the excess unstored)")
+        self.assertIn("else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;kz=held&&h!==ph?(vv.scale||1):0;ps=vv.scale||1;ph=h;"
+                      "document.documentElement.style.setProperty('--app-top',lastPan+'px');}\n"
+                      "else if(h){var S=vv.scale||1,pan=S===ps&&h===ph&&L-h>0;if(S!==ps&&h===ph)kz=0;ps=S;ph=h;"
+                      "if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;kz=S;}}var H=rp===null?lastPan:rp;"
+                      "document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:pan&&kz===S?Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv))):"
+                      "zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}", self.js,
+                      "the measured road (under a pinch only where no hold is held; kz set at a raise, 0 at any other write) and the hold road (a pan "
+                      "of a keyboard raised at this zoom re-bounded from the hold; otherwise the re-raise bound kept apart from the hold, the reading's "
+                      "interval where the share is below the value, the excess unstored). This pin reads the SPELLING only; the pan rule's three "
+                      "conditions (a raise or a re-raise wrote the value, the current zoom, no zoom alone since) are executed in "
+                      "test_kernel_mobile.MobileFitExecutes."
+                      "test_a_pan_of_a_keyboard_raised_at_this_zoom_follows_the_reading and "
+                      "test_a_pan_after_a_zoom_alone_or_over_a_drags_write_keeps_the_value_where_the_share_reaches_it")
         self.assertNotIn("pinched(vv,h)", served_css.js_code(self.js),
                          "both roads take the cut at the layout viewport L, never at the coarse road's h (the author's pass 9, 2026-09-20). This pin reads "
                          "the SPELLING only (a cut at h spelled otherwise passes it); the behaviour, the cut at L and the hold surviving a report between "
