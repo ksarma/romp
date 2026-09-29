@@ -1018,32 +1018,16 @@ class Routes(Fresh):
         # the counts are this kernel's; the manager's restart-all restarts every kernel in its registry.
         # otherKernels is read from that registry as the manager itself lists it (GET /status on the
         # control port, the live map restartAll loops), never from kernels.json: the entries whose port is
-        # not this kernel's. A fake manager answers here; ROMP_MANAGER_PORT points at it for the read
-        import http.server
-        from http.server import ThreadingHTTPServer
-        answer = {"status": 200, "body": ""}
-        hits = []
-
-        class FakeManager(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                hits.append(self.path)
-                if self.path != "/status":
-                    self.send_response(404); self.end_headers(); return
-                body = answer["body"].encode()
-                self.send_response(answer["status"])
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def log_message(self, *a):
-                pass
-        mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
-        threading.Thread(target=mgr.serve_forever, daemon=True).start()
+        # not this kernel's. A fake manager answers here, from a child process (_FAKE_MANAGER_CHILD says why: the
+        # read waits 1 s for it); ROMP_MANAGER_PORT points at it for the read
+        mgr = self._manager_process({})
         saved_port = os.environ.get("ROMP_MANAGER_PORT")
 
+        def answer(status, body):
+            mgr.answer({"GET /status": {"status": status, "body": body}})
+
         def registry(*ports):
-            return json.dumps({"ok": True, "manager": {"pid": 1, "controlPort": mgr.server_address[1], "stale": False},
+            return json.dumps({"ok": True, "manager": {"pid": 1, "controlPort": mgr.port, "stale": False},
                                "kernels": [{"id": "k%d" % p, "port": p, "pid": 2, "restarts": 0, "upSec": 5} for p in ports]})
 
         def check():
@@ -1055,28 +1039,28 @@ class Routes(Fresh):
             return d["otherKernels"]
         try:
             km._UPDATE_AVAIL[0] = "v0.7.0"      # an offer: the counts are read only when a label can be worded (review round 6)
-            os.environ["ROMP_MANAGER_PORT"] = str(mgr.server_address[1])
-            answer["body"] = registry(km.PORT, 31111)
+            os.environ["ROMP_MANAGER_PORT"] = str(mgr.port)
+            answer(200, registry(km.PORT, 31111))
             self.assertEqual(check(), 1, "one other kernel in the registry")
             self.assertEqual(km._other_kernels(), 1)
-            answer["body"] = registry(km.PORT)
+            answer(200, registry(km.PORT))
             self.assertEqual(check(), 0, "this kernel alone")
-            answer["body"] = registry(31111, 31112)
+            answer(200, registry(31111, 31112))
             self.assertEqual(check(), 2, "a registry that does not list this kernel: every entry is another")
-            answer["body"] = registry(km.PORT, 31111, 31112)
+            answer(200, registry(km.PORT, 31111, 31112))
             self.assertEqual(km._manager_kernels(), [{"id": "k%d" % p, "port": p, "pid": 2, "restarts": 0, "upSec": 5}
                                                      for p in (km.PORT, 31111, 31112)], "the registry as the manager lists it")
             # unknown, never a guess: the manager answers something other than 200, or a body of another
             # shape, or nothing at all (a dead port); the route says null and the banner says the other
             # kernels may restart too (the manager did not answer; no article), never the single-kernel form.
             # Each failed read is said on stderr once per episode: the next test
-            answer["status"], answer["body"] = 500, "{}"
+            answer(500, "{}")
             self.assertIsNone(check(), "a status other than 200")
-            answer["status"], answer["body"] = 200, "not json"
+            answer(200, "not json")
             self.assertIsNone(check(), "not JSON")
-            answer["body"] = json.dumps({"ok": True})
+            answer(200, json.dumps({"ok": True}))
             self.assertIsNone(check(), "no kernels list")
-            answer["body"] = json.dumps({"ok": True, "kernels": "main"})
+            answer(200, json.dumps({"ok": True, "kernels": "main"}))
             self.assertIsNone(check(), "kernels of another shape")
             os.environ["ROMP_MANAGER_PORT"] = "1"
             self.assertIsNone(check(), "nothing answers on the port")
@@ -1089,13 +1073,13 @@ class Routes(Fresh):
             # the connection class refuses every port but the fake's, so whatever the code does with the
             # absence this test reaches no manager it did not start
             os.environ.pop("ROMP_MANAGER_PORT", None)
-            answer["status"], answer["body"] = 200, registry(km.PORT, 31111)
-            before = len(hits)
-            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(mgr.server_address[1])):
+            answer(200, registry(km.PORT, 31111))
+            before = len(mgr.hits())
+            with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(mgr.port)):
                 self.assertEqual((km._manager_kernels(), check()), ([], 0), "the variable absent: no manager, nothing asked")
                 os.environ["ROMP_MANAGER_PORT"] = ""
                 self.assertEqual((km._manager_kernels(), check()), ([], 0), "the variable empty: the same")
-            self.assertEqual(len(hits), before, "no request reached the fake on an absent or empty variable")
+            self.assertEqual(len(mgr.hits()), before, "no request reached the fake on an absent or empty variable")
             self.assertEqual((km._manager_port(None), km._manager_port(""), km._manager_port("7777")), (None, None, 7777),
                              "one rule for every door: the value when set, else no manager")
         finally:
@@ -1104,7 +1088,6 @@ class Routes(Fresh):
             else:
                 os.environ["ROMP_MANAGER_PORT"] = saved_port
             km._MANAGER_READ_FAULT[0] = ""
-            mgr.shutdown()
 
     def test_with_no_manager_port_neither_door_dials_a_manager_and_with_one_both_dial_it(self):
         # No manager started this kernel when ROMP_MANAGER_PORT is absent or empty, so the banner's registry
@@ -1316,34 +1299,14 @@ class Routes(Fresh):
         # dial while it is set, the second click hears converging and starts nothing, and the latched outcome of
         # the previous converge is cleared at the click. The converge is the real one, blocked on an Event inside
         # its bundle rebuild (the step before the manager dial), so the flag's set and clear are the code's own;
-        # the fake manager on an ephemeral port answers the registry read and the restart request, and the
+        # the fake manager on an ephemeral port answers the registry read and the restart request, from a child
+        # process (_FAKE_MANAGER_CHILD says why: the idle poll's registry read waits 1 s for it), and the
         # connection class refuses every other port but the Routes server's own
         import contextlib
-        import http.server
-        from http.server import ThreadingHTTPServer
-        hits, dials, gate, builds = [], [], threading.Event(), []
-
-        class FakeManager(http.server.BaseHTTPRequestHandler):
-            def _answer(self, body):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self):
-                hits.append(("GET", self.path))
-                self._answer(json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}, {"id": "k2", "port": 31111}]}).encode())
-
-            def do_POST(self):
-                hits.append(("POST", self.path))
-                self._answer(b"{}")
-
-            def log_message(self, *a):
-                pass
-        mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
-        threading.Thread(target=mgr.serve_forever, daemon=True).start()
-        port = mgr.server_address[1]
+        dials, gate, builds = [], threading.Event(), []
+        registry = json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}, {"id": "k2", "port": 31111}]})
+        mgr = self._manager_process({"GET": {"status": 200, "body": registry}, "POST": {"status": 200, "body": "{}"}})
+        port = mgr.port
 
         def blocked_build():
             builds.append(time.monotonic())
@@ -1381,7 +1344,7 @@ class Routes(Fresh):
                 self.assertEqual((d["state"], d["sessions"], d["midTurn"], d["otherKernels"]), ("running", None, None, None),
                                  "mid-converge: the wait's state, and no counts")
                 self.assertEqual((d["failed"], d["updated"]), ("", ""), "the previous converge's latched outcome was cleared at the click")
-                self.assertEqual([h for h in hits if h[0] == "GET"], [], "no registry read reached the manager while the converge runs")
+                self.assertEqual([h for h in mgr.hits() if h[0] == "GET"], [], "no registry read reached the manager while the converge runs")
                 self.assertEqual([x for x in dials if x[1] != self.port], [], "no dial but the test's own request to the route")
                 self.assertEqual(said, "", "no fault line about a label the banner is not showing")
                 code, body = self._post("/update")
@@ -1397,10 +1360,10 @@ class Routes(Fresh):
                 while km._MAIN_CONVERGE_INFLIGHT[0] and time.monotonic() - t0 < 10:
                     time.sleep(0.01)
                 self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the converge's finally cleared the flag")
-                self.assertEqual([h for h in hits if h[0] == "POST"], [("POST", "/restart-all")], "one restart request went out, to the fake")
+                self.assertEqual([h for h in mgr.hits() if h[0] == "POST"], [("POST", "/restart-all")], "one restart request went out, to the fake")
                 d, said = check()
                 self.assertEqual((d["state"], d["otherKernels"]), ("", 1), "idle again: the poll reads the registry, which lists one other kernel")
-                self.assertEqual([h for h in hits if h[0] == "GET"], [("GET", "/status")], "the idle read dialled the manager once")
+                self.assertEqual([h for h in mgr.hits() if h[0] == "GET"], [("GET", "/status")], "the idle read dialled the manager once")
                 self.assertEqual((d["failed"], d["updated"]), ("", ""), "a restart the manager took latches no outcome: the boot id ends the wait")
         finally:
             gate.set()
@@ -1411,7 +1374,6 @@ class Routes(Fresh):
                 os.environ["ROMP_MANAGER_PORT"] = saved_port
             km._MANAGER_READ_FAULT[0] = ""
             km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
-            mgr.shutdown()
 
     def test_the_auto_converge_is_running_to_every_poll_through_the_decorators_own_flag(self):
         # review round 6 of the confirm step (2026-09-10): the route takes the in-flight flag for a click, but the
@@ -2165,7 +2127,9 @@ class Routes(Fresh):
         # runs sweeps under load). The kwarg itself is pinned on the default path through a recording
         # connection class that fails at once, so nothing waits a real second. And the failure is said on
         # stderr once per episode: the first failed read after a clean one, not the second; a clean read
-        # ends the episode, and the next failure is said again
+        # ends the episode, and the next failure is said again. The clean read's manager is a child process
+        # (_FAKE_MANAGER_CHILD says why: that read waits 1 s for it); the silent one stays a socket here, since
+        # its reads are meant to time out
         import contextlib
         import socket
         srv = socket.socket()
@@ -2181,22 +2145,8 @@ class Routes(Fresh):
                     return
                 accepted.append(c)              # never read, never answered
         threading.Thread(target=acceptor, daemon=True).start()
-        import http.server
-        from http.server import ThreadingHTTPServer
-
-        class FakeManager(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                body = json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}]}).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def log_message(self, *a):
-                pass
-        mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
-        threading.Thread(target=mgr.serve_forever, daemon=True).start()
+        registry = json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}]})
+        mgr = self._manager_process({"GET": {"status": 200, "body": registry}})
         saved_port = os.environ.get("ROMP_MANAGER_PORT")
         km._MANAGER_READ_FAULT[0] = ""
         err = io.StringIO()
@@ -2228,7 +2178,7 @@ class Routes(Fresh):
             self.assertIsNone(ks)
             self.assertEqual(len(err.getvalue().splitlines()), 1, "the second failed read of the episode is not said again")
             # a clean read ends the episode; the next failure opens a new one and is said
-            os.environ["ROMP_MANAGER_PORT"] = str(mgr.server_address[1])
+            os.environ["ROMP_MANAGER_PORT"] = str(mgr.port)
             with contextlib.redirect_stderr(err):
                 self.assertEqual(km._manager_kernels(), [{"id": "k1", "port": km.PORT}])
             self.assertEqual(km._MANAGER_READ_FAULT[0], "")
@@ -2256,7 +2206,7 @@ class Routes(Fresh):
 
                 def getresponse(self):
                     raise socket.timeout("timed out")
-            os.environ["ROMP_MANAGER_PORT"] = str(mgr.server_address[1])
+            os.environ["ROMP_MANAGER_PORT"] = str(mgr.port)
             with mock.patch.object(km.http.client, "HTTPConnection", Recording), contextlib.redirect_stderr(err):
                 self.assertIsNone(km._manager_kernels())
                 _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
@@ -2272,7 +2222,6 @@ class Routes(Fresh):
             for c in accepted:
                 c.close()
             srv.close()
-            mgr.shutdown()
 
     def test_post_update_converges_main_drift_when_no_release_is_pending(self):
         # the drift click is a REAL restart, so the converge is stubbed: a live manager must never hear
