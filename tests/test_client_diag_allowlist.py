@@ -563,10 +563,45 @@ def fed_src():
 
 
 def _ts_code(src):
-    """TypeScript source with its comments blanked (a block comment to spaces, its line breaks kept; a line comment to its end,
-    a `//` inside a string or after a colon kept), so a writer named in prose is not a writer."""
-    src = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), src, flags=re.S)
-    return re.sub(r"(^|[^:\"'`\\])//[^\n]*", r"\1", src)
+    """TypeScript source with its comments blanked to spaces (a block comment's line breaks kept, so offsets and line numbers
+    hold), so a writer named in prose is not a writer, and its string and template literals KEPT as they are: a character walk
+    that tracks the string state, so a `/*`, a `*/` or a `//` inside a double-quoted, single-quoted or template string is string
+    text and blanks nothing. The regex stripper this replaced blanked from a `/*` inside a string to the next `*/`, which hid a
+    road key written between them from the census below, and cut a line at a `//` inside a string unless a quote or a colon
+    came just before it (the landing review's focused re-check, 2026-09-29, plants c3z and c3x). The rule is
+    tests/test_federated_dial_terms_served.py's _ts_code walk, ported and not imported, since that module loads a served lab's
+    environment when imported. Like that walk it tracks no regular-expression literal and no template substitution, so a
+    regex literal holding a quote, a backtick, `//` or `/*`, or a backtick inside a substitution, would make it misread the code
+    after it; a flat quote scan suffices because the one source read through it here, federation.ts, holds neither shape, which
+    that module's test_the_three_sources_carry_no_regex_literal_or_backtick_in_a_substitution refuses loudly."""
+    out = list(src)
+    i, n = 0, len(src)
+    while i < n:
+        ch = src[i]
+        if ch in "\"'`":
+            q = ch
+            i += 1
+            while i < n and src[i] != q:
+                if src[i] == "\\":
+                    i += 1
+                i += 1
+            i += 1
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        elif src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            for k in range(i, j):
+                if src[k] != "\n":
+                    out[k] = " "
+            i = j
+        else:
+            i += 1
+    return "".join(out)
 
 
 def _call_args(src, open_paren):
@@ -661,9 +696,10 @@ def _arms(expr):
 
 def _road_props(kind, literal, out):
     """Classify one object literal's top-level properties for the road census: `road: "<w>"` (the key bare, the value a
-    double-quoted string literal) adds (kind, w); every other property whose text holds the token road adds (kind, its form
-    named), and so does a spread this reader cannot open; a spread of a conditional whose branches are object literals is
-    opened and its properties read the same way."""
+    double-quoted string literal) adds (kind, w); every computed key adds (kind, named), whatever its text, and so does every
+    other property whose text holds the token road, and a spread this reader cannot open; a spread of a conditional whose
+    branches are object literals is opened and its properties read the same way, so a computed key in an opened arm is named
+    too."""
     for prop in _call_args(literal, 0):
         if prop.startswith("..."):
             arms = _arms(prop[3:])
@@ -672,6 +708,11 @@ def _road_props(kind, literal, out):
             else:
                 for arm in arms:
                     _road_props(kind, arm, out)
+        elif re.match(r"(?:(?:get|set|async)(?![\w$])\s*)?\*?\s*\[", prop):
+            # a computed key, `[expr]: value` or a method or accessor named by `[expr]`: its name is an expression this reader
+            # does not evaluate, so it may spell road with no token in its text (`["ro" + "ad"]`, `[k]`); refused whatever its
+            # text holds (the landing review's focused re-check, 2026-09-29, plants S25 and K10; none in any diag data here)
+            out.add((kind, "a computed key this reader cannot read: %s" % prop[:40]))
         elif prop == "road":
             out.add((kind, "a shorthand road property, a variable"))
         elif re.match(r"road\s*:", prop):
@@ -682,20 +723,25 @@ def _road_props(kind, literal, out):
             out.add((kind, "the token road outside the recognised forms: %s" % prop[:40]))
 
 
-def diag_road_sites():
+def diag_road_sites(src=None):
     """Every `this.diag(` call in federation.ts's CODE whose data can carry a `road` key, as (the row kind, the road's value):
     the kind a string literal's text, the value a string literal's text, and any other form named for what it is, so it reds
     the census until classified (the maintainer's round 6, extra8-1: the census had keyed on the spelling
-    `this.diag("feedDelta-apply", {... road: "<w>"`). The reader FAILS CLOSED over the comment-stripped data: the recognised
-    forms are a top-level property `road: "<w>"` (the key bare, the value a double-quoted string literal) and the shorthand
-    `road` (named, a variable), and every other occurrence of the token road in the data is named, so a quoted, single-quoted,
-    computed or template-computed key, a template-literal or single-quoted value, a road in a nested object and the word in a
-    string value all red, as does any spelling nobody has listed. The data is opened when it is an object literal or a
-    conditional of object literals; a top-level spread in it is opened when its operand is such a conditional (the sendqueue
-    row's `...(prev ? { superseded: ... } : {})`, the one top-level spread of any data at this head) and is named, and reds,
-    otherwise, since a road could arrive through it unseen. A data expression this reader cannot open (a variable, a call)
-    is named when its text holds the token and is otherwise not read: no data of that form exists at this head."""
-    src = _ts_code(fed_src())
+    `this.diag("feedDelta-apply", {... road: "<w>"`). The reader FAILS CLOSED over the data with its comments stripped by a
+    string-aware walk (_ts_code): the recognised forms are a top-level property `road: "<w>"` (the key bare, the value a
+    double-quoted string literal) and the shorthand `road` (named, a variable). The named refusals, each of which reds: every
+    other property whose text holds the token road (a quoted or single-quoted key, a template-literal or single-quoted
+    value, a road in a nested object, the word in a string value), and every computed key at the top level, whatever its
+    text holds, since its name is an expression this reader does not evaluate (`["ro" + "ad"]`, `[k]`). The data is opened
+    when it is an object literal or a conditional of object literals; a top-level spread in it is opened when its operand is
+    such a conditional (the sendqueue row's `...(prev ? { superseded: ... } : {})`, the one top-level spread of any data at
+    this head), the opened arms read by the same rules, computed keys included, and any other spread is named, and reds,
+    since a road could arrive through it unseen. What stays unread: a data expression this reader cannot open (a variable, a
+    call) is named when its text holds the token and is otherwise not read (no data of that form exists at this head), and a
+    key spelled with an escape sequence (`r\\u006fad`) holds no token and is not read either, a residual the census test's rig
+    holds on a synthetic call beside the refusals. At this head no computed key, unopened spread or unopenable data is named.
+    `src` is federation.ts unless a test hands in its own text."""
+    src = _ts_code(fed_src() if src is None else src)
     out = set()
     for m in re.finditer(r"this\.diag\(", src):
         args = _call_args(src, m.end() - 1)
@@ -760,7 +806,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
 
     def test_the_constants_and_the_table(self):
         self.assertEqual(km.CLIENT_DIAG_STR_MAX, 64)
-        self.assertEqual(km.CLIENT_DIAG_ROW_MAX, 24 * 1024, "above the collector's worst case (test_the_collectors_worst_case_minute_row_is_stored_whole)")
+        self.assertEqual(km.CLIENT_DIAG_ROW_MAX, 24 * 1024, "above the collector's worst case (test_the_collectors_worst_case_minute_row_is_stored_with_nothing_shed_or_capped_and_its_long_frame_keys_cut_and_marked)")
         self.assertEqual(sorted(km.CLIENT_DIAG_KEYS), ["chat", "federation", "feed", "kernel", "outline", "pane-shim", "perf", "reload-core", "shell", "strip", "waiting"])
         for surface, keys in km.CLIENT_DIAG_KEYS.items():
             self.assertIsInstance(keys, frozenset, surface)
@@ -1344,12 +1390,14 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertIn("key 'loaf', cut", lines[0], what)
         self.assertIn("is not stored whole", lines[0], what)
 
-    def test_the_collectors_worst_case_minute_row_is_stored_whole(self):
+    def test_the_collectors_worst_case_minute_row_is_stored_with_nothing_shed_or_capped_and_its_long_frame_keys_cut_and_marked(self):
         # CLIENT_DIAG_ROW_MAX sat at 8 KiB, below the collector's own worst case, so a share-off minute with 28 or more frame
         # types lost its frames where main stored it whole, and the shared row lost more (review find, 2026-09-18: 16481 B
         # share off, 19110 B share on, measured). The bound is now derived from the collector's caps; this builds the row
         # the collector would send with every cap reached at once, from the constants as perf-telemetry.ts declares them,
-        # and asserts it lands whole, no shed, no marker, nothing said. A 16 KiB bound would still have shed it. The fed:
+        # and asserts that nothing is shed or capped: the long-frame keys are stored at the string cut, the row carries the cut
+        # marker (cut == ['loaf']), the one stderr line is the cut's, and the rest of the row is stored as the admit leaves it,
+        # the frames and the per-host map whole. A 16 KiB bound would still have shed it. The fed:
         # keys are spelled in their longest form, fed:delta: plus the 32-character identifier, 42 characters: federation.ts
         # times a frame as fed: plus classifyFrame(msg), which reads delta: plus the identifier for a delta frame. This test
         # first spelled them fed: plus the identifier, 36 characters, and the row it proved whole was 198 B under the row
@@ -1377,6 +1425,18 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         share_on = re.findall(r"\((\d+\.\d) KB(?: share on\)|; the derivation above\))", ksrc)
         self.assertEqual(len(share_on), 2, "the derivation and CLIENT_DIAG_ROW_MAX's own comment each state the share-on figure once")
         self.assertEqual(set(share_on), {"%.1f" % (on / 1000)}, "both share-on figures are this row's size in KB (%d bytes)" % on)
+        # The same comment's share-off figure and the cut marker's byte figure, restated when the bound became the row as STORED,
+        # were read back by nothing, so a moved figure stayed green (the landing review's focused re-check, 2026-09-29; the
+        # share-off figure is the one the stored row moves). Read over the comment's flattened text, since the comment wraps, and
+        # each held to one statement: the share-off figure against this row's size as stored, the marker's bytes against what
+        # the marker adds to that row (the model, which the loop below holds equal to the kernel's stored row).
+        kflat = re.sub(r"\s+", " ", re.sub(r"\n\s*#", " ", ksrc))
+        share_off = re.findall(r"\((\d+\.\d) KB share off,", kflat)
+        self.assertEqual(share_off, ["%.1f" % (off / 1000)], "the derivation states the share-off figure once, this row's size as stored in KB (%d bytes)" % off)
+        stored_off = self._stored(minute)
+        marker = len(json.dumps(stored_off)) - len(json.dumps({k: v for k, v in stored_off.items() if k != km.CLIENT_DIAG_CUT_KEY}))
+        said = re.findall(r"the row carries the cut key naming loaf, (\d+) bytes\)", kflat)
+        self.assertEqual([int(b) for b in said], [marker], "the derivation states the cut marker's bytes once, what the marker adds to the stored row")
         # docs/reference.md states the same two figures for the same derivation, in its own phrasing: a third copy, which this
         # change moved in kernel.py and the body and left at the old figure in the docs (the maintainer's round 1, regression-3, 2026-09-20). Its own
         # pattern, whitespace-flattened (the doc wraps), and a not-None guard before the comparison, so a rephrased doc fails
@@ -1399,7 +1459,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertEqual(len(row["data"]["frames"]), 2 * (max_types + 1), "every frame type intact")
         self.assertEqual(self.rows()[-1]["data"]["wsBytesByHost"], by_host, "the per-host map lands whole: the admit filters top-level keys only, the scrub walks it")
 
-    def test_a_wide_wsBytesByHost_map_is_shed_whole_as_the_ladders_first_step_and_the_rest_of_the_row_is_stored_as_posted(self):
+    def test_a_wide_wsBytesByHost_map_is_shed_whole_as_the_ladders_first_step_and_the_rest_of_the_row_is_stored_as_the_admit_leaves_it(self):
         # wsBytesByHost is the one key of the minute row the collector does not cap (one position per attached host, the owner's
         # decision), so it is the one key that can take a row the collector builds past CLIENT_DIAG_ROW_MAX. Before the maintainer's round 1 of
         # its review (2026-09-20) the ladder shed the frame histograms first and kept the map that caused the overflow, and past
@@ -1714,9 +1774,29 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # the apply-throw row's road word (the maintainer's round 5, refusals-2): two fixed words at two writers, derived from federation.ts's
         # code by the PROPERTY (every diag call whose data carries a road key, the kind and the value each a literal or named for its form:
         # the maintainer's round 6, extra8-1) and named by the reason
+        # The rig (the landing review's focused re-check, 2026-09-29): the reader over synthetic sources, one call each, so the
+        # refusals no live call exercises stay held. A computed key reds whatever its text, at the top level (K10's shape, and an
+        # accessor) and in an opened spread arm (S25's); a `/*` or `//` inside a string is string text, so the road after it is
+        # read and named (c3z's and c3x's shapes, which the regex stripper blanked or cut, and the same in a single-quoted string,
+        # after an escaped quote, and in a template); a road inside a real comment is still no road; and a key spelled with an
+        # escape sequence stays unread, the witness of the residual the reader's docstring discloses.
+        rig = {
+            'this.diag("sendqueue", { host, ...(prev ? { [k]: "x" } : {}) });': {("sendqueue", 'a computed key this reader cannot read: [k]: "x"')},
+            'this.diag("hostconn", { host, ["ro" + "ad"]: "wire" });': {("hostconn", 'a computed key this reader cannot read: ["ro" + "ad"]: "wire"')},
+            'this.diag("hostconn", { host, get [k]() { return 1; } });': {("hostconn", "a computed key this reader cannot read: get [k]() { return 1; }")},
+            'this.diag("hostconn", { host, ev: "a /* b", road: "x", c: "*/" });': {("hostconn", "x")},
+            'this.diag("hostconn", { host, ev: "a // b", road: "x" });': {("hostconn", "x")},
+            'this.diag("hostconn", { host, ev: \'a /* b\', road: "x", c: \'*/\' });': {("hostconn", "x")},
+            'this.diag("hostconn", { host, ev: "a \\" /* b", road: "x", c: "*/" });': {("hostconn", "x")},
+            'this.diag("hostconn", { host, ev: `a /* b`, road: "x", c: `*/` });': {("hostconn", "x")},
+            'this.diag("hostconn", { host, /* road: "x", */ ev: "e" }); // road: "y"': set(),
+            'this.diag("hostconn", { host, r\\u006fad: "x" });': set(),
+        }
+        for text, want in rig.items():
+            self.assertEqual(diag_road_sites(text), want, "the rig: %s" % text)
         road_sites = diag_road_sites()
         self.assertEqual(road_sites, {("feedDelta-apply", "wire"), ("feedDelta-apply", "local")},
-                         "the road key rides feedDelta-apply alone, a fixed word at each of its two writers; a road on another row kind, a value that is not a double-quoted literal, the token road in any other form or a spread the reader cannot open is classified here or the reason is wrong: %r" % (sorted(road_sites),))
+                         "the road key rides feedDelta-apply alone, a fixed word at each of its two writers; a road on another row kind, a value that is not a double-quoted literal, the token road in any other form, a computed key or a spread the reader cannot open is classified here or the reason is wrong: %r" % (sorted(road_sites),))
         roads = sorted(v for _, v in road_sites)
         road_reason = CENSUS["federation"]["road"][1]
         for lit in roads:

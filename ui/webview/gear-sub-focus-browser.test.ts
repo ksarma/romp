@@ -926,7 +926,7 @@ test("a HOUSE dropdown open under the pointer (gear.js housePick, entered at 9 o
   const houseBody = GEAR.slice(GEAR.indexOf("function housePick("), GEAR.indexOf("var SCHEMES = ["));
   assert.equal((houseBody.match(/setListOpen\(/g) || []).length, 0, "housePick does not call the list writer: its rows never wear rs-picking (the exclusion the sheet states; a call here would be the maintainer's behaviour change, and this pin then moves with it)");
   assert.match(houseBody, /menu\.hidden = true;[\s\S]*menu\.hidden = false;/, "the rig: housePick writes its menu's hidden itself, both ways");
-  for (const [tab, pane, floor] of [["tasks", "Task tracking", 4], ["chat", "Chat", 5]] as const) {
+  for (const [tab, pane, count] of [["tasks", "Task tracking", 4], ["chat", "Chat", 5]] as const) {
     await withGear(t, tab, async (page, errors) => {
       await settled(page, tab);
       const hosts = await census(page);
@@ -936,7 +936,11 @@ test("a HOUSE dropdown open under the pointer (gear.js housePick, entered at 9 o
         const b = document.getElementById(id); const m = b && (b.nextElementSibling as HTMLElement | null);
         return !!(b && b.tagName === "BUTTON" && m && m.tagName === "DIV" && getComputedStyle(m).position === "absolute");
       }), hosts.flatMap((h: any) => h.controls.map((c: any) => c.id)));
-      assert.ok(house.length >= floor, `the rig: the ${pane} pane holds house pickers among the census controls (${house.length} of at least ${floor})`);
+      // exactly the count the title and gear.css name for this pane (9 of the 12 across the two), held as a literal: a picker
+      // added to or removed from either pane reds until the literal changes, and neither text is read, so whoever changes the
+      // literal updates them by hand; nothing holds the 12, since the leg never opens General or Sessions (the landing review's
+      // focused re-check, 2026-09-29: a floor let a thirteenth picker in either pane pass while both texts still said 9 of 12)
+      assert.equal(house.length, count, `the ${pane} pane holds exactly ${count} house pickers among the census controls, the count the title and gear.css name (${house.length} found)`);
       for (const id of house) {
         const host = hosts.find((h: any) => h.controls.some((c: any) => c.id === id));
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.());
