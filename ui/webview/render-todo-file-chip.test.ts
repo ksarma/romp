@@ -73,7 +73,6 @@ class Elm {
   tagName: string;
   className = ""; title = ""; id = ""; role = ""; tabIndex = -1; type = ""; placeholder = ""; rows = 0; value = "";
   dataset: Record<string, string | undefined> = {};
-  style: Record<string, string> = {};   // the Reply modal's grow handler writes style.height (a fake with no layout to measure: it clears it again)
   parentElement: Elm | null = null;
   childNodes!: Kid[];
   listeners: Record<string, Array<(ev: unknown) => void>> = {};
@@ -232,9 +231,10 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
     openPathLink, null, activeId,
     (p: string, sid: string | null) => opened.push([p, sid]),
     linkifyUrls, urlChip, linkTarget,
-    // the window as the modal's keyboard fold reads it (reply-sheet-keyboard.test.ts executes that fold; here it is out of the
-    // way): a tall window, so no kb-tight, and listener methods that keep nothing
-    { innerHeight: 900, addEventListener() { /* the fold's resize listener, not under test here */ }, removeEventListener() { /* its removal */ } },
+    // the window the modal's keyboard fold reads: this fake's elements have no isConnected, so at open the fold (kbFit) takes its
+    // disconnected return, removing the resize listener it had just added, and neither restCap nor grow runs here
+    // (reply-sheet-keyboard.test.ts executes them); the stand-in only has to take that listener's add and its removal
+    { addEventListener() { /* the fold's resize listener, added at open */ }, removeEventListener() { /* and removed by the fold's disconnected return */ } },
   );
   return { ...out, opened };
 }
