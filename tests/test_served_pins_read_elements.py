@@ -28,7 +28,8 @@ Name bound to either in the same function (a tuple assignment counts by position
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
 the author's pass 7), or a `self.<attr>` bound to one in any method of the same class (a setUp, or a setUpClass's `cls.<attr>`;
-round 6, CLS: a class attribute had been outside the derivation, 98 rows in four suite modules), or a body FETCHED by a literal path
+round 6, CLS: a class attribute had been outside the derivation, 83 rows in four suite modules) or of an in-module base class, nearest
+first (round 6, INHERIT; the textual census does not read inheritance, so such a row is a declined form), or a body FETCHED by a literal path
 (the author's pass 8, 2026-09-20: `_, body = _serve_get("/sw.js", ...)`, `page = self._get_text("/")`, through `.read(...)` and
 `.decode(...)`, alone or by tuple unpack; the fixer pass of the author's pass 8: a FORMATTED url too, `with urllib.request.urlopen(
 "http://127.0.0.1:%d/timeline?token=testtok" % self.port) as r:` binding `r` and `body = r.read().decode(...)` after it, the
@@ -900,6 +901,44 @@ def _loops(fn):
     return out
 
 
+def _base_attrs(cls, by_name, own_attrs, have):
+    """{attribute key: served text} the in-module base classes of `cls` bind in their own methods (own_attrs gives one class's
+    self.<attr> and cls.<attr> bindings), nearest base first and on through the bases' bases, for each attribute neither `cls` (the
+    names in `have`) nor a nearer base binds: a subclass reads what its base's setUp or setUpClass bound (round 6, INHERIT: main's
+    tests/test_fetch_wrapper_census.py binds the worker in _Served.setUpClass and reads it in the subclasses). An attribute is merged
+    by its name, a fetched tuple's position keys (`worker[1]`) with it. A base named otherwise than by a bare Name, or a class the
+    module does not define, binds nothing here."""
+    have, out, seen = set(have), {}, {cls.name}
+    todo = [b.id for b in cls.bases if isinstance(b, ast.Name)]
+    while todo:
+        name = todo.pop(0)
+        if name in seen or name not in by_name:
+            continue
+        seen.add(name)
+        base, got = by_name[name], {}
+        for key, text in own_attrs(base).items():
+            got.setdefault(key.split("[", 1)[0], {})[key] = text
+        for attr, keys in got.items():
+            if attr not in have:
+                have.add(attr)
+                out.update(keys)
+        todo += [b.id for b in base.bases if isinstance(b, ast.Name)]
+    return out
+
+
+def _own_attrs_of(bindings, getters, constants, routes, reads):
+    """own_attrs for _base_attrs over one module: a class's own methods' attribute bindings, bound once per class."""
+    memo, functions = {}, (ast.FunctionDef, ast.AsyncFunctionDef)
+    def own_attrs(cls):
+        if id(cls) not in memo:
+            attrs = memo[id(cls)] = {}
+            for fn in [n for n in cls.body if isinstance(n, functions)]:
+                for targets, value in bindings(fn):
+                    _bind(targets, value, {}, attrs, getters, constants, None, routes, reads)
+        return memo[id(cls)]
+    return own_attrs
+
+
 def rows_of(path, getters, constants, routes=None):
     """[(line, literal, text, form, readable, served)] for every membership or position assertion of a literal over a served text in one
     test module; form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
@@ -912,8 +951,9 @@ def rows_of(path, getters, constants, routes=None):
     plain = lambda node: isinstance(node, ast.Constant) and bool(re.fullmatch(_LIT, _segment(lines, node) or ""))
     out = []
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
-    groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
-    groups.append([n for n in tree.body if isinstance(n, functions)])   # module-level test functions (the author's pass 6, 2026-09-20)
+    classes = [cls for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
+    groups = [(cls, [n for n in cls.body if isinstance(n, functions)]) for cls in classes]
+    groups.append((None, [n for n in tree.body if isinstance(n, functions)]))   # module-level test functions (the author's pass 6, 2026-09-20)
     reads = functools.partial(_response_reads, tree)   # the positions each helper of the module reads a response at (_bind), read on demand
     modnames = _module_bindings(tree, getters, constants, routes)   # a served text bound at module level is read in every function (the fixer pass of the author's pass 9)
     binds = {}
@@ -928,17 +968,24 @@ def rows_of(path, getters, constants, routes=None):
                         if item.optional_vars is not None:
                             binds[fn].append(([item.optional_vars], item.context_expr))
         return binds[fn]
-    for fns in groups:
+    by_name, own_attrs = {c.name: c for c in classes}, _own_attrs_of(bindings, getters, constants, routes, reads)
+    for cls, fns in groups:
         attrs = {}
         for fn in fns:   # a setUp's self.<attr> binding is visible to every method
             for targets, value in bindings(fn):
                 _bind(targets, value, {}, attrs, getters, constants, None, routes, reads)
+        # an attribute an in-module base class binds (round 6, INHERIT), a form the textual census does not read (its class
+        # bindings end at the next class line), so a row over one is declined
+        based = _base_attrs(cls, by_name, own_attrs, {k.split("[", 1)[0] for k in attrs}) if cls is not None else {}
+        attrs.update(based)
+        inherited = {k.split("[", 1)[0] for k in based}
         for fn in fns:
             names, sliced = dict(modnames), set()
             for targets, value in bindings(fn):   # an assignment, or a with-item's `as` target (`with urlopen(...) as r`; the fixer pass of the author's pass 8)
                 _bind(targets, value, names, attrs, getters, constants, sliced, routes, reads)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
-            readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced) and not isinstance(x, ast.Subscript)
+            readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced) and not isinstance(x, ast.Subscript) \
+                and not (isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id == "self" and x.attr in inherited)
             rows = []
             for node in ast.walk(fn):
                 for lit, x in _memberships(node):
@@ -1212,8 +1259,9 @@ def readers_of(path, getters, constants, routes=None):
     parser_names = {alias.asname or alias.name for node in tree.body if isinstance(node, ast.ImportFrom) and node.module == "served_css" for alias in node.names}
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     helpers = {n.name: n for n in tree.body if isinstance(n, functions) and not n.name.startswith("test")}
-    groups = [[n for n in cls.body if isinstance(n, functions)] for cls in nodes if isinstance(cls, ast.ClassDef)]
-    groups.append([n for n in tree.body if isinstance(n, functions)])
+    classes = [cls for cls in nodes if isinstance(cls, ast.ClassDef)]
+    groups = [(cls, [n for n in cls.body if isinstance(n, functions)]) for cls in classes]
+    groups.append((None, [n for n in tree.body if isinstance(n, functions)]))
 
     binds = {}
     def bindings(fn):   # read once per function: the attrs pass and the walk both read it, and a followed helper once per caller
@@ -1428,11 +1476,14 @@ def readers_of(path, getters, constants, routes=None):
         return rows
 
     out = []
-    for fns in groups:
+    by_name, own_attrs = {c.name: c for c in classes}, _own_attrs_of(bindings, getters, constants, routes, reads)
+    for cls, fns in groups:
         attrs, methods = {}, {n.name: n for n in fns}
         for fn in fns:
             for targets, value in bindings(fn):
                 _bind(targets, value, {}, attrs, getters, constants, None, routes, reads)
+        if cls is not None:   # an attribute an in-module base class binds (round 6, INHERIT)
+            attrs.update(_base_attrs(cls, by_name, own_attrs, {k.split("[", 1)[0] for k in attrs}))
         for fn in fns:
             out += walk(fn, dict(modnames), attrs, 0, dict(modderived), methods)
     return sorted({(line, form, str(text), source) for line, form, text, source in out})
@@ -1607,6 +1658,35 @@ _ONE_CELL_REASON = ("the reader census is a source-text fact whose rows were der
                     "this one, not replaced by anything")
 
 
+# The one visible listing (the coordinator's round 6 decisions on PR 858, B.4): rows that stand in main's
+# tests/test_fetch_wrapper_census.py, each with its reason. The decision was to re-point that module's page and worker reads through
+# served_css unless that would weaken what it asserts, and it would: importing served_css puts the module on the parser road, where
+# the reader census fails every raw read of a page it can see, and the module's sign-in test reads the served landing byte-exact
+# at offsets (the seed's `<script>` right after `<head>`, the wrapper's exact bytes right after the seed's end tag), which only an
+# element-level check, blind to the tags' exact bytes, could replace. A pins row is keyed (module, literal, text, form, served) and
+# must still be flagged; a reader row is keyed (module, form, text, source) and must still be produced. An entry that matches no
+# row reds (a stale entry), and no row outside the listing is exempt.
+_LISTED_PINS = (
+    (("test_fetch_wrapper_census.py", "(", "_sw_js", "index", True),
+     "the worker test's `sw.index(\"(\", m.start())` (test_the_service_workers_fetches_go_to_routes_that_need_no_credential): a comment "
+     "of the worker spells \"(\" before any code does, and the census does not model index's start argument; m comes from CALL.finditer "
+     "over the worker, which reads the worker's comments too, a weakness of main's test that stands with the module unre-pointed"),
+)
+_LISTED_READERS = (
+    (("test_fetch_wrapper_census.py", "unclassified", "_sw_js",
+      "fetched tuple self.worker: for route, (_, body) in list(self.pages.items()) + [(\"/sw.js\", self.worker[:2])]:"),
+     "a slice of the fetched worker tuple (NoOtherWindowsFetch), which the census does not follow: it reads a fetched tuple by a "
+     "constant index or an unpack, and the worker's body reaches the member scan through the slice"),
+)
+
+
+def _listed(rows, listing, key):
+    """(standing, other, stale) for rows against one listing: the rows a listed key names, the rest, and the listed keys no row has."""
+    keys = {k for k, _ in listing}
+    standing = [r for r in rows if key(r) in keys]
+    return standing, [r for r in rows if key(r) not in keys], sorted(keys - {key(r) for r in standing})
+
+
 class ServedPinsReadElements(unittest.TestCase):
     @unittest.skipUnless(sys.version_info[:2] == _CENSUS_CELL, _ONE_CELL_REASON)
     def test_no_assertion_over_a_served_text_is_satisfiable_by_a_comment(self):
@@ -1679,7 +1759,11 @@ class ServedPinsReadElements(unittest.TestCase):
         # each row is judged against every text it can read (judged_texts: a getter's returns, a fetched page as Handler._send
         # serves it), and a row whose literal occurs in none of them fails (the rulings at the merge of main's login cookie split)
         self.assertTrue([r for r in rows if r[6]] and [r for r in rows if not r[6]], "rows over fetched bodies and over renders both derived")
-        bad, zero = judge_rows(rows)
+        # the listed rows stand with their reasons (_LISTED_PINS): each must still be derived and still be flagged, and no other row is exempt
+        standing, judged, stale = _listed(rows, _LISTED_PINS, lambda r: (r[0], r[2], r[3], r[4], r[6]))
+        self.assertEqual(stale, [], "a listed pins row the census no longer derives: drop it from _LISTED_PINS")
+        self.assertEqual(len(judge_rows(standing)[0]), len(standing), "a listed pins row no comment satisfies any more: drop it from _LISTED_PINS")
+        bad, zero = judge_rows(judged)
         self.assertEqual(bad, [], "a pin a served comment can satisfy; read the parsed rule, the code with its comments removed or the element instead:\n" + "\n".join(bad))
         self.assertEqual(zero, [], "a row whose literal occurs in no text it is judged against, a verdict that proves nothing: judge it against the text "
                          "the test reads, or correct its literal:\n" + "\n".join(zero))
@@ -1933,8 +2017,11 @@ def test_module_level():
         by = {}
         for r in rows:
             by.setdefault(status(*r), []).append(r)
-        self.assertEqual(by.get("unclassified", []), [], "a read of a served text the walk cannot classify (a callee outside the stated allowlist):\n"
-                         + "\n".join("%s:%d %s %s: %s" % r for r in by.get("unclassified", [])))
+        # the listed rows stand with their reasons (_LISTED_READERS): each must still be produced, and no other unclassified row is exempt
+        standing, unlisted, stale = _listed(by.get("unclassified", []), _LISTED_READERS, lambda r: (r[0], r[2], r[3], r[4]))
+        self.assertEqual(stale, [], "a listed reader row the census no longer produces: drop it from _LISTED_READERS")
+        self.assertEqual(unlisted, [], "a read of a served text the walk cannot classify (a callee outside the stated allowlist):\n"
+                         + "\n".join("%s:%d %s %s: %s" % r for r in unlisted))
         self.assertTrue(by.get("view-pin"), "literal pins over the parser's comment-blanked view (the author's pass 6 re-point form) are rows")
         # test_token_login_page.py joined the road at the merge of main's login cookie split (the rulings, 2026-09-28): its own
         # HTMLParser over the login page was the parser beside served_css this census exists to refuse
@@ -2827,6 +2914,56 @@ class T(unittest.TestCase):
         self.assertEqual(sites, [(11, "k1", "_landing", "in")])
         self.assertEqual([r[:3] for r in readers], [(11, "assert", "_landing"), (12, "assert", "_chat_page"), (14, "assert", "_chat_page")],
                          "the class attribute read as the page, the body position as the fetched page, and no read of the status a read of it")
+
+
+    def test_an_attribute_a_base_class_binds_is_read_in_its_subclasses(self):
+        # round 6 (B.1, INHERIT): a method reads the attributes an in-module base class binds in its own methods (a setUp, a
+        # setUpClass), nearest base first and on through the bases' bases (S reads B's attributes through M), for each attribute
+        # its own class does not bind (O's own setUp wins over B's). Main's tests/test_fetch_wrapper_census.py binds the worker so
+        # and reads it in the subclasses, where no census had read it. A base the module does not define binds nothing (X). The
+        # textual census's class bindings end at the next class line, so a row over an inherited attribute is a declined form (i1,
+        # i2), and one over the class's own attribute is not (i3, i4). Dropping INHERIT reds the rows here, and dropping the
+        # declined clause reds i1's form. The rows of both derivations are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest
+class B(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.html = km._landing()
+        cls.resp = cls._req("/chat?token=x")
+    @classmethod
+    def _req(cls, path):
+        return r.status, r.read(), r.headers
+class M(B):
+    pass
+class S(M):
+    def setUp(self):
+        self.page = km._feed_page()
+    def test_a(self):
+        self.assertIn("i1", self.html)
+        self.assertIn("i2", self.resp[1])
+        self.assertIn("i3", self.page)
+class O(B):
+    def setUp(self):
+        self.html = km._chat_page()
+    def test_b(self):
+        self.assertIn("i4", self.html)
+class X(Elsewhere):
+    def test_c(self):
+        self.assertIn("i5", self.html)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            sites, _ = textual_census(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(rows, [(16, "i1", "_landing", "in", False, False), (17, "i2", "_chat_page", "in", False, True), (18, "i3", "_feed_page", "in", True, False),
+                                (23, "i4", "_chat_page", "in", True, False)])
+        self.assertEqual(sites, [(18, "i3", "_feed_page", "in"), (23, "i4", "_chat_page", "in")])
+        self.assertEqual([r[:3] for r in readers], [(16, "assert", "_landing"), (17, "assert", "_chat_page"), (18, "assert", "_feed_page"), (23, "assert", "_chat_page")])
 
 
 if __name__ == "__main__":
