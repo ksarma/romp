@@ -135,7 +135,7 @@ import * as zlib from "node:zlib";   // paintedRatio's PNG decode: the dress rea
 import * as fs from "node:fs";       // the dashboard's pane wrapper, its rules read from kernel/kernel.py at run time (the predicate's cells)
 import * as path from "node:path";
 import { inBrowser, openViewer, openPanel, frames, topBlock, putAtTop, pageHtml, ROOT, REPORT, SID, PARA, ORIGIN } from "./real-viewer-leg";
-import { phonePages, tapCells, type TapDevice as TapCellDevice, type TapSurface } from "./file-figure-open-taps";   // a phone's pages, and the one gate's tap cells, one set for the three engines
+import { phonePages, tapCells, allowlistCells, type TapDevice as TapCellDevice, type TapSurface } from "./file-figure-open-taps";   // a phone's pages, and the one gate's tap cells, one set for the three engines
 import { stackCells, type StackSurface } from "./file-figure-open-stacking";   // the one gate's stacking cells, one set for the three engines
 
 const NOTES = ROOT + "/docs/notes.md";
@@ -3520,6 +3520,18 @@ for (const device of ["phone", "hybrid"] as TapCellDevice[]) for (const surface 
     assert.deepEqual(cells.map(([what, , got]) => [what, got]), cells.map(([what, want]) => [what, want]), "each cell's reading, [cell, reading] (property pins read off the page)");
   });
 }
+test("in Chromium on a hybrid page in the dashboard's shape, the Files pane: the own-chain allowlist's cell (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): extra5-1's still shape with the focus not back, a text input of the viewer focused, the mouse held on the control while the top page hides the viewer's frame across a rendering update and shows it again, released on the top page, then a still click on an element over the control that cancels its mousedown, whose chain carries the input's blur that no element's focus follows: the covered click opens nothing and the next click opens once, in each of three runs, each run's shape asserted as its precondition (property pins over window.open's calls read off the page; the cell opened its covered click in every run at bef9ff8fc, whose gate read no element's blur, the reads a private witness kept out of the tree)", { timeout: 300000 }, async (t) => {
+  let cells: Array<[string, unknown, unknown]> = [];
+  let ran = false;
+  await inBrowser(t, async (browser) => {
+    ran = true;
+    cells = await allowlistCells(browser, "chromium", 3, (m) => t.diagnostic(m));
+  });
+  if (!ran) return;   // no browser: inBrowser skipped the case loudly
+  for (const [what, , got] of cells) t.diagnostic("cell " + what + ": " + JSON.stringify(got));
+  assert.ok(cells.length > 0, "the case ran its cells");
+  assert.deepEqual(cells.map(([what, , got]) => [what, got]), cells.map(([what, want]) => [what, want]), "each cell's reading, [cell, reading] (property pins read off the page)");
+});
 // ── what lets a press pass through an author's element, or raises it over the control, off the markup (the file review's round 16,
 // extra5-1, the covered sign) ── The hit test at a gesture's start (elementFromPoint) reads the element a press would reach, and a press
 // passes through an element a page class sets pointer-events none on, one whose style attribute does, and an inert one; file-view.ts

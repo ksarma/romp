@@ -193,7 +193,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, frames, PARA, REPORT, ROOT, ORIGIN, type Served } from "./real-viewer-leg";
-import { tapCells, type TapDevice, type TapEngine, type TapSurface } from "./file-figure-open-taps";
+import { tapCells, allowlistCells, type TapDevice, type TapEngine, type TapSurface } from "./file-figure-open-taps";
 import { stackCells, type StackEngine, type StackSurface } from "./file-figure-open-stacking";
 
 const ON: Record<TapDevice, string> = { phone: "a phone's pages (hasTouch and isMobile at a device scale of 1, the kernel's viewport meta)", hybrid: "a hybrid page (hasTouch with a mouse)" };
@@ -218,6 +218,24 @@ for (const [engine, devices] of [["webkit", ["phone", "hybrid"]], ["firefox", ["
     await inBrowser(t, async (browser) => {
       ran = true;
       cells = await tapCells(browser, engine, device, surface, (m) => t.diagnostic(m));
+    }, { engine });
+    if (!ran) return;   // no browser: inBrowser skipped the case loudly
+    for (const [what, , got] of cells) t.diagnostic("cell " + what + ": " + JSON.stringify(got));
+    assert.ok(cells.length > 0, "the case ran its cells");
+    assert.deepEqual(cells.map(([what, , got]) => [what, got]), cells.map(([what, want]) => [what, want]), "each cell's reading, [cell, reading] (property pins read off the page)");
+  });
+}
+for (const engine of ["webkit", "firefox"] as TapEngine[]) {
+  const named = engine === "webkit" ? "WebKit (Playwright's, on Linux under touch emulation)" : "Firefox";
+  const orders = engine === "webkit"
+    ? "extra7-1's moved click, the mouse held on the control while the top page hides and shows the viewer's frame, released on the top page, then a click moved onto an element over the control that cancels its mousedown, whose chain carries a mouse's pointermove with no button down in the held press, and its held-move form, whose chain carries a mouse's pointerout with no button down to an element and its pointerover in its place; and extra6-1's delayed hover update, the viewer's tap with the mouse resting in the viewer after the body scrolled under it and an element appearing at its pointerup, then a tap on that element, whose chain carries the mouse's pointer events with no button down between the first tap's pointerup and the second's compatibility mousedown"
+    : "extra5-2's unflushed hide, the viewer's body box focused and the mouse off the viewer, the viewer's tap on the control with an element appearing and laid out at its pointerup that cancels its mousedown, then a tap on it that hides it at its own pointerup with no layout read, whose compatibility mousemove Firefox sends to the hidden element, so the chain carries a compatibility mousedown with no mousemove";
+  test("in " + named + " on a hybrid page in the dashboard's shape, the Files pane: the own-chain allowlist's cells (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): " + orders + ": each covered click opens nothing and the next click opens once, in each of three runs, each run's shape asserted as its precondition (property pins over window.open's calls read off the page; each cell opened its covered click in every run at bef9ff8fc, whose gate read none of those events, the reads a private witness kept out of the tree)", { timeout: 300000 }, async (t) => {
+    let cells: Array<[string, unknown, unknown]> = [];
+    let ran = false;
+    await inBrowser(t, async (browser) => {
+      ran = true;
+      cells = await allowlistCells(browser, engine, 3, (m) => t.diagnostic(m));
     }, { engine });
     if (!ran) return;   // no browser: inBrowser skipped the case loudly
     for (const [what, , got] of cells) t.diagnostic("cell " + what + ": " + JSON.stringify(got));

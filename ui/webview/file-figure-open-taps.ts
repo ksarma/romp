@@ -1636,3 +1636,200 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
     note("record " + JSON.stringify({ engine, device, surface, page: "in a frame beside another pane", scene: "chain", ...rec }));
   }, { device, wide: true });
 }
+
+/** The own-chain allowlist's cells (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's
+ *  decisions on them), in chainCells's shape, the viewer's page in a same-origin frame of a top page beside another pane on the hybrid
+ *  page, on the Files pane: an order of each of the round's four findings as its engine sends it, whose covered click opened the tab
+ *  at bef9ff8fc, whose gate read none of the events that tell it apart, and opens nothing here, the gate's allowlist refusing a chain
+ *  no gesture of the viewer's own makes, the next click opening once; each run `reps` times, each run a cell of its own. In WebKit:
+ *  extra7-1's moved click (the mouse pressed on the control with the control shown and held while the top page hides the viewer's
+ *  frame, released at once on the top page, the frame shown again at once, then Playwright's click on the control, which moves the
+ *  mouse to the point first, on an element of the top page over the control that cancels its mousedown and hides at it, so the viewer
+ *  hears a mouse's pointermove with no button down inside the held press's record before that click's pointerup); its held-move form (the
+ *  held mouse moved 1 px and back while the frame is hidden, then the release and the same element's click with no move, so the viewer
+ *  hears a mouse's pointerout with no button down to an element and its pointerover in place of that pointermove); and extra6-1's
+ *  hover update (the settling click leaving the mouse resting in the viewer, the body scrolled under it to place the picture, then the
+ *  viewer's own tap on the picture with an element of the top page appearing over the picture and the control at its pointerup, which
+ *  takes that tap's compatibility events and click and hides at its own pointerup, then a tap on that element: WebKit's delayed hover
+ *  update for the resting mouse, which the own tap's compatibility mousemove would cancel and which that element took, lands in the
+ *  viewer as the mouse's pointerout, pointerover and pointermove with no button down between the first tap's pointerup and the second
+ *  tap's compatibility mousedown). In Firefox: extra5-2's unflushed hide (the viewer's body box focused and the mouse off the viewer on
+ *  the top page's bar, then the viewer's own tap on the control with an element appearing there at its pointerup and laid out at once,
+ *  which cancels its mousedown and hides at its own pointerup with no layout read, then a tap on it at the control's point: Firefox
+ *  hit-tests that tap's compatibility mousemove against the layout from before the hide and sends it to the hidden element, so the
+ *  viewer hears a compatibility mouseover from no element, a mousedown, a mouseup and a click and no mousemove). In Chromium: extra5-1's
+ *  still shape with the focus not back (a text input of the viewer's document focused, the mouse pressed on the control, whose mousedown
+ *  the viewer cancels, so the focus stays in the input, and held while the top page hides the frame inside a requestAnimationFrame
+ *  callback that asks for one more, so a rendering update runs while the frame is hidden and the focus fixup blurs the input, released
+ *  at once on the top page, the frame shown again, then a still click at the press's point on an element over the control that cancels
+ *  its mousedown and hides at it: the viewer hears the input's blur, no focus after it, since the body did not hold the keyboard and
+ *  retakeAfterHide gives nothing back, and no blur of its window). Each cell asserts that shape as its precondition. */
+export async function allowlistCells(browser: any, engine: TapEngine, reps: number, note: (m: string) => void): Promise<TapCell[]> {
+  const cells: TapCell[] = [];
+  const at = (engine === "webkit" ? "WebKit (Playwright's, on Linux under touch emulation)" : engine) + ", a hybrid page in a frame beside another pane, pane: ";
+  await framedScene(browser, engine, "pane", COVER_TEXT, "allowlist", async (s) => {
+    const rec: Record<string, unknown> = {};
+    type Heard = { type: string; ptype?: string; buttons?: number; button?: number; detail?: number; rt?: string; tgt?: string; trusted: boolean };
+    await s.fr.evaluate(() => {
+      const w = window as any; w.__tal = [];
+      for (const type of ["pointerdown", "pointerup", "pointercancel", "pointerover", "pointerout", "pointerenter", "pointerleave", "pointermove", "mousedown", "mouseup", "mouseover", "mouseout", "mousemove", "touchstart", "touchend", "touchcancel", "dragstart", "contextmenu", "auxclick", "blur", "focus", "click"]) window.addEventListener(type, (e: any) => { w.__tal.push({ type: e.type, ptype: e.pointerType, buttons: e.buttons, button: e.button, detail: e.detail, rt: "relatedTarget" in e ? (e.relatedTarget === null ? "none" : "element") : undefined, tgt: e.target === window ? "window" : e.target && e.target.nodeType === 9 ? "document" : "element", trusted: e.isTrusted }); }, true);
+    });
+    const heard = (): Promise<Heard[]> => s.fr.evaluate(() => (window as any).__tal.splice(0));
+    const word = (evs: Heard[]): string => evs.map((e) => e.type + (e.ptype ? ":" + e.ptype : "") + (e.buttons !== undefined && e.type !== "click" && !e.type.startsWith("blur") && !e.type.startsWith("focus") ? ":b" + e.buttons : "") + (e.rt && /over|out/.test(e.type) ? ":" + e.rt : "") + (e.type === "blur" || e.type === "focus" ? ":" + e.tgt : "") + (e.type === "mouseup" ? ":d" + e.detail : "")).join(" ");
+    const idx = (evs: Heard[], f: (e: Heard) => boolean): number => evs.findIndex(f);
+    const drop = (): Promise<string | null> => s.page.evaluate(() => { const out: string[] = []; for (const id of ["tcover"]) { const d = document.getElementById(id); if (d) { out.push(id + ":" + getComputedStyle(d).display); d.remove(); } } return out.join(" ") || null; });
+    const settle = async (): Promise<void> => {
+      await drop();
+      await s.page.evaluate(() => { const f = document.getElementById("tview") as HTMLElement; f.style.display = "block"; f.style.top = "0px"; });
+      await s.fr.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 0; });
+      await frames(s.fr, 3);
+      const q = await s.fr.evaluate(() => { const p = document.querySelector(".fileview-md p") as HTMLElement; const r = p.getBoundingClientRect(); return { x: Math.round(r.left + 20), y: Math.round(r.top + r.height / 2) }; });
+      await s.page.mouse.click(q.x, q.y);
+      await frames(s.fr, 3);
+      await heard(); await s.events(); await s.opens();
+    };
+    const shown = async (what: string): Promise<{ tapAt: { x: number; y: number }; box: { x: number; y: number; w: number; h: number }; ctl: { x: number; y: number } }> => {
+      const r = await s.place("w490", 3);
+      const c = await s.ctlBox();
+      const tapAt = { x: Math.round(c.l - 50), y: Math.round(c.t + c.h / 2 + 30) };
+      assert.ok(r.inView && r.ctl && c.frameTop === 0, at + what + ": the control shown (a precondition): " + JSON.stringify({ r, c }));
+      return { tapAt, box: { x: Math.round(c.l - 120), y: Math.round(c.t - 10), w: Math.round(c.w + 140), h: Math.round(c.h + 90) }, ctl: { x: Math.round(c.l + c.w / 2), y: Math.round(c.t + c.h / 2) } };
+    };
+    /** The top page's element at `box`, its behaviour `how` (`event:action[+action]` parts: prevent, hide), put up now. */
+    const element = (box: { x: number; y: number; w: number; h: number }, how: string): Promise<void> => s.page.evaluate(([b, h]: [{ x: number; y: number; w: number; h: number }, string]) => {
+      const d = document.createElement("div");
+      d.id = "tcover";
+      d.style.cssText = "position:fixed;left:" + b.x + "px;top:" + b.y + "px;width:" + b.w + "px;height:" + b.h + "px;z-index:10;background:#eee;font:16px sans-serif";
+      d.textContent = "an element of the top page";
+      for (const part of h.split(",")) { const [ev, act] = part.split(":"); d.addEventListener(ev, (e: Event) => { if (act.includes("prevent")) e.preventDefault(); if (act.includes("hide")) d.style.display = "none"; }, { passive: false }); }
+      document.body.appendChild(d);
+    }, [box, how]);
+    /** The same element put up by a one-time capture listener on the viewer's window at the viewer's `on`, laid out there where `flush`. */
+    const appear = (on: string, box: { x: number; y: number; w: number; h: number }, how: string, flush: boolean): Promise<void> => s.page.evaluate(([b, o, h, fl]: [{ x: number; y: number; w: number; h: number }, string, string, boolean]) => {
+      const vw = (document.getElementById("tview") as HTMLIFrameElement).contentWindow as Window;
+      const f = (): void => {
+        vw.removeEventListener(o, f, true);
+        const d = document.createElement("div");
+        d.id = "tcover";
+        d.style.cssText = "position:fixed;left:" + b.x + "px;top:" + b.y + "px;width:" + b.w + "px;height:" + b.h + "px;z-index:10;background:#eee;font:16px sans-serif";
+        d.textContent = "an element of the top page";
+        for (const part of h.split(",")) { if (!part) continue; const [ev, act] = part.split(":"); d.addEventListener(ev, (e: Event) => { if (act.includes("prevent")) e.preventDefault(); if (act.includes("hide")) d.style.display = "none"; }, { passive: false }); }
+        document.body.appendChild(d);
+        if (fl) { void d.offsetHeight; void document.body.getBoundingClientRect(); }
+      };
+      vw.addEventListener(o, f, true);
+    }, [box, on, how, flush]);
+    const hideFrame = (): Promise<void> => s.page.evaluate(() => new Promise<void>((res) => { requestAnimationFrame(() => { (document.getElementById("tview") as HTMLElement).style.display = "none"; requestAnimationFrame(() => { /* one more rendering update asked for, as the round's measurements did */ }); res(); }); }));
+    const showFrame = (): Promise<void> => s.page.evaluate(() => { (document.getElementById("tview") as HTMLElement).style.display = "block"; });
+    /** The next click of the mouse on the picture, the element gone: its opens. */
+    const next = async (what: string): Promise<[number, number]> => {
+      const r2 = await s.read("w490");
+      assert.ok(r2.inView && r2.hit2 === "the picture", at + what + ": the control in view and the next click's point on the picture (a precondition): " + JSON.stringify(r2));
+      await s.page.mouse.click(r2.pt2.x, r2.pt2.y); await frames(s.fr, 3);
+      await heard();
+      return s.opens();
+    };
+    const tap = async (p: { x: number; y: number }): Promise<void> => { await s.page.touchscreen.tap(p.x, p.y); await frames(s.fr, 4); await new Promise((r) => setTimeout(r, 100)); };
+    for (let rep = 1; rep <= reps; rep++) {
+      if (engine === "webkit") {
+        for (const heldMove of [false, true]) {
+          const what = heldMove ? "extra7-1 after a held move: the mouse pressed on the control and held while the top page hides the viewer's frame, moved 1 px and back, released at once on the top page, the frame shown again at once, then a still click on an element over the control that cancels its mousedown and hides at it" : "extra7-1: the mouse pressed on the control and held while the top page hides the viewer's frame, released at once on the top page, the frame shown again at once, then a click moved onto the control, Playwright's, on an element over the control that cancels its mousedown and hides at it";
+          await settle();
+          const g = await shown(what);
+          await s.page.mouse.move(g.ctl.x, g.ctl.y); await frames(s.fr, 2);
+          await heard();                                                                   // the move's boundary events before the press are not the cell's
+          await s.page.mouse.down();
+          await frames(s.fr, 2);
+          await hideFrame();
+          if (heldMove) { await s.page.mouse.move(g.ctl.x + 1, g.ctl.y); await s.page.mouse.move(g.ctl.x, g.ctl.y); }
+          await s.page.mouse.up();
+          await showFrame();
+          await frames(s.fr, 2);
+          await element(g.box, "mousedown:hide+prevent");
+          if (heldMove) { await s.page.mouse.down(); await s.page.mouse.up(); }            // a still click where the press was
+          else await s.page.mouse.click(g.ctl.x, g.ctl.y);                                  // Playwright's click, a move to the point first
+          await new Promise((r) => setTimeout(r, 150)); await frames(s.fr, 4);
+          const evs = await heard();
+          const up = idx(evs, (e) => e.type === "pointerup");
+          const sign = heldMove ? idx(evs, (e) => e.type === "pointerout" && e.ptype === "mouse" && e.buttons === 0 && e.rt === "element") : idx(evs, (e) => e.type === "pointermove" && e.ptype === "mouse" && e.buttons === 0);
+          rec[what + " " + rep] = { heard: word(evs), el: await drop() };
+          assert.ok(evs[0] && evs[0].type === "pointerdown" && evs[0].ptype === "mouse" && n1(evs, "pointerdown") && n1(evs, "mousedown") && n1(evs, "pointerup") && n1(evs, "click") && up > 0 && sign > 0 && sign < up && !evs.some((e) => e.type === "blur" && e.tgt === "window"), at + what + ": the viewer hears the press's pointerdown and mousedown, " + (heldMove ? "a mouse's pointerout with no button down to an element" : "a mouse's pointermove with no button down") + " before the click's pointerup, a mouseup and a click, and no blur of its window (a precondition): " + word(evs));
+          const clickOpens = await s.opens();
+          cells.push(["in WebKit, " + what + ", run " + rep + ": [that click's opens, the next click's]", [[0, 0], [1, 1]], [clickOpens, await next(what)]]);
+        }
+        {
+          const what = "extra6-1: the mouse resting in the viewer, the body scrolled under it, then the viewer's own tap on the picture with an element appearing at its pointerup, then a tap on that element, which hides at its own pointerup";
+          await settle();
+          const g = await shown(what);
+          await appear("pointerup", g.box, "pointerup:hide", false);
+          await heard();
+          await tap(g.tapAt);
+          const st = await heard();
+          const stepOpens = await s.opens();
+          await tap(g.tapAt);
+          const evs = await heard();
+          const all = [...st, ...evs];
+          const up = idx(all, (e) => e.type === "pointerup" && e.ptype === "touch");
+          const md = idx(all, (e) => e.type === "mousedown");
+          const hov = all.findIndex((e, i) => i > up && (md < 0 || i < md) && /^pointer(over|out|move)$/.test(e.type) && e.ptype === "mouse" && e.buttons === 0);
+          rec[what + " " + rep] = { step: word(st), tap: word(evs), el: await drop() };
+          assert.ok(up >= 0 && md > up && hov > up && hov < md && n1(all, "click") && n1(all, "pointerdown"), at + what + ": the viewer hears its tap's pointerdown and pointerup, then the mouse's pointer events with no button down, then the other tap's compatibility mousedown, a mouseup and a click, and one pointerdown (a precondition): " + word(all));
+          const tapOpens = await s.opens();
+          cells.push(["in WebKit, " + what + ", run " + rep + ": [the viewer's tap's opens, the other document's click's, the next click's]", [[0, 0], [0, 0], [1, 1]], [stepOpens, tapOpens, await next(what)]]);
+        }
+      }
+      if (engine === "firefox") {
+        const what = "extra5-2: the viewer's body box focused and the mouse off the viewer, the viewer's own tap on the control with an element appearing there at its pointerup, laid out at once, that cancels its mousedown, then a tap on it that hides it at its own pointerup with no layout read";
+        await settle();
+        await s.page.mouse.move(1200, 650); await frames(s.fr, 2);
+        const g = await shown(what);
+        await s.fr.evaluate(() => { window.focus(); const b = document.querySelector(".fileview-body") as HTMLElement; if (!b.hasAttribute("tabindex")) b.setAttribute("tabindex", "-1"); b.focus(); });
+        await frames(s.fr, 2);
+        await appear("pointerup", g.box, "mousedown:prevent,pointerup:hide", true);
+        await heard();
+        await tap(g.ctl);
+        const st = await heard();
+        const stepOpens = await s.opens();
+        await tap(g.ctl);
+        const evs = await heard();
+        const md = idx(evs, (e) => e.type === "mousedown");
+        rec[what + " " + rep] = { step: word(st), tap: word(evs), el: await drop() };
+        assert.ok(n1(st, "pointerdown") && n1(st, "pointerup") && !st.some((e) => e.type === "mousedown" || e.type === "click") && md >= 0 && n1(evs, "click") && n1(evs, "mouseup") && !evs.some((e) => e.type === "mousemove" || e.type === "pointerdown"), at + what + ": the viewer hears its tap's pointerdown and pointerup and no mousedown or click, then the other tap's mousedown, a mouseup and a click with no mousemove and no pointerdown (a precondition): " + word(st) + " | " + word(evs));
+        const tapOpens = await s.opens();
+        cells.push(["in Firefox, " + what + ", run " + rep + ": [the viewer's tap's opens, the other document's click's, the next click's]", [[0, 0], [0, 0], [1, 1]], [stepOpens, tapOpens, await next(what)]]);
+      }
+      if (engine === "chromium") {
+        const what = "extra5-1 with the focus not back: a text input of the viewer focused, the mouse pressed on the control and held while the top page hides the viewer's frame across a rendering update, released at once on the top page, the frame shown again, then a still click on an element over the control that cancels its mousedown and hides at it";
+        await settle();
+        await s.fr.evaluate(() => { if (!document.getElementById("tvin")) { const i = document.createElement("input"); i.id = "tvin"; i.style.cssText = "position:fixed;right:20px;bottom:90px;width:160px;z-index:2147483647"; document.body.appendChild(i); } });
+        const g = await shown(what);
+        const vin = await s.fr.evaluate(() => { const r = (document.getElementById("tvin") as HTMLElement).getBoundingClientRect(); return { x: Math.round(r.left + 20), y: Math.round(r.top + r.height / 2) }; });
+        await s.page.mouse.click(vin.x, vin.y); await frames(s.fr, 2);
+        const focused = await s.fr.evaluate(() => document.activeElement && (document.activeElement as HTMLElement).id);
+        await s.opens();
+        await s.page.mouse.move(g.ctl.x, g.ctl.y); await frames(s.fr, 2);
+        await heard();                                                                     // the move's boundary events before the press are not the cell's
+        await s.page.mouse.down();
+        await frames(s.fr, 2);
+        await hideFrame();                                                                 // inside a requestAnimationFrame callback that asks for one more, so the focus fixup runs while hidden
+        await s.page.mouse.up();                                                           // at once, on the top page, before a redraw finds the frame hidden with the button down
+        await showFrame();
+        await element(g.box, "mousedown:hide+prevent");
+        await s.page.mouse.down(); await s.page.mouse.up();                                // at once, the still click where the press was
+        await new Promise((r) => setTimeout(r, 150)); await frames(s.fr, 4);
+        const evs = await heard();
+        const up = idx(evs, (e) => e.type === "pointerup");
+        const blur = idx(evs, (e) => e.type === "blur" && e.tgt === "element");
+        const focusAfter = evs.findIndex((e, i) => i > blur && e.type === "focus" && e.tgt === "element");
+        rec[what + " " + rep] = { focused, heard: word(evs), el: await drop() };
+        assert.ok(focused === "tvin" && evs[0] && evs[0].type === "pointerdown" && n1(evs, "pointerdown") && n1(evs, "mousedown") && n1(evs, "pointerup") && n1(evs, "click") && blur > 0 && blur < up && (focusAfter < 0 || focusAfter > up) && !evs.some((e) => e.type === "blur" && e.tgt === "window") && !evs.some((e, i) => i < up && e.ptype === "mouse" && /^pointer(move|out|over)$/.test(e.type)), at + what + ": the input focused, then the viewer hears the press's pointerdown and mousedown, an element's blur and no element's focus before the click's pointerup, no mouse pointer event with no button down before it, a mouseup and a click, and no blur of its window (a precondition): " + JSON.stringify({ focused }) + " " + word(evs));
+        const clickOpens = await s.opens();
+        cells.push(["in Chromium, " + what + ", run " + rep + ": [that click's opens, the next click's]", [[0, 0], [1, 1]], [clickOpens, await next(what)]]);
+      }
+    }
+    note("record " + JSON.stringify({ engine, scene: "allowlist", ...rec }));
+  }, { device: "hybrid", wide: true });
+  return cells;
+}
+/** Exactly one event of `type` in `evs`. */
+const n1 = (evs: Array<{ type: string }>, type: string): boolean => evs.filter((e) => e.type === type).length === 1;
