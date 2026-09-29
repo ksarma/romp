@@ -1956,8 +1956,8 @@ class VerifyReadsTheSweep(_Base):
                      "--flake naming it" % head[:10])
 
     def test_an_invalid_run_in_the_history_is_named_by_verify_and_the_body(self):
-        """Round 1, decision 18: an invalid run needs no flake before a later green counts, but verify and the body
-        name it."""
+        """Round 1, decision 18, which stands for an invalid run that failed no leg: it needs no flake before a later
+        green counts, but verify and the body name it."""
         fx = self.fx
         head = self.assembled()
         stamp = sweep.now()
@@ -1969,6 +1969,35 @@ class VerifyReadsTheSweep(_Base):
         note = "run 1 (started %s) was invalid: %s" % (stamp, reason)
         self.assertIn("an earlier " + note, p.stdout)
         self.assertEqual(fx.state("b1")["sweep"]["invalid_runs"], [note])
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        first_block = next(b for b in body.split("\n\n") if "Verified at %s" % head[:10] in b)
+        self.assertIn("an earlier " + note, first_block)
+
+    def test_a_failure_in_an_invalid_run_counts_and_verify_and_the_body_name_it(self):
+        """Round 2, Class A: invalidity voids a run's passes, never its failures. A history whose invalid run failed
+        pytest passes only when a later run names pytest's known flake, and verify records the invalid run with its
+        failed leg in state['sweep']['invalid_runs'], which the body's first block shows; a later green without the
+        flake is refused naming the invalid run's failure."""
+        fx = self.fx
+        head = self.assembled()
+        stamp = sweep.now()
+        pytest_leg = sweep.PYTEST_LEGS[0]
+        reason = "after the manager leg the checkout is not the sha's tree: untracked leaked.txt"
+        failed = self.legs()
+        failed[pytest_leg].update(rc=1, failed=1, log="logs/pytest.log")
+        invalid = fx.run_record(kind="full", sha=head, started=stamp, finished=stamp, flakes={}, legs=failed, invalid=reason)
+        fx.sweep("b1", runs=[invalid, fx.run_record(kind="full", sha=head, started=stamp, finished=stamp, flakes={},
+                                                     legs=self.legs(), invalid=None)])
+        self.refused("FAIL sweep red at %s: run 1 failed pytest (rc 1; log logs/pytest.log), and run 2 passed it with no "
+                     "--flake naming it" % head[:10])
+        fx.sweep("b1", runs=[invalid, fx.run_record(kind="full", sha=head, started=stamp, finished=stamp,
+                                                     flakes={pytest_leg: self.FLAKE}, legs=self.legs(), invalid=None)])
+        p = fx.ok("verify", "b1")
+        note = "run 1 (started %s) was invalid: %s; its failures count: pytest (rc 1; log logs/pytest.log)" % (stamp, reason)
+        self.assertIn("an earlier " + note, p.stdout)
+        self.assertEqual(fx.state("b1")["sweep"]["invalid_runs"], [note])
+        self.assertEqual(fx.state("b1")["sweep"]["reruns"],
+                         ["pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE])
         body = fx.ok("summarize", "b1", "--print-only").stdout
         first_block = next(b for b in body.split("\n\n") if "Verified at %s" % head[:10] in b)
         self.assertIn("an earlier " + note, first_block)

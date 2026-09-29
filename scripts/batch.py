@@ -62,7 +62,8 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     land re-runs verify and refuses the same. The reader reads the result's whole history (append-only
     runs): a failed run that no later run excused with --flake naming the leg reads red, naming the run and
     its logs, and a result recorded under another leg environment (the allowlist hash) reads invalid; verify
-    and the body name each invalid run the history holds;
+    and the body name each invalid run the history holds, with each leg it failed: invalidity voids a run's
+    passes, never its failures, so such a failure needs --flake naming the leg like any other;
   - land reads main on origin before it retargets any member and once more right before the merge call, and
     refuses if it moved since verify, naming any member it had retargeted and how to restore its base; what
     no read can stop, a move between the last read and GitHub's merge (the merge pins the head, not the
@@ -1566,13 +1567,15 @@ def excuse_contradiction(root, sweep, result, head, subject="the batch head"):
 def sweep_record(sweep, a, head):
     """The pass a reader read (`a`, from assess), as the state records it: verify's state['sweep'] for the batch head
     and each member's 'sweep' for its own head. The head, the result's path and finish, each leg's rc or "not owed",
-    the runner's display summaries, the failed runs the history excused with a known flake, and its invalid runs."""
+    the runner's display summaries, the failed runs the history excused with a known flake, and its invalid runs with
+    the legs each failed."""
     legs = a["result"]["legs"]
     return {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
             "legs": [[n, legs[n].get("rc") if sweep.is_owed(n, legs[n]) else "not owed"] for n in sweep.LEGS],
             "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(n, legs[n]) and legs[n].get("summary")},
             # the result's whole history as the reader read it: each failed run a later run's known flake excused, and
-            # each invalid run (it needs no flake, but it is named)
+            # each invalid run with the legs it failed, whose failures count (one that failed no leg needs no flake, but
+            # it is named)
             "reruns": list(a["result"].get("flake_notes") or []),
             "invalid_runs": list(a["result"].get("invalid_notes") or [])}
 
@@ -1754,8 +1757,8 @@ def read_first_reasons(m, resolved, contained_by=None):
 def sweep_phrase(sw):
     """The first block's words for the sweep verify read: every owed leg with its rc (and the runner's
     display summary), then the legs not owed, then any leg re-run after a known flake, with its first
-    failure and the flake, then any invalid run in the result's history. A record from before the result
-    file (free text passed to verify) is shown as it was written."""
+    failure and the flake, then any invalid run in the result's history, with the legs it failed. A record
+    from before the result file (free text passed to verify) is shown as it was written."""
     if not sw:
         return "sweep not recorded"
     if sw.get("verdict") == "pass" and isinstance(sw.get("legs"), list):
@@ -1765,7 +1768,7 @@ def sweep_phrase(sw):
 
 def pass_legs_phrase(sw):
     """A recorded pass's legs in words (sweep_record's shape): every owed leg with its rc and the runner's display
-    summary, the legs not owed, each failed run a known flake excused, and each invalid run."""
+    summary, the legs not owed, each failed run a known flake excused, and each invalid run with the legs it failed."""
     summary = sw.get("summary") or {}
     ran = ["%s rc %s%s" % (n, rc, (" (%s)" % summary[n]) if summary.get(n) else "") for n, rc in sw["legs"] if rc != "not owed"]
     skipped = [n for n, rc in sw["legs"] if rc == "not owed"]
