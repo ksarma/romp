@@ -151,6 +151,7 @@ This lab boots subprocess kernels and drives Chromium; it loads no romp code in-
 state-isolation preamble and is not scanned by tests/test_state_isolation_order.py (as its siblings). Synthetic
 only: placeholder uuids, hostname TESTHOST, the notes-api demo's session names, invented card and todo text.
 """
+import errno
 import http.server
 import json
 import os
@@ -307,8 +308,18 @@ class LinkProxy:
     ssh -L forward, so the link can be dropped and restored while both kernels stay up. listen() listens and splices each
     accepted connection to the target; drop() closes the listener (a dial is refused, as at a dead -L listener) and
     shuts every spliced pair (both ends read EOF: the hub's upstream, the remote's client); resume() listens again on
-    the same port; stop() drops the link, joins every thread the splice started and fails naming any still alive at its
-    bound. Every transition is stamped for the record.
+    the same port; stop() drops the link, joins every thread the splice started, fails naming any still alive at its
+    bound and releases the port. Every transition is stamped for the record.
+
+    The port is the splice's from construction until stop(): a socket bound to it that never listens holds it, so nothing
+    else on the box can take it before listen() or between a drop() and its resume(), and each listener binds it beside
+    that socket through SO_REUSEPORT. The splice took its port from a free-port probe that closed its socket, and the port
+    was then free for anyone to take until listen() bound it, and again across every drop. On Linux, where the served job
+    runs this lab, a dial to a port that is bound and not listening is refused, so a dial while the link is dropped is
+    refused as before, as at a dead -L listener, which is the refusal the hub's relay starts its redial road from (the
+    module docstring). None of this was measured on another system: LinkProxyEnds, which a scheduled Python cell also runs
+    on macOS, requires there only that such a dial does not connect. LinkProxyEnds holds the port bound from construction
+    until stop().
 
     The upstream socket's timeout is cleared once it connects, as the kernel's own relay clears it (kernel.py _remote_ws:
     create_connection's timeout would otherwise cut the long-lived splice), so a pair stays up however long its remote side
@@ -333,7 +344,11 @@ class LinkProxy:
 
     def __init__(self, target_port):
         self.target = int(target_port)
-        self.port = _dial._free_port()
+        # the holder: bound to the port here, never listening, closed by stop() (the class docstring says why)
+        self._hold = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._hold.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        self._hold.bind(("127.0.0.1", 0))
+        self.port = self._hold.getsockname()[1]
         self._lsock = None
         self._down = True
         self._pairs = set()
@@ -342,8 +357,13 @@ class LinkProxy:
         self.events = []
 
     def listen(self):
+        if self._lsock is not None:
+            # SO_REUSEPORT would let a second listener bind beside the first, and a dial the system handed to the listener
+            # no accept loop reads would sit in its backlog, never spliced: refused here, as the bind did before SO_REUSEPORT
+            raise RuntimeError("the splice is already listening on port %d (resume() follows a drop())" % self.port)
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)   # the port the holder has bound since construction
         s.bind(("127.0.0.1", self.port))
         s.listen(64)
         s.setblocking(False)
@@ -468,19 +488,22 @@ class LinkProxy:
         had just swept, which ends at once, or the accept thread of a listen() that raced the teardown, which does not)
         is joined too or named. A thread still alive at the bound fails the teardown with an AssertionError naming it,
         where a timed join that returned in silence would let a splice that never ended pass (tearDownClass still kills
-        the kernels and removes the lab when this raises)."""
-        self.drop()
-        deadline = time.monotonic() + self.STOP_BOUND_S
-        while True:
-            with self._lock:
-                live = [t for t in self._threads if t.is_alive()]
-            if not live or time.monotonic() >= deadline:
-                break
-            for t in live:
-                t.join(max(0.0, deadline - time.monotonic()))
-        if live:
-            raise AssertionError("the link splice's threads outlived stop()'s %.1f s bound: %s"
-                                 % (self.STOP_BOUND_S, ", ".join(sorted(t.name for t in live))))
+        the kernels and removes the lab when this raises). The held port is closed last, whether or not this raises."""
+        try:
+            self.drop()
+            deadline = time.monotonic() + self.STOP_BOUND_S
+            while True:
+                with self._lock:
+                    live = [t for t in self._threads if t.is_alive()]
+                if not live or time.monotonic() >= deadline:
+                    break
+                for t in live:
+                    t.join(max(0.0, deadline - time.monotonic()))
+            if live:
+                raise AssertionError("the link splice's threads outlived stop()'s %.1f s bound: %s"
+                                     % (self.STOP_BOUND_S, ", ".join(sorted(t.name for t in live))))
+        finally:
+            self._hold.close()
 
 
 class _Control(threading.Thread):
@@ -2049,8 +2072,8 @@ class LinkProxyEnds(unittest.TestCase):
     the splice's connect with nobody accepting, so these run wherever the module is collected, CI's Python cells included.
     stop() is held to end every thread the splice started, drop() being the call that releases them (main's thread-stop
     census reads the joins in stop() and would read them the same with the drop() call gone), and to fail naming any
-    thread still alive at its bound; and a pair is held to stay up through a quiet spell longer than the 5 s timeout its
-    upstream connect is handed."""
+    thread still alive at its bound; a pair is held to stay up through a quiet spell longer than the 5 s timeout its
+    upstream connect is handed; and the port the splice reports is held to be bound from its construction until stop()."""
 
     QUIET_S = 6.0   # a quiet spell longer than the 5 s timeout the splice's upstream connect is handed
 
@@ -2060,6 +2083,46 @@ class LinkProxyEnds(unittest.TestCase):
         srv.bind(("127.0.0.1", 0))
         srv.listen(8)
         return srv
+
+    def _proxy(self, srv):
+        """A splice to the target whose held port is closed when the test ends: stop() closes it, and this cleanup, which
+        runs after every cleanup the test registers later, covers a test that never calls stop() or fails before it
+        reaches it."""
+        p = LinkProxy(srv.getsockname()[1])
+        self.addCleanup(p._hold.close)
+        return p
+
+    @staticmethod
+    def _bind_errno(port):
+        """None when a fresh socket binds 127.0.0.1:port, else the errno it failed with. The probe sets SO_REUSEADDR, as
+        the splice's listener does, so a closed pair's TIME_WAIT on the port does not refuse it; a socket bound to the port
+        without SO_REUSEADDR (the holder) or listening on it (the listener) still does."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("127.0.0.1", port))
+            return None
+        except OSError as e:
+            return e.errno
+        finally:
+            s.close()
+
+    @staticmethod
+    def _dial(port):
+        """How a dial to 127.0.0.1:port ends: "connected", "refused", "timed out", or the error it failed with."""
+        c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        c.settimeout(5)
+        try:
+            c.connect(("127.0.0.1", port))
+            return "connected"
+        except ConnectionRefusedError:
+            return "refused"
+        except TimeoutError:
+            return "timed out"
+        except OSError as e:
+            return repr(e)
+        finally:
+            c.close()
 
     def _spliced(self, p, srv):
         """Dial the splice and carry one byte each way, so the pair is registered and both of its pumps run."""
@@ -2082,7 +2145,7 @@ class LinkProxyEnds(unittest.TestCase):
         returns, and the client reads EOF. A stop() that joins without calling drop() first leaves the accept loop
         running, and fails here at its bound."""
         srv = self._target()
-        p = LinkProxy(srv.getsockname()[1])
+        p = self._proxy(srv)
         self.addCleanup(p.drop)
         p.listen()
         c, _ = self._spliced(p, srv)
@@ -2100,7 +2163,7 @@ class LinkProxyEnds(unittest.TestCase):
         and with it the pump reading the remote timed out and shut the pair after 5 s of silence; in the old-hub drives that
         cut made every relay-socket close outside the drop and the restart, and its redials caught the old page up."""
         srv = self._target()
-        p = LinkProxy(srv.getsockname()[1])
+        p = self._proxy(srv)
         self.addCleanup(p.stop)
         p.listen()
         c, u = self._spliced(p, srv)
@@ -2116,12 +2179,63 @@ class LinkProxyEnds(unittest.TestCase):
         c.sendall(b"w")
         self.assertEqual(u.recv(1), b"w", "the client's byte crosses after the quiet spell")
 
+    def test_the_port_it_reports_is_bound_from_construction_until_stop(self):
+        """The port the splice reports is a port it has bound, and it stays bound from construction until stop(): a
+        fresh socket cannot bind it before listen(), while the link is up, or between a drop() and its resume(), and can
+        once stop() returns. listen() and resume() listen on that port, and a dial while the link is dropped is refused on
+        Linux, as at a dead -L listener, and elsewhere does not connect (the class docstring says why the two differ). The
+        splice took its port from a free-port probe that closed its socket, so the port was free for anyone to take between
+        the probe and listen(), and again between each drop() and its resume()."""
+        srv = self._target()
+        p = LinkProxy(srv.getsockname()[1])
+        self.addCleanup(p.stop)   # stop() closes the held port too; not self._proxy, whose cleanup reads the holder, so this test runs to its assertions over a splice that has none
+        self.assertEqual(self._bind_errno(p.port), errno.EADDRINUSE, "constructed and not yet listening: the reported port is bound")
+        p.listen()
+        self.assertEqual(p._lsock.getsockname(), ("127.0.0.1", p.port), "listen() listens on the reported port")
+        self._spliced(p, srv)
+        self.assertEqual(self._bind_errno(p.port), errno.EADDRINUSE, "the link up: the reported port is bound")
+        with p._lock:
+            accept = [t for t in p._threads if t.name == "linkproxy-accept"]
+        p.drop()
+        # on Linux a listener closed while the accept loop's select waits on it stays open until that select returns (within
+        # its 0.2 s): a dial in that window connects to it, and it still occupies the port; so both reads wait for the loop to end
+        for t in accept:
+            t.join(5)
+        self.assertEqual([t.name for t in accept if t.is_alive()], [], "the accept loop ended after the drop")
+        self.assertEqual(self._bind_errno(p.port), errno.EADDRINUSE, "the link dropped: the reported port is still bound")
+        if sys.platform.startswith("linux"):   # where the lab runs, and the hub's relay starts its redial road from the refusal
+            self.assertEqual(self._dial(p.port), "refused", "the link dropped: a dial is refused")
+        else:
+            self.assertNotEqual(self._dial(p.port), "connected", "the link dropped: a dial does not connect")
+        p.resume()
+        self.assertEqual(p._lsock.getsockname(), ("127.0.0.1", p.port), "resume() listens on the reported port again")
+        self._spliced(p, srv)
+        p.stop()
+        self.assertIsNone(self._bind_errno(p.port), "after stop() the port is released")
+
+    def test_a_second_listen_while_the_link_is_up_is_refused(self):
+        """listen() while a listener is up raises, and the first listener stays the only one and still splices. Each
+        listener binds beside the holder through SO_REUSEPORT, which would let a second listener bind beside the first
+        too, and a dial handed to the listener whose accept loop has ended would sit in its backlog, never spliced."""
+        srv = self._target()
+        p = LinkProxy(srv.getsockname()[1])
+        self.addCleanup(p.stop)   # as in the test above, so this one also runs over a splice with no holder
+        p.listen()
+        first = p._lsock
+        with self.assertRaises((RuntimeError, OSError)):   # the guard's refusal, or a bind's
+            p.listen()
+        self.assertIs(p._lsock, first, "the first listener is still the live one")
+        with p._lock:
+            accepts = [t.name for t in p._threads if t.name == "linkproxy-accept"]
+        self.assertEqual(accepts, ["linkproxy-accept"], "one accept loop was started")
+        self._spliced(p, srv)
+
     def test_stop_fails_naming_every_thread_alive_at_its_bound(self):
         """With the release skipped (drop() made a no-op on this instance), the accept loop never sees a drop and outlives
         the joins: stop() raises at its bound naming the thread, where a timed join that returned in silence would let the
         teardown pass with the splice still running."""
         srv = self._target()
-        p = LinkProxy(srv.getsockname()[1])
+        p = self._proxy(srv)
         self.addCleanup(LinkProxy.drop, p)   # the real release, once the test is done
         p.listen()
         p.STOP_BOUND_S = 0.5
@@ -2136,7 +2250,7 @@ class LinkProxyEnds(unittest.TestCase):
         the loop must see the drop there and close the pair itself, since no sweep will. Registered anyway, the pair's
         two pumps run on sockets nobody shuts, and stop() fails at its bound naming them."""
         srv = self._target()
-        p = LinkProxy(srv.getsockname()[1])
+        p = self._proxy(srv)
         self.addCleanup(LinkProxy.drop, p)
         p.STOP_BOUND_S = 2.0   # the failure this test exists to catch comes at the bound: a late pair's pumps block on sockets nobody shuts
         at_lock, swept = threading.Event(), threading.Event()
@@ -2164,7 +2278,7 @@ class LinkProxyEnds(unittest.TestCase):
         client's read is bounded at 2 s: spliced, the pair would carry nothing and the read would time out rather than
         read EOF."""
         srv = self._target()
-        p = LinkProxy(srv.getsockname()[1])
+        p = self._proxy(srv)
         self.addCleanup(p.stop)
         at_lock, go = threading.Event(), threading.Event()
         p._lock = _GatedLock(at_lock, go)
@@ -2186,7 +2300,7 @@ class LinkProxyEnds(unittest.TestCase):
         that interleaving is set directly: its socket still the live listener, no drop set, and the socket closed, whose
         descriptor then reads -1."""
         srv = self._target()
-        p = LinkProxy(srv.getsockname()[1])
+        p = self._proxy(srv)
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.close()
         p._lsock, p._down = s, False

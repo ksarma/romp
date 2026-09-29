@@ -40,7 +40,8 @@ ROMP_SERVED_TESTS_REQUIRE=1, which turns a skip in those files into a failure ca
 This module takes the `_served` suffix for that job: on the matrix it skips with its reason, as every served lab does, and
 in the served job it must run. It boots no kernel and drives no browser; it needs node and the extension's node_modules.
 The regex census in the driver-bound module stays as the matrix's backstop, its docstring naming the spellings it checks
-and this module as the instrument that reads the rest.
+and this module as the instrument that reads the rest. One class here needs no node: TheParseTreesAreDropped runs
+TheDriverParsed's tearDownClass over a stand-in, on the matrix as in the served job.
 
 THE WALK. A receiver is known by its TYPE through the walk, never by its spelling, and the walk's default is the REFUSAL of
 three things: a NAME no scope of the tree binds, a MEMBER of a root the driver does not read, and a receiver (or a table, a
@@ -182,6 +183,7 @@ repo, which names the rows that were red there. No count is kept in this docstri
 Synthetic: no kernel, no browser; node and the extension's node_modules only.
 """
 import ast
+import gc
 import inspect
 import json
 import os
@@ -191,6 +193,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import weakref
 from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1608,6 +1611,10 @@ class TheDriverParsed(unittest.TestCase):
             raise AssertionError("the parser is typescript %s but vscode-extension/package-lock.json pins %s: a refreshed lock or a drifted node_modules (the docstring "
                                  "names the lock's version as the parser's, so the two must agree)" % (cls.ts_version, pinned))
 
+    @classmethod
+    def tearDownClass(cls):
+        del cls.trees   # the census's input and nothing else's: left on the class it stays reachable for the rest of the process (TheParseTreesAreDropped)
+
     def _census(self, name, src):
         diagnostics, tree = self.trees[name]
         self.assertEqual(diagnostics, [], "%s parses clean as a JS module under typescript %s: %r" % (name, self.ts_version, diagnostics))
@@ -1857,6 +1864,25 @@ class TheDriverParsed(unittest.TestCase):
                     where = [ln for ln, *_ in c["refusals"]] + [ln for _, _, ln in c["unlisted"]] + [ln for ln, *_ in c["uncapped"]] + [ln for _, ln in c["unlisted_waits"]]
                     if want != "fetch":
                         self.assertIn(line, where, "%s: the red names the plant's line %d: %r" % (name, line, where))
+
+
+class TheParseTreesAreDropped(unittest.TestCase):
+    """TheDriverParsed's parse trees, the driver's and every plant's, are its tests' input and nothing else's, and its
+    tearDownClass drops them: left on the class, they stayed reachable for the rest of the process wherever the typescript
+    package is installed, through every module the run executes after this one. Driven with no parse, so it runs wherever the
+    module is collected, CI's Python cells included: the real tearDownClass runs over a stand-in carrying what setUpClass
+    leaves on the class, trees the test holds only a weak reference to."""
+
+    def test_teardown_leaves_the_trees_unreachable(self):
+        class Trees(dict):   # a plain dict takes no weak reference
+            pass
+
+        class StandIn:
+            ts_version, trees = "0", Trees({"driver.mjs": ([], {"k": "SourceFile"})})
+        trees = weakref.ref(StandIn.trees)
+        TheDriverParsed.tearDownClass.__func__(StandIn)
+        gc.collect()
+        self.assertIsNone(trees(), "the trees are still reachable after tearDownClass")
 
 
 if __name__ == "__main__":

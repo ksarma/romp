@@ -199,8 +199,8 @@ REFLECTIVE_NAMES = ("__builtins__",)
 # does NOT say that no allowed module starts a program: which of them do inside their own source is DERIVED by
 # _foreign_spawn_roads (FOREIGN_ROADS, held equal) and printed by the disclosure cell, the module docstring's third road; what
 # the censused set REACHES through an allowed module's own imports is resolved and refused by _reach.
-ALLOWED_IMPORTS = ("base64", "contextlib", "fcntl", "fnmatch", "hashlib", "http", "json", "os", "pathlib", "re", "select", "shlex",
-                   "shutil", "signal", "socket", "subprocess", "sys", "tempfile", "threading", "time", "unittest", "urllib", "uuid")
+ALLOWED_IMPORTS = ("base64", "contextlib", "errno", "fcntl", "fnmatch", "hashlib", "http", "json", "os", "pathlib", "re", "select",
+                   "shlex", "shutil", "signal", "socket", "subprocess", "sys", "tempfile", "threading", "time", "unittest", "urllib", "uuid")
 # the hand-kept DENY list the import pin keys on beside the equality: none of these eight is allowed (the check is this list,
 # not a property of every allowed module's source; that property is derived, above)
 DENIED_IMPORTS = ("pty", "asyncio", "_posixsubprocess", "multiprocessing", "ctypes", "importlib", "builtins", "operator")
@@ -218,10 +218,11 @@ FOREIGN_REFLECTIVE_ATTRS = ("import_module", "resolve_name", "_getframe", "__imp
 # changes) is a red until it is read (pass 10's fixer pass: the cell pinned a subset, so a fifth road could not red it).
 FOREIGN_ROADS = ("http.server", "os", "subprocess", "unittest.mock", "uuid")
 # The members the censused set reads on the foreign modules whose source the scan cannot read (built in, an extension module:
-# fcntl, select, sys, time), as {module: (member, ...)}, held EQUAL to the derived reads by the allow-list cell: a member of such a
-# module is a name the census cannot resolve (its source is not there to read), so one outside the tuple (`sys._getframe`,
+# errno, fcntl, select, sys, time), as {module: (member, ...)}, held EQUAL to the derived reads by the allow-list cell: a member of
+# such a module is a name the census cannot resolve (its source is not there to read), so one outside the tuple (`sys._getframe`,
 # `sys.meta_path`, `sys.modules`) is refused until it is read, the rule the parsed census's KNOWN_MEMBERS states for the driver.
-UNREAD_MEMBERS = {"fcntl": ("LOCK_EX", "flock"), "select": ("select",), "sys": ("path",), "time": ("gmtime", "monotonic", "sleep", "strftime", "time")}
+UNREAD_MEMBERS = {"errno": ("EADDRINUSE",), "fcntl": ("LOCK_EX", "flock"), "select": ("select",), "sys": ("path", "platform"),
+                  "time": ("gmtime", "monotonic", "sleep", "strftime", "time")}
 LAB_MODULE = "test_federated_linkdrop_served"
 PACKAGE = os.path.basename(HERE)   # this directory is a package (tests/__init__.py), so a sibling is importable as tests.x and as .x too
 OTHER_NAMES = tuple(sorted({n for names in OTHER_SPAWNERS.values() for n in names}))
