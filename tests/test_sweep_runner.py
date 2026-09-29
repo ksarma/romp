@@ -524,7 +524,10 @@ os.execvp(rest[0], rest)
 
 # The seed's ci.yml: a python job whose three install steps the runner reads to build the pytest leg's environment
 # (sweep.py's INSTALL_STEPS), the SDK's pin read from kernel/session_host.py as the real workflow reads it. Synthetic;
-# CiParity holds the runner to the real workflow.
+# CiParity holds the runner to the real workflow. The seed keeps the shape ci.yml had before fork PR 928: the served
+# step last in the extension job, after its Build step, and the vendored tooling step in the shell job. In ci.yml since
+# 928 each has a job of its own, and the served job has no Build step; LegGroups'
+# test_the_groups_follow_the_steps_into_jobs_of_their_own runs the grouping over that shape.
 SEED_PIN = "1.2.3"
 SEED_SDK_STEP = """      - name: Install the Claude Agent SDK
         shell: bash
@@ -2332,9 +2335,9 @@ class LegGroups(unittest.TestCase):
                          [("python", [PYTEST_LEG], None), ("shell", ["bats"], None), (None, ["ledger"], None)])
 
     def test_the_groups_follow_the_steps_into_jobs_of_their_own(self):
-        """Fork PR 928's shape: the served step (with its setup-python step) in a job of its own that runs npm ci first,
-        and the vendored tooling step in another: the served leg runs there after npm ci as that job's setup, the tools
-        leg alone, and deps stays with the extension job's legs (the first job that holds npm ci)."""
+        """The shape fork PR 928 gave ci.yml: the served step (with its setup-python step) in a job of its own that runs
+        npm ci first, and the vendored tooling step in another: the served leg runs there after npm ci as that job's
+        setup, the tools leg alone, and deps stays with the extension job's legs (the first job that holds npm ci)."""
         served = SEED_SERVED_PYTHON + SEED_SERVED_STEP
         tools = "      - name: Vendored tooling and host-script tests (node --test)\n        run: node --test tools/*.test.mjs vendor/track-changents/hooks/*.test.mjs\n"
         ci = (SEED_CI.replace(served, "").replace(tools, "")
@@ -3846,7 +3849,8 @@ class ServedLeg(_Base):
         self.assertEqual(w.legs_called(), SEED_ORDER)
         self.assertEqual(w.legs_called()[0], PYTEST_LEG, "pytest first")
         self.assertEqual(SEED_ORDER.index("served"), SEED_ORDER.index("build") + 1,
-                         "the served leg runs after the build leg, as CI runs its step after the Build step")
+                         "the served leg runs after the build leg, as the seed's extension job holds the served step "
+                         "after its Build step")
         calls = self.by_leg()
         pytest_call, served_call = calls[PYTEST_LEG][0], calls["served"][0]
         self.assertEqual(served_call["root"], calls["build"][0]["root"], "in the extension job's checkout")
@@ -4118,7 +4122,7 @@ class ServedLeg(_Base):
         self.assertEqual(switches("served"), {"ROMP_SERVED_TESTS_ENGINES": "chromium"}, "a switch dropped from the step is gone")
 
     def test_the_served_step_is_read_by_its_name_in_a_job_of_its_own(self):
-        """Fork PR 928 moves the served step into a job of its own, with the setup-python step before it: the runner
+        """Fork PR 928 moved the served step into a job of its own, with the setup-python step before it: the runner
         reads it there by its name, with that job's defaults: and the step's working-directory: back at the repository
         root."""
         w = self.w
@@ -5084,9 +5088,10 @@ class CiParity(unittest.TestCase):
     COMPARED = {"Install pytest", "Install cryptography", "Install the Claude Agent SDK", "Run pytest", "Run bats",
                 "Manager handshake tests (node --test)", VENDORED_LABEL, "Install deps", "Typecheck", "Test", "Build",
                 SERVED_LABEL}
-    # The steps a job of the served step's own repeats from the extension job (its own checkout, node, npm ci, build and
-    # Chromium install, as PR 928's ruling describes that job) and the unnamed setup every job has: each may stand in
-    # more than one job, and every copy of a compared one is compared. Every other placed step stands in one job, since
+    # The steps a job of the served step's own repeats from the extension job (its own checkout, node, npm ci and
+    # Chromium install; the served-pages job PR 928 added has no Build step, and Build stays here so a job that repeats
+    # it is compared too) and the unnamed setup every job has: each may stand in more than one job, and every copy of a
+    # compared one is compared. Every other placed step stands in one job, since
     # a comparison reads it by name and a copy elsewhere would be a step no comparison reads.
     SHARED = {"uses: actions/checkout", "uses: actions/setup-python", "uses: actions/setup-node", "Install deps", "Build",
               "Cache Playwright's browsers", "Install the pinned Playwright Chromium"}

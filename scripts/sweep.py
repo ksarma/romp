@@ -382,17 +382,17 @@ PYTEST_IGNORED = {
     "tests/test_cut_turn_tree_kill.py": ("it runs the real cut-turn reaper on a child of pytest, which inside a romp "
                                          "session can stop the session's own process tree; CI covers it once per batch"),
 }
-# The served leg's step in ci.yml, read by its name in whichever job holds it (read_served_step): the extension job
-# today; fork PR 928 moves it into a job of its own. Its env: block is the served leg's switches, the globs on its
-# pytest line are the files the served leg runs, its pip lines are what the served leg's venv holds, and the
-# actions/setup-python step before it in its job names the Python version that venv is built from.
+# The served leg's step in ci.yml, read by its name in whichever job holds it (read_served_step): served-pages, the
+# job of its own fork PR 928 gave it (the extension job before 928). Its env: block is the served leg's switches, the
+# globs on its pytest line are the files the served leg runs, its pip lines are what the served leg's venv holds, and
+# the actions/setup-python step before it in its job names the Python version that venv is built from.
 SERVED_STEP = "Browser-backed served-page tests (pytest)"
 SETUP_PYTHON = "actions/setup-python"
 # The ci.yml step each leg mirrors, by its name (round 2, the coordinator's decision 13). CI runs each job in a fresh
 # checkout of its own, and a job's steps share it; so the runner reads, in the swept sha's ci.yml, which job holds each
 # leg's step, and the legs whose steps one job holds run in one fresh verified checkout, in that job's step order, while
 # each such group starts from a checkout of its own (leg_groups). The grouping is read from the file, never restated
-# here: fork PR 928 moves the tools leg's step and the served step into jobs of their own, and the groups follow.
+# here: fork PR 928 moved the tools leg's step and the served step into jobs of their own, and the groups followed.
 # npm ci runs where the group's job runs it (DEPS_STEP): as the deps leg in the first job that holds that step, and as
 # the group's setup in any other job whose legs come after it. CiParity holds each name to the step whose command the
 # leg runs.
