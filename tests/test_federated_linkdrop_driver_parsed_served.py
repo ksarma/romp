@@ -3,7 +3,8 @@
 The `_served` suffix is a PLACEMENT, not a description: this module boots no kernel, drives no page and needs no browser; it
 parses source. The suffix reaches the one CI job whose vscode-extension/node_modules holds the typescript package (the
 browser-backed served-page step, which runs tests/test_*_served.py after `npm ci` under ROMP_SERVED_TESTS_REQUIRE=1); on the
-Python matrix, which installs no node deps, it skips with a reason saying the same, and under REQUIRE that skip is a failure.
+Python matrix, which installs no node deps, its census (TheDriverParsed) skips with a reason saying the same, and under
+REQUIRE that skip is a failure; TheParseTreesAreDropped needs no node and runs there too.
 
 tests/test_federated_linkdrop_driver_bound.py requires every wait the driver places to draw on its budget and every call
 on a playwright receiver to be one an allow-list names for that receiver's kind, because an auto-waiting read inherits
@@ -37,8 +38,9 @@ WHY THIS FILE. CI's Python matrix installs no node deps, so the typescript packa
 it cannot run in tests/test_federated_linkdrop_driver_bound.py without a skip that CI never turns into a failure. The
 vscode-extension job runs `npm ci` and then pytest over tests/test_*_browser.py and tests/test_*_served.py under
 ROMP_SERVED_TESTS_REQUIRE=1, which turns a skip in those files into a failure carrying the skip's reason (tests/conftest.py).
-This module takes the `_served` suffix for that job: on the matrix it skips with its reason, as every served lab does, and
-in the served job it must run. It boots no kernel and drives no browser; it needs node and the extension's node_modules.
+This module takes the `_served` suffix for that job: on the matrix its census, TheDriverParsed, skips with its reason, as
+every served lab does, and in the served job it must run. It boots no kernel and drives no browser; TheDriverParsed needs
+node and the extension's node_modules.
 The regex census in the driver-bound module stays as the matrix's backstop, its docstring naming the spellings it checks
 and this module as the instrument that reads the rest. One class here needs no node: TheParseTreesAreDropped runs
 TheDriverParsed's tearDownClass over a stand-in, on the matrix as in the served job.
@@ -180,7 +182,8 @@ prep note's tables for censuses 3, 4 and 5, the addendum's `null || pages.feed`,
 comment on PLANTS says; the before-outcomes through the pass-8 head's regex census are in the review record outside the
 repo, which names the rows that were red there. No count is kept in this docstring: len(PLANTS) is the count.
 
-Synthetic: no kernel, no browser; node and the extension's node_modules only.
+Synthetic: no kernel, no browser; TheDriverParsed needs node and the extension's node_modules, and TheParseTreesAreDropped
+needs neither.
 """
 import ast
 import gc
