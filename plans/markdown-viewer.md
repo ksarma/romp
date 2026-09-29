@@ -8836,7 +8836,15 @@ construction, a mouse event with no button down inside a press, a mouse-typed po
 finger's and its moves before the pointerup, a tap with no compatibility mousemove, a window's blur but in an order a read-out
 takes out, a drag, a context menu, an auxclick, a cancel, a second pointerdown, a touch event in a press but a finger's move in a
 mouse's, a boundary event to no element with the button down and any sign the grammar does not name, each such click opening
-nothing and revealing the control, the next click opening; the residual, the covered clicks whose chain the allowlist admits,
+nothing and revealing the control, the next click opening; the read-outs add no covered click, since each takes events out only
+at the place and in the order the viewer's own gesture puts them: where a covered chain of the recorded rows carries the focus
+leaving the viewer's window it leaves before the covered pointerup, at the press another document's element takes (over the
+round's rows, Chromium 5,444 such covered clicks of a mouse and 793 of a pen, WebKit 5,593), and none carries the mouse's moves
+in a finger's contact or a finger's move in a mouse's press, so of the 19,325 covered clicks of every recorded row that reach
+the allowlist the read-outs change no chain, and the covered grid read 0 covered clicks added in each engine and the search of
+the closed direction no click opened that the gate at bef9ff8fc refuses, at 5288151dd, which brought them, and again at
+180f96d2a, the landing merge of the fork's main at 6dd80a6e7, whose gate is the retirement's byte for byte; the residual, the
+covered clicks whose chain the allowlist admits,
 two shapes of the class. First, an element of another same-origin document shown over the picture during the viewer's tap takes
 that tap's compatibility events and click, and a tap on that element, which goes away during the press, then reaches the viewer
 as that tap's compatibility events, a mouseup of detail 1 and a click and takes the slot the viewer's tap filled, where the chain
@@ -9029,7 +9037,18 @@ a press whose chain passes the cap of 1,024 tokens and any event of an engine no
 with regression-1, its round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them, the closing
 check after those fixes, the closing check at 142ade155 after the fixes for the file review's round 18, the file review's round
 19, extra5-1, extra8-1 and extra8-2, and its round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's
-decisions on them);
+decisions on them); where the allowlist costs more than the incremental reads the file review's round 20 drafted in its place
+(the coordinator's ruling on the allowlist's build leaves each such place to the owner's decision): no measured own gesture, its
+three measured costs being theirs too, the held press with the focus not back by their read of extra5-1, the block and the pen's
+press by their read of extra7-1; by reading, not measured, where those reads would open: the window's blur alone and the focus
+leaving at a pen's click's release (the blur's rule they keep marks no touch record, and a mouse's or a pen's record has passed
+to the slot at its pointerup), on a device with both a finger leaving the viewer or crossing an element's edge during a mouse
+click and the mouse crossing an element's edge during a finger's tap, WebKit's hover update inside a finger's slow tap and the
+device's gestures in Firefox and WebKit (their reads of a pointer's events mark mouse and pen records alone, and a tap's slot
+only after its pointerup), a touch-order pen's double tap's second tap (their tail takes its mouseup of detail 2) and a chain
+past the cap (they keep no chain), and perhaps a capture handler's focus move that no census drove, each a click or a tap that
+opens nothing and reveals the control, the next click opening, while a touch-order pen's tap with the focus leaving costs the
+same under both, the blur's rule marking the pen's record and emptying the slot while its compatibility mousedown is due;
 a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
 a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
 screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
@@ -9412,7 +9431,13 @@ mouse's moved click and a pen's still click, on the hybrid page's Files pane), a
 (extra5-1, extra5-2, extra6-1 and extra7-1), the own-chain allowlist's cells on the hybrid page's Files pane, WebKit's moved click
 under an element that cancels its mousedown and its held-move form, WebKit's hover update and Firefox's unflushed hide, each
 covered click refused in each of three runs and opened in every run at bef9ff8fc (the Chromium leg runs the same module's cell of
-extra5-1's still shape with the focus not back),
+extra5-1's still shape with the focus not back), and, since the coordinator's ruling on the allowlist's build, no cell of the
+four read-outs, which ui/webview/file-view-outline.test.ts pins in node (an admit row for each read-out, red under the mutant
+that drops it and at 5501b7a79, and rows that keep refused the window's blur alone, the same focus move before a press's
+pointerup or after a tap's and a pen's in each order, each red under a mutant that widens its read-out there), the five rules
+that ruling retired keeping the cells that were red under a gate without one of them as the allowlist refusing their orders, and
+the replay of every recorded row and the search of the closed direction that measure the read-outs and the retirement kept out
+of the tree, run at the build and again at the landing merge of the fork's main at 6dd80a6e7,
 each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
 a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and two cases of WebKit's alone that read window errors, the Files
 pane's as its Comments aside opens beside a document of top-level tables, and the chat modal's, the Files pane's and the feed

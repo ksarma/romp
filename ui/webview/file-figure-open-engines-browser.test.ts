@@ -50,9 +50,9 @@
 // cancels a tap's pointerdown, with no mousedown and no mouseup before it, after a right or a middle click on the picture,
 // after the viewer's own tap whose compatibility events or click went to another document, and after the mouse held on the
 // control or pressed there and released on the top page's bar or in the other pane, opens nothing and the next click opens
-// once, red at 142ade155 and, on the chat and the Files pane, under a gate without the tail (the gate takes a press for a
+// once, red at 142ade155 and, on the chat and the Files pane, under a gate without the tail (which took a press for a
 // pointer's click only right after a primary mouseup of detail above 0) and without the mouseup's clear (a mouseup other than a
-// primary one of detail above 0 empties the slot and clears the tap's flag), but for the mouse held on the control, which the
+// primary one of detail above 0 emptied the slot and cleared the tap's flag), but for the mouse held on the control, which the
 // refusal of a record still standing at a click closes as well, the mouse released on the top page's bar, which the refusal of
 // a record whose pointer left the viewer's window with a button down closes as well, and the mouse released in the other pane,
 // which both refusals close as well, and after the viewer's tap whose compatibility events went elsewhere, which the mouseout's
@@ -203,7 +203,27 @@
 // own press or between a tap's pointerup and its compatibility mousedown, refused once in the three engines in a probe kept out
 // of the tree,
 // the allowlist pays the same, and the retired leave's arm for no button and mouseout's clear cost nothing measured, no tap or
-// chain cell of this leg changing under them (file-view.ts's gate comment states the figures).
+// chain cell of this leg changing under them (file-view.ts's gate comment states the figures). The read-outs (the coordinator's
+// ruling on the allowlist's build) add no covered click: each takes events out only at the place and in the order the viewer's
+// own gesture puts them, where a covered chain of the recorded rows carries the focus leaving the viewer's window it leaves before
+// the covered pointerup, at the press another document's element takes, and none carries the mouse's moves in a finger's contact
+// or a finger's move in a mouse's press, so of the 19,325 covered clicks of every recorded row that reach the allowlist the
+// read-outs change no chain, and the covered grid read 0 covered clicks added in each engine at 5288151dd, which brought them,
+// and again at 180f96d2a, the landing merge of the fork's main at 6dd80a6e7, whose gate is the retirement's byte for byte; they
+// have no cell here, the outline suite's admit rows and narrowness rows pinning them. That round also retired five rules with
+// no measured effect under the allowlist (the coordinator's ruling on its build): the tail, the mouseup's clear of the slot and
+// the tap's flag, the dragstart's clear of every record, the touchend's and the touchcancel's marking of every touch record and
+// the pointercancel's clear of the slot, each event they read landing in the chain of the press or the tap it acted on, which the
+// allowlist refuses, or leaving a record standing that refuses its own pointer's click, all five gone changing no click over
+// every recorded row, the cells above that were red under a gate without one of them standing as the allowlist refusing their
+// orders. No measured own gesture costs more under
+// the allowlist than under the incremental reads the round drafted in its place, its three measured costs above being theirs
+// too; by reading, not measured, it costs more where those reads would open: the window's blur alone and the focus leaving at a
+// pen's click's release, on a device with both a finger leaving the viewer or crossing an element's edge during a mouse click
+// and the mouse crossing an element's edge during a finger's tap, WebKit's hover update inside a finger's slow tap, the device's
+// gestures in Firefox and WebKit, a touch-order pen's double tap's second tap and a chain past the cap of 1,024 tokens, and
+// perhaps a capture handler's focus move that no census drove (file-view.ts's gate comment says why for each), each a click or a
+// tap that opens nothing and reveals the control, the next click opening, each left to the owner's decision.
 // The cells of a figure at this origin's file routes (the coordinator's ruling on the same-origin figure after the file review's
 // round 19, read over the route's other forms by a check of that build) run in Chromium, Firefox and WebKit, each form in a
 // page of its own under a page key, on the chat modal: a figure written with this origin's /file address, in the plain

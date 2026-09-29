@@ -3012,8 +3012,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   record it marked, and the chain starts at the last primary pointerdown, which ends every earlier record, so the event lands in
   //   the chain of every press whose record it marked and a click can still take; and no chain the allowlist admits carries a
   //   pointerout to no element in a mouse's or a pen's press, with a button down or, the mouse's, with none, or a blur of the
-  //   window anywhere. What the engines send there stands as measured: Firefox sends the held pointerout as a held press leaves the
-  //   viewer's frame, and Chromium and WebKit, which keep a held left press in the frame it began in, sent it for a held right
+  //   window in such a press before its pointerup (the read-outs below take the focus leaving the window out only after a mouse's
+  //   pointerup and in a finger's contact, where the blur's rule marked no record: a mouse's record had passed to the slot at its
+  //   pointerup, and the rule marked no touch record). What the engines send there stands as measured: Firefox sends the held
+  //   pointerout as a held press leaves the viewer's frame, and Chromium and WebKit, which keep a held left press in the frame it
+  //   began in, sent it for a held right
   //   press, whose click never comes, and Chromium for a held press whose frame the top page hides and shows again when the first
   //   redraw to start after the hide finds the frame hidden and the button still down (WebKit sends none there); Chromium sends the
   //   mouse's pointerout with no button down, under pointerId 1 whether a mouse or a pen pressed, after a held press's release that
@@ -3191,6 +3194,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   those four of a finger's and its moves before the pointerup, a tap with no compatibility mousemove, a window's blur but in
   //   an order a read-out takes out, a drag, a context menu, an auxclick, a cancel, a second pointerdown, a touch event in a press
   //   but a finger's move in a mouse's, a boundary event to no element with the button down, and any sign the grammar does not name.
+  //   The read-outs add no covered click, since each takes events out only at the place and in the order the viewer's own gesture
+  //   puts them, and no covered chain of the recorded rows carries them there: where a covered chain carries the focus leaving
+  //   this window, it leaves before the covered pointerup, at the press another document's element takes (over the round's rows,
+  //   Chromium 5,444 such covered clicks of a mouse and 793 of a pen, WebKit 5,593), and no covered chain carries the mouse's
+  //   moves in a finger's contact or a finger's move in a mouse's press. Of the 19,325 covered clicks of every recorded row that
+  //   reach the allowlist (the round's rows, the execution check's census and rows, round 19's rows and the first own-gesture
+  //   adversary's), the read-outs change no chain (those rows replayed through the widened prototype), and the covered grid read
+  //   0 covered clicks added in each engine and the search of the closed direction found no click opened that bef9ff8fc's gate
+  //   refuses, at 5288151dd, which brought the read-outs, and again at 180f96d2a, the landing merge of the fork's main at
+  //   6dd80a6e7, which leaves this gate's code byte-equal.
   // The engines measured: Chromium gives a tap's click the touch's own pointerId and pointer type, Firefox its press's (0, for a
   // mouse and a touch alike), and Playwright's headless WebKit on Linux (WPE's MiniBrowser) under touch emulation, a stand-in
   // for WPE and WebKitGTK browsers on a touchscreen, pointerId 1 of type mouse while its press carried the touch's, 2 for every
@@ -3485,8 +3498,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // and WebKit; WebKit's hover update landing inside a finger's slow tap after the content moved under a resting
   // mouse, an eraser or a barrel button, a capture handler that moves the focus at a press in a way
   // no census drove, a touch-order pen's double tap's second tap, a press whose chain passes the cap of 1,024 tokens, and any event
-  // of an engine not measured. The first own click and the first own tap after a focus move, and Firefox's blur after the
-  // viewer's own open, fall outside any chain a click reads and cost nothing (round 19's measurement: 0 of 141, 0 of 132, and a
+  // of an engine not measured. Where the allowlist costs more than the incremental reads the round drafted in its place (the
+  // coordinator's ruling on the allowlist's build leaves each such place to the owner's decision): no measured own gesture, since
+  // its three measured costs above are theirs too, the held press with the focus not back by their read of extra5-1, the block
+  // and the pen's press by their read of extra7-1; by reading, not measured, at the window's blur alone and the focus leaving at
+  // a pen's click's release (the blur's rule they keep marks no touch record, and a mouse's or a pen's record has passed to the
+  // slot at its pointerup), on a device with both a finger leaving the viewer or crossing an element's edge during a mouse click
+  // and the mouse crossing an element's edge during a finger's tap, WebKit's hover update inside a finger's slow tap and the
+  // device's gestures in Firefox and WebKit (their reads of a pointer's events mark mouse and pen records alone, and a tap's slot
+  // only after its pointerup), a touch-order pen's double tap's second tap (their tail takes its mouseup of detail 2), and a
+  // chain past the cap (they keep no chain), each of which those reads would open, and perhaps at a capture handler's focus move
+  // that no census drove; a touch-order pen's tap with the focus leaving costs the same under both, the blur's rule marking the
+  // pen's record and emptying the slot while its compatibility mousedown is due. At each the click or the tap opens nothing and
+  // reveals the control, and the next click opens. The first own click and the first own tap after a focus move, and Firefox's
+  // blur after the viewer's own open, fall outside any chain a click reads and cost nothing (round 19's measurement: 0 of 141, 0
+  // of 132, and a
   // second click or a tap 5 ms after an own open, 3 of 3 each). The allowlist can only refuse a click the slot would have handed
   // it, so it opens nothing the gate without it refuses. The viewer's window holds the focus after a click or a tap in its text,
   // its picture or a field of its own document, after the open's landing and, in Chromium and WebKit, after another tab comes to
@@ -3521,8 +3547,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // that bef9ff8fc's gate refuses (every sequence of up to 5 of 35 letters, 23,035,113 clicks; 1,530,150 plants in six own
   // skeletons; 4,000,000 structured walks, 7,851,924 clicks), where this gate with the allowlist off opened 59,264, 197,368 and
   // 493,803 clicks that bef9ff8fc's gate refuses (18, 73,660 and 222,225 before the retirement), the orders the five rules closed
-  // and the allowlist refuses. Their node guards stand as the allowlist refusing their orders, red under M-OFF, the allowlist
-  // admitting every chain (the chain rule's block of file-view-outline.test.ts names them). The touch-order pen's wait for its compatibility mousedown is defensive in
+  // and the allowlist refuses; the same figures again at 180f96d2a, the landing merge of the fork's main at 6dd80a6e7, whose gate
+  // is the retirement's byte for byte, 0 clicks changed against it. Their node guards stand as the allowlist refusing their
+  // orders, red under M-OFF, the allowlist admitting every chain (the chain rule's block of file-view-outline.test.ts names
+  // them). The touch-order pen's wait for its compatibility mousedown is defensive in
   // every gesture a browser here drives, since no browser here drives a pen in that order: dropping the wait alone changes no
   // gesture a test drives in a browser, and the pen guard's row of a pointerup, then a mouseup of detail 1 and the pen's click
   // with no mousedown before them, an order no engine measured sends, is red under a gate without it together with M-OFF since

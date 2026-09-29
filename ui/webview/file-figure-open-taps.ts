@@ -30,7 +30,7 @@
 // marking every mouse and pen record refused, a mouseout to no element while a tap's compatibility mousedown is due, emptying
 // the slot, and a blur of the viewer's window itself, marking every mouse and pen record refused and emptying the slot while
 // a tap's compatibility mousedown is due; each of those events lands in the chain of the press or the tap it acted on, and no
-// chain the allowlist admits carries it. The engines differ in what a tap's click
+// chain the allowlist admits carries it there. The engines differ in what a tap's click
 // carries, read off the page as each cell's precondition:
 // Chromium gives the click the touch's own pointerId and type, Firefox its press's (0, a mouse's and a touch's alike), and
 // Playwright's headless WebKit on Linux (WPE's MiniBrowser) under touch emulation, a stand-in for WPE and WebKitGTK browsers on a
@@ -52,8 +52,9 @@
 //   closes what covered it, and the next tap opens once;
 // - the stale records, on the hybrid page: a right press of the mouse on the picture with the control shown, or a mouse drag of the
 //   picture, then the flyout opened over the control by a script's click on its button, with no press of the mouse, then a tap on
-//   the picture: it opens nothing, the mouse's record having ended (the right press's at its own pointerup, the drag's at its
-//   dragstart, and either at the tap's own primary press), so the tap's click reads its own press, and the next tap opens once;
+//   the picture: it opens nothing, the mouse's record having ended (the right press's at its own pointerup, and either at the
+//   tap's own primary press, the drag's at its dragstart too until the file review's round 20 retired that clear), so the tap's
+//   click reads its own press, and the next tap opens once;
 // - the mouse's clicks after its drag of a picture, on the hybrid page and on a plain page (a mouse and no touchscreen): with the
 //   control shown, a drag, then the flyout or the Outline popover opened over the control by a script's click, then a click of the
 //   mouse on the picture opens nothing, and the next click opens once; and the cost cells, a drag, then a click of the mouse on the
@@ -61,7 +62,8 @@
 //   first click opens nothing and the next opens once, and in Chromium and Firefox the first click opens once. Chromium and Firefox
 //   end the drag's press with a pointercancel and send the next press's pointerdown; WebKit sends neither, and the next press
 //   arrives as a mousedown with no pointerdown before it, each cell asserting its engine's shape as its precondition. The gate ends
-//   every record at the drag's dragstart and at that mousedown, so WebKit's first click after the drag finds no press;
+//   every record at that mousedown (at the drag's dragstart too until the file review's round 20 retired that clear), so WebKit's
+//   first click after the drag finds no press;
 // - a drag in another pane, on the hybrid page and on a plain page: the dashboard's panes are same-origin frames, and a same-origin
 //   frame put into the page, with a link dragged inside it, stands in for one, the viewer's window hearing nothing of the drag. A
 //   right click on the picture with the control shown (F1, F2), or a press on the control released beside the picture (F3), then the
@@ -210,7 +212,20 @@
 //   the viewer and a mouse click during which a finger resting on the viewer moves (Chromium, touch emulated); and by reading the
 //   window's blur alone at those places, a pen's click or a touch-order pen's tap with the focus leaving, and on a device with both
 //   a finger or the mouse crossing an element's edge or leaving the viewer during the other's gesture, and the device's gestures in
-//   Firefox and WebKit. The retired blur's
+//   Firefox and WebKit. The read-outs (the coordinator's ruling on the allowlist's build) add no covered click: each takes events
+//   out only at the place and in the order the viewer's own gesture puts them, and where a covered chain of the recorded rows
+//   carries the focus leaving the viewer's window it leaves before the covered pointerup, at the press another document's element
+//   takes, and none carries the mouse's moves in a finger's contact or a finger's move in a mouse's press, so of the 19,325 covered
+//   clicks of every recorded row that reach the allowlist the read-outs change no chain; the covered grid read 0 covered clicks
+//   added in each engine at 5288151dd, which brought them, and again at 180f96d2a, the landing merge of the fork's main at
+//   6dd80a6e7, whose gate is the retirement's byte for byte. No measured own gesture costs more under the allowlist than under the
+//   incremental reads the round drafted in its place, its three measured costs above being theirs too; by reading, not measured,
+//   it costs more where those reads would open: the window's blur alone and the focus leaving at a pen's click's release, on a
+//   device with both a finger leaving the viewer or crossing an element's edge during a mouse click and the mouse crossing an
+//   element's edge during a finger's tap, WebKit's hover update inside a finger's slow tap, the device's gestures in Firefox and
+//   WebKit, a touch-order pen's double tap's second tap and a chain past the cap of 1,024 tokens, and perhaps a capture handler's
+//   focus move that no census drove (file-view.ts's gate comment says why for each), each a click or a tap that opens nothing and
+//   reveals the control, the next click opening, and each left to the owner's decision. The retired blur's
 //   rule's own cost, a focus move out of the viewer's window during the viewer's own press or between a tap's pointerup and its
 //   compatibility mousedown, refused once in the three engines in a probe kept out of the tree, the allowlist pays the same, and
 //   the retired leave's arm for no button and mouseout's clear cost nothing measured, no tap or chain cell of either leg
