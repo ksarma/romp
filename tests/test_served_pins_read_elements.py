@@ -146,8 +146,12 @@ that is no body (`.status`, `.getheader(...)`), a `.getvalue()` too (`buf = self
 
 A fetch by a url spelled otherwise than the census reads it, where the url's static path is a page route and whole, is REFUSED too
 (round 6, _fail_closed's check (2), extra8-3): a `%`-format, an f-string or a `.format` url handed to a fetch helper, and an
-f-string url or a `Request` object handed to urlopen, and (FC2X, narrowed) a url whose path is not whole but whose static part is a
-page route other than the landing's `/` (`"/chat" + rest`, `"/chat%s" % q`). So is a fetch whose url is a Name a loop over one of
+f-string or a `.format` url, or a `Request` object wrapping a url so spelled or `%`-formatted, handed to urlopen; and (FC2X,
+narrowed) any of those, or a concatenation led by a path literal, handed to either, whose path is not whole but whose static part
+is a page route other than the landing's `/` (`"/chat" + rest`, `"/chat%s" % q`). A `%`-formatted url handed to urlopen itself is
+not checked: it is read in the tokened 127.0.0.1 form whose path is whole (the population paragraph above), and any other one (a
+hole after the route, another host, a query with no token) is unread (the Reach paragraph below).
+So is a fetch whose url is a Name a loop over one of
 the kernel's route tables binds (`for route in sorted(km._PAGE_RENDERERS): self._get(route)`: every page the table names, none of
 which the census can tell apart; _fail_closed's check (3)). So is the first bound the census had stated, in both halves: a page-route
 call of a helper of the module whose returns place no read, answered and read as a response at the call (`self._open("/").read()`,
@@ -189,17 +193,22 @@ binding the attribute: the census reads Q's, and Python's order puts B before Q)
 text (at 5a5aab70c the two orders give the same bindings in all 4382 classes of the population; the INHERIT test's i8 is the
 witness). The unread forms the round measured with live sites, counted at 97e65ad4e: a literal bound by assignment
 rather than a loop (3, tests/test_dashboard_auto_reload.py and tests/test_remotes_panel_render.py); a getter called WITH arguments,
-which renders another text (`_shim_core_js("chat")`; 1, tests/test_dashboard_auto_reload.py); a formatted url whose query carries no
-`token=`, answered with the paste-the-token page (1, tests/test_kernel.py); a page from a dynamically resolved getter (`getattr(km,
+which renders another text (`_shim_core_js("chat")`; 1, tests/test_dashboard_auto_reload.py); a `%`-formatted url handed to urlopen
+whose query carries no `token=`, a fetch the kernel answers with the paste-the-token page (1, tests/test_kernel.py);
+a page from a dynamically resolved getter (`getattr(km,
 "_%s_page" % name)()`; 1, tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a comment spells); a fetch of
 a path the dispatch does not map to a getter call, a JSON or text/plain API body, a `/dist/` bundle or a `/media/` file (32, in six
 modules or more); and an assertIn whose needle is no literal (28 rows, `assert` with no pins row: extra8-8). Unread with live sites
 not counted: a fetch whose url is a Name a loop over literal routes binds (`for path in ("/", "/chat"): self._req(path + "?token=" +
-TOK)` in tests/test_session_cookie_auth.py; choice 13). A membership asserted through a helper (`_has(self, lit, body)` in
+TOK)` in tests/test_session_cookie_auth.py; choice 13). Unread at 0 live sites at 5a5aab70c: any other `%`-formatted url handed
+to urlopen, a hole after the route (`"http://127.0.0.1:%d/chat%s" % (port, q)`) or a host other than 127.0.0.1
+(`"http://localhost:%d/chat?token=x" % port`); of the 110 `%`-formatted urlopen urls the census does not read, 109 name an API route
+and the one left is the token-less landing above. A membership asserted through a helper (`_has(self, lit, body)` in
 tests/test_files_pane.py and tests/test_settings_page.py) is read by the reader census, which follows the helper one level (a
 membership over a non-literal needle), and not by the pins census. Among the unread forms the round's checks planted and found silent,
 with no live count: a keyword url; a url Name bound to a literal; a url from a helper call or from urljoin; a fetch through getattr,
-functools.partial or another object's method; urlopen of a Name url or of a concatenation led by anything but a string literal; an
+functools.partial or another object's method; urlopen of a Name url, or of a concatenation unless it is led by a path literal cut
+before its query at a page route other than `/` (`"/chat" + rest`, which check (2) refuses); an
 http.client request; a page aliased through a conditional expression or `or`; a getter aliased to a local Name or reached through
 getattr; a subscript, `.strip()` or `str()` of a read-placing call; delegation through two helper calls; a keyword url to a no-fetch
 helper; and type(self) or super() as the callee. A name bound outside the function, a text served under a name with none of the
@@ -1735,10 +1744,13 @@ def _fail_closed(tree, lines, routes, reads, getters, constants):
     (2) a fetch whose url is spelled otherwise than the census reads it, where the url's static path (_spelled_path) is a page
         route, whole or not (a concatenation stopping before the query, `"/chat" + rest`, a hole after a route, `"/chat%s" % q`;
         round 6, FC2X in its narrowed form), except the landing's `/` when the path is not whole (a hole right after the leading
-        slash, `"/%s/x" % name`, can make any path): to an attribute urlopen, an f-string or a `.format` url, or a `Request` object wrapping any
-        spelled url (a `%`-formatted literal handed to urlopen itself is read, or stated where its query carries no token); to a
-        Name, a self.<method> or a cls.<method> the module does not define or whose returns place a read (_response_reads), a
-        `%`-format, an f-string, a `.format` url or such a concatenation;
+        slash, `"/%s/x" % name`, can make any path): to an attribute urlopen, an f-string or a `.format` url or such a
+        concatenation, or a `Request` object wrapping any spelled url, a `%`-format included; a `%`-formatted url handed to urlopen
+        itself is not checked here, read where _url_route reads it (the tokened 127.0.0.1 form with its path whole) and otherwise
+        unread (a hole after the route, `"http://127.0.0.1:%d/chat%s" % (port, q)`, another host, `"http://localhost:%d/chat?token=x"
+        % port`, or a query with no token: the module docstring's Reach); to a Name, a self.<method> or a cls.<method> the module
+        does not define or whose returns place a read (_response_reads), a `%`-format, an f-string, a `.format` url or such a
+        concatenation;
     (3) a fetch through such a helper whose url is a Name the same function's for loop or comprehension binds, as its target or a
         Name inside it, over an expression naming one of the kernel's route tables (_route_tables: `for route in
         sorted(km._PAGE_RENDERERS): self._get(route)`), which fetches every page the table names by a url the census cannot
