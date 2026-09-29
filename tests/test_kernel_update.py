@@ -102,12 +102,13 @@ def _dials_only(port, dials=None, allow=()):
 # allocations set off runs on the fake's thread and holds the lock for as long as that heap takes to walk: the fake
 # cannot answer meanwhile, and on a worker-sized heap the pause outlasted the 1 s (CI's Python 3.12 cell failed twice
 # on the first read, 2026-09-28; a probe that makes the collection due on the fake's threads measured pauses of 0.8 to
-# 2.5 s and reproduced both failures). A child answers from its own interpreter, so a pause in this process delays the
+# 2.4 s and reproduced both failures). A child answers from its own interpreter, so a pause in this process delays the
 # reader but cannot hold back the answer, and the 1 s read measures the kernel's code again. The child binds port 0 and
-# prints the port it got (no port is chosen before it is bound); it appends each request to hits.jsonl BEFORE it
-# answers, so a request the kernel saw answered is already listed; it reads answers.json at every request, so a test
-# changes the answer by rewriting the file before the request that should see it; and it runs until its stdin
-# closes, which stop() does and which the end of this process does too, so it cannot outlive the run.
+# prints the port it got (no port is chosen before it is bound). It takes GET and POST only: any other method gets the
+# stock handler's 501 and is not listed. It appends each GET and POST to hits.jsonl BEFORE it answers, so one the
+# kernel saw answered is already listed; it reads answers.json at every GET and POST, so a test changes the answer by
+# rewriting the file before the request that should see it; and it runs until its stdin closes, which stop() does and
+# which the end of this process does too, so it cannot outlive the run.
 _FAKE_MANAGER_CHILD = r"""
 import json, os, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -144,7 +145,8 @@ os._exit(0)
 
 class _ManagerProcess:
     """The fake manager as a child process (_FAKE_MANAGER_CHILD says why it is a child): `port` is the port it bound,
-    answer() sets what it answers, hits() lists the (method, path) of every request it took, stop() ends it."""
+    answer() sets what it answers, hits() lists the (method, path) of every GET and POST it took (it takes no other
+    method), stop() ends it."""
 
     def __init__(self, answers):
         self._td = tempfile.TemporaryDirectory()
@@ -164,9 +166,10 @@ class _ManagerProcess:
         self.port = int(line)
 
     def answer(self, answers):
-        """What the child answers from its next request on: {"METHOD PATH" or "METHOD": {"status": int, "body": str}},
-        the exact path first; a request that matches neither is a 404. Written aside and renamed over the old file, so
-        a request never reads half of it."""
+        """What the child answers from its next GET or POST on: {"GET PATH", "POST PATH", "GET" or "POST": {"status":
+        int, "body": str}}, the exact path first, then the method alone; a GET or POST that matches neither is a 404.
+        The child takes no other method: anything else gets the stock handler's 501, and no entry is read for it.
+        Written aside and renamed over the old file, so a request never reads half of it."""
         tmp = os.path.join(self._td.name, "answers.json.tmp")
         with open(tmp, "w") as f:
             json.dump(answers, f)
@@ -1103,7 +1106,7 @@ class Routes(Fresh):
         # live manager on a development box, and on 2026-09-10 a review probe with the variable absent
         # drove the door and every session on the box restarted. Red at 22d540a5: the door dialled the
         # default port (recorded here, never connected). Set to a fake manager's port, both doors dial it as
-        # before. The fake stands in for a manager on an ephemeral port and records every request, from a child
+        # before. The fake stands in for a manager on an ephemeral port and records every GET and POST, from a child
         # process (_FAKE_MANAGER_CHILD says why: three reads below wait 1 s for it); the connection class refuses
         # every other port at construction, so whatever the code does with the absence this test reaches no
         # manager it did not start. The converge's own steps are stubbed
