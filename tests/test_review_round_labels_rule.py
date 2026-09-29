@@ -190,7 +190,9 @@ class RoundLabelRule(unittest.TestCase):
         credited or not (the author's credit in words and in digits, the maintainer's and the reviewer's past the set, an
         unqualified one by the default), as a list and a range, a tens ordinal joined to a unit, and each ordinal shape the reader
         cannot place refused (a plural naming one ordinal, a number before the run it did not consume, a number both before the
-        word and after it, a large ordinal, a number after the word of an ordinal form)."""
+        word and after it, a large ordinal, a number after the word of an ordinal form); and punctuation or markup between an ordinal
+        and the word refused, the mirror of the same after the word, credited or not, a large ordinal and "review" after the run
+        among them, while the same markup before another word the word begins, or after the end of another word, is not read."""
         hi, lo = max(SET), min(SET)
         for (plural, kind), sep in rule.FORM_CLASSES.items():
             word = R + ("s" if plural else "")
@@ -355,6 +357,19 @@ class RoundLabelRule(unittest.TestCase):
             with self.subTest(unplaced_ordinal=s):
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "an ordinal the reader cannot place is refused: %r" % (s,))
                 self.assertIn(why, rule.offences(s, SET)[0][3], s)
+        # the READ direction, punctuation or markup between an ordinal and the word, the mirror of the same after the word: refused,
+        # credited or not, a LARGE ordinal and "review" after the run among them; not read before another word the word begins, or after
+        # the end of another word
+        for s in ("%s *%s* %s" % (A, NTH[3], R), "%s `%s` %s" % (A, nth(3), R), "%s %s (review) %s" % (M, NTH[hi + 2], R), "%s **%s** %s" % (V, nth(lo), R),
+                  "the %s, %s" % (NTH[hi], R), "the %s: %s" % (nth(hi), R), "in its (%s) %s" % (NTH[lo], R), "the *%s* %s" % ("hundredth", R), "the %s review* %s" % (NTH[hi], R),
+                  "the %s *review* %s" % (NTH[hi], R), "the *%s* %ss" % (NTH[hi], R)):
+            with self.subTest(markup_ordinal=s):
+                self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "punctuation or markup between an ordinal and the word is refused: %r" % (s,))
+                self.assertIn("punctuation or markup between an ordinal and the word", rule.offences(s, SET)[0][3], s)
+        for s in ("a *%s* %s-trip" % (NTH[lo], R), "the `%s` %sed corner" % (NTH[hi], R), "the (%s) %ssman" % (NTH[hi], R), "a milli%s, %s trip" % (NTH[2], R)):
+            with self.subTest(markup_not_read=s):
+                self.assertEqual(rule.offences(s, SET), [], "markup before another word the word begins, or after the end of another word, is not read: %r" % (s,))
+                self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unnumbered"], s)
 
     def test_the_credit_keys_on_misattribution(self):
         """The reviewer's ruling of 2026-09-21, each clause by execution under a synthetic set: (a) "the reviewer's round N" is a
@@ -371,7 +386,8 @@ class RoundLabelRule(unittest.TestCase):
         between the qualifier and the word and a number in words too, while the author's pass beside the maintainer's round is
         clean; (g) a number the form did not consume that is not a date is still refused; (h) every unresolvable form is still
         refused with its reason, never passed, the READ direction's among them (punctuation before a number word, an ordinal after
-        the word, the singular's comma followed by "or", a number before an ordinal run, a plural naming one ordinal)."""
+        the word, the singular's comma followed by "or", a number before an ordinal run, a plural naming one ordinal, markup
+        between an ordinal and the word)."""
         hi, lo = max(SET), min(SET)
         with self.subTest(clause="a: the reviewer's round is a credit"):
             self.assertEqual(rule.offences("%s %s %d" % (V, R, hi), SET), [], "the reviewer's round at a ruled round is clean")
@@ -441,7 +457,8 @@ class RoundLabelRule(unittest.TestCase):
         with self.subTest(clause="h: the unresolvable forms still refuse"):
             for s in ("%s: %d" % (R, hi), "%s (%d)" % (R, hi), "%s **%d**" % (R, hi), "%s `%d`" % (R, hi), "%s %db" % (R, hi), "%ss %d" % (R, hi), "%ss %d-%d" % (R, hi, lo),
                       "%s %d, %d" % (R, lo, hi), "%s %s: %d" % (V, R, hi), "%s %s %d, %d findings" % (V, R, hi, hi + 1),
-                      "%s: %s" % (R, WORDS[hi]), "%s %s" % (R, NTH[hi]), "%s %d, or %d" % (R, lo, hi), "the %s, %s %s" % (NTH[lo], NTH[hi], R), "the %s %ss" % (NTH[hi], R)):
+                      "%s: %s" % (R, WORDS[hi]), "%s %s" % (R, NTH[hi]), "%s %d, or %d" % (R, lo, hi), "the %s, %s %s" % (NTH[lo], NTH[hi], R), "the %s %ss" % (NTH[hi], R),
+                      "%s `%s` %s" % (A, nth(lo), R), "%s %s (review) %s" % (M, NTH[hi], R)):
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "an unresolvable form passed or went unread: %r" % (s,))
                 self.assertIn("cannot classify", rule.offences(s, SET)[0][3], s)
 

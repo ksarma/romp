@@ -45,27 +45,31 @@ further number the list did not consume; the list never reads a date's year as a
 date is refused as one the form did not consume.
 
 Every spelling of the word is CLASSIFIED, over the numbers the reader knows: digits, digit ordinals and the words of its tables. A
-numbered form is read, and classed by its plural and its separator (FORM_CLASSES, an ordinal form in classes of its own, one red
-and one green probe per class in the pin, in digits and in words, the class with no separator in digits alone). An UNNUMBERED form
-has no number the reader knows beside the word, and it is not read: after the word, no digit and no number word past the separator
-or past a short run of punctuation, and before it no ordinal past the separator. Those forms, and only those, pass unread: Python's
-round(), the keyword-argument spelling "rounds=40", "a typing round", "the round's own", "this round", "around", a COUNT before the
-word (a cardinal, in digits or a word: "in N rounds", "the two-round convergence bound", which count rounds and name none), a word
-between the word and a number as in "a round of 3 drives", a word other than "review", or punctuation, between an ordinal and the
-word as in "the Nth test round", a longer word a number word begins or an ordinal ends ("round sevenfold", "a millisecond round"),
-the word glued to a letter, another word before which no ordinal is read and after which no number is ("rounded", "roundsman",
-"round-trip"), and a number spelled in a way the reader does not know, a Roman numeral among them, which no branch writes (the rule
-reads spellings of the word, not sentences, and a bare referential form carries no number and so no credit). A form the classifier
-cannot place is REFUSED, keyed on what it did not resolve: a number glued to a letter or an underscore ("round Nb", the lettered
-pass); a further number, digits or a number word, after a run the list did not consume that is not a date ("rounds N; M", "round N,
-M", "round N, or M") or before an ordinal run the list did not consume ("the Nth, Mth round", a compound ordinal written with a
-space, an ordinal joined by a hyphen to a number other than a tens word, "one hundred and first"); a number both before the word
-and after it; a plural that names one number ("rounds N", "the Nth rounds"); a range that does not ascend ("rounds M-N" with M past
-N); a number word the reader does not read beside the word (LARGE: hundred, thousand, million and billion after the word or after a
-number it read, and their ordinals before it or after it; and any ordinal word after the word); and punctuation or markup between
-the word and a number, digits or a word ("round: N", "round (N)", "round **N**", "round `N`"), the one exemption being the
-keyword-argument spelling, the word glued to `=`. An unresolvable form refuses with its reason and never passes: widening the
-credit is not widening what passes unresolved.
+numbered form is read, and classed by its plural and its separator (FORM_CLASSES, an ordinal form in classes of its own, one red and
+one green probe per class in the pin, in digits and in words, the class with no separator in digits alone). An UNNUMBERED form has
+no number the reader knows beside the word, and it is not read: after the word, no digit and no number word past the separator or
+past a short run of punctuation, markup and spaces (up to six characters, on the word's line), and before it no ordinal past the
+separator or past such a run. Those forms, and only those, pass unread: Python's round(), the keyword-argument spelling "rounds=40",
+"a typing round", "the round's own", "this round", "around", a COUNT before the word (a cardinal, in digits or a word: "in N
+rounds", "the two-round convergence bound", which count rounds and name none), a word between the word and a number as in "a round
+of 3 drives", a word other than "review" between an ordinal and the word as in "the Nth test round", a run of punctuation, markup
+and spaces longer than six characters, or one across a line break, between the word and a number or between an ordinal and the word,
+a longer word a number word begins or an ordinal ends ("round sevenfold", "a millisecond round"), the word glued to a letter,
+another word before which no ordinal is read and after which no number is ("rounded", "roundsman", "round-trip"), and a number
+spelled in a way the reader does not know, a Roman numeral among them, which no branch writes (the rule reads spellings of the word,
+not sentences, and a bare referential form carries no number and so no credit). A form the classifier cannot place is REFUSED, keyed
+on what it did not resolve: a number glued to a letter or an underscore ("round Nb", the lettered pass); a further number, digits or
+a number word, after a run the list did not consume that is not a date ("rounds N; M", "round N, M", "round N, or M") or before an
+ordinal run the list did not consume ("the Nth, Mth round", a compound ordinal written with a space, an ordinal joined by a hyphen
+to a number other than a tens word, "one hundred and first"); a number both before the word and after it; a plural that names one
+number ("rounds N", "the Nth rounds"); a range that does not ascend ("rounds M-N" with M past N); a number word the reader does not
+read beside the word (LARGE: hundred, thousand, million and billion after the word or after a number it read, and their ordinals
+before it or after it; and any ordinal word after the word); punctuation or markup in that short run between the word and a number,
+digits or a word ("round: N", "round (N)", "round **N**", "round `N`"), the one exemption being the keyword-argument spelling, the
+word glued to `=`; and punctuation or markup in that short run between an ordinal, a LARGE one among them, and the word, "review"
+allowed after the run with a run of its own ("the *Nth* round", "the `Nth` round", "the Nth (review) round", a comma after the
+ordinal too), credited or not, but not before another word the word begins. An unresolvable form refuses with its reason and never
+passes: widening the credit is not widening what passes unresolved.
 
 THE CREDIT. A numbered round is credited to the reviewer when the qualifier before the word names that party, "the reviewer's round
 N", "the maintainer's round N" or "the maintainer's Nth round" (CREDIT: one party under two names; the apostrophe ASCII or
@@ -154,6 +158,11 @@ BEFORE = {p: re.compile(r"(?<!\w)(?P<run>" + (_ORDINAL_RUN % _CONTINUE[p]) + r")
           for p in (False, True)}
 # a LARGE word's ordinal before the word, the ordinal separator between: a number word the reader does not read before the word
 UNREAD_BEFORE = re.compile(r"(?:%s)" % "|".join(LARGE_ORDINALS) + _WHOLE + _SEP + r"(?:review" + GAP + r")?\Z", re.I)
+# an ordinal, a LARGE word's ordinal among them, then a run of punctuation, markup and spaces on its line (up to six characters),
+# and "review" allowed after it with a run of its own: punctuation or markup between an ordinal and the word, read only where
+# BEFORE and UNREAD_BEFORE read nothing, so a run that is the separator alone has already been read and what this finds holds a
+# character the separator in its place does not take (the mirror of GAP_NUMBER after the word)
+MARKUP_BEFORE = re.compile(r"(?<!\w)(?:" + _ORDINAL + "|(?:%s)" % "|".join(LARGE_ORDINALS) + _WHOLE + r")[^\w\n]{1,6}(?:review[^\w\n]{1,6})?\Z", re.I)
 # before an ordinal run: a number, digits or a number word, then a run of punctuation and spaces, optionally a list word and a
 # shorter run, is a number the run did not consume
 FORE = re.compile(r"(?:\d|" + _ANY_WORD + r")[^\w\n]{1,6}(?:(?:and|or)[^\w\n]{1,3})?\Z", re.I)
@@ -290,6 +299,9 @@ def classify(text, w):
     unread = UNREAD_BEFORE.search(text, w.start() - 40 if w.start() > 40 else 0, w.start())
     if unread is not None:
         return "unclassifiable", unread.start(), text[unread.start():w.end()], [], "a number word the rule does not read, before the word: %r" % text[unread.start():w.end()]
+    mark = None if COMPOUND.match(text, w.end()) else MARKUP_BEFORE.search(text, w.start() - 40 if w.start() > 40 else 0, w.start())
+    if mark is not None:
+        return "unclassifiable", mark.start(), text[mark.start():w.end()], [], "punctuation or markup between an ordinal and the word: %r" % text[mark.start():w.end()]
     if n is None:
         unread = UNREAD_AFTER.match(text, w.end())
         if unread is not None:
