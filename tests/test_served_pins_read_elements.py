@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""A pin over a served page or a served script or style constant reads the ELEMENT, the PARSED RULE or the CODE it pins, never
-text a comment can satisfy.
+"""A pin over a served page or a served script or style constant, in a form this census reads, reads the ELEMENT, the PARSED RULE or
+the CODE it pins, never text a comment can satisfy. What the census reads, what it refuses, and that every other form is unread: the
+Reach paragraph below.
 
 D1, the maintainer's round 1 (2026-09-19): two served comments spelled the viewport meta's own tokens, and three assertions that named the
 meta were satisfied by comment text; one test passed in full against a page whose meta had lost the token it exists to
 pin. The three were re-pointed at the meta element. The maintainer's round 2 asked for the CLASS to be closed, not the instances: every
 assertIn of a string literal over a served page's text whose literal also occurs inside a comment of that page is a pin a
-comment can satisfy, and this module derives them and fails on each (the author's pass 4, 2026-09-20; the first instance beyond the
+comment can satisfy, and this module derives them, in the forms it reads, and fails on each (the author's pass 4, 2026-09-20; the first instance beyond the
 three was the timeline's touch-action pin, satisfied by two script comments that spell the declaration). The author's pass 6
 (2026-09-20): the class had been closed over the page getters only, and the kernel's served CONSTANTS (the `_*_JS` and
 `_*_CSS` strings spliced into the pages) carried eight pins a served comment satisfied, one of them created by the change
@@ -107,8 +108,7 @@ until a branch is added and pinned in the form-space tests below (a naive equali
 self.<method> or a cls.<method> (a test helper over the handler or an HTTP client) whose first argument is a string literal beginning with `/`
 that, without its ?query, is such a route (or a concatenation led by such a literal that holds the whole path, its `?` inside
 the literal: `self._req("/?token=" + tok)`, the form main's login cookie split added to the suite, merged 2026-09-28), or a
-call to an attribute named `urlopen` whose first argument is a string literal,
-bare or `%`-formatted, of the form `http://127.0.0.1:%d/<route>?...token=...` (the `with ... as r` target is what it binds;
+call to an attribute named `urlopen` whose first argument is a `%`-formatted string literal of the form `http://127.0.0.1:%d/<route>?...token=...` (the `with ... as r` target is what it binds;
 the fixer pass of the author's pass 8: the tokened fetches in tests/test_kernel.py carried 39 pins over five pages outside the population, one
 of them satisfiable by three comments of the timeline page); a method call on another object (`path.split("/")`) is not one.
 A fetched value unpacked into a tuple binds only the position the helper's own return statements read a response at (`status,
@@ -125,8 +125,8 @@ membership over the tuple, and the reads of a name bound whole and later rebound
 the rebinding hides the whole binding). A Name in a helper's return is followed to its
 bindings inside the helper (`body = r.read(); return r.status, body, r.headers` reads at `body`'s position), and a returned Name
 the follow cannot place (bound only by an unpack of a call's answer, a for or async for target, a with target, an except name) makes the
-call a fetch that binds every name, so no read behind a Name returned bare leaves both censuses in silence (the rulings on the
-census pass, 2026-09-28; _response_reads). A returned element that holds a read the follow does not place (a read under any
+call a fetch that binds every name, so a read behind a Name returned bare is read as a read of the fetched page (the rulings on
+the census pass, 2026-09-28; _response_reads). A returned element that holds a read the follow does not place (a read under any
 wrapper but a `.decode` chain, `r.read().strip()`, `str(r.read(), "utf-8")`, `r.read() or b""`, a conditional, `raw[3:]`; a Name
 bound to one; an attribute the helper assigns one, `self.body = r.read()`) is REFUSED: every fetch of a page route through that
 helper is an unclassified row the reader census fails on (the rulings on the census bounds, 2026-09-28; _response_reads,
@@ -153,19 +153,34 @@ A served text inline whose value lands where the census does not read it is REFU
 a subscript or through an annotated or augmented assignment or a walrus, yielded, the body of a lambda, or returned by a function
 that is no text helper, or by a text helper the module hands on uncalled or calls with arguments.
 
-Bound: a formatted url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
-membership asserted through a helper (`_has(self, lit, body)` in tests/test_files_pane.py and tests/test_settings_page.py, whose
-formatted fetches bind a name no form here reads), a fetch of a path the dispatch does not map to a getter
-call (a JSON or text/plain API body, a `/dist/` bundle, a `/media/` file: outside the derivation, and not comment-satisfiable
-only where the body carries no comment syntax), a page from a dynamically resolved getter (`getattr(km, "_%s_page" % name)()`,
-tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a comment spells), a helper whose returns differ in length (the union of their positions: `return r.status, r.read(), r.headers` and
-`return r.status, r.read()` give {1, -1, -2}, so `resp[-1]` binds as the page though it is the headers on the first road;
-over-bound, so its reads are rows over the page, never silent), a name bound to a fetched tuple and later rebound to a whole text
-(it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it: over-bound, never
-silent), a getter called WITH
-arguments (`_shim_core_js("chat")` renders another text), a text served under a name with none of the suffixes the rules
-read (the web app manifest; the `_reload_core` function), a name bound outside the function, a literal bound by assignment
-rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation.
+Reach (round 6, the coordinator's decisions on PR 858, B.5): the census READS the forms the paragraphs above and readers_of's
+docstring name, and REFUSES the forms they name as refused, each an unclassified row naming its site; the reader census also fails a
+literal membership no pins row judges (reader_status). Every other form is UNREAD and unguarded: the pins census holds no row for it
+and nothing refuses it (the reader census may name such a read without judging it, an `assert` over a non-literal needle, say, or
+hold no row at all). Two forms are read over-bound, their reads rows over the page: a helper whose returns differ in length (the
+union of their positions: `return r.status, r.read(), r.headers` and `return r.status, r.read()` give {1, -1, -2}, so `resp[-1]`
+binds as the page though it is the headers on the first road), and a name bound to a fetched tuple and later rebound to a whole text
+(it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it). One form is read and
+judged against another state than the test's: a pin over a getter the test renders after setting kernel state (54 rows at
+97e65ad4e) is judged against the hermetic render and the getter's constant returns, so a literal commented only in the state the test
+sets passes (extra8-4). The unread forms the round measured with live sites, counted at 97e65ad4e: a literal bound by assignment
+rather than a loop (3, tests/test_dashboard_auto_reload.py and tests/test_remotes_panel_render.py); a getter called WITH arguments,
+which renders another text (`_shim_core_js("chat")`; 1, tests/test_dashboard_auto_reload.py); a formatted url whose query carries no
+`token=`, answered with the paste-the-token page (1, tests/test_kernel.py); a page from a dynamically resolved getter (`getattr(km,
+"_%s_page" % name)()`; 1, tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a comment spells); a fetch of
+a path the dispatch does not map to a getter call, a JSON or text/plain API body, a `/dist/` bundle or a `/media/` file (32, in six
+modules or more); and an assertIn whose needle is no literal (28 rows, `assert` with no pins row: extra8-8). Unread with live sites
+not counted: a fetch whose url is a Name a loop over literal routes binds (`for path in ("/", "/chat"): self._req(path + "?token=" +
+TOK)` in tests/test_session_cookie_auth.py; choice 13). A membership asserted through a helper (`_has(self, lit, body)` in
+tests/test_files_pane.py and tests/test_settings_page.py) is read by the reader census, which follows the helper one level (a
+membership over a non-literal needle), and not by the pins census. Among the unread forms the round's checks planted and found silent,
+with no live count: a keyword url; a url Name bound to a literal; a url from a helper call or from urljoin; a fetch through getattr,
+functools.partial or another object's method; urlopen of a Name url or of a concatenation led by anything but a string literal; an
+http.client request; a page aliased through a conditional expression or `or`; a getter aliased to a local Name or reached through
+getattr; a subscript, `.strip()` or `str()` of a read-placing call; delegation through two helper calls; a keyword url to a no-fetch
+helper; and type(self) or super() as the callee. A name bound outside the function, a text served under a name with none of the
+suffixes the rules read (the web app manifest; the `_reload_core` function) and assertNotIn (a comment can red it, never green it)
+are unread too. The lists name examples, not every unread form.
 
 Where the two census tests run (2026-09-21, the author's pass after the maintainer's round 5): on ONE CI cell, the kernel's
 interpreter, Python 3.12 (the interpreter the deployed kernel is pinned to, docs/install.md's ROMP_PYTHON), and every other
@@ -580,7 +595,7 @@ def _response_reads(tree):
     annotated or augmented one, a walrus, or a tuple or list target paired by position with a value of the same length. A returned
     Name the follow cannot place, one the function binds to no expression of its own (an unpack of a call's answer, a for or async
     for target, a with target, an except name) or to a Name so bound, and never to
-    a read, gives "unknown", so a read behind it does not leave both censuses in silence: the call is a fetch (_fetched) and binds
+    a read, gives "unknown", so a read behind it is read as the fetched page's: the call is a fetch (_fetched) and binds
     as a helper the module does not define does, every name (_bind). That holds for such a Name returned bare or under a
     `.decode(...)` chain. A returned element that wraps one otherwise (`status, raw = _raw(path); return 200, raw.strip()`,
     `raw[3:]`; a response attribute, `r.status`, excepted), or a Name bound to such a wrapper, gives "refused" (_wraps_unknown;
@@ -684,7 +699,7 @@ def _fetched(node, names, routes, reads=None):
     """The served text a fetched value stands for (the author's pass 8, 2026-09-20): a call to a Name, a self.<method> or a cls.<method>
     (_callee) whose first argument
     is a string literal beginning with `/` that, without its ?query, is a route in `routes` (`_serve_get("/sw.js", ...)`,
-    `self._get_text("/")`), or a concatenation led by such a literal holding the whole path (_fetch_path); a call to an attribute named `urlopen` whose first argument is a string literal, bare or `%`-formatted,
+    `self._get_text("/")`), or a concatenation led by such a literal holding the whole path (_fetch_path); a call to an attribute named `urlopen` whose first argument is a `%`-formatted string literal
     naming such a route with the token in its query (_url_route; the fixer pass of the author's pass 8); or the `.read(...)` or `.decode(...)`
     of such a value or of a Name bound to one, through any chain of the two (`body.decode()`, `fetch("/chat").read().decode()`);
     else None. A bare Name is not followed (as _text does not). A call to a Name or a self.<method> the module defines counts as a
@@ -914,7 +929,7 @@ def _literals(node):
 
 
 def _memberships(node):
-    """[(literal node, text node)] for every membership a node asserts: `self.assertIn(lit, X, ...)`, `self.assertTrue(lit in X, ...)`
+    """[(literal node, text node)] for each membership a node asserts in these forms: `self.assertIn(lit, X, ...)`, `self.assertTrue(lit in X, ...)`
     or a bare `assert lit in X`, the last two also as a conjunction (`assert a in X and b in Y`, one pair per conjunct)."""
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         if node.func.attr == "assertIn" and len(node.args) >= 2:
@@ -1014,8 +1029,8 @@ def _own_attrs_of(bindings, getters, constants, routes, reads, calls):
 
 
 def rows_of(path, getters, constants, routes=None):
-    """[(line, literal, text, form, readable, served)] for every membership or position assertion of a literal over a served text in one
-    test module; form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
+    """[(line, literal, text, form, readable, served)] for each membership or position assertion of a literal over a served text in one
+    test module, in the forms this derivation reads (the module docstring's population paragraph); form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
     census reads (the author's pass 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
     no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice, a
     subscript (`resp[1]`), a name bound to or unpacked from a fetched tuple's position (or a conversion of one), an inherited
@@ -1309,14 +1324,15 @@ def _module_bindings(tree, getters, constants, routes):
 def _imports_parser(path):
     """Whether a test module IMPORTS served_css (`import served_css` or `from served_css import ...`, anywhere in it): the parser
     road's membership test (the fixer pass of the author's pass 9: the census had tested text containment, the string anywhere in the file, a
-    comment included, while every surface stated the import; the two agree at this head, 15 modules)."""
+    comment included, while every surface stated the import)."""
     tree = _parsed(path)[0]
     return any(isinstance(n, ast.Import) and any(a.name == "served_css" for a in n.names) or isinstance(n, ast.ImportFrom) and n.module == "served_css"
                for n in ast.walk(tree))
 
 
 def readers_of(path, getters, constants, routes=None):
-    """[(line, form, text, source)] for every READ of a served text in one test module: the population the maintainer's round 5
+    """[(line, form, text, source)] for each READ of a served text in one test module in a form this walk reads (the forms below; a
+    read in any other form is no row): the population the maintainer's round 5
     ruling asked to be derived once, of every road (the author's pass 9, 2026-09-20), after the one HTML regex this change had added beside
     the parser it introduced. A served text is what rows_of resolves (a getter call, a constant, a Name or self.<attr> bound to
     one or to a fetched body, the variable of a `for` over texts, a Name bound at module level), and since the fixer pass of the author's pass 9
@@ -2089,7 +2105,7 @@ class ServedPinsReadElements(unittest.TestCase):
         # census declines is not a false red here, and the form-space pin below holds those forms)
         self.assertTrue(sites, "the textual census found no assertion over a served text")
         self.assertEqual(sorted(set(sites) - {r[:5] for r in rows}), [], "sites the textual census reads and the derivation does not")
-        self.assertGreaterEqual(len(rows), len(sites), "the population is every assertion of a literal over a served text across the suite: %d rows, %d sites" % (len(rows), len(sites)))
+        self.assertGreaterEqual(len(rows), len(sites), "the population holds at least one row per textual site: %d rows, %d sites" % (len(rows), len(sites)))
         readable_modules = {r[0] for r in rows if r[5]}
         self.assertTrue(readable_modules, "no module has a row in a form the textual census reads")
         self.assertEqual(sorted(readable_modules ^ {s[0] for s in sites}), [],
@@ -2153,10 +2169,10 @@ class ServedPinsReadElements(unittest.TestCase):
         # the population is a derivation, so its form space is pinned: a getter call inline, a Name bound in the function,
         # a tuple assignment by position, a self.<attr> bound in setUp; a Name bound to something else is not a row. The author's pass 5
         # (2026-09-20): a loop variable over a tuple or list of literals (one row per literal), assertTrue(lit in page) and a
-        # bare assert; a literal bound by assignment stays outside (the bound in the docstring). The author's pass 6 (2026-09-20): a served
+        # bare assert; a literal bound by assignment stays outside (unread: the module docstring's Reach paragraph). The author's pass 6 (2026-09-20): a served
         # constant inline and bound, a module-level function, a conjunction inside assert or assertTrue (one row per conjunct),
         # a Name bound to a slice of a page, the position forms index, find, rindex, rfind and count; a dynamically resolved
-        # getter (getattr) stays outside (the bound). The author's pass 7 (2026-09-20): a `for` over served texts (one row per text, a
+        # getter (getattr) stays outside (unread, the Reach paragraph). The author's pass 7 (2026-09-20): a `for` over served texts (one row per text, a
         # membership and a position form), a comprehension over literals, a position form over a loop literal, and the
         # constants of every kind the rule derives (a style constant, an HTML constant, a bare script constant and a markup
         # constant outside the author's pass 6 roster), each name derived here, not written. The author's pass 8: a body fetched by a literal path,
@@ -2332,7 +2348,7 @@ def test_module_level():
         # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling asked once, of every road that reads the served page, whether it is
         # HTML-correct or refuses what it cannot resolve: the change had moved the element reads onto html.parser as ruled and then
         # added a fresh regex over the raw page beside it (the viewport meta, satisfiable by a commented copy, the case it existed to
-        # stop). The population is EVERY read of a served text across the suite, derived by readers_of (its form space in
+        # stop). The population is the reads of a served text across the suite in the forms readers_of reads (its form space in
         # READER_FORMS and pinned below), and each form has a status: the parser road (`parser`); a stated read that is not a read of
         # markup by another road (`assert`: a literal membership the pins census judges, which reader_status holds to a pins row since
         # round 6, a negative literal membership, an assertIn over a non-literal needle, or a whole-text compare; `position` with a
@@ -3127,8 +3143,9 @@ def _outer(path):
         # the author's pass 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
         # synthetic handler with both shapes pins the two: the landing's membership tuple and the equality routes; a route
         # returning json.dumps, a getter called with arguments, a getter called bare inside another call in the return (the
-        # rulings on the census pass, 2026-09-28: the walk reads a getter only as a DIRECT positional argument of the returned
-        # call, and a walk over the whole return reds here on /wrapped), the condition's other spellings (the rulings on the census
+        # rulings on the census pass, 2026-09-28, asked for this case in the table branch, the next test's /wrapped; the case here,
+        # in the equality branch, is the author's extension of that ruling: the walk reads a getter only as a DIRECT positional
+        # argument of the returned call, and a walk over the whole return reds here on /wrapped), the condition's other spellings (the rulings on the census
         # bounds, 2026-09-28: a getter inside a splice or an f-string argument, or handed by keyword; a walk that descends through
         # an argument that is no call reds here on /spliced or /formatted, and one that reads keywords on /byname) and a prefix test
         # bind nothing. An equality-only walk misses the landing here. On the kernel the landing is served through the route table
