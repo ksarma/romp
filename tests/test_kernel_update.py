@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -93,6 +94,97 @@ def _dials_only(port, dials=None, allow=()):
                 raise OSError("the test refuses a connection to port %r: only its fake manager on %r may be dialled" % (eff, port))
             super().__init__(host, p, *a, **kw)
     return Only
+
+
+# The fake manager of the Routes tests that assert on an answered registry read runs in a CHILD process, never on a
+# thread of this interpreter. The read (_manager_kernels) waits 1 s for its answer. A fake on a thread here shares the
+# interpreter lock and the heap with every test the worker has run, so a full collection that the fake's own
+# allocations set off runs on the fake's thread and holds the lock for as long as that heap takes to walk: the fake
+# cannot answer meanwhile, and on a worker-sized heap the pause outlasted the 1 s (CI's Python 3.12 cell failed twice
+# on the first read, 2026-09-28; a probe that makes the collection due on the fake's threads measured pauses of 0.8 to
+# 2.5 s and reproduced both failures). A child answers from its own interpreter, so a pause in this process delays the
+# reader but cannot hold back the answer, and the 1 s read measures the kernel's code again. The child binds port 0 and
+# prints the port it got (no port is chosen before it is bound); it appends each request to hits.jsonl BEFORE it
+# answers, so a request the kernel saw answered is already listed; it reads answers.json at every request, so a test
+# changes the answer by rewriting the file before the request that should see it; and it runs until its stdin
+# closes, which stop() does and which the end of this process does too, so it cannot outlive the run.
+_FAKE_MANAGER_CHILD = r"""
+import json, os, sys, threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+root = sys.argv[1]
+
+
+class Manager(BaseHTTPRequestHandler):
+    def _answer(self):
+        with open(os.path.join(root, "hits.jsonl"), "a") as f:
+            f.write(json.dumps([self.command, self.path]) + "\n")
+        with open(os.path.join(root, "answers.json")) as f:
+            answers = json.load(f)
+        a = answers.get(self.command + " " + self.path) or answers.get(self.command) or {"status": 404, "body": ""}
+        body = a["body"].encode()
+        self.send_response(a["status"])
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = do_POST = _answer
+
+    def log_message(self, *a):
+        pass
+
+
+srv = ThreadingHTTPServer(("127.0.0.1", 0), Manager)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+print(srv.server_address[1], flush=True)
+sys.stdin.read()
+os._exit(0)
+"""
+
+
+class _ManagerProcess:
+    """The fake manager as a child process (_FAKE_MANAGER_CHILD says why it is a child): `port` is the port it bound,
+    answer() sets what it answers, hits() lists the (method, path) of every request it took, stop() ends it."""
+
+    def __init__(self, answers):
+        self._td = tempfile.TemporaryDirectory()
+        self._hits = os.path.join(self._td.name, "hits.jsonl")
+        open(self._hits, "w").close()
+        self.answer(answers)
+        try:
+            self._proc = subprocess.Popen([sys.executable, "-I", "-c", _FAKE_MANAGER_CHILD, self._td.name],
+                                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        except BaseException:
+            self._td.cleanup()
+            raise
+        line = self._proc.stdout.readline()      # the port, or EOF if the child died before binding
+        if not line.strip().isdigit():
+            self.stop()
+            raise AssertionError("the fake manager did not report its port: %r (exit %r)" % (line, self._proc.returncode))
+        self.port = int(line)
+
+    def answer(self, answers):
+        """What the child answers from its next request on: {"METHOD PATH" or "METHOD": {"status": int, "body": str}},
+        the exact path first; a request that matches neither is a 404. Written aside and renamed over the old file, so
+        a request never reads half of it."""
+        tmp = os.path.join(self._td.name, "answers.json.tmp")
+        with open(tmp, "w") as f:
+            json.dump(answers, f)
+        os.replace(tmp, os.path.join(self._td.name, "answers.json"))
+
+    def hits(self):
+        with open(self._hits) as f:
+            return [tuple(json.loads(line)) for line in f if line.strip()]
+
+    def stop(self):
+        self._proc.stdin.close()
+        try:
+            self._proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
+            self._proc.wait()
+        self._proc.stdout.close()
+        self._td.cleanup()
 
 
 class _PeerWritesOnCompare(str):
@@ -720,6 +812,12 @@ class Routes(Fresh):
     def tearDownClass(cls):
         cls.srv.shutdown()
 
+    def _manager_process(self, answers):
+        """A fake manager in a child process (_ManagerProcess), stopped by a cleanup that runs on every exit path."""
+        mgr = _ManagerProcess(answers)
+        self.addCleanup(mgr.stop)
+        return mgr
+
     def _post(self, path, token=True, body=None, legacy=False):
         """A POST as the banner's ARMED click sends it (2026-09-10): {"confirmed": true} unless the
         test says otherwise. `body` is the JSON object to send; {} is the unconfirmed click. `legacy` is
@@ -1022,34 +1120,13 @@ class Routes(Fresh):
         # live manager on a development box, and on 2026-09-10 a review probe with the variable absent
         # drove the door and every session on the box restarted. Red at 22d540a5: the door dialled the
         # default port (recorded here, never connected). Set to a fake manager's port, both doors dial it as
-        # before. The fake stands in for a manager on an ephemeral port and records every request; the
-        # connection class refuses every other port at construction, so whatever the code does with the
-        # absence this test reaches no manager it did not start. The converge's own steps are stubbed
-        import http.server
-        from http.server import ThreadingHTTPServer
-        hits = []
-
-        class FakeManager(http.server.BaseHTTPRequestHandler):
-            def _answer(self, body):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self):
-                hits.append(("GET", self.path))
-                self._answer(json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}, {"id": "k2", "port": 31111}]}).encode())
-
-            def do_POST(self):
-                hits.append(("POST", self.path))
-                self._answer(b"{}")
-
-            def log_message(self, *a):
-                pass
-        mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
-        threading.Thread(target=mgr.serve_forever, daemon=True).start()
-        port = mgr.server_address[1]
+        # before. The fake stands in for a manager on an ephemeral port and records every request, from a child
+        # process (_FAKE_MANAGER_CHILD says why: three reads below wait 1 s for it); the connection class refuses
+        # every other port at construction, so whatever the code does with the absence this test reaches no
+        # manager it did not start. The converge's own steps are stubbed
+        registry = json.dumps({"ok": True, "kernels": [{"id": "k1", "port": km.PORT}, {"id": "k2", "port": 31111}]})
+        mgr = self._manager_process({"GET": {"status": 200, "body": registry}, "POST": {"status": 200, "body": "{}"}})
+        port = mgr.port
         dials, notices, audits = [], [], []
         saved_port = os.environ.get("ROMP_MANAGER_PORT")
         try:
@@ -1075,7 +1152,7 @@ class Routes(Fresh):
                     km._restart_this_kernel("test", manager_port=value)          # the rule the other doors now share
                     km._restart_this_kernel("test")
                 self.assertEqual(dials, [], "no door dialled anything with the variable absent or empty")
-                self.assertEqual(hits, [], "nothing reached the fake manager")
+                self.assertEqual(mgr.hits(), [], "nothing reached the fake manager")
                 self.assertEqual(audits, ["kernel-asks-manager-restart-all"] * 4,
                                  "no main-converge request was audited: none went out (the four rows are _restart_this_kernel's own)")
                 self.assertEqual(len(notices), 4, "each drift-door converge said what it did not do")
@@ -1092,6 +1169,7 @@ class Routes(Fresh):
                 self.assertNotIn("manager", json.loads(body), "with a port set the field is absent: the label names the restart")
                 km._run_main_update("restart", True, manager_port=str(port))
                 km._run_main_update("restart", True)
+            hits = mgr.hits()
             self.assertEqual([h for h in hits if h[0] == "POST"], [("POST", "/restart-all")] * 2, "both restart requests reached the fake")
             self.assertEqual(len([h for h in hits if h[0] == "GET"]), 3, "the two direct registry reads and the route's reached the fake")
             self.assertEqual(set(dials), {("127.0.0.1", port)}, "every dial went to the port the environment named")
@@ -1103,7 +1181,6 @@ class Routes(Fresh):
             else:
                 os.environ["ROMP_MANAGER_PORT"] = saved_port
             km._MANAGER_READ_FAULT[0] = ""
-            mgr.shutdown()
 
     def test_update_check_reads_no_counts_and_dials_no_registry_when_nothing_is_offered(self):
         # review round 6 of the confirm step (2026-09-10): the registry read and the impact count ran on every
