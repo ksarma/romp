@@ -79,7 +79,7 @@ class PaneHiddenWordInBrowsers(unittest.TestCase):
         if o.get("skipped"):
             declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
             if declared and browser not in [e.strip() for e in declared.split(",")]:
-                # a runner that says which engines it installed (CI's extension job: chromium) leaves the other legs
+                # a runner that says which engines it installed (CI's served-pages job: chromium) leaves the other legs
                 # as skips even under ROMP_SERVED_TESTS_REQUIRE=1, which honours this prefix (tests/conftest.py)
                 self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s): %s" % (browser, declared, o["skipped"]))
             self.skipTest("no playwright %s on this machine; this leg needs it (CI installs none): %s" % (browser, o["skipped"]))

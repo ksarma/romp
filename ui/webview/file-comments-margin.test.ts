@@ -361,8 +361,9 @@ test("beside the body the aside is the margin layout: the track between the fixe
   const { w } = await open();
   const aside = w.aside();
   assert.ok(aside.classList.contains("fc-margin"), "the sheet's margin class is on the aside");
-  // the root's children are the five sections as before: head, composer, cards (the track), send, log — the sheet fixes the first two and the last two
-  assert.deepEqual(aside.childNodes.map((n) => (n as El).className), ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log"]);
+  // the root's children are the five sections as before (head, composer, cards: the track, send, log; the sheet fixes the first two and the last two),
+  // then the live region, which the sheet takes out of the flow (.fc-live: absolute, 1px, clipped)
+  assert.deepEqual(aside.childNodes.map((n) => (n as El).className), ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"]);
   const track = w.track(), list = track.querySelector(".fc-cards")!;
   assert.equal(list.style.height, (CONTENT - OFFSET) + "px", "the list's content is the body's, less the header the track begins under: one scroll range for both");
   // the foot (Accept all · Reject all) left the list for the footer, above Send

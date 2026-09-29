@@ -369,8 +369,9 @@
 // `command` or `time` says what each shell does (WRAPPED_CD_WHY: bash and zsh move under `builtin`, bash and dash under
 // `command`, bash and zsh under `time`; the verdict stays unknown), where it said the shell does not move; (3) the prefix form's
 // own text, above; (4) the test file runs its real-shell evidence legs through one probe that reports a shell that is
-// missing or too old with a `NOT RUN` line per leg, never a silent pass (CI's shell job has no zsh; since round 5 the probe
-// covers dash and a bash below the 4.3 the legs need, macOS's 3.2, and any spawn of a shell the probe declined throws).
+// missing or too old with a `NOT RUN` line per leg, never a silent pass (the Linux cell of CI's vendored-tooling job, which
+// runs the test file, has no zsh; since round 5 the probe covers dash and a bash below the 4.3 the legs need, macOS's 3.2,
+// and any spawn of a shell the probe declined throws).
 // THE SEVENTH PASS'S ATTACKER (2026-09-19; on 93bb93b68, at the rule's own boundary): two misses, 0 structural, each a construct
 // the lexer already produced that the implementation realised at one level only, and a sibling found while closing them.
 // F2, a `{ }` group NESTED in a piped or backgrounded group (13 live rows in bash, zsh and dash, a cd face included): one

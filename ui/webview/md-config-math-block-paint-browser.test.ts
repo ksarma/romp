@@ -280,7 +280,7 @@ test("the panel's half alone, over the box stamped by hand as the paint will sta
     assert.notEqual(presel.shadow, "none", "fc-presel-block: its ring");
     await stamp("fc-hl-block");
     await frames(page, 1);
-    // the pass's unpaint over the same body: a filter change repaints from the status already here (setFilter, paintAll)
+    // the pass's unpaint over the same body: a filter change repaints from the status already here (setFilter, #latchCardState)
     await page.click('.fileview-aside [data-act="fcfilter"][data-key="comments"]');
     await frames(page, 3);
     const after = await readBox(page);
