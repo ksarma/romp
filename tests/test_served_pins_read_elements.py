@@ -3937,9 +3937,11 @@ class C(unittest.TestCase):
         # a form rows_of does not read passed unjudged (the live row: tests/test_api_health_rail.py's `"var PAUSE" in self.JS`, the
         # condition of a conditional expression, re-pointed through served_css.js_code in this change). readers_of marks a literal
         # membership over the text itself (_MEMBERSHIP), and reader_status makes a marked row with no pins row at its module, line
-        # and text unclassified. The negative forms carry no mark: assertNotIn, and `not in` under a bare assert or assertTrue (a
-        # comment can red them, never green them). So the pinned forms (5 to 7), the negative ones (8 to 10, and 25, conjuncts of a
-        # bare assert), a non-literal needle
+        # and text unclassified. Two negative forms carry no mark: assertNotIn, and `not in` under a bare assert or assertTrue,
+        # directly or as a conjunct (a comment can red them, never green them). Every other spelling of a negative membership is
+        # marked like a positive one, so with no pins row it is unclassified: assertFalse of a membership (27), `assert not (lit in
+        # X)` (28), assertTrue of a `not` (29) and an if that fails on one (30). So the pinned forms (5 to 7), the two unmarked
+        # negative forms (8 to 10, and 25, conjuncts of a bare assert), a non-literal needle
         # (23, the stated extra8-8 shape) and a whole-text compare (24) keep their status, and the forms the pins census does not
         # read are unclassified: a conditional expression (11), a disjunction (12), any() over literals (13), assertFalse of a `not
         # in` (14), an if of one (15), a membership bound to a Name (17), assertEqual and assertIs of one (18, 19), assertIn by
@@ -3974,6 +3976,11 @@ class T(unittest.TestCase):
         self.assertEqual(page, "x")
         assert "o1" not in page and "o2" not in page
         assert "o3" in page and any(w in page for w in ("o4",))
+        self.assertFalse("o5" in page)
+        assert not ("o6" in page)
+        self.assertTrue(not "o7" in page)
+        if "o8" in page:
+            self.fail("o8")
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3985,7 +3992,7 @@ class T(unittest.TestCase):
         pins = {("m.py", r[0], r[2]) for r in rows if r[3] in _POSITION}
         members = {("m.py", r[0], r[2]) for r in rows if r[3] == "in"}
         statuses = [(r[0], reader_status("m.py", *r, pins, members, {"_landing": frozenset(["markup"])})) for r in readers if r[1] == "assert"]
-        self.assertEqual([line for line, st in statuses if st == "unclassified"], [11, 12, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22])
+        self.assertEqual([line for line, st in statuses if st == "unclassified"], [11, 12, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, 27, 28, 29, 30])
         self.assertEqual([line for line, st in statuses if st == "assert"], [5, 6, 7, 7, 8, 9, 10, 23, 24, 25, 25, 26, 26])
 
 
