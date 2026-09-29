@@ -1871,9 +1871,11 @@ class TheParseTreesAreDropped(unittest.TestCase):
     tearDownClass drops them: left on the class, they stayed reachable for the rest of the process wherever the typescript
     package is installed, through every module the run executes after this one. Driven with no parse, so it runs wherever the
     module is collected, CI's Python cells included: the real tearDownClass runs over a stand-in carrying what setUpClass
-    leaves on the class, trees the test holds only a weak reference to."""
+    leaves on the class, a trees container the test holds only a weak reference to. What it pins is that tearDownClass drops
+    the class's reference to the container; it does not follow the trees' own values, so a copy of them kept elsewhere is not
+    seen."""
 
-    def test_teardown_leaves_the_trees_unreachable(self):
+    def test_teardown_drops_the_classs_reference_to_the_trees_container(self):
         class Trees(dict):   # a plain dict takes no weak reference
             pass
 
@@ -1882,7 +1884,7 @@ class TheParseTreesAreDropped(unittest.TestCase):
         trees = weakref.ref(StandIn.trees)
         TheDriverParsed.tearDownClass.__func__(StandIn)
         gc.collect()
-        self.assertIsNone(trees(), "the trees are still reachable after tearDownClass")
+        self.assertIsNone(trees(), "the trees container is still reachable after tearDownClass")
 
 
 if __name__ == "__main__":

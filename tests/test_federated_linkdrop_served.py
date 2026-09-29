@@ -311,9 +311,9 @@ class LinkProxy:
     the same port; stop() drops the link, joins every thread the splice started, fails naming any still alive at its
     bound and releases the port. Every transition is stamped for the record.
 
-    The port is the splice's from construction until stop(): a socket bound to it that never listens holds it, so nothing
-    else on the box can take it before listen() or between a drop() and its resume(), and each listener binds it beside
-    that socket through SO_REUSEPORT. The splice took its port from a free-port probe that closed its socket, and the port
+    The port is the splice's from construction until stop(): a socket bound to it that never listens holds it, so no socket
+    that binds without SO_REUSEPORT can take it before listen() or between a drop() and its resume() (a socket of the same
+    user that sets SO_REUSEPORT still can), and each listener binds it beside that socket through SO_REUSEPORT. The splice took its port from a free-port probe that closed its socket, and the port
     was then free for anyone to take until listen() bound it, and again across every drop. On Linux, where the served job
     runs this lab, a dial to a port that is bound and not listening is refused, so a dial while the link is dropped is
     refused as before, as at a dead -L listener, which is the refusal the hub's relay starts its redial road from (the
@@ -2187,7 +2187,9 @@ class LinkProxyEnds(unittest.TestCase):
         splice took its port from a free-port probe that closed its socket, so the port was free for anyone to take between
         the probe and listen(), and again between each drop() and its resume()."""
         srv = self._target()
-        p = LinkProxy(srv.getsockname()[1])
+        from unittest import mock
+        with mock.patch.object(_dial, "_free_port", side_effect=AssertionError("LinkProxy took its port from a free-port probe")):
+            p = LinkProxy(srv.getsockname()[1])   # the constructor binds port 0 and reads it: no probe, so no window before the bind
         self.addCleanup(p.stop)   # stop() closes the held port too; not self._proxy, whose cleanup reads the holder, so this test runs to its assertions over a splice that has none
         self.assertEqual(self._bind_errno(p.port), errno.EADDRINUSE, "constructed and not yet listening: the reported port is bound")
         p.listen()
