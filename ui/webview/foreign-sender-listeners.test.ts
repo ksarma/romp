@@ -2247,6 +2247,12 @@ test("the road census reads what it claims: every road around the spelled regist
     ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: (function (ws) { ws = window; })(1); } arm();", "webview/probe.js", 0],
     ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} ws = window; } } arm();", "webview/probe.js", 0],
     ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: switch (0) { case 0: function ws() {} case 1: ws = window; } } arm();", "webview/probe.js", 0],
+    // a write inside a function nested in the declaration's scope that sets a binding of its own there, which the census
+    // resolves it to: a function declared in the block that holds the write, a var of that function, or a function
+    // declared directly in its body
+    ["let ws = new WebSocket(u); function h() { { function ws() {} ws = window; } } h(); ws.onmessage = f;", "webview/probe.js", 0],
+    ["let ws = new WebSocket(u); function h() { var ws; { function ws() {} } ws = window; } h(); ws.onmessage = f;", "webview/probe.js", 0],
+    ["let ws = new WebSocket(u); function h() { function ws() {} ws = window; } h(); ws.onmessage = f;", "webview/probe.js", 0],
     ["const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;", undefined, 0],
     ["document.body.onmessage = null; x.onmessage = undefined; y.onmessageerror = z.onmessage = null;", undefined, 0],
     ["window.onmessageerror = f; document.defaultView.onmessage = g; const w = window; w.onmessage = h;", undefined, 3],
@@ -2386,6 +2392,22 @@ test("the road census reads what it claims: every road around the spelled regist
       ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} } [ws] = [window]; } arm();", "webview/probe.js"],
       ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: if (1) function ws() {} ws = window; } arm();", "webview/probe.js"],
       ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { l: function ws() {} ws = window; } } arm();", "webview/probe.js"],
+      // and a write inside a function, class static block or namespace nested in the declaration's scope when declOf
+      // resolves its name to a function of the name declared in a block there that does not hold the write (hoistedDecl
+      // takes it as hoisted to the nested scope; strict code, as every module is, or a let of the name in a block in
+      // between leaves it in its block, and the write sets the socket's name): in a function, in a module with no let in
+      // between, the TypeScript form, in a namespace, a class static block, an arrow function and a method, a
+      // destructuring write, and a function that is an if statement's clause or a label's statement
+      ["let ws = new WebSocket(u); function h() { { let ws; { function ws() {} } } ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
+      ["export {}; let ws = new WebSocket(u); function h() { { function ws() {} } ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
+      ["let ws: any = new WebSocket(u); function h() { { let ws; { function ws() {} } } ws = window; } h(); ws.onmessage = f;"],
+      ["let ws: any = new WebSocket(u); namespace N { { let ws; { function ws() {} } } ws = window; } ws.onmessage = f;"],
+      ["let ws = new WebSocket(u); class K { static { { let ws; { function ws() {} } } ws = window; } } ws.onmessage = f;", "webview/probe.js"],
+      ["{ let ws = new WebSocket(u); (() => { { let ws; { function ws() {} } } ws = window; })(); ws.onmessage = f; }", "webview/probe.js"],
+      ["let ws = new WebSocket(u); const o = { m() { { let ws; { function ws() {} } } ws = window; } }; o.m(); ws.onmessage = f;", "webview/probe.js"],
+      ["let ws = new WebSocket(u); function h() { { let ws; { function ws() {} } } [ws] = [window]; } h(); ws.onmessage = f;", "webview/probe.js"],
+      ["let ws = new WebSocket(u); function h() { { let ws; if (1) function ws() {} } ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
+      ["let ws = new WebSocket(u); function h() { { let ws; { l: function ws() {} } } ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
       // an ambient declaration, which binds nothing at run time (an ambient var's name is a property of the global object)
       ["declare var ws: any = new WebSocket(u); (window as any).ws = window; ws.onmessage = f;"],
       ["declare let ws: any = new WebSocket(u); (window as any).ws = window; ws.onmessage = f;"],
@@ -2496,8 +2518,9 @@ test("the road census reads what it claims: every road around the spelled regist
   // whose name declOf resolves to nothing, to a binding outside it, or to a function whose own block does not hold the
   // write is named by that cause whatever the write assigns, one row each in another case clause of the declaration's
   // switch with no outer binding, with an outer one, with a function declared in a block the write is not in, and
-  // assigning new WebSocket(...), and one inside a with statement; and for a declaration that is no let, const or var
-  // statement's own one row per shape (a for head's, a catch clause's parameter, none)
+  // assigning new WebSocket(...), one inside a with statement, and one inside a function nested in the declaration's
+  // scope that declares a function of the name in a block the write is not in; and for a declaration that is no let,
+  // const or var statement's own one row per shape (a for head's, a catch clause's parameter, none)
   const UNPROVED = "an onmessage handler on a receiver the census cannot resolve to this page's window or to a socket: ";
   // the kind named for a write rule 3 refuses by its cause, spelled out here rather than read from UNPLACED_WRITE, so
   // that a change to that text reds these rows
@@ -2522,6 +2545,7 @@ test("the road census reads what it claims: every road around the spelled regist
     ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; };\ncase 1: { function ws() {} } ws = window; } arm();", "ws is written at :2 by " + UNPLACED, "webview/probe.js"],
     ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; };\ncase 1: ws = new WebSocket(u2); } arm();", "ws is written at :2 by " + UNPLACED, "webview/probe.js"],
     ["var ws = new WebSocket(u);\nwith (o) { ws = window; }\nws.onmessage = f;", "ws is written at :2 by " + UNPLACED, "webview/probe.js"],
+    ["let ws = new WebSocket(u);\nfunction h() { { let ws; { function ws() {} } } ws = window; }\nh(); ws.onmessage = f;", "ws is written at :2 by " + UNPLACED, "webview/probe.js"],
     ["let ws = new WebSocket(u);\nws ||= window;\nws.onmessage = f;", "ws is written at :2 by a compound assignment", "webview/probe.js"],
     ["let ws = new WebSocket(u);\nws++;\nws.onmessage = f;", "ws is written at :2 by ++ or --", "webview/probe.js"],
     ["\nfor (let ws = new WebSocket(u); ; ) {\n  ws.onmessage = f; break;\n}", "ws is not declared by a let, const or var statement of its own (:2)", "webview/probe.js"],
