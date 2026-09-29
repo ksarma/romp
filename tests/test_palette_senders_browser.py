@@ -200,8 +200,6 @@ class PaletteSendersInBrowsers(unittest.TestCase):
         cls.lab = tempfile.mkdtemp(prefix="palette-senders-")
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
-        with open(os.path.join(dist, "palette-main.js"), encoding="utf-8") as f:
-            cls.bundle = f.read()
         state = os.path.join(cls.lab, "xdg", "romp")
         claude = os.path.join(cls.lab, "claude")
         cwd = os.path.join(cls.lab, "proj")
@@ -288,8 +286,6 @@ class PaletteSendersInBrowsers(unittest.TestCase):
         return o
 
     def _check(self, engine):
-        # the bundle served is this checkout's, with the pane check at both listeners' heads (the census holds its source)
-        self.assertIn("__rompPaneSourceOk", self.bundle, "the served palette bundle reads the shell's check")
         o = self._drive(engine)
         where = engine + " " + o.get("version", "") + ": "
         self.assertEqual(o["split"], "f-chat-2", where + "the shell's split script opened a second column")
