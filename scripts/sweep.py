@@ -490,10 +490,6 @@ ENV_BIN = "/usr/bin/env"
 # The tools whose versions a result records (found on the leg's PATH), with the argument that prints the version.
 TOOL_VERSION_ARGS = (("node", "--version"), ("npm", "--version"), ("bats", "--version"), ("git", "--version"),
                      ("gitleaks", "version"))
-# git's repository-location variables: the runner's own git calls act on --tree, never on an inherited
-# GIT_DIR (a hook's environment carries one).
-GIT_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-                "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM")
 # The box rule's TMPDIR shape (tests/test_tempdir_hygiene.py, SWEEP_TMPDIR_TEMPLATE): short, because the deepest
 # session-host socket path the harness mints under it must fit sun_path.
 TMPDIR_PARENT, TMPDIR_PREFIX, TMPDIR_TAIL = "/tmp", "sweep-", 6
@@ -991,12 +987,14 @@ def excuse_contradiction(tree, result, sha, subject="HEAD"):
 
 # ── the runner ────────────────────────────────────────────────────────────────
 
-# Every git call the runner makes (the sha read, the clone, the checkout, the verification) runs with every GIT_*
-# variable of its environment removed and git's global and system configuration off, so no inherited GIT_DIR,
-# GIT_CONFIG_*, GIT_TEMPLATE_DIR or config file changes what it reads; refs/replace is ignored; and the per-user
-# attributes and excludes files git reads by default (~/.config/git/attributes and ignore) are pointed at an empty
-# file, since a global `* text eol=crlf` there would change what a checkout writes. fsmonitor and the untracked cache
-# are off.
+# Every git call the runner makes (the sha read, the uncommitted-edits notice's git status in the batcher's tree, the
+# clone, the checkout, the verification) runs with every GIT_* variable of its environment removed and git's global and
+# system configuration off, so no inherited GIT_DIR, GIT_CONFIG_*, GIT_TEMPLATE_DIR or config file changes what it
+# reads; refs/replace is ignored; and the per-user attributes and excludes files git reads by default
+# (~/.config/git/attributes and ignore) are pointed at an empty file, since a global `* text eol=crlf` there would change
+# what a checkout writes, and a directory rule in the ignore file would shadow a tracked .gitignore's rule in the re-read
+# after a leg. fsmonitor and the untracked cache are off, over the repository's own config too: the notice's git status
+# runs in the batcher's repository, whose config could name an fsmonitor hook or turn the untracked cache on.
 GIT_NEUTRAL = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_NO_REPLACE_OBJECTS": "1"}
 GIT_NEUTRAL_CONFIG = (("core.attributesFile", os.devnull), ("core.excludesFile", os.devnull), ("core.fsmonitor", "false"),
                       ("core.untrackedCache", "false"))
@@ -1019,11 +1017,13 @@ def git(tree, *args, check=True):
 
 
 def uncommitted_count(tree):
-    """How many entries `git status --porcelain=v1 --untracked-files=all` lists in the batcher's tree, as the batcher's
-    own git sees it (their configuration and excludes), or None when git status fails. Only a notice reads it: the
-    legs run in a private checkout of the sha, so these edits are not swept."""
-    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
-    p = subprocess.run(["git", "-C", tree, "status", "--porcelain=v1", "-z", "--untracked-files=all"], env=env,
+    """How many entries `git status --porcelain=v1 --untracked-files=all` lists in the batcher's tree, or None when git
+    status fails. Only a notice reads it: the legs run in a private checkout of the sha, so these edits are not swept.
+    It runs with the runner's neutral git like every other runner git call (_git_env; round 2, fresh-4), so no
+    core.fsmonitor hook or untracked-cache setting of the batcher's configuration runs or writes in their repository;
+    with the per-user excludes file off, the count includes files only the batcher's global excludes hide, which are
+    not swept either."""
+    p = subprocess.run(["git", "-C", tree, "status", "--porcelain=v1", "-z", "--untracked-files=all"], env=_git_env(),
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if p.returncode != 0:
         return None

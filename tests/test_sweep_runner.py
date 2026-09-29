@@ -893,6 +893,61 @@ class Runner(_Base):
         w.git("clean", "-q", "-fd")
         self.assertNotIn("uncommitted", w.run(check=0).stdout, "a clean tree prints no notice")
 
+    def fsmonitor_hook(self, tag):
+        """A core.fsmonitor hook that records it ran (in a file named by `tag`) and fails, so git falls back to a scan."""
+        mark = os.path.join(self.w.tmp, "fsmonitor-ran-" + tag)
+        hook = os.path.join(self.w.tmp, "fsmonitor-" + tag)
+        with open(hook, "w") as f:
+            f.write("#!/bin/sh\necho ran > '%s'\nexit 1\n" % mark)
+        os.chmod(hook, 0o755)
+        return hook, mark
+
+    def test_the_notice_runs_no_fsmonitor_hook_of_the_batchers_git_config(self):
+        """Round 2, fresh-4 and decision 12: the uncommitted-edits notice's git status runs with the runner's neutral git
+        like every other runner git call, so an fsmonitor hook in the batcher's global config (GIT_CONFIG_GLOBAL) or in
+        their repository's own config does not run: the hook would run with the runner's whole environment, not the leg
+        allowlist. The notice still counts the edits. At c60fb907e both hooks ran (the notice used the batcher's git);
+        the repository's hook is kept off by core.fsmonitor=false alone, since the neutral git reads the repository's
+        config."""
+        w = self.w
+        w.write({"README.md": "# edited, not committed\n", "notes/new.txt": "new\n"})
+        for where in ("global", "repository"):
+            with self.subTest(config=where):
+                hook, mark = self.fsmonitor_hook(where)
+                env = dict(w.env)
+                if where == "global":
+                    path = os.path.join(w.tmp, "global-fsmonitor.gitconfig")
+                    with open(path, "w") as f:
+                        f.write("[core]\n\tfsmonitor = %s\n" % hook)
+                    env["GIT_CONFIG_GLOBAL"] = path
+                else:
+                    w.git("config", "core.fsmonitor", hook)
+                self.assertEqual(subprocess.run(["git", "-C", w.tree, "status", "--porcelain"], env=env, stdout=subprocess.PIPE,
+                                                stderr=subprocess.PIPE).returncode, 0)
+                self.assertTrue(os.path.exists(mark), "premise: the batcher's own git status runs the hook")
+                os.remove(mark)
+                p = w.run(env=env)
+                self.assertIn("has 2 uncommitted edits (git status)", p.stdout, p.stdout + p.stderr)
+                self.assertFalse(os.path.exists(mark), "the runner's git status ran the batcher's fsmonitor hook")
+                if where == "repository":
+                    w.git("config", "--unset", "core.fsmonitor")
+                os.remove(w.result_path())
+
+    def test_the_notice_leaves_the_untracked_cache_of_the_batchers_repository_alone(self):
+        """Round 2, decision 12: core.untrackedCache=false in the runner's neutral git outranks the batcher's repository
+        config, so the notice's git status does not add an untracked cache to the batcher's index when their repository
+        turns it on. At c60fb907e, and under the neutral git without that setting, git status wrote one there."""
+        w = self.w
+        w.write({"notes/new.txt": "new\n"})
+        w.git("config", "core.untrackedCache", "true")
+        index = os.path.join(w.tree, ".git", "index")
+        with open(index, "rb") as f:
+            self.assertNotIn(b"UNTR", f.read(), "premise: the index holds no untracked cache before the run")
+        p = w.run(check=0)
+        self.assertIn("has 1 uncommitted edit (git status)", p.stdout)
+        with open(index, "rb") as f:
+            self.assertNotIn(b"UNTR", f.read(), "the runner's git status wrote an untracked cache into the batcher's index")
+
     def test_the_runner_writes_nothing_in_the_tree(self):
         w = self.w
         before = w.git("status", "--porcelain", "--ignored", "--untracked-files=all")
@@ -2010,6 +2065,20 @@ class Checkout(_Base):
         plants = sorted([os.path.join("hooks", "post-checkout"), os.path.join("info", "attributes")])
         self.assertEqual({leg: seen[leg] for leg in ("manager", "tools")}, {"manager": plants, "tools": plants})
         self.assertEqual({leg: v for leg, v in seen.items() if leg not in ("bats", "manager", "tools") and v}, {})
+
+    def test_a_per_user_ignore_rule_does_not_reach_the_reread(self):
+        """Round 2, tests-3 and decision 12: the runner's git reads no per-user excludes file (core.excludesFile is
+        /dev/null). A directory rule `kernel/` in the batcher's $XDG_CONFIG_HOME/git/ignore, which git reads by default
+        when core.excludesFile is unset whatever GIT_CONFIG_GLOBAL says, would decide for kernel/__pycache__/ ahead of
+        the tracked .gitignore's `__pycache__/` rule, so the re-read after the pytest leg would count the bytecode it left
+        as a file no tracked .gitignore ignores and read a passing run invalid. The run passes."""
+        w = self.group_world()
+        xdg = os.path.join(w.tmp, "road-xdg-ignore")
+        _append(os.path.join(xdg, "git", "ignore"), "kernel/\n")
+        w.ctl({"action": {PYTEST_LEG: "bytecode"}})
+        p = w.run(env=dict(w.env, XDG_CONFIG_HOME=xdg))
+        self.assertEqual((p.returncode, w.result()["invalid"]), (0, None), p.stdout + p.stderr)
+        self.assertEqual(w.result()["verdict"], "pass")
 
     def test_a_later_jobs_fresh_checkout_that_is_not_the_shas_tree_makes_the_run_invalid(self):
         """Round 2, decision 13: each later group's fresh checkout is verified against the sha's tree as the first one is.
