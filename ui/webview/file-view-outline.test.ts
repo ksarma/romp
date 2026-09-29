@@ -2267,7 +2267,8 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // mouse-typed event), M-NOTAPPAIR (it refuses a tap's chain with a compatibility mouseout or mouseover), M-NOBLURPAIR (it refuses
 // every chain with an element's blur), M-NOKEY (the chain listener hears keydown and the grammar reads it as it reads any other
 // token), M-B0OK (a press's chain reads no mouse event with no button down), M-TAPMOUSEPTR (a tap's chain reads no mouse-typed pointer
-// event), M-NOMOVEREQ (a tap's chain with no compatibility mousemove read as if it had one), M-PEN0E (a pen's press admits the mouse's pointerout and pointerover with no button down to an element), M-WASE (the token reads a blur's or a focus's target the window as an element), M-LONEBLUR (an element's blur the focus
+// event), M-NOMOVEREQ (a tap's chain with no compatibility mousemove read as if it had one), M-PEN0E (a pen's press admits the mouse's pointerout and pointerover with no button down to an element), M-WASE (the token reads a blur's or a focus's target the window as an element), M-NOENTER and M-NOLEAVE (a press's pointerenter
+// or its pointerleave with the button down refused), M-LONEBLUR (an element's blur the focus
 // does not follow read as absent), M-W1OFF (the widening to a tap's mouseup of detail 2 dropped), M-W2OFF (the widening to the focus
 // arriving before a press's mousedown and in a tap before its pointerup dropped), M-W3OFF (the widening to the mouse's boundary
 // events to no element during a finger's contact dropped), M-NOMOUSE, M-NOPEN and M-NOTOUCH (the grammar refuses every mouse's, pen's
@@ -3199,7 +3200,7 @@ test("the own-chain allowlist refuses a chain the viewer's own gestures do not m
   assert.deepEqual(got, { moveNoButton: refused, heldMove: refused, hoverUpdate: refused, noMove: refused, penMouse0: refused, penMouse0Fixup: refused, loneBlur: refused },
     "each order's click opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record); the lone blur's row is also the viewer's own press released before the focus returns, or held on the control while the viewer's own input holds the focus, which the allowlist refuses once, a cost");
 });
-test("the own-chain allowlist admits a chain of each family of the viewer's own gestures the round measured, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): with the control shown, each opens once: a click; a click with the focus arriving by the window, by the document (Firefox) or by an element; a double click's second click; a press with its button held moving (jitter); a drag out to an element of this document and back; a pen's press, and one with the mouse-typed boundary events Chromium sends in it; Chromium's, WebKit's and Firefox's taps, WebKit's and Firefox's with their compatibility boundary pair; a tap with the focus arriving; a finger's move in the tap; the press held across a frame hide with the fixup's blur and the focus back, the chain the 119 covered clicks of Chromium's still shape carry, admitted by the coordinator's decision 2; a modifier key pressed during a press; and a tap with a compatibility mouseover from no element and the focus arriving, the chain of the viewer's own tap with the mouse last outside the viewer and the focus elsewhere that the 74 covered taps of Firefox and WebKit carry, admitted by decision 10; and the three widenings: a finger's double tap, its second tap's mouseup and click of detail 2, which opens a second tab as bef9ff8fc's gate does; the focus arriving before a press's mousedown and in a tap before its pointerup, as the Outline popover's close gives it; and the mouse's boundary events to no element with no button down during a finger's contact, as Chromium sends them for a finger held across a frame hide (a property pin over window.open's calls and the scrollIntoView record; each row red under the mutant that drops its clause: the focus rows under M-NOFOCUS, the double click's under M-NOD2, the jitter, the drag and the finger's move under M-NOBMOVE, the pen's boundary events under M-NOPENMOUSE, the compatibility pairs and the 74's chain under M-NOTAPPAIR, the fixup's blur under M-NOBLURPAIR and M-NOFOCUS, the key under M-NOKEY, the widenings under M-W1OFF, M-W2OFF and M-W3OFF; the click, the pen's press and Chromium's tap under M-NOMOUSE, M-NOPEN and M-NOTOUCH alone)", async (t) => {
+test("the own-chain allowlist admits a chain of each family of the viewer's own gestures the round measured, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): with the control shown, each opens once: a click; a click with the focus arriving by the window, by the document (Firefox) or by an element; a double click's second click; a press with its button held moving (jitter); Firefox's jitter on the control, the button held moving across the control's edge and back, with its pointerleave and pointerenter (16 measured own clicks); a drag out to an element of this document and back; a pen's press, and one with the mouse-typed boundary events Chromium sends in it; Chromium's, WebKit's and Firefox's taps, WebKit's and Firefox's with their compatibility boundary pair; a tap with the focus arriving; a finger's move in the tap; the press held across a frame hide with the fixup's blur and the focus back, the chain the 119 covered clicks of Chromium's still shape carry, admitted by the coordinator's decision 2; a modifier key pressed during a press; and a tap with a compatibility mouseover from no element and the focus arriving, the chain of the viewer's own tap with the mouse last outside the viewer and the focus elsewhere that the 74 covered taps of Firefox and WebKit carry, admitted by decision 10; and the three widenings: a finger's double tap, its second tap's mouseup and click of detail 2, which opens a second tab as bef9ff8fc's gate does; the focus arriving before a press's mousedown and in a tap before its pointerup, as the Outline popover's close gives it; and the mouse's boundary events to no element with no button down during a finger's contact, as Chromium sends them for a finger held across a frame hide (a property pin over window.open's calls and the scrollIntoView record; each row red under the mutant that drops its clause: the focus rows under M-NOFOCUS, the double click's under M-NOD2, the jitter, the drag and the finger's move under M-NOBMOVE, the jitter on the control's edge under M-NOENTER and M-NOLEAVE too, a press's pointerenter or pointerleave with the button down refused, the pen's boundary events under M-NOPENMOUSE, the compatibility pairs and the 74's chain under M-NOTAPPAIR, the fixup's blur under M-NOBLURPAIR and M-NOFOCUS, the key under M-NOKEY, the widenings under M-W1OFF, M-W2OFF and M-W3OFF; the click, the pen's press and Chromium's tap under M-NOMOUSE, M-NOPEN and M-NOTOUCH alone)", async (t) => {
   const got: Record<string, unknown> = {};
   const m1: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
   const p2: GatePtr = { pointerId: 2, pointerType: "pen", isPrimary: true, button: 0 };
@@ -3223,6 +3224,20 @@ test("the own-chain allowlist admits a chain of each family of the viewer's own 
   got.focusElement = await row("a click, the focus arriving by an element", (g) => press(g, m1, () => { focusOf(g.body); }));
   got.double = await gateCell(t, "a double click, its second click", (g, opens) => { g.place(IN_BOX); press(g, m1, () => {}); const a = opens(); press(g, m1, () => {}, 2); return [a, opens()]; });
   got.jitter = await row("jitter, the button held moving on the picture", (g) => press(g, m1, () => { onWindow("pointermove", g.img, { ...m1, buttons: 1 }); onWindow("mousemove", g.img, { buttons: 1 }); onWindow("pointermove", g.img, { ...m1, buttons: 1 }); onWindow("mousemove", g.img, { buttons: 1 }); }));
+  got.edgeJitter = await row("Firefox's jitter on the control, the button held moving across the control's edge and back, its pointerleave and pointerenter with the button down", (g) => {
+    onWindow("pointerdown", g.ctl, { ...m1 });
+    onWindow("mousedown", g.ctl, { button: 0 });
+    onWindow("pointermove", g.ctl, { ...m1, buttons: 1 }); onWindow("mousemove", g.ctl, { buttons: 1 });
+    onWindow("pointerout", g.ctl, { ...m1, buttons: 1, relatedTarget: g.img }); onWindow("mouseout", g.ctl, { buttons: 1, relatedTarget: g.img });
+    onWindow("pointerleave", g.ctl, { ...m1, buttons: 1 });
+    onWindow("pointerover", g.img, { ...m1, buttons: 1, relatedTarget: g.ctl }); onWindow("mouseover", g.img, { buttons: 1, relatedTarget: g.ctl });
+    onWindow("pointermove", g.img, { ...m1, buttons: 1 }); onWindow("mousemove", g.img, { buttons: 1 });
+    onWindow("pointerout", g.img, { ...m1, buttons: 1, relatedTarget: g.ctl }); onWindow("mouseout", g.img, { buttons: 1, relatedTarget: g.ctl });
+    onWindow("pointerover", g.ctl, { ...m1, buttons: 1, relatedTarget: g.img }); onWindow("mouseover", g.ctl, { buttons: 1, relatedTarget: g.img });
+    onWindow("pointerenter", g.ctl, { ...m1, buttons: 1 });
+    onWindow("pointerup", g.ctl, { ...m1 });
+    gateClick(g.ctl, 1, 1, true, "mouse");
+  });
   got.drag = await row("a drag out to an element of this document and back", (g) => press(g, m1, () => {
     onWindow("pointerout", g.img, { ...m1, buttons: 1, relatedTarget: g.body }); onWindow("mouseout", g.img, { buttons: 1, relatedTarget: g.body });
     onWindow("pointerover", g.body, { ...m1, buttons: 1, relatedTarget: g.img }); onWindow("mouseover", g.body, { buttons: 1, relatedTarget: g.img });
@@ -3253,7 +3268,7 @@ test("the own-chain allowlist admits a chain of each family of the viewer's own 
   });
   t.diagnostic("record " + JSON.stringify(got));
   const one = { opened: 1, reveals: 0 };
-  assert.deepEqual(got, { click: one, focusWindow: one, focusDocument: one, focusElement: one, double: [one, one], jitter: one, drag: one, pen: one, penMouse: one, chromiumTap: one, webkitTap: one, firefoxTap: one, tapFocus: one, fingerMove: one, fixupBack: one, key: one, outtap: one, doubleTap: [one, one], focusBeforeMd: one, focusInTap: one, fingerHeld: one },
+  assert.deepEqual(got, { click: one, focusWindow: one, focusDocument: one, focusElement: one, double: [one, one], jitter: one, edgeJitter: one, drag: one, pen: one, penMouse: one, chromiumTap: one, webkitTap: one, firefoxTap: one, tapFocus: one, fingerMove: one, fixupBack: one, key: one, outtap: one, doubleTap: [one, one], focusBeforeMd: one, focusInTap: one, fingerHeld: one },
     "each own chain's click opens once, [the first, the second] where a row has two (a property pin over window.open's calls and the scrollIntoView record)");
 });
 test("the chain's record: a run of moves folds, and a chain past its cap refuses, a guard CI runs (the file review's round 20, with the coordinator's decisions on it): the chain listener drops a move a run of moves already holds, since the allowlist reads a run of moves only by the tokens it holds, so a press with its button held jittering for 3,000 moves on the picture, pointermove and mousemove alternating, opens once; and a chain longer than its cap of 1,024 tokens stops recording and its click takes nothing, so a press dragged 600 times between the picture and an element of this document, each crossing four boundary events, and released on the picture opens nothing and reveals the control, a cost by reading, and the next click opens once (a property pin over window.open's calls and the scrollIntoView record; the jitter red under M-NOFOLD, whose chain keeps every alternating move and so passes its cap, and the long drag red under M-NOCAP, which records it whole and opens)", async (t) => {
@@ -3335,4 +3350,169 @@ test("the slot's two rules the own-chain allowlist does not subsume, a guard CI 
   t.diagnostic("record " + JSON.stringify(got));
   const refused = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
   assert.deepEqual(got, { key: refused, twoFingers: refused }, "each row's click opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+});
+// ── the own-chain allowlist token by token, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1,
+// with the coordinator's decisions on them) ── The admit rows above pin each clause of the grammar that ADMITS; this guard pins the
+// closed direction by the token: every token the chain listener writes for its twenty-one types (the gate comment's token, 94 in
+// all), planted alone at each place of six own chains the round measured, reaches the gate through the window's capture phase as
+// the chain listener hears it. The table of what the grammar admits at each place is written here from the ruled grammar's words
+// (the gate comment's paragraph on ownChain), never read off the code: the focus arriving before a press's mousedown, anywhere in a
+// press and, for a finger, anywhere before its pointerup; a press's own moves and boundary events to an element with the button
+// down, a pen's also the mouse-typed ones; a tap's touchstart and its contact's moves and boundary events with the contact down; a
+// finger's also the mouse's boundary events to no element with no button down before its pointerup; a tap's pointerouts to no
+// element and pointerleaves after its pointerup; a touch-order pen's touchend where its finger's would come; a compatibility
+// mouseover from no element in place of the pair; the focus arriving between a tap's compatibility mousedown and its mouseup; and a
+// token equal to the one before it or after it, which the chain drops (a finger's mouseup of detail 2 read as detail 1). A plant
+// the table admits opens, but where its type is one the gate's own listeners hear (a pointerdown, pointerup, pointercancel,
+// mousedown, mouseup, touchend, touchcancel or dragstart), whose other rules may refuse it; every other plant opens nothing and
+// reveals the control. A planted pointerdown, pointerup or pointercancel comes under pointerId 9, not primary, so it neither starts
+// a chain nor ends the press's record.
+test("the own-chain allowlist token by token, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): each of the 94 tokens the chain listener writes, planted alone at each place of a mouse's click, a pen's press, a touch-order pen's tap and Chromium's, Firefox's and WebKit's taps, with the control shown, opens only where the grammar's table admits it at that place, and opens there unless the gate's own listeners hear its type; every other plant opens nothing and reveals the control; so does each pair of a blur and a focus planted together but an element's blur and an element's focus where the focus arriving is admitted, and each pointerdown, pointerup, mousedown and mouseup of the chain replaced by another of its type but a mouseup of detail 2 where the grammar reads 1 or 2, 4,343 plants in all; and each chain with no plant opens once (a property pin over window.open's calls and the scrollIntoView record; red under M-PEN0E, M-WASE, M-NOENTER and M-NOLEAVE, and under 35 more of the 139 code mutants of the allowlist a check of these fixes ran, which no other test reds: the widenings to a context menu or an auxclick, a touch event, a second pointerdown or pointerup, a document's blur or any mousedown or mouseup in a press, the mouse's moves, boundary events to an element or held buttons in a finger's contact, a touch event anywhere in a tap, anything between a tap's compatibility mousedown and mouseup or after its mouseup, a second compatibility pair or a mouseout from no element, a pointerout to an element after a tap's pointerup, a blur paired with any focus or with none, a document's target read as an element's, a mousedown or a pointerup of any kind as the chain's own, and the narrowings of a pen's mouse-typed events and of a tap's contact; the 17 left green change no verdict over the round's recorded rows and 800,000 structured walks but one, a chain restarted at any pointerdown, whose walked opens need a second pointer's pointerdown)", async (t) => {
+  const DOC9 = { nodeType: 9 } as unknown as El;
+  const alphabet: string[] = [];
+  for (const ty of ["pointerdown", "pointerup", "pointercancel", "pointerenter", "pointerleave", "pointermove"]) for (const p of "mpt") for (const b of "B0") alphabet.push(ty + ":" + p + b);
+  for (const ty of ["pointerover", "pointerout"]) for (const p of "mpt") for (const b of "B0") for (const r of "ne") alphabet.push(ty + ":" + p + b + r);
+  for (const k of "012") alphabet.push("mousedown:" + k);
+  for (const k of "012") for (const d of "012") alphabet.push("mouseup:" + k + ":d" + d);
+  for (const ty of ["mouseover", "mouseout"]) for (const b of "B0") for (const r of "ne") alphabet.push(ty + ":" + b + r);
+  for (const b of "B0") alphabet.push("mousemove:" + b);
+  alphabet.push("touchstart", "touchend", "touchcancel", "dragstart", "contextmenu", "auxclick");
+  for (const ty of ["blur", "focus"]) for (const k of "WDE") alphabet.push(ty + ":" + k);
+  assert.equal(new Set(alphabet).size, 94, "the alphabet: 94 distinct tokens (a precondition)");
+  const PT: Record<string, string> = { m: "mouse", p: "pen", t: "touch" };
+  // A token's event: its type, target and fields, and the token read back from them by the gate comment's definition, which must be the token.
+  const eventOf = (g: KeyGate, tok: string): { type: string; target: El; props: Record<string, unknown> } => {
+    const [ty, a = "", b = ""] = tok.split(":");
+    if (ty === "blur" || ty === "focus") return { type: ty, target: a === "W" ? (win as unknown as El) : a === "D" ? DOC9 : g.body, props: {} };
+    if (ty.startsWith("pointer")) {
+      const own = ty === "pointerdown" || ty === "pointerup" || ty === "pointercancel";
+      const props: Record<string, unknown> = { pointerId: own ? 9 : 1, pointerType: PT[a[0]], isPrimary: !own, buttons: a[1] === "B" ? 1 : 0, button: 0 };
+      if (ty === "pointerover" || ty === "pointerout") props.relatedTarget = a[2] === "n" ? null : g.body;
+      return { type: ty, target: g.img, props };
+    }
+    if (ty === "mouseover" || ty === "mouseout") return { type: ty, target: g.img, props: { buttons: a[0] === "B" ? 1 : 0, relatedTarget: a[1] === "n" ? null : g.body } };
+    if (ty === "mousemove") return { type: ty, target: g.img, props: { buttons: a === "B" ? 1 : 0 } };
+    if (ty === "mousedown") return { type: ty, target: g.img, props: { button: Number(a) } };
+    if (ty === "mouseup") return { type: ty, target: g.img, props: { button: Number(a), detail: Number(b.slice(1)) } };
+    return { type: ty, target: g.img, props: {} };
+  };
+  const readBack = (g: KeyGate, e: { type: string; target: El; props: Record<string, any> }): string => {
+    const f = e.props, ty = e.type;
+    if (ty === "blur" || ty === "focus") return ty + ":" + (e.target === (win as unknown as El) ? "W" : e.target === DOC9 ? "D" : "E");
+    const down = f.buttons > 0 ? "B" : "0", to = f.relatedTarget ? "e" : "n";
+    if (ty.startsWith("pointer")) return ty + ":" + String(f.pointerType)[0] + down + (ty === "pointerover" || ty === "pointerout" ? to : "");
+    if (ty === "mouseover" || ty === "mouseout") return ty + ":" + down + to;
+    if (ty === "mousemove") return ty + ":" + down;
+    if (ty === "mousedown") return ty + ":" + f.button;
+    if (ty === "mouseup") return ty + ":" + f.button + ":d" + Math.min(f.detail, 2);
+    return ty;
+  };
+  const plant = (g: KeyGate, tok: string): void => {
+    const e = eventOf(g, tok);
+    assert.equal(readBack(g, e), tok, "the planted event reads back as its token (a precondition)");
+    onWindow(e.type, e.target, e.props);
+  };
+  type Step = [string, (g: KeyGate) => void];
+  const on = (type: string, props: Record<string, unknown> = {}) => (g: KeyGate): void => onWindow(type, g.img, props);
+  const ptr = (pointerId: number, pointerType: string, buttons: number) => ({ pointerId, pointerType, isPrimary: true, button: 0, buttons });
+  const FOCUS3 = ["focus:D", "focus:W", "focus:E"];
+  const NO_ELEMENT = ["pointerout:m0n", "pointerover:m0n", "mouseout:0n", "mouseover:0n"];
+  const PRESS_M = ["pointermove:mB", "pointerenter:mB", "pointerleave:mB", "pointerover:mBe", "pointerout:mBe", "mousemove:B", "mouseover:Be", "mouseout:Be"];
+  const PRESS_P = ["pointermove:pB", "pointerenter:pB", "pointerleave:pB", "pointerover:pBe", "pointerout:pBe", "mousemove:B", "mouseover:Be", "mouseout:Be", "pointermove:mB", "pointerenter:mB", "pointerleave:mB", "pointerover:mBe", "pointerout:mBe"];
+  const CONTACT = (p: string): string[] => ["pointermove:" + p + "B", "pointerenter:" + p + "B", "pointerleave:" + p + "B", "pointerover:" + p + "Be", "pointerout:" + p + "Be"];
+  const tapSteps = (id: number, engine: "chromium" | "firefox" | "webkit"): Step[] => [
+    ["pointerdown:tB", on("pointerdown", ptr(id, "touch", 1))], ["touchstart", on("touchstart")], ["pointerup:t0", on("pointerup", ptr(id, "touch", 0))],
+    ["pointerout:t0n", on("pointerout", { ...ptr(id, "touch", 0), relatedTarget: null })],
+    ...(engine === "firefox" ? [["pointerleave:t0", on("pointerleave", ptr(id, "touch", 0))] as Step] : []),
+    ["touchend", on("touchend")],
+    ...(engine === "firefox" ? [["mouseover:0n", on("mouseover", { buttons: 0, relatedTarget: null })] as Step] : []),
+    ...(engine === "webkit" ? [["mouseout:0e", (g: KeyGate) => onWindow("mouseout", g.body, { buttons: 0, relatedTarget: g.img })] as Step, ["mouseover:0e", (g: KeyGate) => onWindow("mouseover", g.img, { buttons: 0, relatedTarget: g.body })] as Step] : []),
+    ["mousemove:0", on("mousemove", { buttons: 0 })], ["mousedown:0", on("mousedown", { button: 0 })], ["mouseup:0:d1", on("mouseup", { button: 0, detail: 1 })],
+  ];
+  const FINGER = [...FOCUS3, ...NO_ELEMENT];
+  // The table: for each chain, what the grammar admits in the place after each of its events, beyond a token equal to a neighbour.
+  const chains: Array<{ name: string; touch: boolean; pid: number; steps: Step[]; click: (g: KeyGate) => void; admits: string[][] }> = [
+    { name: "a mouse's click", touch: false, pid: 1, click: (g) => bareClick(g.img, 1, 1, true, "mouse"),
+      steps: [["pointerdown:mB", on("pointerdown", ptr(1, "mouse", 1))], ["mousedown:0", on("mousedown", { button: 0 })], ["pointerup:m0", on("pointerup", ptr(1, "mouse", 0))], ["mouseup:0:d1", on("mouseup", { button: 0, detail: 1 })]],
+      admits: [FOCUS3, [...PRESS_M, ...FOCUS3], [], []] },
+    { name: "a pen's press", touch: false, pid: 2, click: (g) => bareClick(g.img, 2, 1, true, "pen"),
+      steps: [["pointerdown:pB", on("pointerdown", ptr(2, "pen", 1))], ["mousedown:0", on("mousedown", { button: 0 })], ["pointerup:p0", on("pointerup", ptr(2, "pen", 0))], ["mouseup:0:d1", on("mouseup", { button: 0, detail: 1 })]],
+      admits: [FOCUS3, [...PRESS_P, ...FOCUS3], [], []] },
+    { name: "a touch-order pen's tap", touch: false, pid: 3, click: (g) => bareClick(g.img, 3, 1, true, "pen"),
+      steps: [["pointerdown:pB", on("pointerdown", ptr(3, "pen", 1))], ["pointerup:p0", on("pointerup", ptr(3, "pen", 0))], ["mousemove:0", on("mousemove", { buttons: 0 })], ["mousedown:0", on("mousedown", { button: 0 })], ["mouseup:0:d1", on("mouseup", { button: 0, detail: 1 })]],
+      admits: [["touchstart", ...CONTACT("p")], ["pointerout:p0n", "pointerleave:p0", "touchend", "mouseover:0n"], [], FOCUS3, []] },
+    { name: "Chromium's tap", touch: true, pid: 3, click: (g) => bareClick(g.img, 3, 1, true, "touch"), steps: tapSteps(3, "chromium"),
+      admits: [FINGER, [...CONTACT("t"), ...FINGER], ["pointerleave:t0"], ["pointerleave:t0"], ["mouseover:0n"], [], FOCUS3, []] },
+    { name: "Firefox's tap", touch: true, pid: 0, click: (g) => bareClick(g.img, 0, 1, true, "touch"), steps: tapSteps(0, "firefox"),
+      admits: [FINGER, [...CONTACT("t"), ...FINGER], ["pointerleave:t0"], [], ["pointerout:t0n"], [], [], [], FOCUS3, []] },
+    { name: "WebKit's tap", touch: true, pid: 2, click: (g) => bareClick(g.img, 1, 1, true, "mouse"), steps: tapSteps(2, "webkit"),
+      admits: [FINGER, [...CONTACT("t"), ...FINGER], ["pointerleave:t0"], ["pointerleave:t0"], [], [], [], [], FOCUS3, []] },
+  ];
+  const GATE_HEARS = new Set(["pointerdown", "pointerup", "pointercancel", "mousedown", "mouseup", "touchend", "touchcancel", "dragstart"]);
+  const got: Record<string, unknown> = {};
+  let plants = 0;
+  for (const c of chains) {
+    assert.equal(c.admits.length, c.steps.length, c.name + ": a place after each event (a precondition)");
+    got[c.name] = await gateCell(t, c.name + ", each token planted at each place", (g, opens) => {
+      g.place(IN_BOX);
+      for (const [, fire] of c.steps) fire(g);
+      c.click(g);
+      const bare = opens();
+      const wrong: string[] = [];
+      let opened = 0, refused = 0;
+      const same = (a: string, b: string): boolean => a === b || (c.touch && a.startsWith("mouseup:0:d") && b.startsWith("mouseup:0:d") && a !== "mouseup:0:d0" && b !== "mouseup:0:d0");
+      for (let i = 0; i < c.steps.length; i++) for (const tok of alphabet) {
+        const admitted = c.admits[i].includes(tok) || same(tok, c.steps[i][0]) || (i + 1 < c.steps.length && same(tok, c.steps[i + 1][0]));
+        const want = !admitted ? "refused" : GATE_HEARS.has(tok.split(":")[0]) ? "either" : "opened";
+        c.steps.forEach(([, fire], j) => { fire(g); if (j === i) plant(g, tok); });
+        c.click(g);
+        const o = opens();
+        plants++;
+        if (o.opened) opened++; else refused++;
+        if ((want === "opened" && !(o.opened === 1 && o.reveals === 0)) || (want === "refused" && !(o.opened === 0 && o.reveals === 1))) wrong.push(tok + " after " + c.steps[i][0] + " (place " + (i + 1) + "): " + JSON.stringify(o) + ", the table: " + want);
+      }
+      // A blur and then a focus, each of the window, the document or an element, planted together at each place: the focus arriving
+      // takes an element's blur only where an element's focus follows it, so the pair of an element's blur and an element's focus
+      // is admitted where the focus arriving is, and every other pair is refused.
+      for (let i = 0; i < c.steps.length; i++) for (const x of "WDE") for (const y of "WDE") {
+        const pair = ["blur:" + x, "focus:" + y];
+        const want = x === "E" && y === "E" && c.admits[i].includes("focus:E") ? "opened" : "refused";
+        c.steps.forEach(([, fire], j) => { fire(g); if (j === i) { plant(g, pair[0]); plant(g, pair[1]); } });
+        c.click(g);
+        const o = opens();
+        plants++;
+        if (o.opened) opened++; else refused++;
+        if ((want === "opened" && !(o.opened === 1 && o.reveals === 0)) || (want === "refused" && !(o.opened === 0 && o.reveals === 1))) wrong.push(pair.join(" ") + " after " + c.steps[i][0] + " (place " + (i + 1) + "): " + JSON.stringify(o) + ", the table: " + want);
+      }
+      // Each pointerdown, pointerup, mousedown and mouseup of the chain in turn replaced by another token of its type, the pointer's own
+      // pointerId and primary flag kept, so the gate's record and slot work as in the chain: the press's pointerdown with a button
+      // down and its pointerup with none, of the chain's pointer type, the left button's mousedown and a mouseup of the left button of
+      // detail 1, or 2 for a mouse's or a pen's press and a finger's tap; every other replacement is refused.
+      for (let i = 0; i < c.steps.length; i++) {
+        const own = c.steps[i][0], ty = own.split(":")[0];
+        if (!["pointerdown", "pointerup", "mousedown", "mouseup"].includes(ty)) continue;
+        for (const tok of alphabet) {
+          if (tok === own || tok.split(":")[0] !== ty) continue;
+          const want = tok === "mouseup:0:d2" && (c.touch || c.name === "a mouse's click" || c.name === "a pen's press") ? "either" : "refused";
+          c.steps.forEach(([, fire], j) => {
+            if (j !== i) { fire(g); return; }
+            const e = eventOf(g, tok);
+            onWindow(e.type, e.target, ty.startsWith("pointer") ? { ...e.props, pointerId: c.pid, isPrimary: true } : e.props);
+          });
+          c.click(g);
+          const o = opens();
+          plants++;
+          if (o.opened) opened++; else refused++;
+          if (want === "refused" && !(o.opened === 0 && o.reveals === 1)) wrong.push(tok + " in place of " + own + " (event " + (i + 1) + "): " + JSON.stringify(o) + ", the table: " + want);
+        }
+      }
+      return { bare, opened, refused, wrong };
+    });
+  }
+  t.diagnostic("record " + JSON.stringify(got));
+  const summary = Object.fromEntries(Object.entries(got).map(([k, v]) => [k, { bare: (v as any).bare, wrong: (v as any).wrong }]));
+  assert.equal(plants, 4343, "every token at every place was planted, each pair at every place and each replacement (a precondition)");
+  assert.deepEqual(summary, Object.fromEntries(chains.map((c) => [c.name, { bare: { opened: 1, reveals: 0 }, wrong: [] }])),
+    "each chain with no plant opens once, and no plant's verdict differs from the table's (a property pin over window.open's calls and the scrollIntoView record)");
+  for (const c of chains) assert.ok((got[c.name] as any).opened > 0 && (got[c.name] as any).refused > 0, c.name + ": plants opened and plants refused (a precondition against a vacuous pass)");
 });
