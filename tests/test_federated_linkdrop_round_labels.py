@@ -5,7 +5,7 @@ repository, the maintainer's round 6, and then to call tests/review_round_labels
 on the three per-branch guards).
 
 A PER-BRANCH GUARD, DELETED AT LANDING. Two numberings meet in the family's comments, docstrings and messages: the MAINTAINER's
-rounds on PR 857 are the rulings the reviewer filed (the maintainer's rounds 1 to 6 at this writing); the AUTHOR's passes are
+rounds on PR 857 are the rulings the reviewer filed (the maintainer's rounds 1 to 7 at this writing); the AUTHOR's passes are
 the build-and-verify passes before, between and after them, numbered 1 to 11 by the PR body's convention paragraph, which maps
 the pipeline's commit labels to them. Before pass 10 the tree said "round N" in the author's pipeline's own numbering, which
 matched neither, and 47 lines credited a sixth round no ruling then existed for; the sweep gave every mention its referent (the
@@ -19,8 +19,9 @@ this lands. THE CALL is a few lines (test_no_mention_credits_a_round_the_maintai
 POPULATION, its ROUNDS and its AUTHOR FORM, and asserts the helper returns no offence.
 
 THE ROUNDS. MAINTAINER_ROUNDS is a constant of this TREE: the rulings the maintainer had filed on PR 857 when pass 11 began,
-derived 2026-09-21, and the author raises it in the same change that first credits a new round, so a credit to a round no
-ruling exists for reds on every machine until the ruling exists and the constant says so. It is read from NOTHING outside the
+derived 2026-09-21, and raised to 7 on 2026-09-29 in the commit that first credits that round. The author raises it in the
+same change that first credits a new round, so a credit to a round no ruling exists for reds on every machine until the
+ruling exists and the constant says so. It is read from NOTHING outside the
 repository (the maintainer's round 6 found the earlier module reading the reviewer's notes directory for the set, so the same
 committed tree got two verdicts). AUTHOR_FORM is how the PR body spells the author's own work ("pass P", "pass P's fixer pass",
 "the pass-P head"), named in the helper's refusal so the writer knows what to write.
@@ -106,9 +107,10 @@ import tests.review_round_labels_rule
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 
-# the rulings the maintainer had filed on PR 857 when pass 11 began (the maintainer's rounds 1 to 6), derived 2026-09-21; the
-# author raises it in the change that first credits a new round, and nothing outside the tree widens it
-MAINTAINER_ROUNDS = frozenset({1, 2, 3, 4, 5, 6})
+# the rulings the maintainer had filed on PR 857 when pass 11 began (the maintainer's rounds 1 to 6), derived 2026-09-21, and
+# the maintainer's round 7, added 2026-09-29 in the commit that first credits it; the author raises it in the change that first
+# credits a new round, and nothing outside the tree widens it
+MAINTAINER_ROUNDS = frozenset({1, 2, 3, 4, 5, 6, 7})
 # how the PR body spells the author's own work, named in the helper's refusal of a misattributed round or pass so the writer knows
 # what to write
 AUTHOR_FORM = "the author's \"pass P\", \"pass P's fixer pass\" or \"the pass-P head\""
