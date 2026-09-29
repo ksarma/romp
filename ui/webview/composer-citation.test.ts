@@ -93,7 +93,9 @@ test("a citation survives a RELOAD but is dropped on tab SWITCH (the user 2026-0
 
 test("clearing a card drops any composer chip pointing INTO it (the user 2026-07-01)", () => {
   // the kernel pushes dropCitation{itemId, itemIds: the card's whole subtree} on a single clear — a chip
-  // can cite a SUB-goal (wireNodeZones sends the clicked node's id) — and dropCitationsAll on Clear-all
+  // can cite a SUB-goal (wireNodeZones sends the clicked node's id); and, from a kernel older than 2026-09-20,
+  // dropCitationsAll on Clear-all (the kernel now sends dropCitation over the ids Clear-all wrote; the branch
+  // stays for that older frame)
   assert.match(RENDER, /m\.type === "dropCitation" && typeof m\.itemId === "string"\) dropCitationByItem\(m\.itemId, Array\.isArray\(m\.itemIds\)/);
   assert.match(RENDER, /m\.type === "dropCitationsAll"\) \{[\s\S]*?composerCitations\.clear\(\); persistDrafts\(\); renderComposerChips\(activeId\);/);
   // dropCitationByItem removes every chip citing the card OR any node under it

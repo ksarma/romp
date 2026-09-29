@@ -1557,7 +1557,10 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    blue, like Clear/Undo — never a background fill; the wash values are the feed's .ftree-act-btn
    family, referenced not re-derived) */
 .composer-stage-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
-.staged-chip { display: flex; flex-direction: column; gap: 2px; border: 1px dashed rgba(156, 210, 255, 0.45);
+/* the dashed edge is the accent at 0.45 through the sheet's tint idiom, the hue of the solid left edge in both themes;
+   written as the dark literal rgba(156, 210, 255, 0.45) it stayed blue beside a clay left edge in the light theme
+   (button-vocab.test.ts's census reads every rule of both sheets for an accent token beside the dark accent written out) */
+.staged-chip { display: flex; flex-direction: column; gap: 2px; border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
   border-left: 2px solid var(--accent); border-radius: 6px; padding: 2px 6px; font-size: 12px; color: var(--fg);
   cursor: pointer; }
 .staged-row, .staged-cite { display: flex; align-items: center; gap: 6px; min-width: 0; }
