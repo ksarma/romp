@@ -6507,10 +6507,25 @@ _ANYIO_REBINDERS = frozenset(("setattr", "delattr", "__setattr__", "__delattr__"
 #   __globals__ (and f_globals) is the module namespace, so a write through it rebinds a name of the module's scope
 #   (_t.__globals__["K"] = "plugins"); __closure__ and cell_contents reach a function's free variables, and __code__,
 #   __defaults__ and __kwdefaults__ the code it runs and its parameters' defaults (the reviewer's fail-closed ruling of
-#   2026-09-28 22:30Z on round 2 of fork PR #894; _REFLECTIVE_ATTRS already lists each as binding-reaching). Three of
-#   them defeat the proof of a def's local as well: f_locals, a frame's write-through view of its locals since Python
-#   3.13; cell_contents, which writes an enclosing def's cell; and __closure__, which hands that cell to a writer that
-#   names neither (ctypes' PyCell_Set)
+#   2026-09-28 22:30Z on round 2 of fork PR #894; _REFLECTIVE_ATTRS already lists each as binding-reaching). Five of
+#   them (_ANYIO_DEFEATERS) defeat the proof of a def's local and a literal key as well as a name of the module's scope
+#   (the reviewer's ruling of 2026-09-29 04:46Z on round 2 of fork PR #894): exec and eval, which run code the rule does
+#   not parse; f_locals, a frame's write-through view of its locals since Python 3.13; cell_contents, which writes an
+#   enclosing def's cell; and __closure__, which hands that cell to a writer that names neither (ctypes' PyCell_Set)
+_ANYIO_DEFEATERS = frozenset(("exec", "eval", "f_locals", "cell_contents", "__closure__"))
+#   the channels of _ANYIO_REBINDERS that defeat EVERY proof wherever the text names one (identifier, import or a str
+#   literal's dotted-or-coloned part): exec and eval run code the rule does not parse, and f_locals, cell_contents and
+#   __closure__ reach a def's locals and its cells, so each invalidates the proof of a def's local (which _anyio_rebinders
+#   already covered for cell_contents, __closure__ and f_locals) AND of a literal key (which nothing covered), not only of
+#   a name of the module's scope (the reviewer's ruling of 2026-09-29 04:46Z on round 2 of fork PR #894)
+_ANYIO_INTROSPECTION = {"gc": "the gc module", "ctypes": "the ctypes module", "__code__": "the __code__ attribute"}
+#   the runtime-introspection channels THE ANYIO RULE refuses WHOLESALE, {token: what it is}, wherever the conftest's text
+#   or a module of the repository it imports directly names one (by an identifier, an import, an attribute, a getattr and
+#   its kin with a proven name, or a str literal's dotted-or-coloned part, the forms the rule already reads names in): the
+#   gc module reaches any object the collector tracks and the ctypes module rewrites its memory, and a function's __code__
+#   its very constants, so a proof over the text cannot bound what they change and no keyed read beside one is safe (the
+#   reviewer's ruling of 2026-09-29 04:46Z on round 2 of fork PR #894). Each is 0 live: tests/conftest.py and
+#   tests/__init__.py name none of them
 
 
 def _anyio_module_file(dotted, dirs):
@@ -6567,9 +6582,10 @@ def _anyio_rebinders(tree, bindings):
     ast_bindings index is `bindings`: a function of (a name, the kind of the scope that binds it) giving why something in
     the text may rebind that name other than by a declaration, else None. Read over the whole text, so what stands in
     any def or class counts. For a name of any scope: a global or nonlocal statement naming it, a type statement binding
-    it, any read of f_locals (a frame's write-through view of its locals since Python 3.13), any read of cell_contents
-    (a write to an enclosing def's cell) and any read of __closure__ (which hands that cell to a writer that names
-    neither, ctypes' PyCell_Set). For a name of the
+    it, and any name of _ANYIO_DEFEATERS (exec or eval, which run code the rule does not parse; any read of f_locals, a
+    frame's write-through view of its locals since Python 3.13; any read of cell_contents, a write to an enclosing def's
+    cell; and any read of __closure__, which hands that cell to a writer that names neither, ctypes' PyCell_Set). For a
+    name of the
     module's scope or a class body's, also: a star import; a read of globals(), vars() or locals() that no declaration
     binds and that may write the namespace it returns (any use but a call whose result is read by a subscript, a
     read-only method or `in`); an attribute store or del naming it; a call of setattr, delattr, __setattr__ or
@@ -6596,8 +6612,7 @@ def _anyio_rebinders(tree, bindings):
     def word(text, line, how):
         hit = next((w for w in re.split(r"[.:]", text) if w in _ANYIO_REBINDERS), None)
         if hit is not None:
-            anyname.append(("%s naming %s at line %d" % (how, hit, line),
-                            hit in ("f_locals", "cell_contents", "__closure__")))
+            anyname.append(("%s naming %s at line %d" % (how, hit, line), hit in _ANYIO_DEFEATERS))
 
     try:
         for x in ast.walk(tree):
@@ -6716,8 +6731,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     refused wholesale where one syntactic check does it and refuses nothing of tests/conftest.py, its reading of
     tests/__init__.py included (a write to the module's namespace, at the end of the fifth clause; a double-underscore
     attribute read on an object of a module of the repository the text imports directly, and a decorated def or class of
-    such a module, the last clause; and the checks the other clauses name), and otherwise are a line of WHAT IT DOES NOT
-    READ, below. It claims no more than that, and never every read: no syntactic check over Python sees every read a
+    such a module, the last clause; the RUNTIME-INTROSPECTION channels gc, ctypes and __code__, refused wherever the text
+    names one, and exec, eval, f_locals, cell_contents and __closure__, which defeat THE PROOF of a def's local and of a
+    literal key as well as of a name of the module's scope, all at the end of THE PROOF; and the checks the other clauses
+    name), and otherwise are a line of WHAT IT DOES NOT READ, below. It claims no more than that, and never every read: no syntactic check over Python sees every read a
     module's code can make, a read reached only through a module the conftest imports transitively (an import of an
     import) is read by none of it, and through a module it imports directly the rule reads the last clause's shapes
     alone.
@@ -6725,9 +6742,11 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     an assignment of a str literal to it alone (a plain or annotated one), with nothing else in the text that binds it:
     no second declaration of any kind (a rebinding, an augmented assignment, a loop, with, except or match target, a
     del, an import, a def, a class, a walrus, a tuple unpacking), no global or nonlocal statement naming it, no type
-    statement binding it, no read of f_locals (a frame's write-through view of a def's locals since Python 3.13), of
-    cell_contents (a write to an enclosing def's cell) or of __closure__ (which hands that cell to a writer that names
-    neither, ctypes.pythonapi.PyCell_Set), and,
+    statement binding it, and no name of _ANYIO_DEFEATERS (exec or eval, which run code the rule does not parse; a read of
+    f_locals, a frame's write-through view of a def's locals since Python 3.13; a read of cell_contents, a write to an
+    enclosing def's cell; or a read of __closure__, which hands that cell to a writer that names neither,
+    ctypes.pythonapi.PyCell_Set) -- these five defeat the proof of a def's local, and of a literal key too, so a literal
+    key is unproven wherever the text names one, and,
     for a name of the module's scope, nothing that can rebind it unread: a star import; globals(), vars() or locals()
     read other than as a call whose result is only read (by a subscript in a load, a read-only method or `in`); an
     attribute store or del, setattr or delattr naming it, or setattr or delattr naming the attribute it writes by no str
@@ -6741,6 +6760,11 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     text binds the name once to a str literal as above (_anyio_imported_module's literals), no submodule of the module
     has the name, and nothing in the conftest's text can rebind the module's attribute of that name or the conftest's
     own name. Anything else is unproven, whatever the rule could fold it to.
+    THE RUNTIME-INTROSPECTION CHANNELS (_ANYIO_INTROSPECTION, the reviewer's ruling of 2026-09-29 04:46Z on round 2 of
+    fork PR #894): the gc module, the ctypes module and the __code__ attribute are refused WHOLESALE wherever the text
+    names one (an identifier, an import, an attribute, a getattr and its kin with a proven name, or a str literal's
+    dotted-or-coloned part), since gc reaches any object the collector tracks, ctypes rewrites its memory and __code__ a
+    function's very constants, so a proof over the text cannot bound what they change. Each is 0 live.
     HOW IT FOLLOWS A ROAD: a carrier or a keyed read is read as an attribute of anything, so an alias of the object it
     is read from (sys under another name, the plugin manager bound to a name) changes nothing; a carrier read and bound
     to a name is refused where it is read, and so is a keyed read taken other than as a call (getoption bound to a name
@@ -6867,12 +6891,15 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     the conftest the fail-closed rule refused); it reads config.workerinput only through hasattr, reads an item of what
     vars() returns only by a literal where it reads one directly (vars(km) bound to a name is a namespace held whole, a
     line of WHAT IT DOES NOT READ), writes no namespace through globals(), vars() or locals() at the module's level, and
-    holds no value naming mainargv. The direct-import check reads tests/__init__.py, which the conftest imports as
+    holds no value naming mainargv, and names none of the runtime-introspection channels gc, ctypes and __code__ nor any
+    of the defeaters exec, eval, f_locals, cell_contents and __closure__. The direct-import check reads tests/__init__.py,
+    which the conftest imports as
     _tests and, in a def, as `from tests import remove_made_dirs`; its one read, sys.argv in write_owner_marker, is in a
     def that returns nothing and has no decorator, so it matches none of the module's names: that def is the module's
     one module-level statement holding a read, and it binds no name of the module's scope through global, so no name of
     the module is matched by the statement it stands under, and the module has no decorated def or class; the conftest
     reads _tests only as the root of an attribute chain, never whole and never through a double-underscore attribute;
+    tests/__init__.py names none of the introspection channels or defeaters either;
     each of its other imports is of the standard library or of pytest, which the import system finds outside the
     repository, and it reads no sys.path. The refusal test pins the count at 0, and the module road proves every fixture
     of the conftest.
@@ -6908,7 +6935,8 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     same way, so a refusal by spelling would refuse the live conftest), or through another process or a library that
     reads it there (ps run on the process, psutil's Process.cmdline); code the module runs from a string (exec, eval),
     whose reads the rule does not parse as code (a string naming anyio there is still refused as a value, and exec or
-    eval in the text defeats THE PROOF of every name of the module's scope); a module loaded other than by an import
+    eval named in the text defeats THE PROOF of every name of the module's scope, of a def's local and of a literal key,
+    so any keyed read beside one is refused); a module loaded other than by an import
     statement (importlib, __import__, sys.modules; tests/conftest.py loads tests/credential_patterns.py through
     importlib); a module of the repository taken, from a directory put on the import path other than by a read of
     sys.path the last clause sees (a module the conftest imports that puts it there, getattr(sys, "path"),
@@ -6933,6 +6961,33 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
         for c in ast.iter_child_nodes(n):
             parent[c] = n
     out, busy, opened = [], set(), (frozenset([""]), True, False)   # what the rule cannot fold: the empty string, open
+
+    def _tokens(node):
+        """The tokens `node` spells that _ANYIO_DEFEATERS or _ANYIO_INTROSPECTION may hold: a Name's id, an Attribute's
+        attr, an alias's name (its first dotted part and its whole) and asname, an ImportFrom's module (its first dotted
+        part), an arg's, a keyword's or a def or class's name, and the dotted-or-coloned parts of a str or bytes literal,
+        the forms the rule already reads names in (spelled and _anyio_rebinders' word)."""
+        if isinstance(node, ast.Name):
+            return (node.id,)
+        if isinstance(node, ast.Attribute):
+            return (node.attr,)
+        if isinstance(node, ast.alias):
+            return (node.name, node.name.split(".")[0], node.asname or "")
+        if isinstance(node, ast.ImportFrom):
+            return ((node.module or "").split(".")[0],)
+        if isinstance(node, ast.arg):
+            return (node.arg,)
+        if isinstance(node, ast.keyword):
+            return (node.arg or "",)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return (node.name,)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+            text = node.value.decode("latin-1") if isinstance(node.value, bytes) else node.value
+            return tuple(re.split(r"[.:]", text))
+        return ()
+    defeaters = sorted({t for n in ast.walk(tree) for t in _tokens(n) if t in _ANYIO_DEFEATERS})
+    defeated = ", ".join(defeaters)   # the names of _ANYIO_DEFEATERS the text holds, "" for none; each invalidates a
+    #   proof of a literal key, of a def's local and of a name of the module's scope (the reviewer's ruling of 2026-09-29)
 
     def capped(values, is_open):
         return (frozenset(), True, True) if len(values) > _ANYIO_FOLD_CAP else (frozenset(values), is_open, False)
@@ -7138,9 +7193,16 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
         """(the one str `n` holds, None) where THE PROOF proves it, else (None, why): a str literal; a name bound once to
         a str literal in the text, nothing there able to rebind it (_anyio_literal); or, where the rule follows the
         text's imports, a name or an attribute a module of the repository the text imports directly binds so
-        (through_import). Anything else is unproven, whatever the rule could fold it to."""
+        (through_import). Anything else is unproven, whatever the rule could fold it to. A str literal is unproven where
+        the text names one of _ANYIO_DEFEATERS (exec, eval, f_locals, cell_contents or __closure__), which can rewrite the
+        hook's code object or a def's locals, so even a fixed key is not safe (the reviewer's ruling of 2026-09-29)."""
         if isinstance(n, ast.Constant):
-            return (n.value, None) if isinstance(n.value, str) else (None, "the literal %r, not a string" % (n.value,))
+            if not isinstance(n.value, str):
+                return None, "the literal %r, not a string" % (n.value,)
+            if defeated:
+                return None, ("the literal %r, but the text names %s, which can rewrite the hook's code object or a def's "
+                              "locals, so even a fixed key is not safe" % (n.value, defeated))
+            return n.value, None
         if follow and isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
             got = through_import(n.value, n.attr)
             if got is not None:
@@ -7208,6 +7270,11 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
             spell = spelled.get(type(n))
             if spell is not None and any("anyio" in s.casefold() for s in spell(n)):
                 off(n, "an identifier naming anyio")
+            named = {p for s in (spell(n) if spell is not None else ()) for p in (s, *s.split("."))}
+            named |= set(_tokens(n)) if isinstance(n, ast.Constant) else set()
+            for tok in sorted(named & set(_ANYIO_INTROSPECTION)):
+                off(n, "%s, a runtime-introspection channel THE ANYIO RULE refuses wholesale, since it reaches and "
+                       "rewrites objects a proof over the text cannot bound" % _ANYIO_INTROSPECTION[tok])
             if isinstance(n, ast.Attribute) and n.attr in _ANYIO_CARRIERS:
                 off(n, "a read of the carrier %s, %s" % (n.attr, _ANYIO_CARRIERS[n.attr]))
             if (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
@@ -13525,8 +13592,13 @@ class HermeticKernelPostal(unittest.TestCase):
         config.option by attribute or by getattr with a literal, a namespace's item by a literal, globals() read by a
         literal key, by get or by `in`, vars() called with nothing in a def and held whole (the def's own namespace, not
         the module's), a plain def of a direct import called and a literal-bound name of it read, and a
-        setattr naming another attribute by a literal beside a proven key. Each refusal class reds under a rule without
-        its check, and each form of the false proof under a proof without the defeater that refuses it."""
+        setattr naming another attribute by a literal beside a proven key, and the two introspection controls (a literal
+        key and a def's local bound once, no channel named). THE RUNTIME-INTROSPECTION CLASS (the reviewer's ruling of
+        2026-09-29 04:46Z on round 2 of fork PR #894, r2f-c95-roads.py's ADJ1 to ADJ5): gc, ctypes and __code__ are
+        refused wholesale wherever the text names one, and exec, eval, f_locals, cell_contents and __closure__ defeat a
+        def's-local proof and a literal key both; each road the rule admitted at f1f9ef44f and refuses at this fix, shown
+        by execution in the artifacts. Each refusal class reds under a rule without its check, and each form of the false
+        proof under a proof without the defeater that refuses it."""
         where = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, where, True)
         modules = {
@@ -13733,22 +13805,60 @@ class HermeticKernelPostal(unittest.TestCase):
                      " what gc.get_referents returns for a nested def, the text naming no __closure__",
                      head + "import gc\n\n\ndef pytest_configure(config):\n    _K = 'verbose'\n\n    def _in():\n"
                      "        return _K\n    [t for t in gc.get_referents(_in) if type(t) is tuple][0][0].cell_contents"
-                     " = 'plugins'\n    config.getoption(_K)\n", {"keyed"}, "keyed", "naming cell_contents"),
+                     " = 'plugins'\n    config.getoption(_K)\n", {"keyed", "introspection"}, "keyed", "naming cell_contents"),
                     ("the false proof: a def's local, then ctypes' PyCell_Set on the cell a nested def's __closure__"
                      " hands over, the text naming no cell_contents",
                      head + "import ctypes\n\n\ndef pytest_configure(config):\n    _K = 'verbose'\n\n    def _in():\n"
                      "        return _K\n    ctypes.pythonapi.PyCell_Set(ctypes.py_object(_in.__closure__[0]),"
-                     " ctypes.py_object('plugins'))\n    config.getoption(_K)\n", {"keyed"}, "keyed",
+                     " ctypes.py_object('plugins'))\n    config.getoption(_K)\n", {"keyed", "introspection"}, "keyed",
                      "naming __closure__"),
                     ("the false proof: a def's local, then ctypes' PyCell_Set on a cell of a nested def's __closure__"
                      " bound to a name first",
                      head + "import ctypes\n\n\ndef pytest_configure(config):\n    _K = 'verbose'\n\n    def _in():\n"
                      "        return _K\n    _c = _in.__closure__[0]\n"
                      "    ctypes.pythonapi.PyCell_Set(ctypes.py_object(_c), ctypes.py_object('plugins'))\n"
-                     "    config.getoption(_K)\n", {"keyed"}, "keyed", "naming __closure__"),
+                     "    config.getoption(_K)\n", {"keyed", "introspection"}, "keyed", "naming __closure__"),
                     ("the false proof: a class body's name, which a read ahead of its binding takes from the module",
                      head + "class _C:\n    _K = 'verbose'\n    V = operator.attrgetter(_K)\n", {"reader"}, "reader",
                      "bound in a class body")]
+        # THE RUNTIME-INTROSPECTION CLASS (the reviewer's ruling of 2026-09-29 04:46Z on round 2 of fork PR #894): gc,
+        # ctypes and __code__ are refused wholesale, and exec, eval, f_locals, cell_contents and __closure__ defeat a
+        # def's-local proof and a literal key both. Each ADJ is a road of r2f-c95-roads.py that at f1f9ef44f the rule
+        # admitted (the roads probe's rule_refused False, red) and at this fix refuses (green), shown by execution.
+        pt_head = "import operator\nimport os\nimport sys\n\nimport pytest\n\n\n"
+        refused += [
+            ("the introspection class: ADJ1, a def's local cell rewritten through gc.get_referents and ctypes' PyCell_Set,"
+             " the text naming no __closure__ or cell_contents (the def's-local proof holds; the wholesale refusal catches it)",
+             "import ctypes\nimport gc\n" + pt_head + "def pytest_configure(config):\n    K = 'verbose'\n\n    def _r():\n"
+             "        return K\n    ctypes.pythonapi.PyCell_Set(ctypes.py_object([t for t in gc.get_referents(_r) if "
+             "type(t) is tuple][0][0]), ctypes.py_object('plugins'))\n    config.getoption(K)\n",
+             {"introspection"}, "introspection", "runtime-introspection channel"),
+            ("the introspection class: ADJ2, exec of a text writing a def's local cell (exec defeats the def's-local proof)",
+             pt_head + "def pytest_configure(config):\n    K = 'verbose'\n\n    def _r():\n        return K\n"
+             "    exec(\"_r.__closure__[0].cell_contents = 'plugins'\", {'_r': _r})\n    config.getoption(K)\n",
+             {"keyed"}, "keyed", "naming exec"),
+            ("the introspection class: ADJ3, locals() written then ctypes' PyFrame_LocalsToFast",
+             "import ctypes\n" + pt_head + "def pytest_configure(config):\n    K = 'verbose'\n    _d = locals()\n"
+             "    _d['K'] = 'plugins'\n    ctypes.pythonapi.PyFrame_LocalsToFast(ctypes.py_object(sys._getframe()), "
+             "ctypes.c_int(0))\n    config.getoption(K)\n", {"introspection"}, "introspection", "runtime-introspection channel"),
+            ("the introspection class: ADJ4, a module name rewritten through a dict gc.get_referents hands over",
+             "import gc\n" + pt_head + "K = 'verbose'\n\n\ndef pytest_configure(config):\n    config.getoption(K)\n\n\n"
+             "[d for d in gc.get_referents(pytest_configure) if type(d) is dict and 'K' in d][0]['K'] = 'plugins'\n",
+             {"introspection"}, "introspection", "runtime-introspection channel"),
+            ("the introspection class: a module name rewritten by scanning gc.get_objects",
+             "import gc\n" + pt_head + "K = 'verbose'\n\n\ndef pytest_configure(config):\n    config.getoption(K)\n\n\n"
+             "for o in gc.get_objects():\n    if isinstance(o, dict) and o.get('K') == 'verbose':\n        o['K'] = 'plugins'\n",
+             {"introspection"}, "introspection", "runtime-introspection channel"),
+            ("the introspection class: ADJ5, a literal key with the hook's constants replaced through __code__",
+             pt_head + "def pytest_configure(config):\n    config.getoption('verbose')\n\n\n_c = pytest_configure.__code__\n"
+             "pytest_configure.__code__ = _c.replace(co_consts=tuple('plugins' if x == 'verbose' else x for x in "
+             "_c.co_consts))\n", {"introspection"}, "introspection", "runtime-introspection channel"),
+            ("the false proof: a literal key, then exec (a defeater invalidates even a fixed key)",
+             pt_head + "def pytest_configure(config):\n    config.getoption('verbose')\n    exec('pass')\n",
+             {"keyed"}, "keyed", "the text names exec"),
+            ("the false proof: a literal key, then a read of __closure__ (a defeater invalidates even a fixed key)",
+             pt_head + "def pytest_configure(config):\n    config.getoption('verbose')\n    _ = pytest_configure.__closure__\n",
+             {"keyed"}, "keyed", "the text names __closure__")]
         for label, stem, why in (("binds it twice", "_fc_k2", "does not bind it once"),
                                  ("writes it through globals()", "_fc_k3", "does not bind it once"),
                                  ("binds it to a fold", "_fc_k4", "does not bind it once"),
@@ -13802,7 +13912,11 @@ class HermeticKernelPostal(unittest.TestCase):
             ("a plain def of a direct import called", hook("_h.quiet()", h)),
             ("a literal-bound name of a direct import read", hook("_h.NAME", h)),
             ("a setattr naming another attribute by a literal, beside a proven key",
-             head + "_K = 'verbose'\n\n\ndef _patch(mp, obj):\n    mp.setattr(obj, 'other', 1)\n\n\n" + use)]
+             head + "_K = 'verbose'\n\n\ndef _patch(mp, obj):\n    mp.setattr(obj, 'other', 1)\n\n\n" + use),
+            ("the introspection control: a literal key, no channel named",
+             head + "def pytest_configure(config):\n    config.getoption('verbose')\n"),
+            ("the introspection control: a def's local bound once, no channel named",
+             head + "def pytest_configure(config):\n    K = 'verbose'\n    config.getoption(K)\n")]
         classes = (("keyed", "the keyed read"), ("reader", "the attribute reader"),
                    ("option", "a read of option other than"), ("namespace", "a namespace's"),
                    ("holder", "xdist's workerinput"), ("byname", "by its name, through"), ("pattern", "pattern's key"),
@@ -13810,6 +13924,7 @@ class HermeticKernelPostal(unittest.TestCase):
                    ("dunder", "a double-underscore attribute"), ("decorated", "a decorated def or class"),
                    ("whole", "a module of the repository read whole"), ("value", "a value naming"),
                    ("carrier", "a read of the carrier"), ("aliased", "the by-name read"),
+                   ("introspection", "a runtime-introspection channel"),
                    ("bare", "that resolves outside every def, lambda and comprehension"))
 
         def own(what):
