@@ -12,7 +12,8 @@
 // Before the tap, the states the fix's other rules and handlers are for, each read from the engine where CI has one
 // (the two node browser legs measure the same and skip in CI's Test step): the window at 300px (the fold on: the sheet
 // pinned to the top under the picker's 12px frame, the detail at its floor and scrolling, its first line's address under
-// a finger once the box is scrolled to bring its line to the top of the box's view, Send inside the clip and under a finger
+// a finger where the engine's own scroll left it and once the box is scrolled to bring its line to the top of the box's
+// view, Send inside the clip and under a finger
 // at the box's bottom); at 420px with the same todo (the pane's two chip rows put the floors past the fold's cap, so its box
 // scrolls a few pixels, and the actions row, kept in view at the box's bottom, holds Cancel and Send inside the clip; the
 // chat's column fits); the detail's scrollWidth against its offsetWidth, the border box,
@@ -156,7 +157,8 @@ const measure = () => page.evaluate(() => {
   };
 });
 // a short window, where the box itself may have to scroll: the detail against its floor, whether it scrolls, whether the
-// address on its first line is under a finger once the box is scrolled to it, and Send at the box's bottom
+// address on its first line is under a finger where the engine's own scroll left it (linkHit) and once the box is scrolled to
+// bring its line to the top of the box's view (linkHitScrolled), and Send at the box's bottom
 const probeShort = () => page.evaluate(() => {
   const overlay = document.getElementById("ut-reply-prompt");
   const box = overlay.querySelector(".confirm-box");

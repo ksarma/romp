@@ -173,8 +173,9 @@ type Sheet = {
   sendRect: Rect; cancelRect: Rect; hitAtSend: string; hitAtCancel: string; kinds: string[]; quoteChips: string[];
 };
 // a short window, where the box itself must scroll: the detail's height against its floor (two of its lines), whether it
-// scrolls within itself, whether the address on its first line is under a finger once the box is scrolled to it, and
-// whether Send is inside the clip and under a finger once the box is scrolled to its bottom
+// scrolls within itself, whether the address on its first line is under a finger where the engine's own scroll left it
+// (linkHit) and once the box is scrolled to bring its line to the top of the box's view (linkHitScrolled), and whether Send
+// is inside the clip and under a finger once the box is scrolled to its bottom
 type Short = {
   frameH: number; tight: boolean; detailH: number; detailLineH: number; detailScrolls: boolean; linkHit: string; linkHitScrolled: string;
   boxScrollH: number; boxClientH: number; boxScrollTop: number; sendHitAtBottom: string; sendInBoxAtBottom: boolean;
@@ -281,7 +282,8 @@ async function boot(browser: any, browserName = "chromium") {
     // the actions row, kept in view at the box's bottom (styles.css #ut-reply-prompt .confirm-actions), can cover what the engine
     // scrolled into view there (at 230 it covers this address in every engine, both panes: a finger aimed at it reaches Cancel or
     // Send); the person scrolls the box, and with the address's line brought to the top of the box's view it is under a finger
-    // (the maintainer's round 2 ruling on B-i's cover: accepted where a covered link can be scrolled into the part the row leaves)
+    // (the maintainer's round 2 ruling on B-i's cover: accepted where a covered link can be scrolled into the part the row leaves,
+    // at 230 only; at 300 this todo's address is clear of the row where the engine's scroll leaves it, and the check there reads both)
     if (a && first) box.scrollTop += first.top - (box.getBoundingClientRect().top + box.clientTop);
     const again = a ? (a.getClientRects()[0] || a.getBoundingClientRect()) : null;
     const atLink2 = again ? document.elementFromPoint((again.left + again.right) / 2, (again.top + again.bottom) / 2) : null;
@@ -523,12 +525,14 @@ async function boot(browser: any, browserName = "chromium") {
 }
 // a short window with the chip todo open: the box scrolls; the detail keeps its floor and scrolls within itself; its
 // first line's address and Send are each under a finger once the box is scrolled to them (the address's line to the top of
-// the box's view: the kept actions row covers the box's bottom)
-function assertShort(s: Short, what: string) {
+// the box's view: the kept actions row covers the box's bottom). With `strict` (300px) the address is also under a finger
+// where the engine's own scroll left it: the maintainer's round 2 accepted the kept row's cover of that address at 230 only
+function assertShort(s: Short, what: string, strict = false) {
   const rec = JSON.stringify(s);
   assert.equal(s.tight, true, `${what}: under the fold (${rec})`);
   assert.ok(s.detailH >= floorOf(s.detailLineH), `${what}: the detail keeps its floor of two lines (${s.detailH}px against a ${s.detailLineH}px line); without the floor it resolved to 0px, invisible and unscrollable (${rec})`);
   assert.ok(s.detailScrolls, `${what}: the detail scrolls within itself (${rec})`);
+  if (strict) assert.equal(s.linkHit, "target", `${what}: the address on the detail's first line is under a finger where the engine's own scroll left it (scrollIntoView nearest), not under the kept actions row: the maintainer's round 2 accepted the row's cover of that address at 230 only (${rec})`);
   assert.equal(s.linkHitScrolled, "target", `${what}: the address on the detail's first line is under a finger once the box is scrolled to bring its line to the top of the box's view (where the engine's own scroll left it, a finger reached ${s.linkHit}: the kept actions row covers the box's bottom) (${rec})`);
   assert.ok(s.boxScrollH > s.boxClientH + 1 && s.boxScrollTop > 0, `${what}: the box scrolls: the floors alone overflow this window, and the deficit past them is a scroll of the box, never a clip (${rec})`);
   assert.ok(s.sendInBoxAtBottom && s.sendHitAtBottom === "target", `${what}: scrolled to the box's bottom, Send is inside the clip and under a finger (${rec})`);
@@ -652,7 +656,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       // keyboard) and 230px (a landscape phone). The detail keeps two lines, the box scrolls to the rest
       await setHeight(300);
       await waitTight(true);
-      assertShort(await probeShort(), "300px, the chip todo");
+      assertShort(await probeShort(), "300px, the chip todo", true);
       await setHeight(230);
       assertShort(await probeShort(), "230px, the chip todo");
       // ── 420px with the chip todo (the fold on): the chat's chips sit inside the quoted line, so its column FITS the fold's cap

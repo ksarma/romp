@@ -26,8 +26,9 @@ of two lines in that state (it resolved to 0px before).
 Then the states the fix's other rules and handlers are for, each read from the engine here because the node legs that
 read them skip in CI: at 300px (the fold on) the sheet is pinned to the top under the picker's 12px frame
 (#ut-reply-prompt.kb-tight), the detail keeps two lines and scrolls within itself, its first line's address is under a
-finger once the box is scrolled to bring its line to the top of the box's view (the kept actions row covers the box's
-bottom), the box scrolls, Send is inside the clip and under a finger at the box's bottom;
+finger where the engine's own scroll left it and once the box is scrolled to bring its line to the top of the box's view
+(the kept actions row covers the box's bottom, and the maintainer's round 2 accepted that cover of the address at 230
+only), the box scrolls, Send is inside the clip and under a finger at the box's bottom;
 at 420px with the same todo the pane's two chip rows put the floors alone past the fold's cap, so its box scrolls a few
 pixels and the actions row, kept in view at the box's bottom (the maintainer's round 2 ruling, B-i), holds Cancel and Send
 inside the clip (before it Send's bottom edge lay 2 to 3px past the clip there), while the chat's column fits (the fitted
@@ -419,6 +420,7 @@ class ReplySheetServed(unittest.TestCase):
         self.assertEqual(s["paddingTop"], "12px", where + "300px: under the picker's 12px frame: %r" % (s,))
         self.assertGreaterEqual(s["detailH"], floor(s), where + "300px: the detail keeps two lines (the floor); it resolved to 0px before: %r" % (s,))
         self.assertTrue(s["detailScrolls"], where + "300px: the detail scrolls within itself: %r" % (s,))
+        self.assertEqual(s["linkHit"], "target", where + "300px: the address on the detail's first line is under a finger where the engine's own scroll left it (scrollIntoView nearest), not under the kept actions row: the maintainer's round 2 accepted the row's cover of that address at 230 only: %r" % (s,))
         self.assertEqual(s["linkHitScrolled"], "target", where + "300px: the address on the detail's first line is under a finger once the box is scrolled to bring its line to the top of the box's view (where the engine's own scroll left it a finger reached %s: the kept actions row covers the box's bottom): %r" % (s["linkHit"], s))
         self.assertTrue(s["boxScrollH"] > s["boxClientH"] + 1 and s["boxScrollTop"] > 0, where + "300px: the box scrolls to the rest: %r" % (s,))
         self.assertTrue(s["sendInBoxAtBottom"] and s["sendHitAtBottom"] == "target", where + "300px: at the box's bottom Send is inside the clip and under a finger: %r" % (s,))
