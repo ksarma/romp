@@ -763,27 +763,51 @@ export function rebaseExecs(messages: any[], offsets: Record<string, number>): a
  *  (hasExec: the recipient's kernel binds exec to its own transcript; the sender's can't). */
 export function stitchMessages(messages: any[], sessions: readonly any[]): any[] {
   if (!messages.length) return messages;
-  const laneIds = new Set(sessions.map((s: any) => s && s.id));
-  const byBare = new Map(sessions.filter((s: any) => s && typeof s.id === "string").map((s: any) => [bareId(s.id), s]));
+  const lanes = sessions.filter((s: any) => s && typeof s.id === "string");
+  const byId = new Map(lanes.map((s: any) => [s.id, s]));
+  const byBare = new Map(lanes.map((s: any) => [bareId(s.id), s]));
+  // A relayed message has TWO ids: the sender's bus minted one, the recipient's bus another for the delivered copy.
+  // The copy carries the sender's as `originMid` from the moment it lands, and the read receipt carries the copy's
+  // back to the sender's row as `dmid`. The sender's row and the recipient's are ONE message: key both under the
+  // sender's id so the board draws one connector, never a pair, now that the sender's kernel ends its row at the
+  // recipient's lane (the user 2026-09-18). Either link alone joins them, so the pair never shows in the receipt's lag.
+  // That is the dedupe KEY only: the surviving row keeps the first row's own ids (the upgrade below).
+  const canon = new Map<string, string>();
+  for (const m of messages) {
+    if (!m || typeof m.id !== "string") continue;
+    if (typeof m.dmid === "string" && m.dmid) canon.set(m.dmid, m.id);
+    if (typeof m.originMid === "string" && m.originMid) canon.set(m.id, m.originMid);
+  }
   const best = new Map<string, any>();
   const out: any[] = [];
   for (const m of messages) {
     if (!m || typeof m !== "object") { out.push(m); continue; }
     const c: any = { ...m };
-    for (const [idKey, nameKey] of [["fromId", "from"], ["toId", "to"]] as const) {
+    for (const [idKey, nameKey, anchorKey] of [["fromId", "from", "fromThreadT"], ["toId", "to", "toThreadT"]] as const) {
       const v = c[idKey];
-      if (typeof v !== "string" || laneIds.has(v)) continue;
-      const lane = byBare.get(bareId(v));
-      if (lane) {
-        c[idKey] = lane.id;
-        if (!c[nameKey]) c[nameKey] = lane.name; // the emitting kernel never knew the foreign name
-      }
+      if (typeof v !== "string") continue;
+      const lane = byId.get(v) || byBare.get(bareId(v));
+      if (!lane) continue;
+      c[idKey] = lane.id;
+      // The display name follows the LANE. A kernel names its own session bare ("web") and the merged lane wears the
+      // host ("TESTHOST:web"), so a remote twin of a local session is told apart in the tooltip exactly as on its
+      // label; the emitting kernel never knew a foreign end's name at all. A thread-anchored end keeps the THREAD's
+      // name (the kernel's rule: the tooltip says who really spoke, from the parent's lane).
+      if (!c[nameKey] || (hostOf(lane.id) !== LOCAL && c[anchorKey] == null)) c[nameKey] = lane.name;
     }
-    const key = typeof c.id === "string" ? c.id : null;
+    const key = typeof c.id === "string" ? (canon.get(c.id) || c.id) : null;
     if (!key) { out.push(c); continue; }
     const prev = best.get(key);
     if (!prev) { best.set(key, c); out.push(c); continue; }
-    if (c.hasExec && !prev.hasExec) Object.assign(prev, c); // upgrade in place — keeps sent-order
+    // upgrade in place: keeps sent-order and the FIRST row's ids (the join keys). The merges concatenate the local kernel's
+    // rows first (mergeHostTimelines, mergeHostBars), so the survivor's ids are the local side's on purpose: for mail this
+    // kernel sent, its own mid and the receipt's dmid; for mail it received, the delivery mid. The local lane's bar mids and
+    // the chat's card mids are those ids (ui/romp-timeline-view.js: the receipt-time join over mm.id and mm.dmid, msgNav's
+    // card match on mm.id), so the survivor is never re-keyed onto the sender's mid (review round 1, 2026-09-21).
+    if (c.hasExec && !prev.hasExec) {
+      const id = prev.id, dmid = prev.dmid;
+      Object.assign(prev, c, { id, ...(dmid ? { dmid } : {}), pending: false });   // an exec IS the landing: nothing is pending
+    }
   }
   return out;
 }
@@ -971,6 +995,58 @@ function pendingTypes(c: Conn): string[] {
 // sha, 7 to 12 hex, plus -dirty).
 const UNKNOWN_SLOT_KEY = "?";
 const UNKNOWN_SLOT_CUT = 32;
+
+// The apps that RENDER a pushed channel a remote host can be heard on (pendingFor): the chat its tab list, the feed, the
+// Outline pane and the Waiting-on-you pane the feed payload, the timeline its lanes. settings and files load this module
+// too, for the fan-out and the routing, and receive no pushed view, so they are not here.
+// FORK DIVERGENCE (review round 1, 2026-09-21): the project's set names its four panes; this fork has a fifth pushed-channel
+// pane, "waiting", in the kernel's feed push audience beside the feed pane and the Outline (kernel.py _push, the
+// `if c["app"] in (...)` feed branch; waiting.ts reads feed.userTodoRows). A roster taken from the project is a roster over
+// the project's panes: at a fold, take this set from the kernel's push audiences (the feed branch, plus the chat's tab list
+// and the timeline's lanes) rather than from the project's line, and keep "waiting" in it. That derivation is a test, not
+// a reading (review rounds 2 to 5, 2026-09-21): federation-reconnect.test.ts's census case accounts for every read of the
+// "app" key written as a string literal in kernel.py _push's body, however spaced or wrapped, as a tuple of string
+// literals however wrapped or spaced (the feed branch, its twin in the except arm and the warm gate's pair), a singleton
+// of any name (the chat and the timeline), or a value formatted into text (the send log line), names every other form (a
+// named constant, a list, a non-literal member, a negated test, a bound read, a call's argument) and asserts none occurs,
+// asserts no subscript or .get in the body keys on a bare ASCII name and no "app" literal sits in a position the census
+// does not read (bound to a name in any shape, a default, a keyword argument, a passed value), asserts the union of the
+// read apps IS this set, and drives each member through the manager on the channel its audience names (a tuple naming
+// feed is the feed payload's, one naming chat the tab list's, one naming timeline the lanes'), with the other two
+// channels' frames leaving it pending. So a pane the kernel adds to any of _push's audiences, in any spelling of the
+// key as a literal, reads red there (in the roster, or as a named form the census cannot read), a key held in a name
+// reads red at its read if the name is ASCII and at its literal if the body binds it (a subscript or a .get whose key
+// is a bare name, `c[APP_KEY]` or `c.get(key)`, is listed whatever the name, if the name is ASCII, and every key _push
+// reads today is written as a literal; the "app" literal a name would be bound to is listed in any binding's spelling),
+// a member here the kernel never pushes to reads red, and a non-feed member that pendingFor's selector below would fall
+// to the per-host feed reads red. The receiver-class text, word for word here, in the census's comment and in the
+// ledger entry (federation-reconnect.test.ts's three-homes case holds the three equal): a subscript is listed only
+// behind a receiver, which is whatever can end a subscriptable primary in Python's grammar: a name that is not a
+// standalone keyword, a closing parenthesis, a closing bracket, a closing brace or a closing quote, double or single,
+// so `pick(c)[k]`, `targets[0][k]`, `{**c}[k]`, `"abc"[k]`, `'abc'[k]`, `self.match[k]` and a generic annotation such
+// as `list[str]` are listed, while a one-element list display (`xs = [c]`, `return [c]`) and a sequence pattern behind
+// the soft keyword case (`case [k]:`) are not. The derived set: a name is a whole identifier token, ASCII or not; a
+// number of any spelling, an Ellipsis or a keyword constant (None, True, False) before a bracket is unlisted; a name
+// after a dot is an identifier only where Python allows one there (match and case). So a name never starts behind an
+// identifier character: `1j[k]`, `0x1f[k]`, `0xff[k]` and `1e5[k]` are not listed through their tails, and a name with
+// a character past ASCII is listed whole. Nor does a name start directly behind a number's trailing dot (a digit run
+// that starts a token, then the dot): `1.e5[k]` and `1_0.j[k]`, one number token each, are not listed, while `v5.e5[k]`
+// and `1.5.e5[k]`, attributes, are. Both rules are lookbehinds on the census's name alternative alone, so a closing
+// parenthesis still ends `f(x)[k]`'s receiver. A hard keyword after a dot is still the keyword, so a list display
+// behind a float's trailing dot or an Ellipsis (`1. in [k]`, `... in [k]`) is not listed. The key, unlike the receiver,
+// is read as an ASCII name: a subscript or a `.get` whose key is a bare name holding a character past ASCII is not
+// listed. Where such a name is bound to the app literal inside `_push`'s body, the unread-literal scan lists the
+// literal; where it is bound outside the body (a module-level constant), the key is listed nowhere, and the census's
+// premise case plants such keys, each asserted unlisted. Deliberately unlisted and disclosed, then: a key named with a
+// character past ASCII and bound outside `_push`'s body; a number, an Ellipsis or a keyword constant before a bracket,
+// none of which can hold the client record; and a bare variable named match or case, subscripted, which reads as the
+// keyword. What stays outside that census and disclosed rather than detected: a key named with a character past ASCII
+// and bound outside _push's body (above), a key held in a dict or a list, reached through an attribute or returned by a
+// call (`c[KEYS[0]]`, `c[self.key]`), whose value the body never spells as a literal, and a pane pushed only by a
+// sender outside _push's body. Exported for that census. Kept an ALLOWLIST on purpose: a denylist of settings and files
+// would pend every host forever again for the next app added to the fan-out with no pushed view (the class the
+// project's change closed).
+export const PANE_CHANNELS = new Set(["chat", "feed", "fleet", "timeline", "waiting"]);
 
 export class FederationManager {
   app = "chat";
@@ -1496,11 +1572,22 @@ export class FederationManager {
     });
   }
 
-  private lastPendingSig = "";
+  // null, not "": the FIRST publish always posts, an empty list included, so a pane's fresh instance (a reload) replaces
+  // whatever list its dead predecessor left in the shell; with "" a reloaded pane that pended nothing never spoke and the
+  // shell kept the stale names (2026-09-18)
+  private lastPendingSig: string | null = null;
 
   /** Which attached hosts THIS pane is still waiting on, by the channel it renders: the chat reads the
-   *  tab list, the feed and fleet the feed payload, the timeline the lanes skeleton. */
+   *  tab list, the feed, the Outline pane and the Waiting-on-you pane (this fork's, app "waiting": PANE_CHANNELS) the
+   *  feed payload, the timeline the lanes skeleton. A page that renders no
+   *  pushed channel pends nothing: the settings page and the file browser load this module (the gear's
+   *  kernel-side settings fan out to every host; the browser routes by host) but sit outside every build
+   *  audience (kernel.py _settings_page, app=settings), so no frame of theirs could ever retire a host, and
+   *  the settings frame's manager posted every attached host as pending for good: the network panel read
+   *  every connected remote as "connected · loading sessions…" from the moment the gear was first opened
+   *  (the user's 2026-09-18 screenshot, three remotes, all up, their sessions in the tabs). */
   private pendingFor(): string[] {
+    if (!PANE_CHANNELS.has(this.app)) return [];
     const src = this.app === "timeline" ? this.perHostTl : this.app === "chat" ? this.perHostOrder : this.perHostFeed;
     return this.hostSeq.filter((h) => h !== LOCAL && !(h in src));
   }
@@ -1511,6 +1598,7 @@ export class FederationManager {
   // says "connected · loading sessions…" until this pane's first payload from that host retires it.
   // Posted on CHANGE only, and only to a same-origin parent (a cross-origin host has no network panel).
   private publishPending(): void {
+    if (!PANE_CHANNELS.has(this.app)) return;   // no channel to retire by: nothing to tell the shell (see pendingFor)
     const hosts = this.pendingFor();
     const sig = hosts.join("\u0000");
     if (sig === this.lastPendingSig) return;
