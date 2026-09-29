@@ -26,10 +26,12 @@ of two lines in that state (it resolved to 0px before).
 Then the states the fix's other rules and handlers are for, each read from the engine here because the node legs that
 read them skip in CI: at 300px (the fold on) the sheet is pinned to the top under the picker's 12px frame
 (#ut-reply-prompt.kb-tight), the detail keeps two lines and scrolls within itself, its first line's address is under a
-finger once the box is scrolled to it, the box scrolls, Send is inside the clip and under a finger at the box's bottom;
+finger once the box is scrolled to bring its line to the top of the box's view (the kept actions row covers the box's
+bottom), the box scrolls, Send is inside the clip and under a finger at the box's bottom;
 at 420px with the same todo the pane's two chip rows put the floors alone past the fold's cap, so its box scrolls a few
-pixels and Send's centre stays under a finger (the backstop state, measured as it is), while the chat's column fits (the
-fitted state); the unbreakable token wraps, so the detail's scrollWidth is no wider than its offsetWidth, the border box
+pixels and the actions row, kept in view at the box's bottom (the maintainer's round 2 ruling, B-i), holds Cancel and Send
+inside the clip (before it Send's bottom edge lay 2 to 3px past the clip there), while the chat's column fits (the fitted
+state); the unbreakable token wraps, so the detail's scrollWidth is no wider than its offsetWidth, the border box
 (overflow-wrap: anywhere); the answer typed at 900px and the window then shrunk to 508 re-fits the answer box (kbFit
 re-runs grow on the resize); and on the other todo's sheet an inline height written as the resize grip writes it stands
 through a keystroke (the drag guard); written to 215px and the frame taken to 420, the dragged height is clamped to the
@@ -46,7 +48,7 @@ builders gave a backdrop press's capture back, the release was read on the overl
 closed with the answer; touch in Firefox and WebKit, which Playwright cannot drive with moves, and on iOS is a stated
 residual). And the tree each
 builder emits, read from the real pages: the pane's chips are
-flex children of the box, the chat's sit inside the quoted line, and the elements the fix's four rules key on match
+flex children of the box, the chat's sit inside the quoted line, and the elements the fix's five rules key on match
 their selectors in both.
 
 The detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
@@ -130,6 +132,10 @@ DETAIL8 = "\n".join("Option %d: the summary section leads and the tables follow,
 TID = "ut-0000a002"   # the record's id shape: "ut-" + 8 hex (kernel.py _register_user_todo)
 TID_OTHER = "ut-0000a001"   # the short-ask todo: the drag guard is read on its sheet after the composition's send closed the other
 TID_EIGHT = "ut-0000a003"   # a short ask and the 8-line detail: the stated boundary is read on its sheet, last
+TID_WORST = "ut-0000a004"   # the worst case: a multi-line ask at the cap with both chips and the detail, one Send cell per pane
+# the tallest legal ask: the kernel strips only a todo's ends before its 300-character bound, and the quoted line keeps its
+# line breaks (white-space: pre-wrap), so a list of short lines at the cap is about ten times one wrapped paragraph's height
+ASK_LINES = ("Which?\n" + "\n".join("- %d" % (i + 1) for i in range(60)))[:300].strip()
 REST_SHARE = 0.348   # the detail's cap at rest: max(12em, 34.8% of the window's height) (styles.css, where the share is derived)
 BOUNDARY = 720   # the stated boundary: the 8-line detail shows in full from a 720px pane (a 751px Safari window)
 # one pixel under each engine's own boundary (720 in Chromium, 717 in WebKit, 718 in Firefox; measured in both panes)
@@ -148,6 +154,7 @@ def _todo_store(now):
         {"id": TID_OTHER, "text": "Which layout should the quarterly report use?", "createdT": now - 400, "detail": DETAIL},
         {"id": TID, "text": LONG_TEXT, "createdT": now - 300, "detail": LINKED_DETAIL, "file": FILE, "link": LINK},
         {"id": TID_EIGHT, "text": "Which layout should the quarterly report use?", "createdT": now - 200, "detail": DETAIL8},
+        {"id": TID_WORST, "text": ASK_LINES, "createdT": now - 100, "detail": LINKED_DETAIL, "file": FILE, "link": LINK},
     ]}
 
 
@@ -216,7 +223,7 @@ class ReplySheetServed(unittest.TestCase):
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
         url = "http://127.0.0.1:%d/%s?token=%s" % (self.port, "waiting" if pane == "waiting" else "chat", self.token)
         cfg = {"engine": engine, "pane": pane, "url": url, "healthz": "http://127.0.0.1:%d/healthz" % self.port,
-               "sid": SID, "tid": TID, "tid2": TID_OTHER, "tid3": TID_EIGHT, "belowBoundary": BELOW_BOUNDARY[engine],
+               "sid": SID, "tid": TID, "tid2": TID_OTHER, "tid3": TID_EIGHT, "tidWorst": TID_WORST, "belowBoundary": BELOW_BOUNDARY[engine],
                "bootTimeoutMs": 30000}
         cfg_path = os.path.join(self.lab, "cfg-%s-%s.json" % (pane, engine))
         Path(cfg_path).write_text(json.dumps(cfg))
@@ -364,6 +371,24 @@ class ReplySheetServed(unittest.TestCase):
                     self.assertEqual(g["sent"], 0, where + label + ": nothing was sent: %r" % (g,))
                 self.assertFalse(tr["tap"]["up"], where + "a finger's tap on the backdrop, pressed and lifted there, still dismisses: %r" % (tr["tap"],))
                 self.assertEqual(tr["tap"]["sent"], 0, where + "and sends nothing: %r" % (tr["tap"],))
+        # THE WORST CASE (the maintainer's round 2 ruling, B-i), one cell per pane: a multi-line ask at the cap with both chips and
+        # the forty-one-line detail, opened at rest at 732 and the keyboard then raised to 508, fourteen lines typed. The click at
+        # Send's centre is asserted FIRST: at a6e7f1cfa the floors put Send past the box's clip, the finger found the backdrop, and
+        # the sheet closed with nothing sent, in both panes. The node legs drive the whole grid in three engines
+        wc = r.get("worst", {"error": "the worst-case step did not run"})
+        with self.subTest(cell="the worst case: a multi-line ask at the cap, the phone's order, 390x508"):
+            self.assertNotIn("error", wc, where + "the worst-case step ran to its end: %r" % (wc,))
+            m = wc["m"]
+            self.assertEqual(wc["sentBefore"], 0, where + "the worst case: nothing sent before the click: %r" % (wc,))
+            self.assertEqual(wc["sent"], [wc["typed"]], where + "the worst case: the click at Send's centre sent the typed answer, once; at a6e7f1cfa it closed the sheet and sent nothing: %r" % (wc,))
+            self.assertFalse(wc["up"], where + "the worst case: the sheet closed by the send: %r" % (wc,))
+            self.assertTrue(m["sendTop"] >= m["clipTop"] - 0.5 and m["sendBottom"] <= m["clipBottom"] + 0.5, where + "the worst case: Send is inside the box's clip (the kept actions row): %r" % (wc,))
+            self.assertTrue(m["sendTop"] >= -0.5 and m["sendBottom"] <= m["frameH"] + 0.5, where + "the worst case: Send is inside the window: %r" % (wc,))
+            self.assertEqual(m["hit"], "target", where + "the worst case: a finger at Send's centre reaches Send: %r" % (wc,))
+            self.assertGreater(m["over"], 0, where + "the worst case: the floors pass the box's cap, so the box scrolls (the state the kept row is for): %r" % (wc,))
+            self.assertGreaterEqual(m["inputH"], m["floorH"] - 1, where + "the worst case: the answer box holds three rows: %r" % (wc,))
+            self.assertLessEqual(m["rowBottom"], m["actionsTop"] + 0.5, where + "the worst case: the line being typed is not under the kept actions row: %r" % (wc,))
+            self.assertTrue(m["rowTop"] >= m["clipTop"] - 0.5 and m["rowBottom"] <= m["clipBottom"] + 0.5, where + "the worst case: the line being typed is inside the box's clip: %r" % (wc,))
         # the tree each builder emits, and the elements the fix's rules key on: the pane's chips are flex children of the
         # box (waiting.ts showReply), the chat's sit inside the quoted line (render.ts showUserTodoReply); the shared
         # skeleton is the title, the quoted line, the detail, the answer box and the buttons, in that order
@@ -375,7 +400,7 @@ class ReplySheetServed(unittest.TestCase):
             self.assertEqual(o["quoteChips"], ["ut-file", "ut-link"], where + "the chat's chips trail the quoted line, the file's first")
         self.assertEqual([k for k in o["kinds"] if not k.startswith("wt-")], ["confirm-title", "confirm-detail", "ut-detail", "ut-reply-input", "confirm-actions"],
                          where + "the skeleton the CSS keys on is the same in both panes")
-        self.assertTrue(o["inputSel"] and o["detailSel"] and o["boxSel"], where + "the three scoped selectors each reach their element: %r" % (o,))
+        self.assertTrue(o["inputSel"] and o["detailSel"] and o["boxSel"] and o["actionsSel"], where + "the four scoped selectors on the sheet's elements each reach their element: %r" % (o,))
         # opened at 508: no fold, three rows, the detail a scroll container over its cap, the box scrolling at this height
         # too, the unbreakable token wrapped so the detail's scrollWidth is no wider than its border box
         self.assertEqual(o["frameH"], 508, where + "the pane's window is the phone's visible height with the keyboard up")
@@ -394,12 +419,13 @@ class ReplySheetServed(unittest.TestCase):
         self.assertEqual(s["paddingTop"], "12px", where + "300px: under the picker's 12px frame: %r" % (s,))
         self.assertGreaterEqual(s["detailH"], floor(s), where + "300px: the detail keeps two lines (the floor); it resolved to 0px before: %r" % (s,))
         self.assertTrue(s["detailScrolls"], where + "300px: the detail scrolls within itself: %r" % (s,))
-        self.assertEqual(s["linkHit"], "target", where + "300px: the address on the detail's first line is under a finger: %r" % (s,))
+        self.assertEqual(s["linkHitScrolled"], "target", where + "300px: the address on the detail's first line is under a finger once the box is scrolled to bring its line to the top of the box's view (where the engine's own scroll left it a finger reached %s: the kept actions row covers the box's bottom): %r" % (s["linkHit"], s))
         self.assertTrue(s["boxScrollH"] > s["boxClientH"] + 1 and s["boxScrollTop"] > 0, where + "300px: the box scrolls to the rest: %r" % (s,))
         self.assertTrue(s["sendInBoxAtBottom"] and s["sendHitAtBottom"] == "target", where + "300px: at the box's bottom Send is inside the clip and under a finger: %r" % (s,))
         # 420px with the chip todo, at open and with fourteen lines: the pane's two chip rows put the floors alone a few
-        # pixels past the fold's cap (the backstop state: the box scrolls the difference, Send's centre under a finger at
-        # open, Send inside the clip once the box is scrolled to its bottom); the chat's column fits (the fitted state)
+        # pixels past the fold's cap (the box scrolls the difference, and the actions row, kept in view at its bottom, holds
+        # Cancel and Send inside the clip; before the kept row Send's bottom edge lay 2 to 3px past it); the chat's column fits
+        # (the fitted state)
         for label, m, mb in (("420px, at open", a4, a4b), ("420px, fourteen lines", t4, t4b)):
             self.assertTrue(m["tight"], where + label + ": under the fold: %r" % (m,))
             self.assertGreaterEqual(m["detailH"], floor(m), where + label + ": the detail keeps its floor: %r" % (m,))
@@ -410,6 +436,8 @@ class ReplySheetServed(unittest.TestCase):
                 self.assertTrue(m["boxClientH"] + 1 < m["boxScrollH"] < m["boxClientH"] + 40,
                                 where + label + ": the pane's floors alone overflow the fold's cap by a few pixels (%d of %dpx; two chip rows the chat's column does not have) and the box scrolls the difference; a chrome change that makes the pane fit here, or overflow by more, changes what the PR body says of this window: %r" % (m["boxScrollH"], m["boxClientH"], m))
                 self.assertTrue(mb["sendInBoxAtBottom"] and mb["sendHitAtBottom"] == "target", where + label + ": scrolled to the box's bottom, Send is inside the clip and under a finger: %r" % (mb,))
+                for b in ("send", "cancel"):
+                    self.assertTrue(self._inside_clip(m, b), where + label + ": %s is inside the box's clip, the actions row kept in view at its bottom (before it, Send's bottom edge lay 2 to 3px past the clip here): %r" % (b, m))
             else:
                 self.assertLessEqual(m["boxScrollH"], m["boxClientH"] + 1, where + label + ": the chat's column fits the fold's cap, nothing is a scroll away: %r" % (m,))
                 for b in ("send", "cancel"):

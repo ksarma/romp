@@ -12,9 +12,10 @@
 // Before the tap, the states the fix's other rules and handlers are for, each read from the engine where CI has one
 // (the two node browser legs measure the same and skip in CI's Test step): the window at 300px (the fold on: the sheet
 // pinned to the top under the picker's 12px frame, the detail at its floor and scrolling, its first line's address under
-// a finger once the box is scrolled to it, Send inside the clip and under a finger at the box's bottom); at 420px with
-// the same todo (the pane's two chip rows put the floors past the fold's cap, so its box scrolls a few pixels and Send's
-// centre is under a finger; the chat's column fits); the detail's scrollWidth against its offsetWidth, the border box,
+// a finger once the box is scrolled to bring its line to the top of the box's view, Send inside the clip and under a finger
+// at the box's bottom); at 420px with the same todo (the pane's two chip rows put the floors past the fold's cap, so its box
+// scrolls a few pixels, and the actions row, kept in view at the box's bottom, holds Cancel and Send inside the clip; the
+// chat's column fits); the detail's scrollWidth against its offsetWidth, the border box,
 // with the unbreakable token wrapped (overflow-wrap: anywhere); the answer typed at 900px and the window then shrunk to
 // 508 (kbFit re-runs grow on the resize: the answer box re-fits to the room). After the tap, on the other todo: an
 // inline height written as the resize grip writes it, then one keystroke (the drag guard: the height stands); the height
@@ -147,7 +148,7 @@ const measure = () => page.evaluate(() => {
     send: rect(send), cancel: rect(cancel), hitAtSend: hit(send), hitAtCancel: hit(cancel),
     kinds: Array.from(box.children).map((c) => (["wt-file", "wt-link", "ut-file", "ut-link"].find((k) => c.classList.contains(k)) || (c.className || c.tagName).split(" ")[0])),
     quoteChips: quote ? Array.from(quote.querySelectorAll(".ut-file, .ut-link")).map((c) => (c.classList.contains("ut-file") ? "ut-file" : "ut-link")) : [],
-    inputSel: input.matches("#ut-reply-prompt .ut-reply-input"), detailSel: detail ? detail.matches("#ut-reply-prompt .ut-detail.open") : null, boxSel: box.matches("#ut-reply-prompt .picker-box"),
+    inputSel: input.matches("#ut-reply-prompt .ut-reply-input"), detailSel: detail ? detail.matches("#ut-reply-prompt .ut-detail.open") : null, boxSel: box.matches("#ut-reply-prompt .picker-box"), actionsSel: overlay.querySelector(".confirm-actions").matches("#ut-reply-prompt .confirm-actions"),
     // the answer box's sizing, for the record: its inline height (grow's last write), computed min-height and line-height,
     // and every child's laid-out height
     inputStyleH: input.style.height, inputMinH: cs(input).minHeight, inputLineH: cs(input).lineHeight, inputScrollH: input.scrollHeight,
@@ -170,11 +171,17 @@ const probeShort = () => page.evaluate(() => {
   const first = a ? (a.getClientRects()[0] || a.getBoundingClientRect()) : null;
   const atLink = first ? document.elementFromPoint((first.left + first.right) / 2, (first.top + first.bottom) / 2) : null;
   const linkHit = !a ? "no-link" : atLink === a ? "target" : atLink ? (atLink.className || atLink.tagName).split(" ")[0] : "none";
+  // the actions row, kept in view at the box's bottom, can cover what the engine scrolled into view there: the person scrolls
+  // the box, and with the address's line brought to the top of the box's view it is under a finger
+  if (a && first) box.scrollTop += first.top - (box.getBoundingClientRect().top + box.clientTop);
+  const again = a ? (a.getClientRects()[0] || a.getBoundingClientRect()) : null;
+  const atLink2 = again ? document.elementFromPoint((again.left + again.right) / 2, (again.top + again.bottom) / 2) : null;
+  const linkHitScrolled = !a ? "no-link" : atLink2 === a ? "target" : atLink2 ? (atLink2.className || atLink2.tagName).split(" ")[0] : "none";
   detail.scrollTop = 30; const detailScrolls = detail.scrollTop > 0; detail.scrollTop = 0;
   box.scrollTop = box.scrollHeight;
   const o = { frameH: window.innerHeight, tight: overlay.classList.contains("kb-tight"), alignItems: getComputedStyle(overlay).alignItems, paddingTop: getComputedStyle(overlay).paddingTop,
     detailH: detail.clientHeight, detailLineH: parseFloat(getComputedStyle(detail).lineHeight),
-    detailScrolls, linkHit, boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxScrollTop: box.scrollTop, sendHitAtBottom: hit(send), sendInBoxAtBottom: inBox(send) };
+    detailScrolls, linkHit, linkHitScrolled, boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxScrollTop: box.scrollTop, sendHitAtBottom: hit(send), sendInBoxAtBottom: inBox(send) };
   box.scrollTop = 0;
   return o;
 });
@@ -282,8 +289,8 @@ try {
   await setHeight(SHORT);
   await waitTight(true);
   out.short = await probeShort();
-  // 420px with the same todo: the pane's two chip rows put the floors past the fold's cap (the box scrolls a few pixels; the
-  // backstop state), the chat's column fits; at open and with fourteen lines typed
+  // 420px with the same todo: the pane's two chip rows put the floors past the fold's cap (the box scrolls a few pixels, the
+  // actions row kept in view at its bottom), the chat's column fits; at open and with fourteen lines typed
   await setHeight(TIGHT);
   await waitTight(true);
   out.at420 = await measure();
@@ -453,6 +460,52 @@ try {
       await touch([p.back]);
       out.touch = { straddles: touched, tap: { h: KEYBOARD_UP, at: p.back, ...(await state()) } };
     } catch (e) { out.touch = { error: String(e).slice(0, 400) }; }
+  }
+  // THE WORST CASE (the maintainer's round 2 ruling, B-i), one cell per pane: a multi-line ask at the kernel's 300-character
+  // cap (the tallest legal ask: the quoted line keeps its line breaks) with both chips and the linked forty-one-line detail,
+  // opened at rest at the installed app's 732 and the keyboard then raised to 508 (the phone's order), fourteen lines typed and
+  // a keystroke at their end, then a real click at Send's centre. The floors pass the box's cap there, so the box scrolls; at
+  // a6e7f1cfa Send lay past the box's clip and the click closed the sheet with nothing sent, in both panes. Read: Send against
+  // the box's clip (its padding box) and the page, what a finger at its centre reaches, the answer box against three rows, the
+  // line being typed against the kept actions row, and what the click sent. The node legs drive the whole grid; this is the cell
+  // CI executes. Whatever sheet the steps above left up is cancelled first. Its own failure is recorded, never fatal
+  if (cfg.tidWorst) {
+    try {
+      await page.evaluate(() => { const o = document.getElementById("ut-reply-prompt"); if (o) o.querySelector(".confirm-actions button").click(); });
+      await page.waitForFunction(() => !document.getElementById("ut-reply-prompt"), null, { timeout: 10000 });
+      await setHeight(APP_PANE, false);
+      await openReply(cfg.tidWorst);
+      await setHeight(KEYBOARD_UP, true);
+      await fill(ANSWER);
+      await page.locator("#ut-reply-prompt .ut-reply-input").focus();
+      await page.keyboard.press(engine === "webkit" ? "Meta+ArrowDown" : "Control+End");
+      await page.keyboard.type(" ok");
+      await settle();
+      const m = await page.evaluate(() => {
+        const o = document.getElementById("ut-reply-prompt"); if (!o) return null;
+        const box = o.querySelector(".confirm-box"), input = o.querySelector(".ut-reply-input"), actions = o.querySelector(".confirm-actions");
+        const send = actions.querySelectorAll("button")[1];
+        const b = box.getBoundingClientRect(), sr = send.getBoundingClientRect(), ir = input.getBoundingClientRect();
+        const clipTop = b.top + box.clientTop, clipBottom = clipTop + box.clientHeight;
+        const cx = (sr.left + sr.right) / 2, cy = (sr.top + sr.bottom) / 2, at = document.elementFromPoint(cx, cy);
+        const cs = getComputedStyle(input), lh = parseFloat(cs.lineHeight) || 18;
+        const rowBottom = ir.bottom - parseFloat(cs.paddingBottom) - parseFloat(cs.borderBottomWidth);
+        const probe = document.createElement("textarea"); probe.className = "ut-reply-input"; probe.rows = 3;
+        probe.style.position = "fixed"; probe.style.top = "0"; probe.style.left = "0"; probe.style.width = "300px"; probe.style.visibility = "hidden";
+        document.body.appendChild(probe); const floorH = probe.clientHeight; probe.remove();
+        return { frameH: innerHeight, clipTop, clipBottom, sendTop: sr.top, sendBottom: sr.bottom, cx, cy,
+          hit: at === send ? "target" : at === o ? "overlay" : at === box ? "box" : at ? (at.className || at.tagName).split(" ")[0] : "none",
+          inputH: input.clientHeight, floorH, rowTop: rowBottom - lh, rowBottom, actionsTop: actions.getBoundingClientRect().top,
+          boxScrollTop: box.scrollTop, over: box.scrollHeight - box.clientHeight };
+      });
+      const sentFor = () => page.evaluate((tid) => window.__wsSent.filter((f) => f.includes('"userTodoAnswer"') && f.includes(tid)).map((f) => { try { return JSON.parse(f).text; } catch (e) { return "(unparsed) " + f.slice(0, 120); } }), cfg.tidWorst);
+      const sentBefore = (await sentFor()).length;
+      const inFrame = !!m && m.cy >= 0 && m.cy <= m.frameH;
+      if (inFrame) await page.mouse.click(m.cx, m.cy);
+      await settle();
+      await page.waitForTimeout(300);
+      out.worst = { m, inFrame, typed: ANSWER + " ok", sentBefore, sent: await sentFor(), up: await page.evaluate(() => !!document.getElementById("ut-reply-prompt")) };
+    } catch (e) { out.worst = { error: String(e).slice(0, 400) }; }
   }
   await result({ ready: true });
 } catch (e) {

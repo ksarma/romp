@@ -38,8 +38,10 @@
 // less a phone keyboard's 336px, and removes the stub at rest; every window under 900 is the keyboard up unless a step
 // says it is at rest. The composition tap is its own test per engine, its outcome asserted first,
 // so the deciding figure has a red of its own on a tree without the fix; the chip todo is also measured at 420, where
-// the chat's column fits the fold's cap (the pane's does not: waiting-reply-sheet-browser.test.ts measures that
-// backstop state). On the base tree at 508 the focus had scrolled the overflow-hidden box to the textarea, so the
+// the chat's column fits the fold's cap (the pane's does not: waiting-reply-sheet-browser.test.ts measures that state, the
+// box scrolling a few pixels with the actions row kept in view at its bottom). THE WORST CASE is its own test per engine
+// (the maintainer's round 2 ruling, B-i): 390 and 320 wide, 230 to 508 with the keyboard up and in the phone's order, four
+// asks at the cap with both chips, and after a grip drag, Send clicked at its centre in every cell. On the base tree at 508 the focus had scrolled the overflow-hidden box to the textarea, so the
 // title, the ask and most of the detail sat above the clip with no way to scroll back; the first red differs by engine
 // (Chromium and WebKit: the answer box a 14px sliver, and in WebKit the buttons below the clip too; Firefox: the rows
 // kept and the buttons in reach), and the detail's computed overflow-y, visible there, is the red common to all three.
@@ -119,12 +121,22 @@ const LINK = "https://github.com/example-org/notes-api/pull/398";
 // installed app's 732 and at 900, and not in Safari's panes (620, 633, 709)
 const DETAIL8 = Array.from({ length: 8 }, (_, i) => `Option ${i + 1}: the summary section leads and the tables follow, with the notes folded under each table.`).join("\n");
 const LINKED_DETAIL = "The earlier draft is at https://github.com/example-org/notes-api/pull/398 and the reviewers' notes follow.\n" + DETAIL;
+// THE WORST CASE (the maintainer's round 2 ruling, B-i): asks at the kernel's 300-character cap, each with both chips and the
+// linked forty-one-line detail. The kernel strips only a todo's ends before that bound and the quoted line keeps its line
+// breaks (white-space: pre-wrap), so the tallest legal ask is a list of short lines, about ten times the height of one wrapped
+// paragraph; a 300-character token cannot break at a space; and a 300-character paragraph wraps to the most lines prose gives
+const ASK300 = (LONG_TEXT + " The reviewers also want the appendix numbered by region and a short caption over every chart please.").slice(0, 300);
+const ASK_LINES = ("Which?\n" + Array.from({ length: 60 }, (_, i) => "- " + (i + 1)).join("\n")).slice(0, 300).trim();
+const ASK_TOKEN = "report-layout-" + "x".repeat(286);
 type Todo = { id: string; text: string; detail?: string; file?: string; link?: string };
 const TODOS: Todo[] = [
   { id: "t1", text: TEXT, detail: DETAIL },
   { id: "t2", text: LONG_TEXT, detail: LINKED_DETAIL, file: FILE, link: LINK },
   { id: "t3", text: TEXT },
   { id: "t4", text: TEXT, detail: DETAIL8 },
+  { id: "t5", text: ASK300, detail: LINKED_DETAIL, file: FILE, link: LINK },
+  { id: "t6", text: ASK_LINES, detail: LINKED_DETAIL, file: FILE, link: LINK },
+  { id: "t7", text: ASK_TOKEN, detail: LINKED_DETAIL, file: FILE, link: LINK },
 ];
 const ANSWER = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n");
 const PHONE_W = 390;
@@ -164,14 +176,14 @@ type Sheet = {
 // scrolls within itself, whether the address on its first line is under a finger once the box is scrolled to it, and
 // whether Send is inside the clip and under a finger once the box is scrolled to its bottom
 type Short = {
-  frameH: number; tight: boolean; detailH: number; detailLineH: number; detailScrolls: boolean; linkHit: string;
+  frameH: number; tight: boolean; detailH: number; detailLineH: number; detailScrolls: boolean; linkHit: string; linkHitScrolled: string;
   boxScrollH: number; boxClientH: number; boxScrollTop: number; sendHitAtBottom: string; sendInBoxAtBottom: boolean;
 };
 const floorOf = (lineH: number) => 2 * lineH - 1;   // two lines, less a pixel of rounding
 const rectOf = (r: Rect) => `${r.top.toFixed(1)}..${r.bottom.toFixed(1)}`;
 const centre = (r: Rect) => ({ x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 });
 
-async function boot(browser: any) {
+async function boot(browser: any, browserName = "chromium") {
   const errors: string[] = [];
   const js = sheetBundle();
   const page = await browser.newPage({ viewport: { width: PHONE_W, height: KEYBOARD_UP } });
@@ -194,9 +206,10 @@ async function boot(browser: any) {
   }, [on, KEYBOARD_H] as [boolean, number]);
   // the keyboard: the viewport's height, which the page's window sees as its own resize; a window under 900 is the keyboard
   // up unless the step says it is at rest. The keyboard's state is set before the resize, so kbFit reads it
+  let width = PHONE_W;   // the page's width: the phone's, or the narrowest the worst case uses (setWidth, below)
   const setHeight = async (h: number, kb = h < TALL) => {
     await keyboard(kb);
-    await page.setViewportSize({ width: PHONE_W, height: h });
+    await page.setViewportSize({ width, height: h });
     await page.waitForFunction((hh: number) => window.innerHeight === hh, h, { timeout: 10000 });
     await settle();
   };
@@ -265,10 +278,18 @@ async function boot(browser: any) {
     const first = a ? (a.getClientRects()[0] || a.getBoundingClientRect()) : null;
     const atLink = first ? document.elementFromPoint((first.left + first.right) / 2, (first.top + first.bottom) / 2) : null;
     const linkHit = !a ? "no-link" : atLink === a ? "target" : atLink ? ((atLink as HTMLElement).className || atLink.tagName).split(" ")[0] : "none";
+    // the actions row, kept in view at the box's bottom (styles.css #ut-reply-prompt .confirm-actions), can cover what the engine
+    // scrolled into view there (at 230 it covers this address in every engine, both panes: a finger aimed at it reaches Cancel or
+    // Send); the person scrolls the box, and with the address's line brought to the top of the box's view it is under a finger
+    // (the maintainer's round 2 ruling on B-i's cover: accepted where a covered link can be scrolled into the part the row leaves)
+    if (a && first) box.scrollTop += first.top - (box.getBoundingClientRect().top + box.clientTop);
+    const again = a ? (a.getClientRects()[0] || a.getBoundingClientRect()) : null;
+    const atLink2 = again ? document.elementFromPoint((again.left + again.right) / 2, (again.top + again.bottom) / 2) : null;
+    const linkHitScrolled = !a ? "no-link" : atLink2 === a ? "target" : atLink2 ? ((atLink2 as HTMLElement).className || atLink2.tagName).split(" ")[0] : "none";
     detail.scrollTop = 30; const detailScrolls = detail.scrollTop > 0; detail.scrollTop = 0;
     box.scrollTop = box.scrollHeight;   // to the bottom, where the buttons are
     const out = { frameH: window.innerHeight, tight: overlay.classList.contains("kb-tight"), detailH: detail.clientHeight, detailLineH: parseFloat(getComputedStyle(detail).lineHeight),
-      detailScrolls, linkHit, boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxScrollTop: box.scrollTop, sendHitAtBottom: hit(send), sendInBoxAtBottom: inBox(send) };
+      detailScrolls, linkHit, linkHitScrolled, boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxScrollTop: box.scrollTop, sendHitAtBottom: hit(send), sendInBoxAtBottom: inBox(send) };
     box.scrollTop = 0;
     return out;
   });
@@ -423,16 +444,92 @@ async function boot(browser: any) {
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await settle(); await page.waitForTimeout(300);
   };
-  return { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, points, sheetState, mouseDrag, touch, errors };
+  // THE WORST CASE (the maintainer's round 2 ruling, B-i). The page's width is an input too: 390, the phone, or 320, the
+  // narrowest the composition uses
+  const setWidth = async (w: number) => {
+    width = w;
+    const h: number = await page.evaluate(() => window.innerHeight);
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForFunction((ww: number) => window.innerWidth === ww, w, { timeout: 10000 });
+    await settle();
+  };
+  // Send against the box's CLIP (its padding box: the border box less the borders, where content past the edge is cut and
+  // not hit-testable) and the page; what a finger at Send's centre reaches; the answer box's height against a three-row probe;
+  // and the answer box's last row (its bottom less the padding and border, one line tall: where the caret sits after typing at
+  // the end) against the clip and the kept actions row's top
+  const cellRead = () => page.evaluate(() => {
+    const o = document.getElementById("ut-reply-prompt"); if (!o) return null;
+    const box = o.querySelector(".confirm-box") as HTMLElement, input = o.querySelector(".ut-reply-input") as HTMLTextAreaElement, actions = o.querySelector(".confirm-actions") as HTMLElement;
+    const send = actions.querySelectorAll("button")[1] as HTMLElement;
+    const b = box.getBoundingClientRect(), sr = send.getBoundingClientRect(), ir = input.getBoundingClientRect();
+    const clipTop = b.top + box.clientTop, clipBottom = clipTop + box.clientHeight;
+    const cx = (sr.left + sr.right) / 2, cy = (sr.top + sr.bottom) / 2, at = document.elementFromPoint(cx, cy);
+    const cs = getComputedStyle(input), lh = parseFloat(cs.lineHeight) || 18;
+    const rowBottom = ir.bottom - parseFloat(cs.paddingBottom) - parseFloat(cs.borderBottomWidth);
+    const probe = document.createElement("textarea"); probe.className = "ut-reply-input"; probe.rows = 3;
+    probe.style.position = "fixed"; probe.style.top = "0"; probe.style.left = "0"; probe.style.width = "300px"; probe.style.visibility = "hidden";
+    document.body.appendChild(probe); const floorH = probe.clientHeight; probe.remove();
+    return { frameW: window.innerWidth, frameH: window.innerHeight, clipTop, clipBottom, sendTop: sr.top, sendBottom: sr.bottom, cx, cy,
+      hit: at === send ? "target" : at === o ? "overlay" : at === box ? "box" : at ? ((at as HTMLElement).className || at.tagName).split(" ")[0] : "none",
+      inputH: input.clientHeight, floorH, rowTop: rowBottom - lh, rowBottom, actionsTop: actions.getBoundingClientRect().top, inputStyleH: input.style.height,
+      boxScrollTop: box.scrollTop, over: box.scrollHeight - box.clientHeight };
+  });
+  // one cell: the sheet opened on the todo with the keyboard up at h ("up"), or at rest at 732 and the keyboard then raised to h
+  // ("order", the phone's order), the answer typed (fourteen lines, then a keystroke at its end); or, with the keyboard up at h,
+  // the answer typed and the grip then pulled 150px down ("drag": a drag fires no input, so grow does not run after it; where the
+  // headless grip does not move, the inline height is written as the grip writes it). Then Send read and a real click at its
+  // centre, and what the click did: the answers posted for this todo, and whether the sheet is still up
+  const sendCell = async (todo: Todo, h: number, how: "up" | "order" | "drag") => {
+    if (how === "order") { await setHeight(APP_PANE, false); await openReply(todo); await setHeight(h, true); }
+    else { await setHeight(h, true); await openReply(todo); }
+    const typed = ANSWER(14) + (how === "drag" ? "" : " ok");
+    const box = page.locator("#ut-reply-prompt .ut-reply-input");
+    await box.fill(ANSWER(14));
+    let road = "";
+    if (how === "drag") {
+      await settle();
+      const g = await page.evaluate(() => { const r = document.querySelector("#ut-reply-prompt .ut-reply-input")!.getBoundingClientRect(); return { x: r.right - 3, y: r.bottom - 3, h: r.height }; });
+      // Firefox's resizer, pressed by Playwright's mouse on this top-level page, takes the press and never sees the release
+      // (measured: a pointerdown on the answer box and no pointerup; the next click at Send then went to the answer box), so
+      // there the height is written as the grip writes it, without the press; the other engines drag the real grip
+      let after = g.h;
+      if (browserName !== "firefox") {
+        await page.mouse.move(g.x, g.y); await page.mouse.down(); await page.mouse.move(g.x, g.y + 150, { steps: 10 }); await page.mouse.up();
+        await settle();
+        after = await page.evaluate(() => document.querySelector("#ut-reply-prompt .ut-reply-input")!.getBoundingClientRect().height);
+      }
+      road = "native grip";
+      if (after < g.h + 30) {
+        road = browserName === "firefox" ? "scripted (Firefox's resizer keeps a Playwright press on this page)" : "scripted (the headless grip did not move)";
+        await page.evaluate((hh: number) => { (document.querySelector("#ut-reply-prompt .ut-reply-input") as HTMLElement).style.height = hh + "px"; }, Math.round(g.h + 150));
+      }
+    } else {
+      await box.focus();
+      await page.keyboard.press(browserName === "webkit" ? "Meta+ArrowDown" : "Control+End");
+      await page.keyboard.type(" ok");
+    }
+    await settle();
+    const m = await cellRead();
+    if (m && m.cy >= 0 && m.cy <= m.frameH) await page.mouse.click(m.cx, m.cy);
+    await settle(); await page.waitForTimeout(150);
+    const after: { up: boolean; posted: string[] } = await page.evaluate((t: string) => ({
+      up: !!document.getElementById("ut-reply-prompt"),
+      posted: ((window as any).__posted || []).filter((p: any) => p && p.type === "userTodoAnswer" && p.todoId === t).map((p: any) => String(p.text)),
+    }), todo.id);
+    if (after.up) await page.evaluate(() => { (document.querySelector("#ut-reply-prompt .confirm-actions button") as HTMLElement).click(); });
+    return { m, typed, road, ...after };
+  };
+  return { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, points, sheetState, mouseDrag, touch, setWidth, sendCell, errors };
 }
 // a short window with the chip todo open: the box scrolls; the detail keeps its floor and scrolls within itself; its
-// first line's address and Send are each under a finger once the box is scrolled to them
+// first line's address and Send are each under a finger once the box is scrolled to them (the address's line to the top of
+// the box's view: the kept actions row covers the box's bottom)
 function assertShort(s: Short, what: string) {
   const rec = JSON.stringify(s);
   assert.equal(s.tight, true, `${what}: under the fold (${rec})`);
   assert.ok(s.detailH >= floorOf(s.detailLineH), `${what}: the detail keeps its floor of two lines (${s.detailH}px against a ${s.detailLineH}px line); without the floor it resolved to 0px, invisible and unscrollable (${rec})`);
   assert.ok(s.detailScrolls, `${what}: the detail scrolls within itself (${rec})`);
-  assert.equal(s.linkHit, "target", `${what}: the address on the detail's first line is under a finger once the box is scrolled to it (${rec})`);
+  assert.equal(s.linkHitScrolled, "target", `${what}: the address on the detail's first line is under a finger once the box is scrolled to bring its line to the top of the box's view (where the engine's own scroll left it, a finger reached ${s.linkHit}: the kept actions row covers the box's bottom) (${rec})`);
   assert.ok(s.boxScrollH > s.boxClientH + 1 && s.boxScrollTop > 0, `${what}: the box scrolls: the floors alone overflow this window, and the deficit past them is a scroll of the box, never a clip (${rec})`);
   assert.ok(s.sendInBoxAtBottom && s.sendHitAtBottom === "target", `${what}: scrolled to the box's bottom, Send is inside the clip and under a finger (${rec})`);
 }
@@ -559,8 +656,8 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       await setHeight(230);
       assertShort(await probeShort(), "230px, the chip todo");
       // ── 420px with the chip todo (the fold on): the chat's chips sit inside the quoted line, so its column FITS the fold's cap
-      // at the floors and after fourteen lines (the fitted state; the pane's two chip rows put its floors past the cap, the
-      // backstop state waiting-reply-sheet-browser.test.ts measures). Measured, so the body's account of this window is read
+      // at the floors and after fourteen lines (the fitted state; the pane's two chip rows put its floors past the cap, the state
+      // waiting-reply-sheet-browser.test.ts measures with the actions row kept in view). Measured, so the body's account of this window is read
       // from the engine in both panes
       await setHeight(KEYBOARD_TIGHT);
       m = (await measure())!;
@@ -878,6 +975,67 @@ for (const name of ["chromium", "firefox", "webkit"]) {
             assert.equal(st.posted, 0, `at ${h}, ${what}: a dismiss posts nothing`);
           });
         }
+      }
+      assert.deepEqual(errors, [], "no script error on the page");
+    } finally { await browser.close(); }
+  });
+
+  // THE WORST CASE, as its own test (the maintainer's round 2 ruling, B-i: the sheet guarantees Send inside the box's clip at
+  // every geometry the rulings name and at the worst-case content, in both panes and three engines, measured by a click at
+  // Send's centre that posts one answer with the typed text). With the keyboard up the box is capped at the visible height and
+  // only the detail yields, down to two of its lines; the answer box keeps three rows, the ask keeps all its lines and the pane's
+  // chips are rows of their own, so where those floors pass the cap the box scrolls, and at a6e7f1cfa the focus left the scroll
+  // at the answer box with the buttons partly or wholly past the clip: clipped content is not hit-testable, so a finger at Send's
+  // centre landed on the backdrop and the sheet closed with the answer. The actions row is now kept in view at the box's bottom
+  // (styles.css #ut-reply-prompt .confirm-actions) and grow keeps the answer box clear of it. Driven at 390 and 320 wide, with the
+  // keyboard up at 230, 300, 420, 480 and 508 and in the phone's order (opened at rest at 732, the keyboard then raised) at 420,
+  // 480 and 508, on four asks at the cap, each with both chips and the linked forty-one-line detail: the 250-character fixture, a
+  // 300-character ask, a multi-line ask at the cap (the tallest legal ask) and a 300-character unbreakable token; and on the
+  // multi-line ask, the grip pulled 150px down with the keyboard up at each height, Send clicked after it. Per cell: Send wholly
+  // inside the box's clip (its padding box) and the frame, a finger at its centre reaches it, and a click there posts exactly one
+  // answer, the typed text, and closes the sheet by the send; for typed answers also the answer box at three rows and the line
+  // being typed inside the clip and not under the kept row (after the drag the dragged box's lower part lies below the clip, and
+  // Send, in the kept row, still sends). Each group of cells is its own subtest, and its message names every failing cell
+  test(`in ${name}: THE WORST CASE with the keyboard up (390 and 320 wide, 230 to 508, four asks at the cap with both chips, opened with the keyboard up, in the phone's order, and after a grip drag): Send is inside the box's clip and a click at its centre sends the typed answer`, async (t) => {
+    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py clicks Send in the worst case in CI's Browser-backed served-page tests (pytest) step"); return; }
+    let browser: any;
+    try { browser = await pw[name].launch(); }
+    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's Browser-backed served-page tests (pytest) step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      const { setWidth, sendCell, errors } = await boot(browser, name);
+      const asks: Array<[Todo, string]> = [[TODOS[1], "the 250-character fixture"], [TODOS[4], "a 300-character ask"], [TODOS[5], "a multi-line ask at the cap"], [TODOS[6], "a 300-character unbreakable token"]];
+      const groups: Array<[Todo, string, "up" | "order" | "drag", number[]]> = [];
+      for (const [todo, what] of asks) { groups.push([todo, what, "up", [230, 300, 420, 480, 508]]); groups.push([todo, what, "order", [420, 480, 508]]); }
+      groups.push([TODOS[5], "a multi-line ask at the cap", "drag", [230, 300, 420, 480, 508]]);
+      for (const [todo, what, how, heights] of groups) {
+        const label = how === "up" ? "opened with the keyboard up" : how === "order" ? "in the phone's order (opened at rest at 732, the keyboard then raised)" : "the grip pulled 150px down with the keyboard up, then Send";
+        await t.test(`${what}, ${label}, at ${heights.join(", ")}`, async (st) => {
+          const fails: string[] = [], roads: string[] = [];
+          for (const w of [PHONE_W, 320]) {
+            await setWidth(w);
+            for (const h of heights) {
+              const c = await sendCell(todo, h, how);
+              const cell = `${w}x${h}`;
+              if (c.road) roads.push(`${cell} ${c.road}`);
+              const m = c.m;
+              if (!m) { fails.push(`${cell}: no sheet to read`); continue; }
+              const why: string[] = [];
+              if (!(m.frameW === w && m.frameH === h)) why.push(`the window is ${m.frameW}x${m.frameH}`);
+              if (!(m.sendTop >= m.clipTop - 0.5 && m.sendBottom <= m.clipBottom + 0.5)) why.push(`Send ${m.sendTop.toFixed(1)}..${m.sendBottom.toFixed(1)} is not inside the box's clip ${m.clipTop.toFixed(1)}..${m.clipBottom.toFixed(1)}`);
+              if (!(m.sendTop >= -0.5 && m.sendBottom <= m.frameH + 0.5)) why.push(`Send is not inside the ${m.frameH}px window`);
+              if (m.hit !== "target") why.push(`a finger at Send's centre reaches ${m.hit}`);
+              if (!(c.posted.length === 1 && c.posted[0] === c.typed && !c.up)) why.push(c.posted.length === 0 ? (c.up ? "the click posted nothing and the sheet stood" : "the click CLOSED the sheet and posted nothing: the answer was discarded") : `the click posted ${c.posted.length} answer(s)${c.posted[0] !== c.typed ? ", not the typed text" : ""}${c.up ? ", and the sheet stood" : ""}`);
+              if (how !== "drag") {
+                if (!(m.inputH >= m.floorH - 1)) why.push(`the answer box is ${m.inputH}px, under its three rows (${m.floorH}px)`);
+                if (!(m.rowBottom <= m.actionsTop + 0.5)) why.push(`the line being typed (${m.rowTop.toFixed(1)}..${m.rowBottom.toFixed(1)}) is under the actions row (its top at ${m.actionsTop.toFixed(1)})`);
+                if (!(m.rowTop >= m.clipTop - 0.5 && m.rowBottom <= m.clipBottom + 0.5)) why.push(`the line being typed (${m.rowTop.toFixed(1)}..${m.rowBottom.toFixed(1)}) is outside the box's clip`);
+              }
+              if (why.length) fails.push(`${cell}: ${why.join("; ")} (box over its cap by ${m.over}px, scrolled ${m.boxScrollTop}px, answer box ${m.inputH}px, inline height ${m.inputStyleH || "none"})`);
+            }
+          }
+          if (roads.length) st.diagnostic(`${name}: the drag's road per cell: ${roads.join("; ")}`);
+          assert.deepEqual(fails, [], `${what}, ${label}: at every cell Send is inside the box's clip and under a finger, and a click at its centre posts the typed answer once and closes the sheet (at a6e7f1cfa Send lay past the clip in states like these, and a click at its centre closed the sheet with the answer)`);
+        });
       }
       assert.deepEqual(errors, [], "no script error on the page");
     } finally { await browser.close(); }

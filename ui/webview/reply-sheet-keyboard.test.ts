@@ -15,12 +15,13 @@
 // than scrolled.
 //
 // The fix rides the picker's existing fold and touches no shared rule (.confirm-box and .picker-box serve seven
-// dialogs). Four CSS rules scoped to this dialog: the answer box never shrinks and holds three rows (min-height in
+// dialogs). Five CSS rules scoped to this dialog: the answer box never shrinks and holds three rows (min-height in
 // lh); the detail is the part that gives way, capped and scrolling within itself (overflow-y: auto makes it a scroll
 // container, whose automatic flex minimum is zero; #pinned-notes is the precedent) down to a floor of two of its lines
 // (the picker's list keeps one row under the fold for the same reason: a region that gives way never gives way to
-// nothing); a short window pins the sheet to the top under the picker's 12px frame; and the box scrolls at every
-// height, the backstop for a window the floors alone overflow. In each builder one closure, kbFit, toggles kb-tight
+// nothing); a short window pins the sheet to the top under the picker's 12px frame; the box scrolls at every height, the
+// backstop for a window the floors alone overflow; and there the actions row is kept in view at the box's bottom, so Send
+// stays inside the clip, while grow keeps the answer box clear of that row (the maintainer's round 2 ruling, B-i). In each builder one closure, kbFit, toggles kb-tight
 // on THIS window's own resize (the shell sizes the pane iframe to the visible height, so the keyboard opening or
 // closing IS a resize here; render.ts's picker keys on the same event, at the same 480px), re-runs restCap (the
 // detail's cap at rest, the maintainer's ruling at the merge with main: with the keyboard down the cap is the larger of
@@ -43,7 +44,7 @@
 // builder's source (the waiting-reply-focus.test.ts idiom) and run them against stand-ins: the overlay is the shared
 // shim's node (ui/test-dom-shim.ts nodeFactory; its isConnected is its tree's own answer), the window a
 // listener-recording EventTarget stand-in with an innerHeight and no DOM edge, the answer box and the sheet's box
-// shim nodes whose geometry is the test's input. The source legs pin the four rules' declared properties (read with
+// shim nodes whose geometry is the test's input. The source legs pin the five rules' declared properties (read with
 // the sheet's comments stripped) and that no rule of the fix adds a font-size (ui/CLAUDE.md), and that the picker's
 // own fold strings stand as picker-keyboard.test.ts pins them. Synthetic only: no fixture text.
 import { test } from "node:test";
@@ -306,9 +307,12 @@ function boxNode(geom: { scroll: number; client: number }) {
   Object.defineProperty(box, "clientHeight", { get: () => geom.client, configurable: true });
   return { box, geom };
 }
-function grower(name: string, src: string, input: unknown, box: unknown, win: Win): () => void {
+// the actions row (.confirm-actions, kept in view at the box's bottom: styles.css #ut-reply-prompt .confirm-actions) as the
+// handler reads it: a shim node whose rect is the test's input; by default the shim's flat rect, level with the answer box's,
+// so the answer box is never under it and the handler leaves the box's scroll alone
+function grower(name: string, src: string, input: unknown, box: unknown, win: Win, actions: unknown = makeNode("div")): () => void {
   const body = growBlock(src, name) + "\n" + line(src, GROW_ARM, "the grow arming line", name) + "\nreturn grow;";
-  return new Function("input", "box", "window", body)(input, box, win) as () => void;
+  return new Function("input", "box", "window", "actions", body)(input, box, win, actions) as () => void;
 }
 
 for (const [name, src] of BUILDERS) {
@@ -430,6 +434,55 @@ for (const [name, src] of BUILDERS) {
     const grow2 = grower(name, src, g2.input, boxNode({ scroll: 400, client: 400 }).box, win) as (resized?: boolean) => void;
     grow2(true);
     assert.deepEqual(g2.writes, ["auto", "202px"], "no drag: the resize path fits the content, as the room case above");
+  });
+}
+
+// ── the answer box kept clear of the kept row, executed out of each builder ─────────────────────
+// Where the floors alone overflow the box (the keyboard up with a long ask, both chips, a narrow phone), the box scrolls and
+// styles.css keeps the actions row in view at its bottom (#ut-reply-prompt .confirm-actions, sticky), so Cancel and Send stay
+// inside the box's clip and a finger on Send sends (the maintainer's round 2 ruling, B-i: at a6e7f1cfa Send lay past the clip
+// in those states and a tap at its centre closed the sheet with the answer). The kept row paints over what the box scrolls
+// under it, and the answer box must not be that: grow's last line scrolls the box to its end when the box overflows and the
+// answer box's bottom lies under the row's top, where the answer box sits just above the row (without the line the row covered
+// the line being typed by up to about 20px, measured by refuter 2 and the ruling). The browser legs measure the real layout
+// (the typed row clear of the row, Send inside the clip and sending, in three engines); this runs the line against stand-ins
+for (const [name, src] of BUILDERS) {
+  test(`${name}: with the box overflowing, grow scrolls the box to its end when the answer box's bottom lies under the kept actions row, and leaves the box's scroll alone otherwise`, () => {
+    const g = inputNode({ offset: 78, client: 76, scroll: 76 });
+    const b = boxNode({ scroll: 400, client: 400 });
+    const scrolls: number[] = [];   // every write to the box's scrollTop, in order
+    Object.defineProperty(b.box, "scrollTop", { get: () => scrolls[scrolls.length - 1] ?? 0, set: (v: number) => { scrolls.push(Number(v)); }, configurable: true });
+    const rect = (top: number, bottom: number) => ({ top, bottom, left: 20, right: 360, width: 340, height: bottom - top, x: 20, y: top });
+    const actions = makeNode("div"); actions._rect = rect(300, 331);
+    const grow = grower(name, src, g.input, b.box, new Win(), actions) as (resized?: boolean) => void;
+    // the box fits its cap: nothing to keep clear, whatever the rects say
+    g.input._rect = rect(240, 318);
+    grow();
+    assert.deepEqual(scrolls, [], "the box fits (400 of 400px): grow leaves its scroll alone, even with the answer box's rect under the row's");
+    // the box overflows and the answer box ends above the row: nothing is covered, the scroll stays
+    b.geom.scroll = 460; g.input._rect = rect(200, 290);
+    grow();
+    assert.deepEqual(scrolls, [], "overflowing, the answer box's bottom (290) above the row's top (300): the scroll stays where the person or the engine left it");
+    // level with the row's top is not under it
+    g.input._rect = rect(222, 300);
+    grow();
+    assert.deepEqual(scrolls, [], "the answer box's bottom level with the row's top is not under it");
+    // the box overflows and the answer box's bottom lies under the row: scrolled to the box's end
+    g.input._rect = rect(240, 318);
+    grow();
+    assert.deepEqual(scrolls, [460], "overflowing, the answer box's bottom (318) under the row's top (300): the box is scrolled to its end, its scroll height, where the answer box sits just above the row");
+    // the resize path (kbFit's grow(true)) does the same
+    grow(true);
+    assert.deepEqual(scrolls, [460, 460], "and on the resize path: a keyboard opening under an answer already grown keeps the answer box clear of the row too");
+    // a dragged height stands against typing: the keystroke path returns before the line, so a keystroke moves nothing
+    g.writes.push("150px");
+    grow();
+    assert.deepEqual(scrolls, [460, 460], "a keystroke after a drag writes nothing and scrolls nothing (the drag guard returns first)");
+    // on the resize path the dragged height is clamped to the room and the line runs after the clamp
+    grow(true);
+    assert.deepEqual(scrolls, [460, 460, 460], "the resize path clamps a dragged height to the room, then keeps the answer box clear of the row");
+    // the line reads the two rects and the box's two heights, nothing of the window
+    assert.match(growBlock(src, name), /\n    if \(box\.scrollHeight > box\.clientHeight && input\.getBoundingClientRect\(\)\.bottom > actions\.getBoundingClientRect\(\)\.top\) box\.scrollTop = box\.scrollHeight;\n  \};$/, name + ": the line is grow's last, after the height is settled, so the answer box's rect is the one the height laid out");
   });
 }
 
@@ -559,7 +612,7 @@ test("the two builders stay twins for this fix: the same kbFit line, the same gr
 // WHERE the order is spelled; the trees themselves are measured by execution in the two browser legs (each pane's
 // `kinds`) and in tests/test_reply_sheet_served.py, which reads both real trees in CI. A builder that reorders its
 // column, or moves its chips to the other pane's placement, goes red here first and in the legs after.
-test("the two builders share the skeleton the four rules key on, in one order, and differ exactly in where the chips go", () => {
+test("the two builders share the skeleton the five rules key on, in one order, and differ exactly in where the chips go", () => {
   const [[, w], [, r]] = BUILDERS;
   assert.match(w, /\n  box\.append\(h, d\); if \(chip\) box\.appendChild\(chip\); if \(lchip\) box\.appendChild\(lchip\); if \(dd\) box\.appendChild\(dd\); box\.append\(input, actions\);\n/,
     "waiting.ts: title, quoted line, the file chip, the link chip, the detail, the answer box, the actions: the chips are flex children of the box (waiting-pane.css #ut-reply-prompt .wt-file: alone on their line, the cap is the line)");
@@ -571,11 +624,11 @@ test("the two builders share the skeleton the four rules key on, in one order, a
   assert.doesNotMatch(r, /box\.appendChild\((chip|lchip)\)/, "render.ts appends no chip to the box");
   for (const [name, src] of BUILDERS) {
     // the classes the rules key on, each minted once per builder, on the element the rule means
-    assert.match(src, /el\("div", "picker-overlay confirm-overlay"\); overlay\.id = "ut-reply-prompt";/, name + ": the overlay id the four rules are scoped to");
+    assert.match(src, /el\("div", "picker-overlay confirm-overlay"\); overlay\.id = "ut-reply-prompt";/, name + ": the overlay id the five rules are scoped to");
     assert.match(src, /const box = el\("div", "picker-box confirm-box"\);/, name + ": the box (#ut-reply-prompt .picker-box)");
     assert.match(src, /el\("div", "ut-detail open"\)/, name + ": the detail (#ut-reply-prompt .ut-detail.open)");
     assert.match(src, /input\.className = "ut-reply-input"; input\.rows = 3;/, name + ": the answer box (#ut-reply-prompt .ut-reply-input), three rows");
-    assert.match(src, /const actions = el\("div", "confirm-actions"\);/, name + ": the actions row");
+    assert.match(src, /const actions = el\("div", "confirm-actions"\);/, name + ": the actions row (#ut-reply-prompt .confirm-actions, kept in view at the box's bottom)");
   }
 });
 
@@ -630,15 +683,24 @@ test("a short window pins the sheet to the top under the picker's 12px frame, on
   assert.match(RENDER, /const kbFit = \(\) => document\.getElementById\("picker"\)\?\.classList\.toggle\("kb-tight", window\.innerHeight < 480\)/, "the picker's own kbFit is untouched");
 });
 
-test("this dialog's box scrolls at EVERY height, on its own selector: the backstop for a window the floors alone overflow", () => {
+test("this dialog's box scrolls at EVERY height, on its own selector: the backstop for a window the floors alone overflow (the actions row kept in view there: the next pin)", () => {
   const r = rule("#ut-reply-prompt .picker-box");
   assert.match(r, /overflow-y: auto;/, "the shared .picker-box is overflow hidden and scrolls only under the fold (480px); above it a row laid out past the cap was clipped and not hit-testable, so a tap where Send was painted fell on the backdrop and closed the sheet with the answer (the maintainer's round 1 ruling); the box scrolls instead, at any height");
   assert.doesNotMatch(r, /max-height|height:|padding|display/, "the scroll alone: no cap of its own (an id-scoped max-height would outrank the fold's calc(100dvh - 24px) and widen this dialog's sizing)");
   assert.equal(r.replace(/\s+/g, " ").trim(), "#ut-reply-prompt .picker-box { overflow-y: auto; }", "one declaration, so the shared box rule's other declarations reach this dialog unchanged");
 });
 
+test("the actions row is kept in view at the box's bottom, on this dialog's own selector: where the floors overflow the box, Cancel and Send stay inside its clip", () => {
+  const r = rule("#ut-reply-prompt .confirm-actions");
+  assert.match(r, /position: sticky; bottom: 0;/, "sticky at the bottom of the box's scrollport: where the floors overflow the box and it scrolls, the row stays in view, so Send is inside the clip and a finger at its centre reaches it (at a6e7f1cfa Send lay partly or wholly past the clip at 390x420 and 480 with a 300-character ask and at 320 wide with the fixture, and a tap at its centre closed the sheet with the answer, in three engines; the maintainer's round 2 ruling, B-i). The browser legs and the served leg click Send's centre in those states and read one answer posted");
+  assert.match(r, /background: var\(--vscode-editorWidget-background, #252526\);/, "opaque, in the box's own background, so what scrolls under the row does not show through it");
+  assert.match(rule(".picker-box"), /background: var\(--vscode-editorWidget-background, #252526\);/, "the box's background, which the row repeats");
+  assert.equal(r.replace(/\s+/g, " ").trim(), "#ut-reply-prompt .confirm-actions { position: sticky; bottom: 0; background: var(--vscode-editorWidget-background, #252526); }", "three declarations, so the shared .confirm-actions rule's layout reaches this dialog unchanged");
+  assert.match(CSS, /\n\.confirm-actions \{ display: flex; gap: 8px; margin-top: 6px; \}\n/, ".confirm-actions is as it was: the other dialogs' rows are untouched");
+});
+
 test("the fix adds no font-size and touches no shared dialog rule", () => {
-  for (const sel of ["#ut-reply-prompt .ut-reply-input", "#ut-reply-prompt .ut-detail.open", "#ut-reply-prompt.kb-tight", "#ut-reply-prompt .picker-box"]) {
+  for (const sel of ["#ut-reply-prompt .ut-reply-input", "#ut-reply-prompt .ut-detail.open", "#ut-reply-prompt.kb-tight", "#ut-reply-prompt .picker-box", "#ut-reply-prompt .confirm-actions"]) {
     assert.doesNotMatch(rule(sel), /font-size/, sel + ": no new font-size (ui/CLAUDE.md: reuse a size already on the surface)");
     assert.equal((CSS.match(new RegExp("\\n" + sel.replace(/[.#]/g, "\\$&") + " \\{", "g")) || []).length, 1, sel + " is declared once");
   }

@@ -350,7 +350,9 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // keyboard up, and a tap there fell on the backdrop): the wanted height is written, the box's overflow past its own
   // cap read, and the height gives that overflow back, never under the floor. Run on the window's resize too (kbFit),
   // so a keyboard opening or closing re-fits an answer already grown; the box's own scroll (styles.css
-  // #ut-reply-prompt .picker-box) is the backstop for a window the floors alone overflow. A height the person DRAGGED
+  // #ut-reply-prompt .picker-box) is the backstop for a window the floors alone overflow, with the actions row kept in view
+  // at its bottom (#ut-reply-prompt .confirm-actions) and the answer box kept clear of that row (grow's last line). A height
+  // the person DRAGGED
   // stands against typing (the textarea keeps resize: vertical): the guard is file-comments.ts autosize's, compared
   // string to string, an inline height that is not what this handler last wrote was dragged there, before the first
   // keystroke or since (the maintainer's round 1 ruling: without it every keystroke snapped a dragged box back to its
@@ -374,6 +376,12 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
     const over = box.scrollHeight - box.clientHeight;   // the box past its own cap with the answer at that height
     if (over > 0) input.style.height = Math.max(floor, want - over) + "px";
     sizedTo = input.style.height;
+    // the kept row (styles.css #ut-reply-prompt .confirm-actions, sticky at the box's bottom) holds Cancel and Send inside the
+    // box's clip wherever the floors overflow the box, over whatever the box scrolls under it; the answer box is the one thing it
+    // must not cover, so when the box overflows and the answer box's bottom lies under the row, the box is scrolled to its end,
+    // where the answer box sits just above the row (the maintainer's round 2 ruling, B-i: without this line the row covered the
+    // line being typed by up to about 20px)
+    if (box.scrollHeight > box.clientHeight && input.getBoundingClientRect().bottom > actions.getBoundingClientRect().top) box.scrollTop = box.scrollHeight;
   };
   input.addEventListener("input", () => grow());
   // NOT a tap on the backdrop: a click whose press began inside the sheet, or whose release landed inside it. Chromium and
