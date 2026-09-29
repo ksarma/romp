@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """A pin over a served page or a served script or style constant, in a form this census reads, reads the ELEMENT, the PARSED RULE or
-the CODE it pins, never text a comment can satisfy. What the census reads, what it refuses, and that every other form is unread: the
+the CODE it pins, never text a comment can satisfy, except in the three forms the Reach paragraph below names as judged otherwise
+than the pin reads: a position pin handed a start or end argument, a pin over a getter the test renders after setting kernel state,
+and an attribute two in-module base classes bind. What the census reads, what it refuses, and that every other form is unread: the
 Reach paragraph below.
 
 D1, the maintainer's round 1 (2026-09-19): two served comments spelled the viewport meta's own tokens, and three assertions that named the
@@ -58,7 +60,8 @@ rendered or read once; a membership or count row is comment-satisfiable when its
 that text (a page: tests/served_css.py comment_spans, an HTML comment, a /* */ inside a style element, a /* */ or // inside
 a script element; a constant: the scanner of each kind it lands in, js_comment_spans for script, css_comment_spans for
 style, comment_spans for markup, their union for a text that lands in more than one), an index or find row when the FIRST
-occurrence is comment text and an rindex or rfind row when the LAST is, the occurrence such a pin reads. A row whose
+occurrence is comment text and an rindex or rfind row when the LAST is, the occurrence such a pin reads when it is handed no start
+or end argument (one handed one is judged the same way: the Reach paragraph below). A row whose
 literal occurs ONLY in comments pins prose and is reported the same way. The texts a row is judged against (judged_texts; the
 rulings at the merge of main's login cookie split, 2026-09-28): a constant's value; a getter's render and every string constant
 its own return statements return (getter_renders: the page `_files_page` serves when its sheet cannot be read); and for a row over
@@ -162,12 +165,21 @@ tuple or a list, is not checked).
 
 Reach (round 6, the coordinator's decisions on PR 858, B.5): the census READS the forms the paragraphs above and readers_of's
 docstring name, and REFUSES the forms they name as refused, each an unclassified row naming its site; the reader census also fails a
-literal membership no pins row judges (reader_status). Every other form is UNREAD and unguarded: the pins census holds no row for it
+literal membership with no pins row at its module, line and text (reader_status; the key is the line, not the literal, so a second
+membership over the same text on a line a pins row holds passes on that row, `assert "a" in page and any(w in page for w in ("b",))`,
+line 26 of test_a_literal_membership_no_pins_row_judges_is_unclassified). Every other form is UNREAD and unguarded: the pins
+census holds no row for it
 and nothing refuses it (the reader census may name such a read without judging it, an `assert` over a non-literal needle, say, or
 hold no row at all). Two forms are read over-bound, their reads rows over the page: a helper whose returns differ in length (the
 union of their positions: `return r.status, r.read(), r.headers` and `return r.status, r.read()` give {1, -1, -2}, so `resp[-1]`
 binds as the page though it is the headers on the first road), and a name bound to a fetched tuple and later rebound to a whole text
-(it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it). One form is read and
+(it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it). One form is judged at
+another occurrence than the one the pin reads: a position pin handed a start or end argument (`js.index("x", 799)`, `sw.index("(",
+m.start())`) is judged over the whole text, an index or find row at the literal's first occurrence and an rindex or rfind row at its
+last, so a bound that skips that occurrence can read another one inside a comment and pass (6 rows at 5a5aab70c, all index; one,
+the worker test of tests/test_fetch_wrapper_census.py, is flagged, its first occurrence being comment text, and stands in the visible
+listing); a count row handed one is judged over every occurrence in the text, so a comment outside its bound can fail it and none
+inside can pass it. One form is read and
 judged against another state than the test's: a pin over a getter the test renders after setting kernel state (54 rows at
 97e65ad4e) is judged against the hermetic render and the getter's constant returns, so a literal commented only in the state the test
 sets passes (extra8-4). One form is read against another binding than the one Python resolves: an attribute more than one in-module
@@ -1953,7 +1965,8 @@ def judged_texts(name, served=False):
 def judge_rows(rows):
     """(flagged, zero) for rows (module, line, literal, text, form, readable, served): `flagged` every row a comment can satisfy in a
     text it is judged against (judged_texts; a membership or a count when any occurrence sits in a comment, an index or find row when
-    the first does, an rindex or rfind row when the last does), `zero` every row whose literal occurs in NONE of its texts. A zero-hit
+    the first does, an rindex or rfind row when the last does, over the whole text: a start or end argument handed the pin is not
+    modelled, the module docstring's Reach), `zero` every row whose literal occurs in NONE of its texts. A zero-hit
     row proves nothing, since a comment spelling its literal cannot satisfy what the text does not carry anywhere (the rulings at the
     merge of main's login cookie split, 2026-09-28: it had passed in silence, and one of them was a fetched row whose literal is in the
     page-key script alone, sound only while that script carried no comment); it is judged against the wrong text, or its literal is
@@ -3918,8 +3931,10 @@ class C(unittest.TestCase):
         # (23, the stated extra8-8 shape) and a whole-text compare (24) keep their status, and the forms the pins census does not
         # read are unclassified: a conditional expression (11), a disjunction (12), any() over literals (13), assertFalse of a `not
         # in` (14), an if of one (15), a membership bound to a Name (17), assertEqual and assertIs of one (18, 19), assertIn by
-        # keywords (20), a chained comparison (21) and a walrus (22). Dropping the demotion, either mark, the negative exemption, its
-        # conjunct road or the positive `not in` reds this. The rows are named, never inferred.
+        # keywords (20), a chained comparison (21) and a walrus (22). A second membership over the text on a line a pins row holds
+        # passes on that row (26, `w in page` beside "o3"): reader_status keys on the module, line and text, not the literal, the
+        # residual the module docstring's Reach states, and this line its witness. Dropping the demotion, either mark, the negative
+        # exemption, its conjunct road or the positive `not in` reds this. The rows are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 class T(unittest.TestCase):
@@ -3946,6 +3961,7 @@ class T(unittest.TestCase):
         self.assertIn(needle, page)
         self.assertEqual(page, "x")
         assert "o1" not in page and "o2" not in page
+        assert "o3" in page and any(w in page for w in ("o4",))
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3958,7 +3974,7 @@ class T(unittest.TestCase):
         members = {("m.py", r[0], r[2]) for r in rows if r[3] == "in"}
         statuses = [(r[0], reader_status("m.py", *r, pins, members, {"_landing": frozenset(["markup"])})) for r in readers if r[1] == "assert"]
         self.assertEqual([line for line, st in statuses if st == "unclassified"], [11, 12, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22])
-        self.assertEqual([line for line, st in statuses if st == "assert"], [5, 6, 7, 7, 8, 9, 10, 23, 24, 25, 25])
+        self.assertEqual([line for line, st in statuses if st == "assert"], [5, 6, 7, 7, 8, 9, 10, 23, 24, 25, 25, 26, 26])
 
 
 if __name__ == "__main__":
