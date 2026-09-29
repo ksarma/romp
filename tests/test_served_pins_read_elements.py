@@ -31,7 +31,7 @@ of the kernel's served TEXTS: a call to one of its page getters, or one of its s
 call with no arguments, to a Name, a self.<method> or a cls.<method>, of a function of the module whose every return statement
 returns one such text inline, every function of the module with that name returning the same one (round 6, RETTEXT; a form the
 textual census declines; such a call is read where the census reads a getter's call, refused by check (5) below where that check
-refuses a text inline, and unread where a getter's call is unread, an await or a text nested in another expression; the same call
+refuses a text inline, and unread where a getter's call is unread, an await of it for one; the same call
 through any other callee that names the function, by a Name or an attribute, `T._js()`, or by a string constant equal to its name,
 `getattr(self, "_js")()`, reads nothing, and check (5) refuses the function's returns, while a name built at run time,
 `getattr(self, "_" + k)()`, is unread; a call of a name two functions of the module define with different returns, a method per
@@ -1345,7 +1345,7 @@ def _text_helpers(tree, getters, constants):
     inline (_text: `def _mobile_js(): return km._LANDING_MOBILE_JS`), keyed as its call with no arguments is looked up (_resolve,
     _bind): such a call to a Name, a self.<method> or a cls.<method> (_callee) reads as the text, inline and bound, where the census
     reads the getter's call (round 6, RETTEXT); _fail_closed's check (5) refuses it where it refuses a text inline, and it is unread
-    where the getter's call is unread (an await, a text nested in another expression). A function with a return of anything else,
+    where the getter's call is unread (an await of it, for one). A function with a return of anything else,
     or of two texts, is no such helper, and a call with arguments, or through any other callee (`T._js()`, `obj._page()`,
     `getattr(self, "_js")()`), reads as nothing: _fail_closed's check (5) refuses the helper's returns where the module names the
     helper by a Name, an attribute or a string constant equal to its name, and a name built at run time (`getattr(self, "_" + k)()`)
@@ -1775,15 +1775,15 @@ def _fail_closed(tree, lines, routes, reads, getters, constants):
         whole value of: an assignment whose targets are not all a Name, a self.<attr> or cls.<attr>, or a tuple or list of Names
         (`d["k"] = km._landing()`, `d["k"] = _page()`); an annotated or augmented assignment or a walrus; a return, a yield or a
         yield from; or a lambda. A text nested inside another expression there (`return km._landing(), 1`, `x = [_page()]`) is
-        not checked, and neither is an await (`await km._landing()`, `await _page()`): both are unread. A return in a text helper
-        of the module is not refused where the module calls the helper only by such calls: each is read where the census reads a
-        getter's call (_resolve), refused here where a text inline is, and unread where a getter's call is. It is refused where
-        the module also hands the helper on uncalled (`{"login": _render_login}`, then `render()` in a loop), calls it with
-        arguments, or calls it through any other callee (`T._js()`, `obj._page()`), which the census does not read and counts as
-        handing it on, and where a string constant of the module equals its name (`getattr(self, "_js")()`, `globals()["_page"]()`,
-        counted as handing it on too); a name built at run time (`getattr(self, "_" + k)()`) is neither read nor refused. A
-        function whose name another function of the module defines with other returns is no text helper (_text_helpers), so its
-        text return is refused.
+        not checked, and neither is an await (`await km._landing()`, `await _page()`), which neither census reads. A return in a
+        text helper of the module is not refused where the module calls the helper only by such calls: each is read where the
+        census reads a getter's call (_resolve), refused here where a text inline is, and unread where a getter's call is. It is
+        refused where the module also hands the helper on uncalled (`{"login": _render_login}`, then `render()` in a loop), calls
+        it with arguments, or calls it through any other callee (`T._js()`, `obj._page()`), which the census does not read and
+        counts as handing it on, and where a string constant of the module equals its name (`getattr(self, "_js")()`,
+        `globals()["_page"]()`, counted as handing it on too); a name built at run time (`getattr(self, "_" + k)()`) is neither
+        read nor refused. A function whose name another function of the module defines with other returns is no text helper
+        (_text_helpers), so its text return is refused.
     A call to a Name the same function binds to an attribute (`seg = km._route_seg`, then `seg("/")`) calls that function, no fetch
     helper of the test's, and is not checked (tests/test_perf_stats.py's route-mark test asserts over `seg("/")` so)."""
     rows, seg = [], lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
