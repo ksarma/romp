@@ -192,15 +192,22 @@ subject; `verify` refuses the branch otherwise.
    `working-directory:` on an install step, an `env:` or `defaults:` on the job or the workflow, or
    a step the runner does not read, named or not); change the runner with it. `--wrap LEG=PREFIX` runs a leg
    under this machine's slot or scope wrapper (the wrap keeps your environment; the leg does not
-   see what it sets). The legs run in a private clone of the batch
-   head's exact sha under the state dir, verified against the sha's tree first, never in the batch
-   worktree: the worktree need not be clean, and its uncommitted edits are not swept (the runner
-   prints how many there are). The legs mirror CI's Python cells and CI's served step. pytest runs
-   first, over all of `tests/`, before `npm ci` and with an empty browser directory, as CI's Python
-   cells run it: the browser-backed tests skip there, as in CI, and the other tests in the served
-   files run with the SDK. Then come `npm ci` from the sha's lockfile, bats, the manager and tooling
-   node tests, the ledger check, `npm run typecheck`, `npm test`, `npm run build` and the served
-   leg: every leg at every head, whatever it changed, since the webview tests and the served tests
+   see what it sets). The legs run in private clones of the batch
+   head's exact sha under the state dir, one per CI job, each verified against the sha's tree before
+   its first leg, never in the batch worktree: the worktree need not be clean, and its uncommitted
+   edits are not swept (the runner prints how many there are). The legs run as CI's jobs run them:
+   each mirrors one step of the head's `ci.yml`, found by its name, and the legs whose steps one job
+   holds share one fresh checkout, in that job's step order, while each job's legs start from a
+   checkout of their own, as CI's jobs do. `npm ci` runs only where that job runs it, so the legs
+   of a job that installs nothing (bats, the manager tests and the tooling tests) run with no
+   `node_modules`, as in CI. The runner reads the grouping from `ci.yml`, and the result records
+   each group's job, legs and checkout. The pytest leg's job runs first: pytest runs over all of
+   `tests/`, with no `node_modules` and with an empty browser directory, as CI's Python cells run
+   it: the browser-backed tests skip there, as in CI, and the other tests in the served files run
+   with the SDK. The legs are pytest, `npm ci` from the sha's lockfile, bats, the manager and
+   tooling node tests, the ledger check (in a checkout of its own: CI runs it in a workflow of its
+   own), `npm run typecheck`, `npm test`, `npm run build` and the served leg: every leg at every
+   head, whatever it changed, since the webview tests and the served tests
    also read files outside `kernel/kernel.py`, `ui/` and `vscode-extension/`. The served leg runs
    what CI's served step runs. The runner finds that step by its name, "Browser-backed served-page
    tests (pytest)", in whichever job of the head's `ci.yml` holds it. It runs the files the step's
@@ -225,11 +232,13 @@ subject; `verify` refuses the branch otherwise.
    refuses a served step it does not read in full: an expression in its `env:`, an `env:` on its
    job or the workflow, a line in its `run:` other than a pip install and the one pytest line, or a
    job whose setup-python step before it names no quoted `python-version:`. The served leg runs
-   last, because CI runs the served step after its Build step. The pane bench
+   where CI's served step runs, after the steps its job runs before it. The pane bench
    (`tests/ui-bench.test.mjs`), the Browser legs step (its roster checks, and the rostered browser
    tests with `ROMP_BROWSER_LEGS_REQUIRE=1`; the sweep's `npm test` runs those tests without the
-   switch, so a Chromium that fails to launch there skips instead of failing), the other Python
-   versions and macOS run only in the batch's CI. CI's free-threaded cell runs pytest with
+   switch, so a Chromium that fails to launch there skips instead of failing), the PDF renderer
+   smoke step (the tooling leg runs `tools/pdf-smoke.test.mjs` with no `node_modules`, where it
+   skips, as in CI's job for that leg), the other Python versions and macOS run only in the
+   batch's CI. CI's free-threaded cell runs pytest with
    `PYTHON_GIL=0`, which the sweep does not set, so a free-threaded `--python` runs with its own
    default. Each
    leg gets an allowlisted environment: a TMPDIR of its own, made when the leg starts and removed
@@ -241,10 +250,17 @@ subject; `verify` refuses the branch otherwise.
    (`NODE_OPTIONS=--max-old-space-size=8192`), which CI does not set. The allowlist governs
    variables only: the legs run as your user, so a file stays readable at its absolute path (a
    credential file, an agent's socket), and a leg can read `/proc/<pid>/environ` of the runner and
-   of your other processes, your shell and sessions included. A leg that changes the checkout (a tracked file; a file no rule of a
+   of your other processes, your shell and sessions included. Nothing a leg leaves in its checkout
+   reaches a leg of another job, not a file in the clone's `.git` (a hook, an attributes file, a
+   replace ref) and not an ignored file (bytecode, `node_modules`); the legs of one job share its
+   checkout, as CI's steps do. The machine itself stays shared, and a leg can leave a file there
+   that a later leg reads: `/tmp` outside each TMPDIR, `/dev/shm`, `/run/user/<uid>`, the npm and
+   Playwright caches, your passwd home, tmux's socket directory (tmux ignores TMPDIR), `--python`'s
+   directory and your repository's object store, which every clone reads. A leg that changes the
+   checkout (a tracked file; a file no rule of a
    tracked `.gitignore` covers, whatever the clone's own git state says; after `npm ci`, any
    ignored file outside `vscode-extension/node_modules` that `npm ci` added or changed) makes the
-   run invalid. It writes every run to
+   run invalid, and so does a job's fresh checkout that is not the sha's tree. It writes every run to
    `<state dir>/sweeps/<full sha>.json`, which keeps every run at that sha. The state dir is
    `$ROMP_STATE_DIR`, else `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and
    `batch.py` with the same environment. When one leg fails on a known flake,
@@ -264,9 +280,10 @@ subject; `verify` refuses the branch otherwise.
    after it keeps the failure; a stop in the moments after the leg exits and before the runner has
    finished its record (up to about five seconds when the leg left processes to reap) loses that
    failure, and the next run needs no flake for it. The runner
-   refuses a run that cannot count, and refuses a re-run of a leg that did not fail. A re-run of
-   pytest runs alone, before any `npm ci`, as the pytest leg does; one that names pytest and a leg
-   after `npm ci` is refused, so re-run pytest first, then the others. `verify` reads the whole
+   refuses a run that cannot count, and refuses a re-run of a leg that did not fail. A re-run runs
+   each leg it names in a fresh checkout of that leg's job, with `npm ci` first where that job runs
+   it, so one re-run may name legs of several jobs; a re-run of pytest, or of a leg whose job runs
+   no `npm ci`, has none, and `deps` named with a later leg of its job runs as a leg. `verify` reads the whole
    history, and the body's first block names each excused failure and its flake, and each invalid
    run with the legs it failed. `scripts/sweep.py check --tree ../romp-batch-<name>` prints
    what `verify` will read.

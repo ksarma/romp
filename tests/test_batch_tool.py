@@ -343,8 +343,9 @@ class Fixture:
         private checkout it ran in (a reader refuses a run without one) unless `runner` is given, and the run's own
         verdict unless `verdict` is."""
         run.setdefault("runner", {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()},
-                                  "checkout": {"form": "clone", "path": "/nonexistent/trees/test", "create_s": 0.1,
-                                               "verify_s": 0.1, "files": 1, "setup": None}})
+                                  "checkout": {"form": "clone", "per": "ci.yml job", "files": 1, "groups": [
+                                      {"job": "python", "legs": [sweep.PYTEST_LEGS[0]], "path": "/nonexistent/trees/test",
+                                       "create_s": 0.1, "verify_s": 0.1, "setup": None}]}})
         run.setdefault("verdict", sweep.run_verdict(run))
         return run
 

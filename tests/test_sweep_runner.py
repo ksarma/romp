@@ -243,6 +243,9 @@ with open(LOG, "a") as f:
                                      if os.path.isdir(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")) else None),
                         "tmp": sorted(os.listdir(os.environ["TMPDIR"])) if os.path.isdir(os.environ.get("TMPDIR", "")) else None,
                         "earlier_tmp_alive": sorted({t for t in earlier if t and os.path.exists(t)}),
+                        # round 2, decision 13: a hook and an attributes file an earlier leg planted in this checkout's .git
+                        "git_plants": sorted(n for n in (os.path.join("hooks", "post-checkout"), os.path.join("info", "attributes"))
+                                             if root and os.path.exists(os.path.join(root, ".git", n))),
                         "state": state}) + "\n")
 act = ctl.get("action", {}).get(leg)
 if act == "commit":
@@ -305,6 +308,26 @@ elif act == "plant":                             # config a later leg would read
         f.write("on\n")
     with open(os.path.join(os.environ["TMPDIR"], "planted-by-a-leg"), "w") as f:
         f.write("planted\n")
+elif act == "leftovers":                         # what git and python read in a checkout, left in the leg's own
+    os.makedirs(os.path.join(root, ".git", "hooks"), exist_ok=True)
+    with open(os.path.join(root, ".git", "hooks", "post-checkout"), "w") as f:
+        f.write("#!/bin/sh\nexit 0\n")
+    os.chmod(os.path.join(root, ".git", "hooks", "post-checkout"), 0o755)
+    os.makedirs(os.path.join(root, ".git", "info"), exist_ok=True)
+    with open(os.path.join(root, ".git", "info", "attributes"), "w") as f:
+        f.write("* r2probe\n")
+    os.makedirs(os.path.join(root, "kernel", "__pycache__"), exist_ok=True)
+    with open(os.path.join(root, "kernel", "__pycache__", "other.cpython-399.pyc"), "wb") as f:
+        f.write(b"bytecode")
+elif act == "corrupt":                           # a blob of the sha rewritten in the BATCHER's object store
+    import zlib
+    oid = subprocess.run(["git", "-C", ctl["tree"], "rev-parse", "HEAD:kernel/other.py"], stdout=subprocess.PIPE,
+                         text=True, check=True).stdout.strip()
+    obj = os.path.join(ctl["tree"], ".git", "objects", oid[:2], oid[2:])
+    os.chmod(obj, 0o644)
+    data = b"OTHER = 2\n"
+    with open(obj, "wb") as f:
+        f.write(zlib.compress(b"blob " + str(len(data)).encode() + b"\0" + data))
 elif act == "home":
     with open(os.path.join(home, ".leftover"), "w") as f:
         f.write("a test that wrote into HOME\n")
@@ -528,6 +551,16 @@ jobs:
         run: python -m pip install cryptography
 """ + SEED_SDK_STEP + """      - name: Run pytest
         run: python -m pytest -q
+  shell:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run bats
+        run: bats --print-output-on-failure tests/*.bats
+      - name: Manager handshake tests (node --test)
+        run: node --test tests/manager-*.test.js
+      - name: Vendored tooling and host-script tests (node --test)
+        run: node --test tools/*.test.mjs vendor/track-changents/hooks/*.test.mjs
   vscode-extension:
     runs-on: ubuntu-24.04
     defaults:
@@ -537,7 +570,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install deps
         run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
 """ + SEED_SERVED_PYTHON + SEED_SERVED_STEP
+# The order the legs run in at the seed's ci.yml (round 2, decision 13): the python job's, the shell job's, the
+# extension job's, each job's legs in its step order, then the ledger, whose check is in no job of ci.yml. Each job's
+# legs share one fresh checkout; each group starts from its own.
+SEED_ORDER = [PYTEST_LEG, "bats", "manager", "tools", "deps", "typecheck", "npm-test", "build", "served", "ledger"]
+SEED_GROUPS = [("python", [PYTEST_LEG]), ("shell", ["bats", "manager", "tools"]),
+               ("vscode-extension", ["deps", "typecheck", "npm-test", "build", "served"]), (None, ["ledger"])]
 SEED_HOST = 'SDK_TESTED_VERSION = "%s"\n' % SEED_PIN
 # The files the seed's served step selects, in the order its globs expand them (one glob after the other).
 SEED_SERVED_FILES = ["tests/test_b_browser.py", "tests/test_a_served.py"]
@@ -739,7 +784,8 @@ class Runner(_Base):
             self.assertEqual(leg["rc"], 0, name)
         self.assertEqual([n for n in sweep.LEGS if r["legs"][n]["owed"] is not False], list(sweep.LEGS),
                          "every head owes every leg: the webview legs whatever it changed, deps in every fresh checkout")
-        self.assertEqual(w.legs_called(), list(sweep.LEGS), "run in roster order")
+        self.assertEqual(w.legs_called(), SEED_ORDER, "run by ci.yml job, each job's legs in its step order")
+        self.assertEqual(r["order"], SEED_ORDER, "the result records the order the legs ran in")
         self.assertTrue(r["finished"])
         self.assertIsNone(r["invalid"])
 
@@ -751,7 +797,7 @@ class Runner(_Base):
         self.assertEqual(r["verdict"], "red")
         self.assertEqual(r["red"], ["bats"])
         self.assertEqual(r["legs"]["bats"]["rc"], 1)
-        self.assertEqual(w.legs_called(), list(sweep.LEGS), "the legs after the red one ran too")
+        self.assertEqual(w.legs_called(), SEED_ORDER, "the legs after the red one ran too")
         self.assertIn("sweep red at %s: bats (rc 1)" % w.head()[:10], p.stdout)
 
     def test_every_head_owes_the_webview_legs_whatever_it_changed(self):
@@ -769,7 +815,7 @@ class Runner(_Base):
                 if road:
                     w.git("update-ref", "-d", "refs/remotes/origin/main")
                 w.run(check=0)
-                self.assertEqual(w.legs_called(), list(sweep.LEGS), "the npm fake ran the webview legs")
+                self.assertEqual(w.legs_called(), SEED_ORDER, "the npm fake ran the webview legs")
                 r = w.result()
                 for name in sweep.WEBVIEW_LEGS:
                     self.assertIs(r["legs"][name]["owed"], True, "%s after a change to %s" % (name, path))
@@ -791,7 +837,7 @@ class Runner(_Base):
         w.git("push", "-q", "origin", "main")
         self.assertEqual(w.head(), w.git("rev-parse", "origin/main"), "origin/main holds the merge commit")
         w.run(check=0)
-        self.assertEqual(w.legs_called(), list(sweep.LEGS), "the webview legs ran at the merge commit")
+        self.assertEqual(w.legs_called(), SEED_ORDER, "the webview legs ran at the merge commit")
         r = w.result()
         for name in sweep.WEBVIEW_LEGS:
             self.assertIs(r["legs"][name]["owed"], True, "%s at the merge commit" % name)
@@ -863,7 +909,7 @@ class Runner(_Base):
                 self.addCleanup(w.close)
                 w.ctl({"action": {"manager": act}})
                 p = w.run(check=3)
-                self.assertEqual(w.legs_called(), [PYTEST_LEG, "deps", "bats", "manager"], "the legs after it did not run")
+                self.assertEqual(w.legs_called(), [PYTEST_LEG, "bats", "manager"], "the legs after it did not run")
                 self.assertIn("sweep invalid at %s: after the manager leg" % w.head()[:10], p.stdout)
                 r = w.result()
                 self.assertEqual(r["verdict"], "invalid")
@@ -1412,29 +1458,40 @@ def _alive(pid):
 
 
 class Checkout(_Base):
-    """Round 1, Class A: the legs run in a private clone of the exact sha under the state dir, verified before any leg
-    (A2), re-read after every leg (A4), and removed on every exit path with TMPDIR (A5); stale checkouts of runs that
-    are gone are removed; a --leg re-run installs the deps first; the result records the checkout."""
+    """Round 1, Class A: the legs run in private clones of the exact sha under the state dir, one per ci.yml job (round
+    2, decision 13), each verified before its job's first leg (A2), re-read after every leg (A4), and removed when its
+    job's legs end and on every exit path with TMPDIR (A5); stale checkouts of runs that are gone are removed; a --leg
+    re-run of a leg its job runs after npm ci installs the deps first (a pytest re-run has no setup); the result records
+    each job's clone."""
 
     def trees(self):
         return os.path.join(self.w.xdg, "romp", "sweeps", "trees")
 
     def test_the_legs_run_in_a_private_clone_of_the_sha_that_is_gone_afterwards(self):
+        """A1, one clone per ci.yml job (round 2, decision 13): the legs whose steps one job holds run in one private clone
+        of the sha, each group in its own (the seed's python, shell and extension jobs, then the ledger's own), each
+        under the state dir and gone afterwards with its marker; the result records each group's job, legs and clone."""
         w = self.w
         sha = w.head()
         expected = expected_tree(w, sha)
         p = w.run(check=0)
         r = w.result()
         co = r["runner"]["checkout"]
-        self.assertEqual((co["form"], co["files"], co["setup"]), ("clone", len(expected), None))
-        self.assertTrue(co["path"].startswith(os.path.join(self.trees(), sha[:12] + "-")), co["path"])
-        for key in ("create_s", "verify_s"):
-            self.assertIsInstance(co[key], (int, float))
+        self.assertEqual((co["form"], co["per"], co["files"]), ("clone", "ci.yml job", len(expected)))
+        self.assertEqual([(g["job"], g["legs"]) for g in co["groups"]], SEED_GROUPS)
+        paths = [g["path"] for g in co["groups"]]
+        self.assertEqual(len(set(paths)), len(paths), "each group has a clone of its own")
+        root_of = {leg: g["path"] for g in co["groups"] for leg in g["legs"]}
+        for g in co["groups"]:
+            self.assertTrue(g["path"].startswith(os.path.join(self.trees(), sha[:12] + "-")), g["path"])
+            for key in ("create_s", "verify_s"):
+                self.assertIsInstance(g[key], (int, float))
+            self.assertIsNone(g["setup"], "a full run's npm ci is the deps leg, in the extension job's clone")
+            self.assertFalse(os.path.exists(g["path"]), "each clone is removed")
         for c in w.calls():
-            self.assertEqual(c["root"], co["path"], "%s ran in the checkout" % c["leg"])
+            self.assertEqual(c["root"], root_of[c["leg"]], "%s ran in its job's clone" % c["leg"])
             self.assertEqual(c["tree"], expected)
-        self.assertFalse(os.path.exists(co["path"]), "the checkout is removed at the end")
-        self.assertEqual(os.listdir(self.trees()), [], "and its sha marker with it")
+        self.assertEqual(os.listdir(self.trees()), [], "and each sha marker with it")
         self.assertFalse(os.path.exists(r["runner"]["tmpdir"]))
         # the clone is the checkout's own repository: a leg's git writes land there, not in the batcher's
         self.assertEqual(w.git("worktree", "list", "--porcelain").count("worktree "), 1)
@@ -1520,7 +1577,7 @@ class Checkout(_Base):
                 r = w.result()
                 self.assertEqual(r["verdict"], "invalid")
                 self.assertIn("after the bats leg the checkout is not the sha's tree: ancestor 1 (%s)" % target, r["invalid"])
-                self.assertEqual(w.legs_called(), [PYTEST_LEG, "deps", "bats"], p.stdout + p.stderr)
+                self.assertEqual(w.legs_called(), [PYTEST_LEG, "bats"], p.stdout + p.stderr)
 
     def test_a_stop_signal_stops_the_leg_its_descendants_and_removes_tmpdir_and_the_checkout(self):
         """A5: a stop signal during a leg whose children write into TMPDIR, one in the leg's process group and one under
@@ -1692,9 +1749,75 @@ class Checkout(_Base):
             self.assertTrue(os.path.exists(made["held"][0]), "a checkout whose run holds its lock is kept")
             self.assertEqual(sorted(os.listdir(trees)), sorted([os.path.basename(made["held"][0]), os.path.basename(made["held"][0]) + ".sha"]))
 
-    # What the deps leg (its npm ci, whose dependencies' install scripts run) could leave for the pytest leg, each hidden
-    # from `git status` in the private clone one way, or ignored by the tracked .gitignore (round 1's verify of the
-    # stage 1 to 3 head: every one of these passed, with the pytest leg seeing the planted file). $R is the checkout.
+    GROUP_SEED_IGNORE = "vscode-extension/node_modules\n__pycache__/\n"
+
+    def group_world(self):
+        seed = dict(SEED)
+        seed[".gitignore"] = self.GROUP_SEED_IGNORE
+        w = World(seed)
+        self.addCleanup(w.close)
+        return w
+
+    def test_each_jobs_legs_share_a_fresh_checkout_and_nothing_a_leg_leaves_there_reaches_the_next_job(self):
+        """Round 2, decision 13: the legs CI runs in one job share one fresh checkout, and each job's group starts from a
+        checkout of its own, as CI's jobs do. The pytest leg plants a hook in its checkout's .git/hooks and an attributes
+        file in .git/info, and leaves bytecode the tracked .gitignore ignores; the deps leg leaves node_modules. No leg of
+        a later group sees the plants or the bytecode (so the pytest leg's bytecode does not reach the served leg); the
+        shell job's legs and the ledger see no node_modules (CI's shell job runs no npm ci), and the extension job's legs
+        after deps do. The run passes: the re-read after a leg does not read .git's hooks or info/attributes, so the job
+        boundary is what keeps them from the next job. At the head every leg ran in one checkout."""
+        w = self.group_world()
+        w.ctl({"action": {PYTEST_LEG: "leftovers", "deps": "ignored"}})
+        w.run(check=0)
+        calls = w.calls()
+        self.assertEqual([c["leg"] for c in calls], SEED_ORDER)
+        roots = {c["leg"]: c["root"] for c in calls}
+        for job, legs in SEED_GROUPS:
+            self.assertEqual({roots[leg] for leg in legs}, {roots[legs[0]]}, "the %s group shares one checkout" % job)
+        self.assertEqual(len({roots[legs[0]] for _job, legs in SEED_GROUPS}), len(SEED_GROUPS), "each group its own")
+        pyc = os.path.join("kernel", "__pycache__", "other.cpython-399.pyc")
+        extension = dict(SEED_GROUPS)["vscode-extension"]
+        for c in calls[1:]:
+            with self.subTest(leg=c["leg"]):
+                self.assertEqual(c["git_plants"], [], "no hook or attributes file an earlier job's leg planted")
+                self.assertNotIn(pyc, c["tree"], "no bytecode an earlier job's leg left")
+                self.assertIs(c["node_modules"], c["leg"] in extension and c["leg"] != "deps",
+                              "node_modules only after npm ci, in the job that runs it")
+        self.assertEqual(w.result()["verdict"], "pass")
+
+    def test_within_a_job_its_legs_share_the_checkout_as_cis_steps_do(self):
+        """Round 2, decision 13, the part that stays open: CI's steps in one job share its checkout, and so do the legs
+        whose steps one job holds. What the bats leg plants in .git is seen by the manager and tools legs, which the shell
+        job runs after it, and by no leg of another job; the run passes (the re-read reads HEAD, config and info/exclude
+        of .git, not its hooks or info/attributes)."""
+        w = self.group_world()
+        w.ctl({"action": {"bats": "leftovers"}})
+        w.run(check=0)
+        seen = {c["leg"]: c["git_plants"] for c in w.calls()}
+        plants = sorted([os.path.join("hooks", "post-checkout"), os.path.join("info", "attributes")])
+        self.assertEqual({leg: seen[leg] for leg in ("manager", "tools")}, {"manager": plants, "tools": plants})
+        self.assertEqual({leg: v for leg, v in seen.items() if leg not in ("bats", "manager", "tools") and v}, {})
+
+    def test_a_later_jobs_fresh_checkout_that_is_not_the_shas_tree_makes_the_run_invalid(self):
+        """Round 2, decision 13: each later group's fresh checkout is verified against the sha's tree as the first one is.
+        The clone reads the batcher's object store (git clone --shared), and git checks out a loose object without
+        checking its hash, so the pytest leg rewrites kernel/other.py's blob there: the shell job's fresh checkout holds
+        other bytes, the run is invalid naming the file, and no later leg runs. At the head the one checkout was made
+        before any leg, and this run passed."""
+        w = self.w
+        w.ctl({"action": {PYTEST_LEG: "corrupt"}})
+        p = w.run(check=3)
+        r = w.result()
+        self.assertEqual(r["verdict"], "invalid", p.stdout + p.stderr)
+        self.assertIn("the fresh checkout for the shell job's legs cannot be used (it is not the sha's tree: content 1 "
+                      "(kernel/other.py)); the legs after it did not run", r["invalid"])
+        self.assertEqual(w.legs_called(), [PYTEST_LEG])
+        self.assertEqual(os.listdir(self.trees()), [], "the unusable checkout is removed too")
+
+    # What the deps leg (its npm ci, whose dependencies' install scripts run) could leave for the legs after it in its
+    # checkout, each hidden from `git status` in the private clone one way, or ignored by the tracked .gitignore (round
+    # 1's verify of the stage 1 to 3 head: every one of these passed, with the pytest leg, then after deps, seeing the
+    # planted file). $R is the checkout.
     HIDDEN_PLANTS = (
         ("a self-hiding untracked .gitignore", 'mkdir -p "$R/tests/zz"; printf "*\\n" > "$R/tests/zz/.gitignore"; '
                                                'printf "x = 1\\n" > "$R/tests/zz/conftest.py"',
@@ -1714,10 +1837,20 @@ class Checkout(_Base):
     )
     HIDDEN_SEED_IGNORE = "vscode-extension/node_modules\ntests/test_no_personal_identifiers.py\n__pycache__/\n*.local\n!keep.local\n"
 
-    def deps_plants(self, script):
-        """A World whose deps leg (the fake npm ci) runs `script` in the checkout ($R) before the fake records it."""
+    # The seed's ci.yml with the Run bats step moved into the extension job, before npm ci: the bats leg then runs in the
+    # deps leg's checkout, before it, as a leg that leaves an ignored file before deps (the case the deps leg's re-read
+    # excuses while npm ci leaves the file as it was). In the real ci.yml npm ci is the first leg of its job.
+    BATS_STEP = "      - name: Run bats\n        run: bats --print-output-on-failure tests/*.bats\n"
+    BATS_BEFORE_DEPS_CI = SEED_CI.replace(BATS_STEP, "").replace("      - name: Install deps\n",
+                                                                 BATS_STEP + "      - name: Install deps\n")
+
+    def deps_plants(self, script, ci=None):
+        """A World whose deps leg (the fake npm ci) runs `script` in the checkout ($R) before the fake records it (and whose
+        ci.yml is `ci`, when given)."""
         seed = dict(SEED)
         seed[".gitignore"] = self.HIDDEN_SEED_IGNORE
+        if ci is not None:
+            seed[".github/workflows/ci.yml"] = ci
         w = World(seed)
         self.addCleanup(w.close)
         real = os.path.join(w.tmp, "realbin")
@@ -1732,9 +1865,9 @@ class Checkout(_Base):
         """A4 by the runner's own walk: a file the deps leg leaves counts whatever git status would say of it (a
         .gitignore the leg wrote, the clone's info/exclude, a commit in the clone excuse nothing, and a replaced .git or a
         changed HEAD or info/exclude is a change of its own), and after deps an ignored file outside
-        vscode-extension/node_modules counts too (bytecode or a test module the tracked .gitignore covers, which the
-        served leg's pytest would load). Each run is invalid after the deps leg, which runs after the pytest leg, and the
-        legs after it never run."""
+        vscode-extension/node_modules counts too (bytecode, which python loads in place of a source, here beside a test
+        module the tracked .gitignore covers). Each run is invalid after the deps leg, which runs after the python and
+        shell jobs' legs, and the legs after it never run."""
         for label, script, named in self.HIDDEN_PLANTS:
             with self.subTest(plant=label):
                 w = self.deps_plants(script)
@@ -1744,35 +1877,41 @@ class Checkout(_Base):
                 self.assertIn("after the deps leg the checkout is not the sha's tree: ", r["invalid"])
                 for text in named:
                     self.assertIn(text, r["invalid"])
-                self.assertEqual(w.legs_called(), [PYTEST_LEG, "deps"], "the legs after it did not run")
+                self.assertEqual(w.legs_called(), SEED_ORDER[:SEED_ORDER.index("deps") + 1], "the legs after it did not run")
 
     def test_ignored_files_are_allowed_where_the_tracked_gitignore_puts_them(self):
-        """The controls: node_modules left by the deps leg, and bytecode the pytest leg leaves before deps (ignored by the
-        tracked .gitignore, beside a module it imported), pass: the deps leg's re-read excuses an ignored file a leg
-        before it left, as long as npm ci leaves it as it was (the next case)."""
+        """The controls: node_modules left by the deps leg, and bytecode a leg before deps in its checkout leaves (ignored
+        by the tracked .gitignore, beside a module it imported: the bats leg, in a ci.yml whose extension job runs bats
+        before npm ci), pass: the deps leg's re-read excuses an ignored file a leg before it in its checkout left, as long
+        as npm ci leaves it as it was (the next case)."""
         w = self.deps_plants('mkdir -p "$R/vscode-extension/node_modules/pkg"; printf "x" > "$R/vscode-extension/node_modules/pkg/index.js"; '
-                             'printf "x" > "$R/vscode-extension/node_modules/pkg/:colon.js"')
-        w.ctl({"action": {PYTEST_LEG: "bytecode"}})
+                             'printf "x" > "$R/vscode-extension/node_modules/pkg/:colon.js"', ci=self.BATS_BEFORE_DEPS_CI)
+        w.ctl({"action": {"bats": "bytecode"}})
         p = w.run(check=0)
         self.assertEqual(w.result()["invalid"], None, p.stdout + p.stderr)
-        self.assertEqual(w.legs_called()[:2], [PYTEST_LEG, "deps"], "the pytest leg's bytecode was there before npm ci ran")
+        calls = w.calls()
+        legs = [c["leg"] for c in calls]
+        self.assertEqual(legs[legs.index("bats") + 1], "deps", "the bats leg's bytecode was there before npm ci ran")
+        self.assertEqual(calls[legs.index("bats")]["root"], calls[legs.index("deps")]["root"], "in the deps leg's checkout")
 
-    def test_bytecode_the_pytest_leg_left_that_npm_ci_changes_makes_the_run_invalid(self):
-        """The excuse covers what a leg before deps left, not what npm ci does to it: the same bytecode, changed by the
-        deps leg, makes the run invalid after the deps leg, naming it, and the legs after it do not run."""
-        w = self.deps_plants('P="$R/kernel/__pycache__/other.cpython-399.pyc"; if [ -e "$P" ]; then printf planted >> "$P"; fi')
-        w.ctl({"action": {PYTEST_LEG: "bytecode"}})
+    def test_bytecode_a_leg_before_deps_left_that_npm_ci_changes_makes_the_run_invalid(self):
+        """The excuse covers what a leg before deps in its checkout left, not what npm ci does to it: the same bytecode,
+        changed by the deps leg, makes the run invalid after the deps leg, naming it, and the legs after it do not run."""
+        w = self.deps_plants('P="$R/kernel/__pycache__/other.cpython-399.pyc"; if [ -e "$P" ]; then printf planted >> "$P"; fi',
+                             ci=self.BATS_BEFORE_DEPS_CI)
+        w.ctl({"action": {"bats": "bytecode"}})
         p = w.run(check=3)
         self.assertIn("after the deps leg the checkout is not the sha's tree: ignored outside vscode-extension/node_modules 1 "
                       "(kernel/__pycache__/other.cpython-399.pyc)", w.result()["invalid"], p.stdout + p.stderr)
-        self.assertEqual(w.legs_called(), [PYTEST_LEG, "deps"], "the legs after it did not run")
+        legs = w.legs_called()
+        self.assertEqual(legs[-2:], ["bats", "deps"], "the legs after it did not run")
 
     def test_a_leg_reruns_setup_that_leaves_bytecode_refuses_the_rerun(self):
-        """The setup of a --leg re-run (npm ci) is read as the deps leg is: an ignored file outside
-        vscode-extension/node_modules refuses the re-run, and nothing is recorded."""
+        """The setup of a --leg re-run (npm ci, before a leg its job runs after npm ci) is read as the deps leg is: an
+        ignored file outside vscode-extension/node_modules refuses the re-run, and nothing is recorded."""
         flag = "$R/../../plant-now"
         w = self.deps_plants('[ -e "%s" ] && mkdir -p "$R/kernel/__pycache__" && printf x > "$R/kernel/__pycache__/other.cpython-399.pyc"; true' % flag)
-        w.ctl({"rc": {"tools": 1}})
+        w.ctl({"rc": {"typecheck": 1}})
         w.run(check=1)
         with open(w.result_path()) as f:
             red = f.read()
@@ -1781,37 +1920,115 @@ class Checkout(_Base):
         os.makedirs(trees, exist_ok=True)
         with open(os.path.join(w.xdg, "romp", "sweeps", "plant-now"), "w") as f:
             f.write("1\n")
-        p = w.run("--leg", "tools", "--flake", Runner.FLAKE, check=2)
+        p = w.run("--leg", "typecheck", "--flake", Runner.FLAKE, check=2)
         self.assertIn("(npm ci) changed it: ignored outside vscode-extension/node_modules 1 (kernel/__pycache__/other.cpython-399.pyc)",
                       p.stderr)
         with open(w.result_path()) as f:
             self.assertEqual(f.read(), red, "a refused re-run records nothing")
 
     def test_a_leg_rerun_runs_npm_ci_first_and_records_it_as_setup(self):
-        """A fresh checkout has no node_modules, so a --leg re-run installs them from the sha's lockfile before its leg
-        and records the install as the checkout's setup; a setup that fails refuses the re-run and records nothing."""
+        """A fresh checkout has no node_modules, so a --leg re-run of a leg whose job runs npm ci before it (here
+        typecheck, in the extension job) installs them from the sha's lockfile first, and records the install as its
+        group's setup; a setup that fails refuses the re-run and records nothing. A --leg re-run of a leg whose job runs
+        no npm ci (tools, in the shell job) runs with no setup and no node_modules, as the full run runs it (round 2,
+        decision 13; before it every --leg re-run of a leg after deps ran npm ci first)."""
         w = self.w
-        w.ctl({"rc": {"tools": 1}})
+        w.ctl({"rc": {"typecheck": 1, "tools": 1}})
         w.run(check=1)
         w.ctl({})
         before = len(w.calls())
-        w.run("--leg", "tools", "--flake", Runner.FLAKE, check=0)
+        w.run("--leg", "typecheck", "--flake", Runner.FLAKE, check=1)
         calls = w.calls()[before:]
-        self.assertEqual([c["leg"] for c in calls], ["deps", "tools"])
+        self.assertEqual([c["leg"] for c in calls], ["deps", "typecheck"])
         self.assertEqual(calls[0]["cwd"], os.path.join(calls[1]["root"], "vscode-extension"), "in the re-run's own checkout")
-        setup = w.result()["runner"]["checkout"]["setup"]
+        group = w.result()["runner"]["checkout"]["groups"][0]
+        self.assertEqual((group["job"], group["legs"]), ("vscode-extension", ["typecheck"]))
+        setup = group["setup"]
         self.assertEqual((setup["cmd"], setup["cwd"], setup["rc"]), (list(sweep.DEPS_CMD), "vscode-extension", 0))
+        w.ctl({"action": {"deps": "ignored"}})
+        before = len(w.calls())
+        w.run("--leg", "tools", "--flake", Runner.FLAKE, check=0)
+        self.assertEqual(w.legs_called()[before:], ["tools"], "no npm ci before the tools leg: the shell job runs none")
+        self.assertIs(w.calls()[-1]["node_modules"], False)
+        self.assertEqual([(g["job"], g["legs"], g["setup"]) for g in w.result()["runner"]["checkout"]["groups"]],
+                         [("shell", ["tools"], None)])
         w2 = World()
         self.addCleanup(w2.close)
-        w2.ctl({"rc": {"tools": 1}})
+        w2.ctl({"rc": {"typecheck": 1}})
         w2.run(check=1)
         with open(w2.result_path()) as f:
             red = f.read()
         w2.ctl({"rc": {"deps": 1}})
-        p = w2.run("--leg", "tools", "--flake", Runner.FLAKE, check=2)
+        p = w2.run("--leg", "typecheck", "--flake", Runner.FLAKE, check=2)
         self.assertIn("the setup of the checkout of %s (npm ci) rc 1" % w2.head()[:10], p.stderr)
         with open(w2.result_path()) as f:
             self.assertEqual(f.read(), red, "a refused re-run records nothing")
+
+
+class LegGroups(unittest.TestCase):
+    """Round 2, decision 13: leg_groups reads, from the swept sha's ci.yml, which job holds each leg's step (LEG_STEPS, by
+    name), and groups the legs by job, in the job's step order, the pytest leg's job first and the ledger's own group
+    last; npm ci runs as a group's setup where its job runs it before one of its legs and the deps leg is not in the
+    group. Synthetic ci.yml text only."""
+
+    def groups(self, ci, legs=sweep.LEGS, npm=True):
+        d = tempfile.mkdtemp(prefix="leggroups-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, ".github", "workflows"))
+        with open(os.path.join(d, ".github", "workflows", "ci.yml"), "w") as f:
+            f.write(ci)
+        return [(g["job"], g["legs"], g["setup_before"]) for g in sweep.leg_groups(d, "HEAD", list(legs), npm=npm)]
+
+    def test_the_legs_of_one_job_form_one_group_in_its_step_order(self):
+        self.assertEqual(self.groups(SEED_CI), [(job, legs, None) for job, legs in SEED_GROUPS])
+        self.assertEqual(set(sweep.LEG_STEPS) | set(sweep.OWN_CHECKOUT_LEGS), set(sweep.LEGS), "every leg is placed")
+        self.assertEqual(set(sweep.LEG_STEPS) & set(sweep.OWN_CHECKOUT_LEGS), set())
+        # the job's step order decides the group's order, not LEGS
+        build = "      - name: Build\n        run: npm run build\n"
+        test = "      - name: Test\n        run: npm test\n"
+        swapped = SEED_CI.replace(test + build, build + test)
+        self.assertNotEqual(swapped, SEED_CI)
+        self.assertIn(("vscode-extension", ["deps", "typecheck", "build", "npm-test", "served"], None), self.groups(swapped))
+
+    def test_a_rerun_gets_npm_ci_where_its_job_runs_it(self):
+        self.assertEqual(self.groups(SEED_CI, ["typecheck"]), [("vscode-extension", ["typecheck"], "typecheck")])
+        self.assertEqual(self.groups(SEED_CI, ["deps", "served"]), [("vscode-extension", ["deps", "served"], None)])
+        self.assertEqual(self.groups(SEED_CI, ["tools"]), [("shell", ["tools"], None)], "the shell job runs no npm ci")
+        self.assertEqual(self.groups(SEED_CI, ["served"], npm=False), [("vscode-extension", ["served"], None)],
+                         "no npm ci where the sha has no vscode-extension/package.json")
+        self.assertEqual(self.groups(SEED_CI, [PYTEST_LEG, "ledger", "bats"]),
+                         [("python", [PYTEST_LEG], None), ("shell", ["bats"], None), (None, ["ledger"], None)])
+
+    def test_the_groups_follow_the_steps_into_jobs_of_their_own(self):
+        """Fork PR 928's shape: the served step (with its setup-python step) in a job of its own that runs npm ci first,
+        and the vendored tooling step in another: the served leg runs there after npm ci as that job's setup, the tools
+        leg alone, and deps stays with the extension job's legs (the first job that holds npm ci)."""
+        served = SEED_SERVED_PYTHON + SEED_SERVED_STEP
+        tools = "      - name: Vendored tooling and host-script tests (node --test)\n        run: node --test tools/*.test.mjs vendor/track-changents/hooks/*.test.mjs\n"
+        ci = (SEED_CI.replace(served, "").replace(tools, "")
+              + "  vendored-tooling:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n" + tools
+              + "  served-pages:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
+              + "      - name: Install deps\n        run: npm ci\n" + served)
+        self.assertEqual(self.groups(ci), [("python", [PYTEST_LEG], None), ("shell", ["bats", "manager"], None),
+                                           ("vscode-extension", ["deps", "typecheck", "npm-test", "build"], None),
+                                           ("vendored-tooling", ["tools"], None), ("served-pages", ["served"], "served"),
+                                           (None, ["ledger"], None)])
+        self.assertEqual(self.groups(ci, ["served"]), [("served-pages", ["served"], "served")])
+
+    def test_the_pytest_legs_job_runs_first_wherever_ci_yml_lists_it(self):
+        start = SEED_CI.index("  python:\n")
+        end = SEED_CI.index("  shell:\n")
+        moved = SEED_CI[:start] + SEED_CI[end:] + SEED_CI[start:end]
+        self.assertEqual([g[0] for g in self.groups(moved)], ["python", "shell", "vscode-extension", None],
+                         "its skips decide what the served leg also runs")
+
+    def test_a_leg_whose_step_is_in_no_job_is_refused_by_name(self):
+        ci = SEED_CI.replace("      - name: Run bats\n", "      - name: Run the bats suite\n")
+        with self.assertRaises(sweep.Refused) as cm:
+            self.groups(ci)
+        self.assertIn("holds no step 'Run bats' in any job; the bats leg runs in the job that holds its step", str(cm.exception))
+        self.assertEqual(self.groups(ci, [PYTEST_LEG, "tools"]), [("python", [PYTEST_LEG], None), ("shell", ["tools"], None)],
+                         "a leg the run does not run needs no step")
 
 
 # Drives run_leg in a process of its own, which becomes a subreaper as the runner does: the leg's status is taken by
@@ -2350,8 +2567,8 @@ class LegEnvironment(_Base):
 
     @staticmethod
     def setup_record(w):
-        """The npm ci setup the newest run recorded (runner.checkout.setup)."""
-        return w.result()["runner"]["checkout"]["setup"]
+        """The npm ci setup the newest run recorded: its first group's (runner.checkout.groups[0].setup)."""
+        return w.result()["runner"]["checkout"]["groups"][0]["setup"]
 
     def test_no_leg_log_header_holds_a_value_of_the_leg_environment(self):
         w = self.all_legs_world()
@@ -2391,7 +2608,7 @@ class LegEnvironment(_Base):
         for name in ("node", "npm", "bats"):
             self.assertEqual(tools[name], {"path": os.path.join(w.bin, name), "version": name + " 0.0.0-fake"})
         self.assertTrue(tools["git"]["version"].startswith("git version"), tools["git"])
-        self.assertEqual(w.legs_called(), list(sweep.LEGS))
+        self.assertEqual(w.legs_called(), SEED_ORDER)
 
     def test_a_wrap_sees_the_runners_environment_and_its_leg_does_not(self):
         w = self.w
@@ -3002,18 +3219,21 @@ class ServedLeg(_Base):
         return [s for s in self.w.setups() if os.path.basename(os.path.dirname(s["home"])).startswith("served-")]
 
     def test_the_pytest_leg_runs_first_over_all_of_tests_with_no_node_modules_and_no_browser(self):
-        """The pytest leg runs before deps, so the fresh checkout holds no node_modules (the fake npm ci leaves some
-        here, and the served leg, after it, sees them); its PLAYWRIGHT_BROWSERS_PATH is an empty directory under TMPDIR,
-        where every other leg gets the shared cache; and it collects tests/ whole, the served globs' files included,
-        leaving out PYTEST_IGNORED alone."""
+        """The pytest leg runs first, in the python job's checkout of its own, which holds no node_modules (the fake npm
+        ci leaves some in the extension job's checkout, where the served leg, after the build leg, sees them); its
+        PLAYWRIGHT_BROWSERS_PATH is an empty directory under its TMPDIR, where every other leg gets the shared cache; and it
+        collects tests/ whole, the served globs' files included, leaving out PYTEST_IGNORED alone."""
         w = self.w
         w.ctl({"action": {"deps": "ignored"}})
         w.run(check=0)
-        self.assertEqual(w.legs_called(), list(sweep.LEGS))
-        self.assertEqual(w.legs_called()[:2], [PYTEST_LEG, "deps"], "pytest first, before npm ci")
-        self.assertEqual(w.legs_called()[-1], "served", "the served leg runs last, as CI runs its step after the Build step")
+        self.assertEqual(w.legs_called(), SEED_ORDER)
+        self.assertEqual(w.legs_called()[0], PYTEST_LEG, "pytest first")
+        self.assertEqual(SEED_ORDER.index("served"), SEED_ORDER.index("build") + 1,
+                         "the served leg runs after the build leg, as CI runs its step after the Build step")
         calls = self.by_leg()
         pytest_call, served_call = calls[PYTEST_LEG][0], calls["served"][0]
+        self.assertEqual(served_call["root"], calls["build"][0]["root"], "in the extension job's checkout")
+        self.assertNotEqual(pytest_call["root"], served_call["root"])
         self.assertIs(pytest_call["node_modules"], False, "the pytest leg's checkout holds no node_modules")
         self.assertIs(served_call["node_modules"], True, "the served leg runs after npm ci, with them")
         tmp = pytest_call["values"]["TMPDIR"]
@@ -3410,22 +3630,45 @@ class ServedLeg(_Base):
         self.assertEqual(r["runner"]["served"]["job"], "vscode-extension")
         self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "pass")
 
-    def test_a_leg_rerun_of_pytest_with_a_leg_after_the_deps_is_refused(self):
-        """The pytest leg runs before the deps, in a checkout with no node_modules, and a --leg re-run of any leg after
-        them installs them first as its setup: one run cannot give both, so a --leg re-run naming pytest and such a leg
-        is refused before anything is read, naming what to do; pytest alone re-runs with no npm ci."""
+    def test_a_leg_rerun_of_pytest_and_served_runs_each_in_its_jobs_own_checkout(self):
+        """Round 2, decision 13: a --leg re-run runs each leg it names in a fresh checkout of the leg's ci.yml job, with
+        npm ci first where that job runs it: pytest in the python job's, with no node_modules and no npm ci, and served in
+        the extension job's, after npm ci as its setup. At the head the re-run had one checkout, so one naming pytest and
+        a leg after the deps was refused."""
         w = self.w
         w.ctl({"rc": {"pytest": 1, "served": 1}})
         w.run(check=1)
-        w.ctl({})
-        p = w.run("--leg", "pytest", "--leg", "served", "--flake", "pytest=" + self.FLAKE, "--flake", "served=" + self.FLAKE, check=2)
-        self.assertIn("--leg pytest runs before the deps, in a checkout with no node_modules, and served after them", p.stderr)
-        self.assertIn("re-run pytest in a --leg run of its own, then the others", p.stderr)
-        self.assertEqual(len(w.data()["runs"]), 1, "nothing recorded")
+        w.ctl({"action": {"deps": "ignored"}})
         before = len(w.calls())
-        w.run("--leg", "pytest", "--flake", "pytest=" + self.FLAKE, check=1)
-        self.assertEqual(w.legs_called()[before:], [PYTEST_LEG], "pytest alone, with no npm ci")
-        w.run("--leg", "served", "--flake", "served=" + self.FLAKE, check=0)
+        w.run("--leg", "pytest", "--leg", "served", "--flake", "pytest=" + self.FLAKE, "--flake", "served=" + self.FLAKE, check=0)
+        calls = w.calls()[before:]
+        self.assertEqual([c["leg"] for c in calls], [PYTEST_LEG, "deps", "served"], "pytest, then npm ci and served")
+        self.assertIs(calls[0]["node_modules"], False, "pytest runs with no node_modules")
+        self.assertIs(calls[2]["node_modules"], True, "served runs after npm ci")
+        self.assertEqual(calls[1]["root"], calls[2]["root"])
+        self.assertNotEqual(calls[0]["root"], calls[2]["root"], "each job's legs in a checkout of their own")
+        groups = w.result()["runner"]["checkout"]["groups"]
+        self.assertEqual([(g["job"], g["legs"], g["setup"] is not None) for g in groups],
+                         [("python", [PYTEST_LEG], False), ("vscode-extension", ["served"], True)])
+        self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "pass")
+
+    def test_a_leg_rerun_naming_pytest_deps_and_bats_runs_deps_as_a_leg(self):
+        """Round 2, extra9-3 and decision 13: `--leg pytest --leg deps --leg bats` is accepted and counts; deps runs as a
+        leg of its own (no setup) in the extension job's checkout, pytest in the python job's and bats in the shell
+        job's."""
+        w = self.w
+        w.ctl({"rc": {"pytest": 1, "deps": 1, "bats": 1}})
+        w.run(check=1)
+        w.ctl({})
+        before = len(w.calls())
+        w.run("--leg", "pytest", "--leg", "deps", "--leg", "bats", "--flake", self.FLAKE, check=0)
+        calls = w.calls()[before:]
+        self.assertEqual([c["leg"] for c in calls], [PYTEST_LEG, "bats", "deps"])
+        self.assertEqual(len({c["root"] for c in calls}), 3, "three jobs, three checkouts")
+        groups = w.result()["runner"]["checkout"]["groups"]
+        self.assertEqual([(g["job"], g["legs"], g["setup"]) for g in groups],
+                         [("python", [PYTEST_LEG], None), ("shell", ["bats"], None), ("vscode-extension", ["deps"], None)])
+        self.assertEqual(w.result()["legs"]["deps"]["rc"], 0, "deps ran as a leg and passed")
         self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "pass")
 
 
@@ -3924,6 +4167,10 @@ class CiParity(unittest.TestCase):
         "Scan every commit", "Scan the tree as it stands",
         # the pane bench runs only in CI (the runner's docstring and docs/batching.md say so)
         "Dashboard pane bench (node --test)",
+        # the PDF renderer smoke step runs tools/pdf-smoke.test.mjs after the extension job's npm ci; the tools leg runs
+        # that file in the checkout of its own job, which runs no npm ci, where it skips, as in CI's job for the tools
+        # step (round 2, decision 13), so the step runs only in CI (the runner's docstring and docs/batching.md say so)
+        "PDF renderer dependency smoke test (node --test)",
         # the rostered browser legs' run under ROMP_BROWSER_LEGS_REQUIRE=1 after CI's Chromium install (PR 887): the
         # sweep's npm-test leg runs the same bundles in its npm test with this machine's Playwright browsers, without
         # the switch, so a launch that fails there skips, as in CI's Test step, instead of failing (the runner's
@@ -3932,7 +4179,7 @@ class CiParity(unittest.TestCase):
     }
     COMPARED = {"Install pytest", "Install cryptography", "Install the Claude Agent SDK", "Run pytest", "Run bats",
                 "Manager handshake tests (node --test)", VENDORED_LABEL, "Install deps", "Typecheck", "Test", "Build",
-                "PDF renderer dependency smoke test (node --test)", SERVED_LABEL}
+                SERVED_LABEL}
     # The steps a job of the served step's own repeats from the extension job (its own checkout, node, npm ci, build and
     # Chromium install, as PR 928's ruling describes that job) and the unnamed setup every job has: each may stand in
     # more than one job, and every copy of a compared one is compared. Every other placed step stands in one job, since
@@ -4250,6 +4497,25 @@ class CiParity(unittest.TestCase):
         self.assertEqual(call["venv_installs"], expected, "the pytest leg's venv holds what ci.yml installs")
         self.assertEqual(w.result()["runner"]["sdk"]["version"], pin)
 
+    def test_the_runner_groups_the_legs_by_the_job_that_holds_each_step(self):
+        """Round 2, decision 13: leg_groups over this ci.yml puts each leg of LEG_STEPS in a job that holds its step (each
+        name one this class compares with the leg's command), each leg once, the pytest leg's job first, each group in its
+        job's step order, and the ledger, whose check is in no job of ci.yml (CI runs it in ledger.yml), in a group of its
+        own, last."""
+        self.assertLessEqual(set(sweep.LEG_STEPS.values()), self.COMPARED)
+        groups = sweep.leg_groups(self.ci_tree, "HEAD", list(sweep.LEGS))
+        self.assertEqual(sorted(leg for g in groups for leg in g["legs"]), sorted(sweep.LEGS), "each leg once")
+        self.assertEqual(groups[0]["legs"], [PYTEST_LEG])
+        self.assertEqual((groups[-1]["job"], groups[-1]["legs"]), (None, ["ledger"]))
+        for g in groups[:-1]:
+            names = list(self.jobs[g["job"]])
+            at = [names.index(sweep.LEG_STEPS[leg]) for leg in g["legs"]]
+            self.assertEqual(at, sorted(at), "the %s job's legs in its step order" % g["job"])
+        self.assertFalse([label for steps in self.jobs.values() for label, (_env, run) in steps.items()
+                          if "upstream-ledger.py" in (run or "")], "the ledger's check is in no job of ci.yml")
+        ledger_yml = (ROOT / ".github" / "workflows" / "ledger.yml").read_text(encoding="utf-8")
+        self.assertIn("python3 scripts/upstream-ledger.py check", ledger_yml, "CI runs it in a workflow of its own")
+
     def test_bats_and_the_node_legs_run_ci_s_commands(self):
         _job, env, run = self.step("Run bats")
         self.assertEqual(shlex.split(run), self.legs["bats"]["cmd"][:2] + list(sweep.GLOBS["bats"]),
@@ -4260,10 +4526,12 @@ class CiParity(unittest.TestCase):
         for step, leg in (("Manager handshake tests (node --test)", "manager"), (VENDORED_LABEL, "tools")):
             _job, _env, run = self.step(step)
             self.assertEqual(shlex.split(run), self.legs[leg]["cmd"][:2] + list(sweep.GLOBS[leg]))
-        # tools/pdf-smoke.test.mjs, its own step in the extension job, is in the tools leg's glob
+        # tools/pdf-smoke.test.mjs, its own step in the extension job (CI-only here), is in the tools leg's glob too; the
+        # tools leg runs it with no node_modules, as the CI job for the tools step does, where it skips
         _job, _env, run = self.step("PDF renderer dependency smoke test (node --test)")
         self.assertEqual(shlex.split(run), ["node", "--test", "tools/pdf-smoke.test.mjs"])
         self.assertIn("tools/pdf-smoke.test.mjs", self.legs["tools"]["cmd"])
+        self.assertNotIn(sweep.DEPS_STEP, self.jobs[self.step(VENDORED_LABEL)[0]], "the tools step's job runs no npm ci")
 
     def test_the_webview_legs_run_the_extension_jobs_commands(self):
         """Typecheck and Test stand in the extension job alone; npm ci and the build stand there and in any job of the
@@ -4385,9 +4653,11 @@ class CiParityServedJobOfItsOwn(CiParity):
             self.assertEqual((served_job, vendored_job), ("served-pages", "vendored-tooling"), "the construction moved both")
 
 
-# The private-checkout record every run of the runner carries (runner.checkout); a reader refuses a run without one.
-CHECKOUT_REC = {"form": "clone", "path": "/nonexistent/trees/1234567890ab-test", "create_s": 0.1, "verify_s": 0.1, "files": 1,
-                "setup": None}
+# The private-checkout record every run of the runner carries (runner.checkout: one clone per ci.yml job, round 2's
+# decision 13); a reader refuses a run without one.
+CHECKOUT_REC = {"form": "clone", "per": "ci.yml job", "files": 1,
+                "groups": [{"job": "python", "legs": [PYTEST_LEG], "path": "/nonexistent/trees/1234567890ab-test",
+                            "create_s": 0.1, "verify_s": 0.1, "setup": None}]}
 
 
 class Reader(unittest.TestCase):

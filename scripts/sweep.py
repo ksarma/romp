@@ -16,45 +16,59 @@ The result is `<state dir>/sweeps/<full sha>.json`, the state dir resolved as bi
 secret: of the leg environment it records the names it dropped and the values it set itself, never an
 inherited value, and a leg log's header shows each variable by its name only.
 
-The legs run in a private checkout of the exact sha, never in the batcher's tree: a `git clone --shared
---no-checkout` of the batcher's repository under <state dir>/sweeps/trees, checked out at the sha with hooks
-off, every runner git call made with GIT_* removed, git's global and system configuration off and
+The legs run in private checkouts of the exact sha, never in the batcher's tree, one checkout per CI job (below): a
+`git clone --shared --no-checkout` of the batcher's repository under <state dir>/sweeps/trees, checked out at the sha
+with hooks off, every runner git call made with GIT_* removed, git's global and system configuration off and
 refs/replace ignored. A clone copies none of the batcher's repository config, attributes, excludes, hooks,
 sparse patterns, index flags or replace refs, so the legs see the sha's tree plus the tool installs, and
-nothing from the checkout's parents. Before any leg the runner verifies the checkout against `git ls-tree -r
+nothing from the checkout's parents. Before any leg the runner verifies the first checkout against `git ls-tree -r
 <sha>` (every path, executable bit, symlink target and blob), and refuses (exit 2, nothing recorded) on a
 difference or on node_modules, package.json, tsconfig.json or jsconfig.json in any ancestor directory, which
-node, tsc and esbuild would read. After every leg it reads the checkout again with its own directory walk,
+node, tsc and esbuild would read; each later checkout is verified the same way before its first leg, and one that is
+not the sha's tree (a leg that rewrote one of the sha's objects in the batcher's repository, whose objects every clone
+reads, and git checks a loose object out without checking its hash) records the run invalid. After every leg it reads
+that leg's checkout again with its own directory walk,
 and records the run invalid, naming the paths and the leg, when a tracked path changed or is gone; when any
 other file exists that no rule of a tracked .gitignore ignores (a .gitignore a leg wrote, the clone's
 info/exclude or a commit made in the clone excuses nothing); after the deps leg, when an ignored file exists
-outside vscode-extension/node_modules (bytecode, or a test module the tracked .gitignore covers, which the served
-leg's pytest would load) that the legs before it did not leave as it now is (the pytest leg's bytecode is excused
-while npm ci leaves it alone); when the clone's .git was replaced or its HEAD, config or info/exclude changed; or when
-one of those names is now in an ancestor directory. After the pytest leg and the served leg it also reads that leg's
-environment (the venvs below) against the tree its build left, and records the run invalid, naming the paths, when a
-file there was added, changed or is gone. That re-read after each leg is the runner's one producer of invalid, and the
-legs after it do not run. The batcher's tree is read for its HEAD sha and branch only, so it need not
+outside vscode-extension/node_modules that the legs before it in its checkout did not leave as it now is (a later leg
+there would read it: bytecode, which python loads in place of a source when it is a timestamp pyc whose stamp matches
+or an unchecked hash-based one, or a node_modules or dist tree that node, tsc or esbuild resolve from; the deps leg is
+its job's first, so in practice nothing is excused); when the clone's .git was replaced or its HEAD, config or
+info/exclude changed; or when one of those names is now in an ancestor directory. After the pytest leg and the served
+leg it also reads that leg's environment (the venvs below) against the tree its build left, and records the run
+invalid, naming the paths, when a file there was added, changed or is gone. That re-read after each leg, and the
+verification of each later checkout, are the runner's producers of invalid, and the legs after either do not run. The batcher's tree is read for its HEAD sha and branch only, so it need not
 be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
-length the deepest session-host socket path depends on, is unchanged, the run's and each leg's own. TMPDIR (the run's,
-and the running leg's) and the checkout are removed on every exit path: SIGTERM, SIGHUP and SIGINT (Ctrl-C) stop each leg's process group, the runner exiting 128 plus the signal's
+length the deepest session-host socket path depends on, is unchanged, the run's and each leg's own. Each checkout is
+removed when its job's legs end, and TMPDIR (the run's, and the running leg's) and the checkout in use are removed on
+every exit path: SIGTERM, SIGHUP and SIGINT (Ctrl-C) stop each leg's process group, the runner exiting 128 plus the signal's
 number, and on Linux the runner is a child subreaper that kills whatever a leg left
 running, a descendant that left the group included; each checkout records its sha beside it, and every run
 removes the checkouts of runs that are no longer running. Every orphaned descendant of a leg, in its process group
 or not, is reparented to the runner and reaped as soon as it exits while the leg runs, so it does not stay in the
 leg's group as a defunct process.
 
-The legs mirror CI's two jobs that run pytest. In order (LEGS): pytest (all of tests/, below), deps (`npm ci` from the
-sha's lockfile, in every checkout, since a fresh one has no node_modules; a --leg re-run of a leg after it runs it first
-as its setup), bats, manager and tools (node --test), ledger (scripts/upstream-ledger.py check), the three webview legs
-(typecheck, npm-test, build), and served (the browser-backed served-page tests, below). pytest is first because CI's
-Python cells run it with no node dependencies and no browser: it runs in the fresh checkout before npm ci, with
-PLAYWRIGHT_BROWSERS_PATH at an empty directory, so the browser-backed tests skip there as they do in CI, and the other
-tests in the served globs' files (63 in six files when the served rulings were made) run with the SDK, as CI runs them.
-served is last because CI runs its served step after the extension job's Build, so the npm-test leg runs over a checkout
-holding no bundle a served test built, as CI's Test step does. Every head owes every leg, a member's head included,
+The legs (LEGS) are pytest (all of tests/, below), deps (`npm ci` from the sha's lockfile), bats, manager and tools
+(node --test), ledger (scripts/upstream-ledger.py check), the three webview legs (typecheck, npm-test, build), and served
+(the browser-backed served-page tests, below). They run as CI's jobs run them (round 2, the coordinator's decision 13;
+leg_groups): each leg mirrors one step of the swept sha's ci.yml, found by its name (LEG_STEPS), and the legs whose
+steps one job holds run in one fresh checkout, in that job's step order, as CI's steps in one job share its checkout,
+while each such group starts from a checkout of its own, as each of CI's jobs does. The grouping is read from ci.yml,
+never restated here, and the result records each group's job, legs, checkout and setup (runner.checkout.groups) and the
+order the legs ran in (order). The ledger's check is in no job of ci.yml (CI runs it in a workflow of its own), so it
+runs in a checkout of its own, after the ci.yml groups. The groups run in ci.yml's job order, the pytest leg's job
+first, since its skips decide what the served leg also runs. npm ci runs where the group's job runs it: as the deps leg
+in the first job that holds that step (DEPS_STEP), and as the setup of any other group whose job runs it before one of
+its legs; a job that runs none gets none. So the pytest leg runs as CI's Python cells run it, with no node dependencies
+and no browser: in a checkout where npm ci never runs, with PLAYWRIGHT_BROWSERS_PATH at an empty directory, so the
+browser-backed tests skip there as they do in CI, and the other tests in the served globs' files (63 in six files when
+the served rulings were made) run with the SDK, as CI runs them; and the legs of a job that runs no npm ci (the bats,
+manager and tools legs, whose CI jobs run none) run with no node_modules, as there. Each group runs in its job's step order,
+so the npm-test leg runs over a checkout holding no bundle a served test built, as CI's Test step does. Every head owes
+every leg, a member's head included,
 whatever its diff: the webview legs read files outside kernel/kernel.py, ui/ and vscode-extension/ (tests, other kernel
 modules, docs), and the served tests boot the kernel and serve the webview bundle, so no set of changed paths shows
 either may be skipped. deps, the webview legs and served are marked not owed only when the sha has no
@@ -163,10 +177,27 @@ leg's env_set. The result also records the versions of node, npm, bats, git and 
 leg, the names it left in its private HOME (runner.home_left, {leg: names}; a setup's are in its own record), with
 home_empty true when no leg and no setup left anything; recorded only.
 
+What a leg leaves, and what of it reaches the legs after it (round 2, Class B and the coordinator's decision 13).
+Closed: its TMPDIR, private HOME and private state root are its own and removed when it ends, so nothing it leaves
+there reaches any later leg; and nothing it leaves in its checkout reaches a leg of another job, since each job's legs
+start from a fresh clone verified against the sha's tree: not a file in the clone's .git (a hook, info/attributes,
+info/exclude, config, a ref or refs/replace, packed-refs, objects/info/alternates), and not an ignored file (bytecode,
+node_modules, dist). Shared, as CI's steps in one job share its checkout: the legs of one job share that checkout, and
+the re-read after each leg makes the run invalid on what it reads (above); anything else a leg leaves there (a hook or
+an attributes file in the clone's .git, a replace ref, an ignored file other than after deps) reaches the later legs of
+its job, as it would reach CI's later steps. Open, since the runner runs on the batcher's machine as the batcher's user
+(the stated outside): /tmp outside each TMPDIR, /dev/shm, /run/user/<uid>, the shared npm and Playwright caches, the
+passwd home (the home directory the password database names, which a leg can write to and which is not HOME), tmux's
+socket directory (tmux ignores TMPDIR), --python's directory, which leads the PATH of every leg outside the two venvs,
+and the batcher's repository, whose objects every clone reads (a rewritten object of the sha fails the next job's
+verification, above). A leg can leave a file in any of these that a later leg reads.
+
 The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
 the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
-switch, so a Chromium that fails to launch there skips instead of failing), the Python versions other than
---python's, and macOS run only in the batch's CI. CI's free-threaded cell also runs pytest with PYTHON_GIL=0, which the
+switch, so a Chromium that fails to launch there skips instead of failing), the PDF renderer smoke step (CI's
+extension job runs tools/pdf-smoke.test.mjs after its npm ci; the tools leg runs that file with no node_modules, as
+CI's job for the tools step does, where it skips), the Python versions other than --python's, and macOS run only in the
+batch's CI. CI's free-threaded cell also runs pytest with PYTHON_GIL=0, which the
 runner does not set, so a free-threaded --python runs with its own default.
 
 The result is append-only (schema 2): `runs` keeps every run at the sha, oldest first, and a run is never
@@ -190,10 +221,13 @@ and test count) still loses the rc: the run records that leg as never finished, 
 it. Writing the rc before the record is whole would not close this, since a stop of the runner's whole scope kills the
 leg with the same signal, and its rc would then read as a failure.
 A --leg re-run refuses unless the newest run finished, is valid, and failed that leg, so the flake a failure in an
-invalid full run needs is spent on a full run. A --leg re-run of pytest
-runs with no setup, as the pytest leg runs before the deps; one naming pytest and a leg after deps is refused, since
-one run cannot give the two legs both checkouts. A --leg re-run of served also runs the tests the newest pytest leg at
-the sha skipped for want of the deps.
+invalid full run needs is spent on a full run. A --leg re-run runs each leg it names in a fresh checkout of that leg's
+job, grouped as a full run groups them, so it may name legs of several jobs (pytest with a leg after deps included),
+with npm ci first where that job runs it before the leg and deps is not re-run with it (round 2, decision 13): a
+re-run of pytest, or of a leg whose job runs no npm ci, has no setup, and deps named with a later leg of its own job
+runs as a leg, not a setup. A setup that fails, or changes the checkout, refuses the run when nothing is recorded yet
+(the run's first group), and otherwise blocks its group's legs after it, each red naming the setup, or makes the run
+invalid. A --leg re-run of served also runs the tests the newest pytest leg at the sha skipped for want of the deps.
 
 The runner calls no nice, ionice, systemd-run, flock or slot script itself: a machine that runs legs
 under such wrappers passes them with --wrap. It imports nothing beyond the standard library.
@@ -217,13 +251,14 @@ import tempfile
 import time
 
 SCHEMA = 2
-# pytest first, before deps: CI's Python cells run pytest over all of tests/ with no node dependencies and no browser, so
-# the pytest leg runs in the fresh checkout before npm ci and with no browser (the served ruling's item 1, 2026-09-28).
+# The legs a result records. They run grouped by the ci.yml job that holds each one's step (leg_groups, round 2's
+# decision 13), not in this order: the pytest leg's job first, in a checkout where npm ci never runs and with no browser,
+# as CI's Python cells run pytest over all of tests/ (the served ruling's item 1, 2026-09-28).
 LEGS = ("pytest", "deps", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "build", "served")
 WEBVIEW_LEGS = ("typecheck", "npm-test", "build")
 # The browser-backed served-page tests, the files CI's served step selects: a leg of their own, as CI runs them in a
-# step of their own (the served ruling, 2026-09-28). Last in LEGS, as CI runs that step after its extension job's Build.
-# It also runs the tests outside those files that the pytest leg skipped for want of the deps (DEPS_SKIP).
+# step of their own (the served ruling, 2026-09-28). Last in LEGS; it runs in the job that holds its step, after that
+# job's steps before it (leg_groups). It also runs the tests outside those files that the pytest leg skipped for want of the deps (DEPS_SKIP).
 SERVED_LEG = "served"
 TEST_LEGS = ("pytest", "bats", "manager", "tools", "npm-test", "served")
 # The test legs pytest runs, whose tests are counted from pytest's summary line.
@@ -257,7 +292,7 @@ EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
 # no:cacheprovider, so nothing is written to a .pytest_cache in the checkout; -rfEs --no-fold-skipped, which print
 # every skip with its node id and reason in the short summary beside pytest's default failures and errors (a bare -rs
 # would replace those), where the runner reads the tests the leg skipped for want of the deps (deps_skipped); PYTEST_ISOLATION; and the PYTEST_IGNORED list. The served globs' files are collected, as CI's
-# Python cells collect them: the leg runs before the deps and with no browser, so the browser-backed tests skip there as
+# Python cells collect them: the leg runs with no node_modules and no browser, so the browser-backed tests skip there as
 # in CI and the others in those files run with the SDK. tests/test_sweep_runner.py (CiParity) holds the two sides to
 # exactly these differences.
 PYTEST_FLAGS = ("-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--durations=10", "--timeout=600", "--timeout-method=thread",
@@ -310,6 +345,21 @@ PYTEST_IGNORED = {
 # actions/setup-python step before it in its job names the Python version that venv is built from.
 SERVED_STEP = "Browser-backed served-page tests (pytest)"
 SETUP_PYTHON = "actions/setup-python"
+# The ci.yml step each leg mirrors, by its name (round 2, the coordinator's decision 13). CI runs each job in a fresh
+# checkout of its own, and a job's steps share it; so the runner reads, in the swept sha's ci.yml, which job holds each
+# leg's step, and the legs whose steps one job holds run in one fresh verified checkout, in that job's step order, while
+# each such group starts from a checkout of its own (leg_groups). The grouping is read from the file, never restated
+# here: fork PR 928 moves the tools leg's step and the served step into jobs of their own, and the groups follow.
+# npm ci runs where the group's job runs it (DEPS_STEP): as the deps leg in the first job that holds that step, and as
+# the group's setup in any other job whose legs come after it. CiParity holds each name to the step whose command the
+# leg runs.
+DEPS_STEP = "Install deps"
+LEG_STEPS = {"pytest": PYTEST_STEP, "deps": DEPS_STEP, "bats": "Run bats", "manager": "Manager handshake tests (node --test)",
+             "tools": "Vendored tooling and host-script tests (node --test)", "typecheck": "Typecheck", "npm-test": "Test",
+             "build": "Build", SERVED_LEG: SERVED_STEP}
+# The legs whose check is in no job of ci.yml, each run in a fresh checkout of its own after the ci.yml groups: CI runs
+# scripts/upstream-ledger.py check in a workflow of its own (.github/workflows/ledger.yml).
+OWN_CHECKOUT_LEGS = ("ledger",)
 # A python-version: the runner reads on that step: a quoted MAJOR.MINOR (YAML reads a plain 3.10 as the number 3.1).
 _PYTHON_VERSION = re.compile(r"""(['"])([0-9]+\.[0-9]+)\1""")
 # The keys the served step may carry. env: and run: are read; working-directory: must leave the step at the repository
@@ -1164,9 +1214,11 @@ def verify_checkout(path, sha, entries):
 
 
 # After the deps leg (npm ci, whose dependencies' install scripts run), the one place an ignored file may appear: every
-# other ignored path it could leave (bytecode in a __pycache__, a module the tracked .gitignore covers) would be read
-# by the served leg's pytest after it. An ignored file a leg before deps left (the pytest leg's bytecode, beside the
-# modules it imported) is excused when the deps leg left it as it was (ignored_now).
+# other ignored path it could leave would be read by a later leg in its checkout (round 2, extra5-4): bytecode, which
+# python loads in place of a source when it is a timestamp pyc whose stamp matches or an unchecked hash-based one, and
+# a node_modules or dist tree that node, tsc or esbuild resolve from. An ignored file a leg before deps in its checkout
+# left is excused when the deps leg left it as it was (ignored_now); the deps leg is its job's first leg in ci.yml, so
+# in its fresh checkout there is none.
 DEPS_PRODUCTS = b"vscode-extension/node_modules/"
 # The files in the private clone's .git that decide what the runner's own git reads there (its HEAD, its repository
 # config, its excludes): a leg that changes one, or replaces .git itself, changes the re-read's verdict.
@@ -1234,9 +1286,9 @@ def _file_digest(path, rel):
 
 def ignored_now(path, entries):
     """{path: digest} of every ignored file on disk in the checkout now (a file no tracked entry names that a rule of a
-    tracked .gitignore ignores, tracked_ignored): read before the deps leg, so the re-read after it excuses what a leg
-    before it left (the pytest leg's bytecode) and still counts what npm ci added or changed. Empty when git's read
-    fails, which excuses nothing."""
+    tracked .gitignore ignores, tracked_ignored): read before the deps leg (and a group's npm ci setup), so the re-read
+    after it excuses what a leg before it in its checkout left and still counts what npm ci added or changed. Empty
+    when git's read fails, which excuses nothing."""
     tracked = {n for n, (mode, _oid) in entries.items() if mode != b"160000"}
     ignored, _err = tracked_ignored(path, entries, sorted(_disk_paths(path) - tracked))
     return {n: _file_digest(path, n) for n in ignored or ()}
@@ -1247,8 +1299,9 @@ def recheck_checkout(path, sha, entries, before, only_under=None, known=None):
     leg could have written: every tracked entry as _entry_faults reads it; every other file on disk, found by the
     runner's own walk (_disk_paths), that no rule of a tracked .gitignore ignores (untracked: a root conftest.py, which
     pytest loads, or a file hidden by a .gitignore a leg wrote, by the clone's info/exclude or by a commit in the
-    clone); with `only_under`, an ignored file outside it too (after deps, bytecode or a module the tracked .gitignore
-    covers, which pytest would still load), less one `known` (ignored_now before the leg) holds as it is now; the
+    clone); with `only_under`, an ignored file outside it too (after deps: bytecode, which python loads in place of a
+    source, or a node_modules or dist tree that node, tsc or esbuild resolve from), less one `known` (ignored_now before
+    the leg) holds as it is now; the
     clone's .git replaced or its HEAD, config or info/exclude changed since
     `before` (git_state); and a name of ANCESTOR_NAMES in an ancestor directory (ancestor). Ignored build products
     (node_modules, dist/, out-tests/, bytecode) are otherwise allowed."""
@@ -2256,6 +2309,58 @@ def read_served_step(checkout, sha):
             "install": install, "python": m.group(2)}
 
 
+def leg_groups(checkout, sha, legs, npm=True):
+    """[{"job", "legs", "setup_before"}, ...]: the legs of `legs` in the order they run, grouped by the ci.yml job each
+    runs in (round 2, the coordinator's decision 13), read from the swept sha's ci.yml in the checkout. A leg of LEG_STEPS
+    runs in the job whose steps hold its step, found by the step's name, and in the first such job when more than one
+    holds it (a job of the served step's own repeats npm ci and may repeat the build); the legs one job holds form one
+    group, in that job's step order. Each leg of OWN_CHECKOUT_LEGS is a group of its own (job None). The groups run in
+    ci.yml's job order, the pytest leg's first (its skips decide what the served leg also runs), then those of
+    OWN_CHECKOUT_LEGS. setup_before names the leg of a group before which npm ci runs as the group's setup: set when
+    `npm` (the sha has vscode-extension/package.json), the group's job holds DEPS_STEP before one of the group's legs, and
+    the deps leg does not run in that group (it runs in the first job that holds the step; a --leg re-run that does not
+    name it gets npm ci there as setup instead). No other step is run as a setup. Refused, naming the file, when ci.yml
+    cannot be read or holds no job with a leg's step."""
+    where = "%s at %s" % (CI_WORKFLOW, short(sha))
+    try:
+        with open(os.path.join(checkout, CI_WORKFLOW), encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError) as e:
+        raise Refused("%s cannot be read (%s); the legs are grouped by the job that holds each one's step" % (where, e))
+    jobs = workflow_jobs(text)
+    steps = {job: [st["name"] for st in (workflow_job(text, job) or {"steps": []})["steps"]] for job in jobs}
+    first = [job for job in jobs if LEG_STEPS["pytest"] in steps[job]][:1]
+    order = first + [job for job in jobs if job not in first]
+    owner = {}
+    for leg in legs:
+        if leg in OWN_CHECKOUT_LEGS:
+            continue
+        holders = [job for job in order if LEG_STEPS[leg] in steps[job]]
+        if not holders:
+            raise Refused("%s holds no step %r in any job; the %s leg runs in the job that holds its step, with that job's "
+                          "other legs in one checkout, so a head whose ci.yml lacks it is not swept: merge main into it"
+                          % (where, LEG_STEPS[leg], leg))
+        owner[leg] = holders[0]
+    groups = []
+    for job in order:
+        mine = sorted((leg for leg in legs if owner.get(leg) == job), key=lambda leg: steps[job].index(LEG_STEPS[leg]))
+        if not mine:
+            continue
+        setup_before = None
+        if npm and "deps" not in mine and DEPS_STEP in steps[job]:
+            at = steps[job].index(DEPS_STEP)
+            later = [leg for leg in mine if steps[job].index(LEG_STEPS[leg]) > at]
+            setup_before = later[0] if later else None
+        groups.append({"job": job, "legs": mine, "setup_before": setup_before})
+    groups += [{"job": None, "legs": [leg], "setup_before": None} for leg in legs if leg in OWN_CHECKOUT_LEGS]
+    return groups
+
+
+def group_label(group):
+    """How a message names a group of legs (leg_groups, or its record): its ci.yml job, or its one leg."""
+    return "the %s job's legs" % group["job"] if group["job"] else "the %s leg" % group["legs"][0]
+
+
 def _dist_key(dist):
     return re.sub(r"[-_.]+", "-", dist).lower()
 
@@ -2998,13 +3103,6 @@ def cmd_run(args):
                       "as a known flake); anything else is a failure: fix it and sweep the new head")
     if only and set(flakes) - set(only):
         raise Refused("--flake names %s, which this --leg re-run does not run" % ", ".join(sorted(set(flakes) - set(only))))
-    after_deps = [n for n in only if LEGS.index(n) > LEGS.index("deps")]
-    if "pytest" in only and "deps" not in only and after_deps:
-        # A --leg re-run installs the deps first as its setup, and the pytest leg runs before them, in a checkout with no
-        # node_modules; one run cannot give it both.
-        raise Refused("--leg pytest runs before the deps, in a checkout with no node_modules, and %s after them, so this "
-                      "re-run would need its setup (npm ci) between the two; re-run pytest in a --leg run of its own, then "
-                      "the others" % ", ".join(after_deps))
     # The batcher's tree is read for its HEAD sha and its branch only: the legs run in a private checkout of the sha,
     # so uncommitted edits there are not swept, and the batcher is told so.
     dirty = uncommitted_count(tree)
@@ -3118,12 +3216,46 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
     else:
         workers = args.workers or default_workers()
     run["runner"]["workers"] = workers
-    # The legs run in a private clone of the exact sha under the state dir (A1), verified against the sha's tree before
-    # any leg (A2) and re-read after every leg (A4); it and TMPDIR are removed on every exit path (A5).
+    # The legs run in private clones of the exact sha under the state dir (A1), one per CI job (round 2, decision 13):
+    # the legs whose steps one job of ci.yml holds share one fresh checkout, in that job's step order, and each such group
+    # starts from a checkout of its own (leg_groups), as CI's jobs each start from a checkout of their own. Each checkout
+    # is verified against the sha's tree before its group's first leg (A2) and re-read after every leg (A4); each is
+    # removed when its group ends, and TMPDIR, the running leg's TMPDIR and the checkout on every exit path (A5).
     sweep_stale_checkouts(sha)
     # leg_tmp: the TMPDIR of the leg (or setup) running now, made at its start and removed at its end (round 2, Class B)
     checkout = marker = tmpdir = hold = served_hold = leg_tmp = None
     served_python = getattr(args, "served_python", None) or python
+
+    def scratch():
+        """A leg's (or a setup's) own context: a fresh TMPDIR with its private HOME and state root (round 2, Class B)."""
+        nonlocal leg_tmp
+        leg_tmp = make_tmpdir()
+        lctx = leg_scratch(ctx, leg_tmp)
+        prepare_home(lctx)
+        return lctx
+
+    def scratch_end(lctx):
+        """The names the leg left in its HOME (at most 20), and its TMPDIR removed, as the leg ends."""
+        nonlocal leg_tmp
+        left = home_left(lctx)[:20]
+        shutil.rmtree(leg_tmp, ignore_errors=True)
+        leg_tmp = None
+        return left
+
+    def run_setup(where, where_before, grec, known):
+        """npm ci as the group's setup (leg_groups' setup_before), run as the deps leg runs, in the group's checkout and in
+        a scratch of its own: its record goes in the group's (grec), and the faults the re-read after it finds, read as
+        after the deps leg (an ignored file outside vscode-extension/node_modules counts), are returned."""
+        setup = {"owed": True, "cmd": list(DEPS_CMD), "cwd": "vscode-extension", "rc": None}
+        print("sweep %s: setup (npm ci) for %s ..." % (short(sha), group_label(grec)), flush=True)
+        lctx = scratch()
+        run_leg(where, "deps", setup, wraps, lctx, logdir)
+        left = scratch_end(lctx)
+        if left:
+            setup["home_left"] = left
+        grec["setup"] = setup
+        return recheck_checkout(where, sha, entries, where_before, only_under=DEPS_PRODUCTS, known=known)
+
     try:
         checkout, marker, create_s = make_checkout(tree, sha)
         _plant_for_tests(checkout)
@@ -3140,8 +3272,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                               os.path.basename(a) for a in above))), len(above), ", ".join(above[:3]),
                               "it" if len(above) == 1 else "them"))
         before = git_state(checkout)
-        run["runner"]["checkout"] = {"form": "clone", "path": checkout, "create_s": create_s,
-                                     "verify_s": round(time.monotonic() - t0, 2), "files": len(entries), "setup": None}
+        verify_s = round(time.monotonic() - t0, 2)
         # ci.yml's served step, found by its name in whichever job holds it: the served leg's files, switches, pip lines
         # and Python version; a step the runner does not read in full is a refusal (read_served_step).
         served = read_served_step(checkout, sha)
@@ -3152,7 +3283,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             # names the missing extension.
             typecheck, served_rec = run["legs"]["typecheck"], run["legs"][SERVED_LEG]
             run.update(owed={"webview": {"owed": typecheck["owed"], "why": typecheck["why"]},
-                             SERVED_LEG: {"owed": served_rec["owed"], "why": served_rec["why"]}}, order=list(LEGS))
+                             SERVED_LEG: {"owed": served_rec["owed"], "why": served_rec["why"]}})
             need = (history or {}).get("need") or {}
             owed = [n for n in LEGS if is_owed(n, run["legs"][n])]
             unrun = sorted(set(need) - set(owed))
@@ -3171,6 +3302,17 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                               "the new head (logs: %s)" % (short(sha), ", ".join("%s in run %d (%s)" % (n, need[n][0], _rc_text(n, need[n][1]))
                                                                                  for n in unnamed),
                                                            ", ".join(str(need[n][1].get("log")) for n in unnamed)))
+        # Round 2, decision 13: the legs this run runs, grouped by the ci.yml job that holds each one's step, read from the
+        # swept sha's ci.yml (leg_groups); a leg whose step is in no job is a refusal. The first group runs in the checkout
+        # made above; each later one in a fresh checkout of its own, made when the group starts.
+        package = os.path.exists(os.path.join(checkout, "vscode-extension", "package.json"))
+        groups = leg_groups(checkout, sha, [n for n in LEGS if n in run["legs"] and is_owed(n, run["legs"][n])], npm=package)
+        grecs = [{"job": g["job"], "legs": list(g["legs"]), "path": None, "create_s": None, "verify_s": None, "setup": None}
+                 for g in groups]
+        grecs[0].update(path=checkout, create_s=create_s, verify_s=verify_s)
+        run["runner"]["checkout"] = {"form": "clone", "per": "ci.yml job", "files": len(entries), "groups": grecs}
+        if not only:
+            run["order"] = [n for g in groups for n in g["legs"]]
         os.makedirs(logdir, mode=0o700, exist_ok=True)
         tmpdir = make_tmpdir()
         run["runner"]["tmpdir"] = tmpdir
@@ -3199,25 +3341,14 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         prepare_home(ctx)
         run["runner"]["leg_env"] = {"allow": list(LEG_ALLOW), "hash": leg_env_hash(ctx)}
         run["runner"]["tools"] = tool_versions(ctx)
-        if (only and "deps" not in only and any(LEGS.index(n) > LEGS.index("deps") for n in only)
-                and os.path.exists(os.path.join(checkout, "vscode-extension", "package.json"))):
-            # A fresh checkout has no node_modules, so a --leg re-run of a leg after deps installs them from the sha's
-            # lockfile first, as CI does; without them the tools leg runs narrowed and can pass, and the served leg's
-            # tests cannot run. A --leg re-run of pytest alone has no setup: the pytest leg runs with no node_modules.
-            setup = {"owed": True, "cmd": list(DEPS_CMD), "cwd": "vscode-extension", "rc": None}
-            print("sweep %s: setup (npm ci) ..." % short(sha), flush=True)
-            # the setup runs as a leg does, in a TMPDIR, HOME and state root of its own (round 2, Class B)
-            leg_tmp = make_tmpdir()
-            lctx = leg_scratch(ctx, leg_tmp)
-            prepare_home(lctx)
-            run_leg(checkout, "deps", setup, wraps, lctx, logdir)
-            left = home_left(lctx)
-            if left:
-                setup["home_left"] = left[:20]
-            shutil.rmtree(leg_tmp, ignore_errors=True)
-            leg_tmp = None
-            run["runner"]["checkout"]["setup"] = setup
-            after = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS)
+        early = groups[0]["setup_before"] is not None and groups[0]["setup_before"] == groups[0]["legs"][0]
+        if early:
+            # The first group's job runs npm ci before its first leg (a --leg re-run of a leg its job runs after npm ci,
+            # the deps leg not named): a fresh checkout has no node_modules, so the setup installs them from the sha's
+            # lockfile first, as that job does; without them the served leg's tests cannot run. It runs before anything
+            # is recorded, so a setup that fails, or changes the checkout, refuses the run.
+            after = run_setup(checkout, before, grecs[0], ignored_now(checkout, entries))
+            setup = grecs[0]["setup"]
             if not passed("deps", setup) or after:
                 raise Refused("the setup of the checkout of %s (npm ci) %s, so the re-run would not run on the sha's tree with "
                               "its dependencies; nothing was recorded (log %s)" % (short(sha), _rc_text("deps", setup) if not
@@ -3228,76 +3359,116 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         run["runner"]["home_left"] = home_left_by_leg = {}
         data["runs"].append(run)
         write_result(path, data)
-        for name in LEGS:
-            rec = run["legs"].get(name)
-            if rec is None or not is_owed(name, rec):
-                continue
-            if name == SERVED_LEG:
-                # The tests outside the served globs that the pytest leg skipped for want of the deps join the served
-                # leg's command: this run's pytest leg, or for a --leg re-run the newest one recorded at this sha. A set
-                # that is not known blocks the leg, which is then red naming why (run_leg).
-                also, why = served_also(run["legs"]["pytest"] if "pytest" in run["legs"] else base_legs.get("pytest"))
-                rec.pop("blocked", None)
-                rec["cmd"] = served_cmd(served_vpy, served_files, also or ())
-                if why is None:
-                    rec["also"] = {"tests": also, "count": len(also), "why": DEPS_SKIP_WHY}
-                    print("sweep %s: served also runs %d test%s the pytest leg skipped for want of the deps"
-                          % (short(sha), len(also), "" if len(also) == 1 else "s"), flush=True)
-                else:
-                    rec["also"] = {"error": why}
-                    rec["blocked"] = why
-            # before deps, the ignored files the legs before it left, which its re-read excuses as long as it leaves them
-            known = ignored_now(checkout, entries) if name == "deps" else None
-            print("sweep %s: %s ..." % (short(sha), name), flush=True)
-            # Round 2, Class B: each leg runs in a fresh TMPDIR of its own, with its private HOME and state root under
-            # it (leg_scratch), removed when the leg ends, so nothing it leaves there reaches a later leg.
-            leg_tmp = make_tmpdir()
-            lctx = leg_scratch(ctx, leg_tmp)
-            prepare_home(lctx)
-            run_leg(checkout, name, rec, wraps, lctx, logdir)
-            if not passed(name, rec):
-                # Round 2, decision 14 (A6): a leg that did not pass is on disk as soon as run_leg returns, before
-                # deps_skipped, the re-read of the checkout and the venv's re-read below, so a stop during any of them
-                # keeps the failure and the next run needs --flake naming it; an invalid mark after the re-read rewrites
-                # the record. A pass is written only after its re-read, which could void it: read_history counts a
-                # stopped run's finished legs, so a pass written first and then stopped would stand unverified.
+        for gi, g in enumerate(groups):
+            grec = grecs[gi]
+            if gi:
+                # Round 2, decision 13: a fresh checkout for this group, verified against the sha's tree as the first one
+                # was. Something is already recorded, so one that cannot be made or is not the sha's tree (a leg that
+                # rewrote an object of the sha in the batcher's repository, whose objects the clone reads) makes the run
+                # invalid rather than refusing it.
+                try:
+                    checkout, marker, create_s = make_checkout(tree, sha)
+                    t0 = time.monotonic()
+                    faults = verify_checkout(checkout, sha, entries)
+                    if faults:
+                        raise Refused("it is not the sha's tree: %s" % describe_faults(faults))
+                    above = ancestor_hits(checkout)
+                    if above:
+                        raise Refused("it has %s in an ancestor directory" % ", ".join(above[:3]))
+                except Refused as e:
+                    run["invalid"] = "the fresh checkout for %s cannot be used (%s); the legs after it did not run" % (
+                        group_label(grec), e)
+                    write_result(path, data)
+                    break
+                before = git_state(checkout)
+                grec.update(path=checkout, create_s=create_s, verify_s=round(time.monotonic() - t0, 2))
+            blocked_by_setup = None
+            for name in g["legs"]:
+                rec = run["legs"][name]
+                if name == g["setup_before"] and not (gi == 0 and early):
+                    # npm ci where this group's job runs it (leg_groups), after the run is recorded: a setup that fails
+                    # blocks the group's legs after it, each red naming it; one that changes the checkout makes the run
+                    # invalid, as the deps leg's re-read does.
+                    after = run_setup(checkout, before, grec, ignored_now(checkout, entries))
+                    setup = grec["setup"]
+                    if after:
+                        run["invalid"] = ("after the setup (npm ci) of %s the checkout is not the sha's tree: %s; the legs "
+                                          "after it did not run" % (group_label(grec), describe_faults(after)))
+                        write_result(path, data)
+                        break
+                    if not passed("deps", setup):
+                        blocked_by_setup = ("its checkout's setup, npm ci as %s runs it, %s (log %s), so the leg did not run"
+                                            % (group_label(grec), _rc_text("deps", setup), setup.get("log")))
+                if name == SERVED_LEG:
+                    # The tests outside the served globs that the pytest leg skipped for want of the deps join the served
+                    # leg's command: this run's pytest leg, or for a --leg re-run the newest one recorded at this sha. A set
+                    # that is not known blocks the leg, which is then red naming why (run_leg).
+                    also, why = served_also(run["legs"]["pytest"] if "pytest" in run["legs"] else base_legs.get("pytest"))
+                    rec.pop("blocked", None)
+                    rec["cmd"] = served_cmd(served_vpy, served_files, also or ())
+                    if why is None:
+                        rec["also"] = {"tests": also, "count": len(also), "why": DEPS_SKIP_WHY}
+                        print("sweep %s: served also runs %d test%s the pytest leg skipped for want of the deps"
+                              % (short(sha), len(also), "" if len(also) == 1 else "s"), flush=True)
+                    else:
+                        rec["also"] = {"error": why}
+                        rec["blocked"] = why
+                if blocked_by_setup:
+                    rec["blocked"] = blocked_by_setup
+                # before deps, the ignored files the legs before it in its checkout left, which its re-read excuses as long
+                # as it leaves them (none in a fresh checkout, where the deps leg is first)
+                known = ignored_now(checkout, entries) if name == "deps" else None
+                print("sweep %s: %s ..." % (short(sha), name), flush=True)
+                # Round 2, Class B: each leg runs in a fresh TMPDIR of its own, with its private HOME and state root under
+                # it (leg_scratch), removed when the leg ends, so nothing it leaves there reaches a later leg.
+                lctx = scratch()
+                run_leg(checkout, name, rec, wraps, lctx, logdir)
+                if not passed(name, rec):
+                    # Round 2, decision 14 (A6): a leg that did not pass is on disk as soon as run_leg returns, before
+                    # deps_skipped, the re-read of the checkout and the venv's re-read below, so a stop during any of them
+                    # keeps the failure and the next run needs --flake naming it; an invalid mark after the re-read
+                    # rewrites the record. A pass is written only after its re-read, which could void it: read_history
+                    # counts a stopped run's finished legs, so a pass written first and then stopped would stand unverified.
+                    write_result(path, data)
+                left = scratch_end(lctx)
+                if left:
+                    home_left_by_leg[name] = left
+                if name == "pytest":
+                    unselected = []
+                    ids, why = deps_skipped(rec.get("log"), served_files, unselected)
+                    rec["deps_skipped"] = ({"tests": ids, "count": len(ids), "rule": DEPS_SKIP.pattern, "unselected": unselected}
+                                           if why is None else {"error": why})
+                print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
+                changed = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS if name == "deps" else None,
+                                           known=known)
+                # A4 reads the pytest and served legs' environments too: a leg that changed its venv changed what it, or
+                # another run's leg using the same venv, ran in, as a leg that changed the checkout changed the tree later
+                # legs run on. The run ends here, and on its way out, after the reap, the runner removes the venv's marker
+                # (VenvHold.retire), so the next run that uses it builds it again whatever the leg wrote into the marker.
+                own = {"pytest": hold, SERVED_LEG: served_hold}.get(name)
+                moved = own.changes() if own is not None else []
+                if changed or moved:
+                    # A4, the runner's producer of invalid: a leg changed the checkout, so later legs would not run on the
+                    # sha's tree, or its own environment, so it may not have run in what its build installed.
+                    parts = []
+                    if changed:
+                        parts.append("after the %s leg the checkout is not the sha's tree: %s" % (name, describe_faults(changed)))
+                    if moved:
+                        parts.append("after the %s leg its environment %s is not the tree its build wrote (%d path%s: %s%s); "
+                                     "the next run that uses it builds it again" % (name, own.venv, len(moved), "" if len(moved) == 1
+                                                                                     else "s", ", ".join(moved[:3]),
+                                                                                     ", ..." if len(moved) > 3 else ""))
+                    run["invalid"] = "; ".join(parts) + "; the legs after it did not run"
+                    write_result(path, data)
+                    break
                 write_result(path, data)
-            left = home_left(lctx)
-            if left:
-                home_left_by_leg[name] = left[:20]
-            shutil.rmtree(leg_tmp, ignore_errors=True)
-            leg_tmp = None
-            if name == "pytest":
-                unselected = []
-                ids, why = deps_skipped(rec.get("log"), served_files, unselected)
-                rec["deps_skipped"] = ({"tests": ids, "count": len(ids), "rule": DEPS_SKIP.pattern, "unselected": unselected}
-                                       if why is None else {"error": why})
-            print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
-            changed = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS if name == "deps" else None,
-                                       known=known)
-            # A4 reads the pytest and served legs' environments too: a leg that changed its venv changed what it, or
-            # another run's leg using the same venv, ran in, as a leg that changed the checkout changed the tree later
-            # legs run on. The run ends here, and on its way out, after the reap, the runner removes the venv's marker
-            # (VenvHold.retire), so the next run that uses it builds it again whatever the leg wrote into the marker.
-            own = {"pytest": hold, SERVED_LEG: served_hold}.get(name)
-            moved = own.changes() if own is not None else []
-            if changed or moved:
-                # A4, the runner's one producer of invalid: a leg changed the checkout, so later legs would not run on
-                # the sha's tree, or its own environment, so it may not have run in what its build installed.
-                parts = []
-                if changed:
-                    parts.append("after the %s leg the checkout is not the sha's tree: %s" % (name, describe_faults(changed)))
-                if moved:
-                    parts.append("after the %s leg its environment %s is not the tree its build wrote (%d path%s: %s%s); "
-                                 "the next run that uses it builds it again" % (name, own.venv, len(moved), "" if len(moved) == 1
-                                                                                 else "s", ", ".join(moved[:3]),
-                                                                                 ", ..." if len(moved) > 3 else ""))
-                run["invalid"] = "; ".join(parts) + "; the legs after it did not run"
-                write_result(path, data)
+            if run["invalid"]:
                 break
-            write_result(path, data)
+            # the group's checkout goes when its legs end; the next group starts from a fresh one
+            remove_checkout(checkout, marker)
+            checkout = marker = None
         # whether no leg, and no setup (whose own record names what it left), left anything in its private HOME
-        run["runner"]["home_empty"] = not home_left_by_leg and not (run["runner"]["checkout"].get("setup") or {}).get("home_left")
+        run["runner"]["home_empty"] = not home_left_by_leg and not any((gr["setup"] or {}).get("home_left") for gr in grecs)
     finally:
         reap_descendants()
         # The shared locks on the legs' environments are held to here, after the reap, so no rebuild removes a venv while
@@ -3362,10 +3533,13 @@ def main(argv=None):
                                    "state dir and verify it against the sha's tree, build or reuse the pytest leg's venv at "
                                    "the install steps of the sha's ci.yml (the SDK at its pin) and the served leg's venv at "
                                    "the sha's ci.yml served step's pip line (no SDK), read the served leg's files and switches "
-                                   "from that step, run every owed leg there in order (%s): pytest over all of tests/ before "
-                                   "the deps and with no browser, as CI's Python cells run it, and served last, in one "
-                                   "process, as CI's served step runs it, with the tests outside the served globs that the "
-                                   "pytest leg skipped for want of the deps (%s); append the run to the sha's result after "
+                                   "from that step, and run every owed leg (%s) as CI's jobs run them: the legs whose steps "
+                                   "one ci.yml job holds in one fresh verified clone of their own, in that job's step order, "
+                                   "each leg in a TMPDIR, HOME and state root of its own, npm ci where the job runs it, the "
+                                   "pytest leg's job first: pytest over all of tests/ with no node_modules and no browser, as "
+                                   "CI's Python cells run it, and served in one process, as CI's served step runs it, with "
+                                   "the tests outside the served globs that the pytest leg skipped for want of the deps (%s); "
+                                   "append the run to the sha's result after "
                                    "every leg, and record it invalid if a leg changed the checkout or its venv. The tree need "
                                    "not be clean; its uncommitted edits are not swept. Exit 0 pass, 1 red (a run that is "
                                    "itself invalid but leaves the sha unable to pass included), 2 refused to start, 3 "
