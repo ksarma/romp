@@ -2307,21 +2307,23 @@ class LegEnvironment(_Base):
         calls = w.calls()
         self.assertEqual(calls[0]["leg"], PYTEST_LEG)
         self.assertEqual(sorted(c["leg"] for c in calls), sorted(sweep.LEGS), "every leg ran once")
-        seen = {}
-        for c in calls:
-            for k in ("HOME", "XDG_STATE_HOME", "TMPDIR"):
-                seen.setdefault(k, []).append(c["values"][k])
-                self.assertFalse(os.path.exists(c["values"][k]), "%s's %s is gone after the run" % (c["leg"], k))
-            self.assertEqual(os.path.dirname(c["values"]["HOME"]), c["values"]["TMPDIR"], "HOME is under the leg's TMPDIR")
-            self.assertEqual(os.path.dirname(c["values"]["XDG_STATE_HOME"]), c["values"]["TMPDIR"])
+        # each clause first, one subtest per later leg, so a runner that shares one of the three reds on its own clause
         for c in calls[1:]:
             with self.subTest(leg=c["leg"]):
                 self.assertEqual(c["home_files"], [], "no .npmrc or .gitconfig from an earlier leg in its HOME")
                 self.assertEqual(c["state"], {"session-hosts": "off\n"}, "its state root is the runner's floor alone")
                 self.assertNotIn("planted-by-a-leg", c["tmp"], "no file an earlier leg left in its TMPDIR")
                 self.assertEqual(c["earlier_tmp_alive"], [], "every earlier leg's TMPDIR is removed when that leg ends")
+        seen = {}
+        for c in calls:
+            for k in ("HOME", "XDG_STATE_HOME", "TMPDIR"):
+                seen.setdefault(k, []).append(c["values"][k])
+                self.assertFalse(os.path.exists(c["values"][k]), "%s's %s is gone after the run" % (c["leg"], k))
         for k, values in seen.items():
             self.assertEqual(len(set(values)), len(values), "every leg has its own %s: %s" % (k, values))
+        for c in calls:
+            self.assertEqual(os.path.dirname(c["values"]["HOME"]), c["values"]["TMPDIR"], "HOME is under the leg's TMPDIR")
+            self.assertEqual(os.path.dirname(c["values"]["XDG_STATE_HOME"]), c["values"]["TMPDIR"])
         self.assertEqual(w.result()["runner"]["home_left"], {PYTEST_LEG: [".gitconfig", ".npmrc"]},
                          "the result names what each leg left in its HOME")
         self.assertIs(w.result()["runner"]["home_empty"], False)
@@ -2338,11 +2340,11 @@ class LegEnvironment(_Base):
         w.run("--leg", "served", "--flake", Runner.FLAKE, check=0)
         setup_call, served_call = w.calls()[before:]
         self.assertEqual((setup_call["leg"], served_call["leg"]), ("deps", "served"))
-        self.assertNotEqual(setup_call["values"]["TMPDIR"], served_call["values"]["TMPDIR"])
         self.assertEqual(served_call["home_files"], [], "the setup's .npmrc and .gitconfig are not in the leg's HOME")
         self.assertEqual(served_call["state"], {"session-hosts": "off\n"})
         self.assertNotIn("planted-by-a-leg", served_call["tmp"])
         self.assertEqual(served_call["earlier_tmp_alive"], [], "the setup's TMPDIR is gone before the leg starts")
+        self.assertNotEqual(setup_call["values"]["TMPDIR"], served_call["values"]["TMPDIR"])
         self.assertEqual(self.setup_record(w)["home_left"], [".gitconfig", ".npmrc"])
         self.assertIs(w.result()["runner"]["home_empty"], False, "a setup that left something makes home_empty false")
 
