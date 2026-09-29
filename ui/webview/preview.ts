@@ -460,6 +460,11 @@ export function openLightbox(path: string, sid?: string | null, pin?: string): v
   inner.style.setProperty("--lb-acts-w", Math.ceil(ctl.reduce((a, c) => a + c.getBoundingClientRect().width, 0) + 4 * Math.max(0, ctl.length - 1) + 8) + "px");
 }
 
+/** The mark on the chat's preview box (previewFull), set as the box is made, outside any sanitize: the markdown-image heal
+ *  (installMdImgHeal) leaves every img inside it to the preview machinery, and knows the box by this mark because no author's
+ *  markup can carry it (the sanitizer strips every data-* attribute an author writes), while an author can type the class. */
+export const PREVIEW_BOX_MARK = "data-preview-full";
+
 // FULL-SIZE inline render for a mentioned image in the CHAT (the user 2026-07-20, who wanted not even a
 // thumbnail but a rendered image, like the user messages). Self-verifying —
 // a path the kernel can't serve removes itself — and an image click still opens the lightbox. Images
@@ -482,6 +487,7 @@ export function previewFull(path: string, sid?: string | null, verified = false,
   if (!kind || !canPreview()) return null;
   const box = document.createElement("span");
   box.className = "path-full" + (kind === "pdf" ? " pdf" : "");
+  box.setAttribute(PREVIEW_BOX_MARK, "");   // the markdown-image heal leaves every img in this box to the machinery below (installMdImgHeal)
   box.title = path;
   if (kind === "pdf") {
     box.classList.add("path-full-pdfcard");
@@ -882,11 +888,21 @@ export function refreshSettledPreviews(): void {
 // fetches it, so a re-render of the same markdown reuses the state instead of fetching, failing and flipping
 // once more. DOMPurify strips inline handlers
 // (correctly), so the failures are caught by ONE document-level capture listener (error events do not
-// bubble but do capture); previews' own <img>s are skipped: their machinery (budgets, resume, chips) owns those.
-// So is the file viewer's own picture, in its picture box (.fileview-imgbox): the viewer asks its address again and
-// runs its own bounded probes (file-view.ts imgFailed and onKernelMessage), so a heal of it would add a second probe of
-// the address on each of the first three kernel messages (its own budget of three). The figures of a markdown file the
-// viewer renders sit in its Rendered body, outside that box, and park and heal here as any markdown image does.
+// bubble but do capture); previews' own <img>s are skipped: their machinery (budgets, resume, chips) owns those, an img
+// it listens to (onerror) or any img in previewFull's box, whose swirl and whose picture shown from fetched bytes listen
+// to nothing.
+// So is the file viewer's own picture, in its picture box (.fileview-imgbox): an svg picture's address the viewer asks
+// again and probes itself (file-view.ts imgFailed and onKernelMessage), so a heal of it would add a second probe of the
+// address on each of the first three kernel messages (its own budget of three); a raster picture's src is an object URL
+// of bytes in hand, which a probe could not bring back (servedByKernel is false for a blob: URL, so the skip costs it
+// nothing). The figures of a markdown file the viewer renders sit in its Rendered body, outside that box, and park and
+// heal here as any markdown image does.
+// The heal knows both boxes by their data marks (PREVIEW_BOX_MARK, set by previewFull, and VIEWER_PICTURE_MARK, set by
+// file-view.ts imgBlock), never by their classes: an author can type a class in a message or a note, and the sanitizer
+// keeps `class` while its profile strips every data-* attribute (md-sanitize.ts), so a figure an author wraps in markup
+// carrying either class, or that carries one itself, parks and heals like any other.
+/** The mark on the file viewer's picture box (file-view.ts imgBlock), the one the heal skips by. */
+export const VIEWER_PICTURE_MARK = "data-fv-picture";
 const mdImgFailed = new Set<string>();             // URLs that failed this page life: a re-render parks them before any fetch
 const mdImgProbe = new Map<string, number>();      // served URLs with per-message attempts left: the budget rides the URL, not the img
 const mdImgProbing = new Map<string, number>();    // served URLs with a per-message probe in flight, by that probe's token: one at a time per URL
@@ -998,8 +1014,8 @@ export function installMdImgHeal(): void {
     if (!img || img.tagName !== "IMG") return;
     const src = img.src || "";
     if (!src || src.startsWith("data:")) return;     // a broken data: URI has no server to heal
-    if (img.onerror || img.closest(".path-full")) return;   // the preview machinery retries its own
-    if (img.closest(".fileview-imgbox")) return;     // the file viewer's picture: the viewer's own way back retries it
+    if (img.onerror || img.closest("[" + PREVIEW_BOX_MARK + "]")) return;   // the preview machinery's own: an img it listens to, or any in its box
+    if (img.closest("[" + VIEWER_PICTURE_MARK + "]")) return;   // the file viewer's picture: an svg's address the viewer asks again itself; a raster one is bytes in hand
     parkMdImg(img, src);
     if (servedByKernel(src)) {                       // bounded and off the DOM: the caption never moves for it
       if (!mdImgProbe.has(src)) mdImgProbe.set(src, 3);   // the budget rides the URL: a re-rendered turn inherits what is left

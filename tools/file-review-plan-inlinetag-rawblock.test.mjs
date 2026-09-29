@@ -9,7 +9,7 @@
 // is theirs too; the literal-tags rule runs after the lex and changes no lexer state, so this is marked's behaviour
 // before and after decision 52. This module holds the record's sentence to the plan and to the installed marked
 // (vscode-extension/node_modules, the copy the viewer bundles), by lexing synthetic documents and reading the later
-// blocks' text tokens. The lexer legs skip where marked is not installed, and CI's shell job, the one runner of
+// blocks' text tokens. The lexer legs skip where marked is not installed, and CI's vendored-tooling job, the one runner of
 // tools/*.test.mjs, installs nothing, so they skipped in every CI run (review find, 2026-09-18): the module of the same stem
 // under ui/webview (file-review-plan-inlinetag-rawblock.test.ts) holds the same scope through both callers' lexes under the
 // extension job's `npm test`, which installs, and the last test here holds that module and its runner to the tree, so the
@@ -96,11 +96,11 @@ test('an unclosed <a leaves no bare URL autolinked in any later block until an <
 
 // ── the arbiter in CI ───────────────────────────────────────────────
 
-// The three legs above assert only where marked is installed. CI's shell job runs tools/*.test.mjs from a bare checkout, so
-// they skip there, and the extension job, which runs npm ci, invokes no tools module but pdf-smoke; so the webview module of
-// this stem carries the scope into that job's `npm test`. This test runs everywhere and holds the chain: the module is in the
-// tree with both lexes and every case above, the test build takes every .test.ts under ui/webview, `npm test` builds and runs
-// that bundle, and the extension job runs `npm test` after `npm ci`.
+// The three legs above assert only where marked is installed. CI's vendored-tooling job runs tools/*.test.mjs from a bare
+// checkout, so they skip there, and the extension job, which runs npm ci, invokes no tools module but pdf-smoke; so the
+// webview module of this stem carries the scope into that job's `npm test`. This test runs everywhere and holds the chain:
+// the module is in the tree with both lexes and every case above, the test build takes every .test.ts under ui/webview,
+// `npm test` builds and runs that bundle, and the extension job runs `npm test` after `npm ci`.
 const TWIN = path.join(REPO, 'ui', 'webview', 'file-review-plan-inlinetag-rawblock.test.ts');
 
 test('the webview module of this stem holds the scope to the installed marked where CI installs it: both callers\' lexes, every case above, and the extension job\'s npm test as its runner', () => {

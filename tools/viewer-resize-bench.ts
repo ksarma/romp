@@ -18,8 +18,8 @@
 // same rule sends the Files pane's long frames to the shell page, which has no observer, which is why no pane recorded
 // the incident's frames. With --cpu-profile a V8 profile of the whole run is written under the output dir and folded to
 // self time by function, each bundle line mapped to its source file through esbuild's module banners (top 25 printed;
-// per-interaction top 12 in the JSON). The `nudge` interaction (a 1px width change) stands for one full panel pass
-// (paintAll, seat, placeCards) over a reflow that moves nothing; `add` is one pass plus the aside's rebuild. A run that
+// per-interaction top 12 in the JSON). The `nudge` interaction (a 1px width change) stands for a reflow that
+// moves nothing (the panel's trimBlanks and placeCards, the viewer's seat); `add` is one pass plus the aside's rebuild. A run that
 // exceeds --timeout-s is killed and recorded as a timeout: that is a reproduction, not a failure of the bench. One JSON per
 // run under <out>/runs/, one summary line on stdout.
 //

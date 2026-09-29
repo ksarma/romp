@@ -298,8 +298,8 @@ const ACCEPTED: Partial<Status> = { store: { v: 3, path: "docs/report.md", sugge
 
 // ── the harness: a mounted panel inside the viewer's body row ──────────────────────────────────────
 type Posted = Record<string, any>;
-const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];   // the panel's sections with the box in its slot
-const NO_SLOT = ["fc-sec-head", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];              // …and with the box away in a card
+const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"];   // the panel's sections with the box in its slot, and its live region
+const NO_SLOT = ["fc-sec-head", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"];              // …and with the box away in a card
 async function harness(over: Partial<FileViewActionCtx> = {}) {
   const fc = await import("./file-comments");
   const main = doc.createElement("div"); main.className = "fileview-main";
@@ -361,7 +361,7 @@ function draft(box: E, text: string, caret: number, scrollHeight: number): void 
 test("Reply moves the box into the comment's card, below its replies and above its buttons; the card opens; the slot stands empty until Cancel", async () => {
   const h = await harness();
   await h.open();
-  assert.deepEqual(h.sections(), SLOT, "the panel's five sections, the box in its slot");
+  assert.deepEqual(h.sections(), SLOT, "the panel's five sections, the box in its slot, and its live region");
   assert.equal(h.composer().hidden, true);
   assert.ok(!h.card(passage.id)!.classList.contains("open"), "the card starts collapsed");
   doc.scrolled.length = 0;
@@ -601,7 +601,7 @@ test("Escape, Cancel and a save hand the keyboard back to the card's Reply; a ke
 // ── pinned at source: the placement, the render order, the guards ─────────────────────────────────
 
 test("source: render builds the cards before the composer and puts the typing box's keyboard back; placeComposer finds the card by comment id and moves the box only when it is out of place; the sections' slot order stands", () => {
-  assert.match(SRC, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/, "the slot's place: head, the box, cards, send, log");
+  assert.match(SRC, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log, this\.live\);/, "the slot's place: head, the box, cards, send, log, then the live region");
   // the reads come first — the composer's box and the Send confirm's note box (the send follow-on), both rebuilt around —
   // then the reply's latch and the arrivals' bookkeeping (the seen and new sets, the dots on the body's marks: the arrivals
   // follow-on), which build nothing; the rebuild after them: the head, the cards around the box, the composer. Between the

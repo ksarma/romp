@@ -3,7 +3,7 @@
 2026-09-10). The files tests/test_*_browser.py and tests/test_*_served.py boot a hermetic kernel and drive the real
 dashboard pages in playwright's Chromium; without the extension's node deps or a browser they skip, and say why. CI's
 Python jobs are such machines, so a served-page regression never turned them red (the deep-link landing pin, T307,
-red on main for a day while CI stayed green). The extension job installs that browser and runs these files with the
+red on main for a day while CI stayed green). The served-pages job installs that browser and runs these files with the
 switch set, the stance the pane bench takes with ROMP_UI_BENCH_REQUIRE: a runner that cannot run them fails, loudly,
 with the skip's own reason, rather than passing with the coverage gone.
 
