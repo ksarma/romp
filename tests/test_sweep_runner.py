@@ -1770,19 +1770,21 @@ class Checkout(_Base):
         w.ctl({"action": {PYTEST_LEG: "leftovers", "deps": "ignored"}})
         w.run(check=0)
         calls = w.calls()
-        self.assertEqual([c["leg"] for c in calls], SEED_ORDER)
-        roots = {c["leg"]: c["root"] for c in calls}
-        for job, legs in SEED_GROUPS:
-            self.assertEqual({roots[leg] for leg in legs}, {roots[legs[0]]}, "the %s group shares one checkout" % job)
-        self.assertEqual(len({roots[legs[0]] for _job, legs in SEED_GROUPS}), len(SEED_GROUPS), "each group its own")
+        self.assertEqual(calls[0]["leg"], PYTEST_LEG, "the pytest leg's job runs first")
         pyc = os.path.join("kernel", "__pycache__", "other.cpython-399.pyc")
         extension = dict(SEED_GROUPS)["vscode-extension"]
+        # each clause first, one subtest per later leg, so a checkout shared across jobs reds on what crossed
         for c in calls[1:]:
             with self.subTest(leg=c["leg"]):
                 self.assertEqual(c["git_plants"], [], "no hook or attributes file an earlier job's leg planted")
                 self.assertNotIn(pyc, c["tree"], "no bytecode an earlier job's leg left")
                 self.assertIs(c["node_modules"], c["leg"] in extension and c["leg"] != "deps",
                               "node_modules only after npm ci, in the job that runs it")
+        self.assertEqual([c["leg"] for c in calls], SEED_ORDER)
+        roots = {c["leg"]: c["root"] for c in calls}
+        for job, legs in SEED_GROUPS:
+            self.assertEqual({roots[leg] for leg in legs}, {roots[legs[0]]}, "the %s group shares one checkout" % job)
+        self.assertEqual(len({roots[legs[0]] for _job, legs in SEED_GROUPS}), len(SEED_GROUPS), "each group its own")
         self.assertEqual(w.result()["verdict"], "pass")
 
     def test_within_a_job_its_legs_share_the_checkout_as_cis_steps_do(self):
