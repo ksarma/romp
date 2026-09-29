@@ -1400,11 +1400,22 @@ def ancestor_hits(path):
 def _plant_for_tests(path):
     """The test seam round 1 rules for the verification's refusal classes: SWEEP_TEST_PLANT, a JSON list of
     [op, relative path], changes the fresh checkout between its creation and its verification (op: byte, extra,
-    missing, mode, symlink-to-file). Whatever it plants, the verification that follows refuses."""
+    missing, mode, symlink-to-file). Whatever it plants, the verification that follows refuses. Every path is read
+    before any is applied, and one that resolves outside the checkout (a `..` path, an absolute path, or a symlink that
+    leads out), followed through its symlinks or through its directory's alone, is refused, naming it, with nothing
+    planted (round 2, extra6-4): outside the checkout the verification cannot see it."""
     spec = os.environ.get("SWEEP_TEST_PLANT")
     if not spec:
         return
-    for op, rel in json.loads(spec):
+    plan = json.loads(spec)
+    root = os.path.realpath(path)
+    for _op, rel in plan:
+        full = os.path.join(path, rel)
+        for where in (os.path.realpath(full), os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full))):
+            if not where.startswith(root + os.sep):
+                raise Refused("SWEEP_TEST_PLANT names %r, which resolves outside the checkout (%s); nothing was planted, run "
+                              "or recorded" % (rel, where))
+    for op, rel in plan:
         full = os.path.join(path, rel)
         if op == "byte":
             with open(full, "ab") as f:

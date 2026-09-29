@@ -1564,6 +1564,31 @@ class Checkout(_Base):
                 self.assertFalse(os.path.exists(w.result_path()))
                 self.assertEqual(os.listdir(os.path.join(w.xdg, "romp", "sweeps", "trees")), [])
 
+    def test_a_plant_outside_the_checkout_is_refused_and_nothing_is_written(self):
+        """Round 2, extra6-4: the SWEEP_TEST_PLANT seam refuses, before it applies any entry, a path that resolves outside
+        the checkout: a `..` path (here beside the checkout under sweeps/trees, and the result file of another sha two
+        levels up), an absolute path, and an escaping entry after one inside. Each run is refused naming the path, nothing
+        is written outside, nothing is run or recorded, and the checkout is removed. At c60fb907e each plant was written
+        where it pointed, the verification saw nothing, and the run passed."""
+        w = self.w
+        w.change({"notes.txt": "a head of its own\n"})
+        sweeps = os.path.join(w.xdg, "romp", "sweeps")
+        other = os.path.join(sweeps, "b" * 40 + ".json")
+        cases = (("a path beside the checkout", [["extra", "../escaped.txt"]], os.path.join(sweeps, "trees", "escaped.txt")),
+                 ("another sha's result", [["extra", "../../" + "b" * 40 + ".json"]], other),
+                 ("an absolute path", [["extra", os.path.join(w.tmp, "absolute-escaped.txt")]], os.path.join(w.tmp, "absolute-escaped.txt")),
+                 ("an escaping entry after one inside", [["extra", "conftest.py"], ["extra", "../escaped.txt"]],
+                  os.path.join(sweeps, "trees", "escaped.txt")))
+        for label, plan, where in cases:
+            with self.subTest(case=label):
+                p = w.run(env=dict(w.env, SWEEP_TEST_PLANT=json.dumps(plan)), check=2)
+                self.assertIn("SWEEP_TEST_PLANT names %r, which resolves outside the checkout" % plan[-1][1], p.stderr)
+                self.assertIn("nothing was planted, run or recorded", p.stderr)
+                self.assertFalse(os.path.exists(where), "nothing is written outside the checkout")
+                self.assertEqual(w.calls(), [])
+                self.assertFalse(os.path.exists(w.result_path()))
+                self.assertEqual(os.listdir(os.path.join(sweeps, "trees")), [])
+
     # What each name in an ancestor directory does to a leg: node_modules/@types reaches tsc and require(); a
     # package.json's "type" changes how node loads a .js file with no nearer one; a tsconfig.json or jsconfig.json is the
     # nearest one esbuild finds above a ui/ file (its paths can map an import to a file outside the sha).
