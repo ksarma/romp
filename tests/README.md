@@ -292,8 +292,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   committed as `_ANYIO_DIRECT_ALLOWED`); any other identifier or attribute name
   refuses the module whole, naming the name and its line, whatever function,
   class or statement holds it (a plain function the direct-import check does not
-  otherwise match included). A list of dangerous names does not converge, since
-  a false proof can reach a builtin by a name no list holds
+  otherwise match included). A list of dangerous names leaves out names a false
+  proof can reach a builtin by, names no list holds
   (`object.__setattr__`, `operator.methodcaller`, `builtins`, `__import__`), so
   the check is turned around: twenty-eight of the refused names carry a category
   (the four channels; the eight defeaters; `f_builtins`, `inspect.currentframe`,
@@ -317,11 +317,16 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   of such a module (a function's `__globals__`, say), since the check cannot
   follow the module there. It refuses a write to the module's namespace
   through `globals()`. Other roads that no honest author writes pass and are
-  listed, each stating either the live site of `tests/conftest.py` a refusal
-  by its name would hit or that a name check on it was not built because a list
-  of such names does not converge (the allowlist refuses them in a direct
-  import, and a value naming anyio reached through one in the conftest is still
-  refused): among them a carrier reached through a function that reads by name
+  listed. A listed kind with a live site names the site, in `tests/conftest.py`
+  or in the `tests/__init__.py` it imports, that a refusal of the kind would
+  hit, and its witness, for most kinds the test that runs the rule over the
+  live conftest and asserts it finds no read. A kind with no live site says so,
+  is escape-only, and names its witness by id: a subtest of
+  `test_every_escape_only_kind_the_anyio_rule_lists_is_admitted`, which runs
+  the rule over the kind's synthetic plants and asserts each is admitted, so a
+  kind the rule starts refusing turns its own subtest red; a pin holds the ids
+  the listing names equal to that test's subtests. Among the listed kinds are
+  a carrier reached through a function that reads by name
   and that the rule does not list (`pydoc.locate`, `pkgutil.resolve_name`), the
   command line read from outside the interpreter's objects
   (`/proc/self/cmdline`, which `tests/conftest.py` reads by that spelling for
