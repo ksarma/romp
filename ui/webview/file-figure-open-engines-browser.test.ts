@@ -381,8 +381,12 @@ const OWN_FORMS: Array<[string, string, "file" | "relay" | "none" | "web"]> = [
 /** Every figure request answered with the picture when it names OWN_PIC, whatever route spelling asked (the escaped route's
  *  src is left uncapped as written, and the harness has no kernel to refuse it). */
 const ownServe = (u: URL): Served | null => (u.searchParams.get("path") === OWN_PIC ? { status: 200, type: "image/svg+xml", body: OWN_SVG } : null);
-type OwnRead = { gated: boolean; capped: boolean; words: string | null; opened: string[]; base: string | null; shown: string | null; back: string | null };
-async function ownFormScene(browser: any, dest: string, key: string): Promise<{ read: OwnRead; errors: string[] }> {
+/** The Cmd/Ctrl-click on the picture after the control's open and Back, for the file and relay forms (the file review's round 20,
+ *  tests-2): each click's ctrlKey read back at the document, the tabs window.open was asked for, and the file the bar names after
+ *  it. */
+type OwnCtrl = { ctrl: boolean[]; tab: string[]; stayed: string | null };
+type OwnRead = { gated: boolean; capped: boolean; words: string | null; opened: string[]; base: string | null; shown: string | null; back: string | null; ctrlClick: OwnCtrl | null };
+async function ownFormScene(browser: any, dest: string, key: string, kind: "file" | "relay" | "none" | "web"): Promise<{ read: OwnRead; errors: string[] }> {
   const note = "# Report\n\n![the figure](" + dest + ")\n\n" + PARA(1) + "\n";
   const { page, errors } = await openViewer(browser, "chat", 900, 700, {
     docs: { [REPORT]: note, [OWN_PIC]: OWN_SVG }, serve: ownServe,
@@ -410,31 +414,54 @@ async function ownFormScene(browser: any, dest: string, key: string): Promise<{ 
     }
     await frames(page, 3);
     const after = await page.evaluate(() => { const i = document.querySelector("img.fileview-img"); const b = document.querySelector(".fileview-nav-back") as HTMLElement | null; const shown = !!b && !b.closest("[hidden]") && b.getAttribute("aria-disabled") !== "true"; return { opened: ((window as any).__opened as string[]).slice(), base: (document.querySelector(".fileview-base") || { textContent: null }).textContent, shown: i ? i.getAttribute("src") : null, back: shown ? b!.title : null }; });
-    return { read: { gated, capped: /[?&]cap=/.test(pre.src), words: pre.words, ...after }, errors };
+    let ctrlClick: OwnCtrl | null = null;
+    if (kind === "file" || kind === "relay") {
+      // the figure's own-tab gesture, a Cmd/Ctrl-click on the picture, after the control's open and Back: Back only where the viewer
+      // moved (at a head whose control opened a tab the viewer stayed and Back is disabled), then the click with the key held, its
+      // ctrlKey read back off a capture listener at the document, so the gesture cannot pass as a plain click
+      if (after.back !== null) {
+        await page.locator(".fileview-nav-back").click();
+        await page.waitForFunction(() => /report\.md/.test((document.querySelector(".fileview-base") || { textContent: "" }).textContent || ""), null, { timeout: 10000 });
+        await page.waitForFunction(() => { const i = document.querySelector(".fileview-md img") as HTMLImageElement | null; return !!i && i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
+        await frames(page, 3);
+      }
+      const n0 = await page.evaluate(() => { const w = window as any; w.__ctrl = []; document.addEventListener("click", (ev) => { w.__ctrl.push((ev as MouseEvent).ctrlKey); }, { capture: true }); return ((w.__opened as string[]) || []).length; });
+      await page.locator(".fileview-md img").hover();
+      await frames(page, 2);
+      await page.locator(".fileview-md img").click({ modifiers: ["ControlOrMeta"] });
+      await page.waitForFunction((n: number) => (window as any).__opened.length > n, n0, { timeout: 10000 }).catch(() => undefined);   // the tab is due; its absence is read below
+      await frames(page, 3);
+      ctrlClick = await page.evaluate((n: number) => ({ ctrl: ((window as any).__ctrl as boolean[]).slice(), tab: ((window as any).__opened as string[]).slice(n), stayed: (document.querySelector(".fileview-base") || { textContent: null }).textContent }), n0);
+    }
+    return { read: { gated, capped: /[?&]cap=/.test(pre.src), words: pre.words, ...after, ctrlClick }, errors };
   } finally { await page.close(); }
 }
 for (const engine of ["chromium", "firefox", "webkit"] as const) {
   const named = engine === "chromium" ? "Chromium" : engine === "firefox" ? "Firefox" : "WebKit (Playwright's, on Linux)";
-  test("in " + named + ", under a page key, a figure written with this origin's /file address opens in the viewer and no tab, in the plain spelling, an escaped route, a .. segment and a . segment, and, with a cap the author copied, respelled with a double slash or params the kernel drops, as a local picture opens: the control wears the local words, the viewer shows the file the query names, in the session it names, through its own capped /file URL, and Back returns to the report; a figure at the relay's route opens the same way in its host's session, through the viewer's own capped relay URL; a host-prefixed sid at the /file route and a pin beside the path, which the viewer cannot open as the picture shown, wear no control and open nothing on a click or a Cmd/Ctrl-click; a name the route does not read (a cache-buster v, a t) and a download of 0 leave the file to open, at the /file route and the relay's, and a download of 1, which the route answers as an attachment, wears no control and opens nothing; a /file address on another origin, or on this host at another port, still opens a web tab at its address (the coordinator's ruling on the same-origin figure after the file review's round 19, read over the route's other forms by a check of that build, and the file review's round 20, regression-2, with the coordinator's decision 7 on it; the first four forms red at dcaa80ec4, where each opened a tab at the address as written, which carries no cap, the next five red at d140285a4, where the two respelled forms opened a tab whose address kept the author's cap, the relay's route and the host-prefixed sid a tab at the address as written, and the pin the live file in the viewer, and the four forms naming what the route does not read red at bef9ff8fc, where each wore no control and opened nothing)", async (t) => {
+  test("in " + named + ", under a page key, a figure written with this origin's /file address opens in the viewer and no tab, in the plain spelling, an escaped route, a .. segment and a . segment, and, with a cap the author copied, respelled with a double slash or params the kernel drops, as a local picture opens: the control wears the local words, the viewer shows the file the query names, in the session it names, through its own capped /file URL, and Back returns to the report; a figure at the relay's route opens the same way in its host's session, through the viewer's own capped relay URL; a host-prefixed sid at the /file route and a pin beside the path, which the viewer cannot open as the picture shown, wear no control and open nothing on a click or a Cmd/Ctrl-click; a name the route does not read (a cache-buster v, a t) and a download of 0 leave the file to open, at the /file route and the relay's, and a download of 1, which the route answers as an attachment, wears no control and opens nothing; a /file address on another origin, or on this host at another port, still opens a web tab at its address; and for the file and relay forms, after the control's open and Back, a Cmd/Ctrl-click on the picture opens one tab at the viewer's own capped URL, the whole prefix with the session the address names, and the viewer stays on the report (the coordinator's ruling on the same-origin figure after the file review's round 19, read over the route's other forms by a check of that build, and the file review's round 20, regression-2, with the coordinator's decision 7 on it, and tests-2; the first four forms red at dcaa80ec4, where each opened a tab at the address as written, which carries no cap, the next five red at d140285a4, where the two respelled forms opened a tab whose address kept the author's cap, the relay's route and the host-prefixed sid a tab at the address as written, and the pin the live file in the viewer, and the four forms naming what the route does not read red at bef9ff8fc, where each wore no control and opened nothing)", async (t) => {
     const key = "k" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);   // a page key minted at run time
     const got: Array<[string, OwnRead]> = [];
     const errs: string[] = [];
     let ran = false;
     await inBrowser(t, async (browser) => {
       ran = true;
-      for (const [what, dest] of OWN_FORMS) { const { read, errors } = await ownFormScene(browser, dest, key); got.push([what, read]); errs.push(...errors); }
+      for (const [what, dest, kind] of OWN_FORMS) { const { read, errors } = await ownFormScene(browser, dest, key, kind); got.push([what, read]); errs.push(...errors); }
     }, { engine });
     if (!ran) return;   // no browser: inBrowser skipped the case loudly
     t.diagnostic("record " + JSON.stringify(got));
     const viewerSrc = "/file?path=" + encodeURIComponent(OWN_PIC) + "&sid=" + OWN_SID + "&cap=";
     const relaySrc = "/remote/gpu1/file?path=" + encodeURIComponent(OWN_PIC) + "&sid=" + OWN_SID + "&cap=";
+    const own = (kind0: string): string => kind0 === "file" ? "the viewer's own capped /file URL" : "the viewer's own capped relay URL";
     const want = OWN_FORMS.map(([what, dest, kind]): [string, unknown] => [what, kind === "file" || kind === "relay"
-      ? { gated: false, capped: what !== "an escaped route", words: "Open the picture", opened: [], base: "b.svg", shown: kind === "file" ? "the viewer's own capped /file URL" : "the viewer's own capped relay URL", back: "Back to report.md" }
+      ? { gated: false, capped: what !== "an escaped route", words: "Open the picture", opened: [], base: "b.svg", shown: own(kind), back: "Back to report.md", ctrlClick: { ctrl: [true], tab: [own(kind)], stayed: "report.md" } }
       : kind === "none"
-        ? { gated: false, capped: true, words: null, opened: [], base: "report.md", shown: null, back: null }
-        : { gated: true, capped: false, words: "Open the picture in a new tab at " + new URL(dest).host, opened: [new URL(dest).href], base: "report.md", shown: null, back: null }]);
-    const seen = got.map(([what, r]): [string, unknown] => [what, { ...r, shown: r.shown !== null && r.shown.startsWith(viewerSrc) ? "the viewer's own capped /file URL" : r.shown !== null && r.shown.startsWith(relaySrc) ? "the viewer's own capped relay URL" : r.shown }]);
-    assert.deepEqual(seen, want, "each form: whether it waited behind its host's box (a precondition: another host's figure does, this origin's does not), whether its src carries a cap (a precondition: the cap pass caps the /file route and the relay's, leaves the escaped route's as written, and keeps the cap an author copied into a respelled route), the control's words (none for a form the viewer cannot open as shown), the tabs opened, the file the bar names, the viewer's picture and Back (a property pin over window.open's calls and the viewer's own DOM)");
+        ? { gated: false, capped: true, words: null, opened: [], base: "report.md", shown: null, back: null, ctrlClick: null }
+        : { gated: true, capped: false, words: "Open the picture in a new tab at " + new URL(dest).host, opened: [new URL(dest).href], base: "report.md", shown: null, back: null, ctrlClick: null }]);
+    // a tab's address read at this origin by its route and query, the whole prefix with the sid the address names, so a tab in the
+    // shown file's session or at the address as written, which carries no cap, reads as itself
+    const asOwn = (u: string): string => { let p = u; try { const x = new URL(u, ORIGIN); if (x.origin === new URL(ORIGIN).origin) p = x.pathname + x.search; } catch { /* read as written */ } return p.startsWith(viewerSrc) ? "the viewer's own capped /file URL" : p.startsWith(relaySrc) ? "the viewer's own capped relay URL" : u; };
+    const seen = got.map(([what, r]): [string, unknown] => [what, { ...r, shown: r.shown !== null && r.shown.startsWith(viewerSrc) ? "the viewer's own capped /file URL" : r.shown !== null && r.shown.startsWith(relaySrc) ? "the viewer's own capped relay URL" : r.shown, ctrlClick: r.ctrlClick === null ? null : { ...r.ctrlClick, tab: r.ctrlClick.tab.map(asOwn) } }]);
+    assert.deepEqual(seen, want, "each form: whether it waited behind its host's box (a precondition: another host's figure does, this origin's does not), whether its src carries a cap (a precondition: the cap pass caps the /file route and the relay's, leaves the escaped route's as written, and keeps the cap an author copied into a respelled route), the control's words (none for a form the viewer cannot open as shown), the tabs opened, the file the bar names, the viewer's picture and Back, and for the file and relay forms the Cmd/Ctrl-click on the picture after Back, its ctrlKey read back, one tab at the viewer's own capped URL in the session the address names and the viewer still on the report (a property pin over window.open's calls and the viewer's own DOM)");
     assert.deepEqual(errs, [], "no page errors");
   });
 }
