@@ -244,10 +244,11 @@ is written to the result as soon as it exits, before the re-read after it, so a 
 failure; a pass is written after its re-read, which could void it. A stop that arrives inside the write of a failure,
 or of the run's invalid mark, lets that write finish before the runner stops (_write_under_stop), where write_result
 alone would remove its temp file and the record with it. A stop in the moments between a leg's exit and the
-runner filling in its record (the reap of what the leg left running, up to about five seconds, then its log's summary
-and test count) still loses the rc: the run records that leg as never finished, and the next run needs no flake for
-it. Writing the rc before the record is whole would not close this, since a stop of the runner's whole scope kills the
-leg with the same signal, and its rc would then read as a failure.
+runner filling in its record (the reap of what the leg left running, which reap_descendants bounds at its 30 s
+timeout, then the reading of its log for the summary and the test count) still loses the rc: the run records that leg
+as never finished, and the next run needs no flake for it. Writing the rc before the record is whole would not close
+this, since a stop of the runner's whole scope kills the leg with the same signal, and its rc would then read as a
+failure.
 A --leg re-run refuses unless the newest run finished, is valid, and failed that leg, so the flake a failure in an
 invalid full run needs is spent on a full run. A --leg re-run runs each leg it names in a fresh checkout of that leg's
 job, grouped as a full run groups them, so it may name legs of several jobs (pytest with a leg after deps included),

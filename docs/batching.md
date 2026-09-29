@@ -303,8 +303,9 @@ subject; `verify` refuses the branch otherwise.
    fails is written to the result as soon as it exits, so stopping the runner during the re-read
    after it, or during that write itself, keeps the failure (a stop inside the write lets it finish
    first, as it does for the write of an invalid mark); a stop in the moments after the leg exits
-   and before the runner has finished its record (up to about five seconds when the leg left
-   processes to reap) loses that failure, and the next run needs no flake for it. The runner
+   and before the runner has finished its record (the reap of what the leg left running, up to
+   the reap's 30 s timeout, then the reading of the leg's log for its summary and test count)
+   loses that failure, and the next run needs no flake for it. The runner
    refuses a run that cannot count, and refuses a re-run of a leg that did not fail. A re-run runs
    each leg it names in a fresh checkout of that leg's job, with `npm ci` first where that job runs
    it, so one re-run may name legs of several jobs; a re-run of pytest, or of a leg whose job runs
