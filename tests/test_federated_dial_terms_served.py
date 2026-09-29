@@ -671,7 +671,13 @@ RECEIVER_BLIND = [
 def _ts_code(src):
     """The TypeScript source with its comments blanked (spaces, so offsets and line numbers hold) and its string and template
     literals left as they are: a character walk that tracks the string state, so a `//` inside a string is not a comment. The
-    censuses below count tokens (`feedHeld`, `throw`, `return`) in CODE, and a comment naming one is not a site."""
+    censuses below count tokens (`feedHeld`, `throw`, `return`) in CODE, and a comment naming one is not a site. The walk
+    tracks no regular-expression literal and no template substitution: a regex literal holding a quote, a backtick, `//` or
+    `/*`, or a backtick inside a substitution (a nested template, or a string holding one), would make it misread code on the
+    same line and on later lines (a quote flips the string state; a `/*` blanks through the next `*/` in the file). So every
+    census built on it holds only while the three sources it reads, federation.ts, feed-delta.ts and view-deltas.ts, carry
+    neither shape; test_the_three_sources_carry_no_regex_literal_or_backtick_in_a_substitution holds that, a loud refusal (the
+    extra8-1 finding on the landing review, its third option)."""
     out = list(src)
     i, n = 0, len(src)
     while i < n:
@@ -745,6 +751,118 @@ def _try_statements(code):
     since _ts_code has blanked the comments; string literals are left as _ts_code leaves them. The try censuses below count
     these, never the substring."""
     return len(re.findall(r"\btry\s*\{", code))
+
+
+_RE_BEFORE = set("(,=:[!&|?{};+-*%<>~^")   # a punctuator after which a `/` opens a regular-expression literal, never a division
+_RE_AFTER_WORDS = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"}
+
+
+def _js_misread_shapes(src):
+    """The shapes _ts_code's walk does not track, found by a lexer that does track them, over the RAW source: (every regular-
+    expression literal as (line, text), every template substitution holding a backtick as (line, text)). The lexer keeps the
+    comment, string, template and substitution states (a substitution's own braces counted, so its closing brace returns to the
+    template) and tells a regex literal from a division by the token before the `/` (a punctuator or a keyword such as return
+    opens a literal; an identifier, a number, a literal or a closing bracket makes it a division), reading the literal to its
+    unescaped closing `/` outside a class, then its flags."""
+    regexes, subs = [], []
+    stack = []          # template states: "tmpl" in a template's text, or a substitution as [start index, brace depth]
+    prev = None         # the last significant token's class: None, "word", "punct" (with the char kept below), "value"
+    prev_punct = ""
+    i, n = 0, len(src)
+    line = lambda k: src.count("\n", 0, k) + 1
+    while i < n:
+        c = src[i]
+        if stack and stack[-1] == "tmpl":
+            if c == "\\":
+                i += 2
+                continue
+            if c == "`":
+                stack.pop()
+                prev, i = "value", i + 1
+                continue
+            if src.startswith("${", i):
+                stack.append([i + 2, 0])
+                i += 2
+                prev = None
+                continue
+            i += 1
+            continue
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            continue
+        if c in "\"'":
+            j = i + 1
+            while j < n and src[j] != c and src[j] != "\n":
+                j += 2 if src[j] == "\\" else 1
+            prev, i = "value", j + 1
+            continue
+        if c == "`":
+            stack.append("tmpl")
+            i += 1
+            continue
+        if c == "/":
+            opens = prev is None or (prev == "punct" and prev_punct in _RE_BEFORE) or (prev == "word" and word in _RE_AFTER_WORDS)
+            if opens:
+                j, cls = i + 1, False
+                while j < n and src[j] != "\n":
+                    if src[j] == "\\":
+                        j += 2
+                        continue
+                    if src[j] == "[":
+                        cls = True
+                    elif src[j] == "]":
+                        cls = False
+                    elif src[j] == "/" and not cls:
+                        break
+                    j += 1
+                j += 1
+                while j < n and (src[j].isalnum() or src[j] == "_"):
+                    j += 1
+                regexes.append((line(i), src[i:j]))
+                prev, i = "value", j
+                continue
+            prev, prev_punct, i = "punct", "/", i + 1
+            continue
+        if stack and isinstance(stack[-1], list):
+            if c == "{":
+                stack[-1][1] += 1
+            elif c == "}":
+                if stack[-1][1] == 0:
+                    start = stack.pop()[0]
+                    if "`" in src[start:i]:
+                        subs.append((line(start), src[start:i][:60]))
+                    i += 1
+                    continue
+                stack[-1][1] -= 1
+        if c.isalpha() or c in "_$":
+            j = i
+            while j < n and (src[j].isalnum() or src[j] in "_$"):
+                j += 1
+            word, prev, i = src[i:j], "word", j
+            continue
+        if c.isdigit():
+            j = i
+            while j < n and (src[j].isalnum() or src[j] in "._"):
+                j += 1
+            prev, i = "value", j
+            continue
+        if c in ")]":
+            prev, i = "value", i + 1
+            continue
+        if not c.isspace():
+            prev, prev_punct = "punct", c
+        i += 1
+    return regexes, subs
+
+
+# the one regex literal the three sources hold, classified: it holds no quote, backtick, `//` or `/*`, so the walk reads it as code
+# (federation.ts's tunnels-poll-failing row collapses whitespace in the error it files)
+_CLASSIFIED_REGEXES = {("federation.ts", r"/\s+/g")}
 
 
 class HeldPairRule(unittest.TestCase):
@@ -986,6 +1104,30 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual(len([i for i in ids if i.startswith("feed-apply-throw")]), 5, "the feed road's five measured throws (four out of upsertById, one out of the top guard)")
         self.assertEqual(sorted((r[3] for r in RECEIVER_BLIND if r[0].startswith("feed-slotpatch-")), key=repr), sorted([(GEN2, 0), (GEN, 0), None], key=repr), "the acceptance's three measured re-seeds: rest.gen, the base's gen, cleared")
 
+    def test_the_three_sources_carry_no_regex_literal_or_backtick_in_a_substitution(self):
+        # The censuses in this module read federation.ts, feed-delta.ts and view-deltas.ts through _ts_code, a walk that tracks
+        # comments and strings and no regular-expression literal or template substitution (its docstring). Rather than teach the
+        # walk those states, this refuses them loudly (the extra8-1 finding on the landing review, its third option): a regex
+        # literal reds here until classified in _CLASSIFIED_REGEXES by its exact text (one today, which holds nothing the walk
+        # reads), and a substitution holding a backtick (a nested template, or a string holding one) reds with no exemption, so
+        # "anywhere in federation.ts" in the censuses below is true of the code the walk reads. The lexer is held to the rig:
+        # a division is no literal, and a planted literal and a planted nested template are each found.
+        self.assertEqual(_js_misread_shapes("const q = a / b / c; const r = f(x) / 2;")[0], [], "the rig: a division is not a regex literal")
+        self.assertEqual([t for _, t in _js_misread_shapes('const q = x.replace(/"/g, "");')[0]], ['/"/g'], "the rig: a literal after a parenthesis is found whole, flags included")
+        self.assertEqual(len(_js_misread_shapes("const t = `a ${`b`} c`;")[1]), 1, "the rig: a nested template is found")
+        self.assertEqual(_js_misread_shapes('const t = `a ${x ? "y" : "z"} c`;')[1], [], "the rig: a substitution holding quotes and no backtick is not one")
+        found = set()
+        for name in ("federation.ts", "feed-delta.ts", "view-deltas.ts"):
+            src = open(os.path.join(ROOT, "ui", "webview", name), encoding="utf-8").read()
+            regexes, subs = _js_misread_shapes(src)
+            self.assertEqual(subs, [], "%s holds a backtick inside a template substitution, which _ts_code's walk misreads: %r" % (name, subs))
+            unclassified = [(line, text) for line, text in regexes if (name, text) not in _CLASSIFIED_REGEXES]
+            self.assertEqual(unclassified, [], "%s holds a regular-expression literal _ts_code's walk does not track: classify it in _CLASSIFIED_REGEXES if it holds no quote, backtick, // or /*, or spell it another way: %r" % (name, unclassified))
+            found |= {(name, text) for _, text in regexes}
+        self.assertEqual(found, _CLASSIFIED_REGEXES, "each classified literal is still in its source (a classification with nothing to classify is stale)")
+        for _, text in _CLASSIFIED_REGEXES:
+            self.assertIsNone(re.search(r"[\"'`]|//|/\*", text[1:text.rindex("/")]), "a classified literal holds nothing the walk reads: %s" % text)
+
     def test_the_receivers_refusal_sites_are_counted_so_a_new_one_reds_until_classified(self):
         # the census form space: the refusal points the table above enumerates are read off the receivers' sources, so a
         # receiver that grows a refusal site fails here until a row classifies it (modelled, or recorder-blind)
@@ -1038,7 +1180,9 @@ class HeldPairRule(unittest.TestCase):
         # is CAUGHT, in feed-delta.ts's tryApplyFeedDelta (the one wrapper both roads call, so both are covered by construction),
         # and each road refuses it with its own recovery and bound (refuseRemoteApply, refuseLocalApply): the pair still stands
         # (nothing was written), one bare needFullFeed goes per stall, and the asking stops after the answering full. A bare
-        # applyFeedDelta call anywhere in federation.ts, a second catch, or a throw of the gate's own moves the reading and reds here.
+        # applyFeedDelta call anywhere in federation.ts, a second catch on either road, or a throw of the gate's own moves the
+        # reading and reds here ("anywhere" holds because the walk reads the whole file as it is: the three sources carry no
+        # shape it misreads, test_the_three_sources_carry_no_regex_literal_or_backtick_in_a_substitution).
         # The two call censuses count the wrapper's name at a word boundary before its parenthesis over comment-stripped code
         # (_ts_code), never the substring, which a comment naming the call also holds
         remote_code = _ts_code(m2.group(1))
@@ -1067,6 +1211,7 @@ class HeldPairRule(unittest.TestCase):
         self.assertRegex(arm_code, r'if \(typeof s === "function"\) s\(\{ type: "needFullFeed" \}\);\n\s*return;', "the local nobase exit follows its ask")
         self.assertRegex(arm_code, r'if \(!r\.ok\) \{ this\.refuseLocalApply\(m, r\.error\); return; \}', "the local checked apply's exit")
         self.assertEqual(len(re.findall(r"\bthrow\b", arm_code)), 0, "and no throw in the arm's code")
+        self.assertEqual(_try_statements(arm_code), 0, "no try statement in the local feedDelta arm's code: the checked apply's throw is caught in feed-delta.ts's tryApplyFeedDelta, and a catch of the road's own reds here until classified")
         m4 = re.search(r"^  private refuseRemoteApply\(c: Conn, host: string, d: any, error: unknown\): void \{\n(.*?)^  \}\n", fed, re.S | re.M)
         self.assertIsNotNone(m4, "federation.ts refuseRemoteApply was not found: re-aim this census")
         self.assertEqual(m4.group(1).count('"needFullFeed"'), 1, "the apply-throw refusal's one bare ask (never the held pair: the base's own content is a suspect)")
