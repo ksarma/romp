@@ -502,7 +502,8 @@ async function boot(browser: any, browserName = "chromium") {
   // Send against the box's CLIP (its padding box: the border box less the borders, where content past the edge is cut and
   // not hit-testable) and the frame; what a finger at Send's centre reaches; the answer box's height against a three-row probe;
   // and the answer box's last row (its bottom less the padding and border, one line tall: where the caret sits after typing at
-  // the end) against the clip and the kept actions row's top
+  // the end) against the clip and the kept actions row's top; and the kept row's computed background against the box's (the row
+  // is painted in the box's own colour, so what scrolls under it is hidden rather than seen through it)
   const cellRead = () => page.evaluate(() => {
     const win = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!; const d = win.document;
     const o = d.getElementById("ut-reply-prompt"); if (!o) return null;
@@ -519,7 +520,7 @@ async function boot(browser: any, browserName = "chromium") {
     return { frameW: win.innerWidth, frameH: win.innerHeight, clipTop, clipBottom, sendTop: sr.top, sendBottom: sr.bottom, cx, cy,
       hit: at === send ? "target" : at === o ? "overlay" : at === box ? "box" : at ? ((at as HTMLElement).className || at.tagName).split(" ")[0] : "none",
       inputH: input.clientHeight, floorH, rowTop: rowBottom - lh, rowBottom, actionsTop: actions.getBoundingClientRect().top, inputStyleH: input.style.height,
-      boxScrollTop: box.scrollTop, over: box.scrollHeight - box.clientHeight };
+      boxScrollTop: box.scrollTop, over: box.scrollHeight - box.clientHeight, rowBg: win.getComputedStyle(actions).backgroundColor, boxBg: win.getComputedStyle(box).backgroundColor };
   });
   // one cell: the sheet opened on `tid` with the keyboard up at h ("up"), or at rest at 732 and the keyboard then raised to h
   // ("order", the phone's order), the answer typed (fourteen lines, then a keystroke at its end); or, with the keyboard up at h,
@@ -582,6 +583,14 @@ function assertShort(s: Short, what: string, strict = false) {
 
 // Send is INSIDE the box's clip (its rect within the box's rect) and inside the frame, so a finger on it reaches it. The
 // box's rect is its clip: overflow hidden or auto, content past its edges is not hit-testable
+// the alpha of a computed background-color: engines serialize it as rgb() (alpha 1) or rgba(), and transparent as
+// rgba(0, 0, 0, 0); any other form reads as NaN, which no check passes
+const alphaOf = (c: string): number => {
+  const v = c.trim(); if (v === "transparent") return 0;
+  const m = /^rgba?\(([^)]*)\)$/.exec(v); if (!m) return NaN;
+  const p = m[1].split(/[\s,\/]+/).filter(Boolean);
+  return p.length === 3 ? 1 : p.length === 4 ? parseFloat(p[3]) : NaN;
+};
 const sendInsideBox = (m: Sheet) => m.sendRect.top >= m.boxTop - 0.5 && m.sendRect.bottom <= m.boxBottom + 0.5;
 const cancelInsideBox = (m: Sheet) => m.cancelRect.top >= m.boxTop - 0.5 && m.cancelRect.bottom <= m.boxBottom + 0.5;
 const boxInsideFrame = (m: Sheet) => m.boxTop >= -0.5 && m.boxBottom <= m.frameH + 0.5;
@@ -1083,9 +1092,11 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // 300-character ask, a multi-line ask at the cap (the tallest legal ask) and a 300-character unbreakable token; and on the
   // multi-line ask, the grip pulled 150px down with the keyboard up at each height, Send clicked after it. Per cell: Send wholly
   // inside the box's clip (its padding box) and the frame, a finger at its centre reaches it, and a click there posts exactly one
-  // answer, the typed text, and closes the sheet by the send; for typed answers also the answer box at three rows and the line
-  // being typed inside the clip and not under the kept row (after the drag the dragged box's lower part lies below the clip, and
-  // Send, in the kept row, still sends). Each group of cells is its own subtest, and its message names every failing cell
+  // answer, the typed text, and closes the sheet by the send; the kept row's computed background is the box's own colour and not
+  // transparent (the row is opaque, so what it covers at the box's bottom is hidden rather than seen through it and mis-tapped);
+  // for typed answers also the answer box at three rows and the line being typed inside the clip and not under the kept row
+  // (after the drag the dragged box's lower part lies below the clip, and Send, in the kept row, still sends). Each group of
+  // cells is its own subtest, and its message names every failing cell
   test(`in ${name}: THE WORST CASE with the keyboard up (390 and 320 wide, 230 to 508, four asks at the cap with both chips, opened with the keyboard up, in the phone's order, and after a grip drag): Send is inside the box's clip and a click at its centre sends the typed answer`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py clicks Send in the worst case in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;
@@ -1114,6 +1125,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
               if (!(m.sendTop >= m.clipTop - 0.5 && m.sendBottom <= m.clipBottom + 0.5)) why.push(`Send ${m.sendTop.toFixed(1)}..${m.sendBottom.toFixed(1)} is not inside the box's clip ${m.clipTop.toFixed(1)}..${m.clipBottom.toFixed(1)}`);
               if (!(m.sendTop >= -0.5 && m.sendBottom <= m.frameH + 0.5)) why.push(`Send is not inside the ${m.frameH}px window`);
               if (m.hit !== "target") why.push(`a finger at Send's centre reaches ${m.hit}`);
+              if (!(m.rowBg === m.boxBg && alphaOf(m.rowBg) > 0)) why.push(`the kept actions row's background is ${m.rowBg}, not the box's ${m.boxBg} (the row must be painted in the box's own colour, not transparent, so what scrolls under it is hidden rather than seen through it)`);
               if (!(c.posted.length === 1 && c.posted[0] === c.typed && !c.up)) why.push(c.posted.length === 0 ? (c.up ? "the click posted nothing and the sheet stood" : "the click CLOSED the sheet and posted nothing: the answer was discarded") : `the click posted ${c.posted.length} answer(s)${c.posted[0] !== c.typed ? ", not the typed text" : ""}${c.up ? ", and the sheet stood" : ""}`);
               if (how !== "drag") {
                 if (!(m.inputH >= m.floorH - 1)) why.push(`the answer box is ${m.inputH}px, under its three rows (${m.floorH}px)`);
