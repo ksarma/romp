@@ -279,6 +279,65 @@ await browser.close();
 process.exit(0);
 """
 
+# THE LINK ROAD BY LAYOUT (the reviewer's round-7 ruling on fresh-2): the head's notified-session seed runs on the phone layout alone. Before
+# the gate it wrote the FIRST chat column's blob on every layout, so a desktop split into columns, cold-opened on the link for a session a
+# later column holds, moved the first column off its stored tab and kept the move. The cell (cfg) names the viewport, the phone device or
+# none, and the stored state written by the top document before the shell parses (the chat blobs and the split's romp-chat-cols record);
+# the page opens on the deep link. Read: the landing (the column holding the notified session shows it), each chat column's active tab and
+# the first column's blob at that settle and 3 s later, and the wire (every socket any document constructs, with its document's path AND
+# query, since a later column is /chat?col=N), so each column's first dial's terms are read off the wire.
+DRIVER_LINK_LAYOUT = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const { chromium, devices } = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await chromium.launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const DEADLINE = __DEADLINE_MS__;   // the harness deadline for an outcome (SETTLE_S), set by the test
+const out = { reveals: [] };
+const dev = cfg.phone ? { ...(devices["iPhone 14"] || {}) } : {}; delete dev.defaultBrowserType;
+const context = await browser.newContext({ ...dev, viewport: cfg.viewport });
+await context.addInitScript((seed) => { try { if (window === window.top) for (const k of Object.keys(seed)) localStorage.setItem(k, seed[k]); } catch (e) {} }, cfg.seed);
+await context.addInitScript(() => {
+  try {
+    const T = window.top; if (!T.__wire) T.__wire = [];
+    const W = window.WebSocket;
+    const Wrapped = function (url, protos) {
+      const rec = { url: String(url), t: Date.now(), doc: location.pathname + location.search, frames: [] };
+      T.__wire.push(rec);
+      const ws = protos === undefined ? new W(url) : new W(url, protos);
+      ws.addEventListener("message", (ev) => { if (rec.frames.length >= 200) return; try { const o = JSON.parse(String(ev.data)); rec.frames.push([Date.now(), o && o.type, o && o.id]); } catch (e) { rec.frames.push([Date.now(), "?", null]); } });
+      return ws;
+    };
+    Wrapped.prototype = W.prototype; Wrapped.CONNECTING = 0; Wrapped.OPEN = 1; Wrapped.CLOSING = 2; Wrapped.CLOSED = 3;
+    window.WebSocket = Wrapped;
+  } catch (e) {}
+});
+const page = await context.newPage();
+page.on("request", (r) => { if (r.method() === "POST" && /\/reveal$/.test(r.url())) out.reveals.push(JSON.parse(r.postData() || "{}")); });
+await page.goto(cfg.link);
+const colFrame = (n) => page.frames().find((f) => { try { const u = new URL(f.url()); return u.pathname === "/chat" && (n === 1 ? !u.searchParams.get("col") : u.searchParams.get("col") === String(n)); } catch (e) { return false; } }) || null;
+const activeOf = async (f) => { if (!f) return null; try { return await f.evaluate(() => (document.querySelector("#tabs .tab.active") || { dataset: {} }).dataset.id || null); } catch (e) { return null; } };
+const read = async () => ({ at: Date.now(), active: { 1: await activeOf(colFrame(1)), 2: await activeOf(colFrame(2)) },
+  blob1: await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("romp-vscode-state-chat") || "null"); } catch (e) { return null; } }),
+  blob2: await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("romp-vscode-state-chat:2") || "null"); } catch (e) { return null; } }),
+  cols: await page.evaluate(() => localStorage.getItem("romp-chat-cols")) });
+let landed = false;
+for (let i = 0; i < DEADLINE / 100 && !landed; i++) { if ((await activeOf(colFrame(cfg.landCol))) === cfg.sidB) landed = true; else await page.waitForTimeout(100); }
+out.landed = landed;
+out.settle = await read();
+await page.waitForTimeout(3000);
+out.later = await read();
+out.mobileShell = await page.evaluate(() => !!document.getElementById("mtabs") && getComputedStyle(document.getElementById("mtabs")).display !== "none");
+out.chatFrames = page.frames().map((f) => f.url()).filter((u) => /\/chat/.test(u));
+out.wire = await page.evaluate(() => (window.__wire || []).slice());
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
 # THE ACK ROAD'S COLD OPEN ON THE PHONE (pass 4b of the lazy panes, the author's label, 2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's
 # extra9-1): the kernel holds a row the worker acked CLICKED, and the app is opened on its start URL (not the link), so the shell's boot
 # check lands the tap via 'ack' and its /reveal beats the chat pane's socket: the tap is PARKED for the window before the chat pane dials.
@@ -790,6 +849,60 @@ class ServedTapLanding(unittest.TestCase):
         self.assertNotIn("token=", out["urlAfterBoot"], "the address keeps no token once the cookie is set: %r" % out["urlAfterBoot"])
         klog = self._klog_settled(r"\[push\] landed sid=%s endpoint=web\.push\.apple\.com" % re.escape(SID_B[:8]))
         self.assertRegex(klog, r"\[reveal\] link sid=%s wid=\S+ boot: (parked|delivered, copy parked \(booting page\))" % re.escape(SID_B[:8]), "the boot reveal: %s" % self._trail())
+
+    # ---- the seed's layout gate (the reviewer's round-7 ruling on fresh-2): pins B(a), B(b) and B(d); B(c) is the phone leg above ----
+    def _link_layout(self, viewport, phone, seed, land_col):
+        link = "http://127.0.0.1:%d/?token=%s&push-reveal=%s" % (self.port, self.token, SID_B)
+        out = self._drive(DRIVER_LINK_LAYOUT, link=link, viewport=viewport, phone=phone, seed={k: json.dumps(v) for k, v in seed.items()}, landCol=land_col)
+        self.assertTrue(out["landed"], "the column holding the notified session shows it (the reveal's focus): settle %r, later %r, reveals %r\n  kernel: %s"
+                        % (out.get("settle"), out.get("later"), out.get("reveals"), self._reveal_lines()))
+        return out
+
+    def _first_dial(self, out, col):
+        """the first socket a chat column's document dialed, and its query terms"""
+        want = "/chat" if col == 1 else "/chat?col=%d" % col
+        dials = [w for w in out.get("wire") or [] if "/ws?app=chat" in w.get("url", "") and (w.get("doc") == want or (col == 1 and w.get("doc", "").startswith("/chat") and "col=" not in w.get("doc", "")))]
+        self.assertTrue(dials, "column %d's chat document dialed: %r" % (col, [(w.get("doc"), w.get("url")) for w in out.get("wire") or []]))
+        return dials[0], parse_qs(urlsplit(dials[0]["url"]).query)
+
+    def test_a_split_desktop_cold_open_on_the_link_keeps_the_first_column_on_its_stored_tab(self):
+        # pin B(a): a desktop at 1600 x 1000 split into two columns, the second holding api, the first stored on tests (which is not the
+        # first column's first visible member, so a seed that wrote its blob would move it: at pass 10's head it moved to docs and kept
+        # the move); the link names api. The first column keeps tests at the settle and 3 s later, its blob is untouched, the second
+        # column shows api, and the first column's first dial names tests, main's dial (the term that does not depend on the strip's order).
+        blob1 = {"activeId": SID_C, "activeName": "tests"}
+        out = self._link_layout({"width": 1600, "height": 1000}, False,
+                                {"romp-chat-cols": {"v": 2, "cols": [{"n": 2, "ids": [SID_B]}]}, "romp-vscode-state-chat": blob1,
+                                 "romp-vscode-state-chat:2": {"activeId": SID_B, "activeName": "api"}}, 2)
+        self.assertFalse(out["mobileShell"], "the desktop layout")
+        for when in ("settle", "later"):
+            r = out[when]
+            self.assertEqual(r["active"], {"1": SID_C, "2": SID_B}, "%s: the first column stays on its stored tab (tests), the second shows api: %r" % (when, r))
+        b1 = out["later"]["blob1"] or {}
+        self.assertEqual((b1.get("activeId"), b1.get("activeName")), (SID_C, "tests"), "the first column's blob still names its stored tab (the page adds its own state keys beside it): %r" % (out["later"],))
+        first, q = self._first_dial(out, 1)
+        self.assertEqual(q.get("active"), [SID_C], "the first column's first dial names its stored tab, as on main (the seed is the phone's): %r" % first["url"])
+
+    def test_an_unsplit_desktop_cold_open_on_the_link_dials_the_stored_tab_first(self):
+        # pin B(b): the desktop with no split, stored on tests, the link naming api: the first chat dial names tests (main's), and the
+        # reveal lands api after it. Pass 10's head and the column-check gate (G2) both dialled api here.
+        out = self._link_layout({"width": 1600, "height": 1000}, False, {"romp-vscode-state-chat": {"activeId": SID_C, "activeName": "tests"}}, 1)
+        self.assertFalse(out["mobileShell"], "the desktop layout")
+        first, q = self._first_dial(out, 1)
+        self.assertEqual(q.get("active"), [SID_C], "the desktop's first dial names the stored tab, main's dial: %r" % first["url"])
+        self.assertEqual(out["later"]["active"]["1"], SID_B, "the reveal landed the notified session: %r" % (out["later"],))
+
+    def test_a_phone_holding_a_desktop_split_in_storage_dials_the_notified_session_first(self):
+        # pin B(d): the same storage as B(a), a split record naming api's column, on a phone at 390 x 844, where the split restores
+        # nothing: the seed runs (the layout is the phone's, whatever the storage holds) and the first chat dial names api with the
+        # diet's term. A gate that also skipped the seed when a later column lists the session would dial tests here.
+        out = self._link_layout({"width": 390, "height": 844}, True,
+                                {"romp-chat-cols": {"v": 2, "cols": [{"n": 2, "ids": [SID_B]}]}, "romp-vscode-state-chat": {"activeId": SID_C, "activeName": "tests"},
+                                 "romp-vscode-state-chat:2": {"activeId": SID_B, "activeName": "api"}}, 1)
+        self.assertTrue(out["mobileShell"], "the phone layout (the tab bar shows)")
+        first, q = self._first_dial(out, 1)
+        self.assertEqual(q.get("active"), [SID_B], "the phone's first chat dial names the notified session: %r" % first["url"])
+        self.assertEqual(q.get("skeleton"), ["1"], "…with the diet's term: %r" % first["url"])
 
     def test_a_phone_cold_open_with_the_tap_parked_before_the_chat_dial_gets_the_notified_session_as_the_one_full(self):
         # pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1): the ack road's cold open, the road the

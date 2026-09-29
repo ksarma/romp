@@ -328,7 +328,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   the phone layout the chat pane's first dial declares `skeleton=1` too (since
   2026-09-18), so a cold open there is served the same way: the strip, one
   full for the stored tab, or for the parked reveal's session as above, and a
-  status per other tab, and the `skeleton` row records it. The idle chain's
+  status per other tab, and the `skeleton` row records it; a cold open on a
+  push notification's deep link makes the notified session the stored tab
+  first, on the phone layout alone (the shell's head seeds the chat blob
+  before the chat pane dials; on the desktop the reveal lands the focus as
+  before). The idle chain's
   start gate runs on every layout (the desktop's panes and dial are unchanged;
   a desktop redial's first background ask follows that one full instead of the
   strip's paint): the chain starts from the moment the stored tab's full has

@@ -1625,8 +1625,10 @@ global.localStorage = {
   getItem: (k) => { if (process.env.ROMP_TEST_LS_THROWS) throw new Error("storage refused"); return STORE.has(k) ? STORE.get(k) : null; },
   setItem: (k, v) => { if (process.env.ROMP_TEST_LS_THROWS) throw new Error("storage refused"); SETS.push(k); STORE.set(k, String(v)); },
 };
+const QUERIES = [];   // the media queries the head's layout probe asked, in order
+if (process.env.ROMP_TEST_LAYOUT !== "none") global.matchMedia = (q) => { QUERIES.push(q); return { matches: process.env.ROMP_TEST_LAYOUT === "phone", media: q }; };   // the layout the cell names (the harness's window is node's global)
 """ % json.dumps(_SEED_KEY)
-_SEED_DRIVER = "\nconsole.log(JSON.stringify({ replaced: REPLACED, blob: STORE.has(%s) ? STORE.get(%s) : null, sets: SETS }));\n" % (json.dumps(_SEED_KEY), json.dumps(_SEED_KEY))
+_SEED_DRIVER = "\nconsole.log(JSON.stringify({ replaced: REPLACED, blob: STORE.has(%s) ? STORE.get(%s) : null, sets: SETS, queries: QUERIES }));\n" % (json.dumps(_SEED_KEY), json.dumps(_SEED_KEY))
 
 
 class NotifiedSessionSeed(unittest.TestCase):
@@ -1634,11 +1636,13 @@ class NotifiedSessionSeed(unittest.TestCase):
     before any body script, with the chat blob's activeId as the dial's hint (the LAST-SHOWN tab), and on the phone that first
     dial takes the skeleton diet: before this seed the kernel's one full went to the last-shown tab and the notified session
     arrived as a skeleton, one round trip later. The head script now seeds the blob with the notified session before the parser
-    reaches the chat iframe, so the first dial names it. Executed here under node with a Map-backed store; the served leg
-    (tests/test_notification_tap_resume_browser.py, the phone iteration of the link road) reads the dial off the wire."""
+    reaches the chat iframe, so the first dial names it. The seed runs on the phone layout alone (the reviewer's round-7 finding
+    fresh-2: on a split desktop it moved the first column off its stored tab), so every cell names its layout: matchMedia answers the
+    phone (the default), the desktop, or is absent. Executed here under node with a Map-backed store; the served legs
+    (tests/test_notification_tap_resume_browser.py, the link road on the phone and on the desktop) read the dial off the wire."""
 
-    def _run(self, href, blob=None, throws=False):
-        env = dict(os.environ, ROMP_TEST_HREF=href)
+    def _run(self, href, blob=None, throws=False, layout="phone"):
+        env = dict(os.environ, ROMP_TEST_HREF=href, ROMP_TEST_LAYOUT=layout)
         if blob is not None:
             env["ROMP_TEST_BLOB"] = json.dumps(blob)
         if throws:
@@ -1683,6 +1687,21 @@ class NotifiedSessionSeed(unittest.TestCase):
             o = self._run("http://localhost:7777/?token=t&push-reveal=" + bad, blob=was)
             self.assertEqual((o["blob"], o["sets"]), (was, []), "refused input %r left the blob alone: %r" % (bad, o))
             self.assertEqual(len(o["replaced"]), 1, "…and the token scrub still ran: %r" % (o,))
+
+    def test_on_the_desktop_layout_a_deep_link_writes_nothing_to_the_chat_blob(self):
+        # pin B(e) of the reviewer's round-7 ruling on fresh-2: the seed is gated on the head's layout probe, so a desktop cold open on
+        # the link leaves the stored tab where it was (the first dial is main's) and the reveal lands the focus as it always did
+        was = {"activeId": _SEED_SID_A, "activeName": "web"}
+        o = self._run("http://localhost:7777/?token=t&push-reveal=" + _SEED_SID_B, blob=was, layout="desktop")
+        self.assertEqual((o["blob"], o["sets"]), (was, []), "the desktop: no write, the stored tab stands: %r" % (o,))
+        self.assertEqual(o["replaced"], ["/?push-reveal=" + _SEED_SID_B], "the token scrub still ran, and the param stays for the reveal script")
+        self.assertEqual(o["queries"], [km._MOBILE_MQ], "the gate asked the layout probe, the shared media query, once: %r" % (o["queries"],))
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_B, layout="desktop")
+        self.assertEqual((o["blob"], o["sets"]), (None, []), "a first-ever desktop open mints no blob")
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_B, blob=was, layout="none")
+        self.assertEqual((o["blob"], o["sets"]), (was, []), "no matchMedia at all: the probe answers the desktop, and nothing is written")
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_B, blob=was)
+        self.assertEqual(o["blob"], {"activeId": _SEED_SID_B, "activeName": ""}, "the same link on the phone seeds as before (the control)")
 
     def test_a_storage_that_throws_leaves_the_token_scrub_standing(self):
         # a storage that refuses every call (the auth test's harness defines no localStorage at all, a ReferenceError; a browser

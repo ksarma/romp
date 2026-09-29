@@ -72778,23 +72778,29 @@ def _landing():
             # that tab before the reveal's focus lands, which then finds it active
             # and loaded. The value is admitted in push-card's shape (a host-prefixed id passes); a blob that already names it is left
             # alone; the param stays for the reveal script, whose /reveal still lands the focus (a revive prompt for an ended session). Its
-            # own try/catch: a page whose storage is missing or throws must still reach the token scrub below. No layout gate: on the desktop
-            # the seed makes the notified tab the active-tab-first build, the outcome the reveal produces there anyway.
-            # The cost when the seeded hint names a session this kernel cannot match (review round 4, 2026-09-19, regression-4): the notified
-            # session ended while the phone was away, or the id is host-prefixed (another host's, admitted by the shape on purpose). The
-            # kernel's _resolve_reconnect reads the hint as any stored tab, and _skeleton_for over an active that matches no session lists
-            # EVERY local transcript-bearing tab as a skeleton, so that cold open is served no local full where the last-shown tab would have
-            # been served whole. The page recovers on its own side, the road the shim's diet comment (_shim, RESTART_DIET) and the strip gate
+            # own try/catch: a page whose storage is missing or throws must still reach the token scrub below. The seed runs on the phone
+            # layout alone (the head probe above; the reviewer's round-7 finding fresh-2): on the desktop it would write the FIRST column's
+            # blob whichever column holds the session, so a desktop split into columns moved its first column off its stored tab and kept the
+            # move, and the desktop's first dial is main's (its stored tab), the reveal landing the focus as it always did.
+            # The cost when the seeded hint names a session this kernel cannot match (review round 4, 2026-09-19, regression-4), on the phone:
+            # the notified session ended while the phone was away, or the id is host-prefixed (another host's, admitted by the shape on
+            # purpose). The kernel's _resolve_reconnect reads the hint as any stored tab, and _skeleton_for over an active that matches no
+            # session lists EVERY local transcript-bearing tab as a skeleton, so that cold open is served no local full where the last-shown
+            # tab would have been served whole. For a notified LOCAL session that ended before the tap that is not the whole cost: the chat
+            # pane stays on the awaited-session body until a pick, and the stored tab is lost, since the seed wrote the ended id into the
+            # blob where main keeps the stored tab (the reviewer's round-7 finding fresh-3, measured on the phone with and without the gate;
+            # whether to change that is the owner's call). For a host-prefixed id the missing local full is the only cost the seed adds:
+            # main's reveal persists that id too. Past the one full, the page's own loading is the road the shim's diet comment (_shim, RESTART_DIET) and the strip gate
             # already describe: a local strip that lists no such local tab opens the prefetch gate (skeleton-tabs.ts gateOnStrip) and the idle
             # chain loads the tabs in the kernel's order; a tap loads its tab at once. A kernel-side fail-safe (a live-session fallback in
             # _resolve_reconnect) was executed in the review and declined: it restored the whole board in place of one full, misfired for
             # the host-prefixed hints the page handles by design, and reached beyond the push cold open. The pass-4b preference in
             # _resolve_reconnect is a different clause: it reads a reveal PARKED for the window, not the hint's match, and falls back to
             # the hint when the parked sid is not a session this kernel lists.
-            "try{var _pr=new URL(location.href).searchParams.get('push-reveal');if(_pr&&/^[A-Za-z0-9_.:-]{1,128}$/.test(_pr)){"
+            "try{if(window.__rompMobileOn()){var _pr=new URL(location.href).searchParams.get('push-reveal');if(_pr&&/^[A-Za-z0-9_.:-]{1,128}$/.test(_pr)){"
             "var _sk='romp-vscode-state-chat',_sb=null;try{_sb=JSON.parse(localStorage.getItem(_sk)||'null');}catch(e){}"
             "if(!_sb||typeof _sb!=='object'||Array.isArray(_sb))_sb={};"
-            "if(_sb.activeId!==_pr){_sb.activeId=_pr;_sb.activeName='';localStorage.setItem(_sk,JSON.stringify(_sb));}}}catch(e){}"
+            "if(_sb.activeId!==_pr){_sb.activeId=_pr;_sb.activeName='';localStorage.setItem(_sk,JSON.stringify(_sb));}}}}catch(e){}"
             "if(navigator.standalone){document.documentElement.className+=' ios-standalone';"
             "var _vp=document.querySelector('meta[name=viewport]');"
             "_vp.setAttribute('content',_vp.getAttribute('content')+',viewport-fit=cover');}"
