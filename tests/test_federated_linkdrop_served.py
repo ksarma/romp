@@ -215,7 +215,8 @@ BAD_EVS = ("delta-unknown-slot", "delta-unkeyed-base")
 # (.github/workflows/ci.yml, the served step): a test that outlives it ends the WHOLE process, so a drive that hung here
 # would take every served lab collected after this module with it and leave no summary. The drive runs in setUpClass, so
 # the node driver's subprocess timeout sits under that cap with room for the boot around it (two kernels and the dist copy
-# before the drive, the readers after: 55 s measured for the whole setUpClass), and the driver's own worst case
+# before the drive, the readers after; the module docstring's Knobs paragraph gives LinkDropBothNew's setUpClass as
+# measured, with the date of the drives it was measured in), and the driver's own worst case
 # (driver_worst_case_s: its wait budget plus the bounded work between the waits) sits under the subprocess timeout, so a
 # degraded drive returns through its wait budget with the expired waits recorded or, for a hang in the control door,
 # through driver_error ("driver timed out"), and the labs after this one still run.
