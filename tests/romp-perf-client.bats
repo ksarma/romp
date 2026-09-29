@@ -269,11 +269,20 @@ d = json.load(sys.stdin)
 assert d["shed_minute_rows"] == 0 and d["capped_rows"] == 0, (d["shed_minute_rows"], d["capped_rows"])
 assert d["cut_rows"] == 0 and d["cut_keys"] == {}, (d["cut_rows"], d["cut_keys"])
 '
-    python3 - "$DIAG" <<'PY'
-import json, sys, time
+    python3 - "$DIAG" "$ROMP_SCRIPT" <<'PY'
+import json, os, re, sys, time
 now = int(time.time())
 W1 = "11111111-2222-3333-4444-555555555555"
 def row(t, wid, what, data): return json.dumps({"t": t, "wid": wid, "surface": "perf", "what": what, "data": data})
+# the rows below that carry `cut` hold what the kernel STORES for a long-frame key it cut: the key a poster sent, longer than the
+# kernel's string cut (scriptKey's form, a long script basename, ':', a long function name, '@' and a position), stored as its
+# first CLIENT_DIAG_STR_MAX characters, the row marked; the cut is read off kernel.py, and each posted key is held longer than it
+ksrc = open(os.path.join(os.path.dirname(os.path.realpath(sys.argv[2])), "..", "kernel", "kernel.py"), encoding="utf-8").read()
+STR_MAX = int(re.search(r"^CLIENT_DIAG_STR_MAX = (\d+)$", ksrc, re.M).group(1))
+TL_KEY = "timeline-" + "b" * 36 + ".js:" + "renderLaneBarsForTheVisibleWindow" + "f" * 15 + "@88210"   # the timeline pane's posted key
+SH_KEY = "shell-" + "b" * 39 + ".js:" + "onFrameFromTheKernelSocket" + "f" * 22 + "@1200"            # the shell's posted key
+for posted in (TL_KEY, SH_KEY):
+    assert len(posted) > STR_MAX, ("a posted key the kernel would not cut", len(posted), STR_MAX)
 # a chat minute row the kernel stored without its frames (its once-per-page nav survived the shed, as intended)
 shed = {"app": "chat", "since": (now - 75) * 1000, "span_ms": 60000,
         "free": {"n": 4, "p50": 9, "p90": 14, "max": 22},
@@ -284,14 +293,14 @@ shed = {"app": "chat", "since": (now - 75) * 1000, "span_ms": 60000,
 mapshed = {"app": "timeline", "since": (now - 70) * 1000, "span_ms": 60000,
            "frames": {"tlBars": {"n": 6, "ms_sum": 60, "ms_max": 20, "n16": 1, "n100": 0, "hist": [0, 0, 0, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]}},
            "free": {"n": 6, "p50": 10, "p90": 20, "max": 30},
-           "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
+           "loaf": {"n": 1, "blocking_ms": 90, "worst_ms": 90, "top": [{"k": TL_KEY[:STR_MAX], "ms": 90, "n": 1, "inv": "WebSocket.onmessage"}], "src": "loaf"},
            "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 60.0, "dom": 1500, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
-           "capped": {"bytes": 25000, "dropped": ["wsBytesByHost"]}, "cut": ["loaf"]}   # and a long-frame attribution string in it was cut: the row is a shed row AND a cut row
-# the shell's minute row (no frame types) with a long-frame attribution string the kernel cut at 64 characters: kept whole
-# otherwise, it folds as the shell's pane and carries `cut` naming the key the cut fell under (kernel.py _client_diag_admit)
+           "capped": {"bytes": 25000, "dropped": ["wsBytesByHost"]}, "cut": ["loaf"]}   # and its long-frame key was cut: the row is a shed row AND a cut row
+# the shell's minute row (no frame types) with a long-frame key the kernel cut to its first 64 characters: kept whole otherwise,
+# it folds as the shell's pane and carries `cut` naming the key the cut fell under (kernel.py _client_diag_admit)
 cutrow = {"app": "shell", "since": (now - 65) * 1000, "span_ms": 60000,
           "free": {"n": 3, "p50": 8, "p90": 12, "max": 15},
-          "loaf": {"n": 1, "blocking_ms": 80, "worst_ms": 120, "top": [{"k": "feed.js:render@1200", "ms": 100, "n": 1, "inv": "WebSocket.onmessage"}], "src": "loaf"},
+          "loaf": {"n": 1, "blocking_ms": 80, "worst_ms": 120, "top": [{"k": SH_KEY[:STR_MAX], "ms": 100, "n": 1, "inv": "WebSocket.onmessage"}], "src": "loaf"},
           "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
           "cut": ["loaf"]}
 with open(sys.argv[1], "a") as f:
@@ -357,16 +366,27 @@ PY
 )"
     read -r CUT1 CUT2 <<< "$CUTKEYS"
     [ -n "$CUT1" ] && [ -n "$CUT2" ]
-    python3 - "$DIAG" "$CUT1" "$CUT2" <<'PY'
-import json, sys, time
+    python3 - "$DIAG" "$CUT1" "$CUT2" "$ROMP_SCRIPT" <<'PY'
+import json, os, re, sys, time
 now = int(time.time())
 W1 = "11111111-2222-3333-4444-555555555555"
-open(sys.argv[1], "w").write(json.dumps({"t": now - 10, "wid": W1, "surface": "perf", "what": "minute", "data": {
+# each cut key holds what the kernel stores for a value it cut: the posted value, longer than the kernel's string cut, stored as its
+# first CLIENT_DIAG_STR_MAX characters (read off kernel.py); the cut list names the keys in the row's own key order, as the kernel
+# writes it (_client_diag_admit), where the header sorts them
+ksrc = open(os.path.join(os.path.dirname(os.path.realpath(sys.argv[4])), "..", "kernel", "kernel.py"), encoding="utf-8").read()
+STR_MAX = int(re.search(r"^CLIENT_DIAG_STR_MAX = (\d+)$", ksrc, re.M).group(1))
+LOAF_KEY = "feed-" + "b" * 40 + ".js:" + "renderCardsForTheColumnThatChanged" + "f" * 14 + "@1200"   # the posted long-frame key
+ENV_TYPE = "an-entry-type-name-a-poster-sent-longer-than-the-kernel-keeps-whole-" + "x" * 12   # a posted env value
+for posted in (LOAF_KEY, ENV_TYPE):
+    assert len(posted) > STR_MAX, ("a posted value the kernel would not cut", len(posted), STR_MAX)
+data = {
     "app": "shell", "since": (now - 70) * 1000, "span_ms": 60000, "free": {"n": 3, "p50": 8, "p90": 12, "max": 15},
-    "loaf": {"n": 1, "blocking_ms": 80, "worst_ms": 120, "top": [{"k": "feed.js:render@1200", "ms": 100, "n": 1, "inv": "WebSocket.onmessage"}], "src": "loaf"},
-    "env": {"dv": 1, "entryTypes": ["longtask"]},
-    "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
-    "cut": [sys.argv[2], sys.argv[3]]}}) + "\n")
+    "loaf": {"n": 1, "blocking_ms": 80, "worst_ms": 120, "top": [{"k": LOAF_KEY[:STR_MAX], "ms": 100, "n": 1, "inv": "WebSocket.onmessage"}], "src": "loaf"},
+    "env": {"dv": 1, "entryTypes": ["longtask", ENV_TYPE[:STR_MAX]]},
+    "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop"}
+assert {sys.argv[2], sys.argv[3]} == {"loaf", "env"}, ("the two cut keys this row fills", sys.argv[2:4])
+data["cut"] = [k for k in data if k in (sys.argv[2], sys.argv[3])]
+open(sys.argv[1], "w").write(json.dumps({"t": now - 10, "wid": W1, "surface": "perf", "what": "minute", "data": data}) + "\n")
 PY
     run "$ROMP_SCRIPT" perf client
     [ "$status" -eq 0 ]
