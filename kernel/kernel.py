@@ -70556,8 +70556,10 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // into the reading's interval [kbPx, panPx] and keeps the result in rp, apart from the hold. So a keyboard raised again with no
 // pan, or with a pan inside the zoom's share, publishes a value the reading allows and not the stale hold (round 6: a keyboard
 // raised again with no pan under a zoom of 1.003 had put the composer 81.5 px below the visible band's bottom), and a later
-// re-raise of the first field still finds the hold, since the next keyboard-down run drops rp. Both key on the run that reads the
-// keyboard, not on a time window. Nothing adjusts the hold in place: the clamp is at use (the author's pass 4, 2026-09-20).
+// re-raise of the first field still finds the hold, since every re-raise bounds from the hold itself, which the hold road never
+// writes, and never from rp (the keyboard-down run also drops rp, which reaches only a report outside the layout viewport that
+// follows it before the next re-raise: that report takes the hold). Both key on the run that reads the keyboard, not on a time
+// window. Nothing adjusts the hold in place: the clamp is at use (the author's pass 4, 2026-09-20).
 var lastPan=0,held=false,gone=false,rp=null;
 // [fork] the author's pass 8 (2026-09-20): the ONE reading of the pan both writing roads share: the measured road stores it under the cut (at
 // or above it, it less the zoom's share, kbPx below; the author's pass 9) and the 0px road's no-pan test reads it, so an offsetTop
@@ -70647,11 +70649,14 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // otherwise the hold road publishes from the hold, or from the re-raise bound rp where one stands (beside lastPan): where the
 // zoom's share is below that value, the value bounded into the reading's interval [kbPx, panPx]; where the share reaches it, the
 // larger of the value and kbPx, so a zoom alone never re-lays the shell there (the pinch-aware note above: its share is the whole
-// of its pan) and a drag past the value plus the share publishes the excess, which nothing stores. Two costs of keeping the value,
-// both measured in round 6: a zoom alone leaves the composer below the visible band's bottom by the zoom's own magnification (12 px
-// at 1.05 about the band's centre, served), and where the share reaches the value, a pan of the same keyboard above it leaves the
-// composer below by the drag until the keyboard goes down (a light-zoom hold of 20 at 1.05 dragged to 0: 20 px published, the
-// composer 44 px below the band's bottom where 0 px leaves 24). Everything the pinch road publishes is CLAMPED AT USE to the layout
+// of its pan) and a drag past the value plus the share publishes the excess, which nothing stores. Three costs of keeping the
+// value, each measured in round 6: a zoom alone leaves the composer below the visible band's bottom by the zoom's own magnification
+// (12 px at 1.05 about the band's centre, served); where the share reaches the value, a pan of the same keyboard above it leaves
+// the composer below by the drag until the keyboard goes down (a light-zoom hold of 20 at 1.05 dragged to 0: 20 px published, the
+// composer 44 px below the band's bottom where 0 px leaves 24); and where the value is the re-raise bound, a later pan of the
+// same keyboard that moves the visual viewport down but keeps it inside the share keeps the bound too, so a band opens under the
+// composer (node cells: a pan to the share after a no-pan re-raise under a light zoom opens 2.67 px at 1.008, 3.33 px at 1.01 and
+// 16 px at 1.05). Everything the hold road publishes is CLAMPED AT USE to the layout
 // viewport's height less h (the author's pass 2,
 // 2026-09-19): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
 // gone would otherwise place the body's bottom, the composer row, below the layout viewport until the zoom ended. The layout
@@ -70665,8 +70670,9 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // pinned by EXECUTION, not by an assertion on the mode: in quirks mode the root's clientHeight is the body's height, not
 // the viewport's, and the served legs' pan and pinch figures, 83 and 336 px in tests/test_keyboard_gap_served.py, flip to 0 in
 // the Chromium legs the moment the document is served without its doctype, legs CI runs with a skip counted as a failure; the
-// WebKit legs run wherever a WebKit is installed and ROMP_SERVED_TESTS_ENGINES does not exclude it, and a WebKit skip is never
-// a failure in any configuration (an absent WebKit is an optional skip even where the engine is declared), so no enforced run
+// WebKit legs run wherever a WebKit is installed and ROMP_SERVED_TESTS_ENGINES does not exclude it, and an absent or undeclared
+// WebKit is never a failure in any configuration (its skip is optional, even where the engine is declared; the class's own skips,
+// no extension deps or a lab kernel that never served, fail every leg alike under ROMP_SERVED_TESTS_REQUIRE=1), so no enforced run
 // measures the WebKit figures without the doctype (the author's pass 9, 2026-09-20: the clause had said "pinned" and named no pin;
 // the maintainer's round 6 ruling, 2026-09-29: it had said both engines with a skip counted as a failure); the page is
 // overflow:hidden, so no scrollbar parts
