@@ -1068,8 +1068,8 @@ for (const [s0, s1, o0, o2, od] of [[2, 1.5, 500, 40, 300], [1.5, 1.2, 400, 100,
 // (2026-09-29: under a pinch the measured road clamps what it publishes at use, at L - h, and still writes kbPx). It had published
 // kbPx unclamped and written the hold, and the refit took the hold road, which clamps at L - h. Rounding can put kbPx a pixel above
 // L - h where the visual viewport sits within half a pixel of the layout viewport's bottom and the zoom's share of the band's
-// shortfall is under about half a pixel. From rest, one such report under the lightest zooms, then the refit: h 843 (L - h 1) and
-// h 694 (L - h 150); and the same rounding at scale 1, under the cut, where the clamp does not apply: the visual viewport 760.6
+// shortfall is under a pixel. From rest, one such report, then the refit: h 843 (L - h 1) under a zoom of 1.00155 and h 694
+// (L - h 150) under 1.00169; and the same rounding at scale 1, under the cut, where the clamp does not apply: the visual viewport 760.6
 // tall at 83.6, h 761 (L - h 83), the reading 84
 { let f = 'clampFace1'; r6rest(f); r6step(f, 'lightPinch', 841.3459, 2.6541, 1.00155); r6step(f, 'refit', 841.3459, 2.6541, 1.00155);
   f = 'clampFace150'; r6rest(f); r6step(f, 'lightPinch', 692.4298, 151.5702, 1.00169); r6step(f, 'refit', 692.4298, 151.5702, 1.00169);
@@ -1950,7 +1950,7 @@ class MobileFitExecutes(unittest.TestCase):
         # band's height, as the hold road does, and still writes kbPx, the reading less the zoom's share, into the hold. It had
         # published kbPx unclamped, and the refit at the same report, on the hold road once the hold was written, clamps at L - h, so
         # where rounding put kbPx a pixel above L - h (the visual viewport within half a pixel of the layout viewport's bottom, and the
-        # zoom's share of the band's shortfall, (L - h)(1 - 1/s), under about half a pixel) the refit published a pixel less: h 843
+        # zoom's share of the band's shortfall, (L - h)(1 - 1/s), under a pixel) the refit published a pixel less: h 843
         # under a zoom of 1.00155, 2 px and then 1; h 694 under 1.00169, 151 and then 150. Both runs now publish L - h. The clamp is the
         # pinch's only, as ruled: under the cut the measured road publishes its reading unclamped, as before, and its refit takes the
         # same road, so it publishes the same (clampFaceS1, the same rounding at scale 1: the reading 84 over a shortfall of 83 on both

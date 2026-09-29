@@ -70752,8 +70752,9 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // swapZoomBack, roundFlip and downOutside cells). And under a pinch with no hold held the measured road had published kbPx
 // unclamped while the refit, on the hold road, clamps at L - h, so where rounding put kbPx a pixel above L - h the refit published
 // a pixel less. That needs the visual viewport within half a pixel of the layout viewport's bottom and the zoom's share of the
-// band's shortfall, (L - h)(1 - 1/s), under about half a pixel: light zooms, with the shortfall up to 280 px under a zoom below
-// 1.002 in a scan of 35.5 million such reports (node cells). A visual viewport 841.3459 tall at offsetTop 2.6541 under a zoom of
+// band's shortfall, (L - h)(1 - 1/s), under a pixel, so a long shortfall needs a light zoom: the refit had moved at a shortfall
+// of 535 px under a zoom of 1.00178, a share of 0.95 px, and at one of 1 px under 1.9976 (node cells). A visual viewport
+// 841.3459 tall at offsetTop 2.6541 under a zoom of
 // 1.00155, h 843, had published 2 px and then 1 px on its refit, and one 692.4298 tall at 151.5702 under 1.00169, h 694, 151 and
 // then 150; the measured road now clamps what it publishes under a pinch at use, as the hold road does, and still writes kbPx, so
 // they publish 1 and 150 on both runs (test_kernel_mobile's clampFace cells). Below the cut it publishes its reading unclamped as
