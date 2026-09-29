@@ -1803,11 +1803,18 @@ test("the one gate's later events of one gesture, a guard CI runs (the file revi
 // tap's flag; a touchend or a touchcancel marks every touch record refused, and the record stands; a click of the slot's pointer
 // type must carry the slot's pointerId; and a pen whose pointerup comes before its own mousedown (the touch order) gets the
 // one-finger tap's exception, its slot taken only after that mousedown and by a click that names that pen or carries no pointerId
-// (the closing check at 142ade155 after the fixes for the file review's round 18); a mouse's or a pen's pointerout with no
-// relatedTarget and a button down, or the mouse's with none, marks every mouse and pen record refused, and a mouseout to no element
-// while a tap's compatibility mousedown is due empties the slot and clears the tap's flag, and so does a blur of the window itself
-// while a tap's compatibility mousedown is due, which also marks every mouse and pen record refused (the file review's round 19,
-// extra5-1, extra8-1 and extra8-2, with the coordinator's decisions on them). The stand-in's dispatch never reaches the
+// (the closing check at 142ade155 after the fixes for the file review's round 18); and a click takes the slot only when the chain of
+// events this window heard from the slot's press to that click is one the viewer's own gestures make, the own-chain allowlist
+// (ownChain, the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them), which
+// refuses the orders of the three rules of the file review's round 19 it retired (a mouse's or a pen's pointerout to no element in a
+// press, with a button down or, the mouse's, with none; a mouseout to no element while a tap's compatibility mousedown is due; a blur
+// of the window itself) with no rule of their own. So every gesture here carries the order its engine sends, as the round-20
+// recorder heard it in the three engines: a press's pointerdown carries a button down (onWindow), a mouse's or a pen's press its own
+// mousedown before its pointerup, and a tap its touchstart after its pointerdown, its pointerout to no element and its touchend after
+// its pointerup (Firefox's pointerleave between them), then the compatibility events, Firefox's mouseover from no element, the
+// mousemove with no button down and the mousedown (tapDown, tapUp and tapCompat); a gesture missing any of them is a chain no
+// engine sends, which the allowlist refuses, so a guard written without them would be green for that refusal and not for its own
+// rule. The stand-in's dispatch never reaches the
 // window, so each pointer event is dispatched on the window here, its target the element a press there would land on, as a
 // browser delivers it to the capture listener before the page's own; a pointer's trusted click comes right after its primary
 // mouseup, whose detail is the click count (at least 1), as every engine measured sends it (gateClick and plainClick), and is
@@ -1815,9 +1822,9 @@ test("the one gate's later events of one gesture, a guard CI runs (the file revi
 // pointerType where a guard names it, detail, and isTrusted, which a node Event cannot carry and the stand-in's click can, so the
 // gate reads it as trusted); bareClick sends a click with no mouseup before it, Firefox's lone click after another document
 // cancelled a tap's pointerdown, and a key's or a script's click. WebKit's tap, as measured under Playwright's touch emulation on
-// Linux: a pointerdown and a pointerup under the touch's pointerId (2), the capture and boundary events after them
-// (lostpointercapture, pointerout), the compatibility mousedown, then the mouseup and a trusted click under pointerId 1 of type
-// mouse, detail 1; and the mouse's own next press after WebKit's drag of the picture, and after a drag in another pane that this
+// Linux: a pointerdown and its touchstart under the touch's pointerId (2), its pointerup and the capture and boundary events after
+// it (lostpointercapture, pointerout), its touchend, the compatibility mousemove and mousedown, then the mouseup and a trusted click
+// under pointerId 1 of type mouse, detail 1; and the mouse's own next press after WebKit's drag of the picture, and after a drag in another pane that this
 // window never hears: a mousedown with no pointerdown before it, a pointerup under pointerId 1, the mouseup and the click.
 // Firefox's chord: a left press's pointerdown and mousedown, then the chorded button's mousedown with no pointerdown of its own,
 // then the left press's pointerup, its mouseup and its click, under pointerId 0. A tap on another document's element over the
@@ -1826,16 +1833,48 @@ test("the one gate's later events of one gesture, a guard CI runs (the file revi
 // in each engine is the browser cells (file-figure-open-engines-browser.test.ts for WebKit and Firefox,
 // file-figure-open-browser.test.ts for Chromium).
 type GatePtr = { pointerId: number; pointerType: string; isPrimary?: boolean; button?: number };
-/** An event on the window, its target `target` and its fields `props`, as the gate's capture listeners hear it. */
+/** An event on the window, its target `target` and its fields `props`, as the gate's capture listeners hear it. A pointerdown carries
+ *  a button down (buttons 1) unless the row gives its buttons, as every engine measured sends a press (the file review's round 20:
+ *  the gate's own-chain allowlist reads a pointer event's buttons). */
 const onWindow = (type: string, target: El, props: Record<string, unknown> = {}): void => {
   const ev = new Event(type);
   Object.defineProperty(ev, "target", { value: target });
-  for (const [k, v] of Object.entries(props)) Object.defineProperty(ev, k, { value: v });
+  const fields = type === "pointerdown" && !("buttons" in props) ? { buttons: 1, ...props } : props;
+  for (const [k, v] of Object.entries(fields)) Object.defineProperty(ev, k, { value: v });
   win.dispatchEvent(ev);
+};
+/** A tap's press on `target` as every engine sends it: its pointerdown, then its touchstart. */
+const tapDown = (target: El, f: GatePtr): void => {
+  onWindow("pointerdown", target, { isPrimary: true, button: 0, ...f });
+  onWindow("touchstart", target);
+};
+/** A tap's release on `target` as `engine` sends it: its pointerup, then its pointerout to no element (WebKit's lostpointercapture before
+ *  it, Firefox's pointerleave after it), then its touchend (the chains the file review's round 20 recorded in the three engines). */
+const tapUp = (target: El, f: GatePtr, engine: "chromium" | "firefox" | "webkit"): void => {
+  onWindow("pointerup", target, { isPrimary: true, button: 0, ...f });
+  if (engine === "webkit") onWindow("lostpointercapture", target, { pointerId: f.pointerId, pointerType: f.pointerType });
+  onWindow("pointerout", target, { pointerId: f.pointerId, pointerType: f.pointerType, buttons: 0, relatedTarget: null });
+  if (engine === "firefox") onWindow("pointerleave", target, { pointerId: f.pointerId, pointerType: f.pointerType, buttons: 0 });
+  onWindow("touchend", target);
+};
+/** A tap's compatibility events on `target` before its mouseup, as `engine` sends them: Firefox's mouseover from no element, then the
+ *  mousemove with no button down, then the mousedown. Another document's tap whose element goes away during the press sends this window
+ *  the same, the element gone by its compatibility mousemove (the stated residual's order). */
+const tapCompat = (target: El, engine: "chromium" | "firefox" | "webkit"): void => {
+  if (engine === "firefox") onWindow("mouseover", target, { buttons: 0, relatedTarget: null });
+  onWindow("mousemove", target, { buttons: 0 });
+  onWindow("mousedown", target, { button: 0 });
 };
 /** A press and its release on `target`, on the window, with no click after them. */
 const pressUp = (target: El, p: GatePtr): void => {
   onWindow("pointerdown", target, { isPrimary: true, button: 0, ...p });
+  onWindow("pointerup", target, { isPrimary: true, button: 0, ...p });
+};
+/** A mouse's press and its release on `target` as every engine sends them, with no click after them: its pointerdown, its own mousedown
+ *  and its pointerup. */
+const mousePressUp = (target: El, p: GatePtr): void => {
+  onWindow("pointerdown", target, { isPrimary: true, button: 0, ...p });
+  onWindow("mousedown", target, { button: 0 });
   onWindow("pointerup", target, { isPrimary: true, button: 0, ...p });
 };
 /** A click on `target` with no mouseup before it: on the window first, which hands it the slot, then on the element, `trusted` as the
@@ -1856,13 +1895,12 @@ const gateClick = (target: El, pointerId: number, detail: number, trusted = true
   if (trusted && pointerId !== -1) onWindow("mouseup", target, { button: 0, detail: Math.max(detail, 1) });
   bareClick(target, pointerId, detail, trusted, pointerType);
 };
-/** WebKit's tap on `target`: its press and release under the touch's pointerId 2, the capture and boundary events after them, the
- *  compatibility mousedown, and its mouseup and trusted click under pointerId 1, detail 1. */
+/** WebKit's tap on `target`: its press and release under the touch's pointerId 2 (tapDown, tapUp), the compatibility mousemove and
+ *  mousedown, and its mouseup and trusted click under pointerId 1, detail 1. */
 const webkitTap = (target: El): void => {
-  pressUp(target, { pointerId: 2, pointerType: "touch" });
-  onWindow("lostpointercapture", target, { pointerId: 2, pointerType: "touch" });
-  onWindow("pointerout", target, { pointerId: 2, pointerType: "touch" });
-  onWindow("mousedown", target, { button: 0 });
+  tapDown(target, { pointerId: 2, pointerType: "touch" });
+  tapUp(target, { pointerId: 2, pointerType: "touch" }, "webkit");
+  tapCompat(target, "webkit");
   gateClick(target, 1, 1);
 };
 /** A mouse drag of `target` as WebKit sends it: the press's pointerdown under pointerId 1 and its mousedown, then a dragstart, and no
@@ -2144,15 +2182,15 @@ test("how a click finds its press, a trusted click with no pointerId, a guard CI
   got.covered = await gateCell(t, "a press begun covered, the cover gone, then a click with no pointerId", (g, opens) => {
     g.place(IN_BOX);
     g.cover(new El("div"));
-    pressUp(g.img, mouse);
+    mousePressUp(g.img, mouse);
     g.cover(null);
     plainClick(g.img, 1);
     const first = opens();
-    pressUp(g.img, mouse);
+    mousePressUp(g.img, mouse);
     plainClick(g.img, 1);
     return [first, opens()];
   });
-  got.shown = await gateCell(t, "a press begun with the control shown, then a click with no pointerId", (g, opens) => { g.place(IN_BOX); pressUp(g.img, mouse); plainClick(g.img, 1); return opens(); });
+  got.shown = await gateCell(t, "a press begun with the control shown, then a click with no pointerId", (g, opens) => { g.place(IN_BOX); mousePressUp(g.img, mouse); plainClick(g.img, 1); return opens(); });
   t.diagnostic("record " + JSON.stringify(got));
   assert.deepEqual(got, { covered: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], shown: { opened: 1, reveals: 0 } },
     "a click with no pointerId takes the press the slot handed it: [the click, the next] where the press began covered (a property pin over window.open's calls and the scrollIntoView record)");
@@ -2169,7 +2207,7 @@ test("how a click finds its press, a tap on another document's element, a guard 
     ["a two-finger touch, its primary contact lifted first as Chromium's touch emulation lifts it, then the tap as Chromium sends it", 11, (g) => { onWindow("pointerdown", g.img, touch(9, true)); onWindow("pointerdown", g.img, touch(10, false)); onWindow("pointerup", g.img, touch(9, true)); onWindow("pointerup", g.img, touch(10, false)); }],
     ["a two-finger touch, its primary contact lifted last, then the tap as Chromium sends it", 11, (g) => { onWindow("pointerdown", g.img, touch(9, true)); onWindow("pointerdown", g.img, touch(10, false)); onWindow("pointerup", g.img, touch(10, false)); onWindow("pointerup", g.img, touch(9, true)); }],
     ["a touch that is not primary, its primary contact pressing another document, then the tap as Chromium sends it", 11, (g) => { onWindow("pointerdown", g.img, touch(10, false)); onWindow("pointerup", g.img, touch(10, false)); }],
-    ["a one-finger tap whose compatibility mousedown came and whose click did not, then the tap as Chromium sends it", 11, (g) => { pressUp(g.img, touch(3, true)); onWindow("mousedown", g.img, { button: 0 }); }],
+    ["a one-finger tap whose compatibility mousedown came and whose click did not, then the tap as Chromium sends it", 11, (g) => { tapDown(g.img, touch(3, true)); tapUp(g.img, touch(3, true), "chromium"); tapCompat(g.img, "chromium"); }],
   ];
   for (const [name, clickPid, before] of leftovers) {
     got[name] = await gateCell(t, name, (g, opens) => {
@@ -2184,9 +2222,9 @@ test("how a click finds its press, a tap on another document's element, a guard 
       return [first, opens()];
     });
   }
-  got["a one-finger tap, as Chromium sends it"] = await gateCell(t, "a one-finger tap, as Chromium sends it", (g, opens) => { g.place(IN_BOX); pressUp(g.img, touch(3, true)); onWindow("mousedown", g.img, { button: 0 }); gateClick(g.img, 3, 1); return opens(); });
+  got["a one-finger tap, as Chromium sends it"] = await gateCell(t, "a one-finger tap, as Chromium sends it", (g, opens) => { g.place(IN_BOX); engineTap(g.img, "chromium", 3); return opens(); });
   got["a one-finger tap, as WebKit sends it"] = await gateCell(t, "a one-finger tap, as WebKit sends it", (g, opens) => { g.place(IN_BOX); webkitTap(g.img); return opens(); });
-  got["a one-finger tap, as Firefox sends it"] = await gateCell(t, "a one-finger tap, as Firefox sends it", (g, opens) => { g.place(IN_BOX); pressUp(g.img, touch(0, true)); onWindow("mousedown", g.img, { button: 0 }); gateClick(g.img, 0, 1); return opens(); });
+  got["a one-finger tap, as Firefox sends it"] = await gateCell(t, "a one-finger tap, as Firefox sends it", (g, opens) => { g.place(IN_BOX); engineTap(g.img, "firefox", 0); return opens(); });
   t.diagnostic("record " + JSON.stringify(got));
   const want = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
   const tap = { opened: 1, reveals: 0 };
@@ -2196,17 +2234,20 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // ── the chain rule, the guards CI runs (the closing check at 142ade155 after the fixes for the file review's round 18; the browser
 // cells, file-figure-open-taps.ts chainCells, skip in CI) ── A verdict moves from a press to a click only along that gesture's
 // own chain of events as this window hears them, and a record still standing at a pointer's click under its pointerId, a press
-// whose pointerup this window never heard, refuses that click; a mouse's or a pen's pointer leaving this window with a button down
-// (a pointerout with no relatedTarget), or the mouse's pointerout with no relatedTarget and no button down, a release this window did
-// not hear (the file review's round 19, extra5-1 and extra8-1), marks every mouse and pen record refused; a mouseout to no element
-// while a tap's compatibility mousedown is due empties the slot (its extra8-2); and a blur of the window itself, the focus leaving
-// this document, marks every mouse and pen record refused and, while a tap's compatibility mousedown is due, empties the slot (its
-// extra5-1, extra8-1 and extra8-2, with the coordinator's decisions on them). Each guard replays an engine's order as the browser cells recorded
-// it, the events this window heard, with the element the gesture lands on, but for the pointerout with no relatedTarget and buttons
-// 1 that Firefox sends as a held press leaves the viewer's frame, which the rows of such a press in the guards of Firefox's lone
-// click and of another document's tap after a mouse's press whose pointerup this window never heard leave out, so they guard the
-// other rules without the refusal of a record whose pointer left, which the guard of a pointer leaving this window drives, and in
-// the browser those cells are closed by that refusal as well; "|" in a row's name marks where another element goes over the control.
+// whose pointerup this window never heard, refuses that click; and the click takes the slot only when that chain, from the slot's
+// press to the click, is one the viewer's own gestures make (the own-chain allowlist, the file review's round 20, extra5-1, extra5-2,
+// extra6-1 and extra7-1, with the coordinator's decisions on them). The rules of the file review's round 19 that read one heard event
+// each (a mouse's or a pen's pointer leaving this window with a button down, a pointerout with no relatedTarget, and the mouse's
+// pointerout with no relatedTarget and no button down, each marking every mouse and pen record refused; a mouseout to no element
+// while a tap's compatibility mousedown is due, emptying the slot; a blur of the window itself, marking every mouse and pen record
+// refused and emptying the slot while a tap's compatibility mousedown is due) are retired: no chain the allowlist admits carries any
+// of those events where they refused, so their guards below stand as the allowlist refusing their orders. Each guard replays an
+// engine's order as the browser cells recorded it, the events this window heard, with the element the gesture lands on, but for the
+// pointerout with no relatedTarget and buttons 1 that Firefox sends as a held press leaves the viewer's frame, which the rows of such
+// a press in the guards of Firefox's lone click and of another document's tap after a mouse's press whose pointerup this window
+// never heard leave out, so they guard the other rules and not the allowlist's refusal of that pointerout, which the guard of a
+// pointer leaving this window drives, and in the browser those cells are refused by the allowlist as well; "|" in a row's name marks
+// where another element goes over the control.
 // The mutants the checklist records: P6-OFF (the tail dropped, both reads), P6-ANYDETAIL (the tail set by any primary mouseup,
 // which, the mouseup's clear being keyed on the tail, also stops that clear for a primary mouseup of detail 0; with that clear kept,
 // a tail set by any primary mouseup reds no guard, the tail's detail condition defensive under that clear: the file review's round
@@ -2217,25 +2258,19 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // with no wait for the pen's compatibility mousedown), MU-OFF (a mouseup other than a primary one of detail above 0 empties
 // nothing), MU-DETAIL (that clear keyed on the detail alone), MU-FLAG (that mouseup clears the tap's flag and leaves the slot)
 // MU-SLOT (it empties the slot and leaves the flag, defensive, so no guard reds under it), OWNREF-OFF (a click reads the record
-// still standing under its own pointerId as its press; with LV-OFF and MO-OFF too, a gate that gives 09f58bec6's verdict on every
-// click the search of the closed direction compares), LV-OFF (no pointerout listener), LV-ANYRT (a pointerout marks the records
-// whatever its relatedTarget), LV-NOBTN (a mouse's or a pen's pointerout with no relatedTarget marks them whatever its buttons, the
-// same gate as LV-LOSTANY now that the mouse's pointerout with no button down marks them), LV-ANYTYPE (a touch's pointerout with a button down marks them too, and every record,
-// a touch's included), LV-MOUSE (a pen's pointerout and a pen's record left out of the arm with a button down, and a pen's record out
-// of both arms) and LV-DEL (the records deleted in place of marked); and of the file review's round 19: LV-NOLOST (the mouse's
-// pointerout with no button down marks nothing, the leave at ddb446fae), LV-LOSTMOUSE (it marks the mouse's records alone),
-// LV-LOSTANY (a mouse's or a pen's pointerout with no relatedTarget marks them whatever its buttons), LV-NOHELD (a pointerout with a
-// button down marks nothing, the arm for none kept), MO-OFF (no mouseout listener), MO-B1 (the mouseout empties the slot only with a
-// button down), MO-NOEND (it empties any slot a touch's pointerup filled, whether or not that tap's mousedown has come), MO-ANYRT (a
-// mouseout empties the slot while a tap's mousedown is due whatever its relatedTarget), MO-ANYSLOT (a mouseout to no element empties
-// the slot whether or not a tap's mousedown is due), MO-NOREMOVE (the mouseout listener added outside the gate's list and never
-// removed) and EXTRA-TYPE (a fourteenth listener, pointerleave, in the gate's list, a thirteenth before the blur's); and of the
-// blur's rule (the file review's round 19, extra5-1, extra8-1 and extra8-2, with the coordinator's decisions on them): BL-OFF (no
-// blur listener), BL-ACCEPT (the blur marks the mouse and pen records accepted), BL-ANYTARGET (it reads an element's blur too),
-// BL-ANYTYPE (it marks a touch's records too), BL-ANYSLOT (it empties the slot whether or not a tap's mousedown is due), BL-NOSLOT
-// (it leaves the slot and the tap's flag alone), BL-KEEPDUE (it empties the slot and leaves the flag, defensive: that tap's
-// mousedown then finds the slot empty), BL-LATCH (every press refused until the window's next focus), BL-DEL (the
-// records deleted in place of marked) and BL-NOREMOVE (the blur listener added outside the gate's list and never removed).
+// still standing under its own pointerId as its press); and of the own-chain allowlist (the file review's round 20): M-OFF (the
+// allowlist admits every chain), M-NOFOCUS (it refuses every chain with a focus in it), M-NOBMOVE (it refuses every chain with a
+// move of a button held), M-NOD2 (it refuses a press's mouseup of detail 2), M-NOPENMOUSE (it refuses a pen's chain with a
+// mouse-typed event), M-NOTAPPAIR (it refuses a tap's chain with a compatibility mouseout or mouseover), M-NOBLURPAIR (it refuses
+// every chain with an element's blur), M-NOKEY (the chain listener hears keydown and the grammar reads it as it reads any other
+// token), M-B0OK (a press's chain reads no mouse event with no button down), M-TAPMOUSEPTR (a tap's chain reads no mouse-typed pointer
+// event), M-NOMOVEREQ (a tap's chain with no compatibility mousemove read as if it had one), M-LONEBLUR (an element's blur the focus
+// does not follow read as absent), M-W1OFF (the widening to a tap's mouseup of detail 2 dropped), M-W2OFF (the widening to the focus
+// arriving before a press's mousedown and in a tap before its pointerup dropped), M-W3OFF (the widening to the mouse's boundary
+// events to no element during a finger's contact dropped), M-NOMOUSE, M-NOPEN and M-NOTOUCH (the grammar refuses every mouse's, pen's
+// or touch's chain, the spines), M-NOFOLD (a run of moves recorded token by token, with the one-token collapse alone), M-NOCAP (no
+// cap on the chain's length), M-EXTRA (a twenty-second type, focusin, in CHAIN_TYPES), M-LESS (focus dropped from CHAIN_TYPES) and
+// M-NOREMOVE (the chain listener added outside the gate's list and never removed).
 /** Firefox's mouse click under pointerId 0 on `target`: its pointerdown, mousedown, pointerup, mouseup and click (typed mouse). */
 const ffMouseClick = (target: El): void => {
   const m: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
@@ -2249,10 +2284,9 @@ const ffMouseClick = (target: El): void => {
  *  under pointerId 1, typed mouse, the touch's pointerId 2. */
 const engineTap = (target: El, engine: "chromium" | "firefox" | "webkit", touchId: number): void => {
   const f: GatePtr = { pointerId: touchId, pointerType: "touch", isPrimary: true, button: 0 };
-  onWindow("pointerdown", target, { ...f });
-  onWindow("pointerup", target, { ...f });
-  onWindow("touchend", target);
-  onWindow("mousedown", target, { button: 0 });
+  tapDown(target, f);
+  tapUp(target, f, engine);
+  tapCompat(target, engine);
   if (engine === "webkit") gateClick(target, 1, 1, true, "mouse");
   else gateClick(target, touchId, 1, true, "touch");
 };
@@ -2364,13 +2398,14 @@ test("how a click finds its press, a touch record a touchend ended, a guard CI r
   t.diagnostic("record " + JSON.stringify(got));
   assert.deepEqual(got, [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], "the click under the ended touch's pointerId opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, a pen in the touch order, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): a pen whose pointerup comes before its own mousedown (read of iPadOS's Pencil and of Android's and ChromeOS's styluses, not driven: Playwright drives no pen in that order), its compatibility mousedown, mouseup and click after the pointerup, gets the one-finger tap's exception: its tap on the picture with the control shown opens once, and so does each of two taps and each tap of a double tap (the second click of detail 2); its tap whose press began with another element over the control opens nothing and reveals it, and the next opens once; its tap whose click carries no pointerId opens once, the gate's arm for such a click unchanged; and its pointerup followed by a mouseup of detail 1 and its click with no compatibility mousedown heard before them, an order no engine measured sends (a mouseup whose mousedown went to another element came with detail 0), opens nothing and reveals the control, and the next tap opens once, the pen's wait for that mousedown being defensive (a property pin over window.open's calls and the scrollIntoView record; red at 142ade155, whose pen's own mousedown found no pointerdown before it and emptied the slot, so every such tap opened nothing, and under P4-OFF; the row with no pointerId red under P4-NOID; the row with no mousedown red under P4-NOMD, a gate whose touch-order pen's slot waits for no mousedown)", async (t) => {
+test("how a click finds its press, a pen in the touch order, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): a pen whose pointerup comes before its own mousedown (read of iPadOS's Pencil and of Android's and ChromeOS's styluses, not driven: Playwright drives no pen in that order), its compatibility mousedown, mouseup and click after the pointerup, gets the one-finger tap's exception: its tap on the picture with the control shown opens once, and so does each of two taps and the first tap of a double tap, while the double tap's second tap, whose mouseup and click carry detail 2, opens nothing and reveals the control, a cost by reading, since the own-chain allowlist admits a mouseup of detail 2 in a finger's tap alone (the file review's round 20, with the coordinator's decisions on it: the widening to Chromium's double tap, measured for a finger, and no pen in the touch order driven), the tap's compatibility mousemove before its mousedown as a finger's tap sends it; its tap whose press began with another element over the control opens nothing and reveals it, and the next opens once; its tap whose click carries no pointerId opens once, the gate's arm for such a click unchanged; and its pointerup followed by a mouseup of detail 1 and its click with no compatibility mousedown heard before them, an order no engine measured sends (a mouseup whose mousedown went to another element came with detail 0), opens nothing and reveals the control, and the next tap opens once, the pen's wait for that mousedown being defensive (a property pin over window.open's calls and the scrollIntoView record; red at 142ade155, whose pen's own mousedown found no pointerdown before it and emptied the slot, so every such tap opened nothing, and under P4-OFF; the row with no pointerId red under P4-NOID; the row with no mousedown red under P4-NOMD, a gate whose touch-order pen's slot waits for no mousedown)", async (t) => {
   const got: Record<string, unknown> = {};
   const pen: GatePtr = { pointerId: 3, pointerType: "pen", isPrimary: true, button: 0 };
   const penTap = (g: KeyGate, detail: number, between: () => void = () => {}, click?: () => void): void => {
     onWindow("pointerdown", g.img, { ...pen });
     between();
     onWindow("pointerup", g.img, { ...pen });
+    onWindow("mousemove", g.img, { buttons: 0 });                         // its compatibility mousemove, as a finger's tap sends it
     onWindow("mousedown", g.img, { button: 0 });
     if (click) click(); else gateClick(g.img, 3, detail, true, "pen");
   };
@@ -2391,7 +2426,7 @@ test("how a click finds its press, a pen in the touch order, a guard CI runs (th
   });
   t.diagnostic("record " + JSON.stringify(got));
   const open1 = { opened: 1, reveals: 0 };
-  assert.deepEqual(got, { one: open1, two: [open1, open1], double: [open1, open1], covered: [{ opened: 0, reveals: 1 }, open1], noPointerId: open1, noMouseDown: [{ opened: 0, reveals: 1 }, open1] },
+  assert.deepEqual(got, { one: open1, two: [open1, open1], double: [open1, { opened: 0, reveals: 1 }], covered: [{ opened: 0, reveals: 1 }, open1], noPointerId: open1, noMouseDown: [{ opened: 0, reveals: 1 }, open1] },
     "each pen tap's opens and reveals, [the first, the next] where the cell has two (a property pin over window.open's calls and the scrollIntoView record)");
 });
 test("how a click finds its press, another document's tap after a touch-order pen's pointerup, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): a pen in the touch order presses the picture with the control shown and its compatibility events and click go to another element, then another element over the control, then a tap on another document's element whose compatibility mousedown, mouseup and click land in this window, the click typed touch under another pointerId (Chromium's shape) or typed mouse under pointerId 1 (WebKit's): the pen's slot is taken only by a click that names that pen, so the click opens nothing and reveals the control, and the next click opens once (a property pin over window.open's calls and the scrollIntoView record; green at 142ade155, whose tap's mousedown emptied the pen's slot, and red under P4-ANY, whose pen slot any click took)", async (t) => {
@@ -2492,12 +2527,13 @@ test("the one gate reads a shown press in view again at its click, a guard CI ru
     const mouse: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
     g.place(IN_BOX);
     onWindow("pointerdown", g.img, { ...mouse });
+    onWindow("mousedown", g.img, { button: 0 });
     g.place(OUT_BOX);                                                      // the body scrolled while the press is held
     onWindow("pointerup", g.img, { ...mouse });
     gateClick(g.img, 1, 1);
     const first = opens();
     g.place(IN_BOX);                                                       // where the reveal put it
-    pressUp(g.img, mouse);
+    mousePressUp(g.img, mouse);
     gateClick(g.img, 1, 1);
     return [first, opens()];
   });
@@ -2555,8 +2591,9 @@ const addSourceOf = (stack: string | undefined): string | null => {
   const e = map ? (map.findEntry(Number(line) - 1, Number(col) - 1) as { originalSource?: string }) : null;
   return e && e.originalSource ? e.originalSource : null;
 };
-test("the one gate's window listeners go with the viewer, a guard CI runs (the file review's round 17, tests-1 with regression-1; its round 18, with the coordinator's decisions on open item 1; the closing check at 142ade155 after the fixes for the file review's round 18; and the file review's round 19, extra5-1, extra8-1, extra8-2 and extra9-3, with the coordinator's decisions on them): every listener the viewer's module adds on the window in its capture phase between the open and the close, whatever its type, each add read by its source (the add's call site through the test bundle's source map, so a capture listener another module adds on the window, the comments module's keydown at its first import, is not counted, and the pin reads the same run alone or in the suite's order), is one of thirteen, pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown, dragstart, touchend, touchcancel, pointerout, mouseout, blur and click, one of each, and the viewer's close removes each of them, the same function with the capture flag its add carried (a property pin over the window's add and remove calls; red at ddb446fae, which added eleven with no mouseout, at d61eb027d, which added twelve with no blur, under a gate that adds its mouseout listener outside its list and never removes it, under one that does so with its blur listener, and under one that adds a fourteenth listener of a type outside the thirteen; the pin it replaced passed the gate that never removes its mouseout listener and the one with a listener of a type outside the list)", async (t) => {
-  const WANT = ["blur", "click", "dragstart", "keydown", "mousedown", "mouseout", "mouseup", "pointercancel", "pointerdown", "pointerout", "pointerup", "touchcancel", "touchend"];
+test("the one gate's window listeners go with the viewer, a guard CI runs (the file review's round 17, tests-1 with regression-1; its round 18, with the coordinator's decisions on open item 1; the closing check at 142ade155 after the fixes for the file review's round 18; the file review's round 19, extra5-1, extra8-1, extra8-2 and extra9-3; and the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): every listener the viewer's module adds on the window in its capture phase between the open and the close, whatever its type, each add read by its source (the add's call site through the test bundle's source map, so a capture listener another module adds on the window, the comments module's keydown at its first import, is not counted, and the pin reads the same run alone or in the suite's order), is one of two kinds: the chain listener, one function added on each of the twenty-one types the own-chain allowlist reads, pointerdown, pointerup, pointercancel, pointerover, pointerout, pointerenter, pointerleave, pointermove, mousedown, mouseup, mouseover, mouseout, mousemove, touchstart, touchend, touchcancel, dragstart, contextmenu, auxclick, blur and focus, once each, and the gate's own listeners, one add on each of ten types, pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown, dragstart, touchend, touchcancel and click, twenty-three types in all; and the viewer's close removes each add, the same function with the capture flag its add carried (a property pin over the window's add and remove calls; red at bef9ff8fc, which added thirteen listeners of thirteen types and no chain listener, under M-EXTRA, whose chain listener hears a twenty-second type, under M-LESS, whose chain listener misses focus, and under M-NOREMOVE, whose chain listener is added outside the gate's list and never removed)", async (t) => {
+  const CHAIN_WANT = ["auxclick", "blur", "contextmenu", "dragstart", "focus", "mousedown", "mousemove", "mouseout", "mouseover", "mouseup", "pointercancel", "pointerdown", "pointerenter", "pointerleave", "pointermove", "pointerout", "pointerover", "pointerup", "touchcancel", "touchend", "touchstart"];
+  const OWN_WANT = ["click", "dragstart", "keydown", "mousedown", "mouseup", "pointercancel", "pointerdown", "pointerup", "touchcancel", "touchend"];
   const calls: { add: Array<[string, unknown, boolean, string | null]>; remove: Array<[string, unknown, boolean]> } = { add: [], remove: [] };
   const capOf = (o: unknown): boolean => (typeof o === "boolean" ? o : !!(o && (o as { capture?: boolean }).capture));
   win.addEventListener = function (type: string, cb: unknown, o?: unknown) { calls.add.push([type, cb, capOf(o), addSourceOf(new Error().stack)]); return EventTarget.prototype.addEventListener.call(this, type, cb as EventListener, o as boolean); };
@@ -2568,7 +2605,12 @@ test("the one gate's window listeners go with the viewer, a guard CI runs (the f
   const others = calls.add.filter(([, , capture, src]) => capture && !viewer(src)).map(([type, , , src]) => type + " from " + src);
   t.diagnostic("the window's other capture adds during the open, not counted: " + JSON.stringify(others));
   assert.ok(calls.add.every(([, , , src]) => src !== null), "every add on the window reads its source through the stack and the bundle's source map (a precondition): " + JSON.stringify(calls.add.map(([type, , capture, src]) => [type, capture, src])));
-  assert.deepEqual(gate.map(([type]) => type).sort(), WANT, "the viewer module's capture listeners on the window, whatever their type, one of each of the thirteen (a property pin over the window's add calls, read by source)");
+  const byFn = new Map<unknown, string[]>();
+  for (const [type, cb] of gate) byFn.set(cb, [...(byFn.get(cb) || []), type]);
+  const widest = [...byFn.entries()].sort((x, y) => y[1].length - x[1].length)[0] || [null, []];
+  const chainTypes = [...widest[1]].sort();
+  const own = gate.filter(([, cb]) => cb !== widest[0]).map(([type]) => type).sort();
+  assert.deepEqual({ chain: chainTypes, own }, { chain: CHAIN_WANT, own: OWN_WANT }, "the viewer module's capture listeners on the window, whatever their type: the chain listener, the one function added on the most types, on each of the twenty-one types the allowlist reads once, and the gate's own listeners on the ten types, one add each (a property pin over the window's add calls, read by source)");
   o.fv.closeFileView();
   const gone = gate.map(([type, cb]) => [type, calls.remove.some(([rt, rcb, rcap]) => rt === type && rcb === cb && rcap)]);
   assert.deepEqual(gone, gate.map(([type]) => [type, true]), "each is removed at the close, the same function with the capture flag, [type, removed] (a property pin over the window's remove calls)");
@@ -2618,7 +2660,7 @@ test("how a click finds its press, another document's tap after a mouse's press 
   const want = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
   assert.deepEqual(got, Object.fromEntries(rows.map((r) => [r.name, want])), "the other document's click after the mouse's press whose pointerup this window never heard opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, a mouse's or a pen's pointer leaving this window with a button down, and the mouse's with no button down, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18; and the file review's round 19, extra5-1 and extra8-1, with the coordinator's decisions on them): the mouse pressed on the control with the control shown and its pointer leaving this window with the button down, a pointerout with no relatedTarget and buttons 1 as Firefox sends it under pointerId 0, marks the mouse's record refused, so where that press is released over another pane and another document's mouse click on an element over the control that hides at its press reaches this window as a pointerup, a mouseup of detail 1 and a click, the pointerup hands the slot a refusal and the click opens nothing and reveals the control, and the next click opens once; the viewer's own press dragged out of the frame and back, and a pen's so by reading, pay the same, a stated cost; the mouse's pointerout with no relatedTarget and no button down during a press, the order Chromium sends after a release this window did not hear (the mouse held on the control while the top page hides the viewer's frame, the release landing on the top page), marks the records refused too, so where another document's mouse click on an element over the control that hides at its press then reaches this window as a pointerup under pointerId 1, a mouseup of detail 1 and a click, the click opens nothing and reveals the control, and the next click opens once; while a pointerout to an element of this document and a touch's pointerout end nothing, and a record whose pointer left is marked and not deleted, so a click under its pointerId never falls through to the slot (a property pin over window.open's calls and the scrollIntoView record; the first three rows red at 343ee2eb5 and at 09f58bec6, whose gate heard no pointerout, the marked row red at 09f58bec6 too, whose click read the record standing under its pointerId, the row of the mouse's pointerout with no button down red at ddb446fae, whose gate read no pointerout with no button down, and under a gate without that arm, and each other row red under its own mutant, which the checklist records)", async (t) => {
+test("how a click finds its press, a mouse's or a pen's pointer leaving this window with a button down, and the mouse's with no button down, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18; the file review's round 19, extra5-1 and extra8-1; and the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): the mouse pressed on the control with the control shown and its pointer leaving this window with the button down, a pointerout with no relatedTarget and buttons 1 as Firefox sends it under pointerId 0, puts in that press's chain an event no press of the viewer's own carries, so where that press is released over another pane and another document's mouse click on an element over the control that hides at its press reaches this window as a pointerup, a mouseup of detail 1 and a click, the own-chain allowlist refuses the click, which opens nothing and reveals the control, and the next click opens once; the viewer's own press dragged out of the frame and back, and a pen's so by reading, pay the same, a stated cost; the mouse's pointerout with no relatedTarget and no button down during a press, the order Chromium sends after a release this window did not hear (the mouse held on the control while the top page hides the viewer's frame, the release landing on the top page), is in no press of the viewer's own either, so where another document's mouse click on an element over the control that hides at its press then reaches this window as a pointerup under pointerId 1, a mouseup of detail 1 and a click, the click opens nothing and reveals the control, and the next click opens once; while a pointerout to an element of this document is the press's own boundary event and a touch's pointerout to no element after its pointerup, as Firefox sends it in its tap, the tap's own, and each opens; and a record left standing refuses a click under its own pointerId, which never falls through to the slot (a property pin over window.open's calls and the scrollIntoView record; the first three rows red at 343ee2eb5 and at 09f58bec6, whose gate heard no pointerout, the standing record's row red at 09f58bec6 too, whose click read the record standing under its pointerId, the row of the mouse's pointerout with no button down red at ddb446fae, whose gate read no pointerout with no button down; the leave's two arms, the rules that closed those rows at bef9ff8fc, are retired, so every closing row is red under M-OFF and the cost rows too, the first three under M-B0OK as well where the pointerout has a button down read as absent, and the standing record's row under OWNREF-OFF)", async (t) => {
   const got: Record<string, unknown> = {};
   const leave = (target: El, pid: number, type: string, buttons = 1, relatedTarget: El | null = null): void => onWindow("pointerout", target, { pointerId: pid, pointerType: type, buttons, relatedTarget });
   const penClick = (target: El): void => { const p: GatePtr = { pointerId: 2, pointerType: "pen", isPrimary: true, button: 0 }; onWindow("pointerdown", target, { ...p }); onWindow("mousedown", target, { button: 0 }); onWindow("pointerup", target, { ...p }); gateClick(target, 2, 1, true, "pen"); };
@@ -2684,20 +2726,14 @@ test("how a click finds its press, a mouse's or a pen's pointer leaving this win
     mouseClick(g.img);
     return [first, opens()];
   });
-  got.touch = await gateCell(t, "a touch's pointerout with no relatedTarget during Firefox's tap on the picture", (g, opens) => {
-    const f: GatePtr = { pointerId: 0, pointerType: "touch", isPrimary: true, button: 0 };
+  got.touch = await gateCell(t, "a touch's pointerout to no element in Firefox's tap on the picture, after its pointerup as Firefox sends it", (g, opens) => {
     g.place(IN_BOX);
-    onWindow("pointerdown", g.img, { ...f });
-    leave(g.img, 0, "touch");
-    onWindow("pointerup", g.img, { ...f });
-    onWindow("touchend", g.img);
-    onWindow("mousedown", g.img, { button: 0 });
-    gateClick(g.img, 0, 1, true, "touch");
+    engineTap(g.img, "firefox", 0);                                        // tapUp sends the touch's pointerout to no element, then its pointerleave and touchend
     const first = opens();
     ffMouseClick(g.img);
     return [first, opens()];
   });
-  got.marked = await gateCell(t, "the record marked and not deleted: the mouse's press on the control, its pointer leaving this window, then another touch's press and release on the picture, | then a mouseup of detail 1 and a click under the mouse's pointerId, an order no engine measured sends", (g, opens) => {
+  got.marked = await gateCell(t, "the record left standing: the mouse's press on the control, its pointer leaving this window, then another touch's press and release on the picture, | then a mouseup of detail 1 and a click under the mouse's pointerId, an order no engine measured sends", (g, opens) => {
     g.place(IN_BOX);
     onWindow("pointerdown", g.ctl, { ...m0 });
     onWindow("mousedown", g.ctl, { button: 0 });
@@ -2706,7 +2742,7 @@ test("how a click finds its press, a mouse's or a pen's pointer leaving this win
     onWindow("pointerdown", g.img, { ...f });                              // another touch, not primary, so the mouse's record stands
     onWindow("pointerup", g.img, { ...f });                                // its pointerup fills the slot with its shown record
     g.cover(new El("div"));
-    gateClick(g.ctl, 0, 1, true, "mouse");                                 // the mouse's pointerId finds its own record, refused, and never reads that slot
+    gateClick(g.ctl, 0, 1, true, "mouse");                                 // the mouse's pointerId finds its own record standing, and never reads that slot
     const first = opens();
     g.cover(null);
     ffMouseClick(g.img);
@@ -2715,9 +2751,9 @@ test("how a click finds its press, a mouse's or a pen's pointer leaving this win
   t.diagnostic("record " + JSON.stringify(got));
   const refused = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], opened = [{ opened: 1, reveals: 0 }, { opened: 1, reveals: 0 }];
   assert.deepEqual(got, { ra: refused, cost: refused, pen: refused, inside: opened, noButton: refused, touch: opened, marked: refused },
-    "each row's click and the next click's opens and reveals, [that click, the next]: the click after the pointer left with the button down, and after the mouse's pointerout with no button down during the press (Chromium's order), refused and revealing, the next opening; the pointerout to an element or of a touch ending nothing (a property pin over window.open's calls and the scrollIntoView record)");
+    "each row's click and the next click's opens and reveals, [that click, the next]: the click after the pointer left with the button down, and after the mouse's pointerout with no button down during the press (Chromium's order), refused by the own-chain allowlist and revealing, the next opening; the pointerout to an element and the touch's pointerout after its pointerup opening (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, a release this window did not hear, a guard CI runs (the file review's round 19, extra5-1 and extra8-1, with the coordinator's decisions on them): the mouse's pointerout with no relatedTarget and no button down, heard while a mouse's or a pen's press stands, is a release of that press this window did not hear, so every mouse and pen record stands refused: the mouse pressed on the control with the control shown, then that pointerout, then another document's mouse click on an element over the control that hides at its press, which reaches this window as a pointerup, a mouseup of detail 1 and a click under pointerId 0 as Firefox numbers the mouse (Chromium's order under pointerId 1 is the guard of a pointer leaving this window), opens nothing and reveals the control; so does a pen's press on the control in the desktop order, then the mouse's pointerout with no button down, which is what Chromium sends when the top page hides the frame under a held pen, then another document's pen click under the pen's pointerId; while the mouse's press with no pointerout and no blur of this window before its pointerup, the still pointer whose frame the top page shows again before any redraw finds it hidden where the element over the control cancels its mousedown or this window did not hold the focus, opens, as the viewer's own click would, and a pen's pointerout with no button down marks nothing, so the mouse's click after it opens; the next click opens once in each row (a property pin over window.open's calls and the scrollIntoView record; the first two rows red at ddb446fae, whose gate read no pointerout with no button down, and under a gate without that arm, the pen's row also red under one whose arm marks the mouse's records alone, and the row of the pen's pointerout red under one that reads a mouse's or a pen's pointerout with no relatedTarget whatever its buttons; the row with no pointerout and no blur is the stated residual, read the same by every gate, so a change to it is seen)", async (t) => {
+test("how a click finds its press, a release this window did not hear, a guard CI runs (the file review's round 19, extra5-1 and extra8-1; and the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): the mouse's pointerout with no relatedTarget and no button down, heard while a mouse's or a pen's press stands, is in no press of the viewer's own, so the own-chain allowlist refuses the click that takes that press: the mouse pressed on the control with the control shown, then that pointerout, then another document's mouse click on an element over the control that hides at its press, which reaches this window as a pointerup, a mouseup of detail 1 and a click under pointerId 0 as Firefox numbers the mouse (Chromium's order under pointerId 1 is the guard of a pointer leaving this window), opens nothing and reveals the control; so does a pen's press on the control in the desktop order, then the mouse's pointerout with no button down, which is what Chromium sends when the top page hides the frame under a held pen, then another document's pen click under the pen's pointerId; and so does the mouse's press with a pen's pointerout with no relatedTarget and no button down in it, an order no engine measured sends; while the mouse's press with no pointerout and no blur of this window before its pointerup, the still pointer whose frame the top page shows again before any redraw finds it hidden where the element over the control cancels its mousedown or this window did not hold the focus, opens, as the viewer's own click would, since its chain is the own click's; the next click opens once in each row (a property pin over window.open's calls and the scrollIntoView record; the first two rows red at ddb446fae, whose gate read no pointerout with no button down, and, the leave's arm for no button retired, under M-OFF, the pen's pointerout row red at bef9ff8fc, whose arm read only the mouse's pointerout with no button down, and under M-OFF; the row with no pointerout and no blur is the stated residual, read the same by every gate and by the allowlist, so a change to it is seen)", async (t) => {
   const got: Record<string, unknown> = {};
   const leave = (target: El, pid: number, type: string, buttons: number): void => onWindow("pointerout", target, { pointerId: pid, pointerType: type, buttons, relatedTarget: null });
   const m0: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 }, m1: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
@@ -2775,22 +2811,22 @@ test("how a click finds its press, a release this window did not hear, a guard C
   });
   t.diagnostic("record " + JSON.stringify(got));
   const refused = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], opened = [{ opened: 1, reveals: 0 }, { opened: 1, reveals: 0 }];
-  assert.deepEqual(got, { firefox: refused, pen: refused, still: opened, penOut: opened },
-    "each row's click and the next click's opens and reveals, [that click, the next]: the click after the mouse's pointerout with no button down during a mouse's or a pen's press refused and revealing, the next opening; the press with no pointerout and the pen's pointerout opening (a property pin over window.open's calls and the scrollIntoView record)");
+  assert.deepEqual(got, { firefox: refused, pen: refused, still: opened, penOut: refused },
+    "each row's click and the next click's opens and reveals, [that click, the next]: the click after a pointerout to no element with no button down during a mouse's or a pen's press refused by the own-chain allowlist and revealing, the next opening; the press with no pointerout opening (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, a tap whose compatibility events went to another document, a guard CI runs (the file review's round 19, extra8-2, with the coordinator's decisions on it): the viewer's own tap on the picture with the control shown fills the slot at its pointerup, and where its compatibility mousedown hit-tests another document's element Firefox sends this window a mouseout to no element before that mousedown is due to come, with a button down where the element was first hit at that mousedown and with none where a mouse rests in the viewer; the gate empties the slot there, so another document's tap on that element over the control, which hides at its own pointerup and reaches this window as a mousedown, a mouseup of detail 1 and a click under pointerId 0 typed touch, opens nothing and reveals the control, and the next tap opens once; while with no mouseout and no blur of this window, the element laid out before the tap's compatibility mousemove and no mouse in the viewer, and the element cancelling the tap's mousedown or this window without the focus, that click takes the slot and opens, the stated residual, and so it does after a mouseout to an element of this document; the rule ends at the tap's own mousedown, so the viewer's own tap whose mouseout comes between its mousedown and its click opens, and it reads only a slot a tap's pointerup filled, so a mouse's click with a mouseout to no element between its pointerup and its click, an order no engine measured sends, opens (a property pin over window.open's calls and the scrollIntoView record; the rows of a mouseout to no element red at ddb446fae, whose gate heard no mouseout, and under a gate without the mouseout listener, the row with no button down red under one whose mouseout needs a button down, the row of the viewer's own tap red under one that empties any slot a touch's pointerup filled, the row of a mouseout to an element red under one that reads a mouseout whatever its relatedTarget, and the mouse's row and the row of the viewer's own tap red under one that empties the slot at any mouseout to no element; the row with no mouseout and no blur is the stated residual, read the same by every gate, so a change to it is seen)", async (t) => {
+test("how a click finds its press, a tap whose compatibility events went to another document, a guard CI runs (the file review's round 19, extra8-2; and the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): the viewer's own tap on the picture with the control shown fills the slot at its pointerup, and where its compatibility mousedown hit-tests another document's element Firefox sends this window a mouseout to no element before that mousedown is due to come, with a button down where the element was first hit at that mousedown and with none where a mouse rests in the viewer; no tap of the viewer's own carries that mouseout there, so the own-chain allowlist refuses the click of another document's tap on that element over the control, which hides at its own pointerup and reaches this window as its compatibility mousemove, mousedown, mouseup of detail 1 and a click under pointerId 0 typed touch: it opens nothing and reveals the control, and the next tap opens once; while with no mouseout and no blur of this window, the element laid out before the tap's compatibility mousemove and no mouse in the viewer, and the element cancelling the tap's mousedown or this window without the focus, that click takes the slot and opens, the stated residual, since its chain is the own tap's, and so it does after the compatibility mouseout and mouseover to elements of this document that Firefox's own tap sends; a mouseout to no element that Firefox sends after the viewer's own tap's click belongs to no chain, so that tap opens and so does the next; and a mouse's click with a mouseout to no element between its pointerup and its click, an order no engine measured sends, is refused, that mouseout in no press of the viewer's own (a property pin over window.open's calls and the scrollIntoView record; the rows of a mouseout to no element red at ddb446fae, whose gate heard no mouseout, and, the mouseout's rule retired, under M-OFF, the mouse's row too, which bef9ff8fc's gate opened; the row with no mouseout and no blur is the stated residual, read the same by every gate and by the allowlist, so a change to it is seen)", async (t) => {
   const got: Record<string, unknown> = {};
   const f0: GatePtr = { pointerId: 0, pointerType: "touch", isPrimary: true, button: 0 };
   /** The viewer's own tap on the picture as Firefox sends it up to its touchend, then `between`, then another document's tap on the element
-   *  over the control: its compatibility mousedown, its mouseup of detail 1 and its click under pointerId 0 typed touch. */
-  const road = (g: KeyGate, opens: () => { opened: number; reveals: number }, between: () => void): unknown => {
+   *  over the control: `compat`, its compatibility events before its mouseup (Firefox's by default), then its mouseup of detail 1 and its
+   *  click under pointerId 0 typed touch. */
+  const road = (g: KeyGate, opens: () => { opened: number; reveals: number }, between: () => void, compat: (g: KeyGate) => void = (k) => tapCompat(k.ctl, "firefox")): unknown => {
     g.place(IN_BOX);
-    onWindow("pointerdown", g.img, { ...f0 });
-    onWindow("pointerup", g.img, { ...f0 });                               // fills the slot with the tap's shown record, the tap's flag set
-    onWindow("touchend", g.img);
+    tapDown(g.img, f0);
+    tapUp(g.img, f0, "firefox");                                           // fills the slot with the tap's shown record at its pointerup, the tap's flag set
     between();
     g.cover(new El("div"));
-    onWindow("mousedown", g.ctl, { button: 0 });                           // another document's tap: its press and release taken by the element, which hides at its pointerup
+    compat(g);                                                             // another document's tap: its press and release taken by the element, which hides at its pointerup
     gateClick(g.ctl, 0, 1, true, "touch");
     const first = opens();
     g.cover(null);
@@ -2801,16 +2837,12 @@ test("how a click finds its press, a tap whose compatibility events went to anot
   got.button = await gateCell(t, "the viewer's tap, a mouseout to no element with a button down, | then another document's tap", (g, opens) => road(g, opens, () => out(g.img, 1)));
   got.noButton = await gateCell(t, "the viewer's tap, a mouse resting in the viewer, a mouseout to no element with no button down, | then another document's tap", (g, opens) => road(g, opens, () => out(g.img, 0)));
   got.none = await gateCell(t, "the viewer's tap, no mouseout and no blur of this window, | then another document's tap: the stated residual's order", (g, opens) => road(g, opens, () => { /* nothing between */ }));
-  got.inside = await gateCell(t, "the viewer's tap, a mouseout to an element of this document, | then another document's tap", (g, opens) => road(g, opens, () => out(g.img, 1, g.body)));
-  got.own = await gateCell(t, "the viewer's own tap, its compatibility mousedown, then a mouseout to no element, then its mouseup of detail 1 and its click", (g, opens) => {
+  got.inside = await gateCell(t, "the viewer's tap, a mouseout and a mouseover to elements of this document with no button down, | then another document's tap", (g, opens) => road(g, opens, () => { out(g.img, 0, g.body); onWindow("mouseover", g.ctl, { buttons: 0, relatedTarget: g.body }); }, (k) => { onWindow("mousemove", k.ctl, { buttons: 0 }); onWindow("mousedown", k.ctl, { button: 0 }); }));
+  got.own = await gateCell(t, "the viewer's own tap and its click, then the mouseout to no element Firefox sends after it, then the next tap", (g, opens) => {
     g.place(IN_BOX);
-    onWindow("pointerdown", g.img, { ...f0 });
-    onWindow("pointerup", g.img, { ...f0 });
-    onWindow("touchend", g.img);
-    onWindow("mousedown", g.img, { button: 0 });
-    out(g.img, 0);
-    gateClick(g.img, 0, 1, true, "touch");
+    engineTap(g.img, "firefox", 0);
     const first = opens();
+    out(g.img, 0);                                                         // Firefox's mouseout 20 to 35 ms after the viewer's own tap's click
     engineTap(g.img, "firefox", 0);
     return [first, opens()];
   });
@@ -2827,15 +2859,16 @@ test("how a click finds its press, a tap whose compatibility events went to anot
   });
   t.diagnostic("record " + JSON.stringify(got));
   const refused = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], opened = [{ opened: 1, reveals: 0 }, { opened: 1, reveals: 0 }];
-  assert.deepEqual(got, { button: refused, noButton: refused, none: opened, inside: opened, own: opened, mouse: opened },
-    "each row's click and the next click's opens and reveals, [that click, the next]: the click after a mouseout to no element while the tap's compatibility mousedown was due refused and revealing, the next opening; the order with no mouseout, the mouseout to an element, the viewer's own tap and the mouse's click opening (a property pin over window.open's calls and the scrollIntoView record)");
+  assert.deepEqual(got, { button: refused, noButton: refused, none: opened, inside: opened, own: opened, mouse: refused },
+    "each row's click and the next click's opens and reveals, [that click, the next]: the click after a mouseout to no element while the tap's compatibility mousedown was due refused by the own-chain allowlist and revealing, the next opening; the order with no mouseout, the compatibility pair to elements and the viewer's own tap opening; the mouse's click with a mouseout to no element in its chain refused (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, a blur of this window, a guard CI runs (the file review's round 19, extra5-1, extra8-1 and extra8-2, with the coordinator's decisions on them): a blur whose target is the window itself, the keyboard focus leaving this document for another document or window, marks every mouse and pen record refused and, while a tap's compatibility mousedown is due, empties the slot and clears the tap's flag, since another document's press or a focus move took the focus while that press or that tap was this window's; so the mouse pressed on the control with the control shown, then that blur, as another document's element that takes its own press's mousedown without cancelling it moves the focus, then that element's click reaching this window as a pointerup under the held press's pointerId, a mouseup of detail 1 and a click (WebKit's order after the top page hid and showed the frame, and Chromium's still one), opens nothing and reveals the control, and so does a pen's press held so (Chromium's order), and the viewer's own tap on the picture with that blur between its pointerup and another document's tap on an element over the control, in Firefox's order and in WebKit's; the costs, the viewer's own press held while the focus moves and the viewer's own tap whose pointerup the focus moves at, are each refused once; the next click opens once in each; while an element's blur inside this document during a press, a blur between a mouse click's pointerup and its click, a finger held while the focus moves, the first click and the first tap after a blur and Firefox's blur after the viewer's own open end nothing and open, and a press begun with the control covered stays refused after the blur, and the record a blur marked is not deleted, so a click under its pointerId never falls through to the slot (a property pin over window.open's calls and the scrollIntoView record; the closing rows and the cost rows red at d61eb027d, whose gate heard no blur, and under a gate without the blur listener, the covered row under one whose blur marks the records accepted, which opens, the mouse's and the pen's closing rows and the held cost too, the row of an element's blur under one that reads a blur whatever its target, the finger's row under one that marks a touch's records too, the row of a blur after a mouse click's pointerup under one that empties the slot at every blur, the three tap rows under one that leaves the slot and the tap's flag alone at a blur, the three rows after a blur under one that refuses every press until the window's next focus, and the marked row under one that deletes the records in place of marking them)", async (t) => {
+test("how a click finds its press, a blur of this window, a guard CI runs (the file review's round 19, extra5-1, extra8-1 and extra8-2; and the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): a blur whose target is the window itself, the keyboard focus leaving this document for another document or window, is in no chain the viewer's own gestures make, so the own-chain allowlist refuses the click whose chain carries it: the mouse pressed on the control with the control shown, then that blur, as another document's element that takes its own press's mousedown without cancelling it moves the focus, then that element's click reaching this window as a pointerup under the held press's pointerId, a mouseup of detail 1 and a click (WebKit's order after the top page hid and showed the frame, and Chromium's still one), opens nothing and reveals the control, and so does a pen's press held so (Chromium's order), and the viewer's own tap on the picture with that blur between its pointerup and another document's tap on an element over the control, in Firefox's order and in WebKit's; the costs, each refused once: the viewer's own press held while the focus moves, the viewer's own tap whose pointerup the focus moves at, and, refused by the allowlist where bef9ff8fc's gate opened them, the focus moved between a mouse click's pointerup and its mouseup and a finger held while the focus moves (round 19's measurement of the blur's rule read both opening in the browser: the first 18, 14 and 18 in Chromium, Firefox and WebKit, the second 14 in Chromium), and an element's blur inside this document during a press with no element's focus after it before the pointerup, the chain of the viewer's own press released before retakeAfterHide's focus returns and of extra5-1's covered click with the focus not back; the next click opens once in each; while the first click and the first tap after a blur and Firefox's blur after the viewer's own open, each outside any chain, open, and a press begun with the control covered stays refused after the blur, and a record left standing refuses a click under its own pointerId, which never falls through to the slot (a property pin over window.open's calls and the scrollIntoView record; the closing rows and the first two cost rows red at d61eb027d, whose gate heard no blur, and, the blur's rule retired, under M-OFF, the element's blur row under M-LONEBLUR too, the three cost rows bef9ff8fc's gate opened red at bef9ff8fc, the covered row read at the press, and the standing record's row under OWNREF-OFF)", async (t) => {
   const got: Record<string, unknown> = {};
   const windowBlur = (): void => onWindow("blur", win);                   // the blur of the window itself, its target the window
   const m1: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
   const pen: GatePtr = { pointerId: 2, pointerType: "pen", isPrimary: true, button: 0 };
   const f0: GatePtr = { pointerId: 0, pointerType: "touch", isPrimary: true, button: 0 };
+  const f2: GatePtr = { pointerId: 2, pointerType: "touch", isPrimary: true, button: 0 };
   const f7: GatePtr = { pointerId: 7, pointerType: "touch", isPrimary: true, button: 0 };
   got.mouse = await gateCell(t, "the mouse held on the control, a blur of this window as another document's element takes its own press's mousedown, | then that element's click under the held press's pointerId", (g, opens) => {
     g.place(IN_BOX);
@@ -2865,12 +2898,11 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
   });
   got.firefoxTap = await gateCell(t, "the viewer's tap on the picture as Firefox sends it, a blur of this window while its compatibility mousedown is due and no mouseout, | then another document's tap", (g, opens) => {
     g.place(IN_BOX);
-    onWindow("pointerdown", g.img, { ...f0 });
-    onWindow("pointerup", g.img, { ...f0 });                               // fills the slot with the tap's shown record, the tap's flag set
-    onWindow("touchend", g.img);
+    tapDown(g.img, f0);
+    tapUp(g.img, f0, "firefox");                                           // fills the slot with the tap's shown record, the tap's flag set
     windowBlur();                                                           // the element that takes the tap's compatibility events takes the focus at their mousedown
     g.cover(new El("div"));
-    onWindow("mousedown", g.ctl, { button: 0 });                           // another document's tap on that element over the control, which hides at its pointerup
+    tapCompat(g.ctl, "firefox");                                           // another document's tap on that element over the control, which hides at its pointerup
     gateClick(g.ctl, 0, 1, true, "touch");
     const first = opens();
     g.cover(null);
@@ -2879,12 +2911,11 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
   });
   got.webkitTap = await gateCell(t, "the viewer's tap on the picture as WebKit sends it, a blur of this window while its compatibility mousedown is due, | then another document's tap on an element that listens for the mouse", (g, opens) => {
     g.place(IN_BOX);
-    pressUp(g.img, { pointerId: 2, pointerType: "touch" });                  // the touch's pointerId 2; its pointerup fills the slot, the tap's flag set
-    onWindow("lostpointercapture", g.img, { pointerId: 2, pointerType: "touch" });
-    onWindow("pointerout", g.img, { pointerId: 2, pointerType: "touch" });
+    tapDown(g.img, f2);                                                     // the touch's pointerId 2; its pointerup fills the slot, the tap's flag set
+    tapUp(g.img, f2, "webkit");
     windowBlur();
     g.cover(new El("div"));
-    onWindow("mousedown", g.ctl, { button: 0 });
+    tapCompat(g.ctl, "webkit");
     gateClick(g.ctl, 1, 1);                                                 // WebKit's tap click, pointerId 1 and no pointerType of the slot's
     const first = opens();
     g.cover(null);
@@ -2904,28 +2935,29 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
   });
   got.tapUp = await gateCell(t, "the cost: the viewer's own tap on the picture, Chromium's order, the focus moved at its pointerup", (g, opens) => {
     g.place(IN_BOX);
-    onWindow("pointerdown", g.img, { ...f7 });
+    tapDown(g.img, f7);
     onWindow("pointerup", g.img, { ...f7 });
     windowBlur();
+    onWindow("pointerout", g.img, { pointerId: 7, pointerType: "touch", buttons: 0, relatedTarget: null });
     onWindow("touchend", g.img);
-    onWindow("mousedown", g.img, { button: 0 });
+    tapCompat(g.img, "chromium");
     gateClick(g.img, 7, 1, true, "touch");
     const first = opens();
     engineTap(g.img, "chromium", 8);
     return [first, opens()];
   });
-  got.element = await gateCell(t, "an element's blur inside this document during the mouse's press on the picture, the focus moving within it", (g, opens) => {
+  got.element = await gateCell(t, "the cost and extra5-1's closure: an element's blur inside this document during the mouse's press on the picture with no element's focus after it before the pointerup", (g, opens) => {
     g.place(IN_BOX);
     onWindow("pointerdown", g.img, { ...m1 });
     onWindow("mousedown", g.img, { button: 0 });
-    onWindow("blur", g.body);                                               // the body's blur, its target an element of this document
+    onWindow("blur", g.body);                                               // the body's blur, its target an element of this document, and no focus after it
     onWindow("pointerup", g.img, { ...m1 });
     gateClick(g.img, 1, 1, true, "mouse");
     const first = opens();
     mouseClick(g.img);
     return [first, opens()];
   });
-  got.afterUp = await gateCell(t, "the focus moved between a mouse click's pointerup and its mouseup, the pointerup having handed its record to the slot", (g, opens) => {
+  got.afterUp = await gateCell(t, "the cost: the focus moved between a mouse click's pointerup and its mouseup, the pointerup having handed its record to the slot", (g, opens) => {
     g.place(IN_BOX);
     onWindow("pointerdown", g.img, { ...m1 });
     onWindow("mousedown", g.img, { button: 0 });
@@ -2936,13 +2968,12 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
     mouseClick(g.img);
     return [first, opens()];
   });
-  got.finger = await gateCell(t, "a finger held on the picture while the focus moves, then its release and its click, Chromium's order", (g, opens) => {
+  got.finger = await gateCell(t, "the cost: a finger held on the picture while the focus moves, then its release and its click, Chromium's order", (g, opens) => {
     g.place(IN_BOX);
-    onWindow("pointerdown", g.img, { ...f7 });
+    tapDown(g.img, f7);
     windowBlur();
-    onWindow("pointerup", g.img, { ...f7 });
-    onWindow("touchend", g.img);
-    onWindow("mousedown", g.img, { button: 0 });
+    tapUp(g.img, f7, "chromium");
+    tapCompat(g.img, "chromium");
     gateClick(g.img, 7, 1, true, "touch");
     const first = opens();
     engineTap(g.img, "chromium", 8);
@@ -2985,7 +3016,7 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
     mouseClick(g.img);
     return [first, opens()];
   });
-  got.marked = await gateCell(t, "the record marked and not deleted: the mouse's press on the control, a blur of this window, then another touch's press and release on the picture, | then a mouseup of detail 1 and a click under the mouse's pointerId, an order no engine measured sends", (g, opens) => {
+  got.marked = await gateCell(t, "the record left standing: the mouse's press on the control, a blur of this window, then another touch's press and release on the picture, | then a mouseup of detail 1 and a click under the mouse's pointerId, an order no engine measured sends", (g, opens) => {
     g.place(IN_BOX);
     onWindow("pointerdown", g.ctl, { ...m1 });
     onWindow("mousedown", g.ctl, { button: 0 });
@@ -2994,7 +3025,7 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
     onWindow("pointerdown", g.img, { ...f });                              // another touch, not primary, so the mouse's record stands
     onWindow("pointerup", g.img, { ...f });                                // its pointerup fills the slot with its shown record
     g.cover(new El("div"));
-    gateClick(g.ctl, 1, 1, true, "mouse");                                 // the mouse's pointerId finds its own record, refused, and never reads that slot
+    gateClick(g.ctl, 1, 1, true, "mouse");                                 // the mouse's pointerId finds its own record standing, and never reads that slot
     const first = opens();
     g.cover(null);
     mouseClick(g.img);
@@ -3002,6 +3033,204 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
   });
   t.diagnostic("record " + JSON.stringify(got));
   const refused = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], opened = [{ opened: 1, reveals: 0 }, { opened: 1, reveals: 0 }];
-  assert.deepEqual(got, { mouse: refused, pen: refused, firefoxTap: refused, webkitTap: refused, held: refused, tapUp: refused, element: opened, afterUp: opened, finger: opened, afterClick: opened, afterTap: opened, popup: opened, covered: refused, marked: refused },
-    "each row's click and the next click's opens and reveals, [that click, the next]: the click after a blur of the window during a mouse's or a pen's press, or while a tap's compatibility mousedown was due, refused and revealing, the next opening; an element's blur, a blur after the pointerup, a finger held, the first click and tap after a blur and Firefox's blur after an own open opening; the covered press refused and the marked record refusing its own pointer's click (a property pin over window.open's calls and the scrollIntoView record)");
+  assert.deepEqual(got, { mouse: refused, pen: refused, firefoxTap: refused, webkitTap: refused, held: refused, tapUp: refused, element: refused, afterUp: refused, finger: refused, afterClick: opened, afterTap: opened, popup: opened, covered: refused, marked: refused },
+    "each row's click and the next click's opens and reveals, [that click, the next]: the click whose chain carries a blur of the window, and the press whose element's blur no focus follows, refused by the own-chain allowlist and revealing, the next opening; the first click and tap after a blur and Firefox's blur after an own open opening; the covered press refused and the standing record refusing its own pointer's click (a property pin over window.open's calls and the scrollIntoView record)");
+});
+// ── the own-chain allowlist, the guards and rows CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with
+// the coordinator's decisions on them) ── A click takes the slot only when the chain of events this window heard from the slot's
+// press to that click is one the viewer's own gestures make (ownChain in file-view.ts, the grammar WALL the round's execution check
+// wrote, over the tokens chainToken writes). The guards drive an order of each of the round's four findings as its engine sends it,
+// each open at bef9ff8fc, whose gate read none of the events that tell it apart, and each refused here and revealing the control, the
+// next click opening; the admit rows drive one chain of each family of the viewer's own gestures the round measured, each opening
+// here, and each red under the mutant that drops the clause of the grammar that admits it (the spines, a click, a pen's press and
+// Chromium's tap, red only under a grammar that refuses a whole pointer type); the widening rows the same for the three clauses the
+// check added to the draft's grammar; and the record's rows pin the fold of a run of moves and the chain's cap. The mutants are named
+// in the chain rule's block above.
+test("the own-chain allowlist refuses a chain the viewer's own gestures do not make, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): with the control shown at each press, the click after each of these orders opens nothing and reveals the control, and the next click opens once: extra7-1's two forms, WebKit's moved click under a cover that cancels its mousedown, a mouse's pointermove with no button down inside the held press, and after a held move a pointerout with no button down to an element of this document and its pointerover; extra6-1's, WebKit's delayed hover update after a scroll under a resting mouse, the mouse's pointerout, pointerover and pointermove with no button down between a tap's pointerup and its compatibility mousedown; extra5-2's, Firefox's tap whose cover hid with no layout flush before its compatibility mousemove, a compatibility mousedown with no mousemove; and extra5-1's still shape with the focus not back, an element's blur in a press that no element's focus follows before the pointerup, a chain the viewer's own press also makes when it is released before retakeAfterHide's focus returns or held on the control while the viewer's own input holds the focus, so this guard pins a cost as well as a closure (a property pin over window.open's calls and the scrollIntoView record; every order open at bef9ff8fc and under M-OFF, the first two under M-B0OK too, the hover update under M-TAPMOUSEPTR, the missing mousemove under M-NOMOVEREQ and the lone blur under M-LONEBLUR)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const m1: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
+  const f0: GatePtr = { pointerId: 0, pointerType: "touch", isPrimary: true, button: 0 };
+  const f2: GatePtr = { pointerId: 2, pointerType: "touch", isPrimary: true, button: 0 };
+  const ptr = (type: string, target: El, pointerType: string, pointerId: number, buttons: number, relatedTarget?: El | null): void => onWindow(type, target, { pointerId, pointerType, isPrimary: true, buttons, ...(relatedTarget === undefined ? {} : { relatedTarget }) });
+  const mouse = (type: string, target: El, buttons: number, relatedTarget?: El | null): void => onWindow(type, target, { buttons, button: 0, ...(relatedTarget === undefined ? {} : { relatedTarget }) });
+  got.moveNoButton = await gateCell(t, "extra7-1, the held press's record: a mouse's pointermove and mousemove with no button down inside the press, | then the covered pointerup, mouseup and click", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.ctl, { ...m1 });
+    onWindow("mousedown", g.ctl, { button: 0 });
+    g.cover(new El("div"));
+    ptr("pointermove", g.ctl, "mouse", 1, 0);                               // WebKit's buttons-0 pointermove after the release the top page took
+    mouse("mousemove", g.ctl, 0);
+    onWindow("pointerup", g.ctl, { ...m1 });
+    gateClick(g.ctl, 1, 1, true, "mouse");
+    const first = opens();
+    g.cover(null);
+    mouseClick(g.img);
+    return [first, opens()];
+  });
+  got.heldMove = await gateCell(t, "extra7-1, after a held move: a pointerout with no button down to an element of this document and its pointerover inside the press, | then the covered pointerup, mouseup and click", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.ctl, { ...m1 });
+    onWindow("mousedown", g.ctl, { button: 0 });
+    ptr("pointerout", g.ctl, "mouse", 1, 1, g.body);                        // the held move, 1 px and back, its boundary events with the button down
+    ptr("pointerover", g.body, "mouse", 1, 1, g.ctl);
+    ptr("pointermove", g.body, "mouse", 1, 1);
+    mouse("mousemove", g.body, 1);
+    g.cover(new El("div"));
+    ptr("pointerout", g.body, "mouse", 1, 0, g.ctl);                        // after the release the top page took: no button down
+    mouse("mouseout", g.body, 0, g.ctl);
+    ptr("pointerover", g.ctl, "mouse", 1, 0, g.body);
+    mouse("mouseover", g.ctl, 0, g.body);
+    onWindow("pointerup", g.ctl, { ...m1 });
+    gateClick(g.ctl, 1, 1, true, "mouse");
+    const first = opens();
+    g.cover(null);
+    mouseClick(g.img);
+    return [first, opens()];
+  });
+  got.hoverUpdate = await gateCell(t, "extra6-1, WebKit's delayed hover update: the viewer's tap up to its touchend, the mouse's pointerout, pointerover and pointermove with no button down, | then another document's compatibility events and click", (g, opens) => {
+    g.place(IN_BOX);
+    tapDown(g.img, f2);
+    tapUp(g.img, f2, "webkit");
+    ptr("pointerout", g.body, "mouse", 1, 0, g.img);                        // the fake mouse move for the resting mouse whose content moved under it
+    mouse("mouseout", g.body, 0, g.img);
+    ptr("pointerover", g.img, "mouse", 1, 0, g.body);
+    mouse("mouseover", g.img, 0, g.body);
+    ptr("pointermove", g.img, "mouse", 1, 0);
+    g.cover(new El("div"));
+    tapCompat(g.ctl, "webkit");                                             // another document's tap on the element over the control, gone during the press
+    gateClick(g.ctl, 1, 1);
+    const first = opens();
+    g.cover(null);
+    webkitTap(g.img);
+    return [first, opens()];
+  });
+  got.noMove = await gateCell(t, "extra5-2, Firefox's unflushed hide: the viewer's tap up to its touchend, | then another document's compatibility mouseover, a mousedown with no mousemove, its mouseup and click", (g, opens) => {
+    g.place(IN_BOX);
+    tapDown(g.img, f0);
+    tapUp(g.img, f0, "firefox");
+    g.cover(new El("div"));
+    onWindow("mouseover", g.ctl, { buttons: 0, relatedTarget: null });      // Firefox's compatibility mousemove went to the hidden element
+    onWindow("mousedown", g.ctl, { button: 0 });
+    gateClick(g.ctl, 0, 1, true, "touch");
+    const first = opens();
+    g.cover(null);
+    engineTap(g.img, "firefox", 0);
+    return [first, opens()];
+  });
+  got.loneBlur = await gateCell(t, "extra5-1, the focus not back: the mouse's press on the control, an element's blur and no element's focus after it, | then the covered pointerup, mouseup and click", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.ctl, { ...m1 });
+    onWindow("mousedown", g.ctl, { button: 0 });
+    onWindow("blur", g.body);                                               // Chromium's focus fixup blurs the viewer's focused body box while the frame is hidden
+    g.cover(new El("div"));
+    onWindow("pointerup", g.ctl, { ...m1 });
+    gateClick(g.ctl, 1, 1, true, "mouse");
+    const first = opens();
+    g.cover(null);
+    mouseClick(g.img);
+    return [first, opens()];
+  });
+  t.diagnostic("record " + JSON.stringify(got));
+  const refused = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
+  assert.deepEqual(got, { moveNoButton: refused, heldMove: refused, hoverUpdate: refused, noMove: refused, loneBlur: refused },
+    "each order's click opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record); the lone blur's row is also the viewer's own press released before the focus returns, or held on the control while the viewer's own input holds the focus, which the allowlist refuses once, a cost");
+});
+test("the own-chain allowlist admits a chain of each family of the viewer's own gestures the round measured, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): with the control shown, each opens once: a click; a click with the focus arriving by the window, by the document (Firefox) or by an element; a double click's second click; a press with its button held moving (jitter); a drag out to an element of this document and back; a pen's press, and one with the mouse-typed boundary events Chromium sends in it; Chromium's, WebKit's and Firefox's taps, WebKit's and Firefox's with their compatibility boundary pair; a tap with the focus arriving; a finger's move in the tap; the press held across a frame hide with the fixup's blur and the focus back, the chain the 119 covered clicks of Chromium's still shape carry, admitted by the coordinator's decision 2; a modifier key pressed during a press; and a tap with a compatibility mouseover from no element and the focus arriving, the chain of the viewer's own tap with the mouse last outside the viewer and the focus elsewhere that the 74 covered taps of Firefox and WebKit carry, admitted by decision 10; and the three widenings: a finger's double tap, its second tap's mouseup and click of detail 2, which opens a second tab as bef9ff8fc's gate does; the focus arriving before a press's mousedown and in a tap before its pointerup, as the Outline popover's close gives it; and the mouse's boundary events to no element with no button down during a finger's contact, as Chromium sends them for a finger held across a frame hide (a property pin over window.open's calls and the scrollIntoView record; each row red under the mutant that drops its clause: the focus rows under M-NOFOCUS, the double click's under M-NOD2, the jitter, the drag and the finger's move under M-NOBMOVE, the pen's boundary events under M-NOPENMOUSE, the compatibility pairs and the 74's chain under M-NOTAPPAIR, the fixup's blur under M-NOBLURPAIR and M-NOFOCUS, the key under M-NOKEY, the widenings under M-W1OFF, M-W2OFF and M-W3OFF; the click, the pen's press and Chromium's tap under M-NOMOUSE, M-NOPEN and M-NOTOUCH alone)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const m1: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
+  const p2: GatePtr = { pointerId: 2, pointerType: "pen", isPrimary: true, button: 0 };
+  const f0: GatePtr = { pointerId: 0, pointerType: "touch", isPrimary: true, button: 0 };
+  const f2: GatePtr = { pointerId: 2, pointerType: "touch", isPrimary: true, button: 0 };
+  const f3: GatePtr = { pointerId: 3, pointerType: "touch", isPrimary: true, button: 0 };
+  const focusOf = (target: El | typeof win): void => onWindow("focus", target as El);
+  const DOC9 = { nodeType: 9 } as unknown as El;                            // a document as a focus event's target (nodeType 9), which the stand-in's own document does not carry
+  const press = (g: KeyGate, p: GatePtr, inside: () => void, detail = 1, before: () => void = () => {}): void => {
+    onWindow("pointerdown", g.img, { ...p });
+    before();
+    onWindow("mousedown", g.img, { button: 0 });
+    inside();
+    onWindow("pointerup", g.img, { ...p });
+    gateClick(g.img, p.pointerId, detail, true, p.pointerType);
+  };
+  const row = (name: string, body: (g: KeyGate) => void): Promise<unknown> => gateCell(t, name, (g, opens) => { g.place(IN_BOX); body(g); return opens(); });
+  got.click = await row("a click", (g) => press(g, m1, () => {}));
+  got.focusWindow = await row("a click, the focus arriving by the window and an element", (g) => press(g, m1, () => { focusOf(win); focusOf(g.body); }));
+  got.focusDocument = await row("a click, the focus arriving by the document, the window and an element (Firefox)", (g) => press(g, m1, () => { focusOf(DOC9); focusOf(win); focusOf(g.body); }));
+  got.focusElement = await row("a click, the focus arriving by an element", (g) => press(g, m1, () => { focusOf(g.body); }));
+  got.double = await gateCell(t, "a double click, its second click", (g, opens) => { g.place(IN_BOX); press(g, m1, () => {}); const a = opens(); press(g, m1, () => {}, 2); return [a, opens()]; });
+  got.jitter = await row("jitter, the button held moving on the picture", (g) => press(g, m1, () => { onWindow("pointermove", g.img, { ...m1, buttons: 1 }); onWindow("mousemove", g.img, { buttons: 1 }); onWindow("pointermove", g.img, { ...m1, buttons: 1 }); onWindow("mousemove", g.img, { buttons: 1 }); }));
+  got.drag = await row("a drag out to an element of this document and back", (g) => press(g, m1, () => {
+    onWindow("pointerout", g.img, { ...m1, buttons: 1, relatedTarget: g.body }); onWindow("mouseout", g.img, { buttons: 1, relatedTarget: g.body });
+    onWindow("pointerover", g.body, { ...m1, buttons: 1, relatedTarget: g.img }); onWindow("mouseover", g.body, { buttons: 1, relatedTarget: g.img });
+    onWindow("pointermove", g.body, { ...m1, buttons: 1 }); onWindow("mousemove", g.body, { buttons: 1 });
+    onWindow("pointerout", g.body, { ...m1, buttons: 1, relatedTarget: g.img }); onWindow("mouseout", g.body, { buttons: 1, relatedTarget: g.img });
+    onWindow("pointerover", g.img, { ...m1, buttons: 1, relatedTarget: g.body }); onWindow("mouseover", g.img, { buttons: 1, relatedTarget: g.body });
+  }));
+  got.pen = await row("a pen's press", (g) => press(g, p2, () => {}));
+  got.penMouse = await row("a pen's press with the mouse-typed boundary events Chromium sends in it", (g) => press(g, p2, () => { onWindow("pointerout", g.img, { pointerId: 1, pointerType: "mouse", buttons: 1, relatedTarget: g.body }); onWindow("pointerover", g.img, { pointerId: 1, pointerType: "mouse", buttons: 1, relatedTarget: g.body }); }));
+  got.chromiumTap = await row("Chromium's tap", (g) => engineTap(g.img, "chromium", 3));
+  got.webkitTap = await row("WebKit's tap with its compatibility mouseout and mouseover to elements", (g) => { tapDown(g.img, f2); tapUp(g.img, f2, "webkit"); onWindow("mouseout", g.body, { buttons: 0, relatedTarget: g.img }); onWindow("mouseover", g.img, { buttons: 0, relatedTarget: g.body }); tapCompat(g.img, "webkit"); gateClick(g.img, 1, 1); });
+  got.firefoxTap = await row("Firefox's tap with its compatibility mouseover from no element", (g) => engineTap(g.img, "firefox", 0));
+  got.tapFocus = await row("a tap, the focus arriving between its compatibility mousedown and its mouseup", (g) => { tapDown(g.img, f3); tapUp(g.img, f3, "chromium"); tapCompat(g.img, "chromium"); focusOf(win); focusOf(g.body); gateClick(g.img, 3, 1, true, "touch"); });
+  got.fingerMove = await row("a finger's move in the tap", (g) => { tapDown(g.img, f3); onWindow("pointermove", g.img, { ...f3, buttons: 1 }); tapUp(g.img, f3, "chromium"); tapCompat(g.img, "chromium"); gateClick(g.img, 3, 1, true, "touch"); });
+  got.fixupBack = await row("the press held across a frame hide, the fixup's element blur and the focus back (the 119's chain)", (g) => press(g, m1, () => { onWindow("blur", g.body); focusOf(g.body); }));
+  got.key = await row("a modifier key pressed during the press", (g) => press(g, m1, () => { onWindow("keydown", g.body, { key: "Control" }); }));
+  got.outtap = await row("the viewer's own tap with the mouse last outside the viewer and the focus elsewhere, as Firefox sends it (the 74's chain)", (g) => { tapDown(g.img, f0); tapUp(g.img, f0, "firefox"); tapCompat(g.img, "firefox"); focusOf(DOC9); focusOf(win); focusOf(g.body); gateClick(g.img, 0, 1, true, "touch"); });
+  got.doubleTap = await gateCell(t, "a finger's double tap, Chromium's order, its second tap's mouseup and click of detail 2", (g, opens) => { g.place(IN_BOX); engineTap(g.img, "chromium", 3); const a = opens(); tapDown(g.img, { ...f3, pointerId: 4 }); tapUp(g.img, { ...f3, pointerId: 4 }, "chromium"); tapCompat(g.img, "chromium"); gateClick(g.img, 4, 2, true, "touch"); return [a, opens()]; });
+  got.focusBeforeMd = await row("a click with the focus arriving before its mousedown, an element's blur and focus, as the Outline popover's close gives it (Chromium)", (g) => press(g, m1, () => {}, 1, () => { onWindow("blur", g.body); focusOf(g.body); }));
+  got.focusInTap = await row("a tap with the focus arriving before its pointerup, as the Outline popover's close gives it", (g) => { tapDown(g.img, f3); focusOf(g.body); tapUp(g.img, f3, "chromium"); tapCompat(g.img, "chromium"); gateClick(g.img, 3, 1, true, "touch"); });
+  got.fingerHeld = await row("a finger held across a frame hide, the mouse's boundary events to no element with no button down and the fixup's blur and focus in its contact (Chromium)", (g) => {
+    tapDown(g.img, f3);
+    onWindow("pointerout", g.img, { pointerId: 1, pointerType: "mouse", buttons: 0, relatedTarget: null }); onWindow("mouseout", g.img, { buttons: 0, relatedTarget: null });
+    onWindow("blur", g.body);
+    onWindow("pointerover", g.img, { pointerId: 1, pointerType: "mouse", buttons: 0, relatedTarget: null }); onWindow("mouseover", g.img, { buttons: 0, relatedTarget: null });
+    focusOf(g.body);
+    tapUp(g.img, f3, "chromium"); tapCompat(g.img, "chromium"); gateClick(g.img, 3, 1, true, "touch");
+  });
+  t.diagnostic("record " + JSON.stringify(got));
+  const one = { opened: 1, reveals: 0 };
+  assert.deepEqual(got, { click: one, focusWindow: one, focusDocument: one, focusElement: one, double: [one, one], jitter: one, drag: one, pen: one, penMouse: one, chromiumTap: one, webkitTap: one, firefoxTap: one, tapFocus: one, fingerMove: one, fixupBack: one, key: one, outtap: one, doubleTap: [one, one], focusBeforeMd: one, focusInTap: one, fingerHeld: one },
+    "each own chain's click opens once, [the first, the second] where a row has two (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("the chain's record: a run of moves folds, and a chain past its cap refuses, a guard CI runs (the file review's round 20, with the coordinator's decisions on it): the chain listener drops a move a run of moves already holds, since the allowlist reads a run of moves only by the tokens it holds, so a press with its button held jittering for 3,000 moves on the picture, pointermove and mousemove alternating, opens once; and a chain longer than its cap of 1,024 tokens stops recording and its click takes nothing, so a press dragged 600 times between the picture and an element of this document, each crossing four boundary events, and released on the picture opens nothing and reveals the control, a cost by reading, and the next click opens once (a property pin over window.open's calls and the scrollIntoView record; the jitter red under M-NOFOLD, whose chain keeps every alternating move and so passes its cap, and the long drag red under M-NOCAP, which records it whole and opens)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const m1: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
+  got.jitter = await gateCell(t, "a press jittering for 3,000 moves on the picture", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.img, { ...m1 });
+    onWindow("mousedown", g.img, { button: 0 });
+    for (let i = 0; i < 1500; i++) { onWindow("pointermove", g.img, { ...m1, buttons: 1 }); onWindow("mousemove", g.img, { buttons: 1 }); }
+    onWindow("pointerup", g.img, { ...m1 });
+    gateClick(g.img, 1, 1, true, "mouse");
+    return opens();
+  });
+  got.longDrag = await gateCell(t, "a press dragged 600 times between the picture and an element of this document, released on the picture", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.img, { ...m1 });
+    onWindow("mousedown", g.img, { button: 0 });
+    for (let i = 0; i < 300; i++) for (const [from, to] of [[g.img, g.body], [g.body, g.img]] as Array<[El, El]>) {
+      onWindow("pointerout", from, { ...m1, buttons: 1, relatedTarget: to }); onWindow("mouseout", from, { buttons: 1, relatedTarget: to });
+      onWindow("pointerover", to, { ...m1, buttons: 1, relatedTarget: from }); onWindow("mouseover", to, { buttons: 1, relatedTarget: from });
+    }
+    onWindow("pointerup", g.img, { ...m1 });
+    gateClick(g.img, 1, 1, true, "mouse");
+    const first = opens();
+    mouseClick(g.img);
+    return [first, opens()];
+  });
+  t.diagnostic("record " + JSON.stringify(got));
+  assert.deepEqual(got, { jitter: { opened: 1, reveals: 0 }, longDrag: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }] }, "the jittering press opens once, and the drag past the cap opens nothing and reveals the control, the next click opening, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("the read types the gate's comment names are the ones the code reads, a guard CI runs (the file review's round 20, with the coordinator's decisions on it): the gate's comment in file-view.ts names the twenty-one types the chain listener hears and the ten its own listeners hear, and those lists equal the code's (CHAIN_TYPES and gateListeners, read from the source), so a type added to or dropped from the code with the comment left as it was, or the reverse, is red here (a property pin over file-view.ts's text)", () => {
+  const codeChain = (/const CHAIN_TYPES = \[([^\]]*)\]/.exec(VIEW) || ["", ""])[1].split(",").map((x) => x.trim().replace(/^"|"$/g, "")).filter(Boolean).sort();
+  const listLine = (/const gateListeners: Array<\[string, \(ev: any\) => void\]> = \[(.*)\];/.exec(VIEW) || ["", ""])[1];
+  const codeOwn = [...listLine.matchAll(/\["([a-z]+)", onFigure[A-Za-z]+\]|\["(click)", onClickRun\]/g)].map((m) => m[1] || m[2]).sort();
+  const comment = VIEW.split("\n").filter((l) => /^\s*\/\//.test(l)).map((l) => l.replace(/^\s*\/\/ ?/, "")).join(" ").replace(/\s+/g, " ");
+  const said = (label: string): string[] => {
+    const m = new RegExp(label + " \\(([a-z, ]+?)\\)").exec(comment);
+    return m ? m[1].replace(/ and /g, ", ").split(",").map((x) => x.trim()).filter(Boolean).sort() : [];
+  };
+  assert.ok(codeChain.length > 0 && codeOwn.length > 0, "the code's lists read (a precondition): " + JSON.stringify({ codeChain, codeOwn }));
+  assert.deepEqual({ chain: said("the chain listener hears twenty-one types of the window's capture phase"), own: said("the gate's own listeners hear ten") }, { chain: codeChain, own: codeOwn },
+    "the gate's comment's two lists, as the sentence names them, equal CHAIN_TYPES and gateListeners' own types (a property pin over file-view.ts's text)");
 });
