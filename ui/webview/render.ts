@@ -10909,7 +10909,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const restCap = () => { let up = false; try { const p = window.parent, pv = p.visualViewport; up = !!pv && p.innerHeight - pv.height * (pv.scale || 1) > 120; } catch { up = false; } if (up) overlay.style.removeProperty("--ut-rest-h"); else overlay.style.setProperty("--ut-rest-h", window.innerHeight + "px"); };
   // THE KEYBOARD (the user 2026-09-19, a phone screenshot: the detail filled the sheet and the answer box was one squeezed
   // line). The shell sizes this iframe to the VISIBLE height, so the on-screen keyboard opening or closing lands here as
-  // this window's own resize: the picker's fold (kbFit in showPicker), on this overlay: short window → kb-tight, and
+  // this window's own resize: the picker's fold (kbFit in openPicker), on this overlay: short window → kb-tight, and
   // styles.css pins the sheet to the top under a 12px frame and lets the box scroll (#ut-reply-prompt.kb-tight, the
   // .picker-overlay.kb-tight rules the class shares). The same resize re-runs restCap (above: the detail's cap at rest)
   // and then grow: the answer's cap is the room the box has left, and the keyboard opening or closing changes the room.

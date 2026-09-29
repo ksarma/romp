@@ -594,7 +594,7 @@ test("the two builders stay twins for this fix: the same kbFit line, the same gr
     assert.equal(line(w, re, what, "waiting.ts").trim(), line(r, re, what, "render.ts").trim(), `one ${what} line in both builders (executed above)`);
   }
   for (const [name, src] of BUILDERS) {
-    assert.match(line(src, KBFIT, "kbFit", name), /overlay\.classList\.toggle\("kb-tight", window\.innerHeight < 480\)/, name + ": the picker's 480px threshold (render.ts showPicker), so the two folds agree on what a short window is");
+    assert.match(line(src, KBFIT, "kbFit", name), /overlay\.classList\.toggle\("kb-tight", window\.innerHeight < 480\)/, name + ": the picker's 480px threshold (render.ts openPicker), so the two folds agree on what a short window is");
     assert.match(line(src, KBFIT, "kbFit", name), /if \(!overlay\.isConnected\) \{ window\.removeEventListener\("resize", kbFit\); return; \}/, name + ": the listener drops itself when the overlay was replaced");
     assert.match(line(src, KBFIT, "kbFit", name), /window\.innerHeight < 480\); restCap\(\); grow\(true\); \};$/, name + ": the fold re-runs restCap and then grow after its own toggle, on the resize path (grow(true): a dragged height is clamped to the room there and returned toward when the room comes back; executed above), so the room is read with the fold's cap and the detail's cap applied (one grow per resize)");
     assert.ok(src.search(RESTCAP) < src.search(KBFIT), name + ": restCap is declared before kbFit, which calls it");

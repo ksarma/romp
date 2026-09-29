@@ -2977,7 +2977,8 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    to 177.8px against 12em's 134px at the default font; the maintainer's round 1 ruling). At rest, the keyboard down, it
    is the larger of 12em and 34.8% of the pane's height (its innerHeight, which is the visual viewport's height except
    under a pinch zoom), which both builders publish as --ut-rest-h only while the keyboard is down (restCap; with the
-   property absent the term is 0px and the cap is 12em; inside the app on Android Chrome that read sees no keyboard, so
+   property absent the term is 0px and the cap is 12em; in the shell on Android Chrome 108 and later, in a tab or
+   installed, that read sees no keyboard, so
    the term applies under it too, a stated residual described at restCap), so a taller pane shows more of a long
    detail; the term is the larger above about 386px. The share is derived at the pane heights a phone gives (the
    maintainer's rulings on the cap pass and on the share), measured in the served phone shell with its webfont loaded,

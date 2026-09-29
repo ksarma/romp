@@ -329,9 +329,9 @@ class ReplySheetServed(unittest.TestCase):
                     self.assertTrue(self._inside_clip(m, b), where + label + ": %s is inside the box's clip: %r" % (b, m))
                 self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
         # the stated boundary on the third todo, the recorded 8-line detail (styles.css: in full from a 720px pane, 717 in
-        # WebKit, 718 in Firefox): in full at the app's 732 and at 720; not in full one pixel under this engine's own boundary and
-        # at Safari's common 633, where it shows the cap (about 220 of its 251px) and scrolls the rest. Read whole first, so a
-        # share that moves the boundary is named as that
+        # WebKit; Firefox's own boundary, measured here, is 718): in full at the app's 732 and at 720; not in full one pixel
+        # under this engine's own boundary and at Safari's common 633, where it shows the cap (about 220 of its 251px) and
+        # scrolls the rest. Read whole first, so a share that moves the boundary is named as that
         e = r.get("eight", {"error": "the boundary step did not run"})
         with self.subTest(window="the 8-line detail at the stated boundary"):
             self.assertNotIn("error", e, where + "the boundary step ran to its end: %r" % (e,))

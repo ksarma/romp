@@ -149,7 +149,9 @@ const SHELL_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8>
 <style>body{margin:0}iframe{display:block;width:${PHONE_W}px;height:${KEYBOARD_UP}px;border:0}</style></head><body>
 <iframe id=f-waiting src=/waiting></iframe></body></html>`;
 // the kernel's /waiting page, as _waiting_page serves it: the chat's stylesheet, then the pane's sheet in a <style>
-// after it (the sheet's @import and font urls 404 here, harmlessly). The served shim's acquireVsCodeApi is a recorder
+// after it (the sheet's @import and font urls 404 here, so the text lays out in the fallback font, which gives the pane's
+// chip sheet about a pixel more room than the served shell: the note above the detail's cap test says what that leaves to
+// the served leg). The served shim's acquireVsCodeApi is a recorder
 // here: every postMessage the pane makes is kept on the frame's window, so a Send is observable as the message it posts
 const WAITING_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><link href=/dist/styles.css rel=stylesheet>
 <style>${PANE_CSS}</style></head><body>
@@ -226,10 +228,11 @@ async function boot(browser: any, browserName = "chromium") {
     await page.waitForFunction((hh: number) => (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.innerHeight === hh, h, { timeout: 10000 });
     await settle();
   };
-  // the keyboard as Android Chrome shows it in the app (the stated residual at restCap): the shell's meta asks for
-  // interactive-widget=resizes-content, which Chrome 108+ honours and iOS ignores, so the keyboard shrinks the shell's
-  // LAYOUT viewport: the shell page itself is resized to h, its visual viewport is not stubbed (the two agree), and the
-  // frame follows the shell's height as --app-h sizes it. restoreShell puts the shell page back at its own height
+  // the keyboard as Android Chrome 108 and later shows it, in a tab or installed (the stated residual at restCap): the
+  // shell's meta asks for interactive-widget=resizes-content, which Chrome 108+ honours and iOS ignores, so the keyboard
+  // shrinks the shell's LAYOUT viewport: the shell page itself is resized to h, its visual viewport is not stubbed (the two
+  // agree), and the frame follows the shell's height as --app-h sizes it. restoreShell puts the shell page back at its own
+  // height
   const setResizesContent = async (h: number) => {
     await keyboard(null);
     await page.setViewportSize({ width: PHONE_W + 30, height: h });
@@ -592,13 +595,13 @@ function assertFits(m: Sheet, what: string) {
 }
 
 for (const name of ["chromium", "firefox", "webkit"]) {
-  test(`in ${name}: with the keyboard up the answer box holds three rows, the detail scrolls within its cap, and Cancel and Send stay in the frame; the fold follows the frame's height; a tap where Send is painted sends`, async (t) => {
+  test(`in ${name}: with the keyboard up the answer box holds three rows, the detail scrolls within its cap, and Cancel and Send stay in the frame; the fold follows the frame's height`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py runs this composition in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
     catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's Browser-backed served-page tests (pytest) step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
-      const { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors } = await boot(browser);
+      const { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors } = await boot(browser);
       await openReply("t1");
       // ── 508px: the keyboard up on a phone, above the fold's threshold: the squeeze fix alone
       let m = (await measure())!;
@@ -899,9 +902,10 @@ for (const name of ["chromium", "firefox", "webkit"]) {
           } finally { await cancelReply(); }
         });
       }
-      // the recorded 8-line detail under the stated boundary (styles.css: in full from a 720px pane, 717 in WebKit, 718 in
-      // Firefox): in Safari's panes and one pixel under the engine's own boundary it shows the cap and scrolls the rest. It
-      // is read whole first, so a share that shows it in full here is named as the boundary having moved
+      // the recorded 8-line detail under the stated boundary (styles.css: in full from a 720px pane, 717 in WebKit;
+      // Firefox's own boundary, measured here, is 718): in Safari's panes and one pixel under the engine's own boundary it
+      // shows the cap and scrolls the rest. It is read whole first, so a share that shows it in full here is named as the
+      // boundary having moved
       for (const h of [SAFARI_16E, SAFARI_BARS, SAFARI_TOP, below]) {
         await t.test(`at rest at ${h}, under the stated boundary: the recorded 8-line detail shows the cap and scrolls the rest`, async () => {
           await setHeight(h, false);
@@ -958,9 +962,12 @@ for (const name of ["chromium", "firefox", "webkit"]) {
 
   // THE COMPOSITION, as its own test so the deciding figure has a red of its own: at 390 by 508 with the keyboard up, the
   // ask wrapped to several lines, both chips, the forty-line detail, the answer grown to the cap, a real click where Send is
-  // painted. The tap's outcome is asserted FIRST: on the round-1 tree (and the base) the answer box laid Send below the box's
-  // clip, so the finger found the backdrop or nothing and the sheet closed with nothing posted, and that is the assertion
-  // that goes red there, not a geometry read before it. The geometry follows, as the explanation of the outcome
+  // painted. The tap's outcome is asserted FIRST: on the round-1 tree the grown answer box laid Send below the box's clip in
+  // every engine, so the finger found the backdrop or nothing and the sheet closed with nothing posted, and that is the
+  // assertion that goes red there, not a geometry read before it. On the base the tap sends in Chromium and Firefox and misses
+  // only in WebKit, where a 14px answer box under the unshrinkable detail, in the focus-scrolled overflow-hidden box, leaves
+  // Send below the clip; the base's red common to the three engines is the main test's overflow-y assertion. The geometry
+  // follows, as the explanation of the outcome
   test(`in ${name}: THE COMPOSITION at 390 by 508 with the keyboard up: a tap where Send is painted sends the answer, and the sheet closes by the send, never by the backdrop`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py runs this composition in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;

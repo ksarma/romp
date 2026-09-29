@@ -548,13 +548,13 @@ function assertFits(m: Sheet, what: string) {
 }
 
 for (const name of ["chromium", "firefox", "webkit"]) {
-  test(`in ${name}: the chat's Reply sheet holds three rows with the keyboard up, the detail scrolls within its cap, the buttons stay in view; the fold follows the window's height; a tap where Send is painted sends`, async (t) => {
+  test(`in ${name}: the chat's Reply sheet holds three rows with the keyboard up, the detail scrolls within its cap, the buttons stay in view; the fold follows the window's height`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py runs this composition in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
     catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's Browser-backed served-page tests (pytest) step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
-      const { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors } = await boot(browser);
+      const { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors } = await boot(browser);
       await openReply(TODOS[0]);
       // ── 508px: the keyboard up on a phone, above the fold's threshold: the squeeze fix alone
       let m = (await measure())!;
@@ -843,9 +843,10 @@ for (const name of ["chromium", "firefox", "webkit"]) {
           } finally { await cancelReply(); }
         });
       }
-      // the recorded 8-line detail under the stated boundary (styles.css: in full from a 720px pane, 717 in WebKit, 718 in
-      // Firefox): in Safari's panes and one pixel under the engine's own boundary it shows the cap and scrolls the rest. It
-      // is read whole first, so a share that shows it in full here is named as the boundary having moved
+      // the recorded 8-line detail under the stated boundary (styles.css: in full from a 720px pane, 717 in WebKit;
+      // Firefox's own boundary, measured here, is 718): in Safari's panes and one pixel under the engine's own boundary it
+      // shows the cap and scrolls the rest. It is read whole first, so a share that shows it in full here is named as the
+      // boundary having moved
       for (const h of [SAFARI_16E, SAFARI_BARS, SAFARI_TOP, below]) {
         await t.test(`at rest at ${h}, under the stated boundary: the recorded 8-line detail shows the cap and scrolls the rest`, async () => {
           await setHeight(h, false);
@@ -881,9 +882,12 @@ for (const name of ["chromium", "firefox", "webkit"]) {
 
   // THE COMPOSITION, as its own test so the deciding figure has a red of its own: at 390 by 508 with the keyboard up, the
   // ask wrapped to several lines with both chips inside it, the forty-line detail, the answer grown to the cap, a real click
-  // where Send is painted. The tap's outcome is asserted FIRST: on the round-1 tree (and the base) the answer box laid Send
-  // below the box's clip, so the finger found the backdrop and the sheet closed with nothing posted, and that is the
-  // assertion that goes red there, not a geometry read before it. The geometry follows, as the explanation of the outcome
+  // where Send is painted. The tap's outcome is asserted FIRST: on the round-1 tree the grown answer box laid Send below the
+  // box's clip in every engine, so the finger found the backdrop and the sheet closed with nothing posted, and that is the
+  // assertion that goes red there, not a geometry read before it. On the base the tap sends in Chromium and Firefox and misses
+  // only in WebKit, where a 14px answer box under the unshrinkable detail, in the focus-scrolled overflow-hidden box, leaves
+  // Send below the clip; the base's red common to the three engines is the main test's overflow-y assertion. The geometry
+  // follows, as the explanation of the outcome
   test(`in ${name}: THE COMPOSITION at 390 by 508 with the keyboard up: a tap where Send is painted sends the answer, and the sheet closes by the send, never by the backdrop`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py runs this composition in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;

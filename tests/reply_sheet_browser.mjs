@@ -25,8 +25,8 @@
 // not a backdrop tap: the sheet stands with its text after both; Chromium and WebKit dispatch that click to the overlay,
 // Firefox to the textarea), and a plain tap on the backdrop, press and release both on it (it dismisses).
 //
-// After the send the chat page's card is REBUILT by the kernel's pushes that follow it (askLiveClear and chatTail frames,
-// 0.8 to 2.6 s later in the lab; the pane's list gets no push after the send here): the other todo's Reply button becomes
+// After the send the chat page's card is REBUILT by the kernel's pushes that follow it (askLiveClear and chatTail frames;
+// the pane's list gets no push after the send here): the other todo's Reply button becomes
 // a new node, and a driver that resolved the old one and then acted on it died with "Element is not attached to the DOM"
 // (PR 859's CI at the pass's pushed head, chromium chat; the reviewer's forcings: the sheet's own node survives that
 // rebuild in both panes, so this is the driver's race, not the sheet's). So the driver tags the other todo's button before
@@ -46,7 +46,7 @@
 // the shell does (restCap; kernel.py kbOpen): the visual viewport of the window that owns the screen shorter than its
 // layout viewport. These pages are top-level, so that window is the page itself: with the keyboard up the driver stubs
 // its visualViewport.height to its innerHeight less a phone keyboard's 336px, and removes the stub at rest; every window
-// under 900 here is the keyboard up.
+// under 900 is the keyboard up unless the step says it is at rest.
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip), 4
 // when the LAB kernel is not healthy (cfg.healthz names the lab port, asserted before any request; never a live kernel).
 // Synthetic sessions and todos only.
@@ -261,7 +261,7 @@ const selectRelease = async (past = 20) => {
   return { endY: r.boxBottom + past, ...after };
 };
 // the card's rebuild the send causes: the other todo's Reply button, tagged before the tap, is a NEW node once the kernel's
-// pushes have been rendered (the chat; 0.8 to 2.6 s in the lab). Waited for where the card is rebuilt, so the sheet is opened
+// pushes have been rendered (the chat). Waited for where the card is rebuilt, so the sheet is opened
 // on a card that is not about to be replaced under the click; the wait's outcome is recorded, never asserted (the kernel's
 // response to a send is its business), and its absence within the bound is recorded as such
 const tagButton = (tid) => page.evaluate((sel) => { window.__tagged = document.querySelector(sel); return !!window.__tagged; }, `.ut-reply[data-tid="${tid}"]`);
