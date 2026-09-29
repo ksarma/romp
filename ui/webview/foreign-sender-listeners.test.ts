@@ -1529,11 +1529,13 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     closures, nested functions and destructuring targets too, and a walk over every identifier of the name, each
 //     resolved by the checker, agrees with it (a name the checker cannot resolve refuses); and the WebSocket that new
 //     calls resolves to the built-in global, every declaration of it ambient and in a .d.ts file. Where the checker's
-//     scopes may not be the page's the proof refuses: a syntax or binder error in the file, and, in a file that is no
-//     module (which runs as sloppy code unless it opens with "use strict", and sloppy code binds a function declared in
-//     a block in its enclosing function too; a strict one is held to the same), such a function of the receiver's
-//     name, or named WebSocket, window or self, and a top-level declaration of a name the new expression reads (its
-//     WebSocket, and in new window.WebSocket(...) the window).
+//     scopes may not be the page's the proof refuses: a syntax or binder error in the file; in any file, a function of
+//     the receiver's name, or named WebSocket, window or self, declared in a block, which sloppy code binds in its
+//     enclosing function too (a file TypeScript calls a module can run as sloppy code: esbuild bundles a .cjs or .cts
+//     file with no import or export statement, and a TypeScript file whose only module syntax is import x =
+//     require(...) or export =, as CommonJS); and, in a file TypeScript calls no module, a top-level declaration of a
+//     name the new expression reads (its WebSocket, and in new window.WebSocket(...) the window), which the checker
+//     merges with the built-in's declarations or sets apart.
 //     The refusal names the site. Its one precondition: the page's global WebSocket is the browser's own. The name
 //     WebSocket is refused below, and a global WebSocket replaced through an object built elsewhere with a computed key
 //     and copied onto the window is on the list of what the rules cannot see; through it a socket the census accepts
@@ -1785,9 +1787,10 @@ function namesNoBinding(n: any): boolean {
 // editor chunk imports (webview/vendor-track-changents.d.ts). Its compiler options are
 // vscode-extension/tsconfig.json's, with four set here:
 //   - allowJs, so the .js modules are in it (checkJs stays off, so for a JavaScript file TypeScript reports its syntax
-//     errors and, of its binder's and checker's errors, only those it keeps for plain JavaScript, the strict-mode ones
-//     among them: not its types, and not every binder error, a duplicate identifier among those it drops; the proof's
-//     clause 0 reads the binder's own list);
+//     errors and, of its binder's and checker's errors, only those on its list for plain JavaScript: most strict-mode
+//     errors, one type error (a comparison of two object literals), and not every binder error (a duplicate
+//     identifier, and a word strict code reserves used as a name, are dropped); the proof's clause 0 reads the
+//     binder's own list);
 //   - target ESNext, so the checker scopes a parameter's default as the page runs it: under the tsconfig's ES2021,
 //     TypeScript resolves a name in a parameter's default to a var of the function's body when a parameter holds a
 //     class expression with a static field, for the sake of its own down-levelled output, and at ESNext it does not
@@ -1938,14 +1941,18 @@ function ctorRefusal(v: any, c: Checked, at: (n: any) => string): string | null 
  *  WebSocket in every file but as the constructor a new calls or in a type, and lists the copied-object road, which it
  *  cannot see and which can replace it. The clauses:
  *  0. The checker's scopes are the page's: the file has no syntax error, and no error from TypeScript's binder, which
- *     sets a duplicate declaration apart as a symbol of its own and reports two sloppy-only forms, a with statement and
- *     a labelled function, as strict code's errors. In a file that is no module (no import or export), which esbuild
- *     bundles, and the kernel inlines, as sloppy code unless it opens with "use strict" (such a file is held to this
- *     too), no function of the receiver's name, or named WebSocket, window or self, is declared in a block (anywhere
- *     but directly in the file, a namespace body or a function's body, so an if statement's clause too): sloppy code
- *     binds such a function in its enclosing function too (Annex B), and the checker, binding strict code, in its block
- *     only. Such a function declared as an if statement's clause is no binder error: in a file that is no module this
- *     clause refuses it, and in a module esbuild refuses to build it.
+ *     sets a duplicate declaration apart as a symbol of its own and reports sloppy-only code as strict code's errors (a
+ *     with statement, a labelled function, delete of a name, eval or arguments declared or assigned, a word strict code
+ *     reserves used as a name), and a label on any declaration statement too, though strict code allows one on a var
+ *     statement; this clause refuses every one. And in any file, no function of the receiver's name, or named
+ *     WebSocket, window or self, is declared in a block (anywhere but directly in the file, a namespace body or a
+ *     function's body, so an if statement's clause too): sloppy code binds such a function in its enclosing function
+ *     too (Annex B), and the checker, binding strict code, in its block only. The proof does not decide which files the
+ *     page runs as sloppy code, since a file TypeScript calls a module can be one: esbuild bundles a script, and the
+ *     kernel inlines one, as sloppy code unless it opens with "use strict", and esbuild bundles as sloppy CommonJS a
+ *     .cjs or .cts file with no import or export statement and a TypeScript file whose only module syntax is
+ *     import x = require(...) or export =, each a module to TypeScript. Such a function declared as an if statement's
+ *     clause is no binder error, and this clause refuses it too.
  *  1. The checker's symbol for `recv` has exactly one declaration: a let, const or var statement's own, with a plain
  *     name (no loop head's, for head's or catch clause's, no parameter, no destructuring pattern), in this file,
  *     neither ambient (isAmbient) nor a namespace's export (isNamespaceExport), neither of which is a run-time binding
@@ -2004,8 +2011,8 @@ function socketRefusal(recv: any, sfRead: any, checked: () => Checked): string |
         && !(ts.isSourceFile(n.parent) || ts.isModuleBlock(n.parent) || (ts.isBlock(n.parent) && ts.isFunctionLike(n.parent.parent)))) blockFn = n;
     else ts.forEachChild(n, blockFns);
   };
-  if (!ts.isExternalModule(sf)) blockFns(sf);
-  if (blockFn) return "a function " + blockFn.name.text + " is declared in a block at " + at(blockFn) + " of a file that is no module, which sloppy code binds in its enclosing function too and the checker in its block only";
+  blockFns(sf);   // in every file: the proof does not decide which files the page runs as sloppy code
+  if (blockFn) return "a function " + blockFn.name.text + " is declared in a block at " + at(blockFn) + ", which sloppy code binds in its enclosing function too and the checker in its block only, and the proof does not decide which files run as sloppy code";
   // 1. one declaration, a let, const or var statement's own
   const sym = checker.getSymbolAtLocation(id);
   if (!sym) return name + " at " + at(id) + " resolves to no symbol";
@@ -2395,11 +2402,10 @@ test("the road census reads what it claims: every road around the spelled regist
   // the language service, and the constructor the built-in global. A binding of the name the checker keeps apart is no
   // write to the socket: a parameter or a var of the name in an unrelated function, an outer var the declaration
   // shadows, a namespace's own var, a parameter of the name beside a default that writes it, a body's var written in
-  // its body, a function declared directly in a function body, and, in a module (strict code, where a function
-  // declared in a block binds in that block only), a function declared in the block that holds the write. A
-  // message listener on this page's own window is a census site, no road. Each row's last column is how many onmessage
-  // census sites it holds: a handler on this page's own window is one, and every other accepted handler (a socket, a
-  // detach, a tested read) is none
+  // its body, and a function declared directly in a function body (a function declared in a block refuses, clause 0,
+  // in any file). A message listener on this page's own window is a census site, no road. Each row's last column is
+  // how many onmessage census sites it holds: a handler on this page's own window is one, and every other accepted
+  // handler (a socket, a detach, a tested read) is none
   const handlerOk: Array<[string, string | undefined, number]> = [
     ["const ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };", undefined, 0],
     ["function c(u: string) { let ws: WebSocket; try { ws = new WebSocket(u); } catch (e) { setTimeout(() => c(u), 2000); return; } const o: any = {}; o.ws = ws; ws.onopen = () => { ws.send(\"\"); }; ws.onmessage = (ev: MessageEvent) => { go(ev.data); }; }", undefined, 0],
@@ -2419,11 +2425,6 @@ test("the road census reads what it claims: every road around the spelled regist
     ["let ws = new WebSocket(u); function h(a) { var ws; ws = window; } h(); ws.onmessage = f;", "webview/probe.js", 0],
     ["var ws = window; function h(a) { var ws = new WebSocket(u); ws.onmessage = f; } h();", "webview/probe.js", 0],
     ["let ws = new WebSocket(u); function h() { function ws() {} ws = window; } h(); ws.onmessage = f;", "webview/probe.js", 0],
-    ["export {}; switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} ws = window; } } arm();", "webview/probe.js", 0],
-    ["export {}; switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: switch (0) { case 0: function ws() {} case 1: ws = window; } } arm();", "webview/probe.js", 0],
-    ["export {}; let ws = new WebSocket(u); function h() { { function ws() {} ws = window; } } h(); ws.onmessage = f;", "webview/probe.js", 0],
-    ["export {}; let ws = new WebSocket(u); function h() { var ws; { function ws() {} } ws = window; } h(); ws.onmessage = f;", "webview/probe.js", 0],
-    ["export {}; let ws = new WebSocket(u); function g() { { ws = window; function ws() {} } ws.onmessage = f; } g();", "webview/probe.js", 0],
     ["const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;", undefined, 0],
     ["document.body.onmessage = null; x.onmessage = undefined; y.onmessageerror = z.onmessage = null;", undefined, 0],
     ["window.onmessageerror = f; document.defaultView.onmessage = g; const w = window; w.onmessage = h;", undefined, 3],
@@ -2569,9 +2570,9 @@ test("the road census reads what it claims: every road around the spelled regist
       ["var ws; switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: [ws] = [window]; } arm();", "webview/probe.js"],
       // and with a function of the name declared in a block inside the switch that does not hold the write (the block
       // in the write's clause, in the declaration's clause, in default:, or an if statement's, a destructuring write,
-      // and a function that is an if statement's clause or a label's statement): in a file that is no module the
-      // function refuses on its own (clause 0; the last one is a binder error of strict code too), and in a module the
-      // checker binds it in its block and resolves the write to the case block's let
+      // and a function that is an if statement's clause or a label's statement): the function refuses on its own
+      // (clause 0, in any file; the last one is a binder error of strict code too), and the checker binds it in its
+      // block and resolves the write to the case block's let (clause 3)
       ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} } ws = window; } arm();", "webview/probe.js"],
       ["switch (0) { case 0: let ws: any = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} } ws = window; } arm();"],
       ["switch (0) { case 0: let ws = new WebSocket(u); { function ws() {} } var arm = () => { ws.onmessage = f; }; case 1: ws = window; } arm();", "webview/probe.js"],
@@ -2582,10 +2583,10 @@ test("the road census reads what it claims: every road around the spelled regist
       ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { l: function ws() {} ws = window; } } arm();", "webview/probe.js"],
       // and a write inside a function, class static block or namespace nested in the declaration's scope, where that
       // scope declares a function of the name in a block the write is not in: the checker binds the function in its
-      // block and resolves the write to the socket (clause 3), and in a file that is no module the function refuses on
-      // its own (clause 0): in a function, in a module with no let in between, the TypeScript form, in a namespace, a
-      // class static block, an arrow function and a method, a destructuring write, and a function that is an if
-      // statement's clause or a label's statement
+      // block and resolves the write to the socket (clause 3), and the function refuses on its own (clause 0, in any
+      // file): in a function, in a module with no let in between, the TypeScript form, in a namespace, a class static
+      // block, an arrow function and a method, a destructuring write, and a function that is an if statement's clause
+      // or a label's statement
       ["let ws = new WebSocket(u); function h() { { let ws; { function ws() {} } } ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
       ["export {}; let ws = new WebSocket(u); function h() { { function ws() {} } ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
       ["let ws: any = new WebSocket(u); function h() { { let ws; { function ws() {} } } ws = window; } h(); ws.onmessage = f;"],
@@ -2713,12 +2714,19 @@ test("the road census reads what it claims: every road around the spelled regist
       ["function c(u: string) { let ws: WebSocket; ws.onmessage = f; try { ws = new WebSocket(u); } catch (e) { return; } }"],
       ["function c(u: string) { let ws: WebSocket; try { ws = new WebSocket(u); } catch (e) { return; } g(); function g() { ws.onmessage = f; } }"],
       ["function c(u: string) { let ws: WebSocket; try { ws = new WebSocket(u); } catch (e) { return; } ws = new WebSocket(u); ws.onmessage = f; }"],
-      // clause 0: in a file that is no module, a function of the name, or WebSocket or window, declared in a block,
-      // which sloppy code binds in its enclosing function too (in a script, the five rows handlerOk accepts as modules,
-      // each accepted in a script before this rule, the fifth the Annex B shape whose unbundled run copies the window
-      // into the function's var at the declaration, where the receiver reads it; under use strict; and a block function
-      // WebSocket or window); and TypeScript's binder errors: a labelled function, which strict code does not allow,
-      // and a duplicate declaration, which the binder sets apart as a symbol of its own
+      // clause 0, in any file: a function of the name, or WebSocket, window or self, declared in a block, which sloppy
+      // code binds in its enclosing function too. In a script: five shapes, the fifth the Annex B shape whose unbundled
+      // run copies the window into the function's var at the declaration, where the receiver reads it; the fifth under
+      // use strict; and a block function WebSocket or window. In a module: the same five shapes, whose writes the
+      // checker reads as writes to another binding than the socket's. In a file TypeScript calls a module and esbuild
+      // bundles as sloppy CommonJS (a .cjs or .cts file with no import or export, a TypeScript file whose only module
+      // syntax is import x = require(...) or export =): a function window given a WebSocket member through an alias,
+      // which the bundle's new window.WebSocket(...) then calls, so the socket is the window (and a function self, in a
+      // .cjs); and the Annex B shape, once more with the function as an if statement's clause. In a file esbuild
+      // bundles as strict code (.mjs, .mts, a TypeScript module with export {}): the function window, refused all the
+      // same, since the proof does not decide how the page runs a file. And TypeScript's binder errors: a labelled
+      // function, which strict code does not allow, and a duplicate declaration, which the binder sets apart as a
+      // symbol of its own
       ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} ws = window; } } arm();", "webview/probe.js"],
       ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: switch (0) { case 0: function ws() {} case 1: ws = window; } } arm();", "webview/probe.js"],
       ["let ws = new WebSocket(u); function h() { { function ws() {} ws = window; } } h(); ws.onmessage = f;", "webview/probe.js"],
@@ -2727,6 +2735,24 @@ test("the road census reads what it claims: every road around the spelled regist
       ["\"use strict\"; let ws = new WebSocket(u); function g() { { ws = window; function ws() {} } ws.onmessage = f; } g();", "webview/probe.js"],
       ["{ function WebSocket() { return window; } } const ws = new WebSocket(u); ws.onmessage = f;", "webview/probe.js"],
       ["{ function window() {} } const ws = new window.WebSocket(u); ws.onmessage = f;", "webview/probe.js"],
+      ["export {}; switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} ws = window; } } arm();", "webview/probe.js"],
+      ["export {}; switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: switch (0) { case 0: function ws() {} case 1: ws = window; } } arm();", "webview/probe.js"],
+      ["export {}; let ws = new WebSocket(u); function h() { { function ws() {} ws = window; } } h(); ws.onmessage = f;", "webview/probe.js"],
+      ["export {}; let ws = new WebSocket(u); function h() { var ws; { function ws() {} } ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
+      ["export {}; let ws = new WebSocket(u); function g() { { ws = window; function ws() {} } ws.onmessage = f; } g();", "webview/probe.js"],
+      ["{ function window() {} const a = window; a[[\"Web\", \"Socket\"].join(\"\")] = function () { return globalThis; }; } const ws = new window.WebSocket(u); ws.onmessage = f;", "webview/probe.cjs"],
+      ["{ function window() {} const a: any = window; a[[\"Web\", \"Socket\"].join(\"\")] = function () { return globalThis; }; } const ws = new window.WebSocket(u); ws.onmessage = f;", "webview/probe.cts"],
+      ["import y = require(\"./y\"); { function window() {} const a: any = window; a[[\"Web\", \"Socket\"].join(\"\")] = function () { return globalThis; }; } const ws = new window.WebSocket(u); ws.onmessage = f;"],
+      ["{ function window() {} const a: any = window; a[[\"Web\", \"Socket\"].join(\"\")] = function () { return globalThis; }; } const ws = new window.WebSocket(u); ws.onmessage = f; export = 0;"],
+      ["{ function self() {} const a = self; a[[\"Web\", \"Socket\"].join(\"\")] = function () { return globalThis; }; } const ws = new self.WebSocket(u); ws.onmessage = f;", "webview/probe.cjs"],
+      ["let ws = new WebSocket(u); function g() { { ws = window; function ws() {} } ws.onmessage = f; } g();", "webview/probe.cjs"],
+      ["let ws: any = new WebSocket(u); function g() { { ws = window; function ws() {} } ws.onmessage = f; } g();", "webview/probe.cts"],
+      ["import y = require(\"./y\"); let ws: any = new WebSocket(u); function g() { { ws = window; function ws() {} } ws.onmessage = f; } g();"],
+      ["let ws: any = new WebSocket(u); function g() { { ws = window; function ws() {} } ws.onmessage = f; } g(); export = 0;"],
+      ["import y = require(\"./y\"); let ws: any = new WebSocket(u); function h() { if (1) function ws() {} ws = window; } h(); ws.onmessage = f;"],
+      ["{ function window() {} const a = window; a[[\"Web\", \"Socket\"].join(\"\")] = function () { return globalThis; }; } const ws = new window.WebSocket(u); ws.onmessage = f;", "webview/probe.mjs"],
+      ["{ function window() {} const a: any = window; a[[\"Web\", \"Socket\"].join(\"\")] = function () { return globalThis; }; } const ws = new window.WebSocket(u); ws.onmessage = f;", "webview/probe.mts"],
+      ["export {}; { function window() {} const a: any = window; a[[\"Web\", \"Socket\"].join(\"\")] = function () { return globalThis; }; } const ws = new window.WebSocket(u); ws.onmessage = f;"],
       ["var ws = new WebSocket(u); l: function ws() {} ws.onmessage = f;", "webview/probe.js"],
       ["var ws = new WebSocket(u); declare function ws(): void; ws.onmessage = f;"],
       ["var ws = new WebSocket(u); class ws {} ws.onmessage = f;", "webview/probe.js"],
@@ -2836,10 +2862,13 @@ test("the road census reads what it claims: every road around the spelled regist
   // their own below)
   const UNPROVED = "an onmessage handler on a receiver the census cannot resolve to this page's window or to a socket: ";
   const named: Array<[string, string, string?]> = [
-    // clause 0: a syntax error, a binder error, a function declared in a block of a file that is no module
+    // clause 0: a syntax error, a binder error, a function declared in a block, in a script, in a .cjs file and in a
+    // TypeScript module whose only module syntax is import x = require(...)
     ["let ws: WebSocket =\n  new WebSocket(u);\nws.onmessage = f;", "the file does not parse as TypeScript reads it (Type annotations can only be used in TypeScript files., at :1)", "webview/probe.js"],
     ["var ws = new WebSocket(u);\nclass ws {}\nws.onmessage = f;", "TypeScript's binder reports an error at :1 (Duplicate identifier 'ws'.), where its scopes are not the page's", "webview/probe.js"],
-    ["let ws = new WebSocket(u);\nfunction g() { { ws = window; function ws() {} } ws.onmessage = f; }\ng();", "a function ws is declared in a block at :2 of a file that is no module, which sloppy code binds in its enclosing function too and the checker in its block only", "webview/probe.js"],
+    ["let ws = new WebSocket(u);\nfunction g() { { ws = window; function ws() {} } ws.onmessage = f; }\ng();", "a function ws is declared in a block at :2, which sloppy code binds in its enclosing function too and the checker in its block only, and the proof does not decide which files run as sloppy code", "webview/probe.js"],
+    ["{\n  function window() {}\n}\nconst ws = new window.WebSocket(u);\nws.onmessage = f;", "a function window is declared in a block at :2, which sloppy code binds in its enclosing function too and the checker in its block only, and the proof does not decide which files run as sloppy code", "webview/probe.cjs"],
+    ["import y = require(\"./y\");\nlet ws: any = new WebSocket(u);\nfunction h() { if (1) function ws() {} ws = window; }\nh(); ws.onmessage = f;", "a function ws is declared in a block at :3, which sloppy code binds in its enclosing function too and the checker in its block only, and the proof does not decide which files run as sloppy code"],
     // clause 1: no symbol, no declaration, two declarations, a declaration that is no let, const or var statement's own
     // (a for head's, a catch clause's parameter), an ambient one, a namespace's export
     ["ws.onmessage = f;", "ws at :1 resolves to no symbol"],
