@@ -41,7 +41,7 @@
 // the chat's column fits the fold's cap (the pane's does not: waiting-reply-sheet-browser.test.ts measures that state, the
 // box scrolling a few pixels with the actions row kept in view at its bottom). THE WORST CASE is its own test per engine
 // (the maintainer's round 2 ruling, B-i): 390 and 320 wide, 230 to 508 with the keyboard up and in the phone's order, four
-// asks at the cap with both chips, and after a grip drag, Send clicked at its centre in every cell. On the base tree at 508 the focus had scrolled the overflow-hidden box to the textarea, so the
+// long asks (three at the cap) with both chips, and after a grip drag, Send clicked at its centre in every cell. On the base tree at 508 the focus had scrolled the overflow-hidden box to the textarea, so the
 // title, the ask and most of the detail sat above the clip with no way to scroll back; the first red differs by engine
 // (Chromium and WebKit: the answer box a 14px sliver, and in WebKit the buttons below the clip too; Firefox: the rows
 // kept and the buttons in reach), and the detail's computed overflow-y, visible there, is the red common to all three.
