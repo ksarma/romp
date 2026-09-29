@@ -321,7 +321,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3297,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3299,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -345,7 +345,9 @@ COUNTS = {
     #                                _browser_session and _need to kernel/kernel.py, and removes Handler._cookie_token; no lambda
     #                                and no other entry moved; then at fold 3's merge of fork main at batch 925 as 3297, the fold's
     #                                19 and the batch's 17 over 3261, the census's own derivation on the merged tree; no other
-    #                                entry moved
+    #                                entry moved; then at fork PR #910's merge of fork main ee5caa810 as 3299: the fix adds
+    #                                _subagent_tree_dep_note and _subagent_walk_dep_note to kernel/kernel.py; no lambda and no
+    #                                other entry moved
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
