@@ -45,7 +45,8 @@ and each foreign module's top-level imports read by path, refused wherever it is
 call's function: `_m9 = mock`, `g(mock)`, `[mock][0]`, `(lambda: mock)()`, `match mock:`, `return mock`; the maintainer's
 round 7, extra4-1, found `_m9 = mock` then `_m9.builtins.__import__` passing, since the attribute chains were resolved from
 an import binding and from nothing else; a member an import binds, such as `Path`, is no module and is not refused, and a
-chain rooted at a sibling's binding is not resolved, since the sibling is censused itself); the reflective names
+name or chain rooted at a sibling's binding, or at the package's (`tests`, which `import tests.x` binds), is not resolved,
+since the siblings are censused themselves); the reflective names
 (REFLECTIVE_CALLS: exec, eval, compile, __import__, vars, globals, locals; REFLECTIVE_ATTRS: import_module,
 __getattribute__, __getattr__, __dict__, modules, attrgetter and the dunder roads the comment above REFLECTIVE_CALLS
 names), each refused as a node whatever its argument in three places: read as a bare name, called or not; as an attribute
@@ -89,7 +90,7 @@ frame, and `unittest.mock`, which runs exec and resolves names); which call of t
 of them is not read. A second instance is an attribute chain rooted at a SIBLING's binding, which neither resolver follows,
 since the sibling is censused itself: `_lab.mock.sys._getframe(0)`, `_lab.mock.builtins.getattr(...)` and `_lab.mock.patch(...)`
 reach members of the modules a sibling imports through the sibling's own name, and on such a chain only the attribute names
-the census enumerates (the spawner families, `subprocess`, the reflective names) are refused.
+the census enumerates (the spawner families, `subprocess`, the reflective names but compile) are refused.
 On the recorder's side the residual is FIVE roads, and the rule over them: the recorder sees a call only through the lab
 module's own `subprocess` attribute, and only while it is installed, and it records the argv the lab module hands that
 attribute and nothing of what the program then does; the census reads only the censused set's own Python sources; so a
@@ -364,7 +365,8 @@ def _commands_around_the_recorder(src, siblings=(), stdlib=None):
     package's excepted) and that _module_of resolves to a module through the import tables, read anywhere but as an
     attribute's value or a call's function (`_m9 = mock`, `g(mock)`, `setattr(h, "m", mock)`, `[mock][0]`, `(lambda: mock)()`,
     `match mock:`, `return mock`, `_m9 = unittest.mock`, `_s = sys`: the maintainer's round 7, extra4-1, where `_m9 = mock`
-    then `_m9.builtins.__import__` passed); a member an import binds (`Path`, `mock.patch`) is no module and is not refused.
+    then `_m9.builtins.__import__` passed); a member (`Path`, which an import binds, or `mock.patch`, reached through one) is
+    no module and is not refused.
     What stays unread, the rule over the two resolvers (_reach and _module_of): each starts from a name an import statement of
     the source binds and follows the source's own imports and the foreign modules' top-level imports, and nothing else, so a
     chain rooted at a SIBLING's binding (`_lab.mock.builtins`, the sibling being censused itself), a module no table records (a
@@ -617,9 +619,10 @@ def _module_of(chain, bindings, loaded, siblings=(), stdlib=None):
     name the censused module's import statements bind (`bindings`; a sibling's binding and the package's are not resolved,
     since the sibling is censused itself), and each step must land on a module, either one the source loads (`loaded`) or a
     module a foreign module's own top-level import binds (_module_imports, read by path). A step that lands on a member (a
-    function, a class, a constant, a name imported by `from M import n` where n is no module) or on a module whose source
-    the census cannot read (built in, an extension module) ends the walk with None: `Path` is a member and `mock.patch` a
-    function, so neither is a module here. The census's module arm keys on this (the maintainer's round 7, extra4-1)."""
+    function, a class, a constant, a name imported by `from M import n` where n is no module), and a step taken FROM a module
+    whose source the census cannot read (built in, an extension module: `sys.modules`), end the walk with None: `Path` is a
+    member and `mock.patch` a function, so neither is a module here, while `sys` is a module, since the walk lands on it and
+    takes no step from it. The census's module arm keys on this (the maintainer's round 7, extra4-1)."""
     names = chain.split(".")
     bound = bindings.get(names[0])
     if bound is None or bound[0].split(".")[0] in siblings or bound[0].split(".")[0] == PACKAGE:
