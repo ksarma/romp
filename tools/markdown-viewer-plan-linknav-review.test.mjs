@@ -165,16 +165,26 @@ test('the two shapes modules the round added exist, name the follow-on, and are 
   assert.ok(tests.includes('tools/' + path.basename(fileURLToPath(import.meta.url))), 'the Tests paragraph names this pin');
 });
 
-test('L6 names tests among the directories the branch changes, from the merge-base, and the two files under it, which the Tests paragraph names too and which exist, and no longer calls the records commit the follow-on\'s last', () => {
-  assert.ok(L6.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools, upstream or tests, SECURITY.md and vscode-extension/ci-browser-legs.txt, alone'), 'the directory list carries tests beside the command, derived from the merge-base, and the two files beside the directories the delta holds, the one root file and the roster the legs joined');
+test('L6 names tests among the directories the branch changes, from the merge-base, and the three files under it inside its sentence on them, which the Tests paragraph\'s pytest clause names too and which exist, and no longer calls the records commit the follow-on\'s last', () => {
+  assert.ok(L6.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools, upstream or tests, SECURITY.md, CONTRIBUTING.md and vscode-extension/ci-browser-legs.txt, alone'), 'the directory list carries tests beside the command, derived from the merge-base, and the three files beside the directories the delta holds, the two root files and the roster the legs joined');
   assert.ok(L6.includes('a verification is derived from the merge-base with main, never from a fixed sha a merge can move behind'), 'and L6 states the rule fresh-1 taught');
   assert.ok(!L6.includes('the last commit of the follow-on'), 'the records commit is not the branch\'s last');
-  for (const f of ['test_guide_files_failures.py', 'test_guide_trail_chords_and_figure_button.py']) {
-    assert.ok(L6.includes('tests/' + f), 'L6 names tests/' + f);
-    assert.ok(exists('tests', f), 'tests/' + f + ' exists');
-    assert.ok(tests.includes('tests/' + f), 'the Tests paragraph names tests/' + f);
-  }
-  assert.ok(L6.includes('both named in the Tests paragraph below'));
+  // each name is read inside the sentence that lists the files under tests, and inside the Tests paragraph's pytest clause, never
+  // anywhere in L6 or the paragraph (the file review's round 20, fresh-1: both already named the third module elsewhere, so a loop
+  // over the whole of each passed while the sentence named two); that the names are the delta's own, derived from the merge-base,
+  // is held where the delta's checks run, in tools/markdown-viewer-plan-linknav.test.mjs's L6 check, behind its gate
+  const sentence = between(L6, 'The files under tests are', 'named in the Tests paragraph below');
+  const pytest = between(tests, 'the pytest modules it added or re-aimed,', 'in the pytest job');
+  assert.ok(sentence.length > 0 && pytest.length > 0, 'L6\'s sentence on the files under tests and the Tests paragraph\'s pytest clause are both found');
+  const TESTS_FILES = ['test_guide_files_failures.py', 'test_guide_trail_chords_and_figure_button.py', 'test_guide_files_place_and_outline.py'];
+  const inSentence = [...sentence.matchAll(/tests\/[\w.-]+\.py/g)].map((m) => m[0]).sort();
+  const inPytest = [...pytest.matchAll(/tests\/[\w.-]+\.py/g)].map((m) => m[0]).sort();
+  const want = TESTS_FILES.map((f) => 'tests/' + f).sort();
+  assert.deepEqual(inSentence, want, 'L6\'s sentence names the three files under tests, each once');
+  assert.deepEqual(inPytest, want, 'the Tests paragraph\'s pytest clause names the same three');
+  for (const f of TESTS_FILES) assert.ok(exists('tests', f), 'tests/' + f + ' exists');
+  assert.ok(sentence.includes('all three'), 'the sentence says all three are named in the Tests paragraph');
+  assert.ok(!/\b(?:two|three|four|five)\b/.test(pytest), 'the pytest clause carries no count word (a count there reds the derived sentence test of the plan pin)');
   assert.ok(!section.includes(String.fromCharCode(0x2014)), 'no em dash in the section');
 });
 

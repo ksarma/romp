@@ -736,22 +736,31 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
     assert.ok(!/fetch-depth:\s*0\b/.test(block), block.split('\n')[0].trim() + ' checks out at the default depth, with no origin/main, so the merge-base gate holds L6\'s verifications off there; a job that fetches history now runs them, and the plan\'s sentence that they run in no checkout that gates landing is to be reworded');
   }
   assert.ok(section.includes('`git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty'), 'L6 names the kernel stat from the merge-base');
-  assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools, upstream or tests, SECURITY.md and vscode-extension/ci-browser-legs.txt, alone'), 'and the listing from the merge-base (ui, not ui/webview, since the case fixes ruled in the file review\'s round 13, extra7-1, brought ui/test-code-only.ts into the delta, SECURITY.md, the one file at the repository\'s root, since the fixes for its round 18, regression-2, named the marquee in its profile list, and the roster PR 887 landed since the legs joined it, the coordinator\'s ruling on the roster after its round 19)');
+  assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools, upstream or tests, SECURITY.md, CONTRIBUTING.md and vscode-extension/ci-browser-legs.txt, alone'), 'and the listing from the merge-base (ui, not ui/webview, since the case fixes ruled in the file review\'s round 13, extra7-1, brought ui/test-code-only.ts into the delta, SECURITY.md, the one file at the repository\'s root, since the fixes for its round 18, regression-2, named the marquee in its profile list, and the roster PR 887 landed since the legs joined it, the coordinator\'s ruling on the roster after its round 19)');
   assert.ok(!section.includes('git diff --stat 34142c262') && !section.includes('git diff --name-only 34142c262'), 'no verification against the branch point remains');
-  const count = /upstream or tests, SECURITY\.md and vscode-extension\/ci-browser-legs\.txt, alone[^()]*\((\d+) files, the ledger entry's where line/.exec(section);
+  const count = /upstream or tests, SECURITY\.md, CONTRIBUTING\.md and vscode-extension\/ci-browser-legs\.txt, alone[^()]*\((\d+) files, the ledger entry's where line/.exec(section);
   assert.ok(count, 'L6 counts the listing beside the command');
   assert.ok(exists('upstream', '2026-09-19-linknav-trail-back-forward.md'), 'the ledger entry the section names');
   assert.ok(exists(...THIS_MODULE.split('/')), 'THIS_MODULE names a file in the tree: ' + THIS_MODULE + ' (a misspelt path would hold the verifications off for good behind a green diagnostic; the file review\'s round 5, tests-7)');
   gated(t, L6_CHECK, (d) => {
     assert.equal(d.kernel, '', 'no kernel change since the merge-base ' + d.base);
     const DIRS = ['ui/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];   // ui, not ui/webview: ui/test-code-only.ts is in the delta since the file review's round 13, extra7-1
-    // the files L6 names outside those directories: SECURITY.md, the one root file, in the delta since the fixes for the file review's
-    // round 18, regression-2, and the roster PR 887 landed, since the legs joined it (the coordinator's ruling on the roster after the
-    // file review's round 19)
-    const NAMED_FILES = ['SECURITY.md', 'vscode-extension/ci-browser-legs.txt'];
-    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)) || NAMED_FILES.includes(f), f + ' lies under one of the six directories L6 names, or is one of the two files it names beside them');
+    // the files L6 names outside those directories: SECURITY.md, a root file in the delta since the fixes for the file review's
+    // round 18, regression-2, the roster PR 887 landed, since the legs joined it (the coordinator's ruling on the roster after the
+    // file review's round 19), and CONTRIBUTING.md, a root file in the delta since the file review's round 20, extra10-2
+    const NAMED_FILES = ['SECURITY.md', 'CONTRIBUTING.md', 'vscode-extension/ci-browser-legs.txt'];
+    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)) || NAMED_FILES.includes(f), f + ' lies under one of the six directories L6 names, or is one of the three files it names beside them');
+    // the files under tests L6's sentence names are the delta's own, derived here (the file review's round 20, fresh-1: the sentence
+    // named two of the three and its pin read the names anywhere in L6, so the missing name passed)
+    const l6 = section.slice(section.indexOf('L6. **'), section.indexOf('**Tests.**'));
+    const sentence = l6.slice(l6.indexOf('The files under tests are'), l6.indexOf('named in the Tests paragraph below'));
+    assert.ok(sentence.length > 0, 'L6 has its sentence on the files under tests');
+    const named = [...sentence.matchAll(/tests\/[\w.-]+\.py/g)].map((m) => m[0]).sort();
+    const underTests = d.files.filter((f) => f.startsWith('tests/')).sort();
+    assert.ok(underTests.length > 0, 'the delta since the merge-base changes files under tests');
+    assert.deepEqual(named, underTests, 'L6\'s sentence names the files under tests the diff since the merge-base ' + d.base + ' lists');
     assert.equal(d.files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + d.files.length + ': ' + d.files.join(', '));
-    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories L6 names or one of the two files it names beside them');
+    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories L6 names or one of the three files it names beside them, the files under tests the ones L6\'s sentence names');
   });
 });
 

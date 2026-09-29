@@ -9206,10 +9206,12 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests, SECURITY.md and vscode-extension/ci-browser-legs.txt, alone (75 files, the ledger entry's where line; run
-2026-09-28 at the head where the legs joined the roster PR 887 landed, after the landing merge of the fork's main at 1d591384e
-(the coordinator's ruling on the roster after the file review's round 19), over 1d591384e, the listing the branch's whole delta
-over it, where the two files added to the delta are that roster, vscode-extension/ci-browser-legs.txt, which gained the legs'
+upstream or tests, SECURITY.md, CONTRIBUTING.md and vscode-extension/ci-browser-legs.txt, alone (76 files, the ledger entry's
+where line; run 2026-09-29 at the head that carries the fixes for the file review's round 20, over 1d591384e, where the one
+file added to the delta is CONTRIBUTING.md, whose copy of the roster rule's reason that round's extra10-2 corrected with the
+roster's own; the run 2026-09-28 at the head where the legs joined the roster PR 887 landed, after the landing merge of the fork's main at 1d591384e
+(the coordinator's ruling on the roster after the file review's round 19), over 1d591384e, listed 75, the listing the branch's
+whole delta over it, where the two files added to the delta are that roster, vscode-extension/ci-browser-legs.txt, which gained the legs'
 lines, and PR 887's tree test, tools/ci-browser-legs.test.mjs, a docstring of which had called the switch test the roster's one
 leg; the run 2026-09-28 at the head that carries that landing merge listed 73, the one file the merge added to the delta
 ui/webview/file-view-figure-cap-spelling-browser.test.ts, a leg it brought whose label assertion the follow-on's label rule
@@ -9291,8 +9293,11 @@ The build's record ran both against 34142c262, the branch point, and the merge o
 (f694e5974) made that commit an ancestor of main, so at the merged head the same stat named four kernel files and the
 same list reached kernel/ and vscode-extension/ (the file review, fresh-1): a verification is derived from the
 merge-base with main, never from a fixed sha a merge can move behind. The files under tests are
-tests/test_guide_files_failures.py, re-aimed in the review's round 1, and
-tests/test_guide_trail_chords_and_figure_button.py, added in its round 2, both named in the Tests paragraph below.
+tests/test_guide_files_failures.py, re-aimed in the review's round 1,
+tests/test_guide_trail_chords_and_figure_button.py, added in its round 2, and
+tests/test_guide_files_place_and_outline.py, re-aimed in the file review's round 19, ui-1, all three named in the Tests
+paragraph below (the file review's round 20, fresh-1: the sentence had named two, and its pin now reads the names inside
+the sentence, the delta's list derived from the merge-base where the delta's checks run).
 
 **Tests.** `ls ui/webview/file-trail*.test.ts ui/webview/file-figure-open*.test.ts` lists the follow-on's five
 modules: ui/webview/file-trail.test.ts (the pure functions, the chord table, the titles, and the wiring pinned at
@@ -9413,7 +9418,8 @@ after the file review's round 19); what gates the follow-on where landing is gat
 its source pins, the node modules beside each leg in the Test step (their node cases; a browser scenario inside a node
 module, ui/webview/file-view-text-size.test.ts's bar case and ui/webview/file-trail.test.ts's Reload case, skips there as
 the legs do, and neither module is a roster line), and the pytest modules it added or re-aimed,
-tests/test_guide_trail_chords_and_figure_button.py and tests/test_guide_files_failures.py, in the pytest job;
+tests/test_guide_trail_chords_and_figure_button.py, tests/test_guide_files_failures.py and
+tests/test_guide_files_place_and_outline.py, in the pytest job;
 tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
 carries the suffix -browser before .test.ts and whose own text names this follow-on, a name and not the property that makes a module a browser leg
 (that property, a call of the shared launcher's inBrowser through any binding or a playwright package named, is what a
@@ -9560,7 +9566,7 @@ guide are the sources' literals; the sheets carry L3's rules under `screen` in b
 control nowhere; no history API call stands in the trail or the viewer; L6's two verifications are run from the
 merge-base with `origin/main` behind a two-part gate read off git, the merge-base not `origin/main` itself and the
 diff since it adding the module (the file review's round 4, extra8-1: the kernel stat empty, every changed file under
-the six directories or one of the two files L6 names beside them, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
+the six directories or one of the three files L6 names beside them, the files under tests the ones L6's sentence names, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
 moved past the branch's last merge of it; on main, on a batch head cut from main's tip, on this branch right after
 merging `origin/main` and on any later branch once the follow-on has landed the checks stand down and the diagnostic
 names the part of the gate that held them, and without the ref the prose alone holds; a batch head that main has moved
