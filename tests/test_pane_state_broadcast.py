@@ -1795,12 +1795,12 @@ out.noneFailed = snap('waiting');
 ownWaiting.forEach((t) => t.f());   // 30 s later, with no retry: the failed promotion's own backstop fires on its own token
 out.noneOwnBackstop = snap('waiting');
 window.__rompMobileTab('fleet');   // a second pane, the same road for the other failing answer
-const ownFleet = t30().slice(-1);
+const ownOther = t30().slice(-1);   // the second pane's promotion's own backstop
 otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the kernel's 403 line at the pane's url: other, a failure
 out.otherFailed = snap('fleet');
-ownFleet.forEach((t) => t.f());
+ownOther.forEach((t) => t.f());
 out.otherOwnBackstop = snap('fleet');
-out.ownTimers = ownWaiting.length + ownFleet.length;
+out.ownTimers = ownWaiting.length + ownOther.length;
 console.log(JSON.stringify(out));
 """
 
@@ -1836,7 +1836,7 @@ console.log(JSON.stringify(out));
 _LAZY_BOTH_ATTRS_DRIVER = _LAZY_TOOLS + r"""
 SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
 shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
-const snapBa = () => ({ src: src().fleet, lazy: lazy().fleet, dataSrc: dataSrc().fleet, div: divCls('fleet'), sets: SETS.fleet || 0, listeners: (LOADS.fleet || []).length, backstops: TIMERS.filter((t) => t.ms === 30000).length, bodyFailed: BODY_CLS.has('pane-failed'), mobile: window.__rompMobileOn() });
+const snapBa = () => ({ src: src().fleet, lazy: lazy().fleet, dataSrc: dataSrc().fleet, div: divCls('fleet'), sets: SETS.fleet || 0, listeners: (LOADS.fleet || []).length, backstops: TIMERS.filter((t) => t.ms === 30000).length, bodyFailed: BODY_CLS.has('pane-failed'), mobile: window.__rompMobileOn(), diag: diagAll() });
 MATCHES = false; MQL.forEach((f) => f({}));   // the flip to the desktop: the Outline gets data-src and the grid's promotion (data-src stays on the frame while it loads, as on every desktop pane)
 ['timeline', 'waiting', 'files'].forEach((k) => { shimUp(k); (LOADS[k] || []).forEach((f) => f()); });
 out.desktop = snapBa();
@@ -3097,6 +3097,8 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(o["afterBackstops"], pv, "every backstop: nothing pending")
         tt = o["tabTap"]
         self.assertEqual((tt["src"], tt["lazy"], tt["div"], tt["sets"], tt["listeners"], tt["backstops"]), ("/fleet", None, ["loading"], 2, pv["listeners"] + 1, pv["backstops"] + 1), "the tab tap is the promotion road, with its own listener and backstop")
+        snaps = ("desktop", "backEarly", "phoneVerdict", "afterSave", "afterBackstops", "tabTap")
+        self.assertEqual([o[k]["diag"] for k in snaps], [[]] * len(snaps), "no clientDiag message of any surface or what over the sequence, the verdict on the phone included (the unfiltered read the other failed-load cases make)")
         js = km._LANDING_MOBILE_JS
         self.assertIn("if(URLS[k]){f.setAttribute(park,URLS[k]);f.removeAttribute(park===LAZY?'data-src':LAZY);}", js, "failed() re-parks under the attribute its next promotion reads and drops the other")
 
@@ -3233,6 +3235,8 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((lf["tab"], lf["bodyFailed"], lf["retryHidden"], lf["active"]), ("fleet", True, False, "body"), "a later pane's first failure shows the button and takes no focus: no gesture asked for it (the load retired the flag)")
         self.assertEqual(o["overlayRefail"]["active"], "body", "the overlay tap is a pointer gesture: its re-failure moves no focus")
         self.assertEqual((o["switchedRefail"]["msg"], o["switchedRefail"]["active"]), ("Still not loading. Try again, or reload the page.", "body"), "a tab switch after the keyboard's retry retires it: the failure that lands after the switch focuses nothing")
+        snaps = ("focused", "retrying", "refailed", "loaded", "sameLater", "laterFirst", "overlayRefail", "switchedRefail")
+        self.assertEqual([o[k]["diag"] for k in snaps], [0] * len(snaps), "no clientDiag message of any surface or what over the keyboard's road, its failures and re-failures included (the unfiltered read the other failed-load cases make)")
         js = km._LANDING_MOBILE_JS
         self.assertIn("var rb=document.getElementById('pane-load-retry');if(rb){rb.hidden=!bad;if(bad&&RFOC){RFOC=false;try{rb.focus();}catch(e){}}}", js, "the failed paint restores the focus once, on the flag")
         self.assertIn("retry();RFOC=true;});", js, "the button's click sets the flag after its retry (whose show() clears it)")
