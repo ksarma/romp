@@ -17,10 +17,11 @@ secret: of the leg environment it records the names it dropped and the values it
 inherited value, and a leg log's header shows each variable by its name only.
 
 The legs run in private checkouts of the exact sha, never in the batcher's tree, one checkout per CI job (below): a
-`git clone --shared --no-checkout` of the batcher's repository under <state dir>/sweeps/trees, checked out at the sha
-with hooks off, every runner git call made with GIT_* removed, git's global and system configuration off and
-refs/replace ignored. A clone copies none of the batcher's repository config, attributes, excludes, hooks,
-sparse patterns, index flags or replace refs, so the legs see the sha's tree plus the tool installs, and
+private repository under <state dir>/sweeps/trees that reads the batcher's objects through its alternates, as
+`git clone --shared` does, and holds no branch or tag of theirs, checked out at the sha with hooks off (make_checkout),
+every runner git call made with GIT_* removed, git's global and system configuration off and refs/replace ignored. It
+copies none of the batcher's repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or
+replace refs, so the legs see the sha's tree plus the tool installs, and
 nothing from the checkout's parents. Before any leg the runner verifies the first checkout against `git ls-tree -r
 <sha>` (every path, executable bit, symlink target and blob), and refuses (exit 2, nothing recorded) on a
 difference or on node_modules, package.json, tsconfig.json or jsconfig.json in any ancestor directory, which
