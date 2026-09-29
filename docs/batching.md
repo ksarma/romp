@@ -270,8 +270,9 @@ subject; `verify` refuses the branch otherwise.
    (`NODE_OPTIONS=--max-old-space-size=8192`), which CI does not set. npm's builtin config file
    (`npmrc` in npm's own package directory), which npm reads before any other and nothing turns
    off, is read by the sweep: one that sets anything but `prefix` refuses the run, naming the file,
-   and the result records whether it exists and its sha256 (an npm shim, such as volta's, whose
-   package the sweep cannot find above it, records none). The allowlist governs
+   and the result records whether it exists and its sha256. An npm whose package the sweep cannot
+   find above it (a shim, such as volta's) refuses the run, naming the npm, since its builtin file
+   cannot be read: put an npm laid out as npm's installs lay it out first on PATH. The allowlist governs
    variables only: the legs run as your user, so a file stays readable at its absolute path (a
    credential file, an agent's socket), and a leg can read `/proc/<pid>/environ` of the runner and
    of your other processes, your shell and sessions included. Nothing a leg leaves in its checkout

@@ -2946,10 +2946,20 @@ class SweepThenVerify(_Base):
         fx.ok("assemble", "b1")
         tools = os.path.join(fx.tmp, "tools-bin")
         os.makedirs(tools)
-        for name in ("fakepython", "npm", "bats", "node"):
+        for name in ("fakepython", "bats", "node"):
             with open(os.path.join(tools, name), "w") as f:
                 f.write(FAKE_TOOL % {"python": sys.executable})
             os.chmod(os.path.join(tools, name), 0o755)
+        # npm as npm's installs lay it out (bin/npm a link into npm's package, beside its package.json): the runner refuses
+        # an npm whose package root it cannot find, since it reads npm's builtin config file there
+        pkg = os.path.join(fx.tmp, "npm-install", "lib", "node_modules", "npm")
+        os.makedirs(os.path.join(pkg, "bin"))
+        with open(os.path.join(pkg, "package.json"), "w") as f:
+            json.dump({"name": "npm", "version": "0.0.0-fake"}, f)
+        with open(os.path.join(pkg, "bin", "npm-cli.js"), "w") as f:
+            f.write(FAKE_TOOL % {"python": sys.executable})
+        os.chmod(os.path.join(pkg, "bin", "npm-cli.js"), 0o755)
+        os.symlink(os.path.join(pkg, "bin", "npm-cli.js"), os.path.join(tools, "npm"))
         env = dict(fx.env, PATH=tools + os.pathsep + fx.env["PATH"])
         p = subprocess.run([sys.executable, os.path.join(fx.dev, "scripts", "sweep.py"), "run", "--tree", fx.wt("b1"),
                             "--python", os.path.join(tools, "fakepython"), "--workers", "2"],

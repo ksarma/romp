@@ -640,10 +640,23 @@ class World:
         self.setup_path = os.path.join(self.tmp, "setup.log")
         os.makedirs(self.bin)
         fake = FAKE % {"python": sys.executable, "ctl": self.ctl_path, "log": self.log_path, "setup": self.setup_path}
-        for name in ("python", "npm", "node", "bats"):
+        for name in ("python", "node", "bats"):
             with open(os.path.join(self.bin, name), "w") as f:
                 f.write(fake)
             os.chmod(os.path.join(self.bin, name), 0o755)
+        # npm as npm's installs lay it out: bin/npm on PATH a link to the package's bin/npm-cli.js, beside the package's
+        # package.json, so the runner finds npm's package root and reads its builtin config file there (an npm whose root
+        # it cannot find refuses the run: round 2, the owner's build question 3). The fake tells its legs apart by the
+        # name it is run as, npm.
+        self.npm_pkg = os.path.join(self.tmp, "npm-install", "lib", "node_modules", "npm")
+        self.npm_cli = os.path.join(self.npm_pkg, "bin", "npm-cli.js")
+        os.makedirs(os.path.dirname(self.npm_cli))
+        with open(os.path.join(self.npm_pkg, "package.json"), "w") as f:
+            json.dump({"name": "npm", "version": "0.0.0-fake"}, f)
+        with open(self.npm_cli, "w") as f:
+            f.write(fake)
+        os.chmod(self.npm_cli, 0o755)
+        os.symlink(self.npm_cli, os.path.join(self.bin, "npm"))
         # a python3 beside --python that is the same file, as in a venv's bin: the served tests' kernels run the first
         # python3 on the served leg's PATH (the kernel launcher's #!/usr/bin/env python3), and the runner refuses a --python
         # whose directory holds none, or another file
@@ -2302,10 +2315,12 @@ class Checkout(_Base):
         self.addCleanup(w.close)
         real = os.path.join(w.tmp, "realbin")
         os.makedirs(real)
-        os.rename(os.path.join(w.bin, "npm"), os.path.join(real, "npm"))
-        with open(os.path.join(w.bin, "npm"), "w") as f:
+        # the fake moves out of npm's package and the script takes its place there, so the npm on PATH is still a link
+        # into npm's package (npm_builtin), and the fake is still run as npm
+        os.rename(w.npm_cli, os.path.join(real, "npm"))
+        with open(w.npm_cli, "w") as f:
             f.write('#!/bin/sh\nif [ "$1" = ci ]; then R=$(cd .. && pwd); %s; fi\nexec \'%s\' "$@"\n' % (script, os.path.join(real, "npm")))
-        os.chmod(os.path.join(w.bin, "npm"), 0o755)
+        os.chmod(w.npm_cli, 0o755)
         return w
 
     def test_a_file_the_deps_leg_hides_from_git_status_or_the_tracked_gitignore_covers_makes_the_run_invalid(self):
@@ -3195,18 +3210,14 @@ class NpmBuiltin(_Base):
     """Round 2, extra6-2: npm's builtin config file (npmrc in npm's package root) is read by npm before any other config
     file, and neither the private HOME nor npm_config_globalconfig=/dev/null turns it off, so a node-options line there
     reached every npm leg as NODE_OPTIONS. The runner reads the builtin file of the npm the legs find on their PATH,
-    refuses the run when it sets any key but prefix (Homebrew's holds prefix alone), and records its presence and sha256
-    either way. The npm here is the fake, installed as npm's installs lay it out: bin/npm on PATH a symlink to the
-    package's bin/npm-cli.js, beside the package's package.json."""
+    refuses the run when it sets any key but prefix (Homebrew's holds prefix alone) or when the runner cannot find npm's
+    package root to read it in (the owner's build question 3), and records its presence and sha256 otherwise. The npm
+    here is the World's fake, installed as npm's installs lay it out: bin/npm on PATH a symlink to the package's
+    bin/npm-cli.js, beside the package's package.json."""
 
     def install_npm(self, npmrc=None):
-        w = self.w
-        pkg = os.path.join(w.tmp, "npm-install", "lib", "node_modules", "npm")
-        os.makedirs(os.path.join(pkg, "bin"))
-        with open(os.path.join(pkg, "package.json"), "w") as f:
-            json.dump({"name": "npm", "version": "0.0.0-fake"}, f)
-        os.rename(os.path.join(w.bin, "npm"), os.path.join(pkg, "bin", "npm-cli.js"))
-        os.symlink(os.path.join(pkg, "bin", "npm-cli.js"), os.path.join(w.bin, "npm"))
+        """The World's npm package directory, holding `npmrc` as its builtin config file when given."""
+        pkg = self.w.npm_pkg
         if npmrc is not None:
             with open(os.path.join(pkg, "npmrc"), "w") as f:
                 f.write(npmrc)
@@ -3255,13 +3266,32 @@ class NpmBuiltin(_Base):
         rec = w.result()["runner"]["npm_builtin"]
         self.assertEqual((rec["root"], rec["present"], rec["sha256"]), (pkg, False, None))
 
-    def test_an_npm_whose_package_the_runner_cannot_find_records_none(self):
-        """An npm that is not a link into its package (a shim, such as volta's; here the plain fake) has no builtin file
-        the runner can find: the record says so (root None), the disclosed limit, and the run proceeds."""
+    def test_an_npm_whose_package_the_runner_cannot_find_refuses_the_run(self):
+        """Round 2, the owner's build question 3: an npm that is not a link into its package (a shim, such as volta's;
+        here the fake copied onto PATH as a plain file, and a link to a copy outside any package) has a builtin file the
+        runner cannot find, so it cannot read it: the run is refused naming the npm and its real path, before anything
+        is recorded or run. Before, the record said root None and the run went on, under a builtin file no one read."""
         w = self.w
-        w.run(check=0)
-        self.assertEqual(w.result()["runner"]["npm_builtin"], {"npm": os.path.join(w.bin, "npm"), "root": None, "path": None,
-                                                               "present": False, "sha256": None, "keys": []})
+        npm = os.path.join(w.bin, "npm")
+        stray = os.path.join(w.tmp, "shim", "npm")
+        os.makedirs(os.path.dirname(stray))
+        shutil.copy(w.npm_cli, stray)
+        for label in ("a plain file", "a link outside npm's package"):
+            with self.subTest(npm=label):
+                w.change({"notes.txt": "a head for %s\n" % label})      # each case at a head of its own
+                os.remove(npm)
+                if label == "a plain file":
+                    shutil.copy(w.npm_cli, npm)
+                else:
+                    os.symlink(stray, npm)
+                before = len(w.calls())
+                p = w.run()
+                self.assertEqual(p.returncode, 2, "an npm whose builtin file cannot be read refuses the run:\n%s%s"
+                                 % (p.stdout, p.stderr))
+                self.assertIn("the npm on the legs' PATH, %s (real path %s), is not a link into npm's own package"
+                              % (npm, os.path.realpath(npm)), p.stderr)
+                self.assertEqual(w.calls()[before:], [], "no leg ran")
+                self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
 
 
 class LegPath(unittest.TestCase):

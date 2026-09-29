@@ -187,7 +187,8 @@ deployment's SDK), nor the global npmrc of a node installed under it (<prefix>/e
 config file (npmrc in npm's package root), which npm reads before any other and nothing turns off, is read by the runner:
 one that sets any key but prefix refuses the run, naming the file (round 2, extra6-2), and the result records its
 presence and sha256 (runner.npm_builtin); an npm whose package root the runner cannot find above its real path (a shim,
-such as volta's) records none, and its builtin file is not read. pytest also runs with `-c /dev/null --rootdir=. --confcutdir=.`, so no pytest.ini or
+such as volta's) refuses the run, naming the npm, since its builtin file cannot be read (round 2, the owner's build
+question 3). pytest also runs with `-c /dev/null --rootdir=. --confcutdir=.`, so no pytest.ini or
 conftest.py above the tree configures it. --wrap prefixes run with the runner's environment, and the
 allowlist applies after them (`env -i`), so nothing a wrap sets reaches the leg. What the allowlist does not
 govern: files stay readable at their absolute paths (a credential file, an agent's socket), and every leg can
@@ -490,7 +491,8 @@ TOOL_CONFIG_OFF = {"npm_config_globalconfig": os.devnull, "GIT_CONFIG_NOSYSTEM":
 # HOME nor npm_config_globalconfig turns it off (round 2, extra6-2): it is as user-writable as the global one under nvm,
 # fnm, volta or a ~/.local prefix, and a node-options line there reaches every npm leg. Homebrew's node writes one that
 # sets prefix alone. The runner reads the file of the npm the legs find on their PATH, refuses the run when it sets any
-# key but prefix, and records its presence and sha256 (npm_builtin).
+# key but prefix, or when the runner cannot find npm's package root to read it in (the owner's build question 3), and
+# records its presence and sha256 (npm_builtin).
 NPM_BUILTIN = "npmrc"
 NPM_BUILTIN_KEYS = ("prefix",)
 # The box floor, which CI does not need: every port variable the tree reads is set to a dead port, so leg code its own
@@ -1814,10 +1816,12 @@ def npm_builtin(ctx):
     """{"npm", "root", "path", "present", "sha256", "keys"}: the builtin config file of the npm the legs find on their
     PATH (NPM_BUILTIN under npm's package root, which npm reads before any other config file, round 2, extra6-2). The root
     is the directory above the npm's real path (its bin/npm-cli.js, where npm's installs link it) whose package.json names
-    npm; an npm with no such directory above it (a shim, such as volta's, or no npm on the PATH) records root None, and
-    the runner cannot read its builtin file. Raises Refused, naming the file and the keys, when the file sets any key but
-    NPM_BUILTIN_KEYS: every line that is not blank or a comment (`;` or `#`) must be `prefix = <value>`, so a section, a
-    bare key or any other key is refused."""
+    npm. Raises Refused, naming the npm and its real path, when no such directory is above it (a shim, such as volta's):
+    the runner cannot read a builtin file it cannot find, so it does not run the legs under one (round 2, the owner's
+    build question 3; before it such an npm recorded root None and the run went on). No npm on the PATH records npm
+    None: there is then no builtin file for any leg to read. Raises
+    Refused, naming the file and the keys, when the file sets any key but NPM_BUILTIN_KEYS: every line that is not
+    blank or a comment (`;` or `#`) must be `prefix = <value>`, so a section, a bare key or any other key is refused."""
     npm = shutil.which("npm", path=ctx["path"])
     rec = {"npm": npm, "root": None, "path": None, "present": False, "sha256": None, "keys": []}
     if not npm:
@@ -1833,7 +1837,12 @@ def npm_builtin(ctx):
             rec["root"] = cand
             break
     if rec["root"] is None:
-        return rec
+        raise Refused("the npm on the legs' PATH, %s (real path %s), is not a link into npm's own package: neither the "
+                      "directory of its real path nor the one above it holds a package.json naming npm, so the runner "
+                      "cannot find npm's builtin config file (npmrc in that package), which npm reads in every npm leg "
+                      "before any other config file and which nothing turns off; put an npm installed as npm's installs "
+                      "lay it out (bin/npm a link to lib/node_modules/npm/bin/npm-cli.js) first on PATH"
+                      % (npm, os.path.realpath(npm)))
     path = os.path.join(rec["root"], NPM_BUILTIN)
     rec["path"] = path
     try:
@@ -3690,7 +3699,8 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         run["runner"]["leg_env"] = {"allow": list(LEG_ALLOW), "hash": leg_env_hash(ctx)}
         run["runner"]["tools"] = tool_versions(ctx)
         # npm's builtin config file, which nothing turns off: refused, before anything is recorded, when it sets any key but
-        # prefix (round 2, extra6-2); its presence and sha256 are recorded either way
+        # prefix (round 2, extra6-2) or when npm's package root, where it lives, cannot be found (the owner's build
+        # question 3); its presence and sha256 are recorded otherwise
         run["runner"]["npm_builtin"] = npm_builtin(ctx)
         early = groups[0]["setup_before"] is not None and groups[0]["setup_before"] == groups[0]["legs"][0]
         if early:
