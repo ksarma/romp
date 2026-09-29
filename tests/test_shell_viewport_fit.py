@@ -824,11 +824,13 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # zoom); the hold road publishes from the hold and writes nothing into it (it sets gone and rp), so --app-top can differ
         # from the hold until a road WRITES it, the measured road or the 0px road in a no-pan state (the author's pass 8, 2026-09-20: the
         # 0px road runs without writing under a standing pan or zoom; the author's pass 6: this comment had said the hold is the last
-        # value published on every road, which the hold road contradicts whenever it bounds, and the harness asserts that state). Both coarse branches sit under
-        # the height's own validity guard (h truthy, the `if(h)` of the --app-h write above them): a refused height report
-        # publishes no pan either, so the prior pan stands beside the prior height (the author's pass 4, 2026-09-20, as the maintainer's round 1
-        # confirmed it); the 0px road has no height to belong to and publishes unconditionally. Behaviour:
-        # test_kernel_mobile.MobileFitExecutes.
+        # value published on every road, which the hold road contradicts whenever it bounds, and the harness asserts that state).
+        # Both coarse branches sit under the height's own validity guard (h truthy, the `if(h)` of the --app-h write above them): a
+        # refused height report publishes no pan either, so the prior pan stands beside the prior height (the author's pass 4,
+        # 2026-09-20, as the maintainer's round 1 confirmed it); the 0px road has no height to belong to and publishes
+        # unconditionally. Behaviour: test_kernel_mobile.MobileFitExecutes; the coarse road's cut at L, and the hold surviving a
+        # report between the cut at L and the one at h, is its test_a_report_between_the_two_cuts_is_a_pinch_at_the_layout_viewport_and_the_hold_survives_it
+        # (the maintainer's round 6 ruling, extra6-1).
         self.assertIn("\nvar lastPan=0,held=false,gone=false,rp=null;\n", self.js, "the hold, its written-hold flag, the held keyboard's down run and the re-raise bound, declared before fit()")
         self.assertIn("\nfunction panPx(vv){return Math.round(vv.offsetTop||0);}\n", self.js, "the one reading of the pan, declared before fit()")
         self.assertIn("\nfunction zoomPx(vv,L){return Math.max(0,Math.round(L*(1-1/(vv.scale||1))));}\n", self.js,
@@ -845,7 +847,11 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
                       "else if(h){if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;}}var H=rp===null?lastPan:rp;"
                       "document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}", self.js,
                       "the measured road (under a pinch only where no hold is held) and the hold road (the re-raise bound kept apart from the hold, the reading's interval where the share is below the value, the excess unstored)")
-        self.assertNotIn("pinched(vv,h)", served_css.js_code(self.js), "both roads take the cut at the layout viewport L, never at the coarse road's h (the author's pass 9, 2026-09-20)")
+        self.assertNotIn("pinched(vv,h)", served_css.js_code(self.js),
+                         "both roads take the cut at the layout viewport L, never at the coarse road's h (the author's pass 9, 2026-09-20). This pin reads "
+                         "the SPELLING only (a cut at h spelled otherwise passes it); the behaviour, the cut at L and the hold surviving a report between "
+                         "the two cuts, is the executed cell test_kernel_mobile.MobileFitExecutes."
+                         "test_a_report_between_the_two_cuts_is_a_pinch_at_the_layout_viewport_and_the_hold_survives_it")
         self.assertNotIn("innerHeight-h", self.js,
                          "the clamp reads the layout viewport (clientHeight), not innerHeight, which the engine model in the fit() comment (the one home, with its evidence status) has WebKit shrink under a pinch")
         self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")

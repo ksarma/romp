@@ -1007,6 +1007,18 @@ for (const [p, s, tag] of [[30, 1.05, 'p30-s1.05'], [83, 1.2, 'p83-s1.2'], [83, 
 { const s = 1.05, f = 'lzhold20'; r6rest(f); r6step(f, 'zoom', 844 / s, r6share(s) / 2, s);
   r6step(f, 'kbUpLZ', 508 / s, Math.round(r6share(s)) + 20, s); r6step(f, 'dragTo0', 508 / s, 0, s); }
 out.r6 = r6;
+// extra6-1 (the maintainer's round 6 ruling, 2026-09-29): the coarse road takes the pinch cut at the layout viewport L, not at its
+// own h. A hold of 83 (the keyboard up at scale 1, h 460), then a report BETWEEN the two cuts (scale 1.0008: at or over L/(L - 0.5),
+// 1.00059 at L 844, and under h/(h - 0.5), 1.00109 at h 460) with the same keyboard (h 460 again) and a reading that rounds to no
+// pixel (offsetTop 0.4), then a real pinch with the keyboard up. At L the report is a pinch: the hold road publishes the reading's
+// 0 and writes nothing, so the pinch after it publishes the hold, 83. Taken at h the report is no pinch, and the measured road
+// writes its 0 into the hold, so the pinch after it publishes 0: the first step reads 0 either way, the second tells the cuts apart
+visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+const cutHold = appTop();
+visualViewport.scale = 1.0008; visualViewport.height = 459.6; visualViewport.offsetTop = 0.4; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+const cutBetween = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.cutBetween = { hold: cutHold, between: cutBetween, pinchAfter: { appTop: appTop(), appH: appH() } };
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 console.log(JSON.stringify(out));
 """
@@ -1300,7 +1312,9 @@ class MobileFitExecutes(unittest.TestCase):
         # both sides on both roads: under the cut the zoom's share is no pixel and the road stores the pan it reads (90 from 90.4 at
         # 1.0005); at or over it the share is one pixel and the road publishes 97 from 97.6 (not the hold, 90; not the raw 98); the
         # 0px road's flips clear under the cut (1.0005 at 844) and keep the hold over it (1.0007). The shares are derived here from
-        # the driven scales, so the pixel the cell subtracts is the cell's own arithmetic.
+        # the driven scales, so the pixel the cell subtracts is the cell's own arithmetic. The coarse road's cut at L rather than at
+        # its own h, and the hold surviving a report between the two, is the next test's cell (the maintainer's round 6 ruling,
+        # extra6-1: test_a_report_between_the_two_cuts_is_a_pinch_at_the_layout_viewport_and_the_hold_survives_it).
         below, above = self.out["cutBelow"], self.out["cutAbove"]
         self.assertEqual((round(below["zoomShare"]), round(above["zoomShare"])), (0, 1), "the zoom's share in pixels on each side of the cut: %r %r" % (below, above))
         self.assertEqual({k: below[k] for k in ("appTop", "appH")}, {"appTop": "90px", "appH": "460px"}, "under the cut the measured road stores its reading")
@@ -1315,6 +1329,21 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual((h0["innerHeight"], h0["clientHeight"]), (0, 0), "the state driven is h 0 on both reads: %r" % (h0,))
         self.assertEqual({k: h0[k] for k in ("appTop", "appH")}, {"appTop": "0px", "appH": "460px"}, "0px written, the height write skipped at h 0")
         self.assertEqual(self.out["h0CoarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a fine run with no layout height")
+
+    def test_a_report_between_the_two_cuts_is_a_pinch_at_the_layout_viewport_and_the_hold_survives_it(self):
+        # extra6-1 (the maintainer's round 6 ruling, 2026-09-29): guards the ruled cut at the layout viewport L on the coarse road
+        # (the author's pass 9: it had been taken at the road's own h, the band's height with the keyboard up) and the hold
+        # surviving a report between the two cuts. Before this cell only a source-spelling pin in test_shell_viewport_fit read
+        # the cut; a cut at h left every executed cell green. The first step publishes 0 under either cut (the reading, 0.4,
+        # rounds to no pan: extra10-1's reading, so it cannot tell a cut at h apart); the pinch after it is the pin: the hold,
+        # 83, where a cut at h has written the reading's 0 into it and publishes 0.
+        c = self.out["cutBetween"]
+        L, h, s = 844, 460, 1.0008
+        self.assertTrue(L / (L - 0.5) <= s < h / (h - 0.5), "the cell's premise: the scale sits at or over the cut at L and under the cut at h")
+        self.assertEqual(round(459.6 * s), h, "the cell's premise: the same keyboard, the band's unzoomed height still %d" % h)
+        self.assertEqual(c["hold"], "83px", "the hold, measured at scale 1: %r" % (c,))
+        self.assertEqual(c["between"], {"appTop": "0px", "appH": "460px"}, "between the cuts: a pinch at L, the reading no pan, 0 published and nothing written: %r" % (c,))
+        self.assertEqual(c["pinchAfter"], {"appTop": "83px", "appH": "460px"}, "the pinch after it publishes the hold: the cut at L left it standing (a cut at h writes 0 into it): %r" % (c,))
 
     def test_a_keyboard_raised_under_a_light_zoom_with_no_hold_publishes_its_pan(self):
         # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling: the author's pass 8's derived cut (1.0006 at 844) had every scale between it and
