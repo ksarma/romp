@@ -70711,10 +70711,18 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // bound the held pan decayed to 0 and a keyboard raised again under the same zoom laid the shell out at pan 0 under a
 // keyboard-sized --app-h, the band reopened). The hold is the pan of the KEYBOARD it was measured with: a keyboard of a
 // different height swapped in while the zoom stands, with no keyboard-down run between (the emoji keyboard, the predictive bar
-// toggled), is published from that pan by the hold road's rule above, under its own height, until the zoom ends or the keyboard
-// goes down, so a band under the composer can open for a taller keyboard and the body's bottom sit below the band for a shorter
+// toggled), is published from that pan by the hold road's stance on the swap's own run (h changed, so no pan), under its own
+// height, so a band under the composer can open for a taller keyboard and the body's bottom sit below the band for a shorter
 // one, by up to the height difference (the author's pass 5, 2026-09-20, disclosed: re-measuring under a zoom only when the height
-// changes is a design call not taken here; the harness and served legs re-raise the same keyboard). Two roads WRITE the hold and
+// changes is a design call not taken here; the harness's swapZoom and swapRefit cells drive a swap). That value stands until the
+// zoom ends or the keyboard goes down only where the pan rule does not govern the next run. Where the value in force was written
+// at a raise or a re-raise under the current zoom (kz the scale), the next run at the SAME report is a pan by the test above (the
+// scale and h unchanged since the swap's run) and publishes the pan rule's value, so --app-top moves with no new information, and
+// fit() runs again on ordinary events (a visual viewport resize or scroll, a window resize, focus and focusout among them).
+// Disclosed, whether a report identical to the previous one is a pan being the maintainer's call: a 471 px keyboard raised at
+// scale 2 with offsetTop 657.5 publishes 236, and the 508 px keyboard swapped in at offsetTop 40 publishes 236 on the swap's run,
+// the composer 364 px below the band's bottom, and 40 on a refit at the same report, 168 below; at 1.5, 275 and then 83 (node
+// cells, test_kernel_mobile's swapRefit cells pin them). Two roads WRITE the hold and
 // each writes the value it publishes: the measured road its measurement less the zoom's share (kbPx, the measurement itself below
 // the cut; under a pinch only where no hold is held), and the 0px road a zero, only in a true no-pan state, one the measured road would
 // store as 0: no visual viewport, or one under the cut, taken at the layout viewport L on both roads (the author's pass 9, 2026-09-20: the

@@ -1029,6 +1029,15 @@ for (const [s, deep, pan] of [[2, 590, 422], [1.5, 495.2, 281.33], [1.1, 250, 15
   const f = 'reraiseDeep' + s; r6rest(f); r6step(f, 'E1-kbUp', 508, 83, 1); r6step(f, 'E2-kbDownZ', 844 / s, 0, s);
   r6step(f, 'E3-reRaiseDeep', 508 / s, deep, s); r6step(f, 'P-panUp', 508 / s, pan, s);
 }
+// a keyboard of another height swapped in at the zoom of the raise that wrote the value in force, then the same report again
+// (disclosed in the fit() comment): the swap's run takes the stance (the band's height changed, so no pan), and a refit at the
+// same geometry is a pan by the test (the scale and the band's height unchanged since the previous run), so it publishes the pan
+// rule's value. At 2, a 471 px keyboard (band 373) raised at the layout viewport's bottom, then the 508 px keyboard (band 336) at
+// 40; at 1.5, the 508 px keyboard at 555.74, then the 471 px keyboard at 83
+{ const f = 'swapRefit2'; r6rest(f); r6step(f, 'kb471up', 373 / 2, 657.5, 2);
+  for (const t of ['swap508', 'refit', 'refit2']) r6step(f, t, 336 / 2, 40, 2); }
+{ const f = 'swapRefit1.5'; r6rest(f); r6step(f, 'kb508up', 336 / 1.5, 555.74, 1.5);
+  for (const t of ['swap471', 'refit']) r6step(f, t, 373 / 1.5, 83, 1.5); }
 // the 0px road clears the written-hold flag where it clears the hold (the maintainer's round 6 ruling, 2026-09-29, the flag's
 // clearing rule): a hold of 83 at scale 1 (the band 460, the flag set), the pointer fine with the visual viewport at rest (the 0px
 // road clears the hold and the flag), then coarse again under a real pinch with the same keyboard up, the nohold family's three
@@ -1749,6 +1758,30 @@ class MobileFitExecutes(unittest.TestCase):
                              "the hold, the keyboard down, the re-raise bound above the hold, then the pan re-bounded from the hold: %r" % (t,))
             self.assertEqual(band(t["P-panUp"], 83), gap, "the band under the composer after the pan: %r" % (t["P-panUp"],))
             self.assertLessEqual(band(t["P-panUp"], rp), 0, "the cell's premise: the re-raise bound would leave no band there: %r" % (t["P-panUp"],))
+
+    def test_a_refit_at_the_swaps_own_report_publishes_the_pan_rules_value(self):
+        # DISCLOSED, and these cells are its witness (the fit() comment's swap paragraph names them): after a keyboard swap at the
+        # zoom of the raise that wrote the value in force, a second fit() at an unchanged report moves --app-top. The swap's run is
+        # no pan (the band's height changed), so the stance keeps the raise's value under the new keyboard; the next run at the same
+        # report is a pan by the test (the scale and the band's height unchanged since the previous run), and the raise was at this
+        # zoom, so it publishes the pan rule's value. fit() runs again on ordinary events, so the second run is ordinary on a device.
+        # Whether a report identical to the previous one is a pan is the maintainer's call; these cells pin the built behaviour so a
+        # change to it is made on purpose (a pan test without the band's-height conjunct takes the rule on the swap's own run).
+        px = self._r6_px
+
+        def below(st):   # how far the composer's bottom sits below the visible band's bottom
+            return round((px(st["appTop"]) + px(st["appH"])) - (st["offsetTop"] + st["height"]), 2)
+
+        for fam, raise_, repeats, want, gaps in (("swapRefit2", "kb471up", ("swap508", "refit", "refit2"), [236, 236, 40, 40], [364.0, 168.0, 168.0]),
+                                                 ("swapRefit1.5", "kb508up", ("swap471", "refit"), [275, 275, 83], [316.33, 124.33])):
+            t = self._r6(fam)
+            self.assertEqual(len({(t[k]["height"], t[k]["offsetTop"], t[k]["scale"]) for k in repeats}), 1,
+                             "the cell's premise: the refits repeat the swap's own report: %r" % (t,))
+            self.assertEqual(t[raise_]["scale"], t[repeats[0]]["scale"], "the cell's premise: the swap at the raise's own zoom")
+            self.assertNotEqual(px(t[raise_]["appH"]), px(t[repeats[0]]["appH"]), "the cell's premise: a keyboard of another height")
+            self.assertEqual([px(t[k]["appTop"]) for k in (raise_,) + repeats], want,
+                             "the raise, the swap's run by the stance, then the refit at the same report by the pan rule: %r" % (t,))
+            self.assertEqual([below(t[k]) for k in repeats], gaps, "the composer below the visible band's bottom: %r" % (t,))
 
     def test_every_stance_cell_of_the_extended_families_publishes_the_stance_value(self):
         # round 6's extended families' stance cells (the maintainer's round 6 ruling, 2026-09-29), ported into the driver so the tree
