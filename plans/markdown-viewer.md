@@ -8782,10 +8782,13 @@ document's tap on an element over the control that hides at that tap's compatibi
 detail 1 and a click alone, which read the mouse's record; each opened the tab with the sign covered at the tap's start, and
 the retired blur's rule refused those cells too where the viewer's window held the focus, so WebKit's run again with an element
 that cancels that mousedown, where no blur comes, were red under a gate whose click reads its own standing record alone, as
-bef9ff8fc measured them; since the file review's round 20 the node guards of the tail, the slot's pointerId test, the touch
-records' refusal, the mouseup's clear and two of the touch-order pen's conditions red their rows only together with M-OFF, the
-allowlist admitting every chain, since the allowlist refuses every order those guards drive, so those rules are defensive under
-it (file-view.ts's gate comment names which reds need it), and the node guards and browser cells of the retired mouseout's rule
+bef9ff8fc measured them; since the file review's round 20 the node guards of the tail, the touch records' refusal, the mouseup's
+clear and the touch-order pen's wait for its compatibility mousedown red their rows only together with M-OFF, the allowlist
+admitting every chain, since the allowlist refuses every order those guards drive, so those rules are defensive under it
+(file-view.ts's gate comment names which reds need it), while the slot's pointerId test and the touch-order pen's condition on a
+click that names it close chains the allowlist admits, the viewer's own tap's and the pen's own tap's, the pointerId test
+Chromium's road 2 (22 covered clicks of that round's recorded rows, replayed), and their node guards, whose other tap sends its
+compatibility mousemove, are red under a gate without either rule alone, and the node guards and browser cells of the retired mouseout's rule
 and the retired blur's rule stand as the allowlist refusing their orders: in Firefox, after the viewer's own tap whose
 compatibility events another document's element took and which started in the viewer, the element first hit at the
 compatibility mousedown or a mouse resting in the viewer, the viewer's window hears a mouseout to no element, and a tap on that

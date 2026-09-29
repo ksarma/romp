@@ -3072,7 +3072,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   viewer's own tap filled the slot and sent no click here (a second finger rested on another document, or another document's
   //   element took that tap's compatibility events or its click), another document's tap sent this window its compatibility
   //   mousedown, mouseup and click under its own touch's pointerId, which took the slot and opened the tab with the sign covered
-  //   at that tap's start (the same check). Two rules of the file review's round 19 emptied the
+  //   at that tap's start (the same check). The own-chain allowlist does not subsume that test or the touch-order pen's condition
+  //   on a click that names it: the viewer's own tap's chain carries no pointerId, so Chromium's road 2, whose covered click names
+  //   another touch, is refused by that test alone (the file review's round 20: 22 covered clicks of its recorded rows, replayed,
+  //   the open leg's Chromium tap cells on the chat and the Files pane red without it, and the node guard, whose other tap sends its
+  //   compatibility mousemove), and a click that names another pointer after a touch-order pen's tap, whose chain is the pen's own
+  //   tap's, is refused by the pen's condition alone (its node guard). Two rules of the file review's round 19 emptied the
   //   slot and cleared the tap's flag (tapDue, below) here: a mouseout to no element of this document while a tap's
   //   compatibility mousedown is due (its extra8-2), which Firefox sends after the viewer's own tap's pointerup, before the next
   //   click here, when another document's element takes that tap's compatibility events and they start in the viewer, the element

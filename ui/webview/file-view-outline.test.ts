@@ -2274,12 +2274,17 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // cap on the chain's length), M-EXTRA (a twenty-second type, focusin, in CHAIN_TYPES), M-LESS (focus dropped from CHAIN_TYPES) and
 // M-NOREMOVE (the chain listener added outside the gate's list and never removed). Since the file review's round 20, where the
 // allowlist refuses a guard's order too, a red a title names for a gate of the earlier rules holds with M-OFF added to that gate:
-// P6-OFF, P6-ANYDETAIL, P5-OFF, P3-OFF, P3-TC, P3-DEL, P4-ANY, P4-NOMD, MU-OFF, MU-DETAIL and MU-FLAG red their guards' rows only
-// together with M-OFF, the allowlist refusing every order those guards drive, so those rules are defensive under it, and so do the
+// P6-OFF, P6-ANYDETAIL, P3-OFF, P3-TC, P3-DEL, P4-NOMD, MU-OFF, MU-DETAIL and MU-FLAG red their guards' rows only together
+// with M-OFF, the allowlist refusing every order those guards drive, so those rules are defensive under it, and so do the
 // unnamed gates of the guard of a tap on another document's element whose flag skips the test of a primary contact or stands after
 // any primary touch's pointerup, and whose mousedown leaves the slot alone but for its row of a tap whose click never came; while
 // OWNREF-OFF, P4-OFF, P4-NOID, A18-C, A18-P, C18-N and T3-M2 red theirs alone, and so do that guard's gates whose flag outlives the
-// tap's own mousedown or whose mousedown empties the slot at every such mousedown.
+// tap's own mousedown or whose mousedown empties the slot at every such mousedown; and P5-OFF and P4-ANY red theirs alone since the
+// fixes for the file review's round 20 gave the guards of another document's tap whose click names another touch and of
+// another document's tap after a touch-order pen's pointerup the other tap's compatibility mousemove, so each drives a chain the
+// allowlist admits, the viewer's own tap's and the pen's own tap's: the slot's pointerId test closes Chromium's road 2, which the
+// allowlist admits (22 covered clicks of that round's recorded rows, replayed; the open leg's Chromium tap cells on the chat and the
+// Files pane red without it), and the pen's condition closes a click that names another pointer after a touch-order pen's tap.
 /** Firefox's mouse click under pointerId 0 on `target`: its pointerdown, mousedown, pointerup, mouseup and click (typed mouse). */
 const ffMouseClick = (target: El): void => {
   const m: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
@@ -2335,18 +2340,17 @@ test("how a click finds its press, Firefox's lone click after another document c
   const want = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
   assert.deepEqual(got, Object.fromEntries(steps.map(([n]) => [n, want])), "the lone click opens nothing and reveals the control, and the next click opens once, [the lone click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, another document's tap whose click names another touch, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): Chromium gives each touch a pointerId of its own and a tap's click the touch's own, so after the viewer's own tap on the picture with the control shown, whose compatibility events and click another element took (a second finger resting on another document, or an element of another document shown during the tap), another element over the control, then a tap on another document's element over the picture that goes away during the press, whose compatibility mousedown, mouseup and click alone land in this window under another touch's pointerId, typed touch: that click opens nothing and reveals the control, and the next tap opens once (a property pin over window.open's calls and the scrollIntoView record; red at 142ade155, where the click took the slot the viewer's tap filled and opened, and under P5-OFF)", async (t) => {
+test("how a click finds its press, another document's tap whose click names another touch, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): Chromium gives each touch a pointerId of its own and a tap's click the touch's own, so after the viewer's own tap on the picture with the control shown, whose compatibility events and click another element took (a second finger resting on another document, or an element of another document shown during the tap), another element over the control, then a tap on another document's element over the picture that goes away during the press, whose compatibility mousedown, mouseup and click alone land in this window under another touch's pointerId, typed touch: that click opens nothing and reveals the control, and the next tap opens once; the rows carry Chromium's whole order, the viewer's tap's touchstart, pointerout and touchend and the other tap's compatibility mousemove, the chain of the viewer's own tap, which the own-chain allowlist admits, so the slot's pointerId test alone refuses the click, as it refuses Chromium's road 2, 22 covered clicks of the file review's round 20's recorded rows whose chain the allowlist admits (a property pin over window.open's calls and the scrollIntoView record; red at 142ade155, where the click took the slot the viewer's tap filled and opened, and under P5-OFF, the rows with no compatibility mousemove before the file review's round 20 red under P5-OFF only together with M-OFF)", async (t) => {
   const got: Record<string, unknown> = {};
   const rows: Array<[string, number, number, number]> = [["two fingers, the slot under touch 2 and the click under touch 3", 2, 3, 1], ["an element shown during the tap, the slot under touch 14 and the click under touch 15, detail 2", 14, 15, 2]];
   for (const [name, slotId, clickId, detail] of rows) {
     got[name] = await gateCell(t, name, (g, opens) => {
       const f: GatePtr = { pointerId: slotId, pointerType: "touch", isPrimary: true, button: 0 };
       g.place(IN_BOX);
-      onWindow("pointerdown", g.img, { ...f });
-      onWindow("pointerup", g.img, { ...f });
-      onWindow("touchend", g.img);
+      tapDown(g.img, f);                                                    // the viewer's tap as Chromium sends it: its pointerdown and touchstart,
+      tapUp(g.img, f, "chromium");                                          // its pointerup, its pointerout to no element and its touchend
       g.cover(new El("div"));
-      onWindow("mousedown", g.img, { button: 0 });
+      tapCompat(g.img, "chromium");                                         // the other tap's compatibility mousemove and mousedown, the own tap's chain
       gateClick(g.img, clickId, detail, true, "touch");
       const first = opens();
       g.cover(null);
@@ -2438,7 +2442,7 @@ test("how a click finds its press, a pen in the touch order, a guard CI runs (th
   assert.deepEqual(got, { one: open1, two: [open1, open1], double: [open1, { opened: 0, reveals: 1 }], covered: [{ opened: 0, reveals: 1 }, open1], noPointerId: open1, noMouseDown: [{ opened: 0, reveals: 1 }, open1] },
     "each pen tap's opens and reveals, [the first, the next] where the cell has two (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, another document's tap after a touch-order pen's pointerup, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): a pen in the touch order presses the picture with the control shown and its compatibility events and click go to another element, then another element over the control, then a tap on another document's element whose compatibility mousedown, mouseup and click land in this window, the click typed touch under another pointerId (Chromium's shape) or typed mouse under pointerId 1 (WebKit's): the pen's slot is taken only by a click that names that pen, so the click opens nothing and reveals the control, and the next click opens once (a property pin over window.open's calls and the scrollIntoView record; green at 142ade155, whose tap's mousedown emptied the pen's slot, and red under P4-ANY, whose pen slot any click took)", async (t) => {
+test("how a click finds its press, another document's tap after a touch-order pen's pointerup, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): a pen in the touch order presses the picture with the control shown and its compatibility events and click go to another element, then another element over the control, then a tap on another document's element whose compatibility mousedown, mouseup and click land in this window, the click typed touch under another pointerId (Chromium's shape) or typed mouse under pointerId 1 (WebKit's): the pen's slot is taken only by a click that names that pen, so the click opens nothing and reveals the control, and the next click opens once; the other tap's compatibility mousemove before its mousedown makes the chain the pen's own tap's, which the own-chain allowlist admits, so the pen's condition alone refuses the click (a property pin over window.open's calls and the scrollIntoView record; green at 142ade155, whose tap's mousedown emptied the pen's slot, and red under P4-ANY, whose pen slot any click took, the rows with no compatibility mousemove before the file review's round 20 red under P4-ANY only together with M-OFF)", async (t) => {
   const got: Record<string, unknown> = {};
   const pen: GatePtr = { pointerId: 3, pointerType: "pen", isPrimary: true, button: 0 };
   const rows: Array<[string, number, string]> = [["a click typed touch under pointerId 5", 5, "touch"], ["a click typed mouse under pointerId 1", 1, "mouse"]];
@@ -2448,6 +2452,7 @@ test("how a click finds its press, another document's tap after a touch-order pe
       onWindow("pointerdown", g.img, { ...pen });
       onWindow("pointerup", g.img, { ...pen });
       g.cover(new El("div"));
+      onWindow("mousemove", g.img, { buttons: 0 });                         // the other tap's compatibility mousemove, the pen's own tap's chain
       onWindow("mousedown", g.img, { button: 0 });
       gateClick(g.img, pid, 1, true, type);
       const first = opens();
