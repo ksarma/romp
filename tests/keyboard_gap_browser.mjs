@@ -10,7 +10,8 @@
 // and a keyboard with no pan (508, 0); then (the author's pass 2) the picker's lift under the pan, a pinch with the keyboard up and the
 // keyboard dismissed under the zoom; then (the author's pass 3) the keyboard up with the visual viewport at the layout viewport's bottom
 // (508, 336), the fixed bar inside the band; then (the author's pass 4) a pinch over that deep pan and the pan at an interior position (508,
-// 320), the bar partly inside the band; then (the author's pass 6) a short band panned deep (20, 830), the band's top below the bar's top.
+// 320), the bar partly inside the band; then (the author's pass 6) a short band panned deep (20, 830), the band's top below the bar's top;
+// then (the maintainer's round 6 ruling) the pinch road's hold families, out.r6, each from rest.
 // After each the driver waits two animation frames (fit() coalesces to one per frame)
 // and reads, in the shell's coordinate space: the composer's bottom (the chat iframe's top plus the composer's bottom inside
 // its same-origin document), the body's box, #mtabs's box, and the three shell variables.
@@ -149,7 +150,7 @@ try {
   // the author's pass 9 (2026-09-20), the maintainer's round 5 ruling: the keyboard raised under a LIGHT zoom with no hold standing (the rest
   // above stored 0): scale 1.003, the visual viewport 506.48 tall (508 / 1.003) panned 83.7, so h is 508 again. The author's pass 8's cut read
   // the report as a pinch and published the hold, 0px, the band. The measured road publishes the pan less the zoom's share,
-  // 844(1 - 1/1.003) = 2.52 px, 3 in pixels: 81px, at most the share below the keyboard's pan
+  // 844(1 - 1/1.003) = 2.52 px, 3 in pixels: 81px, within the share plus a pixel below the keyboard's own pan and a pixel above it
   out.kbUpLightZoom = await move(506.48, 83.7, 1.003);
   out.settledLight = await move(844, 0);
   // the author's pass 3 (2026-09-19): the keyboard up with the visual viewport dragged to the layout viewport's bottom (height 508,

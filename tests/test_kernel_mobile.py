@@ -647,7 +647,8 @@ visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop 
 // stores 0, so the hold is 0; the keyboard then comes up at scale 1.003 (h 460: the visual viewport 458.62 tall, panned 83.7).
 // The author's pass 8's road read the report as a pinch and fell to the hold, 0px, the band under the composer this change exists to close.
 // The measured road now publishes the pan a pure zoom CANNOT explain: the measured pixels (84) less the zoom's share at that
-// scale, 844(1 - 1/1.003) = 2.52 px, 3 in pixels: 81px, at most the share below the keyboard's pan and never 0
+// scale, 844(1 - 1/1.003) = 2.52 px, 3 in pixels: 81px, within the share plus a pixel below the keyboard's own pan and a pixel above
+// it, and never 0
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.restBeforeLightZoom = appTop();
 visualViewport.scale = 1.003; visualViewport.height = 458.62; visualViewport.offsetTop = 83.7; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
