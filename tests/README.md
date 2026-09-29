@@ -259,25 +259,21 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `getattr` and its kin, an item of a namespace such as `vars(sys)`, and
   `config.workerinput`) is admitted only when its key is proved to be one
   fixed string other than the option's: a literal, or a name bound once to a
-  literal with nothing in the conftest's text that can rebind it, in the
-  conftest or in a module of the repository it imports directly. A `setattr`
+  literal in the conftest's own text with nothing there that can rebind it.
+  A key reached through any import (a name an import binds, or an attribute
+  read on one) is not proven, whatever the imported module binds it to. The
+  reviewer's ruling of 2026-09-29 withdrew the proof that read the imported
+  file, after four verifications in a row found an honest way to bind the
+  import, or the module's attribute, to another object at run time (a stub
+  in `sys.modules`, a directory ahead on the import path, another module
+  rebinding the attribute); every key `tests/conftest.py` reads is a literal
+  in its own text. A `setattr`
   or `delattr` in the conftest (a bare name or a method such as
   `monkeypatch.setattr`), or a `unittest.mock` patch spelled `patch`,
   `mock.patch`, `patch.object` or `patch.multiple`, that names the key by a
   string literal, or names what it writes other than by a string literal, can
   rebind it (`monkeypatch.setattr("conftest.K", "plugins")`,
-  `mock.patch("conftest.K", "plugins")`). For a name of a module it imports
-  directly, the proof reads the file the import statement names, so the
-  conftest's text must also leave the statement binding that file: a write
-  of `sys.modules` (an item stored or deleted,
-  `monkeypatch.setitem(sys.modules, ...)`, `mock.patch.dict(sys.modules, ...)`
-  or `mock.patch.dict("sys.modules", ...)`, a method such as `update` or
-  `setdefault`), `monkeypatch.syspath_prepend`, or a setter or patch helper
-  naming `modules`, `__import__` or an import-path attribute of `sys`
-  (`monkeypatch.setattr(builtins, "__import__", fake)`) can make it bind a
-  stub or a module from another directory, so any of these leaves the key
-  unproven. `tests/conftest.py` reads `sys.modules` only through `get`,
-  `items()` and `values()`. A key taken
+  `mock.patch("conftest.K", "plugins")`). A key taken
   from a list, a loop, a parameter, a default, a class attribute or a fold is
   refused, so a helper that passes keys is refused visibly rather than
   admitted. The rule states the trade this makes:
@@ -352,10 +348,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the processes a test leaves), and an environment lookup by a key the rule does
   not prove, or the environment read whole, which `tests/conftest.py` does 12
   times for its state isolation (a lookup that names `PYTEST_ADDOPTS` is
-  refused), a stub put in `sys.modules` by a spelling the proof does not read
-  (`getattr(sys, "modules")`, `vars(sys)["modules"]`), and a module the
-  conftest imports directly that writes `sys.modules` at its import, as
-  `tests/__init__.py` does for seven of its own modules. It stops at the
+  refused). It stops at the
   modules the conftest imports directly: a read
   reached only through an import of an import passes, and so does a road through
   such a module in a shape the direct-import check does not match that names
