@@ -226,6 +226,17 @@ def tree_of(root):
     return out
 
 
+def parent_ignored():
+    """SIGHUP and SIGINT among the signals /proc says this leg's parent, the runner, ignores (SigIgn) as it starts this
+    leg or setup; None without /proc."""
+    try:
+        with open(os.path.join("/proc", str(os.getppid()), "status")) as fh:
+            mask = int(next(line for line in fh if line.startswith("SigIgn:")).split()[1], 16)
+    except (OSError, StopIteration, ValueError):
+        return None
+    return sorted(n for n in ("SIGHUP", "SIGINT") if (mask >> (int(getattr(signal, n)) - 1)) & 1)
+
+
 root = checkout_root(os.getcwd())
 # Round 2, Class B: the TMPDIR of every leg that ran before this one (read from the calls already recorded) that still
 # exists now: each leg's own is removed when it ends, so none should.
@@ -252,6 +263,8 @@ with open(LOG, "a") as f:
                                              if root and os.path.exists(os.path.join(root, ".git", n))),
                         # the owner's build question 5: the stop signals this leg's process started with ignored
                         "ignored": sorted(n for n in ("SIGHUP", "SIGINT") if signal.getsignal(getattr(signal, n)) == signal.SIG_IGN),
+                        # and the runner's: its pid (this leg's parent, since env execs the command) and what it ignores
+                        "parent": os.getppid(), "parent_ignored": parent_ignored(),
                         "state": state}) + "\n")
 act = ctl.get("action", {}).get(leg)
 if act == "commit":
@@ -630,6 +643,9 @@ SEED_928_CI = SEED_CI.replace(SEED_SERVED_PYTHON + SEED_SERVED_STEP, "") + """  
         run: npm ci
 """ + SEED_SERVED_PYTHON + SEED_SERVED_STEP
 assert SEED_CI.count(SEED_SERVED_PYTHON + SEED_SERVED_STEP) == 1 and SEED_928_CI.count(SEED_SERVED_STEP) == 1
+# The fake's calls at that layout, in order: the served-pages job's npm ci setup is the second deps call.
+SEED_928_ORDER = [PYTEST_LEG, "bats", "manager", "tools", "deps", "typecheck", "npm-test", "pdf-smoke", "build", "deps", "served",
+                  "ledger"]
 SEED_HOST = 'SDK_TESTED_VERSION = "%s"\n' % SEED_PIN
 # The files the seed's served step selects, in the order its globs expand them (one glob after the other).
 SEED_SERVED_FILES = ["tests/test_b_browser.py", "tests/test_a_served.py"]
@@ -1864,7 +1880,7 @@ class Checkout(_Base):
     def gated_run(self, w, ignore, signum):
         """Start the runner with the signals in `ignore` ignored (runner_argv) while the bats leg waits (the fake's gate
         action), send `signum` to the runner once the leg is waiting, then let the leg go. Returns (rc, stdout, stderr,
-        the signals /proc says the runner ignored while the leg waited, or None without /proc)."""
+        the signals /proc says the runner ignored while the leg waited, or None without /proc, the runner's pid)."""
         marks = os.path.join(w.tmp, "marks")
         os.makedirs(marks)
         w.ctl({"action": {"bats": "gate"}, "marks": marks})
@@ -1879,35 +1895,52 @@ class Checkout(_Base):
         with open(os.path.join(marks, "go"), "w") as f:
             f.write("go\n")
         out, err = proc.communicate(timeout=120)
-        return proc.returncode, out, err, ignored
+        return proc.returncode, out, err, ignored, proc.pid
 
     def test_a_stop_signal_the_runner_was_started_with_ignored_stays_ignored(self):
         """Round 2, the owner's build question 5: a runner started with SIGHUP ignored (nohup) or SIGINT ignored (a
         non-interactive shell's background job) leaves it ignored, since its caller chose not to have the run stopped by
         it. The signal is sent while the bats leg waits, the leg is then let go, and the run finishes and passes; /proc
-        shows the runner ignoring the signal; and every leg starts with SIGHUP and SIGINT at their default action, as
-        when the runner catches them, so a leg's tests run the same however the runner was started. Before, the runner
-        caught both whatever its caller had chosen, and the signal stopped the run (128 plus its number)."""
+        shows the runner ignoring the signal while the bats leg waits, and still ignoring it, and only it, as it starts
+        every later leg and setup (the fake reads its parent's SigIgn), so no group, setup or leg after the bats leg
+        arms it again; and every leg starts with SIGHUP and SIGINT at their default action, as when the runner catches
+        them, so a leg's tests run the same however the runner was started. At main's layout since fork PR 928, so a
+        group's npm ci setup (the served-pages job's) is among those starts, and the extension job's group after the
+        shell job's. Before, the runner caught both whatever its caller had chosen, and the signal stopped the run (128
+        plus its number)."""
         self.maxDiff = None
+        proc_status = os.path.exists("/proc/self/status")
         for signum in (signal.SIGHUP, signal.SIGINT):
             with self.subTest(signal=int(signum)):
-                w = World()
+                w = World(dict(SEED, **{".github/workflows/ci.yml": SEED_928_CI}))
                 self.addCleanup(w.close)
-                rc, out, err, ignored = self.gated_run(w, (signum,), signum)
+                rc, out, err, ignored, runner = self.gated_run(w, (signum,), signum)
                 result = w.result() if os.path.exists(w.result_path()) else {}
+                calls = w.calls()
+                groups = ((result.get("runner") or {}).get("checkout") or {}).get("groups") or []
+                setup = next((g.get("setup") for g in groups if g.get("job") == "served-pages"), None) or {}
                 self.assertEqual({"exit": rc, "verdict": result.get("verdict"),
                                   "the runner ignores it": None if ignored is None else int(signum) in ignored,
-                                  "legs that started with a signal ignored": [c["leg"] for c in w.calls() if c.get("ignored")]},
+                                  "legs that started with a signal ignored": [c["leg"] for c in calls if c.get("ignored")],
+                                  "the served-pages setup's rc": setup.get("rc"),
+                                  "starts whose parent is not the runner": [c["leg"] for c in calls if c.get("parent") != runner],
+                                  "starts with no SigIgn read where /proc has one":
+                                      [c["leg"] for c in calls if c.get("parent_ignored") is None and proc_status],
+                                  "starts at which the runner did not ignore only it":
+                                      [(c["leg"], c.get("parent_ignored")) for c in calls
+                                       if c.get("parent_ignored") is not None and c["parent_ignored"] != [signum.name]]},
                                  {"exit": 0, "verdict": "pass", "the runner ignores it": None if ignored is None else True,
-                                  "legs that started with a signal ignored": []}, out + err)
-                self.assertEqual(w.legs_called(), SEED_ORDER)
+                                  "legs that started with a signal ignored": [], "the served-pages setup's rc": 0,
+                                  "starts whose parent is not the runner": [], "starts with no SigIgn read where /proc has one": [],
+                                  "starts at which the runner did not ignore only it": []}, out + err)
+                self.assertEqual(w.legs_called(), SEED_928_ORDER)
 
     def test_sigterm_stops_a_runner_started_with_sighup_and_sigint_ignored_and_cleans_up(self):
         """The other way (the owner's build question 5): a runner started with SIGHUP and SIGINT ignored, and SIGTERM too,
         still stops on SIGTERM, sent while the bats leg waits (SIGTERM always stops a run): it exits 143 saying so, the
         stopped run stays unfinished, and the leg's TMPDIR and checkout are gone."""
         w = self.w
-        rc, out, err, _ignored = self.gated_run(w, (signal.SIGHUP, signal.SIGINT, signal.SIGTERM), signal.SIGTERM)
+        rc, out, err, _ignored, _runner = self.gated_run(w, (signal.SIGHUP, signal.SIGINT, signal.SIGTERM), signal.SIGTERM)
         self.assertEqual(rc, 128 + 15, out + err)
         self.assertIn("stopped by signal 15; the legs were stopped and TMPDIR and the checkout removed", err)
         call = [c for c in w.calls() if c["leg"] == "bats"][0]
