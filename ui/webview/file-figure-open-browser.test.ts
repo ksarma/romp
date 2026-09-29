@@ -3501,13 +3501,16 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // round 20: the rulings pass's census and the execution check's, Playwright's engines on Linux, touch emulated), the viewer's own
 // press held across a short hide of its frame with the focus not back at the release (Chromium, 60 of 360 mouse presses and 36
 // of 72 pen presses of the check's grid), a 2,000 px block inserted above the picture during a held press and removed (WebKit, 3
-// of 3), and two own gestures of a focus move that round 19's measurement of the blur's rule drove, which bef9ff8fc's gate
-// opened, the focus moved between a mouse click's pointerup and its click (Chromium 18, Firefox 14, WebKit 18, and 9 of 9 in each
-// engine at d9fb76da0) and a finger held while the focus moves (Chromium 14, and 6 of 6 at d9fb76da0), and 2 Firefox taps of round
-// 19's recorded rows whose own pointerdown took the focus out of the viewer's window, and on a device with a mouse and a
-// touchscreen or a pen, a finger's tap or a pen's press during which the mouse moves in the viewer and a mouse click during which
-// a finger resting on the viewer moves (Chromium, touch and pen emulated, 3 of 3 each at d9fb76da0, whose gate is this head's,
-// each open at bef9ff8fc), and by reading the same with the mouse leaving the viewer, and in Firefox and WebKit; the retired blur's rule's own cost, a focus move out of the viewer's window during the
+// of 3), and on a device with a mouse and a pen, a pen's press during which the mouse moves in the viewer (Chromium, pen emulated,
+// 3 of 3 at d9fb76da0, open at bef9ff8fc), a cost the incremental reads pay too; four own gestures the allowlist refused before its
+// read-outs, which bef9ff8fc's gate opened, open since: the focus moved between a mouse click's pointerup and its click and a
+// finger held while the focus moves (round 19's measurement of the blur's rule, its recorded rows replayed, Chromium 18 and 14,
+// Firefox 14 and WebKit 18, with Firefox's 2 taps whose own pointerdown took the focus out of the viewer's window, 66 in all), and
+// a finger's tap during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves
+// (Chromium, touch emulated); and by reading the window's blur alone at those places, a pen's click or a touch-order pen's tap with
+// the focus leaving, and on a device with both a finger or the mouse crossing an element's edge or leaving the viewer during the
+// other's gesture, and the device's gestures in Firefox and WebKit; the retired blur's rule's own cost, a focus move out of the
+// viewer's window during the
 // viewer's own press or between a tap's pointerup and its compatibility mousedown, refused once, the allowlist pays the same,
 // and the retired leave's arm for no button and mouseout's clear cost nothing measured, no cell of this leg changing under them
 // (file-view.ts's gate comment states each).

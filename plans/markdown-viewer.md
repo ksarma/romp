@@ -8801,8 +8801,10 @@ element over the control, which goes away during the press, took that tap's slot
 start, red at ddb446fae (the file review's round 19, extra8-2), which the allowlist refuses by that mouseout in the tap's chain,
 the mouseout Firefox sends 20 to 35 ms after the viewer's own tap's click falling in no chain a click reads; and the blur guard's
 rows of a mouse's and a pen's held press and of Firefox's and WebKit's tap, red at d61eb027d, are red under M-OFF, its row of an
-element's blur with no focus after it now extra5-1's closure with the focus not back and a cost, and its rows of a blur between a
-mouse click's pointerup and its click and of a finger held while the focus moves costs of the allowlist (below);
+element's blur with no focus after it now extra5-1's closure with the focus not back and a cost, and its rows of the window's
+blur alone between a mouse click's pointerup and its click and in a finger's contact refused, since the focus-leaving read-outs
+take only the engines' orders, each with an element's or the document's blur first (the admit guard carries those orders, and the
+rows of the same focus move before a press's pointerup and after a tap's are refused, costs below);
 the own-chain allowlist (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions
 on them): the chain listener, one function on each of its twenty-one types, starts a chain at every primary pointerdown and
 records every later event of those types as a token, its type, for a pointer event its pointer type and whether a button is
@@ -8821,10 +8823,18 @@ finger's also the focus arriving and the mouse's pointerout, pointerover, mouseo
 down), its pointerup, its own pointerouts and pointerleaves to no element and a touchend where they come, at most one
 compatibility boundary pair (a mouseout and a mouseover to elements, or a mouseover from no element), one or more mousemoves with
 no button down, the mousedown, the focus arriving and a mouseup of detail 1, or of 1 or 2 for a finger's; anywhere an element's
-blur that no element's focus follows before the next pointerup or mouseup is refused, and every other chain is refused by
+blur that no element's focus follows before the next pointerup or mouseup is refused; before the grammar reads a chain, four
+read-outs take out the tokens of four more own gestures (the fixes for that round, the coordinator's ruling on the allowlist's
+build): between a mouse's pointerup and its mouseup, the focus leaving this window, whole, in one of the engines' three orders (an
+element's blur and the window's, Chromium and WebKit; an element's, the document's and the window's, or the document's and the
+window's, Firefox), the focus moved at the click's release; in a finger's tap before its pointerup, one run of the focus leaving
+in one of those orders, a finger held while the focus moves, and the mouse's pointermoves and mousemoves with no button down, the
+mouse moving during the tap; and in a mouse's press between its mousedown and its pointerup, a finger's pointermoves with the
+contact down, a resting finger moving during the click; and every other chain is refused by
 construction, a mouse event with no button down inside a press, a mouse-typed pointer event inside a tap but those four of a
-finger's, a tap with no compatibility mousemove, a window's blur, a drag, a context menu, an auxclick, a cancel, a second
-pointerdown, a boundary event to no element with the button down and any sign the grammar does not name, each such click opening
+finger's and its moves before the pointerup, a tap with no compatibility mousemove, a window's blur but in an order a read-out
+takes out, a drag, a context menu, an auxclick, a cancel, a second pointerdown, a touch event in a press but a finger's move in a
+mouse's, a boundary event to no element with the button down and any sign the grammar does not name, each such click opening
 nothing and revealing the control, the next click opening; the residual, the covered clicks whose chain the allowlist admits,
 two shapes of the class. First, an element of another same-origin document shown over the picture during the viewer's tap takes
 that tap's compatibility events and click, and a tap on that element, which goes away during the press, then reaches the viewer
@@ -8966,7 +8976,7 @@ press held while the page or a peer frame moves the focus refused in Chromium 18
 each mover, a pen's press so in Chromium 14 of 14, the focus moved at a mouse click's own pointerdown and at a tap's pointerup
 18 of 18, 14 of 14 and 18 of 18 each, and the nested frame, the tab and the dialog in the check), while a finger held while the
 focus moves (Chromium 0 of 14 refused) and the focus moved at a mouse click's pointerup (0 of 18, 0 of 14, 0 of 18), which that
-rule refused none of, the allowlist refuses, since it admits a blur of the window nowhere, costs of it below, and the first own
+rule refused none of, the allowlist admits through its focus-leaving read-outs (below), and the first own
 click after a focus move (0 of the 141 that followed a real blur), the first own tap (0 of 132) and the cells with no focus move
 (0 of 164) changed nothing, Firefox's blur after the viewer's own open, the opened tab taking the focus after that open's click,
 counted apart and refusing nothing, Firefox's phone rows left out since Playwright's Firefox mouse click under isMobile opened
@@ -8995,10 +9005,20 @@ refusal once that reveals the control, the next click opening: the viewer's own 
 the focus not back at the release, released within about 10 ms of the show with the body box focused or held on the control
 while the viewer's own input holds the focus (Chromium, 60 of 360 mouse presses and 36 of 72 pen presses of the check's grid),
 whose chain is extra5-1's with the focus not back; a 2,000 px block inserted above the picture during a held press and removed
-(WebKit, 3 of 3), whose chain carries the mouse's boundary events with no button down; and, refused where bef9ff8fc's gate opened
-them, the focus moved between a mouse click's pointerup and its click (Chromium 18, Firefox 14, WebKit 18, and 9 of 9 in each
-engine at d9fb76da0) and a finger held while the focus moves (Chromium 14, and 6 of 6 at d9fb76da0), since the allowlist admits a
-blur of the window nowhere, and 2 Firefox taps of round 19's recorded rows whose own pointerdown took the focus out of the viewer's window; and on a device with a mouse and a touchscreen or a pen, a finger's tap or a pen's press during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves (Chromium, touch and pen emulated, 3 of 3 each at d9fb76da0, whose gate is this head's, each open at bef9ff8fc), and by reading the same with the mouse leaving the viewer, and in Firefox and WebKit; and by reading, not measured,
+(WebKit, 3 of 3), whose chain carries the mouse's boundary events with no button down; and on a device with a mouse and a pen, a
+pen's press during which the mouse moves in the viewer (Chromium, pen emulated, 3 of 3 at d9fb76da0, open at bef9ff8fc), since a
+pen's press admits no mouse event with no button down, a cost the incremental reads pay too (their read of extra7-1 refuses the
+pen's record at the mouse's move); four own gestures the allowlist refused before its read-outs, where bef9ff8fc's gate opened
+them, open since: the focus moved between a mouse click's pointerup and its click and a finger held while the focus moves (round
+19's measurement of the blur's rule, its recorded rows replayed: Chromium 18 and 14, Firefox 14 and WebKit 18, with Firefox's 2
+taps whose own pointerdown took the focus out of the viewer's window, 66 in all, and the first own-gesture adversary's rows at
+d9fb76da0), and on a device with a mouse and a touchscreen, a finger's tap during which the mouse moves in the viewer and a mouse
+click during which a finger resting on the viewer moves (Chromium, touch emulated, that adversary's rows); and by reading, not
+measured, the window's blur alone at a mouse click's release or in a finger's contact, where no element of the viewer's document
+held the focus (every recorded own chain of that focus move carried an element's or the document's blur first, and the read-outs
+take those orders alone), the focus leaving at a pen's click's release or in a touch-order pen's tap, on a device with both a
+finger leaving the viewer or crossing an element's edge during a mouse click and the mouse crossing an element's edge during a
+finger's tap, and the device's gestures in Firefox and WebKit,
 WebKit's hover update landing inside a finger's slow tap after the content moved under a resting mouse, an eraser or a barrel
 button, a capture handler that moves the focus at a press in a way no census drove, a touch-order pen's double tap's second tap,
 a press whose chain passes the cap of 1,024 tokens and any event of an engine not measured (the file review's round 17, tests-1
