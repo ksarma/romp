@@ -1,7 +1,7 @@
 // The overlay's rectangles across a repaint UNDER A HELD POINTER (plans/file-review.md, Slice 4; ui/CLAUDE.md,
 // click-safe). With a PDF the panel's paint pass runs on every page draw, redraw and width change (the chunk's onPage
-// → fireRendered → paintAll → paintRegions → RegionLayer.paint), and a press on a rectangle is deliberately not
-// captured so the browser's click reaches the rectangle. A paint that removed and remade every rectangle therefore
+// → fireRendered → #latchCardState → paintPass → paintRegions → RegionLayer.paint), and a press on a rectangle is
+// deliberately not captured so the browser's click reaches the rectangle. A paint that removed and remade every rectangle therefore
 // detached the pressed one whenever a neighbouring page finished drawing mid-press: mousedown and mouseup on
 // different nodes, and no click reached a data-act (2026-09-06). paint() now updates a rectangle in place, keyed by
 // the comment it opens, and never re-inserts one that is up. The DOM stand-in is the press test's, plus the browser's

@@ -2264,7 +2264,7 @@ function healPathImgs(): void {
 // the page shim fires romp:wsup when THIS pane's kernel socket reconnects (kernel.py ws.onopen) —
 // the same kernel-is-back event a hostUp is for a federated tunnel; heal everything on it
 window.addEventListener("romp:wsup", () => { retryFailedPreviews(); refreshSettledPreviews(); healPathImgs(); });
-installMdImgHeal();   // markdown-inline <img> failures are PARKED (capture-phase, once) and heal on the reconnect-class events (T291c);
+installMdImgHeal();   // a markdown-inline <img> that fails at an address is PARKED (capture-phase, once; a data: figure, which no server can heal, keeps its src) and heals on the reconnect-class events (T291c);
 //                       md() and userMd() run mdImgPostPass on their own output, so a re-render parks a known-failed image before it fetches
 // The page's own bundle build, filed once per page load (T291c, the user's 2026-09-09 report could not tell the
 // page's build from the kernel's): the ?v= the kernel stamped on the render.js script this page loaded (the

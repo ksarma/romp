@@ -825,7 +825,7 @@ test("click-safety: ONE delegate() root for every control (the body row, which a
   // the composer's input is never rebuilt, and the aside's own children are placed once per open, so a
   // poll re-render swaps section CHILDREN only and cannot drop the input's focus mid-word
   assert.match(SRC, /if \(!box\.contains\(this\.input\)\) box\.replaceChildren\(ref, this\.input, acts, err\);/);
-  assert.match(SRC, /if \(!this\.root\.contains\(head\)\) this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/);
+  assert.match(SRC, /if \(!this\.root\.contains\(head\)\) this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log, this\.live\);/);
   assert.equal((SRC.match(/this\.root\.replaceChildren\(/g) || []).length, 1, "the aside's children are never rebuilt elsewhere");
   // the highlights carry the delegate's action and the comment id; painted through anchor-map, states located / context / detached
   // the Rendered paint defers the trim of its collapsed blanks to the pass (`trim: false`; anchor-map.ts trimCollapsedMarks runs

@@ -1,19 +1,19 @@
 // The Comment float across a paint the panel makes with no gesture, in headless Chromium over the REAL viewer and panel (plans/
 // markdown-viewer.md Slice 5, item 9; file-comments.ts onSelectionChange, afterPaint, offeredFor; the Slice 5 review, round 1;
 // real-viewer-leg.ts: the Files pane under styles.css and files-pane.css). A peer's comment lands through the REAL poll (the store's
-// HEAD answers a moved mtime, the next tick refreshes, applyStatus runs paintAll), which unwraps and re-wraps every highlight. A
+// HEAD answers a moved mtime, the next tick refreshes, applyStatus runs #latchCardState's pass, paintPass), which unwraps and re-wraps every highlight. A
 // selection drawn from the first character of a highlight into the plain text after it has an end inside the mark's text node, and
 // the unwrap collapses that end to the mark's place: the selection is cut short to the part after the mark (main's behaviour too),
 // and Chromium fires selectionchange for the move. The listener compared the moved ends with the OFFER's, read the change as a new
 // selection of the person's, and re-showed a float a scroll had hidden, beside the truncated passage, with no gesture (the review's
-// probe: the button's inline left equal to showFloat's arithmetic for " ipsum d"). Now paintAll ends by reading the selection as it
+// probe: the button's inline left equal to showFloat's arithmetic for " ipsum d"). Now paintPass ends by reading the selection as it
 // left it into the record the listener compares with (afterPaint), so the paint's own event is no offer: the hidden float stays
 // hidden and a shown one stays where it was, and the person's next keyboard change offers as before. The review's round 2 added the
 // case where the paint leaves NOTHING selected and Chromium fires no selectionchange at all: a highlight that is its paragraph's
 // whole text is the <p>'s only child, so the unwrap and the wrap again of its mark collapse a selection inside it to the paragraph,
 // and the event fires for a merged or split text node alone (the prefix highlight of the first leg, beside plain text, fires it; a
 // lone-child mark does not), so the listener never saw the collapse and the float stood beside nothing until a click on it hid it
-// and opened no composer. Now paintAll ends by hiding a passage's float it left beside no selection (afterPaint, passageGone). The
+// and opened no composer. Now paintPass ends by hiding a passage's float it left beside no selection (afterPaint, passageGone). The
 // review's round 5 added the remnant with NO box: a real drag from inside the lone-child mark into the next paragraph's start, and the
 // poll's paint moves the anchor to the paragraph's end (a removed node's descendant boundary points move to its parent: the mark's
 // text out of the mark, the mark out of the paragraph, the text into the new mark) while the focus at the next paragraph's start
@@ -546,7 +546,7 @@ test("in a browser, the real viewer and panel: a real drag over a plain paragrap
       // of 168 scenes met the wait inside a five-second bound in a 42-run sweep, so the deadline (DEADLINE, thirty seconds) is a bound
       // on a failure and not the predicate. The one expiry on record with the selection real and the float shown at its place was a
       // vacuity probe's designed red (the offer removed from the product: the show count stood at its baseline while the event count
-      // moved), and the two roads that would keep the show count at its baseline for good are not this leg's: a paint (paintAll's
+      // moved), and the two roads that would keep the show count at its baseline for good are not this leg's: a paint (paintPass's
       // afterPaint) landing in the 1 to 14 ms between the keyboard's change of the selection and Blink's dispatch of its
       // selectionchange reads the grown selection into offeredFor, and the event then compares equal and offers nothing (forced
       // deterministically with a paint hooked on the keyup: the float stands here at the grown selection's arithmetic, so only the

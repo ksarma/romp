@@ -24,6 +24,7 @@ import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, seri
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
 import { probeServed } from "./preview";   // one probe of a picture's address off the page: the way back from a failed svg picture's pane
+import { VIEWER_PICTURE_MARK } from "./preview";   // the picture box's data mark, which the chat page's markdown-image heal skips by (imgBlock)
 import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS } from "./icons";   // the bar's glyphs (T367)
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
 import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
@@ -816,12 +817,16 @@ export interface FileViewActionCtx {
    *  A failure pane is a paint too (plans/markdown-viewer.md Slice 7, item 3): the fetch chain's catch (a refused or failed
    *  fetch, a reload's or a first open's, text() null then) and a picture's decode failure (imgFailed) fire the hooks after
    *  their swap, with error() the pane's words, so a hook waiting on a reload hears it fail at the paint and never at a deadline.
-   *  An svg picture's failed load first asks its address again behind the romp loader, which fires no hook: the answer's paint
-   *  does (the picture's load, or a pane, SVG_PICTURE_FAILED's among them).
-   *  Also once at Edit, as the editor takes the body (Slice 5), with editing() true: the panel's paint pass stands down
-   *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
-   *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
-   *  repaint hands the read-mode state back.
+   *  An svg picture's failed load first asks its address again behind the romp loader, which fires no onRendered (onReplaced
+   *  tells its swap): the answer's paint does (the picture's load, or a pane, SVG_PICTURE_FAILED's among them). A picture still loading when the Source toggle is
+   *  pressed fires none at its load either: the body's next paint is the paint (the Source view's at the decode, unless a
+   *  failed reload's pane or a landing of another type paints first).
+   *  Also once at Edit, at the editor's entry (Slice 5), with editing() true, before the chunk's loader goes up and while the
+   *  body still shows the read view: the panel's paint pass stands down then, and its cards, which read editing() at render
+   *  time, take their edit-mode state from this render (the panel's own begin() ran before the flip, so its render could
+   *  not). The editor's swaps after it, the chunk's loader and then the CodeMirror host or the fallback textarea, fire no
+   *  hook (onReplaced's doc); no other paint while the editor holds the body; the exit's repaint hands the read-mode state
+   *  back.
    *  Every call above is a PAINT (`why` "paint", the default a caller passing nothing gets): the body's nodes are new, and a
    *  hook that wraps or measures them starts over.
    *  Also after a text view REFLOWS with its text unchanged (`why` "reflow"): a text-size step (the A− / A+ buttons, the
@@ -839,14 +844,37 @@ export interface FileViewActionCtx {
    *  waits for its decode), that view's paint at their decode. The order between the two may go either way: the decode's paint
    *  comes after, and so does a picture's load that asks the network, but a picture the page still holds (a reload at an
    *  unchanged mtime) is complete once its src is set, and its onRendered runs first. The Comments panel ends its wait for a
-   *  reload's bytes at whichever comes first; its paint pass and its change cards wait for onRendered. Optional, so a stand-in
-   *  seam need not carry it */
+   *  reload's bytes at whichever comes first; when its change cards move is the card-state rule's (file-comments.ts,
+   *  #cardState's doc), and a landing is no event of it. Optional, so a stand-in seam need not carry it */
   onLanded?(cb: () => void): void;
+  /** runs as the viewer swaps into the body something whose paint may not come with it. Which swaps fire which hook:
+   *  onReplaced, with onRendered at the paint: renderBody's media arm, once its picture or its PDF frame is up (a picture's
+   *  paint is its load, or follows at once, in the same call, when the page still holds it; a frame's paint follows at once,
+   *  in the same call), the romp loader of an svg picture's re-ask (the answer's paint), and the PDF pages' loader (its paint
+   *  is page 1's draw, or the fallback's frame).
+   *  onRendered alone, as it swaps: a text view's rows, the Source view's, a failure pane, and the PDF pages' fallback frame,
+   *  fresh or kept, and a frame kept as the panel closes, whose paint is at once.
+   *  Neither: the editor's swaps. onRendered fires once at the editor's entry, before its chunk's loader goes up and while the
+   *  body still shows the read view (onRendered's doc); the chunk's loader, the CodeMirror host when the chunk resolves and
+   *  the fallback textarea when it rejects fire neither hook, and a rejection with changes pending leaves the editor, whose
+   *  exit repaints. The editor holds the body until that exit's repaint (exitEdit's renderBody), and the Comments panel reads
+   *  editing() for that span. A press of the Source toggle that waits for its decode swaps nothing (the picture stays until
+   *  the body's next paint: the decode's, unless a failed reload's pane or a landing of another type paints first).
+   *  The Comments panel's card-state rule keys on it (file-comments.ts, #cardState's doc). Optional, so a stand-in seam need
+   *  not carry it */
+  onReplaced?(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body, BEFORE the quote-chip gate, so it works with no chat pane.
    *  A selection made or changed from the keyboard reaches no mouseup and runs no hook here: the comments panel listens to the
    *  document's selectionchange itself for those (file-comments.ts onSelectionChange), so the chip's per-gesture fetch never runs per keystroke */
   onSelection(cb: (sel: Selection) => void): void;
-  /** runs when a direct edit's save is acknowledged (fileSaved carries `logged` since Slice 1) */
+  /** runs when a direct edit's save is acknowledged, a save through saveFile (fileSaved carries `logged` since Slice 1) or one
+   *  through the Comments panel (the tracked route, TrackedEdit.save). For the editor that saved, on either route, it runs once
+   *  mtimeNs() answers the saved bytes' mtime, which that editor, if it stays up (keystrokes typed while the save was out; on
+   *  the Comments panel's route also a decision clicked then, or a landed decision undone), now holds as the file it loaded;
+   *  the stay or the exit comes after it, in the same call. When that editor is gone by the ack (Cancel while the save was
+   *  out) the routes part. The Comments panel's save runs it with mtimeNs() where it was, and the viewer re-reads the saved
+   *  bytes itself, at once or at the exit of an editor opened since. A saveFile ack is handled only while editHooks holds its
+   *  save, which Cancel nulls, so that ack is dropped: no onSaved runs and nothing is re-read */
   onSaved(cb: (info: { mtimeNs: string; logged: boolean }) => void): void;
   /** runs once when this open ends — close, Escape, or a replace-open — so per-open timers and listeners leave with it */
   onClose(cb: () => void): void;
@@ -1223,6 +1251,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let isSvgImage = false;                     // an answer the viewer takes as an image whose media type is image/svg+xml, any parameter aside: unlocks the Source toggle
   let svgSource = false;                      // the SVG Source view is up (the highlighted XML)
   let svgText: string | null = null;          // the decoded SVG bytes: read on the first toggle, a reload's replace or drop it
+  let svgTextOf: Blob | null = null;          // the bytes svgText was decoded from: a press to the Source view paints svgText only while they are mediaBlob
   let mediaBlob: Blob | null = null;          // the fetched bytes — the Source toggle decodes THESE, the PDF chunk renders them
   let objUrl: string | null = null;           // this open's picture or frame URL: an object URL (registered as mediaUrlLive), or an svg's /file address with its version key
   // ── an svg picture that fails to load (imgFailed): its address is asked again (fetchFile(true)), one re-ask per picture
@@ -1243,7 +1272,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // presses, so the answer of a fetch that asked the address again (fetchFile(true)) paints only over the view it started from;
   // `picView` and `paneView` are the count when the body's picture and the pane from a re-ask were painted, so a picture failure,
   // a probe that loads or a reconnect-class event starts nothing once a press has come since that paint. `srcDecode`: the bytes
-  // a press of the Source toggle is decoding for the Source view's first paint, until that decode paints (decodeForSource).
+  // a press of the Source toggle is decoding for the Source view's first paint, until that decode paints (decodeForSource), or
+  // for its first paint over bytes that landed after its XML was decoded (svgTextOf); a landing of another type ends it.
   let shownByReask = false;
   let wayBack = false;
   let wayBackSeq = 0;
@@ -1639,10 +1669,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // bytes then paints nothing, and the Source view paints at the decode of the landed ones.
   const decodeForSource = (b: Blob): void => {
     srcDecode = b;
-    void b.text().then((t) => { if (srcDecode !== b) return; srcDecode = null; svgText = t; svgSource = true; renderBody(); takeKeyboard(); });
+    void b.text().then((t) => { if (srcDecode !== b) return; srcDecode = null; svgText = t; svgTextOf = b; svgSource = true; renderBody(); takeKeyboard(); });
   };
+  // A press to the Source view paints the XML on hand only when it was decoded from the bytes that landed last (svgTextOf):
+  // after a reload under the Source view, its decode still out, the XML on hand is the older bytes', so a press from the
+  // picture back to the Source view decodes the landed bytes and paints at that decode, as a press over a picture does, and
+  // the hooks hear that paint alone, over the landed XML.
   srcBtn.addEventListener("click", () => {
-    if (svgText === null) {
+    if (svgText === null || (!svgSource && svgTextOf !== mediaBlob)) {
       if (!mediaBlob) return;
       viewChanged();
       decodeForSource(mediaBlob);
@@ -1833,6 +1867,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const landedHooks: Array<() => void> = [];
   const fireLanded = () => { for (const cb of landedHooks) { try { cb(); } catch { /* a hook must never cost the view */ } } };
   const fireRendered = (why: FileViewRenderWhy = "paint") => { for (const cb of renderHooks) { try { cb(why); } catch { /* a hook must never cost the view */ } } };
+  const replacedHooks: Array<() => void> = [];
+  const fireReplaced = () => { for (const cb of replacedHooks) { try { cb(); } catch { /* a hook must never cost the view */ } } };   // the seam's onReplaced (its doc)
   // A REFLOW's paint keeps the person's selection. The hooks run with `why` "reflow": the panel answers that by re-placing
   // its cards and leaves its marks standing (file-comments.ts), so the selection now outlives the panel untouched; the
   // keeping below stands for any hook that does re-wrap on a reflow (a test's marks action does, and the panel did until
@@ -1888,6 +1924,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     identity: () => (sid ? identityOf(sid) : null),
     onRendered: (cb) => { renderHooks.push(cb); },
     onLanded: (cb) => { landedHooks.push(cb); },
+    onReplaced: (cb) => { replacedHooks.push(cb); },
     onSelection: (cb) => { selHooks.push(cb); },
     onSaved: (cb) => { savedHooks.push(cb); },
     onClose: (cb) => { closeHooks.push(cb); },
@@ -2447,11 +2484,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // The svg picture's re-ask: the romp loader takes the body and fetchFile asks the address again, the same fetch a first open
   // and a reload run, so its answer paints what theirs would: the picture again (with its loader in the picture box until it
   // loads) or the fetch chain's pane, in the relay's or the kernel's words, or the browser's own for no answer at all, with the
-  // path. The loader's paint fires none of the seam's hooks: the Comments panel keeps its layer until the answer paints, and
-  // error() stays null through the wait, as over any loader. A press of the Source toggle during the wait drops the answer
+  // path. The loader fires no onRendered, only the seam's onReplaced: the Comments panel keeps its layer until the answer paints,
+  // and error() stays null through the wait, as over any loader. A press of the Source toggle during the wait drops the answer
   // (fetchFile's `view`): the Source view stands, and the picture loads afresh when the person returns to it.
   const reaskPicture = () => {
     body.replaceChildren(loaderEl());
+    fireReplaced();
     fetchFile(true);
   };
   // A pane from a re-ask stands (imgFailed's, or the fetch chain's when the re-ask's fetch failed): the way back is armed, for
@@ -2517,10 +2555,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (keepShownFrame()) return;           // the panel closing over a frame at these bytes: the frame stays; the notice, or the attempt under way, goes
       notePdfPage();                          // the reader's page, off the shells, before dropPdf removes them
       dropPdf();                              // the frame (or a picture) replaces any pages a closed panel leaves behind
-      picView = viewSeq;                      // the view this picture is painted in: its failure acts only while no press has come since (imgFailed)
+      picView = viewSeq;                      // the view this picture is painted in: its failure (imgFailed) and its load (below) act only while no press has come since
       const shown = isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed);
       body.replaceChildren(shown);
-      whenShown(shown, fireRendered);         // the seam's onRendered for a media body: once the picture shows (Slice 3)
+      fireReplaced();                         // the seam's onReplaced: a picture or a frame is up, its paint to come at whenShown
+      // the seam's onRendered for a media body: once the picture shows (Slice 3). A picture still loading when the Source toggle
+      // is pressed stays in the body until the body's next paint (the Source view's at its decode, unless a failed reload's pane
+      // or a landing of another type paints first), and its load then fires nothing, so no paint hook runs with the view's mtime
+      // (a landing's, when one came while the decode was out) over the picture painted before the press
+      whenShown(shown, () => { if (picView === viewSeq) fireRendered(); });
       aimFrame(shown);                        // …and the frame opens on the reader's page, not page 1
       return;
     }
@@ -2925,6 +2968,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // frame's column and the host follows the column, so the frame itself is never moved.
     if (col) { col.prepend(wait); body.appendChild(host); }
     else body.replaceChildren(wait, host);
+    fireReplaced();                            // the seam's onReplaced: the pages' loader is up, over the kept frame or in place of the body
     // The backstop (ui/CLAUDE.md, loading states; the constant's comment sizes it). Every other end of this attempt is an
     // event — the resolve, a rejection, the panel or the viewer closing — but a render that never settles fires none: a
     // worker stuck in a pathological content stream, or a chunk fetch that stalls without erroring, leaves the promise
@@ -3015,7 +3059,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // editor, Accept and Reject dimmed with those words, no Reveal or link into a read view that is gone: setMode and
     // scrollToOffset are no-ops now), and nothing above rendered them with the flag set: begin() ran before it, as it must
     // (a refused begin() leaves the read view untouched), and renderBody paints nothing in edit mode. So the seam's
-    // onRendered fires here, once, as the editor takes the body: the panel's paint pass stands down on editing() and its
+    // onRendered fires here, once, at the editor's entry and before the chunk's loader goes up (the swaps after it fire
+    // no hook: onReplaced's doc): the panel's paint pass stands down on editing() and its
     // cards take their edit-mode state. Without it a panel open at Edit kept its read-mode cards, live-looking controls
     // that did nothing, until some status happened to land (the review's cards-keep-read-mode finding). The exit's
     // repaint hands the read-mode state back.
@@ -3645,14 +3690,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
           objUrl = URL.createObjectURL(t);
           mediaUrlLive = objUrl;                 // registered so close/replace can revoke (dropMediaUrl)
         }
-        if (svgSource && svgText !== null) {
+        if (svgSource && svgText !== null && isSvgImage) {
           // A reload under the Source view: the XML swaps in when the new bytes decode, and the old
           // text stands until then — nulling it first would flap mode() to "media" and flash the image
           // for the decode's duration. A decode a newer reload overtook, or one landing after the
           // viewer closed, paints nothing: the newest bytes are what show, and a drained panel hears
-          // no onRendered.
-          if (isSvgImage) fireLanded();          // the bytes are in hand before their decode paints the Source view: the seam's onLanded, as at a picture's landing (the panel's wait ends here)
-          void t.text().then((s) => { if (mediaBlob !== t || !wrap.isConnected) return; svgText = s; renderBody(); });
+          // no onRendered. Nor does one whose bytes a press of the Source toggle is decoding by then (srcDecode: the
+          // person went to the picture and back), or one those bytes' own decode painted first (svgTextOf): the Source
+          // view paints these bytes once. A landing of another type is no Source view's: it paints its picture below.
+          fireLanded();                          // the bytes are in hand before their decode paints the Source view: the seam's onLanded, as at a picture's landing (the panel's wait ends here)
+          void t.text().then((s) => { if (mediaBlob !== t || !wrap.isConnected || srcDecode !== null || svgTextOf === t) return; svgText = s; svgTextOf = t; renderBody(); });
           return;
         }
         if (isSvgImage && srcDecode !== null) {
@@ -3664,7 +3711,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
           decodeForSource(t);
           return;
         }
-        svgText = null;   // any decode on hand was the OLD bytes': the next Source toggle decodes this blob
+        svgText = null; svgTextOf = null; svgSource = false; srcDecode = null;   // any decode on hand, or out for a press, was the OLD bytes': the next Source toggle decodes this blob, and no older XML paints over this landing's picture
         renderBody();
         landMedia();                             // the open's first paint (a picture, a PDF frame): the target named and the body taking the keyboard, over a body with a box
         if (isSvgImage) fireLanded();            // the bytes are in hand: the seam's onLanded, after renderBody, so a picture the page still holds has painted by now and one that asks the network has not (the panel's wait ends at the first of the two)
@@ -4728,8 +4775,10 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
 // the paint's own task, the fact the seam's onRendered doc relies on) and parks a label after the img naming the fact and
 // the source (FIGURE_FAILED, the authored src by pictureDest's rule, the alt when there is one). Its twin, a capture-phase
 // `load` listener, removes the label when a retry lands. Installed once per open beside the body's other listeners and
-// dropped with the viewer, never per paint, so the chat page's heal (preview.ts installMdImgHeal, which re-fetches every
-// failed `<img>` per kernel message and on romp:wsup) re-fires into the same listener; the heal skips an img with an
+// dropped with the viewer, never per paint, so the chat page's heal (preview.ts installMdImgHeal, which parks every
+// failed `<img>` at an address and probes that address off the page, on the first three kernel messages for an address the
+// kernel serves and on each reconnect-class event, putting the src back when a probe loads) re-fires into the same
+// listeners; the heal skips a data: figure, which no server can heal and which keeps its src, and an img with an
 // `onerror` property, and none is set here: the img is only listened to. The img stays in the DOM as the browser draws it
 // with every attribute untouched: the Comments panel pairs pictures by img order and `data-fv-src` (file-comments.ts
 // embedFor), the regions layer wraps THE img (file-comments-regions.ts) and the reader's place counts `<img` tags in a row,
@@ -5008,7 +5057,9 @@ function textPoint(root: Node, n: number, start: boolean): [Node, number] {
 // on that event first, in a listener armed before this one. A load that lands after the img left the document fires
 // nothing: a reload replaced it, the picture failed and imgFailed took the body (the pane, a paint of its own that
 // fires the hooks itself, or an svg's re-ask, whose answer paints), or the viewer closed. What shows then is something
-// else, and an overlay sized against the old picture would frame nothing anyone sees.
+// else, and an overlay sized against the old picture would frame nothing anyone sees. The picture can also stay in the
+// document while the view moves on (a press of the Source toggle while its decode is out leaves it up): the media arm's
+// callback reads the press count for that (renderBody), so its load then fires nothing either.
 function whenShown(shown: HTMLElement, cb: () => void): void {
   const img = shown.querySelector("img.fileview-img") as HTMLImageElement | null;
   if (!img || img.complete) { cb(); return; }
@@ -5028,9 +5079,13 @@ function whenShown(shown: HTMLElement, cb: () => void): void {
 // caller's paint takes the whole box. The box fills the body (min-height: 100%), so the loader sits in the part of
 // the body on screen. A picture the browser already holds (a repaint at the same address) is complete and shows
 // with no loader, and so does an object URL's picture, whose bytes are in hand and only decode. The caller owns
-// every pane; this stays a pure element builder.
+// every pane; this stays a pure element builder. The box carries the viewer's data mark (VIEWER_PICTURE_MARK) beside
+// its class, which is for the sheets: the chat page's markdown-image heal leaves a picture inside the mark to the viewer,
+// and knows the box by the mark because no author's markup can carry it (the sanitizer strips every data-* attribute an
+// author writes), while an author can type the class.
 function imgBlock(objUrl: string, path: string, onFail: (e: Event) => void): HTMLElement {
   const box = el("div", "fileview-imgbox");
+  box.setAttribute(VIEWER_PICTURE_MARK, "");
   const img = el("img", "fileview-img") as HTMLImageElement;
   img.addEventListener("error", onFail, { once: true });
   img.src = objUrl;
