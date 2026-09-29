@@ -1853,6 +1853,23 @@ class VerifyReadsTheSweep(_Base):
         fx.sweep("b1", legs=legs)
         fx.ok("verify", "b1")
 
+    def test_a_member_based_on_a_branch_in_neither_the_batch_nor_main_fails_verify(self):
+        """Round 2, extra8-2: the analogue of the retired land.sh's three base cases. A member whose base is a pushed
+        branch that is neither a member's head nor in main fails verify with FAIL base and exit 1 (the exit asserted:
+        a verify that printed the line and still exited 0 would pass a text check alone)."""
+        fx = self.fx
+        self.assembled()
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
+        fx.branch("elsewhere", {"elsewhere.txt": "a branch no member carries\n"}, swept=False)
+        fx.gh_state = fx.gh()
+        fx.gh_state["prs"]["101"]["baseRefName"] = "elsewhere"
+        fx._save_gh()
+        p = fx.run("verify", "b1")
+        self.assertIn("FAIL base: #101 is based on elsewhere, which is neither in the batch nor in main", p.stdout)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertFalse(fx.state("b1")["verified"]["ok"])
+
     def test_a_result_that_excuses_the_ledger_at_a_head_that_holds_its_script_fails(self):
         """Round 2, correctness-4: the ledger is marked not owed only when the head has no ledger script. A result that
         gives the runner's own reason for it fails verify at a batch head whose tree holds scripts/upstream-ledger.py,
@@ -2772,6 +2789,17 @@ class LandAndFinish(_Base):
         fx.ok("verify", "b1")
         fx.ok("summarize", "b1")
         fx.ci("b1")
+
+    def test_land_refuses_a_repository_that_disallows_merge_commits(self):
+        """Round 2, extra8-2: batch.py land keeps the retired land.sh refusal of a repository whose settings disallow
+        merge commits (a batch lands as one merge commit, or its members stay open), and calls no merge."""
+        fx = self.fx
+        self.ready()
+        fx.set_repo(mergeCommitAllowed=False)
+        p = fx.run("land", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("the repository does not allow merge commits; a batch must land as one (repo settings)", p.stdout + p.stderr)
+        self.assertEqual(fx.calls("pr", "merge"), [])
 
     def test_land_merges_with_a_merge_commit_and_finish_cleans_up(self):
         fx = self.fx
