@@ -1,4 +1,4 @@
-// The shared browser-legs CI step, held to the tree from CI's Shell job, which runs tools/*.test.mjs with no npm ci. The
+// The shared browser-legs CI step, held to the tree from CI's vendored-tooling job, which runs tools/*.test.mjs with no npm ci. The
 // gating vscode-extension job runs npm test before it installs a browser, so every browser leg skips at launch there; the
 // step "Browser legs (node --test over ci-browser-legs.txt)" runs the legs named in vscode-extension/ci-browser-legs.txt
 // after the job's Chromium install with ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in
@@ -94,7 +94,7 @@ const SWITCH = 'ROMP_BROWSER_LEGS_REQUIRE';
 const RUN_LINE = 'bash scripts/ci-browser-legs.sh';
 const read = (p) => fs.readFileSync(p, 'utf8');
 
-// ── ci.yml by lines (no YAML library: the shell job installs nothing) ──────────────────────────────────
+// ── ci.yml by lines (no YAML library: the vendored-tooling job installs nothing) ───────────────────────
 
 /** The jobs of the workflow: the `^  <key>:` lines after the `jobs:` line (a key of letters, digits, _ and - with only
  *  whitespace after its colon; a quoted key, or a key line with a comment after its colon, is not read, and its lines join
@@ -665,7 +665,7 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   const comment = step.comments.join('\n');
   // the three numbers are a property of the comment, not a spelling: a step duration in seconds, a job duration in minutes and the
   // job's cap, read from the job's own timeout-minutes line so a raised cap turns a stale sentence red (a lowered one is already
-  // red in tests/test_ci_bats_bound.py::ExtensionJobCeiling, which floors the cap at 40; this pin is about the SENTENCE matching
+  // red in tests/test_ci_bats_bound.py::ExtensionJobCeiling, which floors the cap at 17; this pin is about the SENTENCE matching
   // the line, not about the cap's value); all three measured on the runner (the first run's placeholder held none of them, and
   // the pin that accepted it by its spelling was the kind that lets a filled sentence go red for its wording)
   const { cap } = jobCap(job);
@@ -677,7 +677,7 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   const minutes = /\b(\d+) min\b/.exec(comment);
   assert.ok(minutes, 'the step\'s comment carries the job\'s minutes');
   // the step comment read for the cap jobCap reads, then -minute cap, a word boundary at each end
-  assert.ok(new RegExp('\\b' + cap + '-minute cap\\b').test(comment), 'the comment names the job\'s cap as ci.yml sets it (' + cap + ' minutes): a cap change rewrites the sentence; this pin holds the sentence to the line, whatever the cap, while a LOWERED cap is tests/test_ci_bats_bound.py::ExtensionJobCeiling\'s red (it floors the cap at 40): two guards, two properties');
+  assert.ok(new RegExp('\\b' + cap + '-minute cap\\b').test(comment), 'the comment names the job\'s cap as ci.yml sets it (' + cap + ' minutes): a cap change rewrites the sentence; this pin holds the sentence to the line, whatever the cap, while a LOWERED cap is tests/test_ci_bats_bound.py::ExtensionJobCeiling\'s red (it floors the cap at 17): two guards, two properties');
   assert.ok(Number(minutes[1]) < cap, 'the stated job minutes (' + minutes[1] + ') sit under the cap (' + cap + ')');
   assert.ok(comment.includes(ROSTER), 'the comment names the roster');
   // every path PATH_TOKEN reads (its docstring) in the comment is in the tree, resolved from the repository root or from
@@ -793,7 +793,7 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   const took = /in a job of (\d+) min (\d+) s/.exec(comment);
   assert.ok(took, 'the step\'s comment states the measured job time as "in a job of N min N s"');
   const marginSeconds = cap * 60 - (Number(took[1]) * 60 + Number(took[2]));
-  assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound and the cap together; a job whose other phases grow under an unchanged cap re-measures the margin the same way');
+  assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound, and the cap with it when the new bound does not fit the margin; a job whose other phases grow under an unchanged cap re-measures the margin the same way');
   // the step comment read for the text "re-measures here" alone, not for what the sentence around it says (a negation
   // passes it)
   assert.ok(comment.includes('re-measures here'), 'the step\'s comment contains the phrase "re-measures here", the words of its re-measure condition for growth outside the roster (the job\'s other phases toward the cap)');
@@ -805,13 +805,14 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   // one space, the text from the first "The Browser legs step below" to the next "in the same PR.". It is read for this
   // file's name, where the margin is derived, and for no figure in the two spellings the step comment gives the measured
   // job time and the margin: N min N s (digits, a space, min, a space, digits, a space and s) and N s (digits, a space and
-  // s, a word boundary at each end). The measured time has one home, the step comment above. A figure spelled otherwise
-  // (12 minutes) is not read, and the N min N s pattern, with no word boundary after its s, also reads N min N before any
-  // word that begins with s (12 min 30 seconds, 2 min 3 sessions), a loud red (the job comment's other sentences record
-  // the served step's own history and are not read here)
+  // s, a word boundary at each end). The measured time the margin is read from has one home, the step comment above. A
+  // figure spelled otherwise (12 minutes) is not read, and the N min N s pattern, with no word boundary after its s, also
+  // reads N min N before any word that begins with s (12 min 30 seconds, 2 min 3 sessions), a loud red (the job comment's
+  // other sentences record the served step's own history and the cap's sizing from the runs they name, and are not read
+  // here)
   const about = /The Browser legs step below[\s\S]*?in the same PR\./.exec(jobComment.replace(/\n\s*#\s?/g, ' '));
   assert.ok(about, 'the job comment holds one passage about the Browser legs step, from "The Browser legs step below" to "in the same PR."');
-  assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s passage about this step carries a figure of the measured job time or the margin, whose one home is the step comment: ' + JSON.stringify((about[0].match(/\d+ min \d+ s|\b\d+ s\b/) || [''])[0]) + ' in ' + about[0]);
+  assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s passage about this step carries a figure of the measured job time the margin is read from, or of the margin, whose one home is the step comment: ' + JSON.stringify((about[0].match(/\d+ min \d+ s|\b\d+ s\b/) || [''])[0]) + ' in ' + about[0]);
   assert.ok(about[0].includes('tools/ci-browser-legs.test.mjs'), 'that passage names this file as where the margin is derived: ' + about[0]);
   // node's per-file bound: above the timeout: values the bound pin reads in a rostered source (else a legitimate slow leg
   // is cut), under the step's bound (else the step is cut nameless first). First the reader, over synthetic sources against
@@ -1027,7 +1028,7 @@ const RULE_HOMES = [
 const standIn = (phrase) => 'const assert = require("node:assert");\nconst inBrowser = async (t, body) => { const why = "no playwright browser on this box (a synthetic stand-in)"; if (process.env.' + SWITCH + ') assert.fail(' + JSON.stringify(phrase + ': ') + ' + why); t.skip(why); };\n';
 /** The roster rule's examples, each with its synthetic witness leg, in one table: RULE_WORDS takes each example's phrase from
  *  here, the homes pin holds each home's list after "examples, not the whole set:" to exactly these phrases, and the witness
- *  test below rosters each leg, a plain CommonJS bundle (the Shell job has no node_modules and runs no esbuild). So an example
+ *  test below rosters each leg, a plain CommonJS bundle (the vendored-tooling job has no node_modules and runs no esbuild). So an example
  *  named with no witness, or a witness removed while its example is still named, is red in the homes pin. `leg(phrase)` is
  *  the bundle's test code, handed the phrase the script reads a lost browser by; `marked` says what the mark a leg writes
  *  beside its bundle proves (null for the leg with no failure to mark), and `markBegins` asks that the mark begin with the phrase. */
@@ -1079,7 +1080,7 @@ test('each home of the roster rule, read in its named section (RULE_HOMES\' docs
  *  including /, `*` a run inside ONE segment, and every other character literally. That is minimatch's reading of those two
  *  wildcards inside a pattern, except a pattern that opens with ** and a slash, which minimatch lets match no directory
  *  (the file's pattern for .map files matches a.map there) and this reader holds to at least one /; minimatch is what vsce
- *  applies to .vscodeignore when it packs the VSIX (not executed here: the Shell job has no node_modules); the file
+ *  applies to .vscodeignore when it packs the VSIX (not executed here: the vendored-tooling job has no node_modules); the file
  *  holds no ?, bracket class, brace or leading ! negation, which minimatch reads and this reader does
  *  not, so a pattern that adds one re-derives this reader. tests/test_lab_dist.py reads the same file with Python's fnmatch,
  *  whose `*` crosses `/` (fnmatched below spells that reading), so the two readers part on a single `*` against a path with more
@@ -1160,7 +1161,7 @@ test('the script exists, is executable, runs node --test over the roster array (
  *  its reporter as the destination, read from the argument after --test-reporter=./scripts/ci-browser-legs-reporter.mjs in
  *  the stub's log (null when node was not started). The tree sits in a base directory beside a link to it, and `root` is
  *  the link: the script runs through it on every platform, so its post-run read's key (the script's comment above its
- *  awk pass states it) is held on a plain temporary directory too (ubuntu, where the Shell job runs), not only where
+ *  awk pass states it) is held on a plain temporary directory too (ubuntu, where the vendored-tooling job runs), not only where
  *  os.tmpdir() sits behind a link: a key on the logical path would red every leg that passed. `ext` is
  *  the physical path of the tree's vscode-extension, as node spells a bundle in its record, and `rec(bundle, fields...)`
  *  spells one record line for that bundle (the reporter's eight fields, the path first). `prefix` is the base directory's

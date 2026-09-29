@@ -5,7 +5,7 @@
 //     unwraps and re-wraps the highlights, and a selection end inside a mark's text collapses to the mark's place, so a selection
 //     overlapping a highlight is cut short and the browser fires selectionchange for the move. The listener compared the changed ends
 //     with the OFFER's, read the change as a new selection of the person's, and re-offered a float a scroll had hidden, beside a
-//     passage nobody selected. Now paintAll and repaintPresel end by reading the selection as they left it into the record the
+//     passage nobody selected. Now paintPass and repaintPresel end by reading the selection as they left it into the record the
 //     listener compares with (afterPaint), so the paint's own event is no offer and the float stays as the paint found it, shown
 //     or hidden; the person's next change offers.
 // (2) offeredFor held the offer's two nodes and nothing cleared it, so after a reload replaced the body the whole previous render
@@ -473,8 +473,8 @@ async function offered(t: TestContext): Promise<{ w: World; float: El; sel: any 
 const gc: () => void = (() => { v8.setFlagsFromString("--expose-gc"); return vm.runInNewContext("gc"); })();
 /** A turn's end (a WeakRef's target is held through the job that read it), then two full collections. */
 const settle = async (): Promise<void> => { await new Promise<void>((r) => setImmediate(r)); gc(); await new Promise<void>((r) => setImmediate(r)); gc(); };
-/** The seam's onRendered for a paint: the panel hides the float and runs paintAll over the body as it stands (the stand-in's rows are
- *  untouched; the selection the fake reports when the pass ends is what the paint "left", the stand-in laying nothing out). */
+/** The seam's onRendered for a paint: the panel hides the float and runs #latchCardState's pass (paintPass) over the body as it stands
+ *  (the stand-in's rows are untouched; the selection the fake reports when the pass ends is what the paint "left", the stand-in laying nothing out). */
 const paintHook = (w: World): void => { for (const cb of w.hooks.rendered) cb(); };
 /** A settings pick from another pane (settings.ts onExternalSettingsChange: the same-document signal): the live panel repaints the
  *  marks with no gesture and no hideFloat, the poll's shape for a float that is showing. */
@@ -518,7 +518,7 @@ test("the panel's own paint cuts an overlapping selection short and fires select
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
   live.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
   assert.equal(float.hidden, true, "hidden by a scroll that moved the passage");
-  // the paint (the seam's hook: hideFloat, then paintAll) unwraps and re-wraps the highlight: the passage's text node is replaced,
+  // the paint (the seam's hook: hideFloat, then #latchCardState's pass) unwraps and re-wraps the highlight: the passage's text node is replaced,
   // and the selection's end inside the old node collapsed to the mark's place, so the selection reaches nine characters, not all
   live.cutOnPaint(9); live.rect = RECT_B;
   paintHook(w);
@@ -532,7 +532,7 @@ test("the panel's own paint cuts an overlapping selection short and fires select
   live.length = 5;
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's change after the paint offers the float");
-  // a paint with no gesture while the float SHOWS (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
+  // a paint with no gesture while the float SHOWS (a settings pick from another pane: #latchCardState's pass with no hideFloat, the poll's shape)
   // that cuts the selection again and leaves the remnant's box where the offer read it (the cut trims the selection inside the line
   // box the button sits beside: the fake's rect stays): the float stays as the paint found it, where main left it before the panel
   // heard selectionchange at all, and the paint's own event is no offer (a remnant the paint MOVES from under the button is (6)'s)
@@ -596,7 +596,7 @@ test("a paint whose writes collapse the selection to NOTHING, with no selectionc
   const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
   const float = dragOffer(w, live);
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
-  // a paint with no gesture while the float shows (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
+  // a paint with no gesture while the float shows (a settings pick from another pane: #latchCardState's pass with no hideFloat, the poll's shape)
   // collapses the selection to the paragraph, nothing selected, and no selectionchange follows: the fake applies the collapse when the
   // paint replaces the node (cutOnPaint to 0, the lone-child collapse), so the pass's head reads the selection as offered, and none is fired
   live.cutOnPaint(0);
@@ -631,7 +631,7 @@ test("a paint whose writes cut the selection to a remnant with NO box (a selecti
   const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
   const float = dragOffer(w, live);
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
-  // a paint with no gesture while the float shows (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
+  // a paint with no gesture while the float shows (a settings pick from another pane: #latchCardState's pass with no hideFloat, the poll's shape)
   // leaves the selection a bare line break between the paragraph's end and the next block's start: the fake is told (not collapsed,
   // its nodes in the body, its rect empty), and no selectionchange follows
   live.cutOnPaint(1, "\n"); live.rect = RECT_NONE;
@@ -668,7 +668,7 @@ test("a paint whose writes cut the selection to a remnant WITH a box that has MO
   const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
   const float = dragOffer(w, live);
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
-  // a paint with no gesture while the float shows (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
+  // a paint with no gesture while the float shows (a settings pick from another pane: #latchCardState's pass with no hideFloat, the poll's shape)
   // cuts the selection and leaves the remnant's box a line below the offer's and shorter: the fake is told (in the body, not
   // collapsed, a box, moved), and the browser's selectionchange for the move, where it fires one, follows the paint
   live.cutOnPaint(9); live.rect = RECT_BELOW;
@@ -714,7 +714,7 @@ test("a paint whose writes move the selection WHOLE, not a character cut (a peer
   const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
   const float = dragOffer(w, live);
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
-  // a paint with no gesture while the float shows (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
+  // a paint with no gesture while the float shows (a settings pick from another pane: #latchCardState's pass with no hideFloat, the poll's shape)
   // wraps a peer's mark on the selection's line: the selection's text node is replaced (the wrap's split), every selected character
   // stays selected, and the box stands 4 px further right, the mark's padding; the fake is told, and the browser's selectionchange for
   // the split follows the paint
@@ -773,7 +773,7 @@ test("a float HIDDEN with its place record kept (what the picture overlay's pres
   // the press's hide as the overlay made it until this round: the hidden bit alone, the offer's place record kept (the panel's own
   // hideFloat clears it, and the press goes through hideFloat now; this is the shape afterPaint must read as a hidden float all the same)
   float.hidden = true;
-  // a paint with no gesture (a settings pick from another pane: paintAll with no hideFloat, the poll's shape) moves the still-selected
+  // a paint with no gesture (a settings pick from another pane: #latchCardState's pass with no hideFloat, the poll's shape) moves the still-selected
   // passage whole, the mark's padding: the fake is told, and the browser's selectionchange for the split follows the paint
   live.rect = RECT_PADDED;
   externalFilterPick();
@@ -804,8 +804,8 @@ test("a paint whose writes move the selection WHOLE past the BODY'S BOX (the Sho
   const float = dragOffer(w, live);
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
   assert.ok(RECT_A.top >= box.top && RECT_A.bottom <= box.bottom, "the offer's passage sits inside the body's box");
-  // a paint with no gesture (a settings pick from another pane: paintAll with no hideFloat, the toggle's own shape, saveSettings then
-  // paintAll) grows the text above the selected line and pushes the still-selected passage whole below the body's bottom edge: the
+  // a paint with no gesture (a settings pick from another pane: #latchCardState's pass with no hideFloat, the toggle's own shape,
+  // saveSettings then that pass) grows the text above the selected line and pushes the still-selected passage whole below the body's bottom edge: the
   // fake is told (in the body, not collapsed, the same text, a box out of the body's), and the browser's selectionchange, where the
   // paint fires one, follows
   live.rect = RECT_BELOW_CLIP;
@@ -851,7 +851,7 @@ test("a paint landing in the GAP between the person's change of the selection an
   const float = dragOffer(w, live);
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) });
   // the person's Shift+ArrowRight: the selection grows by a character and its box widens by the glyph, and the browser's selectionchange
-  // is a task away; a settings pick from another pane lands in that gap (paintAll, no gesture), replacing the selection's node (a mark
+  // is a task away; a settings pick from another pane lands in that gap (#latchCardState's pass, no gesture), replacing the selection's node (a mark
   // elsewhere on the line unwrapped and wrapped again) and leaving every selected character selected
   const GROWN: Rect = { ...RECT_B, right: RECT_B.right + 7 };
   live.length = 10; live.rect = GROWN;

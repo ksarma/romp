@@ -1891,9 +1891,10 @@ function fileLink(path: string): HTMLElement {
 // on the RIGHT of the tool's HEAD line; the expandable content hangs below the
 // head, hidden until clicked — so each tool stays ONE row by default (the user:
 // vertical-compact). `head` must already be appended to `turn`.
-function inlineFold(head: HTMLElement, turn: HTMLElement, label: string, content: HTMLElement, key?: string) {
+function inlineFold(head: HTMLElement, turn: HTMLElement, label: string | HTMLElement, content: HTMLElement, key?: string) {
   const toggle = el("span", "tool-fold-toggle");
-  toggle.textContent = label;   // just the clickable summary ("+14 −0" / "12 lines") — no caret/bullet
+  if (typeof label === "string") toggle.textContent = label;   // just the clickable summary ("12 lines"), no caret or bullet
+  else toggle.appendChild(label);                                // or a dressed one: an edit's totals in the diff colours (diffTotals)
   toggle.title = "click to expand";
   applyFold(turn, "fold-open", key);
   toggle.addEventListener("click", (e) => { e.stopPropagation(); rememberFold(turn, "fold-open", key); });
@@ -2263,7 +2264,7 @@ function healPathImgs(): void {
 // the page shim fires romp:wsup when THIS pane's kernel socket reconnects (kernel.py ws.onopen) —
 // the same kernel-is-back event a hostUp is for a federated tunnel; heal everything on it
 window.addEventListener("romp:wsup", () => { retryFailedPreviews(); refreshSettledPreviews(); healPathImgs(); });
-installMdImgHeal();   // markdown-inline <img> failures are PARKED (capture-phase, once) and heal on the reconnect-class events (T291c);
+installMdImgHeal();   // a markdown-inline <img> that fails at an address is PARKED (capture-phase, once; a data: figure, which no server can heal, keeps its src) and heals on the reconnect-class events (T291c);
 //                       md() and userMd() run mdImgPostPass on their own output, so a re-render parks a known-failed image before it fetches
 // The page's own bundle build, filed once per page load (T291c, the user's 2026-09-09 report could not tell the
 // page's build from the kernel's): the ?v= the kernel stamped on the render.js script this page loaded (the
@@ -5602,7 +5603,7 @@ function renderTool(ev: Extract<ChatEvent, { kind: "tool" }>): HTMLElement {
       row.append(og, ng, sign, txt);
       pre.appendChild(row);
     }
-    inlineFold(head, turn, `+${add} -${del}`, pre, fkey);   // the row's one totals text, the approved shape (+A -R, a hyphen minus); the head prints none beside it (T418 round two)
+    inlineFold(head, turn, diffTotals(add, del), pre, fkey);   // the row's one totals, the approved shape (+A -R, a hyphen minus) in the diff colours, the folded summary's dress; the head prints none beside it (T418 round two; the colours 2026-09-18)
   } else if (ev.name === "Read") {
     if (ev.output) { const n = countLines(ev.output); inlineFold(head, turn, `${n} line${n === 1 ? "" : "s"}`, preEl(ev.output, fkey && fkey + ":out"), fkey); }   // "1 line", not "1 lines" (T418, seen in the lab)
   } else if (ev.name === "Skill") {
@@ -14467,14 +14468,20 @@ function toolGroupKey(first: ChatEvent): string { return "tg:" + (first.uuid || 
 // end in the diff colours (+37 -0). Clicking the line toggles expand → the full non-compact rows (the user 2026-06-14). Carries
 // the rail dot + time-marker + hover wiring like any event so it anchors on the timeline; the dot is a green ✓ disc, red ✗ if any
 // errored.
-/** The edits' totals of a head, summed over every edit in the group, appended once in the diff colours. */
-function appendTotals(line: HTMLElement, add: number, del: number): void {
-  if (!add && !del) return;
+/** An edit's totals in the diff colours: "+A -R" as two spans (tool-plus green, tool-minus red, the theme tokens) inside one
+ *  tool-totals span. ONE dress for both places the numbers show (the user 2026-09-18: the folded group's summary was coloured,
+ *  the expanded rows' numbers were plain text): the collapsed group's head (appendTotals) and each row's diff-fold toggle. */
+function diffTotals(add: number, del: number): HTMLElement {
   const tot = el("span", "tool-totals");
   const plus = el("span", "tool-plus"); plus.textContent = "+" + add;
   const minus = el("span", "tool-minus"); minus.textContent = "-" + del;
-  tot.append(" ", plus, " ", minus);
-  line.appendChild(tot);
+  tot.append(plus, " ", minus);
+  return tot;
+}
+/** The edits' totals of a head, summed over every edit in the group, appended once in the diff colours. */
+function appendTotals(line: HTMLElement, add: number, del: number): void {
+  if (!add && !del) return;
+  line.append(" ", diffTotals(add, del));
 }
 function renderToolGroup(tools: Extract<ChatEvent, { kind: "tool" }>[], prevEpoch: number | null, key: string, open: boolean): HTMLElement {
   const turn = el("div", "turn turn-toolgroup" + (open ? " expanded" : ""));

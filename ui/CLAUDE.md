@@ -97,6 +97,7 @@ loads no stylesheet and defines no `--dim`, so `var(--dim)` falls back to its li
 `#9aa4ad` in either theme, while the light theme spells the light label gray `#5D574E`
 (styles.css's light `--dim`) as a literal; swapping that literal for the token would lose
 the contrast fix.
+Section labels in the settings modal and its mirrors (`.rs-sec`, `.rs-divider`, `.rs-preview-title`, the network panel's `.rnet-khead` and the strip's `.sn-khead`) are sentence case in the accent colour at 11px/600, never uppercase and never letter-spaced: hierarchy by size and colour, not by shouting (the user 2026-09-18).
 
 ### Loading/waiting states: show the romp loader FIRST
 Anytime something is loading, parsing, or otherwise making the user wait, the FIRST

@@ -294,13 +294,13 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
 test("the paint pass: unpaintChanges before each repaint, the change painters after the comment highlights, stylesFor from the colour map, the marks owned", () => {
   assert.match(SRC, /import \{ paintChangesRaw, paintChangesRendered, unpaintChanges \} from "\.\/anchor-map";/, "the D4 API by name");
   assert.match(SRC, /import type \{ MapRefusal, SourceRange, Located, ChangePaint \} from "\.\/anchor-map";/);
-  const paint = SRC.split("  paintAll(): void {")[1].split("\n  }\n")[0];
+  const paint = SRC.split("  private paintPass(current: boolean): void {")[1].split("\n  }\n")[0];
   // each line is asserted PRESENT before its place is compared: a bare indexOf gives -1 for a missing line, and
   // -1 sorts before everything, so an ordering pin alone would pass with the unpaint deleted
-  const pos = (s: string) => { const i = paint.indexOf(s); assert.ok(i >= 0, "paintAll has: " + s); return i; };
-  assert.ok(pos("unpaintChanges(this.ctx.body());") < pos('this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");'), "unpaint the changes before anything is repainted");
-  assert.ok(pos("this.located.set(card.id, { ...loc, painted });") < pos("this.paintChanges(root, src, rendered, true);"), "changes after the comment highlights");
-  assert.ok(pos("this.paintChanges(root, src, rendered, true);") < pos("this.paintPresel(root, src, rendered);"), "…and before the composer's target");
+  const pos = (s: string) => { const i = paint.indexOf(s); assert.ok(i >= 0, "the pass has: " + s + "; a source pin only"); return i; };
+  assert.ok(pos("unpaintChanges(this.ctx.body());") < pos('this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");'), "unpaint the changes before anything is repainted; a source pin only, whose executed witness is this file's case on repaints over the same body leaving one mark per change");
+  assert.ok(pos("this.located.set(card.id, { ...loc, painted });") < pos("this.paintChanges(root, src, rendered, current, true);"), "changes after the comment highlights; a source pin only, whose executed witness is this file's case on repaints over the same body leaving one mark per change");
+  assert.ok(pos("this.paintChanges(root, src, rendered, current, true);") < pos("this.paintPresel(root, src, rendered);"), "…and before the composer's target; a source pin only, with the same executed witness");
   // every painter of the pass defers its trim of collapsed blanks (paintChanges's `true`; paintPresel always does, since its other
   // caller, repaintPresel, trims after it too since round 14), and the pass trims ONCE after the last of them: one layout for the
   // pass, not one per comment (anchor-map.ts trimCollapsedMarks; the Slice 4 review, round 12)
@@ -309,7 +309,7 @@ test("the paint pass: unpaintChanges before each repaint, the change painters af
   assert.match(pc, /return col && col\.color \? \{ "--fc-author": col\.color\.bg \} : \{\};/, "the author's session colour as --fc-author; nothing when unknown (the sheet's neutral)");
   assert.match(pc, /const aid = authorIdOf\(store, c\.id\);/, "the sidecar record's authorId, since toHunks drops it");
   assert.match(pc, /paintChangesRendered\(root, src, changes, stylesFor, \{ trim: !deferTrim \}\)/, "the Rendered painter trims its own marks unless the pass defers the trim"); assert.match(pc, /paintChangesRaw\(root, src, changes, stylesFor\)/);
-  assert.match(pc, /if \(!s \|\| !\(s\.hunks \|\| \[\]\)\.length \|\| !this\.paintCurrent\(s\)\) return;/, "offsets index the text the host read, read over the text the body shows (paintCurrent): no marks over other bytes; a source pin only, whose executed witness is file-comments-about.test.ts's case on the change marks and a selection's changes from a landing to its paint (a repaint while the older text shows marks nothing over it, and one while the status's text shows keeps the marks)");
+  assert.match(pc, /if \(!s \|\| !\(s\.hunks \|\| \[\]\)\.length \|\| !current\) return;/, "offsets index the text the host read, read over the text the body shows as the card-state rule holds it or is taking it (the pass's current; file-comments.ts, #cardState's doc): no marks over other bytes; a source pin only, whose executed witness is file-comments-about.test.ts's case on the change marks and a selection's changes from a landing to its paint (a repaint while the older text shows marks nothing over it, and one while the status's text shows keeps the marks)");
   assert.match(pc, /this\.mark\(m\);/, "a change mark is the panel's own (mark: owns, and the registry the chat pane's link handler reads), like a comment highlight");
   assert.match(SRC, /const rv = btn\("Reveal", "fcreveal"\); rv\.dataset\.id = c\.key;/, "Reveal on a change card carries the card's key");
   assert.match(SRC, /if \(c\.kind === "del" \|\| !painted\) \{/, "Reveal on a deletion and on any change the view does not show");

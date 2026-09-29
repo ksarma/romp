@@ -518,7 +518,7 @@ test("source: the pre- and post-render stale guards, the page-less refusal, and 
   // the frame path in renderBody: the kept frame first, then the page read, then the drop, then the aim after the mount
   const media = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
   assert.match(media, /if \(keepShownFrame\(\)\) return;[^\n]*\n\s*notePdfPage\(\);[^\n]*\n\s*dropPdf\(\);/);
-  assert.match(media, /whenShown\(shown, fireRendered\);[^\n]*\n\s*aimFrame\(shown\);/);
+  assert.match(media, /whenShown\(shown, \(\) => \{ if \(picView === viewSeq\) fireRendered\(\); \}\);[^\n]*\n\s*aimFrame\(shown\);/, "the aim after the mount and the hooks' arming: a source pin only");
 });
 
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────

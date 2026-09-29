@@ -39,7 +39,7 @@ fails, never skips, when that engine is missing):
      scripts turned off.
 
 Nothing here prints a token, a session id or a key: the driver compares them in memory and reports booleans, statuses and
-counts. The lab token is minted at run time. Skips LOUDLY without the extension deps or a Chromium; the CI extension job
+counts. The lab token is minted at run time. Skips LOUDLY without the extension deps or a Chromium; the CI served-pages job
 installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a failure there.
 SYNTHETIC fixtures only (session web, the notes-api demo world, placeholder uuids)."""
 import ast
@@ -676,13 +676,13 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             if explicit:
                 raise AssertionError("PAGE_KEY_DASHBOARD_ENGINE is set but the extension deps are absent")
-            raise unittest.SkipTest("extension deps absent (npm ci not run here): the served lab needs them; CI's extension job has them and requires this file to run")
+            raise unittest.SkipTest("extension deps absent (npm ci not run here): the served lab needs them; CI's served-pages job has them and requires this file to run")
         probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p[process.argv[2]].executablePath())",
                                 os.path.join(EXT, "node_modules", "playwright"), ENGINE], capture_output=True, text=True)
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             if explicit:
                 raise AssertionError("PAGE_KEY_DASHBOARD_ENGINE=%s is not installed on this box" % ENGINE)
-            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         cls.lab = tempfile.mkdtemp(prefix="page-key-dash-")
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
@@ -762,7 +762,7 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         if p.returncode == 3:
             if "PAGE_KEY_DASHBOARD_ENGINE" in os.environ:
                 self.fail("the %s engine did not launch" % ENGINE)
-            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         mask = lambda s: s.replace(self.token, "<token>")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + mask(p.stdout[-3000:] + p.stderr[-3000:]) + "\nkernel:\n" + self._klog_tail())
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)

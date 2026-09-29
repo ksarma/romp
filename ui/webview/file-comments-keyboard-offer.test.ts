@@ -549,8 +549,8 @@ test("a primary press the browser ended itself is over at its contextmenu (ctrl+
   assert.equal(float.hidden, false, "the finger lifted: offered");
 });
 
-/** The onRendered hook for a paint: the panel hides the float and runs paintAll over the body as it stands (a status landing, a settings
- *  pick): the highlight's mark is unwrapped, the row normalized (the mark's text node merged into the text before it and DETACHED) and
+/** The onRendered hook for a paint: the panel hides the float and runs #latchCardState's pass (paintPass) over the body as it stands (a
+ *  status landing, a settings pick): the highlight's mark is unwrapped, the row normalized (the mark's text node merged into the text before it and DETACHED) and
  *  the mark wrapped anew around a new text node. */
 const paintHook = (w: World): void => { for (const cb of w.hooks.rendered) cb(); };
 const dragendsOn = (n: Txt): number => n.listeners.filter((l) => l.type === "dragend").length;

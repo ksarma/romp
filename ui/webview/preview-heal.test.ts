@@ -82,6 +82,7 @@ test("markdown-inline <img> failures are caught by ONE capture-phase listener an
   assert.match(PREVIEW, /document\.addEventListener\("error", \(e\) => \{/);
   assert.match(PREVIEW, /\}, true\);\s*\n\}/, "capture phase — error events do not bubble");
   assert.match(PREVIEW, /if \(!src \|\| src\.startsWith\("data:"\)\) return;/, "a broken data: URI has no server to heal");
-  assert.match(PREVIEW, /if \(img\.onerror \|\| img\.closest\("\.path-full"\)\) return;/, "previews own their own retries");
+  assert.match(PREVIEW, /if \(img\.onerror \|\| img\.closest\("\[" \+ PREVIEW_BOX_MARK \+ "\]"\)\) return;/, "previews own their own imgs: one the machinery listens to, or any in the preview box, known by its data mark and not by its class; a source pin, whose executed witnesses are md-img-park.test.ts's case on a figure whose author's markup carries the preview box's class and md-img-park-browser.test.ts's case on the chat's own preview box");
+  assert.match(PREVIEW, /box\.className = "path-full" \+ \(kind === "pdf" \? " pdf" : ""\);\n\s*box\.setAttribute\(PREVIEW_BOX_MARK, ""\);/, "previewFull marks its box as it makes it; a source pin, executed by md-img-park-browser.test.ts's case on the chat's own preview box");
   assert.match(PREVIEW, /if \(mdImgHealOn\) return;/, "ensure-once");
 });

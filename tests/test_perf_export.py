@@ -1074,8 +1074,10 @@ class ServedKernel(unittest.TestCase):
         st = km._PERF_STATS
         km.em._count_read(self.leaf, 4096)
         self.addCleanup(self._unplant)
+        self.tier_gate = km.jd.tier_stats()    # the child's gate block in its minter's shape: every gated tier's counters, the stamps
         st.judge_child_done({"op": "done", "seq": 7, "wallMs": 12.5, "failures": {"count": 1, "first": self.first}, "recovered": False,
-                             "recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}}}}, pid=4242)
+                             "recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}}},
+                             "tierGate": self.tier_gate}, pid=4242)
         st.build_chat(False, 0.100, active=True, sid=SID, nbytes=4096)
         st.parse(SID, 4096)
         for method, path in (("GET", "/glossary/" + TERM), ("GET", "/nope/" + SID), ("GET", "/remote/TESTHOST/sessions"),
@@ -1139,6 +1141,8 @@ class ServedKernel(unittest.TestCase):
         self.assertGreaterEqual(perf["http"]["GET /glossary/*"]["count"], 1)
         self.assertGreaterEqual(perf["http"]["other"]["count"], 2)
         self.assertEqual((perf["judge"]["child"]["status"], perf["judge"]["child"]["failures"]), ("failed", 1))
+        self.assertEqual(perf["judge"]["child"].get("tierGate"), self.tier_gate,
+                         "the child's gate counters are served and the public form keeps them whole: fixed names over numbers")
         self.assertEqual(perf["parses"]["perSession"]["sessions"], 1)
         self.assertIn("other", perf["pusher"]["connectPush"]["byApp"])
         self.assertGreaterEqual(doc["usage"]["actions"]["send"], 1)

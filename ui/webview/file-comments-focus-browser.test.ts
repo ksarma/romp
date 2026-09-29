@@ -316,7 +316,8 @@ type Listing = {
  *  against its content, and the reply's box and the card it stands in. `content` is what the aside's box model gives its
  *  sections with the list at its children's span: the aside's padding, each child's box and margins, the gaps between
  *  them, and the cards section counted with the list's box replaced by the span — so a list taller than its children
- *  shows as a scroll range past the content. */
+ *  shows as a scroll range past the content. Only the children in the flow count: the panel's live region (.fc-live) is
+ *  positioned out of it and takes no space. */
 const listing = (page: any, key: string): Promise<Listing> => page.evaluate((key: string) => {
   const px = (v: string): number => parseFloat(v) || 0;
   const aside = document.querySelector(".fileview-aside") as HTMLElement;
@@ -325,7 +326,7 @@ const listing = (page: any, key: string): Promise<Listing> => page.evaluate((key
   const span = kids.length ? Math.max(...kids.map((r) => r.bottom)) - Math.min(...kids.map((r) => r.top)) : 0;
   const listBox = list.getBoundingClientRect().height;
   const cardsSec = aside.querySelector(".fc-sec-cards") as HTMLElement;
-  const children = Array.from(aside.children) as HTMLElement[];
+  const children = (Array.from(aside.children) as HTMLElement[]).filter((c) => !/^(absolute|fixed)$/.test(getComputedStyle(c).position));
   const ac = getComputedStyle(aside);
   let content = px(ac.paddingTop) + px(ac.paddingBottom) + px(ac.borderTopWidth) + px(ac.borderBottomWidth) + px(ac.rowGap) * Math.max(0, children.length - 1);
   for (const c of children) {
