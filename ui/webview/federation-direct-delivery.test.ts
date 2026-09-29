@@ -293,7 +293,7 @@ test("a view-order storage event re-emits all three merged frames to the registe
     assert.equal(typeof win.__rompFed.onFrame, "function", "the registration is published on the window slot");
     const got: any[] = [];
     const h = (e: MessageEvent) => got.push(e.data);
-    listenForFrames(h);   // the pane's install: window AND the registry, one function
+    listenForFrames(h);   // the pane's install: h in the registry, and on window a wrapper that calls h after the foreign-sender check (window-sender.ts)
     fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }] });
     fm.inbound("", feedFrame([ask("a1", U)], 1));
     fm.inbound("", laneData([U]));

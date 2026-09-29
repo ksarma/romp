@@ -277,9 +277,10 @@ test("marker hygiene: the preview neutralizes the path, id, desc and body exactl
 // side at a time: on 2026-09-06 the kernel moved the --file path to the quoted form and re-pinned its own
 // suite, this suite's pin kept the bare path, and the review found each suite green against its own text
 // (the preview and the sent message would have differed on any such path). Nothing short of running both
-// builders on the same inputs catches that, so this test does: python3 loads bin/romp-kernel — under a
-// throwaway state root and the floors tests/conftest.py puts under every kernel load, the way
-// tests/test_file_comments.py loads it — and answers _file_comments_message for each case, with is_text the
+// builders on the same inputs catches that, so this test does: python3 loads bin/romp-kernel (from the runner's
+// environment, ROMP_STATE_DIR removed and seven variables set: XDG_STATE_HOME, a throwaway state root,
+// ROMP_MANAGER_PORT=1, ROMP_KERNEL_NO_OPEN=1, ROMP_SERVE_TOKEN, ROMP_CLAUDE_BIN=/bin/false,
+// ROMP_MODEL_CATALOG=off and ROMP_CLI_SCOPE=0) and answers _file_comments_message for each case, with is_text the
 // kernel's own verdict (_is_text_path(p), the dispatcher's call, pinned at source). The cases reach every
 // branch of the template and both ports: the plural, the decisions line, tracked on and off, the regenerate
 // bullet by the kernel's allowlist (a .dat and an .ipynb the viewer calls neither image nor PDF), a path with
@@ -408,8 +409,9 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
   ].join("\n");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "romp-fc-parity-"));
   try {
-    // the floors tests/conftest.py and tests/test_file_comments.py put under a kernel load: a hermetic state
-    // root, a dead manager port, no browser open, no real CLI, no catalog fetch, no systemd scope
+    // over the runner's environment, ROMP_STATE_DIR removed, the spawn sets seven variables: a hermetic state root, a
+    // dead manager port, no browser open, a serve token, no real CLI, no catalog fetch and no systemd scope; every
+    // other variable, the rest of ROMP_* among them, is the runner's
     const env: NodeJS.ProcessEnv = { ...process.env, XDG_STATE_HOME: scratch, ROMP_MANAGER_PORT: "1", ROMP_KERNEL_NO_OPEN: "1",
       ROMP_SERVE_TOKEN: "testtok", ROMP_CLAUDE_BIN: "/bin/false", ROMP_MODEL_CATALOG: "off", ROMP_CLI_SCOPE: "0" };
     delete env.ROMP_STATE_DIR;

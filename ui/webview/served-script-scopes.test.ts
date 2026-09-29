@@ -158,9 +158,10 @@ for (const form of ["(0, eval)(s); seen = check();", "this.eval(s); seen = check
 }
 
 /** The kernel's served scripts (tests/test_shell_source_check.py _served_scripts), the pages SERVED_BUILDERS lists, the
- *  documents the scripts were read from, and the pieces of `plant`, a page of our own, as that module's reader finds them;
- *  python3 loads the kernel under a throwaway state root with the floors tests/conftest.py puts under a kernel load (the
- *  way file-comments.test.ts loads it). */
+ *  documents the scripts were read from, and the pieces of `plant`, a page of our own, as that module's reader finds them.
+ *  python3 loads the kernel from the runner's environment with every ROMP_* variable dropped and eight set: XDG_STATE_HOME
+ *  and TMPDIR (a throwaway directory), ROMP_MANAGER_PORT=1, ROMP_KERNEL_NO_OPEN=1, ROMP_SERVE_TOKEN,
+ *  ROMP_CLAUDE_BIN=/bin/false, ROMP_MODEL_CATALOG=off and ROMP_CLI_SCOPE=0. */
 function servedScripts(plant: string): { pages: string[]; documents: string[]; scripts: Piece[]; plant: Array<[string, Piece["kind"], string]> } {
   const script = [
     "import json, os, sys",
