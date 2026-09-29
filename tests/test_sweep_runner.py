@@ -1948,10 +1948,10 @@ class Checkout(_Base):
         return False
 
     def stop_in_the_re_read(self, w, *extra, signum=15):
-        """Run the runner (with `extra`) while the pytest leg fails and leaves its checkout's .git/info/exclude a FIFO
-        (the fake's "fifo" action), so the re-read after the leg waits on that file. A non-blocking open of the FIFO for
-        writing succeeds only once a reader is in its open, and `signum` is sent once that reader sleeps in its read of
-        the FIFO (/proc's wchan): events, not a timer. The read and not the open is the event because a signal that
+        """Run the runner (with `extra`) while a leg or a setup leaves its checkout's .git/info/exclude a FIFO (the fake's
+        "fifo" action, or a --wrap that plants one), so the re-read after it waits on that file. A non-blocking open of
+        the FIFO for writing succeeds only once a reader is in its open, and `signum` is sent once that reader sleeps in
+        its read of the FIFO (/proc's wchan): events, not a timer. The read and not the open is the event because a signal that
         lands between the reader's open and its read can wait for that read to return: CPython 3.10 did not run the
         runner's handler there, and the write end stays open until the runner has exited, so the read never returned
         and the pins hung on 3.10 alone. Where /proc has no wchan (macOS), the open is the event. Returns (rc, stdout,
@@ -2055,6 +2055,34 @@ class Checkout(_Base):
         self.assertIn("the run at %s failed pytest in run 1 (rc 1)" % w.head()[:10], p.stderr)
         self.assertIsNone(w.data()["runs"][1]["legs"]["pytest"].get("finished"), "the unverified pass is not on disk")
         w.run("--flake", "pytest=" + flake, check=0)
+
+    def test_a_stop_before_a_later_legs_invalid_mark_leaves_the_runs_passes_uncounted(self):
+        """Round 2, the owner's build question 2 (the adversary's VOIDED-STOP probe): a valid red of pytest, then a run
+        with pytest's flake whose pytest passes (written after its own re-read) and whose manager leg leaves the shell
+        job's checkout's .git/info/exclude a FIFO, a change the re-read after that leg would mark the run invalid for. The
+        runner is stopped while that re-read waits on the FIFO, so the invalid mark is never written. A run that did not
+        finish cannot vouch for its passes: a plain run is then refused naming run 1's failure, and a run with pytest's
+        flake passes. Before, the stopped run's pytest pass excused run 1's failure, and the plain run passed."""
+        flake = Runner.FLAKE
+        w = self.w
+        w.ctl({"rc": {PYTEST_LEG: 1}})
+        w.run(check=1)
+        w.ctl({"action": {"manager": "fifo"}})
+        rc, out, err = self.stop_in_the_re_read(w, "--flake", "pytest=" + flake)
+        self.assertEqual(rc, 128 + 15, out + err)
+        self.assertIn("sweep %s: manager rc 0" % w.head()[:10], out, "stopped after the manager leg's rc line")
+        run = w.data()["runs"][1]
+        self.assertEqual((run["finished"], run["invalid"]), (None, None), "neither the invalid mark nor the finish is on disk")
+        self.assertEqual((run["legs"][PYTEST_LEG]["rc"], bool(run["legs"][PYTEST_LEG]["finished"])), (0, True),
+                         "the pass is on disk")
+        w.ctl({})
+        p = w.run()
+        self.assertEqual(p.returncode, 2, "the next plain run must be refused:\n%s%s" % (p.stdout, p.stderr))
+        self.assertIn("the run at %s failed pytest in run 1 (rc 1); a later run counts over a failed leg only with "
+                      "--flake" % w.head()[:10], p.stderr)
+        self.assertEqual(len(w.data()["runs"]), 2, "the refused run recorded nothing")
+        p = w.run("--flake", "pytest=" + flake, check=0)
+        self.assertIn("pytest re-run after a known flake (first run rc 1; flake: %s)" % flake, p.stdout)
 
     def stop_in_the_write(self, w, *extra, nth=1):
         """Run the runner (with `extra` after its arguments) while its first run's record carries a padding field no
@@ -5972,6 +6000,32 @@ class Reader(unittest.TestCase):
         for label, runs, want, named in cases:
             with self.subTest(label):
                 self.write(self.result(runs=runs))
+                case, line = self.case()
+                self.assertEqual(case, want, line)
+                self.assertIn(named, line)
+
+    def test_a_run_that_did_not_finish_counts_its_failures_and_none_of_its_passes(self):
+        """Round 2, the owner's build question 2: a run with no finished stamp is read as an invalid run is. After a red, a
+        full run with pytest's flake that passed pytest and stopped before it finished excuses nothing: a later plain
+        green reads red naming run 1's failure, and a later green with the flake passes, the flake spent there. A failure
+        the stopped run recorded still counts: a second failure of pytest there leaves the sha red naming runs 1 and 2.
+        Before, the stopped run's pass excused run 1's failure, so the plain green passed and the green with the flake
+        read invalid (a flake with no failed run before it)."""
+        stopped = dict(flakes={PYTEST_LEG: self.FLAKE}, started="2026-01-01T00:02:00Z", finished=None)
+        plain = self.run_rec(started="2026-01-01T00:04:00Z")
+        flaked = self.run_rec(flakes={PYTEST_LEG: self.FLAKE}, started="2026-01-01T00:04:00Z")
+        cases = (
+            ("a stopped pass, then a plain green", [self.run_rec(**stopped), plain], "red",
+             "run 1 failed pytest (rc 1; log logs/pytest.log), and run 3 passed it with no --flake naming it"),
+            ("a stopped pass, then a green with the flake", [self.run_rec(**stopped), flaked], "pass",
+             "pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE),
+            ("a stopped failure, then a green with the flake", [self.run_rec(legs=self.legs(pytest=1), **stopped), flaked],
+             "red", "pytest failed in runs 1 and 2; a known flake is excused once"),
+        )
+        for label, later, want, named in cases:
+            with self.subTest(label):
+                self.assertEqual(later[0]["verdict"], "running")
+                self.write(self.red_then(*later))
                 case, line = self.case()
                 self.assertEqual(case, want, line)
                 self.assertIn(named, line)

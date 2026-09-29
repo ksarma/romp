@@ -242,7 +242,10 @@ unable to pass (the reader reads it red, and the runner exits 1 for such a run, 
 for nothing, since its checkout or venv changed. An invalid run that failed no leg needs no flake. The pass line,
 verify's record and the reader's invalid line name each invalid run with the legs it failed. A leg that did not pass
 is written to the result as soon as it exits, before the re-read after it, so a stop during that re-read keeps its
-failure; a pass is written after its re-read, which could void it. A stop that arrives inside the write of a failure,
+failure; a pass is written after its re-read, which could void it. A run that did not finish (stopped, or its runner
+died) is read as an invalid run is: its failures count and its passes count for nothing (round 2, the owner's build
+question 2), since a later leg's re-read could have voided them, and a stop during that re-read keeps its invalid mark
+from being written. A stop that arrives inside the write of a failure,
 or of the run's invalid mark, lets that write finish before the runner stops (_write_under_stop), where write_result
 alone would remove its temp file and the record with it. A stop in the moments between a leg's exit and the
 runner filling in its record (the reap of what the leg left running, which reap_descendants bounds at its 30 s
@@ -688,7 +691,11 @@ def read_history(runs):
     the run's passes are dropped, since its checkout or a venv changed and a pass there proves nothing. An invalid run
     that failed no leg needs no flake and is only named (round 1 decision 18 stands for it). The never-checks stay off
     for an invalid run: a flake it names for a leg after the invalidating one, which never ran, is a record the runner
-    does write. A leg is read by its own finished stamp, not its run's, so a stopped run's finished legs count too.
+    does write. A leg is read by its own finished stamp, not its run's, so a stopped run's finished legs count too; but a
+    run with no finished stamp of its own is read as an invalid run is (round 2, the owner's build question 2): each
+    finished leg of it that did not pass is a failure, and its passes are dropped, since a run that did not finish
+    cannot vouch for them (a pass written after its re-read can still be voided by a later leg's re-read, whose invalid
+    mark a stop can keep from being written).
       never    the records no runner writes: a --leg re-run with no known flake named for a leg it ran, a flake
                named for a leg the run did not run or that had no failed run before it at this sha;
       dead     why no run at this sha can pass any more: a leg that failed in two runs (a known flake is excused once),
@@ -722,8 +729,12 @@ def read_history(runs):
                 if not (isinstance(flakes.get(n), str) and flakes[n].strip()):
                     out["never"].append("run %d re-ran %s with no known flake named" % (num, n))
         for n in ran:
+            ok = passed(n, legs[n])
+            if ok and not run.get("finished"):
+                # the owner's build question 2: a run that did not finish cannot vouch for its passes
+                continue
             flake = flakes.get(n)
-            attempts[n].append((num, passed(n, legs[n]), flake if isinstance(flake, str) and flake.strip() else None, legs[n]))
+            attempts[n].append((num, ok, flake if isinstance(flake, str) and flake.strip() else None, legs[n]))
     for n in LEGS:
         seq = attempts[n]
         fails = [a for a in seq if not a[1]]
@@ -3788,9 +3799,10 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                     # Round 2, decision 14 (A6): a leg that did not pass is on disk as soon as run_leg returns, before
                     # deps_skipped, the re-read of the checkout and the venv's re-read below, so a stop during any of them
                     # keeps the failure and the next run needs --flake naming it; an invalid mark after the re-read
-                    # rewrites the record. A pass is written only after its re-read, which could void it: read_history
-                    # counts a stopped run's finished legs, so a pass written first and then stopped would stand unverified.
-                    # A stop inside this write finishes it before the stop is raised (_write_under_stop), so the failure
+                    # rewrites the record. A pass is written only after its re-read, which could void it; and read_history
+                    # counts a stopped run's finished failures but none of its passes (the owner's build question 2), since
+                    # a later leg's re-read could still void them. A stop inside this write finishes it before the stop is
+                    # raised (_write_under_stop), so the failure
                     # is on disk even then.
                     _write_under_stop(path, data)
                 left = scratch_end(lctx)
