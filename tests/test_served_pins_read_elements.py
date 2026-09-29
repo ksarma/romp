@@ -3918,8 +3918,10 @@ class T(unittest.TestCase):
         # globals() lookup (60), counts as handed on, so its return is refused (53, 57); a name built at run time (64) is unread,
         # its return not refused (62): no row, the stated outside. Dropping the check reds every row here, dropping the text
         # helpers' exemption refuses 25 and 27 as well, counting a call through any callee as a call drops 32, dropping the
-        # helper-call clause drops 40, 44 and 45, and dropping the string-constant clause drops 53 and 57. The rows are named,
-        # never inferred.
+        # helper-call clause drops 40, 44 and 45, and dropping the string-constant clause drops 53 and 57. A helper called with a
+        # keyword argument only (69) is handed on as one called with a positional argument is (23), so its return is refused (66)
+        # and the call reads nothing; counting a keyword call as a call the census reads drops 66 (the keyword half, unpinned
+        # before round 6's follow-up). The rows are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 class T(unittest.TestCase):
@@ -3985,6 +3987,11 @@ class H(unittest.TestCase):
         return km._landing()
     def test_b(self):
         self.assertIn("z8", getattr(self, "_" + "bs")())
+def _kw(x=0):
+    return km._landing()
+class K(unittest.TestCase):
+    def test_k(self):
+        self.assertIn("z9", _kw(x=1))
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3998,7 +4005,8 @@ class H(unittest.TestCase):
                           (12, "_landing", where % "NamedExpr"), (13, "_landing", where % "Lambda"), (15, "_landing", where % "Yield"),
                           (19, "_landing", where % "Return"), (21, "_landing", where % "Return"), (23, "_chat_page", where % "Return"),
                           (32, "_LANDING_MOBILE_JS", where % "Return"), (40, "_landing", where % "Return"), (44, "_landing", where % "Assign"),
-                          (45, "_landing", where % "AnnAssign"), (53, "_landing", where % "Return"), (57, "_chat_page", where % "Return")])
+                          (45, "_landing", where % "AnnAssign"), (53, "_landing", where % "Return"), (57, "_chat_page", where % "Return"),
+                          (66, "_landing", where % "Return")])
         # and the call through the class reads nothing: no row over its text at 34 to 36
         self.assertEqual([r for r in readers if 33 <= r[0] <= 36], [])
         # the helper's calls: refused at 40, 44 and 45, read at 47, and no row at the awaits (49, 50), the stated outside
@@ -4006,7 +4014,9 @@ class H(unittest.TestCase):
                          [(40, "unclassified", "_landing"), (44, "unclassified", "_landing"), (45, "unclassified", "_landing"), (47, "assert", "_landing")])
         # the helpers reached by a string: the two returns refused (53, 57), no row at their calls (55, 60), and none at the name
         # built at run time (62, 64)
-        self.assertEqual([r[:3] for r in readers if r[0] >= 51], [(53, "unclassified", "_landing"), (57, "unclassified", "_chat_page")])
+        self.assertEqual([r[:3] for r in readers if 51 <= r[0] <= 64], [(53, "unclassified", "_landing"), (57, "unclassified", "_chat_page")])
+        # the helper called with a keyword argument: its return refused (66), no row at the call (69)
+        self.assertEqual([r[:3] for r in readers if r[0] >= 65], [(66, "unclassified", "_landing")])
 
 
     def test_a_literal_membership_no_pins_row_judges_is_unclassified(self):
