@@ -1395,7 +1395,8 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('import os\nx.vars(os)["sys" + "tem"]\n', ".vars on any value"),
                  ('x.globals()["subpro" + "cess"]\n', ".globals on any value"),
                  ('x.locals()\n', ".locals on any value"),
-                 ('from unittest import mock\ndef f():\n    return getattr((lambda: mock)().builtins, "__import__")("subpro" + "cess").run(["true"])\n', 'getattr((lambda: mock)().builtins, "__import__"): a reflective name'),
+                 # (the lambda's receiver is not in the expected form: ast.unparse spells it `lambda : mock` on Python 3.10 and `lambda: mock` later)
+                 ('from unittest import mock\ndef f():\n    return getattr((lambda: mock)().builtins, "__import__")("subpro" + "cess").run(["true"])\n', '"__import__"): a reflective name handed as a constant name'),
                  ('import test_federated_dial_terms_served as _dial\ndef f():\n    return getattr(_dial.mock.builtins, "__import__")("subpro" + "cess").run(["true"])\n', 'getattr(_dial.mock.builtins, "__import__"): a reflective name'),
                  ('import subprocess\ndef f():\n    return getattr(subprocess.CompletedProcess.__init__, "__globals__")["Popen"](["true"])\n', 'getattr(subprocess.CompletedProcess.__init__, "__globals__"): a reflective name'),
                  ('setattr(x, "exec", y)\n', 'setattr(x, "exec"): a reflective name'),
