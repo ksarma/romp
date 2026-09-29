@@ -6507,6 +6507,12 @@ _ANYIO_PARSES = frozenset(("parse_args", "parse_known_args", "parse_intermixed_a
 _ANYIO_IMPORT_PATHS = frozenset(("path", "meta_path", "path_hooks", "path_importer_cache"))
 #   the attributes of sys that decide where an import finds its module: THE DIRECT-IMPORT CHECK refuses a read of one in
 #   the conftest's text, since a module the text then imports may come from a directory the check does not read
+_ANYIO_IMPORT_BINDERS = _ANYIO_IMPORT_PATHS | frozenset(("modules", "__import__"))
+#   the attributes whose write makes an import statement bind another object than the module the file THE DIRECT-IMPORT
+#   CHECK reads defines: the four of _ANYIO_IMPORT_PATHS (where the import finds its module), sys.modules (a stub put
+#   there is what the statement binds) and builtins.__import__ (the function the statement calls). A setter or a patch
+#   helper in the conftest's text that may write one of them, or an attribute store or del naming one, leaves THE
+#   DIRECT-IMPORT KEY PROOF unproven (_anyio_import_binders)
 _ANYIO_HOLDERS = {"workerinput": "xdist's workerinput, whose item mainargv is the controller's command line"}
 #   the objects THE ANYIO RULE admits only as one item read by a key THE PROOF proves, {attribute: what it holds}:
 #   xdist's config.workerinput holds mainargv, the controller's sys.argv on a worker, beside harmless items, so it is
@@ -6964,6 +6970,65 @@ def _anyio_builtin_defeaters(tree, proven):
     return ""
 
 
+def _anyio_import_binders(tree):
+    """Why the conftest's own text `tree` may make an import statement of it bind another object than the module the
+    file THE DIRECT-IMPORT CHECK reads by that name defines, else "" (THE DIRECT-IMPORT KEY PROOF's reading: the
+    verification of the hundred and fifth round-2 commit of fork PR #894 found a stub the conftest's text put in
+    sys.modules ahead of the import, by a module-level item store, monkeypatch.setitem or mock.patch.dict, admitted
+    while a real run handed getoption the -p list, since the proof reads the file the statement names and nothing read
+    what the statement binds). Read over the whole text, so what stands in any def or class counts: an attribute named
+    modules (sys.modules under any name sys is read by) read other than as a subscript in a load (sys.modules["x"]), as
+    the owner of a read-only method called (get, keys, values, items, copy and the like) or on the right of `in`, so an
+    item stored or deleted, the attribute handed to a call (monkeypatch.setitem(sys.modules, ...),
+    mock.patch.dict(sys.modules, ...)), a method that may write it (update, setdefault, pop), bound to a name, iterated
+    or stored; modules imported from sys by its name; the str literal 'sys.modules' (mock.patch.dict("sys.modules",
+    ...)); a setter or a patch helper (_anyio_attribute_writes) that may write a name of _ANYIO_IMPORT_BINDERS
+    (monkeypatch.setattr(builtins, "__import__", fake), monkeypatch.setattr(sys, "path", [...])), and an attribute
+    store or del naming one (builtins.__import__ = fake); and the identifier syspath_prepend
+    (monkeypatch.syspath_prepend, which puts a directory ahead of the rest on the import path). Each is 0 live:
+    tests/conftest.py reads sys.modules only through get, items() and values() and names none of the others."""
+    parent = {c: x for x in ast.walk(tree) for c in ast.iter_child_nodes(x)}
+    readonly = ("get", "keys", "values", "items", "copy", "__contains__", "__getitem__", "__len__", "__iter__")
+    try:
+        for n in ast.walk(tree):
+            line = getattr(n, "lineno", 0) or getattr(parent.get(n), "lineno", 0)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value == "sys.modules":
+                return "the str literal 'sys.modules' at line %d" % line
+            if isinstance(n, ast.ImportFrom) and n.module == "sys" and any(a.name == "modules" for a in n.names):
+                return "modules imported from sys at line %d" % line
+            if (isinstance(n, ast.Name) and n.id == "syspath_prepend") or (
+                    isinstance(n, ast.Attribute) and n.attr == "syspath_prepend"):
+                return "syspath_prepend at line %d, which puts a directory ahead on the import path" % line
+            if isinstance(n, ast.Call):
+                written = _anyio_attribute_writes(n)
+                hit = next((nm for nm in written[1] if nm in _ANYIO_IMPORT_BINDERS), None) if written else None
+                if hit:
+                    return "%s naming %s at line %d" % (written[0], hit, line)
+            if not isinstance(n, ast.Attribute):
+                continue
+            if n.attr in _ANYIO_IMPORT_BINDERS and isinstance(n.ctx, (ast.Store, ast.Del)):
+                return "an attribute store or del naming %s at line %d" % (n.attr, line)
+            if n.attr != "modules":
+                continue
+            p = parent.get(n)
+            if isinstance(p, ast.Subscript) and p.value is n:
+                if isinstance(p.ctx, ast.Load):
+                    continue
+                return "an item of sys.modules stored or deleted at line %d" % line
+            if isinstance(p, ast.Attribute) and p.value is n:
+                call = parent.get(p)
+                if p.attr in readonly and isinstance(call, ast.Call) and call.func is p:
+                    continue
+                return "sys.modules.%s at line %d, which may write it" % (p.attr, line)
+            if isinstance(p, ast.Compare) and any(c is n for c in p.comparators) and all(
+                    isinstance(o, (ast.In, ast.NotIn)) for o in p.ops):
+                continue
+            return "sys.modules held whole at line %d (handed to a call, bound to a name, iterated or returned)" % line
+    finally:
+        parent = None
+    return ""
+
+
 def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     """[(line, what)] for each read of the anyio option THE ANYIO RULE finds in `tree`, a conftest's text, wherever it
     stands (the module's import-time code and the body of every def, lambda and class, their decorators and defaults
@@ -7062,9 +7127,25 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     text's imports, THE DIRECT-IMPORT KEY PROOF: a name bound once by a from import, or an attribute read on a name
     bound once by an import, of a module of the repository the text imports directly, is proven where that module's own
     text binds the name once to a str literal as above (_anyio_imported_module's literals), no submodule of the module
-    has the name, and nothing in the conftest's text can rebind the module's attribute of that name (a setter or a
+    has the name, nothing in the conftest's text can rebind the module's attribute of that name (a setter or a
     patch helper naming it among what can, monkeypatch.setattr("_ih.KEY", "plugins") or mock.patch("_ih.KEY",
-    "plugins"), the verifier's B2 and B4) or the conftest's own name; that module's literals are THE PROOF read over
+    "plugins"), the verifier's B2 and B4) or the conftest's own name, and nothing in the conftest's text can make the
+    import bind another object than the module that file defines (_anyio_import_binders, since the hundred and sixth
+    round-2 commit of fork PR #894: the proof reads the file the import statement names, so a stub the conftest put in
+    sys.modules ahead of the import, the verifier's A1 to A3b, and a directory monkeypatch.syspath_prepend put ahead
+    on the import path, its O1, were admitted while a real run handed getoption the -p list). That is: sys.modules
+    written, the attribute modules (under any name sys is read by) read other than as a subscript in a load, as the
+    owner of a read-only method called (get, keys, values, items, copy and the like) or on the right of `in` (an item
+    stored or deleted; handed to a call, as monkeypatch.setitem(sys.modules, ...) and mock.patch.dict(sys.modules, ...)
+    hand it; update, setdefault or pop; bound to a name, iterated or stored), modules imported from sys by its name, or
+    the str literal 'sys.modules' (mock.patch.dict("sys.modules", ...)); a setter or a patch helper that may write
+    modules, __import__ or one of the four import-path attributes of _ANYIO_IMPORT_PATHS, or an attribute store or del
+    naming one (monkeypatch.setattr(builtins, "__import__", fake), builtins.__import__ = fake,
+    monkeypatch.setattr(sys, "path", [...])), the names of _ANYIO_IMPORT_BINDERS; and the identifier syspath_prepend
+    (monkeypatch.syspath_prepend). Each is 0 live, and
+    test_a_conftest_write_that_can_make_an_import_bind_a_stub_defeats_the_direct_import_key_proof pins each refused.
+    A write of sys.modules outside the conftest's text is not read here (a line of WHAT IT DOES NOT READ). That
+    module's literals are THE PROOF read over
     its own text, so a name of _ANYIO_DEFEATERS anywhere in
     it defeats the proof of each name it binds, as one in the conftest's text defeats the proof of a name of the
     conftest's module scope (and, since a defeater is a name tests/__init__.py does not hold, refuses the module whole,
@@ -7252,7 +7333,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     and neither is refused; a BARE setattr, delattr, object.__setattr__ or compile in the conftest's own text WOULD be
     refused since the reviewer's ruling of 2026-09-29 15:08Z, and setattr, delattr, vars and compile are names
     tests/__init__.py does not hold, so in a direct import's text THE POSITIVE ALLOWLIST refuses them, over that text and
-    not the conftest's). The direct-import check reads
+    not the conftest's). Nothing in it can make an import bind another object than the file the check reads
+    (_anyio_import_binders finds nothing): it reads sys.modules only through get, items() and values(), and names no
+    syspath_prepend, no setter or patch helper that may write modules, __import__ or an import-path attribute, and no
+    attribute store naming one. The direct-import check reads
     tests/__init__.py,
     which the conftest imports as
     _tests and, in a def, as `from tests import remove_made_dirs`; its one read, sys.argv in write_owner_marker, is in a
@@ -7388,13 +7472,26 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     refusal by the token importlib would refuse the live conftest (THE LIVE WITNESS). A module of the repository taken,
     from a directory put on the import path other than by a read of sys.path the last clause sees (a module the conftest
     imports that puts it there, getattr(sys, "path"), __import__("sys").path, a star import of sys, pytest's pythonpath
-    setting), ahead of the file of the check's directories it reads by that name, or of the module outside the
+    setting, and monkeypatch.syspath_prepend or monkeypatch.setattr(sys, "path", [...]), which leave THE DIRECT-IMPORT
+    KEY PROOF unproven, _anyio_import_binders, but not the rest of the check, which still reads the file of its
+    directories), ahead of the file of the check's directories it reads by that name, or of the module outside the
     repository the import system of the process reading the text finds by it (a helper named like a module of the
     standard library), and a submodule a package's extended __path__ finds elsewhere; no live site (tests/conftest.py
     reads no sys.path and puts no directory on it), escape-only, witness
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[import-path], whose plants put a directory on the path
-    through __import__("sys").path and through getattr(sys, "path") and take from it a module named like a file the
-    check reads.
+    through __import__("sys").path, through getattr(sys, "path") and through pytest's MonkeyPatch.syspath_prepend, and
+    take from it a module named like a file the check reads. An import statement of the conftest bound, when it runs,
+    to a stub put in sys.modules by a write THE DIRECT-IMPORT KEY PROOF does not read: in the conftest's own text,
+    sys.modules reached other than as an attribute named modules or an import of it from sys
+    (getattr(sys, "modules")["_ih"] = stub, vars(sys)["modules"]["_ih"] = stub); no live site (tests/conftest.py reaches
+    sys.modules only as sys.modules, read through get, items() and values()), escape-only, witness
+    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[sys-modules-by-another-spelling], whose two plants
+    put such a stub ahead of the import, so getoption is handed 'plugins' where THE PROOF proved 'verbose'. And outside
+    the conftest's text, a module of the repository the conftest imports directly that writes sys.modules at its
+    import, ahead of the conftest's import of the module it puts there; live site: tests/__init__.py puts seven of
+    its own modules in sys.modules at its import by sys.modules.setdefault (romp_load, lab_dist, lab_dist_stub,
+    fs_clock, git_fixture, sdk_blocker and env_ring_census), so a refusal of a direct import whose text writes
+    sys.modules would refuse the live conftest's import of it (THE LIVE WITNESS).
     OBJECTS, KEYS AND NAMES REACHED A WAY THE RULE DOES NOT READ. A double-underscore attribute of an object of a module
     the conftest imports directly reached other than in the forms the last clause refuses (the object handed to a def of
     the text that reads the attribute there, def _g(o): return o.__globals__); no live site (tests/conftest.py hands no
@@ -7618,6 +7715,7 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     rebound = _anyio_rebinders(tree, bindings)
     package, dirs = _import_roots(HERE if where is None else where) if follow else ("", [])
     known = {}              # {dotted: _anyio_imported_module's reading}, shared with THE DIRECT-IMPORT CHECK
+    binders = []            # [_anyio_import_binders(tree)], read once, where THE DIRECT-IMPORT KEY PROOF first needs it
 
     def imported(dotted):
         """_anyio_imported_module's reading of the module `dotted` of the repository, None where none of `dirs` holds
@@ -7633,9 +7731,11 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
         for the name `name_node` bound once by a from import of the module's name (`attr` None), or bound once by an
         import of the module itself with `attr` read on it; None where no such import binds it (the caller reads it
         as any other name). Proven where the module's own text binds the name once to a str literal nothing there can
-        rebind (_anyio_imported_module's literals), no submodule of the module has the name, and the text binds its own
+        rebind (_anyio_imported_module's literals), no submodule of the module has the name, the text binds its own
         name once and nothing in it can rebind the module's attribute of that name (an attribute store, setattr, a
-        namespace written: _anyio_rebinders)."""
+        namespace written: _anyio_rebinders), and nothing in the text can make the import bind another object than the
+        module that file defines (sys.modules written, syspath_prepend, a setter or patch helper naming modules,
+        __import__ or an import-path attribute: _anyio_import_binders)."""
         try:
             decls, scope = bindings.scope_of(name_node).resolve(name_node.id)
         except AssertionError:
@@ -7663,6 +7763,11 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
         why = rebound(key, "module") or rebound(name_node.id, scope.kind if scope is not None else "module")
         if why:
             return None, "%s, which %s in the text can rebind" % (site, why)
+        if not binders:
+            binders.append(_anyio_import_binders(tree))
+        if binders[0]:
+            return None, ("%s, whose import the text can make bind another object than the module that file defines: "
+                          "%s" % (site, binders[0]))
         return got[3][key], None
 
     def proven(n):
@@ -8465,7 +8570,23 @@ _ESCAPE_ONLY_KINDS = (
          "import os\nimport sys\n\ngetattr(sys, 'path').insert(0, os.path.join(os.path.dirname(__file__), 'alt'))\n\n"
          "import _ih" + _ESCAPE_ONLY_READ % "_ih.remove_made_dirs(None)",
          {"_ih": "def remove_made_dirs(root):\n    return []\n",
+          "alt/_ih": "import sys\n\n\ndef remove_made_dirs(root):\n    return sys.argv\n"}, "read"),
+        ("a directory put on the path by pytest's MonkeyPatch.syspath_prepend",
+         "import os\n\nimport pytest\n\npytest.MonkeyPatch().syspath_prepend(os.path.join(os.path.dirname(__file__), "
+         "'alt'))\n\nimport _ih" + _ESCAPE_ONLY_READ % "_ih.remove_made_dirs(None)",
+         {"_ih": "def remove_made_dirs(root):\n    return []\n",
           "alt/_ih": "import sys\n\n\ndef remove_made_dirs(root):\n    return sys.argv\n"}, "read"))),
+    ("sys-modules-by-another-spelling", (
+        ("getattr(sys, 'modules')['_ih'] = stub ahead of the import",
+         "import sys\nimport types\n\ngetattr(sys, 'modules')['_ih'] = "
+         "types.SimpleNamespace(TEST_ROOT_PREFIX='plugins')\nimport _ih  # noqa: E402\n"
+         "\n\ndef pytest_configure(config):\n    config.getoption(_ih.TEST_ROOT_PREFIX)\n",
+         {"_ih": "TEST_ROOT_PREFIX = 'verbose'\n"}, "rewrite"),
+        ("vars(sys)['modules']['_ih'] = stub ahead of the import",
+         "import sys\nimport types\n\nvars(sys)['modules']['_ih'] = "
+         "types.SimpleNamespace(TEST_ROOT_PREFIX='plugins')\nimport _ih  # noqa: E402\n"
+         "\n\ndef pytest_configure(config):\n    config.getoption(_ih.TEST_ROOT_PREFIX)\n",
+         {"_ih": "TEST_ROOT_PREFIX = 'verbose'\n"}, "rewrite"))),
     ("dunder-through-a-handed-object", (
         ("a def of the module handed to _g, which reads its __globals__",
          "import _ih\n\n\ndef _g(o):\n    return o.__globals__"
@@ -15148,6 +15269,137 @@ class HermeticKernelPostal(unittest.TestCase):
                 self.assertTrue(any(why in w for _l, w in reads),
                                 "%s: the refusal names the setter or patch helper that can rebind the key (%r): %s"
                                 % (label, why, reads))
+
+    def test_a_conftest_write_that_can_make_an_import_bind_a_stub_defeats_the_direct_import_key_proof(self):
+        """THE IMPORT'S BINDING (the verification of the hundred and fifth round-2 commit of fork PR #894, its medium
+        and its low): THE DIRECT-IMPORT KEY PROOF reads the file an import statement of the conftest names, so where the
+        conftest's own text makes the statement bind another object, a stub put in sys.modules ahead of it, a directory
+        put ahead on the import path or the import function replaced, a key the proof proved from the file is not what
+        the statement binds. _anyio_import_binders reads the text for each such write and leaves the key unproven. THE
+        PINS, each REFUSED at the fix, the refusal naming the write; each ADMITTED at the hundred and fifth, here shown
+        with _anyio_import_binders disabled (and by execution at the hundred and fifth in the artifacts); and each road
+        whose write stands at the conftest's import or in the hook it runs, run in a child interpreter with a fake
+        config (_escape_only_run), hands getoption 'plugins' where THE PROOF proved 'verbose'. The verifier's A1 and
+        A1b (an item of sys.modules stored at import, then import and from import), A2 and A2b (monkeypatch.setitem on
+        sys.modules in an autouse fixture, then import and from import in the hook), A3 and A3b (mock.patch.dict on
+        sys.modules, by the object and by the string 'sys.modules') and O1 (monkeypatch.syspath_prepend); and the class
+        around them: sys.modules.update and sys.modules.setdefault, sys.modules bound to a name, modules imported from
+        sys, sys under another name, mock.patch.dict as a decorator of the hook, the import function replaced by
+        monkeypatch.setattr, by mock.patch and by an attribute store, a directory put ahead by
+        monkeypatch.setattr(sys, 'path', [...]) and by a MonkeyPatch's syspath_prepend at import. THE CONTROLS,
+        admitted: a direct import's key beside sys.modules read through get, items(), values(), `in` and an item (the
+        forms tests/conftest.py reads it in); a direct import's key with no write, and beside
+        monkeypatch.setattr(o, 'a', 1); and a literal key and a module-scope key beside a stub put in sys.modules, which
+        THE DIRECT-IMPORT KEY PROOF does not decide."""
+        from unittest import mock
+        mod = sys.modules[__name__]
+        where = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, where, True)
+        stub = "types.SimpleNamespace(TEST_ROOT_PREFIX='plugins')"
+        fake = ("\n_real = builtins.__import__\n\n\ndef _fake(name, *a, **k):\n    if name == '_ih':\n"
+                "        return %s\n    return _real(name, *a, **k)\n" % stub)
+        ih = {"_ih": "TEST_ROOT_PREFIX = 'verbose'\n"}
+        alt = {**ih, "alt/_ih": "TEST_ROOT_PREFIX = 'plugins'\n"}
+        cfg = "\n\ndef pytest_configure(config):\n    config.getoption(_ih.TEST_ROOT_PREFIX)\n"
+        cfg_in = "\n\ndef pytest_configure(config):\n    import _ih\n    config.getoption(_ih.TEST_ROOT_PREFIX)\n"
+        call_in = ("\n\ndef pytest_runtest_call(item):\n    import _ih\n"
+                   "    item.config.getoption(_ih.TEST_ROOT_PREFIX)\n")
+        call_from = ("\n\ndef pytest_runtest_call(item):\n    from _ih import TEST_ROOT_PREFIX\n"
+                     "    item.config.getoption(TEST_ROOT_PREFIX)\n")
+        fx = ("import os\nimport sys\nimport types\n\nimport pytest\n\n\n@pytest.fixture(autouse=True)\n"
+              "def _f(monkeypatch):\n    %s\n")
+        mk = ("import builtins\nimport sys\nimport types\nfrom unittest import mock\n\nimport pytest\n%s\n\n"
+              "@pytest.fixture(autouse=True)\ndef _f():\n    with %s:\n        yield\n")
+        here = "os.path.join(os.path.dirname(__file__), 'alt')"
+        roads = [
+            ("A1 an item of sys.modules stored at import, then import _ih",
+             "import sys\nimport types\n\nsys.modules['_ih'] = %s\nimport _ih  # noqa: E402\n" % stub + cfg, ih,
+             "an item of sys.modules stored or deleted", True),
+            ("A1b an item of sys.modules stored at import, then from _ih import TEST_ROOT_PREFIX",
+             "import sys\nimport types\n\nsys.modules['_ih'] = %s\nfrom _ih import TEST_ROOT_PREFIX  # noqa: E402\n"
+             "\n\ndef pytest_configure(config):\n    config.getoption(TEST_ROOT_PREFIX)\n" % stub, ih,
+             "an item of sys.modules stored or deleted", True),
+            ("A2 monkeypatch.setitem(sys.modules, '_ih', stub) in an autouse fixture, import _ih in the hook",
+             fx % ("monkeypatch.setitem(sys.modules, '_ih', %s)" % stub) + call_in, ih, "sys.modules held whole",
+             False),
+            ("A2b monkeypatch.setitem(sys.modules, '_ih', stub) in an autouse fixture, a from import in the hook",
+             fx % ("monkeypatch.setitem(sys.modules, '_ih', %s)" % stub) + call_from, ih, "sys.modules held whole",
+             False),
+            ("A3 mock.patch.dict(sys.modules, {...}) in an autouse fixture, import _ih in the hook",
+             mk % ("", "mock.patch.dict(sys.modules, {'_ih': %s})" % stub) + call_in, ih, "sys.modules held whole",
+             False),
+            ("A3b mock.patch.dict('sys.modules', {...}) in an autouse fixture, import _ih in the hook",
+             mk % ("", "mock.patch.dict('sys.modules', {'_ih': %s})" % stub) + call_in, ih,
+             "the str literal 'sys.modules'", False),
+            ("O1 monkeypatch.syspath_prepend(alt) in an autouse fixture, import _ih in the hook",
+             fx % ("monkeypatch.syspath_prepend(%s)" % here) + call_in, alt, "syspath_prepend", False),
+            ("sys.modules.update at import", "import sys\nimport types\n\nsys.modules.update({'_ih': %s})\n"
+             "import _ih  # noqa: E402\n" % stub + cfg, ih, "sys.modules.update", True),
+            ("sys.modules.setdefault at import", "import sys\nimport types\n\nsys.modules.setdefault('_ih', %s)\n"
+             "import _ih  # noqa: E402\n" % stub + cfg, ih, "sys.modules.setdefault", True),
+            ("sys.modules bound to a name, an item stored through it",
+             "import sys\nimport types\n\n_mods = sys.modules\n_mods['_ih'] = %s\nimport _ih  # noqa: E402\n" % stub
+             + cfg, ih, "sys.modules held whole", True),
+            ("modules imported from sys, an item stored",
+             "import types\nfrom sys import modules\n\nmodules['_ih'] = %s\nimport _ih  # noqa: E402\n" % stub + cfg,
+             ih, "modules imported from sys", True),
+            ("sys under another name", "import sys as _s\nimport types\n\n_s.modules['_ih'] = %s\n"
+             "import _ih  # noqa: E402\n" % stub + cfg, ih, "an item of sys.modules stored or deleted", True),
+            ("mock.patch.dict(sys.modules, ...) as a decorator of the hook",
+             "import sys\nimport types\nfrom unittest import mock\n\n\n@mock.patch.dict(sys.modules, {'_ih': %s})"
+             % stub + cfg_in.replace("\n\ndef", "\ndef", 1), ih, "sys.modules held whole", True),
+            ("the import function replaced by monkeypatch.setattr(builtins, '__import__', fake)",
+             "import builtins\n" + fx % "monkeypatch.setattr(builtins, '__import__', _fake)" + fake + call_in, ih,
+             "setattr naming __import__", False),
+            ("the import function replaced by mock.patch('builtins.__import__', fake)",
+             mk % (fake, "mock.patch('builtins.__import__', _fake)") + call_in, ih, "patch naming __import__", False),
+            ("the import function replaced by an attribute store at import",
+             "import builtins\nimport types\n" + fake + "\n\nbuiltins.__import__ = _fake\n" + cfg_in, ih,
+             "an attribute store or del naming __import__", True),
+            ("a directory put ahead by monkeypatch.setattr(sys, 'path', [...])",
+             fx % ("monkeypatch.setattr(sys, 'path', [%s, os.path.dirname(os.__file__)])" % here) + call_in, alt,
+             "setattr naming path", False),
+            ("a directory put ahead by a MonkeyPatch's syspath_prepend at import",
+             "import os\n\nimport pytest\n\npytest.MonkeyPatch().syspath_prepend(%s)\n" % here + cfg_in, alt,
+             "syspath_prepend", True)]
+        controls = [
+            ("a direct import's key beside sys.modules read through get, items(), values(), in and an item",
+             "import sys\n\nimport _ih\n\n_A = sys.modules.get('os')\n_B = list(sys.modules.items())\n"
+             "_C = list(sys.modules.values())\n_D = '_ih' in sys.modules\n_E = sys.modules['os']\n" + cfg, ih),
+            ("a direct import's key, no write", "import _ih\n" + cfg, ih),
+            ("a direct import's key beside monkeypatch.setattr(o, 'a', 1)",
+             "import _ih\n" + fx % "monkeypatch.setattr(sys, 'a', 1)" + cfg, ih),
+            ("a literal key beside a stub put in sys.modules",
+             "import sys\nimport types\n\nsys.modules['_ih'] = %s\n" % stub
+             + "\n\ndef pytest_configure(config):\n    config.getoption('verbose')\n", ih),
+            ("a module-scope key beside a stub put in sys.modules",
+             "import sys\nimport types\n\nK = 'verbose'\nsys.modules['_ih'] = %s\n" % stub
+             + "\n\ndef pytest_configure(config):\n    config.getoption(K)\n", ih)]
+        self.assertTrue(roads and controls, "the roads and the controls")
+        for i, (label, conf, mods, why, run) in enumerate(roads + [(lb, c, m, None, False) for lb, c, m in controls]):
+            with self.subTest(road=label) if why else self.subTest(control=label):
+                d = os.path.join(where, "b%02d" % i)
+                for name, text in dict(mods, conftest=conf).items():
+                    path = os.path.join(d, name + ".py")
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(text)
+                reads = _anyio_option_reads(ast.parse(conf), where=d)
+                if why is None:
+                    self.assertEqual(reads, [], "%s: admitted, no read" % label)
+                    continue
+                self.assertTrue(reads, "%s: refused at the fix" % label)
+                self.assertTrue(all("the keyed read getoption" in w and "whose import the text can make bind" in w
+                                    for _l, w in reads), "%s: %s" % (label, reads))
+                self.assertTrue(any(why in w for _l, w in reads),
+                                "%s: the refusal names the write that can make the import bind a stub (%r): %s"
+                                % (label, why, reads))
+                with mock.patch.object(mod, "_anyio_import_binders", lambda tree: ""):
+                    self.assertEqual(_anyio_option_reads(ast.parse(conf), where=d), [],
+                                     "%s: admitted at the hundred and fifth (_anyio_import_binders disabled)" % label)
+                if run:
+                    self.assertEqual(_escape_only_run(d, ()), ["plugins"],
+                                     "%s: the run hands getoption 'plugins' where THE PROOF proved 'verbose'" % label)
 
     def test_every_escape_only_kind_the_anyio_rule_lists_is_admitted(self):
         """THE ESCAPE-ONLY WITNESS (the reviewer's ruling of 2026-09-29 18:09Z on round 2 of fork PR #894, on item 3 of
