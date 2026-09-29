@@ -10970,29 +10970,38 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
     if (box.scrollHeight > box.clientHeight && input.getBoundingClientRect().bottom > actions.getBoundingClientRect().top) box.scrollTop = box.scrollHeight;
   };
   input.addEventListener("input", () => grow());
-  // NOT a tap on the backdrop: a click whose press began inside the sheet, or whose release landed inside it. Chromium and
-  // WebKit dispatch a click whose press and release targets differ to their common ancestor, here the overlay, so a grip
-  // pull released past the box's bottom edge (the box at its cap cannot grow with the answer box, so the pointer leaves it)
-  // and a text selection dragged out of the box arrived as backdrop clicks and closed the sheet with the answer (the
-  // author's pass after the maintainer's round 1, composition-2, and the reviewer's ruling on the pass's selection-drag
-  // observation). The reverse road, a press on the backdrop released inside the sheet, reached this handler in all three
-  // engines (the overlay is both the pressed node and the common ancestor) and closed the sheet with the answer too (the
-  // maintainer's round 2, ui-1). A backdrop tap is the whole gesture on the backdrop, press and release both: the overlay's
-  // pointerdown records whether the press began inside the sheet (any target but the overlay itself), its pointerup
-  // whether the release landed inside it, and the click line closes only when the click's target is the overlay and
-  // neither record says inside; a press that wanders into the sheet and back out, released on the backdrop, is still a
-  // backdrop tap. The release is read where the pointer lifted: a touch pointer is implicitly captured to the node it
-  // pressed (Pointer Events), so a finger pressed on the backdrop delivers its pointerup to the overlay wherever it lifts,
-  // and a finger pressed just outside the box's edge and lifted inside it closed the sheet (measured in Chromium through CDP
-  // touch); a press on the backdrop therefore gives that capture back, and its pointerup's target is the node under the
-  // lift (the maintainer's round 2 ruling). A press inside the sheet keeps its capture on the node it pressed. What a
-  // dismiss DOES (close with no save) is the filed discard item's, untouched here. These lines are plain JavaScript, no
-  // cast: reply-sheet-keyboard.test.ts executes them out of each builder and pins the two builders' equal
-  let pressedInside = false;   // the last press began inside the sheet (on the box or anything in it), not on the backdrop
-  let releasedInside = false;   // the last release landed inside the sheet: a press on the backdrop released inside it is not a backdrop tap
-  overlay.addEventListener("pointerdown", (e) => { pressedInside = e.target !== overlay; if (!pressedInside && overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId); });
-  overlay.addEventListener("pointerup", (e) => { releasedInside = e.target !== overlay; });
-  overlay.addEventListener("click", (e) => { if (e.target === overlay && !pressedInside && !releasedInside) close(); });
+  // NOT a tap on the backdrop: a click whose gesture did not both begin and end there. Chromium and WebKit dispatch a click
+  // whose press and release targets differ to their common ancestor, here the overlay, so a grip pull released past the box's
+  // bottom edge (the box at its cap cannot grow with the answer box, so the pointer leaves it) and a text selection dragged
+  // out of the box arrived as backdrop clicks and closed the sheet with the answer (the author's pass after the maintainer's
+  // round 1, composition-2, and the reviewer's ruling on the pass's selection-drag observation). The reverse road, a press on
+  // the backdrop released inside the sheet, reached this handler in all three engines (the overlay is both the pressed node
+  // and the common ancestor) and closed the sheet with the answer too (the maintainer's round 2, ui-1). A backdrop tap is the
+  // whole gesture on the backdrop, press and release both, recorded per pointer: the overlay's pointerdown notes a pointer
+  // whose press began on the backdrop (the overlay itself, not the box or anything in it) and forgets one whose press began
+  // inside; its pointerup marks a tap pending only when that pointer's press began on the backdrop and its release lands there
+  // too; a cancelled pointer is forgotten; and any new press clears a pending tap. The click line closes only when the click's
+  // target is the overlay and a tap is pending. The click's own pointer is not compared, since WebKit dispatches a touch tap's
+  // click as the mouse's. While the gesture was two records shared by every pointer (the last press, the last release), two
+  // more roads closed the sheet with the answer (the maintainer's focused re-check of round 2): a chorded mouse, whose left
+  // button released over the sheet with a second button held is no pointerup, so its click read a release left from an
+  // earlier gesture; and a finger resting on the backdrop, whose press overwrote the record of a mouse or pen press inside the
+  // sheet. A press that wanders into the sheet and back out, released on the backdrop, is still a backdrop tap. The release
+  // is read where the pointer lifted: a touch pointer is implicitly captured to the node it pressed (Pointer Events), so a
+  // finger pressed on the backdrop delivers its pointerup to the overlay wherever it lifts, and a finger pressed just outside
+  // the box's edge and lifted inside it closed the sheet (measured in Chromium through CDP touch); a press on the backdrop
+  // therefore gives that capture back, and its pointerup's target is the node under the lift (the maintainer's round 2
+  // ruling). A press inside the sheet keeps its capture on the node it pressed. Beyond these lines, a stated residual: a short
+  // tap pressed on the backdrop just below the box, under Cancel or Send, and lifted inside the box is given to that button by
+  // Chromium's touch adjustment before this handler runs (it predates this fix; iOS is unmeasured). What a dismiss DOES (close
+  // with no save) is the filed discard item's, untouched here. These lines are plain JavaScript, no cast:
+  // reply-sheet-keyboard.test.ts executes them out of each builder and pins the two builders' equal
+  const backdropPress = new Set();   // the pointers whose press began on the backdrop, not yet released or cancelled
+  let tapPending = false;   // a pointer's press and release were both on the backdrop: set at that release, cleared by any new press
+  overlay.addEventListener("pointerdown", (e) => { tapPending = false; if (e.target === overlay) { backdropPress.add(e.pointerId); if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId); } else backdropPress.delete(e.pointerId); });
+  overlay.addEventListener("pointerup", (e) => { tapPending = backdropPress.has(e.pointerId) && e.target === overlay; backdropPress.delete(e.pointerId); });
+  overlay.addEventListener("pointercancel", (e) => { backdropPress.delete(e.pointerId); tapPending = false; });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay && tapPending) close(); });
   box.append(h, d); if (dd) box.appendChild(dd); box.append(input, actions);
   actions.append(cancel, send);
   overlay.appendChild(box);

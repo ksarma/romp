@@ -423,7 +423,9 @@ try {
   // the phone's width that press lies just past the window's left edge), at rest at 900 and with the keyboard up at 508; then a
   // finger's tap on the backdrop. A touch pointer is implicitly captured to the node it pressed, so
   // until the builders gave a backdrop press's capture back, the pointerup's target was the overlay wherever the finger lifted and
-  // the straddle closed the sheet with the answer. On the third todo's sheet (the one the boundary step left up), the answer typed
+  // the straddle closed the sheet with the answer. No press here lies below the box: a short tap pressed there, under Cancel or
+  // Send, and lifted inside the box is given to that button by Chromium's touch adjustment before the backdrop's code runs, the
+  // second stated residual beside the touch one (it predates the fix; iOS is unmeasured). On the third todo's sheet (the one the boundary step left up), the answer typed
   // before each gesture; a gesture that closed the sheet is recorded and the sheet reopened for the next. Its own failure is
   // recorded, never fatal
   if (cfg.tid3 && engine === "chromium") {

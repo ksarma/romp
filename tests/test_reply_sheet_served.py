@@ -27,8 +27,10 @@ Then the states the fix's other rules and handlers are for, each read from the e
 read them skip in CI: at 300px (the fold on) the sheet is pinned to the top under the picker's 12px frame
 (#ut-reply-prompt.kb-tight), the detail keeps two lines and scrolls within itself, its first line's address is under a
 finger where the engine's own scroll left it and once the box is scrolled to bring its line to the top of the box's view
-(the kept actions row covers the box's bottom, and the maintainer's round 2 accepted that cover of the address at 230
-only), the box scrolls, Send is inside the clip and under a finger at the box's bottom;
+(the kept actions row covers the box's bottom, and the maintainer's round 2 accepted its cover of the address at 230 and at
+300 wherever a scroll brings the address clear; here the centre of the address's first line lies above the row, in the pane
+3.6 to 5px above it with the row covering that line's lowest 1.5 to 3.4px), the box scrolls, Send is inside the clip and under
+a finger at the box's bottom;
 at 420px with the same todo the pane's two chip rows put the floors alone past the fold's cap, so its box scrolls a few
 pixels and the actions row, kept in view at the box's bottom (the maintainer's round 2 ruling, B-i), holds Cancel and Send
 inside the clip (before it Send's bottom edge lay 2 to 3px past the clip there), while the chat's column fits (the fitted
@@ -47,7 +49,9 @@ in, and 10px out, past the window's left edge at the phone's width, and 5px in, 
 backdrop still dismisses (the maintainer's round 2, ui-1: a touch pointer is captured to the node it pressed, so until the
 builders gave a backdrop press's capture back, the release was read on the overlay wherever the finger lifted and the sheet
 closed with the answer; touch in Firefox and WebKit, which Playwright cannot drive with moves, and on iOS is a stated
-residual). And the tree each
+residual, and so is a short finger tap pressed on the backdrop just below the box, under Cancel or Send, and lifted inside
+the box, which Chromium's touch adjustment gives to that button before the backdrop's code runs: it predates the fix, and iOS
+is unmeasured). And the tree each
 builder emits, read from the real pages: the pane's chips are
 flex children of the box, the chat's sit inside the quoted line, and the elements the fix's five rules key on match
 their selectors in both.
@@ -420,7 +424,7 @@ class ReplySheetServed(unittest.TestCase):
         self.assertEqual(s["paddingTop"], "12px", where + "300px: under the picker's 12px frame: %r" % (s,))
         self.assertGreaterEqual(s["detailH"], floor(s), where + "300px: the detail keeps two lines (the floor); it resolved to 0px before: %r" % (s,))
         self.assertTrue(s["detailScrolls"], where + "300px: the detail scrolls within itself: %r" % (s,))
-        self.assertEqual(s["linkHit"], "target", where + "300px: the address on the detail's first line is under a finger where the engine's own scroll left it (scrollIntoView nearest), not under the kept actions row: the maintainer's round 2 accepted the row's cover of that address at 230 only: %r" % (s,))
+        self.assertEqual(s["linkHit"], "target", where + "300px: the address on the detail's first line is under a finger where the engine's own scroll left it (scrollIntoView nearest): the centre of its first line is above the kept actions row (in the pane 3.6 to 5px above it, the row covering that line's lowest 1.5 to 3.4px; in the chat the line is wholly above it); the maintainer's round 2 accepted the row's cover at 230 and at 300 wherever a scroll brings the address clear, and this read is kept to make a layout shift that covers the line's centre loud: %r" % (s,))
         self.assertEqual(s["linkHitScrolled"], "target", where + "300px: the address on the detail's first line is under a finger once the box is scrolled to bring its line to the top of the box's view (the address was under a finger where the engine's own scroll left it, but not once its line was scrolled to the box's top, where a finger reached %s): %r" % (s["linkHitScrolled"], s))
         self.assertTrue(s["boxScrollH"] > s["boxClientH"] + 1 and s["boxScrollTop"] > 0, where + "300px: the box scrolls to the rest: %r" % (s,))
         self.assertTrue(s["sendInBoxAtBottom"] and s["sendHitAtBottom"] == "target", where + "300px: at the box's bottom Send is inside the clip and under a finger: %r" % (s,))

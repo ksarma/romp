@@ -3022,14 +3022,14 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    up only the detail yields, down to its two lines; the answer box keeps three rows, the ask keeps all its lines (a todo at
    the kernel's 300-character cap wraps to about six at 390 wide, and one made of short lines runs to sixty-one) and the pane's
    chips are rows of their own, so where those floors pass the cap the box scrolls, and the focus left the scroll at the
-   answer box with Cancel and Send partly or wholly past the clip: at 390x420 and 480 with a 300-character ask, and at 320
-   wide with the composition's ask, a tap at Send's centre fell on the backdrop and closed the sheet with the answer, in
-   Chromium, Firefox and WebKit. The row is sticky at the bottom of the box's scrollport, in the box's own background so
+   answer box with Cancel and Send partly or wholly past the clip: in the pane at 390x420 and 480 with a 300-character ask,
+   and at 320 wide with the composition's ask, a tap at Send's centre fell on the backdrop and closed the sheet with the
+   answer, in Chromium, Firefox and WebKit. The row is sticky at the bottom of the box's scrollport, in the box's own background so
    what scrolls under it does not show through, and it holds Send inside the clip at every height the rulings name (230 to
    508 with the keyboard up, in both panes and three engines). The one thing it must not cover is the answer box, so the
    grow handlers scroll the box to its end when the answer box's bottom lies under the row (their last line). What the row
-   can cover is content the engine scrolls into view at the box's bottom (at 230 the detail's first line); that is a scroll
-   of the box away, never out of reach. */
+   can cover is content the engine scrolls into view at the box's bottom (the detail's first line, or part of it, at 230 and
+   at 300); that is a scroll of the box away, never out of reach. */
 #ut-reply-prompt .ut-reply-input { flex: 0 0 auto; min-height: calc(3lh + 16px); }
 #ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 32px; min-height: 2lh; max-height: max(12em, calc(0.348 * var(--ut-rest-h, 0px))); overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere; overscroll-behavior: contain; }
 #ut-reply-prompt.kb-tight { align-items: flex-start; padding: 12px 16px; }

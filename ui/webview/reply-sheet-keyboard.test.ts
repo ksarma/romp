@@ -32,12 +32,14 @@
 // height the person dragged (file-comments.ts autosize's guard); on the resize path (kbFit's grow(true)) that height is
 // the person's preference, clamped to the room and returned toward when the room comes back, never re-fit to the
 // content (the author's pass after the maintainer's round 1, composition-3). The backdrop's click dismisses only when the
-// whole gesture was on the backdrop, press and release both: a click whose press began inside the sheet (a grip pull or a
-// text selection released past the box's edge) is not a backdrop tap (the author's pass after the maintainer's round 1,
-// composition-2, and the reviewer's ruling on the selection), and neither is a click whose release landed inside it (a
-// press on the backdrop released inside the sheet, the maintainer's round 2); the release is read where the pointer
-// lifted, since a backdrop press gives back the implicit capture a touch pointer takes (the two records, the capture's
-// release and the click line are executed below out of each builder).
+// whole gesture was on the backdrop, press and release both, recorded per pointer: a click whose press began inside the
+// sheet (a grip pull or a text selection released past the box's edge) is not a backdrop tap (the author's pass after the
+// maintainer's round 1, composition-2, and the reviewer's ruling on the selection), and neither is a click whose release
+// landed inside it (a press on the backdrop released inside the sheet, the maintainer's round 2), nor a click that no
+// release of its own pointer preceded (a chorded mouse) or that ends a drag out of the sheet while another pointer rests on
+// the backdrop (the maintainer's focused re-check of round 2); the release is read where the pointer lifted, since a
+// backdrop press gives back the implicit capture a touch pointer takes (the backdrop's six lines, the capture's release
+// among them, are executed below out of each builder).
 //
 // Two kinds of leg, no browser (the browser legs are waiting-reply-sheet-browser.test.ts and
 // render-reply-sheet-browser.test.ts). The executed legs slice the fold's lines and the grow handler out of EACH
@@ -74,14 +76,19 @@ const RESTCAP = /^\s*const restCap = .*$/m;   // the detail's cap at rest: the w
 const CLOSE = /^\s*const close = .*$/m;
 const KB_ARM = /window\.addEventListener\("resize", kbFit\);\n\s*kbFit\(\);/;
 const GROW_ARM = /input\.addEventListener\("input", \(\) => grow\(\)\);/;   // the keystroke path: grow with no argument (kbFit's resize path is grow(true))
-// the backdrop's click and the two records it reads: whether the last press began inside the sheet and whether the last
-// release landed inside it, the press listener that writes the first (and gives back a backdrop press's pointer capture),
-// the release listener that writes the second, and the click line
-const PRESS_RECORD = /^\s*let pressedInside = false;.*$/m;
-const RELEASE_RECORD = /^\s*let releasedInside = false;.*$/m;
+// the backdrop's click and what it reads, recorded per pointer: the pointers whose press began on the backdrop and the pending
+// tap; the press listener, which clears any pending tap, notes a backdrop press (and gives back its pointer capture) and
+// forgets a press inside; the release listener, which marks a tap pending when that pointer's press and release were both on
+// the backdrop; the cancel listener, which forgets a cancelled pointer; and the click line
+const PRESS_RECORD = /^\s*const backdropPress = new Set\(\);.*$/m;
+const TAP_RECORD = /^\s*let tapPending = false;.*$/m;
 const PRESS_ARM = /^\s*overlay\.addEventListener\("pointerdown", .*$/m;
 const RELEASE_ARM = /^\s*overlay\.addEventListener\("pointerup", .*$/m;
+const CANCEL_ARM = /^\s*overlay\.addEventListener\("pointercancel", .*$/m;
 const DISMISS = /^\s*overlay\.addEventListener\("click", .*$/m;
+const BACKDROP: Array<[string, RegExp]> = [["the press record", PRESS_RECORD], ["the pending tap", TAP_RECORD], ["the press listener", PRESS_ARM], ["the release listener", RELEASE_ARM], ["the cancel listener", CANCEL_ARM], ["the backdrop's click", DISMISS]];
+// the six lines as one body, each by its own anchor (a missing one is a loud re-anchor failure)
+const backdropLines = (src: string, name: string): string => BACKDROP.map(([what, re]) => line(src, re, what, name)).join("\n");
 // the grow handler is a BLOCK (its records, its head, its statements, the `};` that closes it), sliced whole; a builder
 // whose head or close moved is a loud failure here
 const GROW_HEAD = "\n  const grow = (resized = false) => {\n";   // resized: kbFit's path, where a dragged height is clamped to the room
@@ -496,13 +503,15 @@ for (const [name, src] of BUILDERS) {
 // sheet: a press on the backdrop released on the answer box or the title reached the overlay as its click in all three
 // engines and closed the sheet with the answer (the maintainer's round 2, ui-1), and for a touch the release is read where
 // the finger lifted only because a backdrop press gives back the implicit capture a touch pointer takes, without which the
-// pointerup's target is the overlay wherever the finger lifts (measured in Chromium through CDP touch). Two records: whether
-// the LAST press began inside the sheet and whether the LAST release landed inside it (any target but the overlay itself);
-// every press and every release rewrites its own, and every click an engine dispatches from a pointer follows its press and
-// its release, so the click line only reads them. The browser legs and tests/test_reply_sheet_served.py drive the gestures in
-// each engine (the touch in Chromium: this shim cannot model an engine's capture, so it pins the call, not the routing). What
-// a dismiss DOES (close with no save) is untouched: the filed discard item's. Run here against shim nodes with the five lines
-// sliced out of each builder
+// pointerup's target is the overlay wherever the finger lifts (measured in Chromium through CDP touch). The gesture is
+// recorded per pointer (any target but the overlay itself is inside), and a tap is pending from the release that completes
+// it until any new press (the maintainer's focused re-check of round 2): while it was two records shared by every pointer,
+// the last press and the last release, a chorded mouse (the left button released over the sheet with a second button held,
+// which is no pointerup) and a finger resting on the backdrop while a mouse or pen dragged out of the sheet closed it with the
+// answer. The browser legs and tests/test_reply_sheet_served.py drive the gestures in each engine (the touch in Chromium:
+// this shim cannot model an engine's capture, so it pins the call, not the routing; the chord and the resting finger in the
+// browser legs). What a dismiss DOES (close with no save) is untouched: the filed discard item's. Run here against shim nodes
+// with the six lines sliced out of each builder
 for (const [name, src] of BUILDERS) {
   test(`${name}: the backdrop's click dismisses only when the press and the release were both on the backdrop; a backdrop press gives back its pointer capture so its release is read where it lifted`, () => {
     const overlay = makeNode("div"), input = makeNode("textarea"), detail = makeNode("div"), title = makeNode("div");
@@ -513,8 +522,7 @@ for (const [name, src] of BUILDERS) {
     overlay.releasePointerCapture = (id: number) => { released.push(id); held.delete(id); };
     let closed = 0;
     const close = () => { closed++; };
-    const body = [line(src, PRESS_RECORD, "the press record", name), line(src, RELEASE_RECORD, "the release record", name), line(src, PRESS_ARM, "the press listener", name), line(src, RELEASE_ARM, "the release listener", name), line(src, DISMISS, "the backdrop's click", name)].join("\n");
-    new Function("overlay", "input", "close", body)(overlay, input, close);
+    new Function("overlay", "input", "close", backdropLines(src, name))(overlay, input, close);
     const press = (target: unknown, pointerId = 1) => overlay._listeners.pointerdown({ type: "pointerdown", target, pointerId });
     const release = (target: unknown, pointerId = 1) => overlay._listeners.pointerup({ type: "pointerup", target, pointerId });
     const click = (target: unknown) => overlay._listeners.click({ type: "click", target });
@@ -525,13 +533,13 @@ for (const [name, src] of BUILDERS) {
     // THE REVERSE DRAG (the maintainer's round 2, ui-1): the press on the backdrop, the release on the answer box, the click at the
     // overlay (the pressed node and the common ancestor both, in all three engines)
     press(overlay); release(input); click(overlay);
-    assert.equal(closed, 1, "a press on the backdrop released on the answer box is not a backdrop tap: the sheet stands (with the press record alone it closed with the answer in Chromium, Firefox and WebKit)");
+    assert.equal(closed, 1, "a press on the backdrop released on the answer box is not a backdrop tap: the sheet stands (reading the press alone, it closed with the answer in Chromium, Firefox and WebKit)");
     press(overlay); release(title); click(overlay);
     assert.equal(closed, 1, "and released on the title: the sheet stands");
     // THE GUARDED DRAG: a drag of the grip released past the box's bottom edge, the press on the answer box, the inline height
     // changed under it, the release and the click at the overlay (Chromium and WebKit: the common ancestor of the press and the release)
     press(input); input.style.height = "148px"; release(overlay); click(overlay);
-    assert.equal(closed, 1, "the click that ends a grip drag is not a backdrop tap: the sheet stands (before the press record it closed with the answer in Chromium and WebKit; with the release record alone it would again)");
+    assert.equal(closed, 1, "the click that ends a grip drag is not a backdrop tap: the sheet stands (before the press was read it closed with the answer in Chromium and WebKit; reading the release alone, it would again)");
     // a text selection dragged out of the box and released over the backdrop: the press inside the sheet, the height unchanged,
     // the same common-ancestor click
     press(input); release(overlay); click(overlay);
@@ -539,20 +547,20 @@ for (const [name, src] of BUILDERS) {
     // a press anywhere inside the sheet (the detail, say) released on the backdrop: the same
     press(detail); release(overlay); click(overlay);
     assert.equal(closed, 1, "any press that began inside the sheet: its click at the overlay is not a dismissal");
-    // the next press and release rewrite the records: a tap on the backdrop after any of them dismisses
+    // each gesture is its own: a tap on the backdrop after any of them dismisses
     press(overlay); release(overlay); click(overlay);
-    assert.equal(closed, 2, "the records are the last press and the last release: a tap on the backdrop after a drag dismisses");
+    assert.equal(closed, 2, "each gesture is its own: a tap on the backdrop after a drag dismisses");
     // Firefox retargets a guarded drag's click to the pressed node: not the overlay, so nothing to dismiss
     press(input); input.style.height = "200px"; release(overlay); click(input);
     assert.equal(closed, 2, "a click on the textarea is never a dismissal");
     press(overlay); release(overlay); click(overlay);
-    assert.equal(closed, 3, "and the drag's records do not reach the next tap on the backdrop");
-    // a press inside the sheet whose release and click never came here (released over another frame): the next press and release
-    // rewrite the records
+    assert.equal(closed, 3, "and the drag leaves nothing behind for the next tap on the backdrop");
+    // a press inside the sheet whose release and click never came here (released over another frame): the pointer's next press
+    // rewrites its record
     press(input);
     press(overlay); release(overlay); click(overlay);
-    assert.equal(closed, 4, "a new press rewrites the record: a press inside the sheet without a release leaves nothing behind for the next tap");
-    // a reverse drag's release record does not outlive the next tap either
+    assert.equal(closed, 4, "a pointer's new press rewrites its record: a press inside the sheet without a release leaves nothing behind for the next tap");
+    // nor does a reverse drag outlive the next tap
     press(overlay); release(input); click(overlay);
     press(overlay); release(overlay); click(overlay);
     assert.equal(closed, 5, "a release inside the sheet, then a tap on the backdrop: the tap dismisses");
@@ -582,6 +590,53 @@ for (const [name, src] of BUILDERS) {
     press(overlay, 10);
     assert.deepEqual(released, [7, 8], "no capture held, nothing released");
   });
+  // THE GESTURE PER POINTER (the maintainer's focused re-check of round 2, lens A's findings 1 and 2, measured there on the
+  // builders before this form): fed on a fresh sheet, as a person meets it, so no earlier gesture's release is in play
+  test(`${name}: the gesture is recorded per pointer and a new press clears a pending tap: a chorded mouse and a finger resting on the backdrop are not backdrop taps`, () => {
+    const overlay = makeNode("div"), input = makeNode("textarea");
+    overlay.appendChild(input);
+    overlay.hasPointerCapture = () => false;   // a mouse or a pen: no implicit capture
+    overlay.releasePointerCapture = () => { /* never asked for here */ };
+    let closed = 0;
+    const close = () => { closed++; };
+    new Function("overlay", "input", "close", backdropLines(src, name))(overlay, input, close);
+    const press = (target: unknown, pointerId: number) => overlay._listeners.pointerdown({ type: "pointerdown", target, pointerId });
+    const release = (target: unknown, pointerId: number) => overlay._listeners.pointerup({ type: "pointerup", target, pointerId });
+    const cancel = (pointerId: number) => overlay._listeners.pointercancel({ type: "pointercancel", target: overlay, pointerId });
+    const click = (target: unknown) => overlay._listeners.click({ type: "click", target });
+    // THE CHORD: the left button pressed on the backdrop and a second button held (no pointer event: the pointer is already
+    // down), the pointer moved over the answer box and the left released there, which with another button still down is a
+    // pointermove, not a pointerup; the engine then dispatches the left's click at the overlay, the common ancestor
+    press(overlay, 1); click(overlay);
+    assert.equal(closed, 0, "a chorded mouse released over the sheet is not a backdrop tap: no release of its pointer came before the click, so no tap is pending and the sheet stands (with one release record shared by every pointer, the click read the value it held from the sheet's open and closed the sheet with the answer in Chromium, Firefox and WebKit)");
+    release(input, 1);   // the second button released over the answer box: the pointer's pointerup, and no click follows it
+    // THE RESTING FINGER: a mouse (or a pen) pressed in the answer box, a finger, another pointer, pressed on the backdrop and
+    // held, the mouse released over the backdrop (a selection dragged out of the box), and the mouse's click at the overlay
+    press(input, 1); press(overlay, 2); release(overlay, 1); click(overlay);
+    assert.equal(closed, 0, "a finger resting on the backdrop does not make a mouse's drag out of the sheet a backdrop tap: that pointer's press began inside the sheet (with one press record shared by every pointer, the finger's press overwrote the mouse's and the sheet closed with the answer, in Chromium through the DevTools protocol, with a mouse and with a pen)");
+    release(overlay, 2); click(overlay);
+    assert.equal(closed, 1, "the resting finger lifted where it pressed, on the backdrop: its own press and release both there, so its tap dismisses, which the rule allows");
+    // THE NEW PRESS CLEARS A PENDING TAP: a right click on the backdrop is a press and a release there whose click the engine
+    // never dispatches (it sends contextmenu and auxclick), so its tap stays pending; the chord after it must not read it
+    closed = 0;
+    press(overlay, 1); release(overlay, 1);
+    press(overlay, 1); click(overlay);
+    assert.equal(closed, 0, "a new press clears a pending tap: the chord after a right click on the backdrop is not a backdrop tap (left pending, the right click's tap would close the sheet with the answer)");
+    release(input, 1);
+    // and another pointer's press does the same to a tap whose click has not come yet
+    press(overlay, 3); release(overlay, 3); press(input, 1); click(overlay);
+    assert.equal(closed, 0, "any new press clears it: a press inside the sheet between a tap's release and its click withdraws the tap");
+    release(input, 1);
+    // A CANCELLED POINTER is forgotten, and clears a pending tap: in the engines a cancelled pointer (a touch that became a pan)
+    // fires no pointerup and no click, so these two halves are argued, not observed, there; this is their pin
+    press(overlay, 4); cancel(4); release(overlay, 4); click(overlay);
+    assert.equal(closed, 0, "a cancelled pointer's backdrop press is forgotten: no release of it can complete a tap");
+    press(overlay, 5); release(overlay, 5); cancel(6); click(overlay);
+    assert.equal(closed, 0, "a cancel clears a pending tap");
+    // a plain tap after all of them dismisses
+    press(overlay, 7); release(overlay, 7); click(overlay);
+    assert.equal(closed, 1, "a tap on the backdrop, pressed and released there by one pointer, dismisses after all of them");
+  });
 }
 
 // ── twins ────────────────────────────────────────────────────────────────────────────────────────
@@ -590,7 +645,7 @@ test("the two builders stay twins for this fix: the same kbFit line, the same gr
   assert.equal(line(w, KBFIT, "kbFit", "waiting.ts").trim(), line(r, KBFIT, "kbFit", "render.ts").trim(), "one kbFit line in both builders");
   assert.equal(line(w, RESTCAP, "restCap", "waiting.ts").trim(), line(r, RESTCAP, "restCap", "render.ts").trim(), "one restCap line in both builders (executed above)");
   assert.equal(growBlock(w, "waiting.ts"), growBlock(r, "render.ts"), "one grow block in both builders, byte for byte");
-  for (const [what, re] of [["the press record", PRESS_RECORD], ["the release record", RELEASE_RECORD], ["the press listener", PRESS_ARM], ["the release listener", RELEASE_ARM], ["the backdrop's click", DISMISS]] as Array<[string, RegExp]>) {
+  for (const [what, re] of BACKDROP) {
     assert.equal(line(w, re, what, "waiting.ts").trim(), line(r, re, what, "render.ts").trim(), `one ${what} line in both builders (executed above)`);
   }
   for (const [name, src] of BUILDERS) {
@@ -692,7 +747,7 @@ test("this dialog's box scrolls at EVERY height, on its own selector: the backst
 
 test("the actions row is kept in view at the box's bottom, on this dialog's own selector: where the floors overflow the box, Cancel and Send stay inside its clip", () => {
   const r = rule("#ut-reply-prompt .confirm-actions");
-  assert.match(r, /position: sticky; bottom: 0;/, "sticky at the bottom of the box's scrollport: where the floors overflow the box and it scrolls, the row stays in view, so Send is inside the clip and a finger at its centre reaches it (at a6e7f1cfa Send lay partly or wholly past the clip at 390x420 and 480 with a 300-character ask and at 320 wide with the fixture, and a tap at its centre closed the sheet with the answer, in three engines; the maintainer's round 2 ruling, B-i). The browser legs and the served leg click Send's centre in those states and read one answer posted");
+  assert.match(r, /position: sticky; bottom: 0;/, "sticky at the bottom of the box's scrollport: where the floors overflow the box and it scrolls, the row stays in view, so Send is inside the clip and a finger at its centre reaches it (at a6e7f1cfa, in the pane, Send lay partly or wholly past the clip at 390x420 and 480 with a 300-character ask and at 320 wide with the fixture, and a tap at its centre closed the sheet with the answer, in three engines; the maintainer's round 2 ruling, B-i). The browser legs and the served leg click Send's centre in those states and read one answer posted");
   assert.match(r, /background: var\(--vscode-editorWidget-background, #252526\);/, "opaque, in the box's own background, so what scrolls under the row does not show through it");
   assert.match(rule(".picker-box"), /background: var\(--vscode-editorWidget-background, #252526\);/, "the box's background, which the row repeats");
   assert.equal(r.replace(/\s+/g, " ").trim(), "#ut-reply-prompt .confirm-actions { position: sticky; bottom: 0; background: var(--vscode-editorWidget-background, #252526); }", "three declarations, so the shared .confirm-actions rule's layout reaches this dialog unchanged");

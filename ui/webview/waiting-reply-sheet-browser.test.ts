@@ -25,7 +25,7 @@
 // Cancel and Send inside the clip at open and with the answer typed; the chat's column fits there
 // (render-reply-sheet-browser.test.ts). Before the kept row Send's bottom edge lay 2 to 3px past the clip in that state,
 // and with a 300-character ask, or at 320 wide, a finger at its centre closed the sheet with the answer: THE WORST CASE is
-// its own test per engine (both widths, 230 to 508 with the keyboard up and in the phone's order, four asks at the cap,
+// its own test per engine (both widths, 230 to 508 with the keyboard up and in the phone's order, four long asks (three at the cap),
 // and after a grip drag, Send clicked at its centre in every cell). A click whose press began
 // inside the sheet is not a backdrop tap (the author's pass after the maintainer's round 1, composition-2, and the
 // reviewer's ruling on the selection): at 508 the box is at its cap, so a grip pull released past its bottom edge, or a
@@ -37,7 +37,10 @@
 // title reached the overlay as its click in all three engines and closed the sheet with the answer, and in Chromium so did a
 // finger pressed just outside the box's edge and lifted inside it (a touch pointer is captured to the node it pressed, driven
 // here through the DevTools protocol's touch input; touch in Firefox, WebKit and iOS is a stated residual); the sheet now
-// stands through each, and a plain tap on the backdrop still dismisses. A dragged height is the person's PREFERENCE on the resize
+// stands through each, and a plain tap on the backdrop still dismisses. The same test drives two more roads the maintainer's
+// focused re-check of round 2 found while the gesture was two records shared by every pointer: a chorded mouse released over
+// the sheet (three engines) and a mouse or a pen dragged out of the sheet while a finger rests on the backdrop (Chromium); the
+// gesture is now recorded per pointer and the sheet stands. A dragged height is the person's PREFERENCE on the resize
 // path (composition-3): pulled to 215px at 900, the keyboard opening clamps the box to the room, not to its content, and
 // the keyboard closing returns it to 215px; before, the dragged height stood through the resize and Send lay below the
 // frame.
@@ -316,8 +319,9 @@ async function boot(browser: any, browserName = "chromium") {
     // the actions row, kept in view at the box's bottom (styles.css #ut-reply-prompt .confirm-actions), can cover what the engine
     // scrolled into view there (at 230 it covers this address in every engine, both panes: a finger aimed at it reaches Cancel or
     // Send); the person scrolls the box, and with the address's line brought to the top of the box's view it is under a finger
-    // (the maintainer's round 2 ruling on B-i's cover: accepted where a covered link can be scrolled into the part the row leaves,
-    // at 230 only; at 300 this todo's address is clear of the row where the engine's scroll leaves it, and the check there reads both)
+    // (the maintainer's round 2 ruling on B-i's cover: accepted at 230 and at 300 wherever a covered link can be scrolled into the
+    // part the row leaves; at 300 the centre of this todo's address's first line lies 3.6 to 5px above the row where the engine's
+    // scroll leaves it, the row covering that line's lowest 1.5 to 3.4px, and the check there reads both)
     if (a && first) box.scrollTop += first.top - (box.getBoundingClientRect().top + box.clientTop);
     const again = a ? (a.getClientRects()[0] || a.getBoundingClientRect()) : null;
     const atLink2 = again ? d.elementFromPoint((again.left + again.right) / 2, (again.top + again.bottom) / 2) : null;
@@ -569,13 +573,15 @@ async function boot(browser: any, browserName = "chromium") {
 // a short window with the chip todo open: the box scrolls; the detail keeps its floor and scrolls within itself; its
 // first line's address and Send are each under a finger once the box is scrolled to them (the address's line to the top of
 // the box's view: the kept actions row covers the box's bottom). With `strict` (300px) the address is also under a finger
-// where the engine's own scroll left it: the maintainer's round 2 accepted the kept row's cover of that address at 230 only
+// where the engine's own scroll left it, the centre of its first line 3.6 to 5px above the kept row (which covers that line's
+// lowest 1.5 to 3.4px): the maintainer's round 2 accepted the row's cover at 230 and at 300 wherever a scroll brings the
+// address clear, and kept this read, deterministic, so a layout shift that covers the line's centre is a loud regression
 function assertShort(s: Short, what: string, strict = false) {
   const rec = JSON.stringify(s);
   assert.equal(s.tight, true, `${what}: under the fold (${rec})`);
   assert.ok(s.detailH >= floorOf(s.detailLineH), `${what}: the detail keeps its floor of two lines (${s.detailH}px against a ${s.detailLineH}px line); without the floor it resolved to 0px, invisible and unscrollable (${rec})`);
   assert.ok(s.detailScrolls, `${what}: the detail scrolls within itself (${rec})`);
-  if (strict) assert.equal(s.linkHit, "target", `${what}: the address on the detail's first line is under a finger where the engine's own scroll left it (scrollIntoView nearest), not under the kept actions row: the maintainer's round 2 accepted the row's cover of that address at 230 only (${rec})`);
+  if (strict) assert.equal(s.linkHit, "target", `${what}: the address on the detail's first line is under a finger where the engine's own scroll left it (scrollIntoView nearest): the centre of its first line is above the kept actions row (3.6 to 5px above it, the row covering that line's lowest 1.5 to 3.4px); the maintainer's round 2 accepted the row's cover at 230 and at 300 wherever a scroll brings the address clear, and this read is kept to make a layout shift that covers the line's centre loud (${rec})`);
   // with `strict` the read above has passed, so a failure here is the scrolled read alone: the row's cover is not the cause
   const scrolledWhy = strict
     ? `the address was under a finger where the engine's own scroll left it, but not once its line was scrolled to the box's top, where a finger reached ${s.linkHitScrolled}`
@@ -1024,15 +1030,27 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // width the box's left edge is under 8px from the window's, so the 10px press lies just past the window's left edge, a point
   // the protocol accepts and Chromium delivers to the overlay, as the ruling's own measurement took it), at the answer
   // box's height (touch in Firefox and WebKit, and on iOS, is a stated residual: Playwright drives no touch moves there); after each the sheet stands with the answer and nothing is
-  // posted. At the head before this fix every one of these closed the sheet with the answer. Then a plain tap on the backdrop
-  // still dismisses: the mouse's in every engine, a finger's in Chromium
-  test(`in ${name}: a press on the backdrop released inside the sheet is not a backdrop tap (the mouse's reverse drags${name === "chromium" ? ", and a finger pressed just outside the box's edge and lifted inside it" : ""}), at 900 and 508; a plain tap on the backdrop still dismisses`, async (t) => {
+  // posted. At the head before this fix every one of these closed the sheet with the answer. A second stated residual sits
+  // beside the touch one: a short finger tap pressed on the backdrop just below the box, under Cancel or Send, and lifted inside
+  // the box is given to that button by Chromium's touch adjustment before the backdrop's code runs (it predates this fix; iOS
+  // is unmeasured), so no step here presses under the kept row. Then THE GESTURE PER POINTER (the maintainer's focused re-check
+  // of round 2, lens A's findings 1 and 2), each on a fresh sheet with the answer typed, as a person meets it: a chorded mouse,
+  // one button pressed on the backdrop 6px left of the box's edge and the other pressed and held, the pointer moved onto the
+  // answer box and the left released there (with a button still down that release is no pointerup, and the engine dispatches
+  // the left's click at the overlay), in both orders and after a right click on the backdrop (whose press and release there
+  // dispatch no click), in every engine; and in Chromium, through the DevTools protocol, a mouse and a pen pressed in the
+  // answer box and dragged out onto the backdrop while a finger rests on the backdrop, the sheet read at the mouse's or the
+  // pen's release. While the gesture was two records shared by every pointer the chord closed the sheet with the answer in
+  // Chromium and Firefox in both orders and in WebKit with the right button first, and the resting finger with a mouse and
+  // with a pen in Chromium (fbc7972ce). Then a plain tap on the backdrop still dismisses: the mouse's in every engine, a
+  // finger's in Chromium
+  test(`in ${name}: a press on the backdrop released inside the sheet is not a backdrop tap (the mouse's reverse drags${name === "chromium" ? ", and a finger pressed just outside the box's edge and lifted inside it" : ""}), nor is a chorded mouse released over the sheet${name === "chromium" ? ", nor a mouse or a pen dragged out of the sheet while a finger rests on the backdrop" : ""}, at 900 and 508; a plain tap on the backdrop still dismisses`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py drives the touch road in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
     catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's Browser-backed served-page tests (pytest) step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
-      const { setHeight, openReply, cancelReply, fill, points, sheetState, mouseDrag, touch, errors } = await boot(browser);
+      const { page, settle, setHeight, openReply, cancelReply, fill, points, sheetState, mouseDrag, touch, errors } = await boot(browser);
       const TYPED = "my typed answer";
       // a sheet up with the answer typed: the one the last step left standing, or a fresh one where the last step closed it
       const ready = async () => {
@@ -1066,6 +1084,67 @@ for (const name of ["chromium", "firefox", "webkit"]) {
             assert.equal(st.posted, 0, `at ${h}, ${what}: nothing was posted`);
           });
         }
+        // THE GESTURE PER POINTER, each on a fresh sheet: no earlier gesture's release is in play, as when a person opens it
+        const fresh = async () => {
+          if ((await sheetState()).up) await cancelReply();
+          await openReply("t1");
+          await fill(TYPED);
+        };
+        const chord = async (p: Awaited<ReturnType<typeof points>>, first: "left" | "right") => {
+          const second = first === "left" ? "right" : "left";
+          await page.mouse.move(p.boxLeft - 6, p.input.y); await page.mouse.down({ button: first }); await page.mouse.down({ button: second });
+          await page.mouse.move(p.input.x, p.input.y, { steps: 6 });
+          await page.mouse.up({ button: "left" }); await page.waitForTimeout(100); await page.mouse.up({ button: "right" });
+          await settle(); await page.waitForTimeout(300);
+        };
+        const chords: Array<[string, (p: Awaited<ReturnType<typeof points>>) => Promise<void>]> = [
+          ["a chorded mouse: the left pressed on the backdrop, the right pressed and held, the left released over the answer box", (p) => chord(p, "left")],
+          ["a chorded mouse: the right pressed on the backdrop and held, the left pressed, the left released over the answer box", (p) => chord(p, "right")],
+          ["a right click on the backdrop (no click follows its release), then the chord with the right first", async (p) => { await page.mouse.click(p.back.x, p.back.y, { button: "right" }); await settle(); await page.waitForTimeout(200); await chord(p, "right"); }],
+        ];
+        for (const [what, gesture] of chords) {
+          await t.test(`at ${h}: ${what}`, async () => {
+            await fresh();
+            const p = await points();
+            await gesture(p);
+            const st = await sheetState();
+            assert.equal(st.up, true, `at ${h}, ${what}: the sheet stands: no release of the left's pointer came before its click, so no tap is pending (${JSON.stringify(p)}); while the gesture was two records shared by every pointer, the click read a release left from the sheet's open or an earlier gesture, and a chord closed the sheet with the answer`);
+            assert.equal(st.value, TYPED, `at ${h}, ${what}: the answer is intact`);
+            assert.equal(st.posted, 0, `at ${h}, ${what}: nothing was posted`);
+          });
+        }
+        // a finger resting on the backdrop while a mouse or a pen drags out of the sheet (Chromium, through the DevTools protocol: the
+        // finger's touch and the pen's mouse events with pointerType pen): the press in the answer box, the finger down above the box,
+        // the drag onto the backdrop above the box and the release there; the sheet read at that release, then the finger lifted
+        if (name === "chromium") for (const kind of ["mouse", "pen"] as const) {
+          const what = `a ${kind} pressed in the answer box and dragged out onto the backdrop while a finger rests on the backdrop`;
+          await t.test(`at ${h}: ${what}`, async () => {
+            await fresh();
+            const p = await points();
+            const cdp = await page.context().newCDPSession(page);
+            try {
+              const a = p.input, b = p.back, f = { x: p.back.x + 40, y: p.back.y };
+              const pen = (type: string, x: number, y: number, button: string, buttons: number) => cdp.send("Input.dispatchMouseEvent", { type, x, y, button, buttons, clickCount: 1, pointerType: "pen" });
+              if (kind === "mouse") { await page.mouse.move(a.x, a.y); await page.mouse.down(); }
+              else { await pen("mouseMoved", a.x, a.y, "none", 0); await pen("mousePressed", a.x, a.y, "left", 1); }
+              await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: f.x, y: f.y, id: 7, radiusX: 1, radiusY: 1, force: 1 }] });
+              if (kind === "mouse") { await page.mouse.move(b.x, b.y, { steps: 8 }); await page.mouse.up(); }
+              else { for (let s = 1; s <= 8; s++) await pen("mouseMoved", a.x + (b.x - a.x) * s / 8, a.y + (b.y - a.y) * s / 8, "left", 1); await pen("mouseReleased", b.x, b.y, "left", 0); }
+              await settle(); await page.waitForTimeout(300);
+              const st = await sheetState();
+              assert.equal(st.up, true, `at ${h}, ${what}: at the ${kind}'s release the sheet stands: that pointer's press began inside the sheet, whatever the finger did (${JSON.stringify(p)}); with one press record shared by every pointer the finger's press overwrote it and the sheet closed with the answer`);
+              assert.equal(st.value, TYPED, `at ${h}, ${what}: the answer is intact at the ${kind}'s release`);
+              assert.equal(st.posted, 0, `at ${h}, ${what}: nothing was posted at the ${kind}'s release`);
+              await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+              await settle(); await page.waitForTimeout(300);
+              // the finger lifted where it pressed: its own press and release both on the backdrop, so a dismiss here is a backdrop tap,
+              // which the rule allows; recorded, not asserted
+              const after = await sheetState();
+              t.diagnostic(`${name} at ${h}, ${what}: after the finger lifted on the backdrop the sheet is ${after.up ? "up" : "dismissed by the finger's own tap"}`);
+              assert.equal(after.posted, 0, `at ${h}, ${what}: nothing was posted after the finger lifted`);
+            } finally { await cdp.detach(); }
+          });
+        }
         const taps: Array<[string, (p: Awaited<ReturnType<typeof points>>) => Promise<void>]> = [["a mouse tap on the backdrop", (p) => mouseDrag(p.back, p.back)]];
         if (name === "chromium") taps.push(["a finger's tap on the backdrop", (p) => touch([p.back])]);
         for (const [what, tap] of taps) {
@@ -1092,7 +1171,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // centre landed on the backdrop and the sheet closed with the answer. The actions row is now kept in view at the box's bottom
   // (styles.css #ut-reply-prompt .confirm-actions) and grow keeps the answer box clear of it. Driven at 390 and 320 wide, with the
   // keyboard up at 230, 300, 420, 480 and 508 and in the phone's order (opened at rest at 732, the keyboard then raised) at 420,
-  // 480 and 508, on four asks at the cap, each with both chips and the linked forty-one-line detail: the 250-character fixture, a
+  // 480 and 508, on four long asks (three at the cap), each with both chips and the linked forty-one-line detail: the 250-character fixture, a
   // 300-character ask, a multi-line ask at the cap (the tallest legal ask) and a 300-character unbreakable token; and on the
   // multi-line ask, the grip pulled 150px down with the keyboard up at each height, Send clicked after it. Per cell: Send wholly
   // inside the box's clip (its padding box) and the frame, a finger at its centre reaches it, and a click there posts exactly one
@@ -1101,7 +1180,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // for typed answers also the answer box at three rows and the line being typed inside the clip and not under the kept row
   // (after the drag the dragged box's lower part lies below the clip, and Send, in the kept row, still sends). Each group of
   // cells is its own subtest, and its message names every failing cell
-  test(`in ${name}: THE WORST CASE with the keyboard up (390 and 320 wide, 230 to 508, four asks at the cap with both chips, opened with the keyboard up, in the phone's order, and after a grip drag): Send is inside the box's clip and a click at its centre sends the typed answer`, async (t) => {
+  test(`in ${name}: THE WORST CASE with the keyboard up (390 and 320 wide, 230 to 508, four long asks (three at the cap) with both chips, opened with the keyboard up, in the phone's order, and after a grip drag): Send is inside the box's clip and a click at its centre sends the typed answer`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py clicks Send in the worst case in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
@@ -1129,6 +1208,9 @@ for (const name of ["chromium", "firefox", "webkit"]) {
               if (!(m.sendTop >= m.clipTop - 0.5 && m.sendBottom <= m.clipBottom + 0.5)) why.push(`Send ${m.sendTop.toFixed(1)}..${m.sendBottom.toFixed(1)} is not inside the box's clip ${m.clipTop.toFixed(1)}..${m.clipBottom.toFixed(1)}`);
               if (!(m.sendTop >= -0.5 && m.sendBottom <= m.frameH + 0.5)) why.push(`Send is not inside the ${m.frameH}px window`);
               if (m.hit !== "target") why.push(`a finger at Send's centre reaches ${m.hit}`);
+              // the pane's framed page drags the real grip in every engine (the maintainer's ruling on the owner's fourth call): a drag
+              // cell that fell back to writing the height is a failure, not a pass on the written height
+              if (how === "drag" && c.road !== "native grip") why.push(`the drag took the road "${c.road}", not the native grip`);
               if (!(m.rowBg === m.boxBg && alphaOf(m.rowBg) > 0)) why.push(`the kept actions row's background is ${m.rowBg}, not the box's ${m.boxBg} (the row must be painted in the box's own colour, not transparent, so what scrolls under it is hidden rather than seen through it)`);
               if (!(c.posted.length === 1 && c.posted[0] === c.typed && !c.up)) why.push(c.posted.length === 0 ? (c.up ? "the click posted nothing and the sheet stood" : "the click CLOSED the sheet and posted nothing: the answer was discarded") : `the click posted ${c.posted.length} answer(s)${c.posted[0] !== c.typed ? ", not the typed text" : ""}${c.up ? ", and the sheet stood" : ""}`);
               if (how !== "drag") {
