@@ -19,6 +19,7 @@ import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHi
 import { sameKeySeq } from "./feed-card-gate";
 import { searchMatches, searchSids } from "./feed-search";   // the real modules feed.ts's lifted paint plan calls (review round 2)
 import { lensAll, lensUnions, lensVisible } from "./tag-lens";
+import { FEED_BOARD, columnOf, isNeedsYou } from "./board-def";   // the board definition the lifted viewBase and askColumn read (the boards' phase two)
 import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a window stand-in with a parent edge enumerates its primitives alone
 
 const requireCjs = createRequire(__filename);
@@ -202,7 +203,7 @@ test("the follow-move backstop yields to a prediction a payload already retired;
   const ack = body("ackFollowMove");
   const guard = ack.indexOf('if (!pendingFollowMove.has(itemId)) return;\n    clearFollowMove(itemId, "backstop-noconfirm"); render();');
   assert.ok(guard > 0, "the backstop checks the prediction still stands before it reverts");
-  assert.match(body("reconcileFollowMove"), /if \(!a \|\| a\.column === "working" \|\| pendingMoveKind\.get\(id\) === "answer"\) \{\n\s*clearFollowMove\(/);
+  assert.match(body("reconcileFollowMove"), /if \(!a \|\| askColumn\(a\) === "asks" \|\| pendingMoveKind\.get\(id\) === "answer"\) \{\n\s*clearFollowMove\(/);   // Working through askColumn (the boards' phase two)
 });
 
 test("a bell jump settles the owed paint on the shell's word before it looks for the card, through the show override, unless the shell's word says the pane is off screen", () => {
@@ -308,7 +309,7 @@ test("run: feed.ts's own wiring publishes the pane's word on its events, nothing
 // feed.ts to it; the wiring run at the end lifts feed.ts's own lines with a phone stand-in for window.parent.
 //
 // What the harness PAINTS is the render's own plan, lifted from feed.ts (review round 2, 2026-09-19): viewScope, viewBase,
-// viewFiltered, turnGroups, paintPlan and paintedKeyOf run under esbuild against the real feed-search and tag-lens modules,
+// viewFiltered, turnGroups, paintPlan and paintedKeyOf run under esbuild against the real feed-search, tag-lens and board-def modules,
 // with the pane's filter state (the footer's session filter, the search box, the tag lens) stood in. Pass 1's harness stamped
 // one a:<itemId> per model card, the shape that hid the defect: a card the model holds but the view never paints (a
 // delegation satellite, a filtered card, a turn-group member) was parked for a paint that could never land it, and the
@@ -318,12 +319,14 @@ type Views = { tags?: { id: string; name: string; color: string; members: string
 type PlanState = { model: ModelAsk[]; onlySid: string | null; searchQ: string; metas: { sid: string; name: string }[]; lens: { all?: boolean; none?: boolean; tags?: string[] }; views: Views };
 function liftedPlan() {
   // …with the follow-move prediction lifted too (review round 3, extra6-1): predictFollowMoves, the pure transform, and applyFollowMove,
-  // render()'s in-place application, over the module's three Maps stood in (pendingFollowMove, pendingMoveKind, predictedFrom)
-  const names = ["viewScope", "viewBase", "viewFiltered", "turnGroups", "paintPlan", "paintedKeyOf", "predictFollowMoves", "applyFollowMove"];
+  // render()'s in-place application, over the module's three Maps stood in (pendingFollowMove, pendingMoveKind, predictedFrom), and
+  // askColumn, the transform's skip since the boards' phase two, lifted with them over board-def's FEED_BOARD and columnOf
+  const names = ["viewScope", "viewBase", "viewFiltered", "turnGroups", "paintPlan", "paintedKeyOf", "askColumn", "predictFollowMoves", "applyFollowMove"];
   const src = names.map((n) => body(n)).join("\n");
   const js = requireCjs("esbuild").transformSync(src, { loader: "ts" }).code;
   const prelude = `
     const searchSids = M.searchSids, searchMatches = M.searchMatches, lensAll = M.lensAll, lensUnions = M.lensUnions, lensVisible = M.lensVisible;
+    const FEED_BOARD = M.FEED_BOARD, columnOf = M.columnOf, isNeedsYou = M.isNeedsYou;
     let asks = [], feedOnlySid = null, feedSearchQ = "", sessionsMeta = [], feedLens = { all: true }, feedTagViews = null;
     const pendingFollowMove = new Map(), pendingMoveKind = new Map(), predictedFrom = new Map();
     const bind = (st) => { asks = st.model; feedOnlySid = st.onlySid; feedSearchQ = st.searchQ; sessionsMeta = st.metas; feedLens = st.lens; feedTagViews = st.views; };
@@ -335,7 +338,7 @@ function liftedPlan() {
              pending: (id, kind) => { pendingFollowMove.set(id, 1); pendingMoveKind.set(id, kind); },
              clearMoves: () => { pendingFollowMove.clear(); pendingMoveKind.clear(); predictedFrom.clear(); },
              predictedFrom: () => predictedFrom };`)(
-    { searchSids, searchMatches, lensAll, lensUnions, lensVisible }) as {
+    { searchSids, searchMatches, lensAll, lensUnions, lensVisible, FEED_BOARD, columnOf, isNeedsYou }) as {
       plan(st: PlanState): { shown: ModelAsk[]; byTurn: Map<string, ModelAsk[]>; grouped: Set<string> }; keyOf(st: PlanState, id: string): string | null;
       rendered(st: PlanState): { shown: ModelAsk[]; byTurn: Map<string, ModelAsk[]>; grouped: Set<string> }; predict(list: ModelAsk[]): ModelAsk[];
       pending(id: string, kind: "followup" | "answer"): void; clearMoves(): void; predictedFrom(): Map<string, ModelAsk> };
