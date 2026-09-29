@@ -3308,7 +3308,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // owner. There, the pointer still, this window hears the events its own click would send, and no event of the
   // allowlist's types tells that click from the viewer's own. One sign comes outside those events, and the gate does not read it:
   // an intersection observer's report of the control leaving the viewport and coming back (in Chromium's still shape it came
-  // before the covered pointerup in 28 of the 85 opens of round 19's measurement). By reading and not drivable here, a native context menu that takes a right press's
+  // before the covered pointerup in 28 of the 85 opens of a mouse above). By reading and not drivable here, a native context menu that takes a right press's
   // release, as Safari's does, may leave the same state with no frame hidden. Reaching it needs the top page to hide the
   // viewer's pane while a press is held and an element of the top page over the control that hides at its own press.
   // The gate's cost measured in WebKit, the same at 142ade155 (its cost cell; the closing check at 142ade155 after the fixes for
