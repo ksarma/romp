@@ -14,20 +14,21 @@ rule classifies (a red and a green probe per class of FORM_CLASSES, assembled at
 caller's set moves nothing here, each class in digits and in words but the one with no separator, in digits alone), the READ
 direction the reader keeps (the coordinator's ruling of 2026-09-29 on PR 857's review: a number after the word in digits or as a
 cardinal word, an ordinal before it in digits or as a word, credited or not, a list with or without a serial comma and the
-singular's comma followed by "and" all read into numbers, and
-every other placement of a number the reader knows refused as unclassified, while a number spelled in a way it does not know, a
-Roman numeral among them, is named as passing unread), the wrapped shapes (a comment marker or a block comment's continuation line
-between the qualifier and the number), the plural's lists and ranges (every number judged, a range expanded so a caller's set need
-not be contiguous), the date form, the forms refused as unresolved, the unnumbered spellings not read, the credit's two names and
-the default with its stated reason, each misattribution refused with its reason and the caller's author form named in it, and the
-tree-only pin carried over from the 857 guard and adapted: the helper imports re alone and reads no file, no environment and no
-path, pinned by resolution over its source and by the absence of any file or reflective primitive. A probe's set is synthetic (no
-PR's rounds live here or in the helper: a cell holds that no round set lives in the helper by any shape it could take, an integer
-constant bound at module level by any assignment, in any function's default, in any set, tuple, list or dict-key display or any
-range(), set() or frozenset() anywhere in the module, and by execution that offences() takes its rounds with no default; that the
-same text gets opposite verdicts under two caller sets; and that neither the helper's text nor this module's spells a
-numbered-round form or a misattributed pass, so a caller that censuses either reads it clean and no credit to any PR's round lives
-in the rule's text)."""
+singular's comma followed by "and" all read into numbers; every other placement of a number the reader knows refused as unclassified
+but for the unnumbered forms the rule's docstring names, among them a count before the word, a word between the word and a number, a
+word other than "review" between an ordinal and the word, and a run of punctuation longer than six characters or across a line
+break; and a number spelled in a way the reader does not know, a Roman numeral among them, one of those unnumbered forms), the
+wrapped shapes (a comment marker or a block comment's continuation line between the qualifier and the number), the plural's lists
+and ranges (every number judged, a range expanded so a caller's set need not be contiguous), the date form, the forms refused as
+unresolved, the unnumbered spellings not read, the credit's two names and the default with its stated reason, each misattribution
+refused with its reason and the caller's author form named in it, and the tree-only pin carried over from the 857 guard and adapted:
+the helper imports re alone and reads no file, no environment and no path, pinned by resolution over its source and by the absence
+of any file or reflective primitive. A probe's set is synthetic (no PR's rounds live here or in the helper: a cell holds that no
+round set lives in the helper by any shape it could take, an integer constant bound at module level by any assignment, in any
+function's default, in any set, tuple, list or dict-key display or any range(), set() or frozenset() anywhere in the module, and by
+execution that offences() takes its rounds with no default; that the same text gets opposite verdicts under two caller sets; and
+that neither the helper's text nor this module's spells a numbered-round form or a misattributed pass, so a caller that censuses
+either reads it clean and no credit to any PR's round lives in the rule's text)."""
 import ast
 import inspect
 import os
