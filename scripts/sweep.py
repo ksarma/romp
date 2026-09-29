@@ -46,7 +46,10 @@ length the deepest session-host socket path depends on, is unchanged, the run's 
 removed when its job's legs end, and TMPDIR (the run's, and the running leg's) and the checkout in use are removed on
 every exit path: SIGTERM, SIGHUP and SIGINT (Ctrl-C) stop each leg's process group, the runner exiting 128 plus the signal's
 number, and on Linux the runner is a child subreaper that kills whatever a leg left
-running, a descendant that left the group included; each checkout records its sha beside it, and every run
+running, a descendant that left the group included. A stop signal that arrives during that cleanup does not cut it
+short: the step it interrupted runs again from its start and the steps after it run too (round 2, correctness-3; a
+venv whose tree changed is still retired), and one that arrives while a checkout is being made removes what was made
+of it, its marker included (extra5-2). Each checkout records its sha beside it, and every run
 removes the checkouts of runs that are no longer running. Every orphaned descendant of a leg, in its process group
 or not, is reparented to the runner and reaped as soon as it exits while the leg runs, so it does not stay in the
 leg's group as a defunct process.
@@ -1025,32 +1028,42 @@ def make_checkout(tree, sha):
     <state dir>/sweeps/trees/<sha12>-<random>, then `checkout -q --detach <sha>` there with hooks off. A clone copies
     none of the batcher's repository config, info/attributes, info/exclude, hooks, sparse patterns, index flags or
     refs/replace, and a leg's git writes land in the clone. The marker beside it, written first, holds the full sha,
-    so a later run can tell whether that sha's lock is held (sweep_stale_checkouts)."""
+    so a later run can tell whether that sha's lock is held (sweep_stale_checkouts). Any exception between the marker's
+    create and the end of the checkout, the Stopped of a stop signal included, removes the partial checkout and its
+    marker before it propagates (round 2, extra5-2)."""
     parent = trees_dir()
     os.makedirs(parent, mode=0o700, exist_ok=True)
     common = git(tree, "rev-parse", "--git-common-dir")
     common = common if os.path.isabs(common) else os.path.abspath(os.path.join(tree, common))
     t0 = time.monotonic()
-    for _ in range(100):
-        name = "%s-%s" % (sha[:12], _random_tail())
-        marker = os.path.join(parent, name + ".sha")
-        try:
-            fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            continue
-        with os.fdopen(fd, "w") as f:
-            f.write(sha + "\n")
-        break
-    else:
-        raise Refused("could not name a checkout under %s" % parent)
-    path = os.path.join(parent, name)
-    p = subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", common, path], env=_git_env(), text=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if p.returncode == 0:
-        p = git(path, "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
-    if p.returncode != 0:
+    path = marker = None
+    try:
+        # Round 2, extra5-2: from the marker's exclusive create to the end of the checkout, any exception, a stop signal's
+        # Stopped included, removes the partial checkout and its marker before it propagates; the caller holds neither
+        # until this returns.
+        for _ in range(100):
+            name = "%s-%s" % (sha[:12], _random_tail())
+            candidate = os.path.join(parent, name + ".sha")
+            try:
+                fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                continue
+            marker = candidate
+            with os.fdopen(fd, "w") as f:
+                f.write(sha + "\n")
+            break
+        else:
+            raise Refused("could not name a checkout under %s" % parent)
+        path = os.path.join(parent, name)
+        p = subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", common, path], env=_git_env(), text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if p.returncode == 0:
+            p = git(path, "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
+        if p.returncode != 0:
+            raise Refused("could not check %s out into a private clone: %s" % (short(sha), (p.stderr or p.stdout).strip()))
+    except BaseException:
         remove_checkout(path, marker)
-        raise Refused("could not check %s out into a private clone: %s" % (short(sha), (p.stderr or p.stdout).strip()))
+        raise
     return path, marker, round(time.monotonic() - t0, 2)
 
 
@@ -3168,6 +3181,28 @@ def load_history(path, sha, for_leg):
     return data
 
 
+def _finish(step, stopped):
+    """Run one cleanup step to its end (round 2, correctness-3): a stop signal that arrives during it raises Stopped, which
+    is kept in `stopped`, and the step runs again from its start, now with the stop signals ignored (_on_stop ignores
+    every one after the first), so the steps after it run too and the caller raises the stop once they are done."""
+    try:
+        step()
+    except Stopped as e:
+        stopped.append(e)
+        step()
+
+
+def _retire_if_changed(hold, sha):
+    """Retire a venv whose tree is not the one its build wrote (VenvHold.retire), naming what differs."""
+    late = hold.changes()
+    if late:
+        why = hold.retire()
+        print("sweep %s: %s is not the tree its build wrote (%d path%s: %s%s); %s" % (
+            short(sha), hold.venv, len(late), "" if len(late) == 1 else "s", ", ".join(late[:3]),
+            ", ..." if len(late) > 3 else "", "the next run that uses it builds it again" if why is None
+            else "%s, so remove the venv by hand" % why), flush=True)
+
+
 def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None):
     flakes = dict(flakes or {})
     logdir = os.path.join(sweeps_dir(), "logs", sha)
@@ -3470,7 +3505,11 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         # whether no leg, and no setup (whose own record names what it left), left anything in its private HOME
         run["runner"]["home_empty"] = not home_left_by_leg and not any((gr["setup"] or {}).get("home_left") for gr in grecs)
     finally:
-        reap_descendants()
+        # Round 2, correctness-3: a stop signal that arrives during this cleanup (the first one; the handler ignores the
+        # rest) is kept, the step it cut short runs again from its start and the steps after it run, and the stop is raised
+        # at the end, so every exit path removes TMPDIR, the running leg's TMPDIR and the checkout in use (_finish).
+        stopped = []
+        _finish(reap_descendants, stopped)
         # The shared locks on the legs' environments are held to here, after the reap, so no rebuild removes a venv while
         # anything this run started may still be running from it. A venv whose tree changed (seen after a leg, which ends
         # the run as invalid, or only now, when the run was stopped during a leg) is retired first, under the lock and after
@@ -3479,20 +3518,15 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             if h is None:
                 continue
             try:
-                late = h.changes()
-                if late:
-                    why = h.retire()
-                    print("sweep %s: %s is not the tree its build wrote (%d path%s: %s%s); %s" % (
-                        short(sha), h.venv, len(late), "" if len(late) == 1 else "s", ", ".join(late[:3]),
-                        ", ..." if len(late) > 3 else "", "the next run that uses it builds it again" if why is None
-                        else "%s, so remove the venv by hand" % why), flush=True)
+                _finish(lambda h=h: _retire_if_changed(h, sha), stopped)
             finally:
-                h.release()
-        if leg_tmp:
-            shutil.rmtree(leg_tmp, ignore_errors=True)
-        if tmpdir:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-        remove_checkout(checkout, marker)
+                _finish(h.release, stopped)
+        for d in (leg_tmp, tmpdir):
+            if d:
+                _finish(lambda d=d: shutil.rmtree(d, ignore_errors=True), stopped)
+        _finish(lambda: remove_checkout(checkout, marker), stopped)
+        if stopped:
+            raise stopped[0]
     run["finished"] = now()
     run["verdict"] = run_verdict(run)
     run["red"] = [n for n in red_legs(run) if run["kind"] == "full" or n in run["legs"]] if run["verdict"] == "red" else []

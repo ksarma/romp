@@ -364,6 +364,23 @@ elif act in ("venv-forge", "venv-forge-gate"):   # as venv-write, then the build
         end = time.monotonic() + 60
         while not os.path.exists(os.path.join(ctl["marks"], "go")) and time.monotonic() < end:
             time.sleep(0.02)
+elif act == "fill":                              # a large tree in the leg's TMPDIR, whose removal takes a while
+    fill = os.path.join(os.environ["TMPDIR"], "fill")
+    for i in range(int(ctl.get("fill_dirs", 100))):
+        d = os.path.join(fill, "d%%03d" %% i)
+        os.makedirs(d)
+        for j in range(int(ctl.get("fill_files", 400))):
+            open(os.path.join(d, "f%%d" %% j), "w").close()
+    with open(os.path.join(ctl["marks"], "filled"), "w") as f:
+        f.write(fill)
+elif act == "venv-big":                          # a large (sparse) file in the venv, so reading its tree takes a while
+    site = os.path.join(venv_root, "lib", "python3.99", "site-packages")
+    os.makedirs(site, exist_ok=True)
+    big = os.path.join(site, "zz-big.bin")
+    with open(big, "wb") as f:
+        f.truncate(int(ctl.get("big_bytes", 384 << 20)))
+    with open(os.path.join(ctl["marks"], "big"), "w") as f:
+        f.write(big)
 elif act == "gate":                              # the leg waits, up to a minute, until the test lets it go
     open(os.path.join(ctl["marks"], "ready"), "w").write(str(os.getpid()))
     end = time.monotonic() + 60
@@ -1625,6 +1642,148 @@ class Checkout(_Base):
                 self.assertEqual([pid for pid in pids if _alive(pid)], [], "both writers are gone")
                 self.assertTrue(os.path.exists(os.path.join(marks, "group.pid.term")), "the leg's process group got SIGTERM first")
                 self.assertEqual(w.result()["finished"], None, "the stopped run stays unfinished")
+
+    def start_runner(self, w, env=None):
+        proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2"],
+                                env=env or w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                stdin=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        return proc
+
+    def wait_for(self, proc, what, ready, timeout=60):
+        """Poll `ready()` every few milliseconds until it returns a true value, which is returned; fail if the runner
+        ends first or `timeout` passes."""
+        deadline = time.monotonic() + timeout
+        while True:
+            got = ready()
+            if got:
+                return got
+            if proc.poll() is not None:
+                self.fail("the runner ended before %s: %s" % (what, (proc.communicate(),)))
+            if time.monotonic() > deadline:
+                self.fail("%s never happened" % what)
+            time.sleep(0.002)
+
+    def test_a_stop_during_a_slow_removal_of_a_legs_tmpdir_still_removes_it_the_run_tmpdir_and_the_checkout(self):
+        """Round 2, correctness-3, keyed on an event: the last leg (the ledger) fills its TMPDIR with 40000 files, and the
+        runner is stopped once their removal has begun (the fill directory's count drops). The leg's TMPDIR, the run's
+        TMPDIR and the checkout are all gone afterwards, and the runner says so and exits 143. At the head that TMPDIR
+        was the run's, removed in the finally, where the stop cut the removal short and skipped the checkout's."""
+        w = self.w
+        marks = os.path.join(w.tmp, "marks")
+        os.makedirs(marks)
+        w.ctl({"action": {"ledger": "fill"}, "marks": marks})
+        proc = self.start_runner(w)
+        fill = self.wait_for(proc, "the fill", lambda: os.path.exists(os.path.join(marks, "filled"))
+                             and open(os.path.join(marks, "filled")).read())
+        self.addCleanup(shutil.rmtree, os.path.dirname(fill), True)     # only if the runner under test left it
+
+        def removing():
+            try:
+                return len(os.listdir(fill)) < 100
+            except FileNotFoundError:
+                return True
+        self.wait_for(proc, "the removal of the fill", removing)
+        proc.send_signal(15)
+        out, err = proc.communicate(timeout=90)
+        self.assertEqual(proc.returncode, 128 + 15, out + err)
+        self.assertIn("stopped by signal 15; the legs were stopped and TMPDIR and the checkout removed", err)
+        self.assertFalse(os.path.exists(os.path.dirname(fill)), "the leg's TMPDIR is gone")
+        self.assertFalse(os.path.exists(w.data()["runs"][-1]["runner"]["tmpdir"]), "the run's TMPDIR is gone")
+        self.assertEqual(os.listdir(self.trees()), [], "the checkout and its marker are gone")
+
+    def git_wrapper(self, w, when):
+        """A git ahead of the real one on the runner's PATH that, on the run's first clone, waits (up to a minute) until
+        the test lets it go, `when` "before" or "after" running the real clone, having marked that it is waiting."""
+        marks = os.path.join(w.tmp, "marks")
+        os.makedirs(marks)
+        real = shutil.which("git", path=w.env["PATH"])
+        wrap = os.path.join(w.tmp, "gitwrap")
+        os.makedirs(wrap)
+        with open(os.path.join(wrap, "git"), "w") as f:
+            f.write("#!/bin/sh\n"
+                    "case \" $* \" in *\" clone \"*)\n"
+                    "  if [ ! -e '%(m)s/once' ]; then\n"
+                    "    : > '%(m)s/once'\n"
+                    "    rc=0\n"
+                    "    if [ %(when)s = after ]; then '%(real)s' \"$@\"; rc=$?; fi\n"
+                    "    : > '%(m)s/ready'\n"
+                    "    n=0; while [ ! -e '%(m)s/go' ] && [ $n -lt 3000 ]; do sleep 0.02; n=$((n+1)); done\n"
+                    "    if [ %(when)s = before ]; then exec '%(real)s' \"$@\"; fi\n"
+                    "    exit $rc\n"
+                    "  fi;;\n"
+                    "esac\n"
+                    "exec '%(real)s' \"$@\"\n" % {"m": marks, "when": when, "real": real})
+        os.chmod(os.path.join(wrap, "git"), 0o755)
+        return marks, dict(w.env, PATH=wrap + os.pathsep + w.env["PATH"])
+
+    def test_a_stop_during_the_checkout_or_between_its_marker_and_the_clone_leaves_nothing_under_trees(self):
+        """Round 2, extra5-2, keyed on events: the runner is stopped while its first clone waits, once after the real
+        clone made the checkout's directory (during make_checkout), once before it (the marker made, the clone not
+        started). Either way nothing is left under <state dir>/sweeps/trees, nothing is recorded, and the runner exits
+        143 saying so. At the head make_checkout had no cleanup of its own, so the directory and the marker were left."""
+        for when in ("after", "before"):
+            with self.subTest(when=when):
+                w = World()
+                self.addCleanup(w.close)
+                marks, env = self.git_wrapper(w, when)
+                proc = self.start_runner(w, env)
+                self.wait_for(proc, "the clone's wait", lambda: os.path.exists(os.path.join(marks, "ready")))
+                trees = os.path.join(w.xdg, "romp", "sweeps", "trees")
+                names = sorted(os.listdir(trees))
+                self.assertEqual(len([n for n in names if n.endswith(".sha")]), 1, names)
+                self.assertEqual(len([n for n in names if not n.endswith(".sha")]), 1 if when == "after" else 0, names)
+                proc.send_signal(15)
+                out, err = proc.communicate(timeout=90)
+                self.assertEqual(proc.returncode, 128 + 15, out + err)
+                self.assertIn("stopped by signal 15", err)
+                self.assertEqual(os.listdir(trees), [], "no partial checkout and no marker left")
+                self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
+                self.assertEqual(w.calls(), [])
+
+    def test_a_stop_while_the_way_out_reads_a_changed_venv_still_retires_it(self):
+        """Round 2, correctness-3, keyed on an event: the pytest leg leaves a large file in its venv, so the run is invalid
+        after it, and the runner is stopped while its way out reads the venv's tree again (the result already names the
+        change, and the runner has the large file open). The venv is still retired (its marker gone, whatever a leg could
+        have written into it), so the next run builds it again, and TMPDIR and the checkout are gone. At the head the stop
+        cut that read short, so the marker stayed and the checkout with it."""
+        if not os.path.isdir("/proc/self/fd"):
+            self.skipTest("reads the runner's open files from /proc")
+        w = self.w
+        marks = os.path.join(w.tmp, "marks")
+        os.makedirs(marks)
+        w.ctl({"action": {PYTEST_LEG: "venv-big"}, "marks": marks})
+        proc = self.start_runner(w)
+        big = self.wait_for(proc, "the large file", lambda: os.path.exists(os.path.join(marks, "big"))
+                            and open(os.path.join(marks, "big")).read())
+        venv = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(big))))
+        marker = os.path.join(venv, sweep.SDK_MARKER)
+        self.assertTrue(os.path.exists(marker), "the build's marker is there while the leg runs")
+
+        def invalid_written():
+            try:
+                return w.data()["runs"][-1].get("invalid")
+            except (OSError, ValueError, KeyError, IndexError):
+                return None
+        self.wait_for(proc, "the invalid mark", invalid_written)
+
+        def reading_it():
+            fd_dir = "/proc/%d/fd" % proc.pid
+            for n in os.listdir(fd_dir) if os.path.isdir(fd_dir) else ():
+                try:
+                    if os.readlink(os.path.join(fd_dir, n)) == big:
+                        return True
+                except OSError:
+                    pass
+            return False
+        self.wait_for(proc, "the way out's read of the venv", reading_it)
+        proc.send_signal(15)
+        out, err = proc.communicate(timeout=90)
+        self.assertEqual(proc.returncode, 128 + 15, out + err)
+        self.assertFalse(os.path.exists(marker), "the venv is retired: the next run builds it again")
+        self.assertIn("is not the tree its build wrote", out)
+        self.assertEqual(os.listdir(self.trees()), [], "the checkout is gone")
+        self.assertFalse(os.path.exists(w.data()["runs"][-1]["runner"]["tmpdir"]), "TMPDIR is gone")
 
     def stop_in_the_re_read(self, w, *extra, signum=15):
         """Run the runner (with `extra`) while the pytest leg fails and leaves its checkout's .git/info/exclude a FIFO
