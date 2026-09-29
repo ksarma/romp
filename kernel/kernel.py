@@ -68127,8 +68127,11 @@ else window.__rompPaneToggle('fleet');});})();
 # not hold (a page on another origin that opened the dashboard, a popup), a sandboxed frame (origin "null") and a
 # frame nested inside a pane all fail. Its data-protocol=none clause is the project's URL-pane marking, which no
 # iframe on the fork carries, so it refuses nothing here. Defined by this script, which runs ahead of every shell
-# listener; each of them reads it FAIL-CLOSED as its first statement (no check, no message), spelled as the
-# project spells it, and tests/test_shell_source_check.py takes the census. The service worker's own channel
+# listener; each inline listener reads it FAIL-CLOSED as its first statement (no check, no message), spelled as the
+# project spells it, and tests/test_shell_source_check.py takes their census. The shell's bundled palette
+# (palette-main.js, from ui/webview/palette-main.ts) reads it the same way, fail-closed, at the head of its two
+# window listeners, through paneSourceOk (ui/webview/pane-source.ts, adopted from the same commit), and
+# ui/webview/foreign-sender-listeners.test.ts takes their census and runs them. The service worker's own channel
 # (_LANDING_REVEAL_JS) is the one exception: no window can post on it.
 # [fork] THE LOCK (2026-09-26): the fourth line, right after the adopted three, is the fork's own, not the project's.
 # It makes the check read-only and non-configurable once it is defined, so no later script (another inline script, a

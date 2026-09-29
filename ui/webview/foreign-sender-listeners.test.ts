@@ -5,66 +5,77 @@
 //   - frame-listener.ts listenForFrames, the one window install every pane's frame handler shares (the feed, the Outline,
 //     Waiting on you, the chat and the VS Code timeline): the window path hands the handler no message from a foreign
 //     sender. The federation registry path is unchanged: only federation.js calls it, with a MessageEvent it built.
-//   - every other window listener, each with its own check at its head: the Waiting pane's panes cache, the VS Code
-//     settings sync, the shared file viewer's two (its viewFile relay, and the way back from a failed svg picture, which
-//     runs the fetch again on hostUp and sends a probe of the picture's address on any other kernel message), the file
-//     browser, the file-comments panel's replies, the gear's six listeners, the shell palette's two, and the VS Code
-//     strip's.
-// Each listener hears every class windowSender does not name foreign, which covers each one's real senders: the shell
-// (the embedder of a pane; to the shell's own page, its panes are windows on its location.origin), this document
-// (self), a window on this page's location.origin (a second chat column, a pane posting up to the shell, the VS Code
-// webview host, which posts from its own window on the webview's origin) and this document's dispatch (the pane shim's
-// and federation.js's kernel frames).
+//   - every other window listener, each with its own check at its head: windowSender's in the Waiting pane's panes
+//     cache, the VS Code settings sync, the shared file viewer's two (its viewFile relay, and the way back from a failed
+//     svg picture, which runs the fetch again on hostUp and sends a probe of the picture's address on any other kernel
+//     message), the file browser, the file-comments panel's replies, the gear's six listeners and the VS Code strip's;
+//     and the shell's own check in the shell palette's two, read through pane-source.ts (paneSourceOk, which reads the
+//     shell's window.__rompPaneSourceOk and fails closed), since the palette runs only on the shell page.
+// Each windowSender listener hears every class windowSender does not name foreign, which covers each one's real
+// senders: the shell (the embedder of a pane; to the shell's own page, its panes are windows on its location.origin),
+// this document (self), a window on this page's location.origin (a second chat column, a pane posting up to the shell,
+// the VS Code webview host, which posts from its own window on the webview's origin) and this document's dispatch (the
+// pane shim's and federation.js's kernel frames). The palette's two hear only a pane of the shell, an iframe of the
+// shell's document on its location.origin (the chat pane and a split column, whose tab menu posts hotkeyConfigure, and
+// the settings frame, whose gear posts openKeys), and refuse every other window: the shell's own page, its own dispatch,
+// a sourceless post, a frame nested in a pane and a tab a pane opened among them, and every foreign sender.
 //
-// Executed legs: every listener is run against the same senders. Four run as installed, over a stand-in window: the real
-// listenForFrames, installSettingsSync, initFileView and initFileBrowse, each with that stand-in as the global window
-// (which is also the window windowSender reads by default). The rest live inside modules that boot a page on import (the
-// Waiting pane, the shell palette), behind module state (the comments panel's live panel) or inside a closure (the gear,
-// the strip, the file viewer's way back), so each is lifted out of its file by the TypeScript parser, from its function to
-// its closing brace, transpiled and run over stubs: every free identifier it reads is an inert stub except the effect it
-// is tested for, which counts, windowSender, which is the real helper, and window, which is the stand-in the helper reads.
-// A representative arm per listener reaches its effect once from every heard sender and never from a foreign one; the
-// head check sits before every arm, which the census below pins at source for every listener in ui/. A listener declared
-// in ARMS (the way back) has a leg per declared arm (hostUp, and the probe), which the executed-leg census holds to exactly
-// one each; each of those legs counts its own arm's effect once and the other arm's twice, so a heard sender that reaches
-// the wrong arm fails as well as a foreign one that reaches either.
+// Executed legs: every windowSender listener is run against the same senders (HEARD, FOREIGN), and the palette's two
+// against the shell's panes (PANE_HEARD) and every other sender (PANE_REFUSED: every FOREIGN row, the shell's own page,
+// its dispatch, a sourceless post on its location.origin, a frame nested in a pane, a tab a pane opened, and a pane of
+// a shell page that defines no check), over a page whose check is the adopted one, run from its kernel.py text (the
+// no-check row aside). Four run as installed, over a stand-in window: the real listenForFrames, installSettingsSync,
+// initFileView and initFileBrowse, each with that stand-in as the global window (which is also the window windowSender
+// reads by default). The rest live inside modules that boot a page on import (the Waiting pane, the shell palette),
+// behind module state (the comments panel's live panel) or inside a closure (the gear, the strip, the file viewer's way
+// back), so each is lifted out of its file by the TypeScript parser, from its function to its closing brace, transpiled
+// and run over stubs: every free identifier it reads is an inert stub except the effect it is tested for, which counts,
+// windowSender and paneSourceOk, which are the real helpers, and window, which is the stand-in the helpers read. A
+// representative arm per listener reaches its effect once from every heard sender and never from a refused one; the
+// head check sits before every arm, which the census below pins at source for every listener in ui/. A listener
+// declared in ARMS (the way back) has a leg per declared arm (hostUp, and the probe), which the executed-leg census
+// holds to exactly one each; each of those legs counts its own arm's effect once and the other arm's twice, so a heard
+// sender that reaches the wrong arm fails as well as a foreign one that reaches either.
 //
 // The census reads the population instead of a list: every addEventListener("message", …) or
 // addEventListener("messageerror", …) call in a ui/ source file (test and types files excluded; uiSources lists the
 // files), the method named or a computed member, whatever its receiver, and every onmessage or onmessageerror handler
 // assigned to this page's own window, the receiver resolved by its binding (window, self, globalThis, frames, the bare
 // global, this page's document.defaultView, a local initialised to one of them, the global `this`), must take the event
-// as its one parameter, with no default, have the check, preceded by nothing but reads of the message and early returns
-// whose condition the census judges to run no code, none holding a destructuring default or a computed key (headCheck's
-// docstring lists the forms), judged by form, not by what runs, and be one of the gated sites below, each with an
-// executed leg here. A messageerror event carries the sender's origin and source as a message does, and a sender causes
-// one by posting what the page cannot deserialize, so it is counted as a message. A listener handed over by name is
-// read at the function written in place that a const of that name holds, found by the name's binding; any other name
-// fails. A new window listener anywhere in ui/ fails it until it is gated and given a leg. A second census reads what
-// the name windowSender is bound to: in every ui/ file that calls the check, it is the helper's own import (gear.js:
-// its require), bound once and never written, so a local helper of the same name that lets one more sender through
-// cannot stand in for it. The first census reads the listeners the source spells, so two more hold the source to
-// spellings it can read: a third holds that every addEventListener in ui/ is a call the first can read, and a fourth
-// refuses the roads that spell neither (a method of the window, of the body element or of a prototype read by a
-// computed name, a function run with the window as its `this`, an onmessage handler set other than by an assignment the
-// fourth accepts, a handler or a message listener on a window other than this page's own, code run from a string (a
-// module imported from a data: URL or from a URL built at run time among it, and a timer, a callee named setTimeout or
-// setInterval on any receiver, handed a string literal, a template, a + expression, an array or object literal or a
-// variable whose initialiser is one, or used as a template's tag), a test or types file imported as a module, a module
-// specifier holding a ? or a # or ending in / or /. (which esbuild rewrites before it resolves), a require() whose
-// specifier is no string literal (which esbuild bundles as every file its pattern can match), a `with` statement, and
-// the name WebSocket anywhere but as the constructor a `new` calls, or in a type). A test of its own holds the repo root
-// to no package.json, tsconfig.json or jsconfig.json, which esbuild would read to resolve a ui/ module's specifier. What
-// those cannot see is listed at the fourth.
+// as its one parameter, with no default, have the check (the pane check in palette-main.ts, the shell's bundle, and
+// windowSender's in every other file), preceded by nothing but reads of the message and early returns whose condition
+// the census judges to run no code, none holding a destructuring default or a computed key (headCheck's docstring lists
+// the forms), judged by form, not by what runs, and be one of the gated sites below, each with an executed leg here. A
+// messageerror event carries the sender's origin and source as a message does, and a sender causes one by posting what
+// the page cannot deserialize, so it is counted as a message. A listener handed over by name is read at the function
+// written in place that a const of that name holds, found by the name's binding; any other name fails. A new window
+// listener anywhere in ui/ fails it until it is gated and given a leg. A second census reads what the names
+// windowSender and paneSourceOk are bound to: in every ui/ file that calls either check, the name is the helper's own
+// import (gear.js: windowSender's require), bound once and never written, so a local helper of the same name that lets
+// one more sender through cannot stand in for it. The first census reads the listeners the source spells, so two more
+// hold the source to spellings it can read: a third holds that every addEventListener in ui/ is a call the first can
+// read, and a fourth refuses the roads that spell neither (a method of the window, of the body element or of a
+// prototype read by a computed name, a function run with the window as its `this`, an onmessage handler set other than
+// by an assignment the fourth accepts, a handler or a message listener on a window other than this page's own, code run
+// from a string (a module imported from a data: URL or from a URL built at run time among it, and a timer, a callee
+// named setTimeout or setInterval on any receiver, handed a string literal, a template, a + expression, an array or
+// object literal or a variable whose initialiser is one, or used as a template's tag), a test or types file imported as
+// a module, a module specifier holding a ? or a # or ending in / or /. (which esbuild rewrites before it resolves), a
+// require() whose specifier is no string literal (which esbuild bundles as every file its pattern can match), a `with`
+// statement, and the name WebSocket anywhere but as the constructor a `new` calls, or in a type). A test of its own
+// holds the repo root to no package.json, tsconfig.json or jsconfig.json, which esbuild would read to resolve a ui/
+// module's specifier. What those cannot see is listed at the fourth.
 // Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { hideEdges, staysEnumerable, defineHidden } from "../test-dom-shim";
 import { windowSender } from "./window-sender";
+import { paneSourceOk } from "./pane-source";
 import { listenForFrames } from "./frame-listener";
 import { installSettingsSync } from "./settings";
 import { initFileView } from "./file-view";
@@ -120,7 +131,8 @@ const SHELL = hideEdges({ name: "the romp shell" });
  *  own top-level page (its parent and its top are itself), and VS Code's webview frame, whose script sets window.parent
  *  to the frame itself (1.103 on) or deletes it (1.88 to 1.102). The pane holds two frames, each sharing its top: a
  *  sandboxed one (frameIn 0) and one on its location.origin (frameIn 1); the shell's page holds a sandboxed frame
- *  (frameIn 0). */
+ *  (frameIn 0) and its three panes, each a frame on its location.origin: the chat pane (CHILD_PANE, frameIn 1), a split
+ *  chat column (SECOND_COLUMN, frameIn 2) and the settings frame, whose gear posts openKeys (SETTINGS_PANE, frameIn 3). */
 function receiver(ctx: Ctx): Receiver {
   if (ctx === "pane") {
     const w = new Receiver("a pane in the romp shell", SHELL, ORIGIN, SHELL);
@@ -131,7 +143,7 @@ function receiver(ctx: Ctx): Receiver {
     const w = new Receiver("the romp shell's page", null, ORIGIN);
     w.parent = w;
     w.top = w;
-    w.holdFrames([sandboxed(w, w)]);
+    w.holdFrames([sandboxed(w, w), CHILD_PANE, SECOND_COLUMN, SETTINGS_PANE]);
     return w;
   }
   if (ctx === "vscode") { const w = new Receiver("a VS Code webview frame", null, VSCODE_ORIGIN); w.parent = w; return w; }
@@ -139,12 +151,14 @@ function receiver(ctx: Ctx): Receiver {
 }
 const SECOND_COLUMN = hideEdges({ name: "a second chat column" });
 const CHILD_PANE = hideEdges({ name: "a pane of the shell" });
+const SETTINGS_PANE = hideEdges({ name: "the shell's settings frame" });
 const VSCODE_HOST = hideEdges({ name: "the VS Code webview host" });
 const OTHER_PAGE = hideEdges({ name: "a page on another origin" });
 const OTHER_WEBVIEW = hideEdges({ name: "a window on another VS Code webview's origin" });
 const sandboxed = (parent: unknown, top?: unknown) => hideEdges({ name: "a sandboxed frame", parent, top });
 
-type Row = { who: string; ctx: Ctx; source: (w: Receiver) => unknown; origin: string };
+type Row = { who: string; ctx: Ctx; source: (w: Receiver) => unknown; origin: string;
+             noCheck?: true };   // the palette's legs only: the row's page defines no window.__rompPaneSourceOk
 const HEARD: Row[] = [
   { who: "this document", ctx: "pane", source: (w) => w, origin: ORIGIN },
   { who: "its embedder, the romp shell", ctx: "pane", source: (w) => w.parent, origin: ORIGIN },
@@ -172,12 +186,73 @@ const FOREIGN: Row[] = [
   { who: "a window on another VS Code webview's origin (the frame's window.parent deleted)", ctx: "vscode, older", source: () => OTHER_WEBVIEW, origin: OTHER_VSCODE_ORIGIN },
   { who: "a sourceless post from another VS Code webview's origin", ctx: "vscode", source: () => null, origin: OTHER_VSCODE_ORIGIN },
 ];
+/** The senders the shell palette's two listeners hear: the shell's panes, each an iframe of the shell's document on its
+ *  location.origin, the frames receiver("shell") lists after its sandboxed one. Run over a shell page whose check is the
+ *  adopted one (installPaneCheck). */
+const PANE_HEARD: Row[] = [
+  { who: "the chat pane, an iframe of the shell's document (#f-chat)", ctx: "shell", source: () => CHILD_PANE, origin: ORIGIN },
+  { who: "a split chat column, another iframe of the shell's document", ctx: "shell", source: () => SECOND_COLUMN, origin: ORIGIN },
+  { who: "the settings frame, the gear's iframe of the shell's document (#f-settings)", ctx: "shell", source: () => SETTINGS_PANE, origin: ORIGIN },
+];
+/** Every other sender, which the palette's two refuse: every FOREIGN row, each over a page that carries the adopted check
+ *  (its document's iframes are the frames its window lists), so each is refused by the check's own clauses and not by its
+ *  absence; the senders windowSender hears that are no pane of the shell, the shell's own page, its own dispatch, a
+ *  sourceless post on its location.origin, and a window on its location.origin that is no iframe of its document (a frame
+ *  nested in a pane, a tab a pane opened); and a pane of a shell page that defines no check, which the palette's
+ *  fail-closed read refuses. */
+const PANE_REFUSED: Row[] = [
+  ...FOREIGN,
+  { who: "the shell's page itself", ctx: "shell", source: (w) => w, origin: ORIGIN },
+  { who: "the shell page's own dispatch (no source, no origin)", ctx: "shell", source: () => null, origin: "" },
+  { who: "a sourceless post on the shell's location.origin", ctx: "shell", source: () => null, origin: ORIGIN },
+  { who: "a frame nested in the chat pane, on the shell's location.origin", ctx: "shell",
+    source: (w) => hideEdges({ name: "a frame nested in the chat pane", parent: CHILD_PANE, top: w }), origin: ORIGIN },
+  { who: "a tab the chat pane opened, on the shell's location.origin", ctx: "shell",
+    source: () => hideEdges({ name: "a tab the chat pane opened", opener: CHILD_PANE }), origin: ORIGIN },
+  { who: "the chat pane, on a shell page that defines no check", ctx: "shell", source: () => CHILD_PANE, origin: ORIGIN, noCheck: true },
+];
+
+// ── the shell's own check, which the palette's two read ──
+
+/** kernel.py, whose served JavaScript holds the shell's check. */
+const KERNEL_PY = path.resolve(EXT, "..", "kernel", "kernel.py");
+/** The first and last characters of the adopted region that opens kernel.py's _LANDING_BOOT_JS, and the sha256 of its
+ *  text: the digest tests/test_shell_source_check.py AdoptedCheck pins (ADOPTED_SHA256 there), recomputed from the
+ *  project's commit f4a57200894ede72a4d4469570490aa64fbf9e94, never from the fork's copy. */
+const CHECK_HEAD = "window.__rompPaneSourceOk=function(e){";
+const CHECK_TAIL = "return false;}catch(x){return false;}};";
+const CHECK_SHA256 = "97e0342292b56cf7b1df96a91d40c7bf8db3ee3a0949abc681c0e3457908f7bb";
+let adopted: string | null = null;
+/** The shell's check as kernel.py serves it: the region from CHECK_HEAD through CHECK_TAIL, read from kernel.py's text,
+ *  once, and held to CHECK_SHA256, so the palette's legs run the check the shell defines, not a copy of it. */
+function adoptedCheck(): string {
+  if (adopted !== null) return adopted;
+  const src = fs.readFileSync(KERNEL_PY, "utf8");
+  const i = src.indexOf(CHECK_HEAD);
+  assert.ok(i >= 0 && src.indexOf(CHECK_HEAD, i + 1) < 0, "kernel.py defines the shell's check once (" + CHECK_HEAD + ")");
+  const j = src.indexOf(CHECK_TAIL, i);
+  assert.ok(j > i, "and its region ends at " + CHECK_TAIL);
+  const region = src.slice(i, j + CHECK_TAIL.length);
+  assert.equal(crypto.createHash("sha256").update(region, "utf8").digest("hex"), CHECK_SHA256,
+    "kernel.py's check is not the adopted region tests/test_shell_source_check.py AdoptedCheck pins");
+  return (adopted = region);
+}
+/** Gives `w` a document whose iframes are the frames `w` lists, each an iframe element holding that frame's window and no
+ *  data-protocol attribute, and runs the adopted check over it with `w` as its window and `w.location` as its location,
+ *  so w.__rompPaneSourceOk is the shell's check on this page (hidden, as every other object `w` holds). */
+function installPaneCheck(w: Receiver): void {
+  const iframes = Array.from({ length: w.length }, (_, i) => hideEdges({ contentWindow: frameIn(w, i), getAttribute: (_a: string): null => null }));
+  const doc = hideEdges({ querySelectorAll: (sel: string) => (sel === "iframe" ? iframes : []) });
+  defineHidden(w, "document", doc);
+  new Function("window", "document", "location", adoptedCheck())(w, doc, w.location);
+  hideEdges(w);
+}
 
 // ── the stand-ins stay small in a dump ──
 
 test("the stand-ins inspect as their primitives: every enumerable key of a receiving window and of each sending window holds a primitive", () => {
   const pane = receiver("pane"), shell = receiver("shell");
-  const all: object[] = [SHELL, SECOND_COLUMN, CHILD_PANE, VSCODE_HOST, OTHER_PAGE, OTHER_WEBVIEW, sandboxed(SHELL), sandboxed(SHELL, SHELL),
+  const all: object[] = [SHELL, SECOND_COLUMN, CHILD_PANE, SETTINGS_PANE, VSCODE_HOST, OTHER_PAGE, OTHER_WEBVIEW, sandboxed(SHELL), sandboxed(SHELL, SHELL),
     pane, shell, receiver("vscode"), receiver("vscode, older"), frameIn(pane, 0) as object, frameIn(pane, 1) as object, frameIn(shell, 0) as object];
   for (const o of all) {
     for (const k of Object.keys(o)) assert.ok(staysEnumerable((o as any)[k]), k + " is enumerable and holds a " + typeof (o as any)[k]);
@@ -186,7 +261,14 @@ test("the stand-ins inspect as their primitives: every enumerable key of a recei
   // the frames edges are there for a check to read, hidden or not: each receiver's frames is itself, listing its frames
   assert.ok(pane.frames === pane && pane.length === 2 && pane.top === SHELL && (frameIn(pane, 0) as { parent: unknown }).parent === pane,
     "the pane's frames list its two frames, and its top is the shell");
-  assert.ok(shell.frames === shell && shell.length === 1 && shell.top === shell, "the shell's page lists its one frame, and it is its own top");
+  assert.ok(shell.frames === shell && shell.length === 4 && shell.top === shell && frameIn(shell, 1) === CHILD_PANE
+    && frameIn(shell, 2) === SECOND_COLUMN && frameIn(shell, 3) === SETTINGS_PANE,
+    "the shell's page lists its sandboxed frame and its three panes, and it is its own top");
+  // a page given the adopted check keeps it hidden, as it keeps every other object it holds
+  const checked = receiver("shell");
+  installPaneCheck(checked);
+  assert.equal(typeof (checked as any).__rompPaneSourceOk, "function", "the adopted check is defined on the page");
+  for (const k of Object.keys(checked)) assert.ok(staysEnumerable((checked as any)[k]), k + " is enumerable and holds a " + typeof (checked as any)[k]);
 });
 
 // ── the listeners run as installed ──
@@ -354,7 +436,8 @@ type Lifted = { file: string; marker: string; what: string; data: unknown;
                 // the effect's binding, counting through hit; arm is the leg's own arm, for a scope with more than one effect
                 named: (hit: () => void, w: Receiver, arm: string | undefined) => Record<string, unknown>;
                 writes?: string;   // or: the effect is a write to this free name
-                arm?: string };    // a leg of a listener declared in ARMS names the declared arm it runs
+                arm?: string;      // a leg of a listener declared in ARMS names the declared arm it runs
+                senders?: "panes" };   // the shell palette's: heard from the shell's panes only (PANE_HEARD, PANE_REFUSED)
 /** The file viewer's way back (openFileView's onKernelMessage) over a pane that waits, with the probes' budget full, for the
  *  leg that runs `arm`. Both of its effects count: the way back (wayBackEvent, which runs the fetch again), the hostUp arm's,
  *  and a probe of the picture's address (probeServed, which sends one), the probe arm's. The leg's own arm's effect counts
@@ -392,9 +475,9 @@ const LIFTED: Lifted[] = [
     data: { romp: "openSettings", tab: "tasks" }, named: (hit) => ({ openSettings: hit }) },
   { file: "webview/gear.js", marker: "'logUnseen'", what: "the gear's logUnseen count, which sets the Open log badge",
     data: { romp: "logUnseen", n: 3 }, named: (hit, w) => { defineHidden(w, "__rompSetLogCount", hit); return {}; } },
-  { file: "webview/palette-main.ts", marker: '"openKeys"', what: "the shell's openKeys ask, which opens the shortcuts dialog",
+  { file: "webview/palette-main.ts", marker: '"openKeys"', what: "the shell's openKeys ask, which opens the shortcuts dialog", senders: "panes",
     data: { romp: "openKeys" }, named: (hit) => ({ keys: { open: hit } }) },
-  { file: "webview/palette-main.ts", marker: '"hotkeyConfigure"', what: "the shell's hotkeyConfigure ask, which binds a tab's hot key",
+  { file: "webview/palette-main.ts", marker: '"hotkeyConfigure"', what: "the shell's hotkeyConfigure ask, which binds a tab's hot key", senders: "panes",
     data: { romp: "hotkeyConfigure", sid: SID, name: "web" }, named: (hit) => ({ configureHotkey: hit }) },
   { file: "webview/strip.ts", marker: '"stripShow"', what: "the VS Code strip's usage push, which repaints the bars",
     data: { type: "usage", usage: { fiveHour: { pct: 10 } } }, named: (hit) => ({ render: hit }) },
@@ -427,14 +510,17 @@ function compile(site: Site): (scope: unknown) => Listener {
   return make;
 }
 /** Runs the lifted listener once, over a fresh receiving window of the row's kind, on the message from the row's sender,
- *  and returns the effect's count. */
+ *  and returns the effect's count. A palette leg's window carries the adopted check (installPaneCheck) unless the row's
+ *  page defines none; paneSourceOk is the real helper reading that window, as windowSender is the real helper reading it. */
 function runLifted(leg: Lifted, row: Row): number {
   const site = siteOf(leg.file, leg.marker);
   const w = receiver(row.ctx);
+  if (leg.senders === "panes" && !row.noCheck) installPaneCheck(w);
   let n = 0;
   const hit = () => { n++; };
   const named: Record<string, unknown> = {
     windowSender: (e: { source?: unknown; origin?: unknown }) => windowSender(e, w),
+    paneSourceOk: (e: unknown) => paneSourceOk(e as MessageEvent, w as unknown as Window),
     window: w,
     location: w.location,
     ...leg.named(hit, w, leg.arm),
@@ -450,6 +536,17 @@ function runLifted(leg: Lifted, row: Row): number {
 
 for (const leg of LIFTED) {
   const label = leg.file + " (" + (leg.arm ? leg.arm + " arm" : leg.marker) + ")";
+  if (leg.senders === "panes") {
+    test(label + ": " + leg.what + " from any window that is not a pane of the shell, and on a page with no check, reaches nothing", () => {
+      const reached = PANE_REFUSED.filter((row) => runLifted(leg, row) !== 0).map((row) => row.who);
+      assert.deepEqual(reached, [], label + ": a sender that is no pane of the shell reached the effect: " + reached.join("; "));
+    });
+    test(label + ": " + leg.what + " from each pane of the shell reaches the effect once", () => {
+      const missed = PANE_HEARD.map((row) => [row.who, runLifted(leg, row)] as const).filter(([, n]) => n !== 1).map(([who, n]) => who + " (" + n + ")");
+      assert.deepEqual(missed, [], label + ": a pane of the shell did not reach the effect once: " + missed.join("; "));
+    });
+    continue;
+  }
   test(label + ": " + leg.what + " from a foreign sender reaches nothing", () => {
     const reached = FOREIGN.filter((row) => runLifted(leg, row) !== 0).map((row) => row.who);
     assert.deepEqual(reached, [], label + ": a foreign sender reached the effect: " + reached.join("; "));
@@ -530,7 +627,15 @@ function uiPartition(root: string = UI): Record<string, string[]> {
 function uiSources(): string[] {
   return uiPartition()["modules"];
 }
-/** Where the listener's `if (windowSender(<its event>) === "foreign") return;` is among its body's statements, or why
+/** The files whose window listeners take the shell's own check, not windowSender's: palette-main.ts, bundled as
+ *  palette-main.js, which only the shell page loads (the test after the census holds that), so its two listeners hear
+ *  only the shell's panes. Their gate is `if (!paneSourceOk(<its event>)) return;`, paneSourceOk being pane-source.ts's
+ *  fail-closed reader of the shell's window.__rompPaneSourceOk. headCheck refuses a windowSender gate in such a file, and
+ *  the pane gate in any other: a pane's listeners hear their embedder, their own dispatch and the VS Code host, which the
+ *  shell's check admits none of, and no pane page defines it. */
+const PANE_GATED_FILES = new Set(["webview/palette-main.ts"]);
+/** Where the listener's check is among its body's statements, `if (windowSender(<its event>) === "foreign") return;`, or
+ *  in a file of PANE_GATED_FILES `if (!paneSourceOk(<its event>)) return;` (the other file kind's gate refused), or why
  *  it does not count: the listener takes one parameter, the event, a plain name with no default (a parameter's default
  *  runs before the body, so a default on it or on a second parameter would run ahead of the check, and a destructured
  *  parameter, where a default or a computed key could sit, is no plain name), and every statement before the check must
@@ -556,6 +661,8 @@ function uiSources(): string[] {
  *  the superclass's prototype, and a decorator is a call) and a JSX element, a call once compiled. */
 function headCheck(site: Site): string | null {
   const fn = site.fn;
+  const pane = PANE_GATED_FILES.has(site.file);
+  const which = pane ? "the pane check" : "the foreign-sender check";
   if (ts.isIdentifier(fn)) return "the listener is a name no const holding a function written in place binds (sitesIn): " + fn.text;
   if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || !fn.body || !ts.isBlock(fn.body)) return "the listener is not a function with a body";
   if (!fn.parameters.length || !ts.isIdentifier(fn.parameters[0].name)) return "the listener names no event parameter";
@@ -564,11 +671,16 @@ function headCheck(site: Site): string | null {
   }
   const ev = fn.parameters[0].name.text;
   const isReturn = (s: any) => ts.isReturnStatement(s) && !s.expression;
-  const isGate = (s: any) => ts.isIfStatement(s) && !s.elseStatement && isReturn(s.thenStatement)
+  const senderGate = (s: any) => ts.isIfStatement(s) && !s.elseStatement && isReturn(s.thenStatement)
     && ts.isBinaryExpression(s.expression) && s.expression.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
     && ts.isCallExpression(s.expression.left) && ts.isIdentifier(s.expression.left.expression) && s.expression.left.expression.text === "windowSender"
     && s.expression.left.arguments.length === 1 && ts.isIdentifier(s.expression.left.arguments[0]) && s.expression.left.arguments[0].text === ev
     && ts.isStringLiteralLike(s.expression.right) && s.expression.right.text === "foreign";
+  const paneGate = (s: any) => ts.isIfStatement(s) && !s.elseStatement && isReturn(s.thenStatement)
+    && ts.isPrefixUnaryExpression(s.expression) && s.expression.operator === ts.SyntaxKind.ExclamationToken
+    && ts.isCallExpression(s.expression.operand) && ts.isIdentifier(s.expression.operand.expression) && s.expression.operand.expression.text === "paneSourceOk"
+    && s.expression.operand.arguments.length === 1 && ts.isIdentifier(s.expression.operand.arguments[0]) && s.expression.operand.arguments[0].text === ev;
+  const [isGate, otherGate] = pane ? [paneGate, senderGate] : [senderGate, paneGate];
   // the binary operators that coerce no operand: the logical connectives, strict equality and the comma. Every other binary
   // operator runs valueOf/toString/Symbol.toPrimitive (==, !=, the relational operators, +, and the rest) or Symbol.hasInstance
   // (instanceof) or a Proxy trap (in) on an operand, so it can run an arm; assignments run an arm too. All are not inert.
@@ -624,16 +736,20 @@ function headCheck(site: Site): string | null {
   const allowed = new Set<string>([ev]);   // the event, plus each name a message read binds to <event>.data, in body order
   for (let i = 0; i < body.length; i++) {
     if (isGate(body[i])) return null;
+    if (otherGate(body[i])) return "statement " + (i + 1) + (pane
+      ? " is windowSender's gate, and a listener in the shell's bundle (PANE_GATED_FILES) takes the pane check, `if (!paneSourceOk(" + ev + ")) return;`"
+      : " is the pane check, which only the shell's bundle (PANE_GATED_FILES) takes; a pane's listener takes windowSender's gate");
     const dc = defaultOrComputed(body[i]);
     if (dc) return "statement " + (i + 1) + " holds a " + (ts.isComputedPropertyName(dc) ? "computed key" : "destructuring default")
-      + " ahead of the foreign-sender check: " + dc.getText().slice(0, 80);
+      + " ahead of " + which + ": " + dc.getText().slice(0, 80);
     if (readsMessage(body[i])) {
       for (const d of (body[i] as any).declarationList.declarations) if (ts.isIdentifier(d.name)) allowed.add(d.name.text);
       continue;
     }
-    if (!earlyReturn(body[i], allowed)) return "statement " + (i + 1) + " runs before the foreign-sender check: " + body[i].getText().slice(0, 80);
+    if (!earlyReturn(body[i], allowed)) return "statement " + (i + 1) + " runs before " + which + ": " + body[i].getText().slice(0, 80);
   }
-  return "no `if (windowSender(" + ev + ") === \"foreign\") return;` in the listener's body";
+  return pane ? "no `if (!paneSourceOk(" + ev + ")) return;` in the listener's body (a listener in the shell's bundle takes the pane check)"
+    : "no `if (windowSender(" + ev + ") === \"foreign\") return;` in the listener's body";
 }
 // The gated sites, by file and count. EXEMPT is for a site the census counts that no other page can post to (an
 // addEventListener("message", …) on something that is not a window), listed with its reason; there is none in ui/ today.
@@ -740,20 +856,31 @@ test("the census reads every spelling of a window message listener: addEventList
 
 // ── the census: the name every check calls is the helper ──
 //
-// The lifted legs hand each listener the real windowSender under that name, and the head census accepts a call by that
-// name, so neither reads what the name is bound to in the listener's file. This census does: in every ui/ source file
-// that names windowSender (the gated sites, the chat's render.ts and any file that joins them), the name has exactly one
-// binding, the helper itself, and nothing writes to it. In a TypeScript file the binding is
-// `import { windowSender } from "./window-sender"`, unaliased; in gear.js, a CommonJS script, it is
-// `var windowSender = require('./window-sender.ts').windowSender;` at the file's top level. A second binding anywhere in
-// the file (a local, a parameter, a function, a destructured name, an import aliased so that another binding takes the
-// name), an assignment to the name, or a `with` statement, which can rebind any name, fails it.
+// The lifted legs hand each listener the real windowSender and paneSourceOk under those names, and the head census
+// accepts a call by those names, so neither reads what the names are bound to in the listener's file. This census does:
+// in every ui/ source file that names windowSender (the gated sites but the palette's, the chat's render.ts and any file
+// that joins them), or paneSourceOk (the palette's palette-main.ts and any file that joins it), the name has exactly one
+// binding, its helper, and nothing writes to it. In a TypeScript file the binding is
+// `import { windowSender } from "./window-sender"` or `import { paneSourceOk } from "./pane-source"`, unaliased; in
+// gear.js, a CommonJS script, windowSender's is `var windowSender = require('./window-sender.ts').windowSender;` at the
+// file's top level, and no script may bind paneSourceOk. A second binding anywhere in the file (a local, a parameter, a
+// function, a destructured name, an import aliased so that another binding takes the name), an assignment to the name,
+// or a `with` statement, which can rebind any name, fails it.
 
 const TS_BINDING = 'import { windowSender } from "./window-sender";';
 const GEAR_BINDING = "var windowSender = require('./window-sender.ts').windowSender;";
-/** Why `windowSender` in this source does not certainly name the helper, or null when it does: its declarations, the
- *  writes to it and any `with` statement, read by the TypeScript parser (so a spelling in a comment or a string is none). */
-function senderBinding(file: string, src: string): string | null {
+const PANE_BINDING = 'import { paneSourceOk } from "./pane-source";';
+/** The helpers the checks call, by name: the one binding a TypeScript file may give the name, the one a CommonJS script
+ *  may (none for paneSourceOk), and the helper's own file, which the census leaves out. */
+const HELPERS: Record<string, { ts: string; js: string | null; home: string }> = {
+  windowSender: { ts: TS_BINDING, js: GEAR_BINDING, home: "webview/window-sender.ts" },
+  paneSourceOk: { ts: PANE_BINDING, js: null, home: "webview/pane-source.ts" },
+};
+/** Why `name` (windowSender unless given) in this source does not certainly name its helper, or null when it does: its
+ *  declarations, the writes to it and any `with` statement, read by the TypeScript parser (so a spelling in a comment or
+ *  a string is none). */
+function senderBinding(file: string, src: string, name = "windowSender"): string | null {
+  const helper = HELPERS[name];
   const kind = kindOfUi(file), isJs = kind === ts.ScriptKind.JS || kind === ts.ScriptKind.JSX;
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, kind);
   const decls: any[] = [], writes: string[] = [], withs: string[] = [];
@@ -761,7 +888,7 @@ function senderBinding(file: string, src: string): string | null {
     ts.SyntaxKind.FunctionExpression, ts.SyntaxKind.ClassDeclaration, ts.SyntaxKind.ClassExpression, ts.SyntaxKind.ImportSpecifier,
     ts.SyntaxKind.ImportClause, ts.SyntaxKind.NamespaceImport, ts.SyntaxKind.ImportEqualsDeclaration, ts.SyntaxKind.EnumDeclaration,
     ts.SyntaxKind.ModuleDeclaration];
-  const named = (n: any): boolean => !!n && ts.isIdentifier(n) && n.text === "windowSender";
+  const named = (n: any): boolean => !!n && ts.isIdentifier(n) && n.text === name;
   const mentions = (n: any): boolean => { let hit = named(n); if (!hit) ts.forEachChild(n, (c: any) => { if (!hit && mentions(c)) hit = true; }); return hit; };
   const visit = (n: any): void => {
     if (DECL.includes(n.kind) && named(n.name)) decls.push(n);
@@ -773,46 +900,50 @@ function senderBinding(file: string, src: string): string | null {
   };
   visit(sf);
   if (withs.length) return "a `with` statement, which can rebind the name: " + withs.join("; ");
-  if (writes.length) return "a write to windowSender: " + writes.join("; ");
-  if (decls.length !== 1) return decls.length + " bindings of windowSender, not the one: " + decls.map((d) => ts.SyntaxKind[d.kind] + " `" + d.getText(sf).slice(0, 60) + "`").join("; ");
+  if (writes.length) return "a write to " + name + ": " + writes.join("; ");
+  if (decls.length !== 1) return decls.length + " bindings of " + name + ", not the one: " + decls.map((d) => ts.SyntaxKind[d.kind] + " `" + d.getText(sf).slice(0, 60) + "`").join("; ");
   const d = decls[0];
   if (isJs) {
+    if (helper.js === null) return "a script binds " + name + ", which only `" + helper.ts + "` in a TypeScript module may bind";
     const stmt = d.parent && d.parent.parent;
-    if (!ts.isVariableDeclaration(d) || !stmt || !ts.isVariableStatement(stmt) || stmt.parent !== sf || stmt.getText(sf) !== GEAR_BINDING) {
-      return "the binding is not `" + GEAR_BINDING + "` at the file's top level: `" + (stmt ? stmt.getText(sf) : d.getText(sf)).slice(0, 100) + "`";
+    if (!ts.isVariableDeclaration(d) || !stmt || !ts.isVariableStatement(stmt) || stmt.parent !== sf || stmt.getText(sf) !== helper.js) {
+      return "the binding is not `" + helper.js + "` at the file's top level: `" + (stmt ? stmt.getText(sf) : d.getText(sf)).slice(0, 100) + "`";
     }
     return null;
   }
   const decl = ts.isImportSpecifier(d) ? d.parent.parent.parent : null;
-  if (!decl || d.propertyName || !ts.isImportDeclaration(decl) || decl.getText(sf) !== TS_BINDING) {
-    return "the binding is not `" + TS_BINDING + "`: `" + (decl ? decl.getText(sf) : d.getText(sf)).slice(0, 100) + "`";
+  if (!decl || d.propertyName || !ts.isImportDeclaration(decl) || decl.getText(sf) !== helper.ts) {
+    return "the binding is not `" + helper.ts + "`: `" + (decl ? decl.getText(sf) : d.getText(sf)).slice(0, 100) + "`";
   }
   return null;
 }
-/** Every ui/ source file whose code names windowSender (read by the parser), window-sender.ts itself aside. */
-function senderFiles(): string[] {
-  return uiSources().filter((f) => f !== "webview/window-sender.ts").filter((f) => {
+/** Every ui/ source file whose code names `name` (windowSender unless given; read by the parser), its helper's own file
+ *  aside. */
+function senderFiles(name = "windowSender"): string[] {
+  return uiSources().filter((f) => f !== HELPERS[name].home).filter((f) => {
     const src = fs.readFileSync(path.join(UI, f), "utf8");
-    if (!src.includes("windowSender")) return false;
+    if (!src.includes(name)) return false;
     const sf = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, kindOfUi(f));
     let hit = false;
-    const visit = (n: any): void => { if (hit) return; if (ts.isIdentifier(n) && n.text === "windowSender") hit = true; else ts.forEachChild(n, visit); };
+    const visit = (n: any): void => { if (hit) return; if (ts.isIdentifier(n) && n.text === name) hit = true; else ts.forEachChild(n, visit); };
     visit(sf);
     return hit;
   });
 }
 
-test("census: in every ui/ file that calls the check, the name windowSender is bound once, to the helper, and never written", () => {
-  const files = senderFiles();
+test("census: in every ui/ file that calls a check, the name windowSender or paneSourceOk is bound once, to its helper, and never written", () => {
+  const files = senderFiles(), paneFiles = senderFiles("paneSourceOk");
   const gated = GATED.map(([f]) => f);
-  assert.deepEqual(gated.filter((f) => !files.includes(f)), [], "every gated site's file names windowSender");
+  assert.deepEqual(gated.filter((f) => !PANE_GATED_FILES.has(f) && !files.includes(f)), [], "every gated site's file but the shell's bundle names windowSender");
+  assert.deepEqual([...PANE_GATED_FILES].filter((f) => !paneFiles.includes(f)), [], "the shell's bundle names paneSourceOk");
   assert.ok(files.includes("webview/render.ts"), "the chat's frame handler, the first check, is in the population");
-  const bad = files.map((f) => [f, senderBinding(f, fs.readFileSync(path.join(UI, f), "utf8"))] as const).filter(([, why]) => why !== null)
-    .map(([f, why]) => f + ": " + why);
-  assert.deepEqual(bad, [], "a file's windowSender is not certainly the helper:\n" + bad.join("\n"));
+  const bad = [...files.map((f) => [f, "windowSender"]), ...paneFiles.map((f) => [f, "paneSourceOk"])]
+    .map(([f, name]) => [f, name, senderBinding(f, fs.readFileSync(path.join(UI, f), "utf8"), name)] as const).filter(([, , why]) => why !== null)
+    .map(([f, name, why]) => f + " (" + name + "): " + why);
+  assert.deepEqual(bad, [], "a file's windowSender or paneSourceOk is not certainly its helper:\n" + bad.join("\n"));
 });
 
-test("the binding census reads what it claims: a local, a parameter, an aliased import, a wrapper in gear.js, a write or a `with` is refused; the helper's own import and require are accepted", () => {
+test("the binding census reads what it claims: a local, a parameter, an aliased import, a wrapper in gear.js, a write or a `with` is refused, for windowSender and for paneSourceOk; each helper's own import, and windowSender's require, are accepted", () => {
   const imp = TS_BINDING + "\n";
   assert.equal(senderBinding("webview/probe.ts", imp + 'window.addEventListener("message", (e) => { if (windowSender(e) === "foreign") return; });'), null);
   assert.equal(senderBinding("webview/probe.js", "var x = 1;\n" + GEAR_BINDING + "\nfunction f(e) { return windowSender(e); }"), null);
@@ -835,6 +966,23 @@ test("the binding census reads what it claims: a local, a parameter, an aliased 
     ["webview/probe.js", "var a = 1;", /0 bindings/],
   ];
   for (const [file, src, why] of refused) assert.match(String(senderBinding(file, src)), why, file + ": " + src);
+  // paneSourceOk, the palette's: its own import is the one binding; every other shape is refused, a script's among them
+  const pimp = PANE_BINDING + "\n";
+  assert.equal(senderBinding("webview/probe.ts", pimp + 'window.addEventListener("message", (e) => { if (!paneSourceOk(e)) return; });', "paneSourceOk"), null);
+  const paneRefused: Array<[string, string, RegExp]> = [
+    ["webview/probe.ts", 'import { paneSourceOk as ok } from "./pane-source";\nconst paneSourceOk = (e: MessageEvent) => e.origin === "null" || ok(e);', /not `import/],
+    ["webview/probe.ts", pimp + "function f() { const paneSourceOk = (e: unknown) => true; return paneSourceOk; }", /2 bindings/],
+    ["webview/probe.ts", pimp + "function f(paneSourceOk: (e: unknown) => boolean) { return paneSourceOk; }", /2 bindings/],
+    ["webview/probe.ts", 'import { paneSourceOk } from "./pane-source.ts";', /not `import/],
+    ["webview/probe.ts", 'import { paneSourceOk } from "./window-sender";', /not `import/],
+    ["webview/probe.ts", 'import * as paneSourceOk from "./pane-source";', /not `import/],
+    ["webview/probe.ts", "const paneSourceOk = (e: unknown) => true;", /not `import/],
+    ["webview/probe.ts", pimp + "paneSourceOk = () => true;", /a write/],
+    ["webview/probe.js", "var paneSourceOk = require('./pane-source.ts').paneSourceOk;", /a script binds paneSourceOk/],
+    ["webview/probe.ts", pimp + "with ({ paneSourceOk: () => true }) { paneSourceOk(e); }", /with/],
+    ["webview/probe.ts", "const a = 1;", /0 bindings/],
+  ];
+  for (const [file, src, why] of paneRefused) assert.match(String(senderBinding(file, src, "paneSourceOk")), why, file + ": " + src);
 });
 
 // ── the census: every addEventListener in ui/ is one the census above can read ──
@@ -2469,4 +2617,42 @@ test("the census rule reads what it claims: a listener that acts before the chec
     'const { h } = handlers; window.addEventListener("message", h);',
     'window.addEventListener("message", h);',
   ]) assert.match(String(byName(src)[0]), /a name no const holding a function written in place binds/, src);
+});
+
+test("the pane gate reads what it claims: in the shell's bundle a listener takes `if (!paneSourceOk(e)) return;` and no other gate, and no other file takes it", () => {
+  const at = (file: string, text: string) => {
+    const sf = ts.createSourceFile(file, "window.addEventListener(\"message\", " + text + ");", ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const call = (sf.statements[0] as any).expression;
+    return headCheck({ file, line: 1, receiver: "window", fn: call.arguments[1], text, kind: "addEventListener" });
+  };
+  const PALETTE = "webview/palette-main.ts";
+  assert.ok(PANE_GATED_FILES.has(PALETTE) && PANE_GATED_FILES.size === 1, "the palette is the one file that takes the pane gate");
+  assert.equal(at(PALETTE, '(e) => { if (!paneSourceOk(e)) return; if (e.data && e.data.romp === "openKeys") keys.open(); }'), null, "the openKeys listener");
+  assert.equal(at(PALETTE, '(e) => { const m = e.data; if (!m) return; if (!paneSourceOk(e)) return; go(m); }'), null, "a message read and an early return may come first");
+  assert.match(String(at(PALETTE, '(e) => { if (windowSender(e) === "foreign") return; go(e.data); }')), /statement 1 is windowSender's gate, and a listener in the shell's bundle/);
+  assert.match(String(at(PALETTE, '(e) => { go(e.data); if (!paneSourceOk(e)) return; }')), /statement 1 runs before the pane check/);
+  assert.match(String(at(PALETTE, "(e) => { const m = e.data; }")), /no `if \(!paneSourceOk\(e\)\) return;`/);
+  for (const text of ['(e) => { if (!paneSourceOk(other)) return; go(e.data); }', '(e) => { if (!paneSourceOk(e, w)) return; go(e.data); }',
+                      '(e) => { if (paneSourceOk(e) === false) return; go(e.data); }', '(e) => { if (!paneSourceOk(e)) {} go(e.data); }',
+                      '(e) => { if (!paneSourceOk(e)) return; else go(e.data); }'])
+    assert.notEqual(at(PALETTE, text), null, "not the pane gate: " + text);
+  assert.match(String(at("webview/probe.ts", '(e) => { if (!paneSourceOk(e)) return; go(e.data); }')), /statement 1 is the pane check, which only the shell's bundle/);
+  assert.match(String(at("webview/gear.js", '(e) => { if (!paneSourceOk(e)) return; go(e.data); }')), /is the pane check/, "a pane's own file");
+  assert.equal(at("webview/probe.ts", '(e) => { if (windowSender(e) === "foreign") return; go(e.data); }'), null, "windowSender's gate everywhere else");
+});
+
+test("the shell's bundle is loaded by the shell page alone: kernel.py's landing page loads each file of PANE_GATED_FILES as its bundle, once, and no other page or VS Code webview does", () => {
+  const kernel = fs.readFileSync(KERNEL_PY, "utf8");
+  const extSrc = fs.readdirSync(path.join(EXT, "src")).filter((f) => /\.ts$/.test(f) && !/\.test\.ts$/.test(f))
+    .map((f) => fs.readFileSync(path.join(EXT, "src", f), "utf8")).join("\n");
+  for (const file of PANE_GATED_FILES) {
+    const bundle = path.basename(file).replace(/\.ts$/, ".js");
+    const tag = "<script src=/dist/" + bundle;
+    const at = kernel.indexOf(tag);
+    assert.ok(at >= 0 && kernel.indexOf(tag, at + 1) < 0, "kernel.py loads " + bundle + " once: " + tag);
+    assert.equal(kernel.split("/dist/" + bundle).length - 1, 1, "and names its URL nowhere else");
+    const def = kernel.lastIndexOf("\ndef ", at);
+    assert.ok(kernel.startsWith("\ndef _landing(", def), bundle + " is loaded inside _landing, the shell page's builder");
+    assert.ok(!extSrc.includes(bundle), "no VS Code webview document the extension writes loads " + bundle);
+  }
 });

@@ -15,8 +15,12 @@ them reds; recompute the recorded digest from that commit, never from the fork's
 
     git show f4a57200894ede72a4d4469570490aa64fbf9e94:kernel/kernel.py | sed -n '65382,65384p' | head -c -1 | sha256sum
 
-NoOtherWriter holds that nothing else names the check: no file in the tree but the kernel, and in the kernel's code
-nothing but the adopted lines and the gates. The rest runs the served landing: the census of every window message
+NoOtherWriter holds that nothing else names the check: no file in the tree but the kernel and ui/webview/pane-source.ts,
+the reader the shell's bundled palette goes through, whose code lines are the project's at the same commit byte for byte
+(pinned by sha256) and only read it; and in the kernel's code nothing but the adopted lines, the lock and the gates. The
+censuses and runs below read the served shell's inline scripts, not the /dist bundles it loads: the palette's two window
+listeners (palette-main.js) are ui/webview/foreign-sender-listeners.test.ts's census and executed legs. The rest runs the
+served landing: the census of every window message
 listener in its inline scripts (addEventListener for a message or a messageerror; every onmessage assignment, whatever
 its receiver, which must be one of the sockets and the channel ONMESSAGE_RECEIVERS lists; and no onmessageerror handler
 on any receiver), the same census over all of kernel.py and every page it serves (KernelListenerCensus), and node
@@ -89,16 +93,28 @@ ADOPTED_SHA256 = "97e0342292b56cf7b1df96a91d40c7bf8db3ee3a0949abc681c0e3457908f7
 ADOPTED_LEN = 319
 REGION_HEAD = "window.__rompPaneSourceOk=function(e){"
 REGION_TAIL = "return false;}catch(x){return false;}};"
+# The shell's bundled palette reads the check through ui/webview/pane-source.ts (paneSourceOk), ADOPTED from the same
+# commit: its code lines, from its first line that is not a // comment to the file's end, are that commit's
+# ui/webview/pane-source.ts lines 7-11 byte for byte, final newline included (298 bytes), and the fork's header stands
+# where the project's six comment lines stand. sha256 of that text at UPSTREAM_SHA; recompute from that commit, never
+# from the fork's copy:
+#     git show f4a57200894ede72a4d4469570490aa64fbf9e94:ui/webview/pane-source.ts | sed -n '7,$p' | sha256sum
+PANE_SOURCE = "ui/webview/pane-source.ts"
+PANE_SOURCE_SHA256 = "e57ac6389e2498adc241574e7d7c8270b852fd82c6a5b54247915e67124c6208"
+PANE_SOURCE_LEN = 298
 
-# The read every shell listener opens with, spelled as the project spells it (so a fold's lines match).
+# The read every inline shell listener opens with, spelled as the project spells it (so a fold's lines match). The shell's
+# bundled palette reads the check through ui/webview/pane-source.ts instead (foreign-sender-listeners.test.ts's census).
 GATE = "if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;"
 # The fork's line right after the adopted three (2026-09-26): it locks the check, read-only and non-configurable, so no
 # later script replaces, redefines or deletes it. Not the project's text: a fold that takes the project's side of
 # _LANDING_BOOT_JS keeps this line after the project's definition (CheckLocked fails without it).
 LOCK = "try{Object.defineProperty(window,'__rompPaneSourceOk',{writable:false,configurable:false});}catch(x){}"
 
-# Every window message listener the shell runs, by a phrase only its own body carries. A listener added to the
-# shell must join this list (the census below fails until it does), which is where its senders get decided.
+# Every window message listener the shell's inline scripts run, by a phrase only its own body carries. A listener added
+# to them must join this list (the census below fails until it does), which is where its senders get decided. The two in
+# the palette bundle the shell loads (palette-main.js) are not read here: ui/webview/foreign-sender-listeners.test.ts takes
+# their census and runs them.
 LISTENERS = {
     "activeTab relay (_LANDING_FOCUS_JS)": "m.romp!=='activeTab'",
     "toggleFleet (_LANDING_FLEET_JS)": "m.romp!=='toggleFleet'",
@@ -365,24 +381,47 @@ def _files_naming(name):
 
 
 class NoOtherWriter(unittest.TestCase):
-    """Nothing outside the adopted lines, the lock and the thirteen gates names the check: no other code in the kernel
-    (the pane shim, another page's script, a string it serves), and no file anywhere else in the tree (a ui/ bundle the
-    shell or a pane loads, the timeline view). So no code in the tree replaces the shell's check under its name, on its
-    own window or on a pane's window.parent. This census reads text. A replacement the landing makes under a computed
-    name is what the executed legs below catch, on the roads their stand-in drives (ShellListenersExecuted says which),
-    and so is a pane page's inline script's through window.parent (ServedPagesExecuted). One on a road the stand-in does
-    not drive, or one a ui/ bundle makes under a computed name, is refused by the lock once the boot script has run
-    (CheckLocked)."""
+    """Nothing outside the adopted lines, the lock, the thirteen gates and the palette bundle's reader names the check:
+    no other code in the kernel (the pane shim, another page's script, a string it serves), and no file anywhere else in
+    the tree (a ui/ bundle the shell or a pane loads, the timeline view) but ui/webview/pane-source.ts. That one file is
+    the reader the shell's bundled palette calls (paneSourceOk), and its code lines are the project's text at
+    UPSTREAM_SHA byte for byte, pinned by sha256 (PANE_SOURCE_SHA256), which read the check and write nothing. So no code
+    in the tree replaces the shell's check under its name, on its own window or on a pane's window.parent. This census
+    reads text. A replacement the landing makes under a computed name is what the executed legs below catch, on the roads
+    their stand-in drives (ShellListenersExecuted says which), and so is a pane page's inline script's through
+    window.parent (ServedPagesExecuted). One on a road the stand-in does not drive, or one a ui/ bundle makes under a
+    computed name, is refused by the lock once the boot script has run (CheckLocked)."""
 
-    def test_no_file_but_the_kernel_names_the_check(self):
+    def test_no_file_but_the_kernel_and_the_palettes_reader_names_the_check(self):
         hits, read = _files_naming("__rompPaneSourceOk")
         # the walk reads the sources a script on romp's origin comes from: the kernel's pages, the bundles built from
-        # ui/webview (the shell's palette, every pane's), the timeline view the kernel injects, the extension's source
-        for must in ("kernel/kernel.py", "ui/webview/palette-main.ts", "ui/webview/render.ts", "ui/webview/gear.js",
-                     "ui/webview/frame-listener.ts", "ui/romp-timeline-view.js", "vscode-extension/src/extension.ts"):
+        # ui/webview (the shell's palette and the reader it calls, every pane's), the timeline view the kernel injects,
+        # the extension's source
+        for must in ("kernel/kernel.py", "ui/webview/palette-main.ts", PANE_SOURCE, "ui/webview/render.ts",
+                     "ui/webview/gear.js", "ui/webview/frame-listener.ts", "ui/romp-timeline-view.js",
+                     "vscode-extension/src/extension.ts"):
             self.assertIn(must, read, "the walk read " + must)
         self.assertGreater(len([f for f in read if f.startswith("ui/")]), 100, "the walk read ui/ (%d files)" % len(read))
-        self.assertEqual(hits, ["kernel/kernel.py"], "a file outside the kernel names the shell's check")
+        self.assertEqual(hits, ["kernel/kernel.py", PANE_SOURCE],
+                         "a file names the shell's check that is neither the kernel nor the palette's reader, "
+                         "ui/webview/pane-source.ts (test_the_palettes_reader_is_the_projects_text_and_writes_nothing "
+                         "holds that one to the project's text)")
+
+    def test_the_palettes_reader_is_the_projects_text_and_writes_nothing(self):
+        with open(os.path.join(os.path.dirname(HERE), PANE_SOURCE), encoding="utf-8") as f:
+            text = f.read()
+        lines = text.split("\n")
+        head = 0
+        while head < len(lines) and lines[head].startswith("//"):
+            head += 1
+        code = "\n".join(lines[head:])
+        self.assertGreater(head, 0, "the fork's header, // comment lines only, ahead of the code")
+        self.assertEqual(len(code.encode("utf-8")), PANE_SOURCE_LEN, "the code's length at %s %s" % (UPSTREAM_REPO, UPSTREAM_SHA))
+        self.assertEqual(hashlib.sha256(code.encode("utf-8")).hexdigest(), PANE_SOURCE_SHA256,
+                         "pane-source.ts's code lines were edited: they must stay the project's text at %s %s (a fold "
+                         "resolves them as identical; the fork's words go in the header)" % (UPSTREAM_REPO, UPSTREAM_SHA))
+        self.assertEqual(code.count("__rompPaneSourceOk"), 2, "the name, in the code, only in the reader's type and its read")
+        self.assertIsNone(re.search(r"__rompPaneSourceOk\s*=(?!=)", code), "and no write of it")
 
     def test_the_kernel_names_it_only_in_the_adopted_lines_the_lock_and_the_gates(self):
         # the Python comment lines that describe it aside, every mention is in the served JavaScript
@@ -404,8 +443,11 @@ class NoOtherWriter(unittest.TestCase):
 
 
 class ShellListenerCensus(unittest.TestCase):
-    """Every window message listener in the served shell reads the check fail-closed as its first statement; the
-    service worker's channel, which no window can post on, is the one listener without it."""
+    """Every window message listener in the served shell's inline scripts reads the check fail-closed as its first
+    statement; the service worker's channel, which no window can post on, is the one listener without it. This census
+    reads the page's inline scripts only: the two window listeners of the palette bundle it loads (palette-main.js) read
+    the check through ui/webview/pane-source.ts, and ui/webview/foreign-sender-listeners.test.ts takes their census and
+    runs them."""
 
     def setUp(self):
         self.html = _served_shell()
@@ -565,10 +607,11 @@ def _loose_add_tokens(code):
 
 
 class KernelListenerCensus(unittest.TestCase):
-    """Every window message listener in kernel.py, and on every page it serves, is one of the listed kinds: the shell's
-    (the adopted check), the pane shim's (fromShell), the timeline boot's (heardSender), and the service worker's
-    channel. Every onmessage assignment in the kernel's code and its pages, whatever its receiver, is on one of the sockets
-    or the channel ONMESSAGE_RECEIVERS lists, by the receiver's name, and none sets an onmessageerror handler; and no
+    """Every window message listener in kernel.py, and in the inline scripts of every page it serves, is one of the listed
+    kinds: the shell's (the adopted check), the pane shim's (fromShell), the timeline boot's (heardSender), and the
+    service worker's channel (the /dist bundles the pages load are ui/webview/foreign-sender-listeners.test.ts's census).
+    Every onmessage assignment in the kernel's code and its pages, whatever its receiver, is on one of the sockets or the
+    channel ONMESSAGE_RECEIVERS lists, by the receiver's name, and none sets an onmessageerror handler; and no
     addEventListener in the kernel's code escapes the census by an alias or a computed event type."""
 
     def test_every_message_listener_in_the_kernels_code_is_a_listed_kind(self):
@@ -1392,7 +1435,9 @@ def _name_of(src):
 
 
 class ShellListenersExecuted(unittest.TestCase):
-    """The served shell's scripts, run: no listener reads a message from a sender that is not one of its panes.
+    """The served shell's inline scripts, run: no listener reads a message from a sender that is not one of its panes.
+    The /dist bundles the page loads are not run here: the palette bundle's two window listeners are run from every
+    sender by ui/webview/foreign-sender-listeners.test.ts, and in real browsers by tests/test_palette_senders_browser.py.
 
     The run drives these roads before any message is tested: the scripts themselves; every callback they queue (a timer,
     an animation frame, an idle callback, a microtask, a load or pageshow listener), each once; every other listener or
