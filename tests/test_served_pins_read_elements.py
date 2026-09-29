@@ -25,6 +25,8 @@ inside assertTrue or assert is one row per conjunct), and the position forms `X.
 variable had been outside the derivation, and the one such pin in the suite was satisfiable by two comments), or a Name of a tuple
 target over tuples of literals of its length, `for a, b in (("x", "y"), ...)`, read by position (round 6, TUPLOOP), and X is one
 of the kernel's served TEXTS: a call to one of its page getters, or one of its served constants (`<alias>.<_NAME>`), or a
+call with no arguments of a function of the module whose every return statement returns one such text inline (round 6, RETTEXT; a
+form the textual census declines), or a
 Name bound to either in the same function (a tuple assignment counts by position; a Name bound to a SLICE of one counts
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
@@ -746,10 +748,13 @@ def _placed_tuple_uses(fn):
 
 def _resolve(node, names, attrs, getters, constants):
     """The served text a node stands for: a getter call or constant inline, a Name bound in the function, a self.<attr> bound in
-    the class, a fetched tuple's body position by a constant index (`resp[1]`, _position_key), or a `.decode(...)` or `.read(...)`
+    the class, a call with no arguments of a text helper of the module (the `"<name>()"` keys of `names`, _text_helpers), a
+    fetched tuple's body position by a constant index (`resp[1]`, _position_key), or a `.decode(...)` or `.read(...)`
     chain over any of those (`body.decode()`, `resp[1].decode("utf-8")`: a conversion of a served text is that text; round 6,
     PEEL, correctness-1); None otherwise."""
     t = _text(node, getters, constants)
+    if not t and isinstance(node, ast.Call) and not node.args and not node.keywords and _callee(node) is not None:
+        t = names.get(_callee(node) + "()")   # a text helper of the module called (RETTEXT)
     if not t and isinstance(node, ast.Name):
         t = names.get(node.id)
     if not t and isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
@@ -764,7 +769,8 @@ def _resolve(node, names, attrs, getters, constants):
 
 def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=None, reads=None):
     """Record Name and self.<attr> targets bound to a served text, or to a slice of one (a cls.<attr> target binds as the self.<attr>:
-    round 6, CLS); a tuple assignment binds by position; a
+    round 6, CLS; a call with no arguments of a text helper of the module, looked up in `names`, is the text: RETTEXT); a tuple
+    assignment binds by position; a
     FETCHED value (_fetched, with `routes`) unpacked into a tuple binds the positions its helper's own return statements read a
     response at (`reads`, a callable giving the module's _response_reads; the rulings at the merge of main's login cookie split,
     2026-09-28): `status, body, headers = self._req("/")` binds `body` alone where `_req` returns `r.status, r.read(), r.headers`,
@@ -799,6 +805,8 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
     for t, v in pairs:
         g = _text(v, getters, constants)
         via_slice = fetched = False
+        if not g and isinstance(v, ast.Call) and not v.args and not v.keywords and _callee(v) is not None:
+            g = names.get(_callee(v) + "()")   # `page = _page()`, a text helper of the module called (RETTEXT; a _ByHelper text)
         if not g and isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr in ("decode", "read") \
                 and isinstance(v.func.value, ast.Subscript):
             # `body = resp[1].decode()`, a conversion of a fetched tuple's body position: that text (round 6, PEEL; it had bound
@@ -955,15 +963,16 @@ def _base_attrs(cls, by_name, own_attrs, have):
     return out
 
 
-def _own_attrs_of(bindings, getters, constants, routes, reads):
-    """own_attrs for _base_attrs over one module: a class's own methods' attribute bindings, bound once per class."""
+def _own_attrs_of(bindings, getters, constants, routes, reads, calls):
+    """own_attrs for _base_attrs over one module: a class's own methods' attribute bindings, bound once per class (`calls`, the
+    module's text helpers, _text_helpers)."""
     memo, functions = {}, (ast.FunctionDef, ast.AsyncFunctionDef)
     def own_attrs(cls):
         if id(cls) not in memo:
             attrs = memo[id(cls)] = {}
             for fn in [n for n in cls.body if isinstance(n, functions)]:
                 for targets, value in bindings(fn):
-                    _bind(targets, value, {}, attrs, getters, constants, None, routes, reads)
+                    _bind(targets, value, dict(calls), attrs, getters, constants, None, routes, reads)
         return memo[id(cls)]
     return own_attrs
 
@@ -974,7 +983,7 @@ def rows_of(path, getters, constants, routes=None):
     census reads (the author's pass 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
     no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice, a
     subscript (`resp[1]`), a name bound to or unpacked from a fetched tuple's position (or a conversion of one), an inherited
-    attribute (_base_attrs) or a `.decode(...)`/`.read(...)` call (round 6); served
+    attribute (_base_attrs), a `.decode(...)`/`.read(...)` call or a text a helper of the module returns (_ByHelper; round 6); served
     is whether the text is a FETCHED body (_fetched), judged as Handler._send serves it (judged_texts; the rulings at the merge of
     main's login cookie split, 2026-09-28)."""
     tree, lines = _parsed(path)
@@ -998,12 +1007,13 @@ def rows_of(path, getters, constants, routes=None):
                         if item.optional_vars is not None:
                             binds[fn].append(([item.optional_vars], item.context_expr))
         return binds[fn]
-    by_name, own_attrs = {c.name: c for c in classes}, _own_attrs_of(bindings, getters, constants, routes, reads)
+    calls = {k: t for k, t in modnames.items() if k.endswith("()")}   # the module's text helpers (RETTEXT), read in a setUp too
+    by_name, own_attrs = {c.name: c for c in classes}, _own_attrs_of(bindings, getters, constants, routes, reads, calls)
     for cls, fns in groups:
         attrs = {}
         for fn in fns:   # a setUp's self.<attr> binding is visible to every method
             for targets, value in bindings(fn):
-                _bind(targets, value, {}, attrs, getters, constants, None, routes, reads)
+                _bind(targets, value, dict(calls), attrs, getters, constants, None, routes, reads)
         # an attribute an in-module base class binds (round 6, INHERIT), a form the textual census does not read (its class
         # bindings end at the next class line), so a row over one is declined
         based = _base_attrs(cls, by_name, own_attrs, {k.split("[", 1)[0] for k in attrs}) if cls is not None else {}
@@ -1016,7 +1026,8 @@ def rows_of(path, getters, constants, routes=None):
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
             readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced) and not isinstance(x, ast.Subscript) \
                 and not (isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id == "self" and x.attr in inherited) \
-                and not (isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr in ("decode", "read"))   # PEEL: declined
+                and not (isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr in ("decode", "read")) \
+                and not isinstance(text_of(x), _ByHelper)   # PEEL and RETTEXT: declined
             rows = []
             for node in ast.walk(fn):
                 for lit, x in _memberships(node):
@@ -1225,10 +1236,31 @@ _VALUE_USES = {"dumps", "len", "print", "isinstance", "write", "repr", "str", "t
                "subprocess.run", "subprocess.check_output", "subprocess.Popen"}
 
 
+class _ByHelper(str):
+    """A served text reached through a helper of the module that returns it (_text_helpers): the text itself, and a form the textual
+    census does not read, so a pins row over it is declined (rows_of). Compares and hashes as the name, as _Served does."""
+    __slots__ = ()
+
+
+def _text_helpers(tree, getters, constants):
+    """{"<name>()": served text} for every function and method of the module whose own return statements all return ONE served text
+    inline (_text: `def _mobile_js(): return km._LANDING_MOBILE_JS`), keyed as its call with no arguments is looked up (_resolve,
+    _bind): such a call reads as the text, inline and bound, where the census reads the getter's call (round 6, RETTEXT). A function
+    with a return of anything else, or of two texts, is no such helper, and a call with arguments reads as nothing."""
+    out = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            texts = {_text(r.value, getters, constants) if r.value is not None else None for r in _own_returns(fn)}
+            if len(texts) == 1 and None not in texts:
+                out[fn.name + "()"] = _ByHelper(texts.pop())
+    return out
+
+
 def _module_bindings(tree, getters, constants, routes):
     """{Name: served text} for the module-level assignments that bind a served text (`JS = km._LANDING_APIH_JS`; the fixer pass of
-    the author's pass 9: three suite modules bind one at import time and read it in every test, and neither census had seen the binding)."""
-    names, reads = {}, functools.partial(_response_reads, tree)
+    the author's pass 9: three suite modules bind one at import time and read it in every test, and neither census had seen the binding),
+    and under the keys `"<name>()"` the module's text helpers (_text_helpers; round 6, RETTEXT), which every function reads."""
+    names, reads = _text_helpers(tree, getters, constants), functools.partial(_response_reads, tree)
     for st in tree.body:
         if isinstance(st, ast.Assign):
             _bind(st.targets, st.value, names, {}, getters, constants, None, routes, reads)
@@ -1508,12 +1540,13 @@ def readers_of(path, getters, constants, routes=None):
         return rows
 
     out = []
-    by_name, own_attrs = {c.name: c for c in classes}, _own_attrs_of(bindings, getters, constants, routes, reads)
+    calls = {k: t for k, t in modnames.items() if k.endswith("()")}   # the module's text helpers (RETTEXT), read in a setUp too
+    by_name, own_attrs = {c.name: c for c in classes}, _own_attrs_of(bindings, getters, constants, routes, reads, calls)
     for cls, fns in groups:
         attrs, methods = {}, {n.name: n for n in fns}
         for fn in fns:
             for targets, value in bindings(fn):
-                _bind(targets, value, {}, attrs, getters, constants, None, routes, reads)
+                _bind(targets, value, dict(calls), attrs, getters, constants, None, routes, reads)
         if cls is not None:   # an attribute an in-module base class binds (round 6, INHERIT)
             attrs.update(_base_attrs(cls, by_name, own_attrs, {k.split("[", 1)[0] for k in attrs}))
         for fn in fns:
@@ -3080,6 +3113,59 @@ class T(unittest.TestCase):
         self.assertEqual(sites, [])
         self.assertEqual([r[:3] for r in readers], [(6, "assert", "_landing"), (7, "position", "_landing"), (8, "position", "_landing"), (10, "assert", "_landing"),
                                                     (12, "assert", "_landing"), (14, "assert", "_landing"), (15, "position", "_landing")])
+
+
+    def test_a_helper_returning_one_served_text_reads_as_that_text_where_it_is_called(self):
+        # round 6 (B.1, RETTEXT): a function or method of the module whose every return statement returns one served text inline
+        # (`def _page(): return km._landing()`) reads as that text at each call of it with no arguments, inline (h1, h4), bound
+        # to a Name (h2), to a setUp's attribute (h3, the setUp written after the test, so only the class's attribute pass reads it
+        # before the test does), at module level (h7), or to an attribute a subclass inherits (h8). Such a call had been no text, so
+        # a pin over it was in
+        # neither census. A call with arguments (h5) and a helper whose returns differ (h6, `_mixed` also returns "") read as
+        # nothing. The textual census reads no helper call, so every row over such a text is a declined form. Dropping RETTEXT reds
+        # the rows here, dropping its binding road alone reds h2, h3, h7 and h8, dropping the text helpers from either census's
+        # attribute pass reds h3 and from the base classes' pass h8, and dropping the declined marker reds the rows' form.
+        # The rows of both derivations are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest
+def _page():
+    return km._landing()
+MOD = _page()
+class T(unittest.TestCase):
+    def _js(self):
+        return km._LANDING_MOBILE_JS
+    def test_a(self):
+        self.assertIn("h1", _page())
+        page = _page()
+        self.assertIn("h2", page)
+        self.assertIn("h3", self.html)
+        self.assertIn("h4", self._js())
+        self.assertIn("h5", _page(1))
+        self.assertIn("h6", _mixed())
+        self.assertIn("h7", MOD)
+    def setUp(self):
+        self.html = _page()
+def _mixed(ok=True):
+    if ok:
+        return km._landing()
+    return ""
+class U(T):
+    def test_b(self):
+        self.assertIn("h8", self.html)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            sites, _ = textual_census(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(rows, [(9, "h1", "_landing", "in", False, False), (11, "h2", "_landing", "in", False, False), (12, "h3", "_landing", "in", False, False),
+                                (13, "h4", "_LANDING_MOBILE_JS", "in", False, False), (16, "h7", "_landing", "in", False, False), (25, "h8", "_landing", "in", False, False)])
+        self.assertEqual(sites, [])
+        self.assertEqual([r[:3] for r in readers], [(9, "assert", "_landing"), (11, "assert", "_landing"), (12, "assert", "_landing"),
+                                                    (13, "assert", "_LANDING_MOBILE_JS"), (16, "assert", "_landing"), (25, "assert", "_landing")])
 
 
 if __name__ == "__main__":
