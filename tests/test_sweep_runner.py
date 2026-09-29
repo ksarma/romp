@@ -4586,6 +4586,28 @@ class ShortSummaryReader(unittest.TestCase):
                             "a skip whose node id this reader cannot find", repr(first))
         self.assertNotKnown(self.log(first, second), repr(first), "a line before any kind line", second[:60])
 
+    def test_the_other_correct_summaries_the_docstring_names_make_the_set_not_known(self):
+        """Disclosed, loud: the module docstring and docs/batching.md name every kind of summary pytest writes correctly
+        that the reader refuses; beside the split message above and the parametrize id read short (the bracket case),
+        these three, each as the pytest leg's own command printed it (a synthetic tree, pytest 9.1.1). A parametrize id
+        whose own brackets do not balance; a SUBSKIPPED line whose skip reason holds ") tests/", so its node id could
+        start at 2 places; and a reason running on to a line that starts with an upper-case word and then "tests",
+        which is read as a kind the reader does not read. Each leaves the set unknown and names the line, never a skip
+        dropped; a reader changed to read one of them owes the texts that name it a change."""
+        cases = (
+            ("SKIPPED tests/test_d_param.py::test_p[a[] - Skipped: npm ci not run here", "brackets do not balance"),
+            ("SUBSKIPPED(k=1) tests/test_a.py::A::test_sub_reason - Skipped: no playwright (npm ci not run) tests/lab needs "
+             "it", "could start at 2 places"),
+        )
+        for line, why in cases:
+            with self.subTest(line=line):
+                self.assertNotKnown(self.log(line), why, line[:60])
+        line = "ALL tests of this file need node_modules"
+        with self.subTest(line=line):
+            self.assertNotKnown(self.log("SKIPPED tests/test_a.py::A::test_reason_runs_on - Skipped: extension deps absent "
+                                         "(npm ci not run here):", line),
+                                "a kind this reader does not read", line)
+
 
 class DepsSkipRule(unittest.TestCase):
     """The served ruling's condition (2026-09-28): the tests outside the served globs that skip without the deps run in

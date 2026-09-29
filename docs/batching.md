@@ -232,13 +232,18 @@ subject; `verify` refuses the branch otherwise.
    pytest 9, names the test it belongs to, and the served leg runs that test whole; under pytest 8
    the same skip prints as a `SKIPPED` line of that test). The read is closed: a summary line of a
    kind pytest does not write, a skip line that does not name exactly one test, or a line before
-   any kind line leaves the set unknown, and the served leg is then red naming the lines. Two
+   any kind line leaves the set unknown, and the served leg is then red naming the lines. These
    summaries pytest writes correctly end that way too, loudly and never with a skip dropped: a
-   subtest message holding a newline, which splits its line, and a parametrize id holding ` - `,
-   read short at the first one (refused when that leaves a bracket open; an id holding `] - ` is
-   read short and handed to the served leg's pytest, which exits 4 unless a test has exactly that
-   id). That covers the skips whose reasons the runner's rule reads, and three cases fall outside
-   it: a skip for want of the deps in other words runs in no leg (the pytest leg's record lists
+   subtest message holding a newline, which splits its line; a parametrize id holding ` - `, read
+   short at the first one (refused when that leaves a bracket open; an id holding `] - ` is read
+   short and handed to the served leg's pytest, which exits 4 unless a test has exactly that id);
+   a parametrize id whose own brackets do not balance, such as `a[`; a `SUBSKIPPED` line whose
+   node id could start at more than one place, which `] tests/` or `) tests/` in its subtest's
+   description or in its skip's reason can make it, or whose node id holds ` tests/`; and a
+   reason or message running on to a line that starts with an upper-case word and then `tests`
+   before a slash, a space or the line's end (such as `ALL tests of this file ...`), which the
+   reader takes for a line of a kind pytest does not write. That covers the skips whose reasons
+   the runner's rule reads, and three cases fall outside it: a skip for want of the deps in other words runs in no leg (the pytest leg's record lists
    every other skip outside the served files with its reason, so it can be seen); two real-tree pins in
    `tests/test_lab_dist.py` and `tests/test_kernel_bundle_staleness.py` do not skip without
    `node_modules` but read `esbuild.js` under a stand-in for the missing package, where they used

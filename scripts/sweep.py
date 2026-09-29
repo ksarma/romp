@@ -146,14 +146,17 @@ does not read (a line shaped like a kind that is none of pytest's kinds, a skip 
 test, a non-blank line before any kind line), leaves the set unknown, and the served leg is then red naming why and the
 lines, never run without it. The count when the served rulings' condition was measured: 1 test in 1 file when
 measured on 2026-09-28 (tests/test_landing_bundles_built.py, whose build guard needs the extension's deps). The claim
-covers what the rule selects in a summary the reader reads. Two summaries pytest writes correctly leave the set
-unknown, so the served leg is red, never a skip dropped: a subtest message holding a newline splits its SUBSKIPPED
-line; and a node id is read up to its first " - ", so a parametrize id holding one is read short, refused when that
-leaves a bracket open (a node id's brackets must balance), while one read short that closes its brackets (a parametrize
-id holding "] - ") is handed to the served leg's pytest, which exits 4 unless a test has exactly that id. A SUBSKIPPED
-line whose node id could start at more than one place (a subtest's description holding "] tests/" or ") tests/") is
-refused too. Under pytest 8 a subtest's skip prints as a SKIPPED line of its whole test, the same node id. And three
-cases fall outside the claim. A skip for want of the deps whose reason DEPS_SKIP does not match runs in no leg; the
+covers what the rule selects in a summary the reader reads. These summaries, each one pytest writes correctly, leave
+the set unknown, so the served leg is red, never a skip dropped: a subtest message holding a newline splits its
+SUBSKIPPED line; a node id is read up to its first " - ", so a parametrize id holding one is read short, refused when
+that leaves a bracket open, while one read short that closes its brackets (a parametrize id holding "] - ") is handed to
+the served leg's pytest, which exits 4 unless a test has exactly that id; a node id's brackets must balance, so a
+parametrize id whose own brackets do not (such as "a[") is refused; a SUBSKIPPED line whose node id could start at more
+than one place is refused, which a "] tests/" or ") tests/" in the subtest's description or in the skip's reason can
+make it, and so is one whose node id holds " tests/"; and a reason or message that runs on to a line starting with an
+upper-case word, an optional description and then "tests" before a slash, a space or the line's end (such as "ALL tests
+of this file need node_modules") is read as a kind the reader does not read. Under pytest 8 a subtest's skip prints
+as a SKIPPED line of its whole test, the same node id. And three cases fall outside the claim. A skip for want of the deps whose reason DEPS_SKIP does not match runs in no leg; the
 pytest leg's record lists every other skip outside the served globs with its reason (deps_skipped.unselected), so such
 a miss can be seen. A test that does not skip without node_modules but takes another road runs there on that road
 only: two real-tree pins, in tests/test_lab_dist.py and tests/test_kernel_bundle_staleness.py, read esbuild.js under tests/lab_dist_stub.py's stand-in for a missing package,
@@ -3076,13 +3079,16 @@ _SKIP_KIND = re.compile(r"SKIPPED |SUBSKIPPED[\[(]")
 _NODE_ID_REASON = re.compile(r"(tests/\S(?:.*?\S)?)(?: - (.*))?")
 _SKIPPED_LINE = re.compile(r"SKIPPED " + _NODE_ID_REASON.pattern)
 # What comes before a SUBSKIPPED line's node id: the word and a description, which ends in "] " or ") " right before the
-# node id. A description can hold anything, "] tests/" and ") tests/" included, so a line whose node id could start at
-# more than one such place is not read (round 2, decision 5), never anchored at the first.
+# node id. A description can hold anything, "] tests/" and ") tests/" included, and so can the reason after the node id,
+# so a line whose node id could start at more than one such place is not read (round 2, decision 5), never anchored at
+# the first.
 _SUBSKIPPED_HEAD = re.compile(r"SUBSKIPPED(?:\[.*\](?: \(.*\))?|\(.*\)) ")
 _SUBSKIPPED_ANCHOR = re.compile(r"(?<=[\])] )tests/")
 # A line shaped like a kind: an upper-case word, a description as a subtest word has, and a node id (every node id the
 # pytest leg collects starts with tests). One that is none of the kinds above is a kind this reader does not read, never
-# a reason running on. (A bare upper-case first word is no test: a message running on over lines can start with one.)
+# a reason running on. (A bare upper-case first word is no test: a message running on over lines can start with one.
+# The word "tests" followed by a space or the line's end is: a reason running on to such a line, "ALL tests of this
+# file ...", is refused, and the module docstring discloses it.)
 _KIND_SHAPED = re.compile(r"[A-Z][A-Z_]+(?:\[.*?\])?(?: ?\(.*?\))? tests(?:/|\s|$)")
 
 
