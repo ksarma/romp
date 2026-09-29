@@ -4,6 +4,7 @@ narrow/touch viewport, and the kernel tells the shell to switch to Chat when a f
 brings the chat forward. Pure-HTML + routing asserts; no real session data.
 """
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -697,7 +698,7 @@ visualViewport.scale = 0.9; visualViewport.height = 511.11; visualViewport.offse
 out.zoomOutKb = { appTop: appTop(), appH: appH() };
 // (c) the premise test to the pixel: a visual viewport FLUSH at the layout viewport's bottom with the keyboard up under a real pinch,
 // its two values as an engine hands them over (float32, Math.fround), sums to L plus an ulp in doubles; an exact offsetTop + height
-// <= L read it as outside the layout viewport and sent it to the hold road (0px with no hold), where the excess arm publishes the
+// <= L read it as outside the layout viewport and sent it to the hold road (0px with no hold), where the measured road publishes the
 // keyboard's pan: 512 less the share's 235, 277
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 { const s = 1.38562, h = Math.fround(460 / s), ot = Math.fround(844 - 460 / s);
@@ -929,6 +930,84 @@ out.noVVWebKit = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: gl
 global.visualViewport = savedVV;
 LAYOUT.h = null; BAR.top = null; global.innerHeight = 844; visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(WIN, 'resize'); fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.webkitBack = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+// the maintainer's round 6 ruling (2026-09-29): the pinch road's HOLD across a drag, a continuous pinch and a keyboard raised again
+// under a zoom, in families that each start from rest (the measured road stores 0 there and clears the flag). The keyboard's band
+// is 508 unzoomed, so a report at scale s with the keyboard up is 508/s tall and one with it down 844/s. Every step records the
+// report it drove and what the shell published, so the test derives the reading's interval from the geometry it drove (the
+// reading less the zoom's share, both in pixels, up to the reading) and never from the kernel's own arithmetic.
+const r6 = {};
+const r6step = (fam, tag, height, offsetTop, scale) => {
+  visualViewport.scale = scale; visualViewport.height = height; visualViewport.offsetTop = offsetTop;
+  fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  (r6[fam] = r6[fam] || []).push({ tag, height, offsetTop, scale, appTop: appTop(), appH: appH() });
+};
+const r6share = (s) => 844 * (1 - 1 / s);
+const r6rest = (fam) => r6step(fam, 'rest', 844, 0, 1);
+// ui-1: a real pinch (scale 2) over a hold of 83, the visual viewport dragged to o (one pixel past the share, well past it, and
+// past the hold plus the share), dragged back, then the keyboard down and raised again under the zoom
+for (const o of [423, 500, 590]) {
+  const f = 'drag' + o; r6rest(f);
+  r6step(f, 'kbUp', 508, 83, 1); r6step(f, 'pinch2', 254, 83, 2); r6step(f, 'drag', 254, o, 2); r6step(f, 'back', 254, 83, 2);
+  r6step(f, 'kbDownZ', 422, 200, 2); r6step(f, 'reRaiseZ', 254, 83, 2);
+}
+// ui-1's wider face: a continuous pinch from the hold (83) with the keyboard up, about the band's top, centre and bottom
+for (const fp of [0, 0.5, 1]) {
+  const f = 'pinch' + fp; r6rest(f); r6step(f, 'kbUp', 508, 83, 1);
+  for (const s of [1.0007, 1.003, 1.01, 1.02, 1.05, 1.1, 1.2, 1.5, 2]) r6step(f, 's' + s, 508 / s, 83 + fp * 508 * (1 - 1 / s), s);
+  r6step(f, 'kbDownZ', 422, 200, 2); r6step(f, 'reRaiseZ', 254, 83, 2);
+}
+// a hold of 0 (the keyboard up at scale 1 with no pan) under a pinch: dragged past the share, back, the keyboard down and up again
+for (const [s, deep] of [[1.05, false], [2, true]]) {
+  const f = 'hold0-' + s; r6rest(f); r6step(f, 'kbUp0', 508, 0, 1); r6step(f, 'pinchC', 508 / s, 0.5 * 508 * (1 - 1 / s), s);
+  r6step(f, 'drag', 508 / s, deep ? 844 - 508 / s : r6share(s) + 40, s); r6step(f, 'back0', 508 / s, 0, s);
+  r6step(f, 'down', 844 / s, 0, s); r6step(f, 'reNoPan', 508 / s, 0, s);
+}
+// extra10-1: the light-zoom window with no hold (the keyboard's first raise stores the reading less the share), the keyboard
+// down, up with no pan, a pan inside the share, down, and up with its pan again
+for (const s of [1.0007, 1.003, 1.01, 1.05]) {
+  const f = 'lz' + s; r6rest(f);
+  r6step(f, 'A1-kbUpPan', 508 / s, 83, s); r6step(f, 'A2-kbDown', 844 / s, 0, s); r6step(f, 'A3-kbUpNoPan', 508 / s, 0, s);
+  r6step(f, 'A4-kbUpPanInShare', 508 / s, r6share(s), s); r6step(f, 'A5-kbDown', 844 / s, 0, s); r6step(f, 'A6-kbUpPanAgain', 508 / s, 83, s);
+}
+// a hold from scale 1 (83), then the light zoom: the keyboard down, up with no pan, a pan of 2; and the no-pan report under the
+// zoom with no keyboard-down run between
+for (const s of [1.003, 1.01, 1.05]) {
+  let f = 'hold83-lz' + s; r6rest(f); r6step(f, 'E1-kbUp', 508, 83, 1);
+  r6step(f, 'E2-kbDownLZ', 844 / s, 0, s); r6step(f, 'E3-kbUpNoPanLZ', 508 / s, 0, s); r6step(f, 'E4-kbUpPan2LZ', 508 / s, 2, s);
+  f = 'hold83-direct' + s; r6rest(f); r6step(f, 'E1-kbUp', 508, 83, 1); r6step(f, 'E3b-noPanLZ', 508 / s, 0, s);
+}
+// no hold, the keyboard raised at the light zoom (the first raise stores the reading less the share), then dragged up
+for (const s of [1.003, 1.01]) {
+  const f = 'lzdrag' + s; r6rest(f); r6step(f, 'G1-kbUpPan', 508 / s, 83, s);
+  for (const o of [0, 2, 40]) r6step(f, 'G-dragTo' + o, 508 / s, o, s);
+}
+// a small hold (1: a no-hold drag one pixel past the share at scale 2), then the keyboard at the light zoom, with and without a pan
+{ const f = 'smallHold'; r6rest(f); r6step(f, 'S1-kbUpZ423', 254, 423, 2); r6step(f, 'S2-kbDownZ', 422, 200, 2);
+  r6step(f, 'S3-lzKbUpPan', 508 / 1.003, 83.7, 1.003); r6step(f, 'S4-lzKbUpNoPan', 508 / 1.003, 0, 1.003); }
+// a hold of p at scale 1, a pinch about the band's centre to s, then the keyboard down and raised again under the zoom: with no
+// pan, with a pan inside the share, and the first field again (its own pan p, the zoom unpanned). The holds sit at or under the
+// zoom's share (30 under 40 at 1.05; 83 under 141 at 1.2 and 422 at 2), and three scales put the share exactly one pixel under,
+// at and over a hold of 83 (82, 83, 84: s = 844/(844 - z))
+for (const [p, s, tag] of [[30, 1.05, 'p30-s1.05'], [83, 1.2, 'p83-s1.2'], [83, 2, 'p83-s2'],
+                           [83, 844 / 762, 'share82'], [83, 844 / 761, 'share83'], [83, 844 / 760, 'share84']]) {
+  const f = 'reraise-' + tag, o = p + 0.5 * 508 * (1 - 1 / s), down = (t) => r6step(f, t, 844 / s, Math.min(o, r6share(s)), s);
+  r6rest(f); r6step(f, 'kbUp1', 508, p, 1); r6step(f, 'pinchC', 508 / s, o, s);
+  down('down1'); r6step(f, 'reNoPan', 508 / s, 0, s);
+  down('down2'); r6step(f, 'reInShare', 508 / s, r6share(s) / 2, s);
+  down('down3'); r6step(f, 'reSameP', 508 / s, p, s);
+}
+// the real-pinch stance: a hold of 83, a pinch to 2 at 200, dragged up to 40 and to 0 (the shell stays at the hold); and no
+// hold under the pinch, the keyboard raised there, dragged past the share (the excess is stored: no hold was held), back, up
+{ const f = 'stance'; r6rest(f); r6step(f, 'P1-kbUp', 508, 83, 1); r6step(f, 'P2-at200', 254, 200, 2);
+  r6step(f, 'P3-up40', 254, 40, 2); r6step(f, 'P4-at0', 254, 0, 2); }
+{ const f = 'nohold'; r6rest(f); r6step(f, 'Z1-kbUpZ', 230, 83, 2); r6step(f, 'Z2-drag500', 230, 500, 2);
+  r6step(f, 'Z3-back83', 230, 83, 2); r6step(f, 'Z4-to10', 230, 10, 2); }
+// the drag face where the zoom's share reaches the value: a hold measured at the light zoom (1.05, the zoom unpanned: the
+// reading 60 less the share's 40, 20) and the same keyboard's pan dragged to the top
+{ const s = 1.05, f = 'lzhold20'; r6rest(f); r6step(f, 'zoom', 844 / s, r6share(s) / 2, s);
+  r6step(f, 'kbUpLZ', 508 / s, Math.round(r6share(s)) + 20, s); r6step(f, 'dragTo0', 508 / s, 0, s); }
+out.r6 = r6;
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 console.log(JSON.stringify(out));
 """
 
@@ -1189,10 +1268,10 @@ class MobileFitExecutes(unittest.TestCase):
         # the hold only in a true no-pan state, one the measured road would store as 0 (no visual viewport, or one under the
         # cut, taken at the layout viewport L on both roads since the author's pass 9, 2026-09-20, whose offsetTop rounds to no positive
         # pixel); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
-        # was measured with. Every writing road writes the value it publishes; the clamp road writes nothing. The author's pass 8
-        # (2026-09-20): the no-pan test reads the value the measured road stores, one helper (panPx) for both roads, so a
-        # sub-pixel offsetTop is the same answer on both: 0.4 is no pan (cleared here, 0px stored there) and 0.5 a pan (the
-        # hold stands here, 1px stored there); the road had read the raw offsetTop, so 0.4 kept the hold the measured road
+        # was measured with. Every writing road writes the value it publishes; the hold road writes nothing into the hold. The
+        # author's pass 8 (2026-09-20): the no-pan test reads the value the measured road stores under the cut, one helper (panPx)
+        # for both roads, so a sub-pixel offsetTop is the same answer on both: 0.4 is no pan (cleared here, 0px stored there) and
+        # 0.5 a pan (the hold stands here, 1px stored there); the road had read the raw offsetTop, so 0.4 kept the hold the measured road
         # would have zeroed.
         self.assertEqual(self.out["fineFromPan"], "0px", "the fine pointer published 0px from the pan")
         self.assertEqual(self.out["coarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a flip with the keyboard's pan standing")
@@ -1290,7 +1369,7 @@ class MobileFitExecutes(unittest.TestCase):
         # Nothing is published, the hold stays 0, and a keyboard's pan under a zoom-out is published whole. (c) The premise test
         # (inside) compares the report's bottom edge to the pixel: float32 values flush at the layout viewport's bottom sum to L plus
         # an ulp in doubles, which an exact test read as outside, so a keyboard flush at the bottom under a real pinch fell to the hold
-        # road and published 0 where the excess arm publishes 277 (512 less the share's 235)
+        # road and published 0 where the measured road publishes 277 (512 less the share's 235)
         self.assertEqual(self.out["zoomOutNoKb"], {"appTop": "0px", "appH": "844px"}, "a zoom-out with no keyboard publishes no pan (the head: 94px)")
         self.assertEqual(self.out["zoomOutCentred"], {"appTop": "0px", "appH": "844px"}, "the centred report (a negative offsetTop) the same")
         self.assertEqual(self.out["zoomOutHold"], "0px", "the hold stayed 0 through the zoom-out cells")
@@ -1340,6 +1419,131 @@ class MobileFitExecutes(unittest.TestCase):
                          "a fine pointer under the WebKit model publishes the layout viewport, and the bar inside it keeps its strip")
         self.assertEqual({k: nv[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"},
                          "no visualViewport under the WebKit model: the layout viewport, and upstream's reading reserves the bar")
+
+    # The maintainer's round 6 ruling (2026-09-29): what the pinch road publishes from its hold. The reading's interval is derived
+    # here from the report each step drove, not from the kernel: a pure zoom at scale s pans the visual viewport by at most its
+    # share, L(1 - 1/s) over the layout viewport L of 844, so a keyboard's own pan lies between the reading less the share (the
+    # zoom panned all of it) and the reading (the zoom panned none), both in whole pixels as the engine rounds them (half up), with
+    # a pixel of slack each side for the two roundings (the bound kernel.py states beside kbPx).
+    @staticmethod
+    def _r6_px(v):
+        return int(v[:-2])
+
+    @staticmethod
+    def _r6_interval(st):
+        half_up = lambda x: int(math.floor(x + 0.5))
+        share = 844 * (1 - 1 / st["scale"]) if st["scale"] > 1 else 0
+        pan = half_up(st["offsetTop"])
+        return max(0, pan - half_up(share)) - 1, pan + 1
+
+    def _r6(self, fam):
+        return {st["tag"]: st for st in self.out["r6"][fam]}
+
+    def test_a_pinch_reading_never_overwrites_a_standing_hold(self):
+        # ui-1: under a real pinch with a hold standing, the measured road had stored any reading past the zoom's share, so a drag
+        # one pixel past it dropped a hold of 83 to 1, a continuous pinch lowered it at every step, and a keyboard raised again
+        # under the zoom was laid out at the decayed value. It now writes under a pinch only where no hold is held, and the flag is
+        # kept apart from the value, so a hold of 0 counts too (keyed on the value, a hold of 0 read as none and a drag past the
+        # share overwrote it). A drag past the hold plus the share publishes the excess and stores nothing: the drag back and the
+        # keyboard raised again find the hold (it had stored 168 from a drag to 590 and laid the re-raise out there). Every
+        # cell is checked before the test fails, so a red names all of them.
+        px, bad = self._r6_px, []
+
+        def expect(fam, tag, want):
+            got = px(self._r6(fam)[tag]["appTop"])
+            if got != want:
+                bad.append("%s %s: %d, not %d" % (fam, tag, got, want))
+
+        for o in (423, 500, 590):
+            fam = "drag%d" % o
+            excess = self._r6_interval(self._r6(fam)["drag"])[0] + 1   # the reading less the share, 422 at scale 2
+            for tag, want in (("kbUp", 83), ("pinch2", 83), ("drag", max(83, excess)), ("back", 83), ("kbDownZ", 0), ("reRaiseZ", 83)):
+                expect(fam, tag, want)
+        for fp in ("0", "0.5", "1"):
+            fam = "pinch" + fp
+            zoomed = [st["tag"] for st in self.out["r6"][fam] if st["tag"].startswith("s")]
+            self.assertEqual(len(zoomed), 9, "the family drove its nine scales: %r" % (zoomed,))
+            for tag in zoomed + ["reRaiseZ"]:
+                expect(fam, tag, 83)
+            expect(fam, "kbDownZ", 0)
+        for s in ("1.05", "2"):
+            fam = "hold0-" + s
+            excess = self._r6_interval(self._r6(fam)["drag"])[0] + 1
+            self.assertGreater(excess, 0, "the cell's premise: the drag passes the share, so the reading leaves an excess: %r" % (self._r6(fam)["drag"],))
+            for tag, want in (("kbUp0", 0), ("pinchC", 0), ("drag", excess), ("back0", 0), ("down", 0), ("reNoPan", 0)):
+                expect(fam, tag, want)
+        if bad:
+            self.fail("a drag, a continuous pinch or a hold of 0 under a real pinch: the hold stands, the excess is published unstored; %d cells:\n%s" % (len(bad), "\n".join(bad)))
+
+    def test_a_keyboard_raised_again_under_a_zoom_publishes_what_the_reading_allows(self):
+        # extra10-1: with a hold standing, a keyboard raised with no pan, or with a pan inside the zoom's share, had published the
+        # stale hold (80 px under the light zoom of 1.003, the composer 81.5 px below the visible band's bottom; a hold of 83 at
+        # scales 1.2 and 2). The hold road's keyboard-down run marks the held keyboard gone, and the next keyboard-up run bounds the
+        # hold into the reading's interval and keeps that bound apart from the hold, so a later re-raise of the first field still
+        # finds the hold (a bound written into the hold lost it: 0 at scale 2 where the field's own pan is 83). The share=hold
+        # cells put the share one pixel under, at and over a hold of 83, where the boundary between bounding and keeping sits.
+        # Every cell is checked before the test fails, so a red names all of them.
+        px, bad, checked = self._r6_px, [], []
+
+        def inside(fam, tag):
+            st = self._r6(fam)[tag]
+            lo, hi = self._r6_interval(st)
+            checked.append((fam, tag))
+            if not lo <= px(st["appTop"]) <= hi:
+                bad.append("%s %s: %s, outside the reading's interval [%d, %d]" % (fam, tag, st["appTop"], lo, hi))
+
+        def expect(fam, tag, want):
+            got = px(self._r6(fam)[tag]["appTop"])
+            if got != want:
+                bad.append("%s %s: %d, not %d" % (fam, tag, got, want))
+
+        for s in ("1.0007", "1.003", "1.01", "1.05"):
+            fam = "lz" + s
+            for tag in ("A1-kbUpPan", "A3-kbUpNoPan", "A4-kbUpPanInShare", "A6-kbUpPanAgain"):
+                inside(fam, tag)
+            expect(fam, "A2-kbDown", 0)
+            expect(fam, "A5-kbDown", 0)
+        for s in ("1.003", "1.01", "1.05"):
+            expect("hold83-lz" + s, "E1-kbUp", 83)
+            expect("hold83-lz" + s, "E2-kbDownLZ", 0)
+            inside("hold83-lz" + s, "E3-kbUpNoPanLZ")
+            inside("hold83-lz" + s, "E4-kbUpPan2LZ")
+            inside("hold83-direct" + s, "E3b-noPanLZ")
+        for s in ("1.003", "1.01"):
+            for tag in ("G1-kbUpPan", "G-dragTo0", "G-dragTo2", "G-dragTo40"):
+                inside("lzdrag" + s, tag)
+        expect("smallHold", "S1-kbUpZ423", 1)   # the excess stored where no hold was held
+        expect("smallHold", "S2-kbDownZ", 0)
+        inside("smallHold", "S3-lzKbUpPan")
+        inside("smallHold", "S4-lzKbUpNoPan")
+        for tag, p in (("p30-s1.05", 30), ("p83-s1.2", 83), ("p83-s2", 83), ("share82", 83), ("share83", 83), ("share84", 83)):
+            fam = "reraise-" + tag
+            share = 844 * (1 - 1 / self._r6(fam)["pinchC"]["scale"])
+            self.assertGreaterEqual(round(share), p - 1, "the cell's premise: the zoom's share is at, just under or over the hold: %s %r" % (fam, share))
+            for step, want in (("kbUp1", p), ("pinchC", p), ("down1", 0), ("down2", 0), ("down3", 0), ("reNoPan", 0), ("reSameP", p)):
+                expect(fam, step, want)   # reNoPan: no pan, not the hold; reSameP: the first field again finds the hold
+            inside(fam, "reInShare")
+        self.assertEqual(len(checked), 41, "every step named above was checked")
+        if bad:
+            self.fail("a keyboard raised again under a zoom: inside the reading's interval, and the first field finds its hold; %d cells:\n%s" % (len(bad), "\n".join(bad)))
+
+    def test_a_zoom_alone_and_a_pan_under_a_real_pinch_keep_the_value_where_the_share_reaches_it(self):
+        # a GUARD, green before round 6 too: bounding every pinch report by the reading (the light-zoom bound widened to every scale)
+        # would re-lay the shell under a real pinch dragged above the hold (40 and 0 here, where the stance keeps 83; 10 where no
+        # hold was held and the drag's excess, 78, became the hold). Where the zoom's share reaches the value the hold road keeps
+        # it, and the same keyboard's pan above it keeps it too: the drag face the fit() comment states as a cost (a light-zoom hold
+        # of 20 at 1.05 dragged to the top publishes 20, outside the reading's interval of [0, 0]).
+        px = self._r6_px
+        t = self._r6("stance")
+        self.assertEqual([px(t[k]["appTop"]) for k in ("P1-kbUp", "P2-at200", "P3-up40", "P4-at0")], [83, 83, 83, 83],
+                         "a zoom alone and a pan under a real pinch keep the hold: %r" % (t,))
+        t = self._r6("nohold")
+        self.assertEqual([px(t[k]["appTop"]) for k in ("Z1-kbUpZ", "Z2-drag500", "Z3-back83", "Z4-to10")], [0, 78, 78, 78],
+                         "no hold under the pinch: the drag's excess is stored and kept: %r" % (t,))
+        t = self._r6("lzhold20")
+        self.assertEqual(px(t["kbUpLZ"]["appTop"]), 20, "the keyboard raised at the light zoom with no hold stores the reading less the share: %r" % (t,))
+        self.assertEqual(self._r6_interval(t["dragTo0"]), (-1, 1), "the cell's premise: the drag reaches the top, where the reading allows no pan")
+        self.assertEqual(px(t["dragTo0"]["appTop"]), 20, "the drag face: the share (40) reaches the hold (20), so the pan keeps it: %r" % (t,))
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

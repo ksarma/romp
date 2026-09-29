@@ -178,6 +178,37 @@ try {
   out.kbDownZoomed = await move(422, 200, 2);    // the keyboard goes while zoomed: h = 844 again, and a held pan would hang the body
   out.kbUpAgainZoomed = await move(254, 83, 2);  // the author's pass 4: the keyboard raised again under the same zoom: the hold survived the clamp, the pan is 83 again
   out.zoomBack = await move(844, 0, 1);
+  // the maintainer's round 6 ruling (2026-09-29): the pinch road's HOLD, served. Synthetic families, each from rest (the keyboard's
+  // band 508 unzoomed, so 508/s tall at scale s with the keyboard up and 844/s with it down): a drag under a real pinch over a hold
+  // of 83 (one pixel past the share, and past the hold plus the share) with its drag back and re-raise; a continuous pinch about
+  // the band's centre; the keyboard raised again with no pan under a light zoom, with no hold and over a hold of 83; a hold of 0
+  // dragged past the share and re-raised; a hold of 83 re-raised with no pan at 1.2 and 2, then its own field again
+  out.r6 = [];
+  const r6 = async (fam, tag, h, ot, sc) => { out.r6.push({ fam, tag, h, ot, sc, g: await move(h, ot, sc) }); };
+  const r6share = (s) => 844 * (1 - 1 / s);
+  for (const o of [423, 590]) {
+    const f = "drag" + o; await r6(f, "rest", 844, 0, 1);
+    await r6(f, "kbUp", 508, 83, 1); await r6(f, "pinch2", 254, 83, 2); await r6(f, "drag", 254, o, 2); await r6(f, "back", 254, 83, 2);
+    await r6(f, "kbDownZ", 422, 200, 2); await r6(f, "reRaiseZ", 254, 83, 2);
+  }
+  { const f = "pinch"; await r6(f, "rest", 844, 0, 1); await r6(f, "kbUp", 508, 83, 1);
+    for (const s of [1.003, 1.01, 1.05, 1.1, 1.5, 2]) await r6(f, "s" + s, 508 / s, 83 + 0.5 * 508 * (1 - 1 / s), s);
+    await r6(f, "kbDownZ", 422, 200, 2); await r6(f, "reRaiseZ", 254, 83, 2); }
+  { const f = "lz1.003"; await r6(f, "rest", 844, 0, 1); await r6(f, "kbUpPan", 508 / 1.003, 83, 1.003);
+    await r6(f, "kbDown", 844 / 1.003, 0, 1.003); await r6(f, "kbUpNoPan", 508 / 1.003, 0, 1.003); }
+  { const f = "hold83-lz1.003"; await r6(f, "rest", 844, 0, 1); await r6(f, "kbUp", 508, 83, 1);
+    await r6(f, "kbDown", 844 / 1.003, 0, 1.003); await r6(f, "kbUpNoPan", 508 / 1.003, 0, 1.003); }
+  for (const [s, deep] of [[1.05, false], [2, true]]) {
+    const f = "hold0-" + s; await r6(f, "rest", 844, 0, 1); await r6(f, "kbUp0", 508, 0, 1);
+    await r6(f, "pinchC", 508 / s, 0.5 * 508 * (1 - 1 / s), s); await r6(f, "drag", 508 / s, deep ? 844 - 508 / s : r6share(s) + 40, s);
+    await r6(f, "back0", 508 / s, 0, s); await r6(f, "down", 844 / s, 0, s); await r6(f, "reNoPan", 508 / s, 0, s);
+  }
+  for (const s of [1.2, 2]) {
+    const f = "reraise-s" + s, o = 83 + 0.5 * 508 * (1 - 1 / s), down = (t) => r6(f, t, 844 / s, Math.min(o, r6share(s)), s);
+    await r6(f, "rest", 844, 0, 1); await r6(f, "kbUp1", 508, 83, 1); await r6(f, "pinchC", 508 / s, o, s);
+    await down("down1"); await r6(f, "reNoPan", 508 / s, 0, s); await down("down2"); await r6(f, "reSameP", 508 / s, 83, s);
+  }
+  out.r6Back = await move(844, 0, 1);
   if (cfg.shots) await page.screenshot({ path: cfg.shots + "-settled.png" }).catch(() => {});
   await result({});
 } catch (e) {

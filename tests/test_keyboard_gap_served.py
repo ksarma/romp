@@ -318,7 +318,56 @@ class KeyboardGap(unittest.TestCase):
         self.assertAlmostEqual(uz["body"]["top"], KB_PAN, delta=0.5, msg=where + "the body is back at the pan under the zoom: %r" % (uz,))
         self.assertAlmostEqual(uz["body"]["bottom"], band_bottom, delta=0.5, msg=where + "%r" % (uz,))
         self.assertAlmostEqual(zb["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (zb,))
+        self._hold(r, where, rest_gap)
         return r
+
+    def _hold(self, r, where, rest_gap):
+        """The maintainer's round 6 ruling (2026-09-29), served: the pinch road's hold. Under a real pinch a drag or a continuous pinch
+        had overwritten a standing hold (a drag one pixel past the zoom's share dropped 83 to 1, a continuous pinch lowered it at every
+        step, a drag to 590 at scale 2 stored 168 for the re-raise), a hold of 0 read as none, and a keyboard raised again with no pan
+        published the stale hold (the composer 81.5 px below the visible band's bottom under a zoom of 1.003; 167.7 and 337 px at
+        scales 1.2 and 2). The values are the rules test_kernel_mobile.MobileFitExecutes derives cell by cell; here the served
+        shell publishes them and lays the body and the composer out at them. Every cell is checked before the leg fails."""
+        cells = r["r6"]
+        self.assertEqual(len(cells), 60, where + "the driver ran every cell: %r" % ([(c["fam"], c["tag"]) for c in cells],))
+        top = {(c["fam"], c["tag"]): _px(c["g"]["appTop"]) for c in cells}
+        want = {}
+        for fam in ("drag423", "drag590"):
+            want.update({(fam, "kbUp"): 83, (fam, "pinch2"): 83, (fam, "back"): 83, (fam, "kbDownZ"): 0, (fam, "reRaiseZ"): 83})
+        want[("drag423", "drag")] = 83                 # one pixel past the share (422): the hold, not the 1 px excess
+        want[("drag590", "drag")] = 590 - 422          # past the hold plus the share: the excess, published and not stored
+        want.update({("pinch", c["tag"]): 83 for c in cells if c["fam"] == "pinch" and c["tag"].startswith("s")})
+        want.update({("pinch", "kbUp"): 83, ("pinch", "kbDownZ"): 0, ("pinch", "reRaiseZ"): 83})
+        want.update({("lz1.003", "kbDown"): 0, ("lz1.003", "kbUpNoPan"): 0, ("hold83-lz1.003", "kbUp"): 83,
+                     ("hold83-lz1.003", "kbDown"): 0, ("hold83-lz1.003", "kbUpNoPan"): 0})
+        want[("lz1.003", "kbUpPan")] = KB_PAN - round(LAYOUT_H * (1 - 1 / 1.003))   # no hold: the reading (83) less the share (3)
+        for fam, excess in (("hold0-1.05", 40), ("hold0-2", 590 - 422)):
+            want.update({(fam, "kbUp0"): 0, (fam, "pinchC"): 0, (fam, "drag"): excess, (fam, "back0"): 0, (fam, "down"): 0, (fam, "reNoPan"): 0})
+        for fam in ("reraise-s1.2", "reraise-s2"):
+            want.update({(fam, "kbUp1"): 83, (fam, "pinchC"): 83, (fam, "down1"): 0, (fam, "reNoPan"): 0, (fam, "down2"): 0, (fam, "reSameP"): 83})
+        self.assertEqual(sorted(k for k in top if k[1] != "rest"), sorted(want), where + "every cell has its expected value")
+        bad = ["%s %s: %d, not %d" % (k[0], k[1], top[k], v) for k, v in sorted(want.items()) if top[k] != v]
+        for c in cells:
+            g, name = c["g"], "%s %s" % (c["fam"], c["tag"])
+            if not (g["vv"]["fake"] and g["innerHeight"] == LAYOUT_H and g["scrollY"] == 0 and g["composerBottom"] is not None):
+                bad.append(name + ": the emulation did not hold: %r" % (g,))
+                continue
+            if round(c["h"] * c["sc"]) != KB_H:
+                continue
+            # the keyboard up: the body is the published band, and the composer sits at its bottom at its resting distance
+            t = _px(g["appTop"])
+            if abs(g["body"]["top"] - t) > 0.5 or abs(g["body"]["bottom"] - (t + KB_H)) > 0.5:
+                bad.append(name + ": the body is not the published band: %r" % (g["body"],))
+            if abs((t + KB_H - rest_gap) - g["composerBottom"]) > 1:
+                bad.append(name + ": the composer is not at the published band's bottom: %r" % (g,))
+            if c["tag"] in ("kbUpNoPan", "reNoPan"):
+                # a keyboard raised with no pan under the zoom: the composer below the visible band's bottom by the zoom's own
+                # magnification at most (the band is 508/s tall from the top), never by a stale hold on top of it
+                over = g["composerBottom"] + rest_gap - (c["ot"] + c["h"])
+                if over > KB_H - c["h"] + 1:
+                    bad.append(name + ": the composer sits %.2f px below the visible band's bottom, past the zoom's %.2f" % (over, KB_H - c["h"]))
+        if bad:
+            self.fail(where + "the pinch road's hold, served; %d cells:\n%s" % (len(bad), "\n".join(bad)))
 
     def _populations(self, engine):
         """The writer's and the consumer's populations, as the comments in fit() and over the fixed body rule state them (the author's pass
