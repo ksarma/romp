@@ -3106,11 +3106,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   focus arriving (a focus of the document, the window or an element, or an element's blur that an element's focus follows), its
   //   mousedown of the left button, then only its own moves and its boundary events to an element with the button down (a pen's
   //   also the mouse-typed ones Chromium sends) and the focus arriving, then its pointerup and a mouseup of detail 1 or 2; a tap by
-  //   a finger, or by a pen in the touch order, is its pointerdown, a touchstart, its own moves and boundary events to an element
-  //   with the contact down (a finger's also the focus arriving and the mouse's pointerout, pointerover, mouseout and mouseover to
-  //   no element with no button down), then its pointerup, its pointerout and pointerleave to no element, a touchend, at most one
-  //   compatibility boundary pair (a mouseout and a mouseover to elements, or a mouseover from no element), one or more mousemoves
-  //   with no button down, the mousedown, the focus arriving and a mouseup of detail 1, or of 1 or 2 for a finger's; and anywhere
+  //   a finger, or by a pen in the touch order, is its pointerdown, a touchstart where one comes, its own moves and boundary events
+  //   to an element with the contact down (a finger's also the focus arriving and the mouse's pointerout, pointerover, mouseout and
+  //   mouseover to no element with no button down), then its pointerup, its own pointerouts and pointerleaves to no element and a
+  //   touchend where they come, at most one compatibility boundary pair (a mouseout and a mouseover to elements, or a mouseover from
+  //   no element), one or more mousemoves with no button down, the mousedown, the focus arriving and a mouseup of detail 1, or of 1
+  //   or 2 for a finger's; and anywhere
   //   an element's blur that no element's focus follows before the next pointerup or mouseup is refused. Every other chain is
   //   refused, by construction: a mouse event with no button down inside a press, a mouse-typed pointer event inside a tap but
   //   those four of a finger's, a tap with no compatibility mousemove, a window's blur, a drag, a context menu, an auxclick, a
