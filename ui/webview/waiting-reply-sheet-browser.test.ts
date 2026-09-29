@@ -1038,9 +1038,11 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // is unmeasured), so no step here presses under the kept row. Then THE GESTURE PER POINTER (the maintainer's focused re-check
   // of round 2, lens A's findings 1 and 2), each on a fresh sheet with the answer typed, as a person meets it: a chorded mouse,
   // one button pressed on the backdrop 6px left of the box's edge and the other pressed and held, the pointer moved onto the
-  // answer box and the left released there (with a button still down that release is no pointerup, and the engine dispatches
-  // the left's click at the overlay), in both orders and after a right click on the backdrop (whose press and release there
-  // dispatch no click), in every engine; and in Chromium, through the DevTools protocol, a mouse and a pen pressed in the
+  // answer box and the left released there (with a button still down that release is no pointerup in Chromium and Firefox,
+  // and in WebKit with the right button first; WebKit sends the left-first release as a pointerup inside the sheet, which the
+  // release listener reads; the engine then dispatches the left's click at the overlay), in both orders and after a right click
+  // on the backdrop (whose press and release there dispatch no click), in every engine; and in Chromium, through the DevTools
+  // protocol, a mouse and a pen pressed in the
   // answer box and dragged out onto the backdrop while a finger rests on the backdrop, the sheet read at the mouse's or the
   // pen's release. While the gesture was two records shared by every pointer the chord closed the sheet with the answer in
   // Chromium and Firefox in both orders and in WebKit with the right button first, and the resting finger with a mouse and
@@ -1113,7 +1115,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
             const p = await points();
             await gesture(p);
             const st = await sheetState();
-            assert.equal(st.up, true, `at ${h}, ${what}: the sheet stands: no release of the left's pointer came before its click, so no tap is pending (${JSON.stringify(p)}); while the gesture was two records shared by every pointer, the click read a release left from the sheet's open or an earlier gesture, and a chord closed the sheet with the answer`);
+            assert.equal(st.up, true, `at ${h}, ${what}: the sheet stands: no tap is pending at the left's click (no release of its pointer came before it, or in WebKit with the left first that release was inside the sheet; ${JSON.stringify(p)}); while the gesture was two records shared by every pointer, a chord whose release was no pointerup left the click reading a release from the sheet's open or an earlier gesture, and it closed the sheet with the answer (Chromium and Firefox in both orders, WebKit with the right button first)`);
             assert.equal(st.value, TYPED, `at ${h}, ${what}: the answer is intact`);
             assert.equal(st.posted, 0, `at ${h}, ${what}: nothing was posted`);
           });

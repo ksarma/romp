@@ -607,9 +607,11 @@ for (const [name, src] of BUILDERS) {
     const click = (target: unknown) => overlay._listeners.click({ type: "click", target });
     // THE CHORD: the left button pressed on the backdrop and a second button held (no pointer event: the pointer is already
     // down), the pointer moved over the answer box and the left released there, which with another button still down is a
-    // pointermove, not a pointerup; the engine then dispatches the left's click at the overlay, the common ancestor
+    // pointermove, not a pointerup, in Chromium and Firefox (in WebKit, in this order, it is a pointerup inside the sheet, which
+    // the release listener reads as the reverse drag's); the engine then dispatches the left's click at the overlay, the common
+    // ancestor
     press(overlay, 1); click(overlay);
-    assert.equal(closed, 0, "a chorded mouse released over the sheet is not a backdrop tap: no release of its pointer came before the click, so no tap is pending and the sheet stands (with one release record shared by every pointer, the click read the value it held from the sheet's open and closed the sheet with the answer in Chromium, Firefox and WebKit)");
+    assert.equal(closed, 0, "a chorded mouse released over the sheet is not a backdrop tap: no release of its pointer came before the click, so no tap is pending and the sheet stands (with one release record shared by every pointer, the click read the value it held from the sheet's open and closed the sheet with the answer in Chromium and Firefox in both orders, and in WebKit with the right button first)");
     release(input, 1);   // the second button released over the answer box: the pointer's pointerup, and no click follows it
     // THE RESTING FINGER: a mouse (or a pen) pressed in the answer box, a finger, another pointer, pressed on the backdrop and
     // held, the mouse released over the backdrop (a selection dragged out of the box), and the mouse's click at the overlay
