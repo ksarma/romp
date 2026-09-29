@@ -214,7 +214,11 @@ class RoundLabelRule(unittest.TestCase):
         cannot place refused (a plural naming one ordinal, a number before the run it did not consume, a number both before the
         word and after it, a large ordinal, a number after the word of an ordinal form); and punctuation or markup between an ordinal
         and the word refused, the mirror of the same after the word, credited or not, a large ordinal and "review" after the run
-        among them, while the same markup before another word the word begins, or after the end of another word, is not read."""
+        among them, while the same markup before another word the word begins, or after the end of another word, is not read; and
+        a number word glued to the list word or the range word before it, or a digit ordinal glued to the letter after it, read as
+        no number, so a plural with one other number is refused as a plural naming one number and never read as a list or a range
+        (a number word glued to "and", "or" or "to", qualified or not, and a digit ordinal glued to "and", "or" or "to", credited
+        or not: the guard before a number word in a continuation and the whole-word guard on a digit ordinal each have these reds)."""
         hi, lo = max(SET), min(SET)
         for (plural, kind), sep in rule.FORM_CLASSES.items():
             word = R + ("s" if plural else "")
@@ -403,6 +407,15 @@ class RoundLabelRule(unittest.TestCase):
             with self.subTest(markup_not_read=s):
                 self.assertEqual(rule.offences(s, SET), [], "markup before another word the word begins, or after the end of another word, is not read: %r" % (s,))
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unnumbered"], s)
+        # a number word glued to the list word or the range word before it, or a digit ordinal glued to the letter after it, is no
+        # number: in a plural the one number left is refused as a plural that names one number, never read as a list or a range of two
+        for s in ("%s %ss %d and%s" % (M, R, lo, WORDS[hi]), "%ss %d and%s" % (R, hi - 1, WORDS[hi + 1]), "%s %ss %d or%s" % (V, R, lo, WORDS[hi]),
+                  "%ss %d to%s" % (R, lo, WORDS[hi]), "%s %ss %s and%s" % (M, R, WORDS[lo], WORDS[hi]),
+                  "the %sand %s %ss" % (nth(lo), nth(lo + 1), R), "%s %sand %s %ss" % (A, nth(lo), nth(lo + 1), R), "%s %sor %s %ss" % (M, nth(lo), nth(hi), R),
+                  "the %sto %s %ss" % (nth(lo), nth(lo + 2), R)):
+            with self.subTest(glued=s):
+                self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "a glued word is no number, so this plural names one number and is refused, never read as a list: %r" % (s,))
+                self.assertIn("a plural that names one number", rule.offences(s, SET)[0][3], s)
 
     def test_every_number_word_the_reader_knows(self):
         """Every number from zero to ninety-nine, spelled by this module's own tables (card() and ordinal(), never the helper's):
