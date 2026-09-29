@@ -6,8 +6,9 @@ The two node browser legs (ui/webview/waiting-reply-sheet-browser.test.ts, rende
 the sheet in three engines where a box has them, and skip where it does not. None of the extension job's browser-backed
 steps runs them: the job's Test step (`npm test`) runs them before the job installs its browser, so they skip there, and
 they are not on the roster of "Browser legs (node --test over ci-browser-legs.txt)" (each launches its own engines and
-skips an absent one, which that step's roster rule refuses). This leg runs in the job's "Browser-backed served-page tests
-(pytest)" step (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), against the
+skips an absent one, which that step's roster rule refuses). This leg runs in the "Browser-backed served-page tests
+(pytest)" step of the served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a
+skip here is a failure), against the
 pages as the kernel serves them from a private dist, with the REAL builders (waiting.ts showReply in /waiting, render.ts
 showUserTodoReply in /chat), so it is the guard the node legs name where they skip.
 
