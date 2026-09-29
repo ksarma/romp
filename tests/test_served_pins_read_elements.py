@@ -117,7 +117,7 @@ the census bounds, 2026-09-28; readers_of): an alias (`r2 = resp`), a subscript 
 membership over the tuple, and the reads of a name bound whole and later rebound to such a tuple (the walk is flow-insensitive, so
 the rebinding hides the whole binding). A Name in a helper's return is followed to its
 bindings inside the helper (`body = r.read(); return r.status, body, r.headers` reads at `body`'s position), and a returned Name
-the follow cannot place (bound only by an unpack of a call's answer, a synchronous for or a with target, an except name) makes the
+the follow cannot place (bound only by an unpack of a call's answer, a for or async for target, a with target, an except name) makes the
 call a fetch that binds every name, so no read behind a Name returned bare leaves both censuses in silence (the rulings on the
 census pass, 2026-09-28; _response_reads). A returned element that holds a read the follow does not place (a read under any
 wrapper but a `.decode` chain, `r.read().strip()`, `str(r.read(), "utf-8")`, `r.read() or b""`, a conditional, `raw[3:]`; a Name
@@ -152,9 +152,7 @@ self._req("/?token=x")[1]` binds nothing: a literal pin over `page` reds the flo
 of it, or of the subscript inline, is in neither census, in silence; x2 and x3 in that test_d), a getter called WITH
 arguments (`_shim_core_js("chat")` renders another text), a text served under a name with none of the suffixes the rules
 read (the web app manifest; the `_reload_core` function), a name bound outside the function, a literal bound by assignment
-rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation. One claim is stated
-narrower than the code: an `async for` target returned by name is read as a for target is (_BINDERS), but no case pins that, so
-the claims above stop at a synchronous for.
+rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation.
 
 Where the two census tests run (2026-09-21, the author's pass after the maintainer's round 5): on ONE CI cell, the kernel's
 interpreter, Python 3.12 (the interpreter the deployed kernel is pinned to, docs/install.md's ROMP_PYTHON), and every other
@@ -461,8 +459,8 @@ def _name_bindings(node):
     """[(Name, value)] for the Names one node binds in the function holding it, the value None where the node binds a Name to no
     expression of its own: an assignment's Name target, and a Name inside a tuple or list target over a tuple or list of the same
     length, by position, bind to their value, as do an annotated assignment with a value, a walrus and an augmented assignment
-    (`body += r.read()`); a Name of a tuple target over any other value (`status, body = self._raw(r)`), a for target (an `async
-    for` target too, which no case pins: a stated bound), a with target and an except name bind to None."""
+    (`body += r.read()`); a Name of a tuple target over any other value (`status, body = self._raw(r)`), a for or async for target,
+    a with target and an except name bind to None."""
     out = []
     def pair(t, v):
         if isinstance(t, ast.Name):
@@ -553,8 +551,8 @@ def _response_reads(tree):
     function (_name_bindings; the rulings on the census pass, 2026-09-28): `body = r.read(); return r.status, body, r.headers`
     gives {1}, through an alias or a `.decode(...)` too (`raw = r.read(); body = raw.decode()`), and a binding is an assignment, an
     annotated or augmented one, a walrus, or a tuple or list target paired by position with a value of the same length. A returned
-    Name the follow cannot place, one the function binds to no expression of its own (an unpack of a call's answer, a synchronous
-    for or a with target, an except name; an `async for` target is read the same way, unpinned) or to a Name so bound, and never to
+    Name the follow cannot place, one the function binds to no expression of its own (an unpack of a call's answer, a for or async
+    for target, a with target, an except name) or to a Name so bound, and never to
     a read, gives "unknown", so a read behind it does not leave both censuses in silence: the call is a fetch (_fetched) and binds
     as a helper the module does not define does, every name (_bind). That holds only for such a Name returned BARE. A returned
     element that wraps one (`status, raw = _raw(path); return 200, raw.strip()`, `raw[3:]`), or a Name bound to such a wrapper,
@@ -2288,7 +2286,8 @@ def _spread(path):
         # a call's answer, _opaque), makes the call a fetch that binds every name, as a helper the module does not define does, so
         # the read behind it stays in both censuses. A parameter returned is no read of the helper's (_echo), and its call stays no
         # fetch. test_b holds the other forms the follow claims (the rulings on the census bounds, 2026-09-28: each was unpinned):
-        # a for target, a with target and an except name returned are unknown (_forv, _withv, _exc); an augmented assignment, a
+        # a for target, a with target and an except name returned are unknown (_forv, _withv, _exc), and so is an async for target
+        # (_aforv at the end of test_d, round 6: the claim had been stated and unpinned, its mutant surviving); an augmented assignment, a
         # walrus and an annotated assignment bind their Name to the read (_aug, _walrus, _ann); a tuple or list target over a tuple
         # or list of the same length pairs by position, so the read binds and the status does not (_tuplepair, _listpair: d9 and
         # d11 are no rows); a Name bound to an unknown Name is unknown (_opaque2); a nested def's bindings are its own, so a
@@ -2296,8 +2295,9 @@ def _spread(path):
         # and two definitions of one name, a helper per class, give the union of their positions (_two: both names bind). test_d
         # holds two stated bounds (the check on the census bounds found them silent; the module docstring lists them): a
         # wrapper over a Name the follow cannot place gives no position, so _opaque3's call is no fetch and x1 is in neither census,
-        # and a subscript of a fetch call by a constant index binds nothing, assigned (x2) or read inline (x3). The rows of both
-        # derivations are named, never inferred.
+        # and a subscript of a fetch call by a constant index binds nothing, assigned (x2) or read inline (x3). It ends with the async
+        # for target (x4: a row in both derivations, and "unknown" in the positions; it reds with ast.AsyncFor dropped from _BINDERS
+        # and _name_bindings). The rows of both derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import re, unittest
 def _named(path):
@@ -2397,6 +2397,8 @@ class T(unittest.TestCase):
         page = _named("/")[1]
         re.search("x2", page)
         re.search("x3", _named("/")[1])
+        z1, z2 = _aforv("/")
+        self.assertIn("x4", z2)
     def _kept(self, path):
         self.body = urlopen(path).read()
         return 200, self.body
@@ -2488,6 +2490,10 @@ def _outer2(path):
         return body
     body = fetch_meta(path)
     return 200, body
+async def _aforv(path):
+    async for body in fetch_all(path):
+        pass
+    return 200, body
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -2497,7 +2503,7 @@ def _outer2(path):
         finally:
             os.unlink(f.name)
         pinned = [(31, "d1"), (33, "d2"), (35, "d3"), (37, "d4"), (40, "d6"), (42, "d7"), (44, "d8"), (47, "d10"), (50, "d12"), (54, "d14"), (55, "d15"),
-                  (74, "w8"), (76, "w9")]
+                  (74, "w8"), (76, "w9"), (100, "x4")]
         self.assertEqual([r[:4] for r in rows], [(18, "n1", "_landing", "in"), (23, "n3", "_chat_page", "in"), (25, "n4", "_landing", "in"),
                                                  (26, "n5", "_landing", "in")] + [(line, lit, "_landing", "in") for line, lit in pinned])
         # the rulings on the census bounds (2026-09-28): a helper whose return holds a read the follow does not place (test_c: a read
@@ -2529,7 +2535,7 @@ def _outer2(path):
                           "_kept": ["refused"], "_strip": ["refused"], "_str": ["refused"], "_or": ["refused"], "_ifexp": ["refused"], "_cut": ["refused"],
                           "_whole": ["refused"], "_mixed": [-1, 1, "refused"], "_json": ["refused"], "_gv": ["refused"], "_attr_tuple": ["refused"],
                           "_attr_ann": ["refused"], "_attr_aug": ["refused"], "_deep": ["refused"], "_via_name": ["refused"],
-                          "_attr_list": ["refused"], "test_d": [], "_opaque3": []})
+                          "_attr_list": ["refused"], "test_d": [], "_opaque3": [], "_aforv": ["unknown"]})
 
     def test_a_call_is_a_fetch_only_where_its_callee_reads_a_response(self):
         # the rulings at the merge of main's login cookie split (2026-09-28), P2: a call to a Name or a self.<method> whose first
