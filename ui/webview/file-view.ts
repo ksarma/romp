@@ -3190,8 +3190,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   moves, and the mouse's pointermoves and mousemoves with no button down, the mouse moving during the tap; and in a mouse's
   //   press between its mousedown and its pointerup, a finger's pointermoves with the contact down, a resting finger moving
   //   during the click. Every other chain is
-  //   refused, by construction: a mouse event with no button down inside a press, a mouse-typed pointer event inside a tap but
-  //   those four of a finger's and its moves before the pointerup, a tap with no compatibility mousemove, a window's blur but in
+  //   refused, by construction: a mouse event with no button down inside a press, a mouse-typed pointer event anywhere in a tap
+  //   and a mouse event in a tap's contact, but in a finger's contact the four boundary events to no element and the mouse's moves
+  //   with no button down, a tap with no compatibility mousemove, a window's blur but in
   //   an order a read-out takes out, a drag, a context menu, an auxclick, a cancel, a second pointerdown, a touch event in a press
   //   but a finger's move in a mouse's, a boundary event to no element with the button down, and any sign the grammar does not name.
   //   The read-outs add no covered click, since each takes events out only at the place and in the order the viewer's own gesture
@@ -3252,8 +3253,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the viewer's tap whose mouseup of detail 0 ended its chain and another document's tap after a mouse's press whose pointerup
   // this window never heard, each red at 142ade155, the last at 1a6470e72 and at 09f58bec6 too, and on the chat and the Files
   // pane under a gate without the rules that close it, as bef9ff8fc measured them with the rules that the file review's round
-  // 20 retired (Firefox's lone click after a mouseup of
-  // another button or of detail 0 is closed by the tail and by the mouseup's clear alike, the one after the mouse released on the
+  // 20 retired (Firefox's lone click after a mouseup of another button or of detail 0 was closed by the tail and by the mouseup's
+  // clear alike, the one after the mouse released on the
   // top page's bar by the refusal of a record whose pointer left this window with a button down as well, after the mouse held on
   // the control by the tail and by the refusal of a record standing at a click alike, after the mouse released in the other pane
   // by the tail and by both refusals alike, its two cells a surface after the viewer's tap whose mouseup or click went elsewhere
@@ -3311,13 +3312,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // execution check's census; the coordinator's decision 10). What the allowlist refuses of the class, each open at bef9ff8fc:
   // Firefox's tap whose element hid with no layout flush before its compatibility mousemove, which Firefox sends to the hidden
   // element, so this window hears a compatibility mousedown with no mousemove (extra5-2, 42 covered clicks); WebKit's delayed
-  // hover update after a scroll under a resting mouse, the mouse's pointerout, pointerover and pointermove with no button down in
-  // the tap (extra6-1, 81); and, as the retired rules of the file review's round 19 did, Firefox's mouseout to no element where
+  // hover update after a scroll under a resting mouse, the mouse's pointerout and pointerover to elements and its pointermove with
+  // no button down between the tap's pointerup and its compatibility mousedown (extra6-1, 81); and, as the retired rules of the
+  // file review's round 19 did, Firefox's mouseout to no element where
   // the tap's compatibility events start in the viewer, and the blur of this window where it held the focus and the element takes
   // that tap's mousedown without cancelling it. In it by reading, not drivable here: a second finger resting on another document
   // during the viewer's tap, in Firefox and WebKit; a tap whose click the engine withholds (a long press's context menu, a tap past
   // the click slop without a pointercancel), in Firefox and WebKit; a foreign tap by the same pen under the same pointerId;
-  // WebKit's hover update landing inside a finger's slow tap; and, on a WebKit that sends no hover update when a frame shows again,
+  // WebKit's hover update from no element landing inside a finger's slow tap, as when the frame shows again under a resting mouse
+  // (a hover update between elements there refuses the viewer's own tap, a cost below); and, on a WebKit that sends no hover
+  // update when a frame shows again,
   // the viewer's own tap on the picture whose frame the top page hides at that tap's pointerup and shows again, then another
   // document's tap on an element over the control that hides at its pointerup, whose chain is then the viewer's own tap's
   // (Playwright's WebKit sends that hover update, the mouse's pointerout, pointerover and pointermove with no button down, which
@@ -3490,26 +3494,35 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // on the control or on the picture while the page or a peer frame moves the focus, Chromium 18 of 18, Firefox 14 of 14 and
   // WebKit 18 of 18 for each mover, a pen's press held so, Chromium 14 of 14, the focus moved at a mouse click's own pointerdown,
   // 18, 14 and 18, and at a tap's pointerup, 18, 14 and 18); so does a Firefox press dragged out of the frame and back, the
-  // retired held arm's cost (8 of 8). By reading, not measured: the window's blur alone at a mouse click's release or in a
-  // finger's contact, where no element of the viewer's document held the focus (every recorded own chain of that focus move
-  // carried an element's or the document's blur first, and the read-outs take those orders alone); the focus leaving at a pen's
-  // click's release or in a touch-order pen's tap; on a device with both, a finger leaving the viewer or crossing an element's
-  // edge during a mouse click and the mouse crossing an element's edge during a finger's tap, and the device's gestures in Firefox
-  // and WebKit; WebKit's hover update landing inside a finger's slow tap after the content moved under a resting
-  // mouse, an eraser or a barrel button, a capture handler that moves the focus at a press in a way
-  // no census drove, a touch-order pen's double tap's second tap, a press whose chain passes the cap of 1,024 tokens, and any event
-  // of an engine not measured. Where the allowlist costs more than the incremental reads the round drafted in its place (the
-  // coordinator's ruling on the allowlist's build leaves each such place to the owner's decision): no measured own gesture, since
-  // its three measured costs above are theirs too, the held press with the focus not back by their read of extra5-1, the block
-  // and the pen's press by their read of extra7-1; by reading, not measured, at the window's blur alone and the focus leaving at
-  // a pen's click's release (the blur's rule they keep marks no touch record, and a mouse's or a pen's record has passed to the
-  // slot at its pointerup), on a device with both a finger leaving the viewer or crossing an element's edge during a mouse click
-  // and the mouse crossing an element's edge during a finger's tap, WebKit's hover update inside a finger's slow tap and the
-  // device's gestures in Firefox and WebKit (their reads of a pointer's events mark mouse and pen records alone, and a tap's slot
-  // only after its pointerup), a touch-order pen's double tap's second tap (their tail takes its mouseup of detail 2), and a
-  // chain past the cap (they keep no chain), each of which those reads would open, and perhaps at a capture handler's focus move
-  // that no census drove; a touch-order pen's tap with the focus leaving costs the same under both, the blur's rule marking the
-  // pen's record and emptying the slot while its compatibility mousedown is due. At each the click or the tap opens nothing and
+  // retired held arm's cost (8 of 8). By reading, not measured: any event the grammar does not name that a real gesture brings
+  // into a press or a tap, since the allowlist refuses each such chain by construction, among them every place below where the
+  // incremental reads would open, and besides them a touch-order pen's tap with the focus leaving before its compatibility
+  // mousedown, an eraser or a barrel button and any event of an engine not measured. Where the allowlist costs more than the
+  // incremental reads the round drafted in its place (the coordinator's ruling on the allowlist's build leaves each such place to
+  // the owner's decision): no measured own gesture, since its three measured costs above are theirs too, the held press with the
+  // focus not back by their read of extra5-1, the block and the pen's press by their read of extra7-1 as drafted (a read of
+  // extra7-1 that marks the mouse's records alone closes the same covered clicks and would open the pen's press); by reading and
+  // by synthetic chains replayed through both, not measured in a browser and not a census, at the places found, each of which
+  // those reads would open since they act on a few named events alone: the focus moving at a release where no read-out takes it,
+  // that is the window's blur alone at a mouse click's release or in a finger's contact, where no element of the viewer's document
+  // held the focus (every recorded own chain of that focus move carried an element's or the document's blur first, and the
+  // read-outs take those orders alone), the focus leaving at a pen's click's release, after a click's mouseup or after a tap's
+  // compatibility mousedown, or leaving and coming back at a release, the focus arriving or moving inside the viewer's document
+  // after a click's pointerup or between a tap's pointerup and its compatibility mousedown, and an element's blur that no focus
+  // follows at a click's release with the frame shown (the blur's rule they keep marks mouse and pen records alone, which have
+  // passed to the slot at their pointerup, and empties a tap's slot only while its compatibility mousedown is due, and they read
+  // no focus and, with the frame shown, no element's blur); on a device with more than one pointer, another pointer's events
+  // during a press or a tap beyond those the grammar and the read-outs admit, among them a finger leaving the viewer, crossing an
+  // element's edge, lifting or cancelled during a mouse click, a finger moving during a pen's press, the mouse crossing an
+  // element's edge or entering or leaving the viewer during a finger's tap, WebKit's hover update between elements inside a
+  // finger's slow tap after the content moved under a resting mouse, and a pen hovering during a mouse click or a finger's tap,
+  // and the device's gestures in Firefox and WebKit (their reads of a pointer's events mark mouse and pen records alone, and a
+  // tap's slot only after its pointerup, so they refuse such an event only where it marks a mouse's or a pen's record, as the
+  // mouse's move or its leaving the viewer during a pen's press does); a touch-order pen's double tap's second tap (their tail
+  // takes its mouseup of detail 2); a chain past the cap (they keep no chain); and perhaps a capture handler's focus move that no
+  // census drove. A touch-order pen's tap with the focus leaving before its compatibility mousedown costs the same under both, the
+  // blur's rule marking the pen's record and emptying the slot while that mousedown is due. At each the click or the tap opens
+  // nothing and
   // reveals the control, and the next click opens. The first own click and the first own tap after a focus move, and Firefox's
   // blur after the viewer's own open, fall outside any chain a click reads and cost nothing (round 19's measurement: 0 of 141, 0
   // of 132, and a
@@ -3691,7 +3704,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     return c;
   };
   /** The allowlist: whether a chain is one the viewer's own gestures make, the grammar above widened three ways: a finger's tap's
-   *  mouseup of detail 1 or 2; the focus arriving anywhere before a press's mousedown and anywhere in a tap before its pointerup; and during a
+   *  mouseup of detail 1 or 2; the focus arriving anywhere before a press's mousedown and anywhere in a finger's tap before its
+   *  pointerup; and during a
    *  finger's contact the mouse's pointerout, pointerover, mouseout and mouseover to no element with no button; after the read-outs
    *  above. An element's blur that no element's focus follows before the next pointerup or mouseup is refused, and a blur of the
    *  window anywhere but in a focus-leaving order that a read-out takes out. */
