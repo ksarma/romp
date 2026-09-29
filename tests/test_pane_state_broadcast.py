@@ -2050,13 +2050,14 @@ def _route_table_renderers(tree, scopes):
     them under another name); the builtins namespace reached as `__builtins__`, a name or an attribute, or by the string
     `'builtins'` or `'__builtins__'` (`__builtins__['exec']`, `sys.modules['builtins']`); a function's or a frame's namespace, the
     attribute `__globals__`, `f_globals`, `f_locals` or `f_builtins` or that name as a string (`_x_page.__globals__[k] = v`,
-    `sys._getframe().f_globals[k] = v`; kernel.py walks frames by `f_back` twice and reads none of the four); and the table reached
+    `sys._getframe().f_globals[k] = v`; kernel.py walks frames by `f_back` twice and reads none of the four); the table reached
     as an attribute or by its name as a string (the module-object road: `sys.modules[__name__]._PAGE_RENDERERS`,
-    `setattr(m, '_PAGE_RENDERERS', ...)`).
+    `setattr(m, '_PAGE_RENDERERS', ...)`); and every attribute name above read as a class pattern's keyword
+    (`case object(__globals__=g)`) or as an import-from's name (`from __main__ import _PAGE_RENDERERS as t`), 0 live.
     THE BOUND: every other road is unread, among them a getattr or setattr whose name is computed or names a builtin such as exec,
     a `__dict__` write with a computed name, the `__import__` and importlib roads, and a write from another module (sys.modules has
-    10 live uses in kernel.py and `__dict__` 1, a read of glob's module dict, so neither can be refused by name). Returns (renderer
-    names, ids of the `.get` calls)."""
+    10 live uses in kernel.py and `__dict__` 1, a read of glob._StringGlobber's class dict, so neither can be refused by name).
+    Returns (renderer names, ids of the `.get` calls)."""
     defs = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == _ROUTE_TABLE for t in n.targets)]
     if len(defs) != 1 or len(defs[0].targets) != 1 or not isinstance(defs[0].value, ast.Dict):
         raise AssertionError("kernel.py: %s is not one module-level dict literal (%d bindings); classify it here" % (_ROUTE_TABLE, len(defs)))
@@ -2089,6 +2090,19 @@ _NAMESPACE_ROADS = ("vars", "locals", "exec", "eval")   # a reference to any of 
 _NAMESPACE_ATTRS = ("globals",) + _NAMESPACE_ROADS   # the same five as attributes (builtins.globals, builtins.exec) and as imported names
 _BUILTINS_NAMES = ("builtins", "__builtins__")   # the builtins module and the builtins namespace, spelled as strings (sys.modules['builtins'])
 _FRAME_ROADS = ("__globals__", "f_globals", "f_locals", "f_builtins")   # a function's or a frame's namespace: writable by a computed key, or reaching exec
+# every attribute name the checks below refuse as an ast.Attribute, read in its other spellings by _attribute_like_names
+_ATTR_REFUSED = frozenset(_NAMESPACE_ATTRS + ("__builtins__",) + _FRAME_ROADS + (_ROUTE_TABLE,))
+
+
+def _attribute_like_names(n):
+    """The names `n` reads the way an attribute is read, other than an ast.Attribute's own .attr (the checks read those
+    themselves): a class pattern's keywords (`case object(__globals__=g)` reads object's __globals__) and an import-from's
+    names (`from m import x` reads m's attribute x)."""
+    if isinstance(n, ast.MatchClass):
+        return list(n.kwd_attrs)
+    if isinstance(n, ast.ImportFrom):
+        return [al.name for al in n.names]
+    return []
 
 
 def _refuse_dynamic_table_roads(tree, parent):
@@ -2134,6 +2148,11 @@ def _refuse_dynamic_table_roads(tree, parent):
         if (isinstance(n, ast.Attribute) and n.attr == _ROUTE_TABLE) or (isinstance(n, ast.Constant) and n.value == _ROUTE_TABLE):
             raise AssertionError("kernel.py line %d: %s reached as an attribute or by its name as a string (a module-object write: "
                                  "sys.modules[__name__].%s, setattr(m, '%s', ...)); classify it here" % (n.lineno, _ROUTE_TABLE, _ROUTE_TABLE, _ROUTE_TABLE))
+        for name in _attribute_like_names(n):
+            if name in _ATTR_REFUSED:
+                raise AssertionError("kernel.py line %d: %s read as a class pattern's keyword or an imported name (`case object(%s=v)`, "
+                                     "`from m import %s`), the same read as the attribute .%s this census refuses; classify it here"
+                                     % (n.lineno, name, name, name, name))
 
 
 _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
@@ -2578,7 +2597,8 @@ class StampCensusResolvesByBinding(unittest.TestCase):
     def test_a_dynamic_write_to_the_table_is_refused_naming_its_road(self):
         # the reviewer's round-7 findings extra8-1 and extra8-2, and the builtins roads the check on the fix pass found: every road below
         # writes the table without naming it where the use classification reads a name, and each is refused by one syntactic check at 0
-        # live uses in kernel.py; the one globals() read kernel.py makes, a .get with a string-constant key, is the control and passes
+        # live uses in kernel.py; the two globals() reads kernel.py makes (of _JUDGE_MODEL_VALUES and _MODEL_VALUES), each a .get with a
+        # string-constant key, are the control's shape and pass
         roads = (("from _tables import *", None, r"a star import \(`from _tables import \*`\)"),
                  (None, "globals().get(_key)['/x'] = _x_page", r"a reference to globals other than a globals\(\)\.get read with one string-constant key"),
                  (None, "globals()[_key] = _PAGES", r"a reference to globals other than a globals\(\)\.get read with one string-constant key"),
@@ -2615,6 +2635,16 @@ class StampCensusResolvesByBinding(unittest.TestCase):
                  (None, "sys._getframe().f_back.f_globals[_key] = _PAGES", r"a function's or a frame's namespace reached as f_globals"),
                  (None, "sys._getframe(1).f_locals[_key] = _PAGES", r"a function's or a frame's namespace reached as f_locals"),
                  (None, "sys._getframe().f_builtins['exec'](_code)", r"a function's or a frame's namespace reached as f_builtins"),
+                 # the landing re-check at a86973c74: each attribute name read as a class pattern's keyword or an import-from's name
+                 (None, "match _x:\n        case object(__globals__=_g): pass", r"__globals__ read as a class pattern\'s keyword or an imported name"),
+                 (None, "match _x:\n        case object(f_globals=_g): pass", r"f_globals read as a class pattern\'s keyword or an imported name"),
+                 (None, "match _x:\n        case object(exec=_g): pass", r"exec read as a class pattern\'s keyword or an imported name"),
+                 (None, "match _x:\n        case object(__builtins__=_g): pass", r"__builtins__ read as a class pattern\'s keyword or an imported name"),
+                 (None, "match _x:\n        case object(_PAGE_RENDERERS=_g): pass", r"_PAGE_RENDERERS read as a class pattern\'s keyword or an imported name"),
+                 ("from __main__ import _PAGE_RENDERERS as _t", None, r"_PAGE_RENDERERS read as a class pattern\'s keyword or an imported name"),
+                 ("from __main__ import __globals__ as _t", None, r"__globals__ read as a class pattern\'s keyword or an imported name"),
+                 ("from __main__ import f_builtins as _t", None, r"f_builtins read as a class pattern\'s keyword or an imported name"),
+                 ("from __main__ import __builtins__ as _t", None, r"__builtins__ read as a class pattern\'s keyword or an imported name"),
                  (None, "sys.modules[__name__]._PAGE_RENDERERS['/x'] = _x_page", r"_PAGE_RENDERERS reached as an attribute or by its name as a string"),
                  (None, "setattr(sys.modules[__name__], '_PAGE_RENDERERS', _PAGES)", r"_PAGE_RENDERERS reached as an attribute or by its name as a string"))
         do_get = "    _page = _PAGE_RENDERERS.get(self.path)\n    return self._send(200, _page(), \"text/html\")\n"
