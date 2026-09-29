@@ -272,17 +272,25 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   or the module-level statement it stands under, such as an `if` over
   `sys.argv`), and of any decorated function or class there. A function that
   returns nothing, such as `write_owner_marker` in `tests/__init__.py`, is not
-  refused for what it reads, but a runtime-introspection channel it names is
-  refused all the same. The rule refuses, wholesale, the channels `gc`,
-  `ctypes`, its C-extension half `_ctypes`, and `__code__` wherever the
-  conftest names one and anywhere in the whole text of a module it imports
-  directly, whatever function, class or statement there holds it (a plain
-  function the direct-import check does not otherwise match included), since
-  each reaches and rewrites objects a proof over the text cannot bound;
-  `exec`, `eval`, and reads of `f_locals`, `cell_contents` or `__closure__`
+  refused for what it reads, though any of the eighteen names listed below
+  anywhere in its module refuses the module. The rule refuses, wholesale, the
+  runtime-introspection channels `gc`, `ctypes`, its C-extension half
+  `_ctypes`, and `__code__` wherever the conftest names one, since each
+  reaches and rewrites objects a proof over the text cannot bound. In the
+  conftest's own text, `exec`, `eval`, and reads of `f_locals`,
+  `cell_contents`, `__closure__`, `f_globals`, `f_back` or `sys._getframe`
   defeat the proof of a fixed key and of a function's local as well as of a
-  name of the module's scope. `tests/conftest.py` and `tests/__init__.py` name
-  none of these. The rule also refuses an import of a module it finds neither among
+  name of the module's scope. A module of the repository the conftest imports
+  directly is refused whole when any of eighteen names appears anywhere in its
+  text, whatever function, class or statement holds it (a plain function the
+  direct-import check does not otherwise match included): those four
+  channels, those eight names, and `f_builtins`, `inspect.currentframe`,
+  `tb_frame`, `gi_frame`, `cr_frame` and `ag_frame`. A function in such a
+  module can rewrite a name or a cell of the conftest through an object the
+  conftest hands it: a function, whose cells and globals are the conftest's,
+  or the frame that calls it. `tests/conftest.py` and `tests/__init__.py` name
+  none of these.
+  The rule also refuses an import of a module it finds neither among
   the directories it reads nor, through the import system, outside the
   repository (a module on a directory put on the import path, say), and the
   conftest's read of `sys.path`. It refuses the conftest's use of a module of
@@ -301,8 +309,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   that names `PYTEST_ADDOPTS` is refused). It stops at the modules the
   conftest imports directly: a read reached only through an import of an
   import passes, and so does a road through such a module in neither shape
-  (what a function that returns nothing leaves behind, or an object the
-  module fills at its import). The rule claims no more than this. Its
+  that names none of the eighteen names (what a function that returns nothing
+  leaves behind, an object the module fills at its import, or a function
+  there writing a function's `__globals__` the conftest hands it). The rule
+  claims no more than this. Its
   docstring, `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`,
   lists in WHAT IT DOES NOT READ what it leaves unrefused. A name
   is licensed only when a child pytest over a copy of the conftest writes the
