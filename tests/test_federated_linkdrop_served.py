@@ -905,7 +905,7 @@ class _LinkDrop(unittest.TestCase):
     # cap (one derivation with the waits paragraph above, `population_drive.py`, which prints this sentence whole and checks
     # it here, reading seen.expired so that a wait that ran to its cap is not counted as a delivery; a tool outside the repo
     # that the PR body names, so the figures cannot be re-checked from the tree). The old-hub class times its gate by the
-    # Outline's patch instead (LinkDropOldLocal._link_up_delivery_ms), well under a second in its drives, so the new
+    # Outline's patch instead (LinkDropOldLocal._link_up_delivery_ms), under a second in its drives, so the new
     # bundle's cap is what sizes the dwell.
     # A dwell of 30 s, sized at twice the 12.9 s
     # then recorded, redded on the very next drive (19.0 s): a threshold fitted to the data at hand is no threshold, which is
