@@ -75,10 +75,11 @@
 // with no way to scroll back; the first red differs by engine (Chromium and WebKit: the answer box a 14px sliver, and in
 // WebKit the buttons below the clip too; Firefox: the rows kept and the buttons in reach), and the detail's computed
 // overflow-y, visible there, is the red common to all three. Where the legs skip (no playwright, no engine), the
-// served leg tests/test_reply_sheet_served.py runs the same composition against the served pages in CI's
-// "Browser-backed served-page tests (pytest)" step. These legs run in none of the job's browser-backed steps: the Test
-// step runs them before the job installs its browser, so they skip there, and they are not on the roster of "Browser
-// legs (node --test over ci-browser-legs.txt)".
+// served leg tests/test_reply_sheet_served.py runs the same composition against the served pages in the
+// "Browser-backed served-page tests (pytest)" step of CI's served-pages job. These legs run in no step of that job,
+// which runs pytest only, and in none of the vscode-extension job's browser-backed steps: that job's Test step (npm
+// test) runs them before it installs its browser, so they skip there, and they are not on the roster of "Browser legs
+// (node --test over ci-browser-legs.txt)".
 // Synthetic fixtures only: the notes-api world, a placeholder sid, TESTHOST, an invented path.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
