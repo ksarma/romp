@@ -5948,9 +5948,9 @@ class Rules(unittest.TestCase):
         v = sweep.verdict_of
 
         def result(finished="2026-01-01T00:00:00Z", invalid=None, **legs):
-            base = {n: {"owed": False, "rc": None, "why": "not owed here"} for n in sweep.LEGS}
-            for n in sweep.EXTENSION_LEGS:
-                base[n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
+            # every leg the runner may mark not owed carries the one reason the runner gives for it (NOT_OWED_WHY; round 2,
+            # correctness-4: another reason for the ledger reads as owed, as for the extension's legs)
+            base = {n: {"owed": False, "rc": None, "why": sweep.NOT_OWED_WHY[n]} for n in sweep.LEGS if n in sweep.NOT_OWED_WHY}
             for n in sweep.ALWAYS_OWED:
                 base[n] = {"owed": True, "rc": 0, "tests": 1, "failed": 0}
             base.update(legs)
@@ -5964,6 +5964,9 @@ class Rules(unittest.TestCase):
         self.assertEqual(v(result(ledger={"owed": True, "rc": False})), "red", "rc must be the integer 0, not False")
         self.assertEqual(v(result(bats={"rc": 0, "tests": 1, "failed": 0})), "pass", "a leg that does not say it is not owed is owed")
         self.assertEqual(v(result(bats={"owed": "no", "rc": None})), "red", "only owed: false excuses a leg")
+        self.assertEqual(v(result(ledger={"owed": False, "rc": None, "why": "not owed here"})), "red",
+                         "the ledger marked not owed for a reason the runner never gives is owed (round 2, correctness-4)")
+        self.assertEqual(v(result()), "pass", "the runner's own reason for each leg not owed")
         self.assertEqual(v(result(pytest={"owed": True, "rc": 0, "tests": 1, "failed": 0})), "pass",
                          "a not-owed leg's empty rc is fine")
         # extra5-6: a test leg's failed count is required beside its test count and must be an int of 0 or more; one that
