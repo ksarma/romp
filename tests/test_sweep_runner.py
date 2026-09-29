@@ -32,6 +32,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 # Hermetic state BEFORE the load below: the runner resolves its state dir from ROMP_STATE_DIR or XDG_STATE_HOME,
@@ -466,6 +467,11 @@ elif act in ("orphan", "orphans"):
 elif act == "daemon":                            # a daemon under setsid, still running when the leg exits
     subprocess.Popen([sys.executable, "-c", "import time; time.sleep(%%d)" %% ctl["daemon_seconds"]], start_new_session=True,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+elif act == "biglog":                            # a large log: whole lines of filler, ahead of the leg's own closing output
+    filler = b"#" * 1023 + b"\n"
+    for _i in range(int(ctl["big_log_bytes"]) // len(filler)):
+        sys.stdout.buffer.write(filler)
+    sys.stdout.buffer.flush()
 elif act == "idle":
     # One grandchild the runner adopts stays running while the leg sleeps two seconds; the leg reads the runner's CPU
     # time (utime + stime in /proc/<runner>/stat) before and after. A runner that blocks until a child exits uses
@@ -3241,6 +3247,110 @@ def _xdg_config(w):
     _append(os.path.join(d, "git", "attributes"), "* text eol=crlf\n")
     _append(os.path.join(d, "git", "ignore"), "conftest.py\n")
     return d
+
+
+class LargeLog(unittest.TestCase):
+    """The focused re-check at the round-2 fix head, its large-log road: a failing leg's own huge log got the runner
+    killed for memory after the leg exited and before its failure was written, since the leg-end reads (summarize_log,
+    count_tests) held the whole log twice, as bytes and as text; the failure then counted nowhere, and the next plain run
+    passed. The reads now hold a bounded part of the log (bats' lines counted while it streams, node's and pytest's
+    counts read from its tail). The cap is RLIMIT_DATA, which Linux holds every private writable mapping to, set by the
+    runner's own process before it execs the runner, so the legs and git inherit it too: CAP is about twice the most a
+    plain run needed (measured at 19 to 23 MiB on CPython 3.10 to 3.13 and 67 MiB on the free-threaded 3.14t, the
+    smallest cap under which a plain run passed), and LOG, twice CAP, is more than a whole-log read can hold under it."""
+
+    CAP = 128 << 20
+    LOG = 256 << 20
+
+    def capped(self, argv):
+        """argv run under RLIMIT_DATA at CAP: a python that sets the limit on itself and then execs argv."""
+        code = ("import os, resource, sys; resource.setrlimit(resource.RLIMIT_DATA, (%d, %d)); os.execv(sys.argv[1], sys.argv[1:])"
+                % (self.CAP, self.CAP))
+        return [sys.executable, "-c", code] + list(argv)
+
+    def test_a_failing_legs_huge_log_under_a_small_memory_cap_still_has_its_failure_written(self):
+        """Once for bats (its lines counted while the log streams) and once for the tools leg (node's counts read from
+        the log's tail): the leg writes LOG bytes of filler, then its own failing output, and exits 1, all under a
+        runner capped at CAP. The failure is written, finished, with its counts, and the run exits 1 naming the leg; at
+        the round-2 fix head the runner died on MemoryError in summarize_log with the leg's rc empty and unfinished."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("RLIMIT_DATA holds mmap'd memory to its cap on Linux alone")
+        # The cap is live here: under it, a process cannot hold LOG bytes and their text, as a whole-log read would.
+        probe = subprocess.run(self.capped([sys.executable, "-c", "b = b'#' * %d; t = b.decode('ascii')" % self.LOG]),
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        self.assertNotEqual(probe.returncode, 0, "a process under the cap held the log and its text: the cap is not live")
+        self.assertIn("MemoryError", probe.stderr)
+        for leg, out, counts in (("bats", "1..1\nnot ok 1 a\n", (0, 1)), ("tools", "# pass 1\n# fail 1\n", (1, 1))):
+            with self.subTest(leg=leg):
+                w = World()
+                try:
+                    w.ctl({"action": {leg: "biglog"}, "big_log_bytes": self.LOG, "rc": {leg: 1}, "out": {leg: out}})
+                    p = subprocess.run(self.capped([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python,
+                                                    "--workers", "2"]),
+                                       env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       stdin=subprocess.DEVNULL, timeout=600)
+                    said = p.stdout + p.stderr[-3000:]
+                    rec = w.result()["legs"][leg]
+                    self.assertGreater(os.path.getsize(rec["log"]), self.LOG, "the leg wrote its large log")
+                    self.assertEqual(rec["rc"], 1, said)
+                    self.assertTrue(rec["finished"], "the failed leg is written finished")
+                    self.assertEqual((rec["tests"], rec["failed"]), counts, said)
+                    self.assertEqual(p.returncode, 1, said)
+                    self.assertIn("%s (rc 1" % leg, said)
+                    self.assertNotIn("MemoryError", said)
+                finally:
+                    w.close()
+
+    def test_the_bounded_reads_count_what_a_whole_log_read_counts(self):
+        """The two bounded reads against the whole-log reads they replaced, over synthetic logs and every piece and
+        tail size from 1 byte up: bats' counts at every size (a line split across two pieces counted once, the log's
+        start a line start), and pytest's and node's counts at every tail that still holds the closing lines."""
+        whole_bats = lambda t: (len(re.findall(r"^ok ", t, re.M)), len(re.findall(r"^not ok ", t, re.M)))
+        bats_logs = ["ok 1 a\nnot ok 2 b\nok 3 c\n", "not ok 1 a\n# ok 2 no\n  ok 3 no\nok 4 d", "1..2\nok 1 a\r\nnot ok 2\n",
+                     "not ok not ok ok \nok ok \n", "", "ok", "\n\nnot ok 9 x\n"]
+        tail_logs = [(PYTEST_LEG, "junk 9 passed in 9.0s\n" + "x" * 50 + "\n=== 3 failed, 5 passed in 1.20s ===\n"),
+                     ("served", "=" * 30 + "\n2 passed, 1 error in 0.01s\n"),
+                     ("tools", "# pass 7\n# fail 7\nnoise\n# pass 2\n# fail 1\n# cancelled 0\n")]
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        for i, text in enumerate(bats_logs):
+            path = os.path.join(d, "bats%d.log" % i)
+            with open(path, "w") as f:
+                f.write(text)
+            for size in range(1, len(text) + 3):
+                with self.subTest(log=i, piece=size), unittest.mock.patch.object(sweep, "LOG_PIECE", size):
+                    self.assertEqual(sweep.count_tests("bats", path), whole_bats(text))
+                    self.assertEqual(sweep.summarize_log("bats", path), "%d ok, %d not ok" % whole_bats(text))
+        for name, text in tail_logs:
+            path = os.path.join(d, name + ".log")
+            with open(path, "w") as f:
+                f.write(text)
+            with unittest.mock.patch.object(sweep, "LOG_TAIL", 1 << 20):
+                expected = (sweep.count_tests(name, path), sweep.summarize_log(name, path))
+            self.assertNotEqual(expected[0], (None, None), name)
+            # the closing lines: pytest's last summary line, or node's last pass and fail lines, and all after them
+            keep = len(text) - (text.rindex("\n", 0, len(text) - 1) + 1 if name in sweep.PYTEST_LEGS
+                                else text.index("# pass 2"))
+            for size in range(keep, len(text) + 3):
+                with self.subTest(log=name, tail=size), unittest.mock.patch.object(sweep, "LOG_TAIL", size):
+                    self.assertEqual((sweep.count_tests(name, path), sweep.summarize_log(name, path)), expected)
+
+    def test_a_line_cut_at_the_tails_start_is_not_read_as_a_line(self):
+        """A tail that starts inside a line drops it: a pytest log whose only summary-shaped text is the second half of a
+        line the tail cuts reads no count, as the whole log read whole does, where reading from the cut would read 5
+        passed."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "pytest.log")
+        head = "output that ends in 5 passed in 1.00s\n"
+        with open(path, "w") as f:
+            f.write(head + "trailing line\n")
+        cut = head.index("5 passed")
+        with unittest.mock.patch.object(sweep, "LOG_TAIL", os.path.getsize(path) - cut):
+            self.assertEqual(sweep.count_tests(PYTEST_LEG, path), (None, None))
+            self.assertIsNone(sweep.summarize_log(PYTEST_LEG, path))
+        with unittest.mock.patch.object(sweep, "LOG_TAIL", os.path.getsize(path)):
+            self.assertEqual(sweep.count_tests(PYTEST_LEG, path), (None, None), "read whole, the line is no summary line")
 
 
 class CheckoutRoads(unittest.TestCase):

@@ -3350,12 +3350,70 @@ def _read_log(path):
         return None
 
 
+# The leg-end reads of a leg's log (count_tests and summarize_log, which run_leg makes after the leg exits and before
+# the runner writes a failure) hold at most this much of it in memory, whatever the log's size: a failing leg's own
+# huge log read whole got the runner killed for memory in that window, and the failure was then never written (the
+# focused re-check at the round-2 fix head, its large-log road). Pytest's and node's closing counts are read from the
+# log's last LOG_TAIL bytes; bats' ok and not-ok lines are counted while the log streams past in pieces of LOG_PIECE.
+LOG_TAIL = 1 << 20
+LOG_PIECE = 1 << 20
+
+
+def _log_tail(path):
+    """The log's last LOG_TAIL bytes, decoded, from the first line that starts inside them (the whole log when it is no
+    longer), so a line cut at the tail's start is never read as a line; None when the log cannot be read. A closing
+    summary line further than LOG_TAIL bytes from the log's end is not in it: the leg then counts no test, which the
+    verdict reads as red for a leg that exited 0, the safe side, and which changes nothing for a leg that failed."""
+    try:
+        with open(path, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            if size <= LOG_TAIL:
+                f.seek(0)
+                data = f.read(LOG_TAIL)
+            else:
+                # one byte more, the one before the tail, tells whether the tail starts a line
+                f.seek(size - LOG_TAIL - 1)
+                data = f.read(LOG_TAIL + 1)
+                cut = data.find(b"\n")
+                data = data[cut + 1:] if cut >= 0 else b""
+    except OSError:
+        return None
+    return data.decode("utf-8", "replace")
+
+
+def _bats_counts(path):
+    """(ok, not ok): the log's lines that start `ok ` and `not ok ` (bats' TAP results), counted while the log is read
+    in pieces of LOG_PIECE bytes, each pattern searched with the bytes before the piece that could start a match
+    carried over, so a line split across two pieces is counted once and memory stays bounded whatever the log's size;
+    None when the log cannot be read. The log's start counts as a line start, as `^` reads it in a multiline regex."""
+    pats = {b"\nok ": 0, b"\nnot ok ": 0}
+    carry = {p: b"\n" for p in pats}
+    try:
+        with open(path, "rb") as f:
+            while True:
+                piece = f.read(LOG_PIECE)
+                if not piece:
+                    break
+                for p in pats:
+                    buf = carry[p] + piece
+                    pats[p] += buf.count(p)
+                    # a match cannot lie wholly inside the carry, which is one byte shorter than the pattern
+                    carry[p] = buf[-(len(p) - 1):]
+    except OSError:
+        return None
+    return pats[b"\nok "], pats[b"\nnot ok "]
+
+
 def count_tests(name, path):
     """(passed, failed) for a test leg, counted from its log: pytest's last summary line for the pytest and served legs
     (PYTEST_LEGS; failed counts failures and errors, so a skip the served step's switch turned into a failure counts),
     bats' `ok` and `not ok` lines, node's last `pass` and `fail` counts. (None, None) when the log holds no count, which
-    the verdict reads as no test ran."""
-    data = _read_log(path)
+    the verdict reads as no test ran. Memory stays bounded whatever the log's size: pytest's and node's counts are read
+    from the log's tail (_log_tail), bats' lines counted while it streams (_bats_counts)."""
+    if name == "bats":
+        counts = _bats_counts(path)
+        return counts if counts is not None else (None, None)
+    data = _log_tail(path)
     if data is None:
         return None, None
     if name in PYTEST_LEGS:
@@ -3364,8 +3422,6 @@ def count_tests(name, path):
             return None, None
         words = dict((w, int(n)) for n, w in re.findall(r"(\d+) (failed|passed|errors?)\b", hits[-1]))
         return words.get("passed", 0), words.get("failed", 0) + words.get("error", 0) + words.get("errors", 0)
-    if name == "bats":
-        return len(re.findall(r"^ok ", data, re.M)), len(re.findall(r"^not ok ", data, re.M))
     counts = {}
     for word, n in NODE_COUNT.findall(data):
         counts[word] = int(n)
@@ -3376,17 +3432,16 @@ def count_tests(name, path):
 
 def summarize_log(name, path):
     """A display-only summary: pytest's last result line (the pytest and served legs), bats' ok and not-ok counts,
-    node's pass and fail counts."""
-    data = _read_log(path)
+    node's pass and fail counts; read with the same bounded memory as count_tests."""
+    if name == "bats":
+        counts = _bats_counts(path)
+        return "%d ok, %d not ok" % counts if counts is not None else None
+    data = _log_tail(path)
     if data is None:
         return None
     if name in PYTEST_LEGS:
         hits = PYTEST_SUMMARY.findall(data)
         return hits[-1].strip() if hits else None
-    if name == "bats":
-        ok = len(re.findall(r"^ok ", data, re.M))
-        bad = len(re.findall(r"^not ok ", data, re.M))
-        return "%d ok, %d not ok" % (ok, bad)
     counts = dict(NODE_COUNT.findall(data))
     if counts:
         return "pass %s, fail %s" % (counts.get("pass", "?"), counts.get("fail", "?"))
