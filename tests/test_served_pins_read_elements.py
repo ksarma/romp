@@ -145,7 +145,10 @@ which the census can tell apart; _fail_closed's check (3)). So is the first boun
 call of a helper of the module whose returns place no read, answered and read as a response at the call (`self._open("/").read()`,
 where `_open` returns `urlopen(path)`, or a with target or a Name bound to the call and read so; check (4)), and a fetch through a
 helper whose returned element is itself a call to another read-placing helper of the module (`return r.status, self._body(r)`,
-which _response_reads gives "refused").
+which _response_reads gives "refused"). And so is a fetch through a helper whose returned element wraps a Name the follow cannot
+place, or a Name bound to such a wrapper (`status, raw = _raw(path)` and then `return 200, raw.strip()`, `return 200, raw[3:]`, or
+`text = raw.strip(); return 200, text`; a response attribute, `r.status`, and a `.decode(...)` chain are no wrapper): _response_reads
+gives it "refused" (round 6, X1; x1 in test_d of test_a_returned_name_is_followed_to_its_binding_in_the_helper, a stated bound before).
 
 Bound: a formatted url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
 membership asserted through a helper (`_has(self, lit, body)` in tests/test_files_pane.py and tests/test_settings_page.py, whose
@@ -156,12 +159,7 @@ tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a c
 `return r.status, r.read()` give {1, -1, -2}, so `resp[-1]` binds as the page though it is the headers on the first road;
 over-bound, so its reads are rows over the page, never silent), a name bound to a fetched tuple and later rebound to a whole text
 (it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it: over-bound, never
-silent), a returned element that wraps a Name
-the follow cannot place, or a Name bound to such a wrapper (`status, raw = _raw(path)` and then `return 200, raw.strip()`, `return
-200, raw[3:]`, `return raw.strip()`, or `text = raw.strip(); return 200, text`: no position, so its call is no fetch; a literal pin
-over a name the call is assigned to reds the floor through the textual census, and any other read of that name, a regex or a split,
-is in neither census, in silence; x1 in test_d of
-test_a_returned_name_is_followed_to_its_binding_in_the_helper), a getter called WITH
+silent), a getter called WITH
 arguments (`_shim_core_js("chat")` renders another text), a text served under a name with none of the suffixes the rules
 read (the web app manifest; the `_reload_core` function), a name bound outside the function, a literal bound by assignment
 rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation.
@@ -541,6 +539,20 @@ def _held(node):
     return call, names, chains
 
 
+# the attributes of a response that are no read of its body: a Name the follow cannot place read through one of these
+# (`r.status`) is no wrapper over the body (_wraps_unknown)
+_RESPONSE_ATTRS = {"status", "headers", "code", "reason", "getcode", "getheader", "getheaders", "info", "close", "geturl", "url", "msg"}
+
+
+def _wraps_unknown(node, unknown):
+    """Whether an expression uses a Name of `unknown` (a Name _response_reads cannot place) otherwise than as the object of a
+    response attribute (`r.status`): `raw.strip()`, `raw[3:]`, `str(raw)` wrap one (round 6, X1). Its callers take the Name bare,
+    or under a `.decode(...)` chain, as unknown before they ask."""
+    parents = {id(c): p for p in ast.walk(node) for c in ast.iter_child_nodes(p)}
+    return any(isinstance(x, ast.Name) and x.id in unknown and not (isinstance(parents.get(id(x)), ast.Attribute) and parents[id(x)].attr in _RESPONSE_ATTRS)
+               for x in ast.walk(node))
+
+
 def _own_returns(fn):
     """The Return statements of one function, the ones of a function, lambda or class nested inside it excluded."""
     out, todo = [], list(ast.iter_child_nodes(fn))
@@ -566,11 +578,11 @@ def _response_reads(tree):
     Name the follow cannot place, one the function binds to no expression of its own (an unpack of a call's answer, a for or async
     for target, a with target, an except name) or to a Name so bound, and never to
     a read, gives "unknown", so a read behind it does not leave both censuses in silence: the call is a fetch (_fetched) and binds
-    as a helper the module does not define does, every name (_bind). That holds only for such a Name returned BARE. A returned
-    element that wraps one (`status, raw = _raw(path); return 200, raw.strip()`, `raw[3:]`), or a Name bound to such a wrapper,
-    gives no position, so its call is no fetch and a read of the body behind it is in neither census unless a literal pin reds the
-    floor through the textual census (a stated bound: x1 in test_d of
-    test_a_returned_name_is_followed_to_its_binding_in_the_helper).
+    as a helper the module does not define does, every name (_bind). That holds for such a Name returned bare or under a
+    `.decode(...)` chain. A returned element that wraps one otherwise (`status, raw = _raw(path); return 200, raw.strip()`,
+    `raw[3:]`; a response attribute, `r.status`, excepted), or a Name bound to such a wrapper, gives "refused" (_wraps_unknown;
+    round 6, X1: it had given no position, so its call was no fetch and a read of the body behind it in neither census, a stated
+    bound, x1 in test_d of test_a_returned_name_is_followed_to_its_binding_in_the_helper).
     A returned element that IS a call, under any `.decode(...)` chain, to another function of the module whose returns place a read
     (`return r.status, self._body(r)`) gives "refused" too (round 6, the first bound's second half, one level deep). A returned
     element that HOLDS a read the follow does not place gives "refused" (the rulings on the census bounds, 2026-09-28): a
@@ -616,6 +628,8 @@ def _response_reads(tree):
         held_names, held_chains = set(), set()
         holds = lambda h: h[0] or bool(h[1] & (read | held_names)) or bool(h[2] & held_chains)
         if values:   # read only for a function that returns something
+            # a Name bound to a wrapper over a Name the follow cannot place (`text = raw.strip()`) holds a read it cannot place (X1)
+            held_names |= {name for name, v in binds[fn] if v is not None and name not in read and name not in unknown and _wraps_unknown(v, unknown)}
             facts = [(held_names, name, _held(v)) for name, v in binds[fn] if v is not None and name not in read]
             facts += [(held_chains, chain, _held(v)) for chain, v in sets[fn]]
             changed = True
@@ -626,7 +640,9 @@ def _response_reads(tree):
                         target.add(key)
                         changed = True
         at = out.setdefault(fn.name, set())
-        placed = lambda e: "refused" if holds(_held(e)) else "unknown" if isinstance(e, ast.Name) and e.id in unknown else None
+        # a bare unknown Name (under any `.decode` chain) is unknown; an element holding a read the follow does not place, or
+        # wrapping an unknown Name (X1), is refused
+        placed = lambda e: "unknown" if _reads_response(e, unknown) else "refused" if holds(_held(e)) or _wraps_unknown(e, unknown) else None
         for v in values:
             if isinstance(v, ast.Tuple) and any(isinstance(e, ast.Starred) for e in v.elts):
                 at.add("unknown")   # the positions a starred element spreads over are not in the source
@@ -679,11 +695,9 @@ def _fetched(node, names, routes, reads=None):
     (`return urlopen(path)`) is not a fetch here, and readers_of refuses a page-route call of one answered and read as a response
     (`self._open("/").read()`; _fail_closed's check (4)); one whose returned element is a call to another read-placing helper
     (`return r.status, self._body(r)`) gives "refused" (_response_reads), so it is no fetch and readers_of refuses its fetches of a
-    page route. Nor is a fetch here a subscript of a fetch call by a constant index (`self._req("/?token=x")[1]`, which is no call;
-    readers_of refuses the fetch inside it, check (1)), nor a helper that returns a wrapper over a Name its follow cannot place
-    (`status, raw = _raw(path); return 200, raw.strip()`; _response_reads), a stated bound: where such a call is assigned to names
-    the textual census binds them (_FETCH_DEF), so a literal pin over one reds the floor, and any other read of such a name (a regex,
-    a split, a slice) is in neither census, in silence."""
+    page route, as it refuses those of a helper that returns a wrapper over a Name its follow cannot place (`status, raw =
+    _raw(path); return 200, raw.strip()`, "refused" too: _response_reads, X1). Nor is a fetch here a subscript of a fetch call by a
+    constant index (`self._req("/?token=x")[1]`, which is no call; readers_of refuses the fetch inside it, check (1))."""
     if not isinstance(node, ast.Call):
         return None
     f = node.func
@@ -2661,10 +2675,10 @@ def _spread(path):
         # d11 are no rows); a Name bound to an unknown Name is unknown (_opaque2); a nested def's bindings are its own, so a
         # helper whose inner def binds `body = r.read()` while its own `body` is not a read is no fetch (_outer2: d13 is no row);
         # and two definitions of one name, a helper per class, give the union of their positions (_two: both names bind). test_d
-        # holds what the check on the census bounds found silent: a wrapper over a Name the follow cannot place gives no position,
-        # so _opaque3's call is no fetch and x1 is in neither census (a stated bound; the module docstring lists it), and a
-        # subscript of a fetch call by a constant index binds nothing, assigned (x2) or read inline (x3), and since round 6 is
-        # refused, an unclassified row at the call (96 and 98, _fail_closed's check (1); a stated bound before). It ends with the async
+        # holds what the check on the census bounds found silent, each a stated bound before round 6 and refused since, an
+        # unclassified row at the call: a wrapper over a Name the follow cannot place (_opaque3 gives "refused", so its fetch is
+        # refused at 94, X1, and x1 reads nothing), and a subscript of a fetch call by a constant index, assigned (x2) or read
+        # inline (x3; 96 and 98, _fail_closed's check (1)). It ends with the async
         # for target (x4: a row in both derivations, and "unknown" in the positions; it reds with ast.AsyncFor dropped from _BINDERS
         # and _name_bindings). The rows of both derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
@@ -2887,7 +2901,7 @@ async def _aforv(path):
         # to an expression holding a Name bound to the read (_via_name)
         refused = [(59, "_landing"), (61, "_landing"), (63, "_landing"), (65, "_landing"), (67, "_landing"), (69, "_chat_page"), (71, "_sw_js"),
                    (73, "_landing"), (75, "_landing"), (79, "_landing"), (81, "_landing"), (83, "_landing"), (85, "_landing"), (87, "_landing"),
-                   (89, "_landing"), (91, "_landing"), (96, "_landing"), (98, "_landing")]
+                   (89, "_landing"), (91, "_landing"), (94, "_landing"), (96, "_landing"), (98, "_landing")]
         self.assertEqual([r[:3] for r in readers], sorted([(18, "assert", "_landing"), (19, "regex", "_landing"), (23, "assert", "_chat_page"),
                                                            (25, "assert", "_landing"), (26, "assert", "_landing")] + [(line, "assert", "_landing") for line, _ in pinned]
                                                           + [(line, "unclassified", text) for line, text in refused]),
@@ -2896,7 +2910,7 @@ async def _aforv(path):
         self.assertEqual([r[3].split(":")[0] for r in readers if r[1] == "unclassified"],
                          ["refused fetch, _%s returns a read the follow cannot place" % h for h in ("strip", "str", "or", "ifexp", "cut", "kept", "whole", "mixed", "mixed",
                                                                                                     "gv", "attr_tuple", "attr_ann", "attr_aug", "deep", "via_name",
-                                                                                                    "attr_list")]
+                                                                                                    "attr_list", "opaque3")]
                          + ["fetched page bound nowhere the census reads (Subscript)"] * 2)
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
                          {"_named": [-2, 1], "_aliased": [-1, 1], "_opaque": ["unknown"], "_echo": [], "test_a": [], "test_b": [], "_two": [-1, -2, 0, 1],
@@ -2905,7 +2919,7 @@ async def _aforv(path):
                           "_kept": ["refused"], "_strip": ["refused"], "_str": ["refused"], "_or": ["refused"], "_ifexp": ["refused"], "_cut": ["refused"],
                           "_whole": ["refused"], "_mixed": [-1, 1, "refused"], "_json": ["refused"], "_gv": ["refused"], "_attr_tuple": ["refused"],
                           "_attr_ann": ["refused"], "_attr_aug": ["refused"], "_deep": ["refused"], "_via_name": ["refused"],
-                          "_attr_list": ["refused"], "test_d": [], "_opaque3": [], "_aforv": ["unknown"]})
+                          "_attr_list": ["refused"], "test_d": [], "_opaque3": ["refused"], "_aforv": ["unknown"]})
 
     def test_a_call_is_a_fetch_only_where_its_callee_reads_a_response(self):
         # the rulings at the merge of main's login cookie split (2026-09-28), P2: a call to a Name or a self.<method> whose first
@@ -3611,6 +3625,54 @@ class T(unittest.TestCase):
                           (24, "_chat_page", second % "_xd")])
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
                          {"_open": [], "_body": ["whole"], "_x": ["refused"], "_xd": ["refused"], "_pathconf": [], "_two": [], "test_a": []})
+
+
+    def test_a_returned_wrapper_over_a_name_the_follow_cannot_place_is_refused(self):
+        # round 6 (B.1, X1, the tidy pass's first exit): a helper whose returned element wraps a Name the follow cannot place
+        # (`status, raw = _raw(path); return 200, raw.strip()`), or returns a Name bound to such a wrapper (`text = raw[3:]`), had
+        # given no position, so its call was no fetch and a read of the body behind it was in neither census (x1, a stated bound).
+        # Such a helper gives "refused" now (_wraps_unknown), so its fetches of a page route are refused (17, 18). The Name bare
+        # or under a `.decode(...)` chain stays "unknown", a fetch that binds every name (21, 22), and a response attribute of it
+        # (`r.status`) is no wrapper (19, 20). Dropping X1 reds 17 and 18, dropping its Name road reds 18, and dropping the
+        # response-attribute clause refuses 19. The rows of both derivations are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import re, unittest
+def _strip(path):
+    status, raw = _raw(path)
+    return 200, raw.strip()
+def _bound(path):
+    status, raw = _raw(path)
+    text = raw[3:]
+    return 200, text
+def _attr(path):
+    status, r = _raw(path)
+    return r.status, r
+def _dec(path):
+    status, raw = _raw(path)
+    return 200, raw.decode()
+class T(unittest.TestCase):
+    def test_a(self):
+        a1, a2 = _strip("/chat?token=x")
+        b1, b2 = _bound("/chat?token=x")
+        c1, c2 = _attr("/chat?token=x")
+        self.assertIn("y1", c2)
+        d1, d2 = _dec("/chat?token=x")
+        self.assertIn("y2", d2)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual([r[:4] for r in rows], [(20, "y1", "_chat_page", "in"), (22, "y2", "_chat_page", "in")])
+        self.assertEqual([(r[0], r[1], r[3].split(":")[0]) for r in readers],
+                         [(17, "unclassified", "refused fetch, _strip returns a read the follow cannot place"),
+                          (18, "unclassified", "refused fetch, _bound returns a read the follow cannot place"),
+                          (20, "assert", 'self.assertIn("y1", c2)'), (22, "assert", 'self.assertIn("y2", d2)')])
+        self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
+                         {"_strip": ["refused"], "_bound": ["refused"], "_attr": ["unknown"], "_dec": ["unknown"], "test_a": []})
 
 
 if __name__ == "__main__":
