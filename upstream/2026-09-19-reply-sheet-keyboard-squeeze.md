@@ -1,7 +1,7 @@
 ---
 title: The todo Reply sheet holds three rows with the phone keyboard up; the long detail scrolls within a cap
 status: candidate
-where: ui/webview/styles.css (#ut-reply-prompt .ut-reply-input, #ut-reply-prompt .ut-detail.open, #ut-reply-prompt.kb-tight, #ut-reply-prompt .picker-box, #ut-reply-prompt .confirm-actions), ui/webview/waiting.ts (showReply: restCap, kbFit, grow), ui/webview/render.ts (showUserTodoReply: restCap, kbFit, grow; renderTodo), ui/webview/reply-sheet-keyboard.test.ts, ui/webview/waiting-reply-sheet-browser.test.ts, ui/webview/render-reply-sheet-browser.test.ts, ui/webview/waiting-reply-focus.test.ts, ui/webview/render-todo-file-chip.test.ts, tests/test_reply_sheet_served.py, tests/reply_sheet_browser.mjs, upstream/2026-09-19-reply-sheet-keyboard-squeeze.md (this entry)
+where: ui/webview/styles.css (#ut-reply-prompt .ut-reply-input, #ut-reply-prompt .ut-detail.open, #ut-reply-prompt.kb-tight, #ut-reply-prompt .picker-box, #ut-reply-prompt .confirm-actions), ui/webview/waiting.ts (showReply: restCap, kbFit, grow), ui/webview/render.ts (showUserTodoReply: restCap, kbFit, grow; renderTodo), ui/webview/reply-sheet-keyboard.test.ts, ui/webview/picker-keyboard.test.ts (the picker's fold pins, anchored on the picker's own block), ui/webview/waiting-reply-sheet-browser.test.ts, ui/webview/render-reply-sheet-browser.test.ts, ui/webview/waiting-reply-focus.test.ts, ui/webview/render-todo-file-chip.test.ts, tests/test_reply_sheet_served.py, tests/reply_sheet_browser.mjs, upstream/2026-09-19-reply-sheet-keyboard-squeeze.md (this entry)
 added: 2026-09-19
 pr: 859
 tier: fix
