@@ -3531,8 +3531,7 @@ CLIENT_DIAG_KEYS = {
     "reload-core": frozenset(("reason", "detail", "hold", "ageMs")),
     "shell": frozenset(("sidAttached", "host", "why", "tabs", "status", "via", "boot", "hasSid", "hasCard", "hasPid", "controlled", "dup",
                         "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
-                        "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms",                      # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
-                        "pane", "n")),                                                                            # pane-load-failed (2026-09-19): a lazy pane's document failed to load (pane key, via 'load' or 'backstop', the failure count)
+                        "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms")),                    # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
     "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
                              "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded")),
     "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
@@ -3543,8 +3542,7 @@ CLIENT_DIAG_KEYS = {
                        "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland",
                        "view")),                                    # a spacer row of a view that was not the element the scroller measured in its frame (switched away before it, or hidden by the section-at-a-glance view): one fixed word, no host name; the table admits the key and CLIENT_DIAG_VALUES below bounds its value to that word, the page's builder's (ui/webview/scroll-write.ts spacerRow), so any other value is refused, not stored (PR E; the owner 2026-09-21, who approved the field; the maintainer's round 5 ruling, tests-1)
     "strip": frozenset(("ok", "tunnels", "err", "open", "base")),
-    "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total",
-                       "itemId", "sid", "why", "key", "painted")),                                                 # reveal-dropped (review round 3, 2026-09-19): a bell or notification reveal the feed could not land (ids only; why offscreen or unpainted, key the parked key, painted the plan's answer at the release or null)
+    "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total")),
     "outline": frozenset(("buildId", "slot", "rev")),
     "waiting": frozenset(("buildId",)),
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
@@ -70887,14 +70885,16 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // marker nor the stamp, so what the kernel did not serve as a 200 (its 403 line to a browser holding no session cookie the kernel accepts,
 // its 500 page, a proxy's 502 body while it restarts). THE RULE (review round 2's family two, narrowed in review round 4,
 // 2026-09-19, kernel-1 and tests-1): a 200 the kernel served at the pane's url is not a failure just because this reader cannot
-// recognise it, so `doc` is SHOWN AS SERVED (the loader clears, the src stays, one shell client-diag row `pane-load-unmarked`
-// {pane, via} says what was seen, never silence); every other status is NOT shown as served: `other` is a failure like `none`,
+// recognise it, so `doc` is SHOWN AS SERVED (the loader clears, the src stays), the way the pane's own document is; every other status is NOT shown as served: `other` is a failure like `none`,
 // re-parked with the failed state and its retry road (a re-tap, the overlay tap, the Try again button). Pass 3 had shown every
 // same-origin document as served, which put the kernel's 403 line, whose body names the serve-token file's path, on the phone's
 // screen with no retry road for the page's life; the stamp is what a 403, a 500 or a 502 body cannot carry. The iframe's `error`
 // event never fires for a failed navigation in any engine; the load listener reads docState() on every load but the initial
 // about:blank's own, and the 30 s backstop reads it for a frame still loading then (`blank` or `none` is a failure by the
-// backstop, WebKit's road; `app` is a slow load, the loader clears as before; `doc` is shown and said; `other` fails).
+// backstop, WebKit's road; `app` is a slow load, the loader clears as before; `doc` is shown as served; `other` fails).
+// No answer files a row (the reviewer's round-7 ruling on regression-1): the pane-load-unmarked and pane-load-failed rows and their
+// keys were dropped, since no reader acted on them, so `doc` and `app` now leave the same page state and the rule that a `doc` is said
+// and never silent (review round 2's family two) is retired with them; the page's state is the whole of the outcome.
 // failed() reads the LAYOUT at fire time (review round 3, 2026-09-19, family one: a promotion armed on the phone keeps judging after a
 // flip to the desktop, where the failed state is not painted at all, and before this it re-parked under data-lazy-src whatever the
 // layout, leaving a desktop column with neither src nor data-src and no road to promote it again). On the phone it re-parks the pane
@@ -70907,7 +70907,7 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // and back on the phone the tab tap, the overlay tap and the Try again button all did nothing for the page's life, a dead end the
 // parent commit did not have). The desktop's response is a TABLE over the episode count (EPI) and docState's answer (pass 5, the author's label,
 // 2026-09-20, taking the reviewer's round-4 findings correctness-3 and extra9-1). `blank` at the backstop HOLDS: the src is kept for the fetch still in flight, nothing is
-// re-fetched, the row and the episode count record the 30 s uncommitted document and DEAD records the promotion for the flip back; a
+// re-fetched, the episode count records the 30 s uncommitted document and DEAD records the promotion for the flip back; a
 // healthy slow load is not torn down and lands through the load listener as ever, loaded() ending the episode (pass 4 tore it down at
 // 30 s, re-fetched it, and a rotation to the desktop armed one such deadline per parked pane in the same tick). Otherwise the episode's
 // first failure re-parks under data-src and promotes again, and the second is the bound: `other`, a document the kernel sent (its 403
@@ -70915,7 +70915,7 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // to about:blank; the answer is on show for the frames between its commit and its load event, the listener's read, then dropped: the
 // author's pass-5 verify), its url parked under data-lazy-src, the attribute the controller's reconcile does not read (parked under data-src, a
 // gear save set the src again with no token and no backstop and the bound promotion's stale listener judged and dropped it once more:
-// one re-fetch and one pane-load-failed row per save, the author's pass-5 verify), so on the desktop nothing promotes it again short of a
+// one re-fetch per save, the author's pass-5 verify), so on the desktop nothing promotes it again short of a
 // flip to the phone or a reload; and `none`, the browser's own error page, keeps its src as a desktop failure always showed;
 // both record the promotion's token in DEAD, so the promote-fail loop is closed at two and the flip back to the phone (lazyFlip's phone
 // branch) parks that pane under data-lazy-src with the failed state, where the three retry roads promote it again. Pass 4's bound kept
@@ -70924,7 +70924,7 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // (Firefox and WebKit fire no load event for one) is gone, no worse than the parent, which armed nothing there; and a fetch still in
 // flight at a flip back to the phone is dropped with the src, an open residual. The backstop's guard is
 // PEND, the token of the promotion still awaiting its verdict (the phone's `loading` class is paint alone: the grid paints none).
-// Both layouts count the failure and file one shell client-diag row (`pane-load-failed` {pane, via, n}). Every promotion mints the
+// Both layouts count the failure in the episode's count (EPI) and file no row. Every promotion mints the
 // token (TOK), the desktop's included, so a phone-armed listener or backstop is inert over the desktop's re-promotion (without that
 // the stale listener re-failed the desktop's load and the promote-fail cycle never ended). Not every promotion goes through promote():
 // the desktop's boot promotions (the controller's reconcile in _LANDING_COLLAPSE_JS, and _LANDING_DESKTOP_PANES_JS for the Waiting and
@@ -70935,26 +70935,26 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // #pane-load-retry button, a real button shown in the failed state alone (review round 3, ui-1: focusable and named for the keyboard
 // and a screen reader, the way #rail-api's row is; a tap anywhere on #pane-load retries too); the second failure and later of an
 // EPISODE say so and offer the page reload (EPI counts the failures since the pane last loaded and loaded() resets it, review round 3,
-// correctness-1: FAILS, the page-life count the row carries, never resets, and read for the copy it called a fresh failure the second).
+// correctness-1: a page-life count never resets, and read for the copy it called a fresh failure the second; the page-life count left with
+// its row in the reviewer's round 7).
 // The copy names no input (ui-2: "Try again" sits on the control), since the phone layout also serves a narrowed mouse window.
-var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},EPI={},TOK={},PEND={},DEAD={};   // PEND: per pane, the token of the promotion still awaiting its verdict (the backstop's guard); DEAD: the token of a desktop promotion recorded for the flip back to the phone to park: the episode's bound, or a backstop over a fetch still in flight (pass 4, the table of pass 5; the author's labels)
+var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},EPI={},TOK={},PEND={},DEAD={};   // PEND: per pane, the token of the promotion still awaiting its verdict (the backstop's guard); DEAD: the token of a desktop promotion recorded for the flip back to the phone to park: the episode's bound, or a backstop over a fetch still in flight (pass 4, the table of pass 5; the author's labels)
 var MSG_FAILED="Couldn't load this pane.",MSG_FAILED_AGAIN="Still not loading. Try again, or reload the page.";
 var RFOC=false;   // the Try again button's click retried with the keyboard's focus on it (review round 4, 2026-09-19, ui-1): paintLoading hides the button while the retry loads, and hiding the focused control drops focus to the body in every engine with nothing bringing it back, so pass 3's keyboard road survived exactly one activation; the failed paint that shows the button again puts focus on it while this is set, and clears it. A load (loaded) and a tab switch (show) clear it too, so a later pane's first failure moves focus onto nothing the user did not ask for; the overlay tap sets nothing (a pointer gesture keeps its own focus)
 function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
 function paintLoading(){try{var k=document.body.getAttribute('data-tab'),d=paneDiv(F[k]);document.body.classList.toggle('pane-loading',!!(d&&d.classList.contains('loading')));
 var bad=!!(d&&d.classList.contains('failed'));document.body.classList.toggle('pane-failed',bad);
-var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((EPI[k]||0)>=2?MSG_FAILED_AGAIN:MSG_FAILED):'';   // the copy by this episode's count (EPI), not the page-life count (FAILS)
+var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((EPI[k]||0)>=2?MSG_FAILED_AGAIN:MSG_FAILED):'';   // the copy by this episode's count (EPI), not a page-life count
 var rb=document.getElementById('pane-load-retry');if(rb){rb.hidden=!bad;if(bad&&RFOC){RFOC=false;try{rb.focus();}catch(e){}}}}catch(e){}}   // the retry button exists for the failed state alone: a focusable control under the loader would be wrong; shown again after the keyboard's retry (RFOC), it takes the focus back, once
 function loaded(k){EPI[k]=0;PEND[k]=0;DEAD[k]=0;RFOC=false;try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}   // a load ends the episode: the next failure's copy is a first failure's; nothing is pending or dead; the keyboard's retry, if one was owed a focus, is answered by the load (RFOC)
-function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;if(w&&typeof w.__rompApp==='string')return 'app';var h=d.documentElement;return (h&&h.getAttribute&&h.getAttribute('data-romp-served')==='200')?'doc':'other';}catch(e){return 'none';}}   // the frame's document, classified (the comment above): none (a cross-origin error page), blank (the initial document, never committed), app (the pane's own, its shim run: window.__rompApp), doc (a 200 the kernel served, its stamp on the <html> tag, that this reader cannot classify: shown as served, said), other (a document at the url with neither: not a 200 of this kernel's, a failure)
-function unmarked(k,via){loaded(k);try{shellDiag('pane-load-unmarked',{pane:k,via:via});}catch(e){}}   // a 200 the kernel served with no pane shim (its "needs the ui/ modules" fallback page): shown as served, the loading state ended and the src kept, and said once (review round 3; a 200 alone since review round 4, the stamp)
-function failed(k,via,s){var f=F[k];if(!f)return;var mob=mobileOn();PEND[k]=0;FAILS[k]=(FAILS[k]||0)+1;EPI[k]=(EPI[k]||0)+1;   // the verdict is in, s docState's answer at it (pass 5, the author's label); FAILS: the page-life count the row carries (docs/read-side.md); EPI: this episode's, for the copy and the desktop's bound
+function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;if(w&&typeof w.__rompApp==='string')return 'app';var h=d.documentElement;return (h&&h.getAttribute&&h.getAttribute('data-romp-served')==='200')?'doc':'other';}catch(e){return 'none';}}   // the frame's document, classified (the comment above): none (a cross-origin error page), blank (the initial document, never committed), app (the pane's own, its shim run: window.__rompApp), doc (a 200 the kernel served, its stamp on the <html> tag, that this reader cannot classify: shown as served), other (a document at the url with neither: not a 200 of this kernel's, a failure)
+function failed(k,s){var f=F[k];if(!f)return;var mob=mobileOn();PEND[k]=0;EPI[k]=(EPI[k]||0)+1;   // the verdict is in, s docState's answer at it (pass 5, the author's label); EPI: this episode's count, for the copy and the desktop's bound
 var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');   // the desktop's table (pass 5, the author's label; the comment above): a fetch still in flight at the backstop is held (the src kept, nothing re-fetched); else the episode's first failure is re-parked and promoted again below, and the second is the bound, which drops a document the kernel sent (`other`) from the frame and keeps the browser's own error page (`none`); the hold and the bound record DEAD for the flip back
-var park=(mob||bound)?LAZY:'data-src';   // the attribute the url waits under: the phone's, and the desktop BOUND's too (the author's pass-5 verify: the controller's reconcile copies data-src to src on every gear save, so a bound pane parked there was re-fetched with no token and no backstop and judged by the bound promotion's stale listener, one re-fetch and one pane-load-failed row per save); the desktop's first failure keeps data-src, which the promotion below reads at once
+var park=(mob||bound)?LAZY:'data-src';   // the attribute the url waits under: the phone's, and the desktop BOUND's too (the author's pass-5 verify: the controller's reconcile copies data-src to src on every gear save, so a bound pane parked there was re-fetched with no token and no backstop and judged by the bound promotion's stale listener, one re-fetch per save); the desktop's first failure keeps data-src, which the promotion below reads at once
 if(!keep){try{f.removeAttribute('src');}catch(e){}try{if(URLS[k]){f.setAttribute(park,URLS[k]);f.removeAttribute(park===LAZY?'data-src':LAZY);}}catch(e){}}   // re-parked under the attribute its next promotion reads, and the other dropped (the author's pass-4 verify: a pane the desktop promoted and the phone judged held data-src beside data-lazy-src, and the controller's reconcile set its src from data-src on the next gear save with no token, listener or backstop armed; so a feed parked by a failure is re-fetched by its Feed tab tap, never off screen by a gear save): promote()'s src guard reads nothing, the url is back where a first tap (the phone) or the grid's promotion below (the desktop's first failure) finds it, and no other writer promotes it (at the desktop's bound the reconcile reads data-src and finds none)
 DEAD[k]=(hold||bound)?TOK[k]:0;
 try{var d=paneDiv(f);if(d){d.classList.remove('loading');if(mob)d.classList.add('failed');else d.classList.remove('failed');}}catch(e){}   // the failed state is the phone's; the desktop path never leaves one for a later rotation to paint (the flip back paints it for a DEAD pane, lazyFlip)
-try{shellDiag('pane-load-failed',{pane:k,via:via,n:FAILS[k]});}catch(e){}paintLoading();
+paintLoading();
 if(again)promote(k);}   // the desktop grid shows the pane with no tap: promoted again at once, once per episode (its own listener and backstop judge it; at the bound nothing promotes, DEAD above)
 function promote(k){var f=F[k];if(!f)return false;var u=null;
 try{if(f.getAttribute('src'))return false;u=f.getAttribute('data-src')||f.getAttribute(LAZY);}catch(e){return false;}   // loaded already (a src is never reassigned: no reload of a live pane), or an element without attributes: nothing to do
@@ -70964,8 +70964,8 @@ try{f.removeAttribute(LAZY);}catch(e){}
 URLS[k]=u;var tok=TOK[k]=(TOK[k]||0)+1;PEND[k]=tok;DEAD[k]=0;   // tok: this promotion's, minted on EVERY promotion (the desktop's too, review round 3): a listener or backstop of an earlier promotion (a retry after a failure; a phone-armed one over the desktop's re-promotion after a flip) is inert; PEND: its verdict is owed; a DEAD record is over
 try{var d0=paneDiv(f);if(d0)d0.classList.remove('failed');}catch(e){}   // any promotion clears a standing failed state (a flip to the desktop re-promotes a pane the phone failed; a stale `failed` would paint over it on the flip back)
 if(mobileOn()){try{var d=paneDiv(f);if(d)d.classList.add('loading');}catch(e){}}   // the loading state is the phone's paint (the grid paints no loader); the two detectors below are every layout's (review round 4, regression-1: the desktop's re-promotion had none)
-f.addEventListener('load',function(){if(TOK[k]!==tok)return;var s=docState(f);if(s==='blank')return;if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'load');else failed(k,'load',s);});   // the initial about:blank's own load is not the page's (the gear opener's guard); the pane's own document loaded; a stamped 200 with no shim is shown as served and said; an error page (no document), or a document the kernel did not serve as a 200, is a failure
-setTimeout(function(){if(TOK[k]!==tok||PEND[k]!==tok)return;var s=docState(f);if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'backstop');else failed(k,'backstop',s);},LOAD_MS);   // the verdict still owed at the backstop (PEND, the class being paint): the pane's own document is a slow load (the loader clears, as before); a stamped 200 with no shim is shown and said; no document, one never committed (WebKit's road), or one the kernel did not serve as a 200, is a failure
+f.addEventListener('load',function(){if(TOK[k]!==tok)return;var s=docState(f);if(s==='blank')return;if(s==='app'||s==='doc')loaded(k);else failed(k,s);});   // the initial about:blank's own load is not the page's (the gear opener's guard); the pane's own document loaded, and a stamped 200 with no shim is shown as served the same way; an error page (no document), or a document the kernel did not serve as a 200, is a failure
+setTimeout(function(){if(TOK[k]!==tok||PEND[k]!==tok)return;var s=docState(f);if(s==='app'||s==='doc')loaded(k);else failed(k,s);},LOAD_MS);   // the verdict still owed at the backstop (PEND, the class being paint): the pane's own document is a slow load (the loader clears, as before), and a stamped 200 with no shim is shown as served the same way; no document, one never committed (WebKit's road), or one the kernel did not serve as a 200, is a failure
 f.setAttribute('src',u);paintLoading();return true;}
 try{var pl=document.getElementById('pane-load'),prb=document.getElementById('pane-load-retry');
 var retry=function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}};   // the failed state's retry: the shown tab's pane again (show() promotes a re-parked pane as a first tap would)

@@ -359,7 +359,7 @@ try {
     // do the page's other inline scripts (its loader's, and since main's fork PR #919 the page-key script Handler._send puts first in
     // every authorized page's head): the route counts the script elements before and after the strip, one fewer after. The shell
     // must show it as served: the loader retires on the document's load (not the 30 s backstop), the src stays, no failed state on the body
-    // or the pane, one pane-load-unmarked row via load and no pane-load-failed row. The stamp is read in the engine off documentElement (a
+    // or the pane, and no pane-load row (the reviewer's round 7 dropped both rows with their keys). The stamp is read in the engine off documentElement (a
     // byte count cannot tell a stamped root tag from a stamped `<html` elsewhere in the body). No shim runs in the document, so the pane says
     // nothing on the shell's wire (no wsState word, no socket dial for its app after the tap; pinned off out.wsWords and out.dials): the tapUp
     // wait is skipped and out.tapped stays null, so _parked expects nothing parked at the return and _lazy counts a no-tap boot.

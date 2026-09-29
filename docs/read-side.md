@@ -279,9 +279,10 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   rows is the saving, not a field. A lazy pane whose document fails to load
   (the load event over an error page, which commits no readable document, or
   no committed document by the 30 s backstop) is put back where a tap finds
-  it, says so over the pane area with a control to retry, and files one
-  `pane-load-failed` row (surface `shell`: `pane`, `via` `load` or `backstop`,
-  `n` the failures for that pane on this page). A 200 the kernel served at the
+  it and says so over the pane area with a control to retry; it files no
+  row (the `pane-load-failed` and `pane-load-unmarked` rows, and their `pane`
+  and `n` keys, were dropped in the reviewer's round 7 on this PR, since no
+  reader acted on them). A 200 the kernel served at the
   pane's url that carries no pane shim (its own "needs the ui/ modules" page;
   the kernel stamps every text/html 200 it writes whose body carries an
   `<html>` tag with `data-romp-served=200` on that tag, so every text/html 200
@@ -292,16 +293,15 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   failure (the paste-the-token page at `/` and `/login` is such a body today,
   and neither is a pane url); and the shell reads that stamp) is not a
   failure: the shell cannot classify it, so it is shown as served (the loader
-  clears, the src stays) and one `pane-load-unmarked` row (surface `shell`:
-  `pane`, `via`) says what was seen; a reader that cannot classify a 200 never
-  reports absent. A document at the url with neither the shim nor the stamp
+  clears, the src stays), the same page state as the pane's own document; the
+  row that used to say what was seen went with the rest, so a real engine no
+  longer tells the two apart. A document at the url with neither the shim nor the stamp
   (the kernel's 403 line, which a pane url answers only to a browser holding
   no session cookie this kernel accepts, since a page opens on that cookie
   alone; its 500 page; a proxy's 502 body) is a failure like an error page:
-  re-parked with the retry control and one
-  `pane-load-failed` row (since 2026-09-19; the 200 scope since review round 4
-  the same day). On the desktop layout a pane a flip promoted files the same
-  two rows (its promotion arms the same load listener and 30 s backstop): the
+  re-parked with the retry control (since 2026-09-19; the 200 scope since review round 4
+  the same day). On the desktop layout a pane a flip promoted is judged the
+  same way (its promotion arms the same load listener and 30 s backstop): the
   episode's first failure hands the url back to `data-src` and promotes once
   more; the second is the bound, which drops a document the kernel sent (the
   frame to about:blank, the url under `data-lazy-src`) and keeps the browser's

@@ -8,12 +8,11 @@
 //      promoted, its document loads and paints, no failed class stands; the flip back to the phone and a tap show a loaded pane.
 //   B  flip WHILE loading: the first request for /waiting is held 1.5 s and then aborted (later ones pass); the Waiting tab is tapped on
 //      the phone and 300 ms later the window widens, so the phone-armed load listener judges the failure on the DESKTOP: the url goes
-//      back under data-src and the pane is promoted once more, the real document loads, exactly one pane-load-failed row is filed and
-//      nothing promotes a third time (the token).
+//      back under data-src and the pane is promoted once more, the real document loads and nothing promotes a third time (the token).
 //   C  as B, and the desktop's re-promotion FAILS too (the first two requests are aborted, the third passes): the desktop's own listener
 //      judges it (review round 4, regression-1: pass 3 armed none off the phone, so the pane kept a src over a dead document with no
 //      state and every road back on the phone was dead for the page's life), the episode's bound holds (the browser's own error page
-//      stands with the url under data-src, a second pane-load-failed row, nothing promotes a third time within 3 s; without the token
+//      stands with the url under data-src, nothing promotes a third time within 3 s; without the token
 //      minted per promotion the phone-armed listener would judge the second failure too and the loop would run until the route passed,
 //      extra7-2's refuter executed it), then the window narrows back to the phone: the recorded failure parks the pane with the failed
 //      state painted, and ONE recovery gesture (cfg.recover: "tab" the Waiting tab's button, "overlay" a tap on #pane-load away from its
@@ -30,9 +29,13 @@
 //      failed state; the Waiting tab's tap (the route passing now) loads it.
 //   E  (pass 5, the author's label, taking the reviewer's round-4 findings tests-2 with extra9-1) a healthy but SLOW desktop load through the 30 s backstop: the first request for /waiting
 //      is held cfg.slowMs (34 s, past LOAD_MS) and then continued. The flip to the desktop promotes the pane; at 30 s the backstop reads a
-//      frame never committed (`blank`) and HOLDS it: the src kept, no re-fetch (one request on the wire, one src set), one pane-load-failed
-//      row via backstop recording the 30 s uncommitted document; the document then lands on the kept src and paints. Pass 4 tore it down
+//      frame never committed (`blank`) and HOLDS it: the src kept, no re-fetch (one request on the wire, one src set); the document then
+//      lands on the kept src and paints. Pass 4 tore it down
 //      at 30 s and re-fetched it (two requests, two sets).
+// Every case also records out.rows, the pane-load-failed and pane-load-unmarked rows the lab kernel stored from this page's shell: the
+// reviewer's round 7 (regression-1) dropped both rows with their keys, so the served test asserts none. The shell's own boot rows
+// (deeplink, tap-pending) are main's and stay out of the read; a row re-added under another what or surface is the fake-DOM
+// harness's to catch (tests/test_pane_state_broadcast.py LazyPanes reads every clientDiag message the shell sends).
 // Prints one RESULT: JSON line (cfg.resultPath gets the same object). cfg.healthz names the LAB port and is asserted before any request;
 // a live kernel is never touched. Chromium alone: WebKit's failure detector is the 30 s backstop (no load event), which would cost 30 s a
 // case for the same shell lines. Synthetic sessions only.

@@ -175,6 +175,16 @@ def _seed(lab):
     return state, claude
 
 
+_DROPPED_SHELL_ROWS = ("pane-load-failed", "pane-load-unmarked")   # the lazy panes' two shell rows, dropped with their keys in the reviewer's round 7 (regression-1)
+
+
+def _shell_rows(rows, wid):
+    """This page's pane-load-failed and pane-load-unmarked rows, which a leg asserts absent. The shell's other rows are main's (its boot
+    rows, deeplink and tap-pending; its return-probe, which measure() reads) and stay out of the read; a row re-added under another what
+    or surface is the fake-DOM harness's to catch (tests/test_pane_state_broadcast.py LazyPanes reads every clientDiag message)."""
+    return [x for x in rows if x.get("wid") == wid and x.get("surface") == "shell" and x.get("what") in _DROPPED_SHELL_ROWS]
+
+
 def _rows(path):
     out = []
     try:
@@ -480,17 +490,16 @@ class ReturnFromBackground(unittest.TestCase):
         never the text); the premise the prose states, pinned: after the tap the pane's app dials no socket and posts no wsState word; in
         the engine the frame's document is at the pane's url, its documentElement carries data-romp-served=200 and its window has no
         __rompApp; the loader retired on the document's load (not the 30 s backstop), the src stands, no failed or loading state on the body
-        or the pane div, one pane-load-unmarked row via load and no pane-load-failed row. The document runs no shim, so the leg's parked and
+        or the pane div, and no pane-load-unmarked or pane-load-failed row (the reviewer's round 7, regression-1, dropped both rows with
+        their keys: the loader's retirement on the load is what says the document was taken as served). The document runs no shim, so the leg's parked and
         lazy checks read a no-tap boot (out.tapped null)."""
         where = name + ": "
         u = r.get("unmarked") or {}
         self.assertEqual((u.get("stamp"), u.get("shim")), ("200", "undefined"), where + "read in the engine: the frame's root tag carries the kernel's stamp and its window has no pane shim (docState's `doc`; a re-parked pane reads no stamp, its frame back at about:blank): %r" % (u,))
         self.assertTrue(str(u.get("url") or "").endswith("/" + tap), where + "the frame's document is at the pane's url: %r" % (u,))
         wid = r.get("wid") or ""
-        mine = [x for x in rows if x.get("wid") == wid and x.get("surface") == "shell" and x.get("what") == "pane-load-unmarked"]
-        self.assertEqual([x.get("data") for x in mine], [{"pane": tap, "via": "load"}], where + "one pane-load-unmarked row via load (the reader said what it saw): %r" % (mine,))
-        failed = [x for x in rows if x.get("wid") == wid and x.get("surface") == "shell" and x.get("what") == "pane-load-failed"]
-        self.assertEqual(failed, [], where + "no pane-load-failed row: a 200 the kernel served is not a failure: %r" % (failed,))
+        shell = _shell_rows(rows, wid)
+        self.assertEqual(shell, [], where + "no pane-load-unmarked or pane-load-failed row: the document is shown as served and filed nowhere: %r" % (shell,))
         self.assertEqual((u.get("src"), u.get("lazy")), ("/" + tap, None), where + "the src stands, nothing re-parked: %r" % (u,))
         self.assertEqual((u.get("bodyFailed"), u.get("divFailed"), u.get("bodyLoading"), u.get("divLoading"), u.get("msg")), (False, False, False, False, ""), where + "no failed state, no loading state, no message: the document shows as served: %r" % (u,))
         self.assertGreaterEqual(r.get("loadingClearedMs", -1), 0, where + "the loading state retired within the wait: %r" % (r.get("loadingClearedMs"),))
@@ -533,7 +542,7 @@ class ReturnFromBackground(unittest.TestCase):
         now stamps every text/html 200 whose body has an <html> tag (data-romp-served=200 on that tag) and the shell's docState shows as served only a document
         carrying it. Asserted, on top of _abort's failed-state and re-tap checks: the status the kernel answered was 403 (read off the
         response event; the body is never read, printed or kept, by the driver or here), the failed overlay is painted opaque and fixed over
-        the pane's whole box (the document under it is not on show), no pane-load-unmarked row was filed, and the detector was the load
+        the pane's whole box (the document under it is not on show), and the detector was the load
         listener (the 403 commits a document and fires load in every engine)."""
         where = name + ": "
         a = r.get("abort") or {}
@@ -549,19 +558,18 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertGreater(fr.get("bottom", 0), fr.get("top", 0), where + "the frame has a box to cover: %r" % (fr,))
         self.assertTrue(ov.get("top", 1e9) <= fr.get("top", 0) + 1 and ov.get("bottom", -1e9) >= fr.get("bottom", 1e9) - 1 and ov.get("left", 1e9) <= fr.get("left", 0) + 1 and ov.get("right", -1e9) >= fr.get("right", 1e9) - 1,
                         where + "the overlay covers the frame's whole box (to the pixel): the denial's document is not on show: overlay %r, frame %r" % (ov, fr))
-        wid = r.get("wid") or ""
-        unmarked = [x for x in rows if x.get("wid") == wid and x.get("surface") == "shell" and x.get("what") == "pane-load-unmarked"]
-        self.assertEqual(unmarked, [], where + "no pane-load-unmarked row: the denial was never shown as served: %r" % (unmarked,))
+        self.assertLess(a.get("ms", -1), 20000, where + "the load listener judged the denial: the failed state painted within 20 s of the tap, never at the 30 s backstop: %r" % (a,))
 
     # ---- HIGH 2 (review round 1, 2026-09-19): a lazy pane whose first document fetch fails is re-parked, says so, and loads on the re-tap ----
     def _abort(self, name, r, rows, tap, engine, mode="abort", retry_enter=False):
         """The tapped pane's document fetch failed at the first tap: aborted by the route (mode abort), or answered by the real kernel's
         403 to a request stripped of its cookie (mode denied, review round 4; _denied below adds its own checks). The shell must paint the failed state where the user looks
         (body.pane-failed keeps #pane-load up at display:flex with the message and the loader down), re-park the pane (no src, the
-        url back under data-lazy-src) and file one `pane-load-failed` row whose keys survive CLIENT_DIAG_KEYS' allowlist; the re-tap
-        then loads it (the frame at the pane's url, its shim up, the failed state gone). Chromium detects the failure on the error
-        page's load event (`via` load); Firefox and WebKit fire no load event the shell can act on for the aborted navigation (the
-        frame keeps about:blank), so the 30 s backstop detects it (`via` backstop), which is what the WebKit leg's wait is for.
+        url back under data-lazy-src) and file no row (the reviewer's round 7, regression-1, dropped pane-load-failed with its keys); the
+        re-tap then loads it (the frame at the pane's url, its shim up, the failed state gone). Chromium detects the failure on the error
+        page's load event, so the failed state paints within 20 s of the tap; Firefox and WebKit fire no load event the shell can act on
+        for the aborted navigation (the frame keeps about:blank), so the 30 s backstop detects it and the failed state paints 30 s after
+        the tap, which is what the WebKit leg's wait is for (the rows' `via` said which detector ran; the page's own clock says it now).
         (Pass 3 showed any same-origin document at the url as served; pass 4 narrowed that to a 200 the kernel stamped, so the
         kernel's own 403 is a failure again, driven for real in the denied mode.)"""
         where = name + ": "
@@ -594,17 +602,14 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertIs(re_.get("hidden"), False, where + "the button is shown again in the failed state: %r" % (re_,))
             self.assertEqual(re_.get("active"), "BUTTON#pane-load-retry", where + "…and holds the keyboard focus after the re-failure (the failed paint that shows it again puts focus back on the control that retried): %r" % (re_,))
         wid = r.get("wid") or ""
-        mine = [x for x in rows if x.get("wid") == wid and x.get("surface") == "shell" and x.get("what") == "pane-load-failed"]
-        n_fail = 2 if retry_enter else 1
-        self.assertEqual(len(mine), n_fail, where + "%d pane-load-failed row(s): one per failure (the keyboard retry's re-failure counted when the leg pressed Enter): %r" % (n_fail, mine))
-        self.assertEqual([(x.get("data") or {}).get("n") for x in mine], list(range(1, n_fail + 1)), where + "the rows count the page's failures in order: %r" % (mine,))
-        data = mine[0].get("data") or {}
-        self.assertEqual((data.get("pane"), data.get("n")), (tap, 1), where + "the row names the pane and the count (the keys survive the allowlist): %r" % (data,))
-        vias = [(x.get("data") or {}).get("via") for x in mine]
-        if mode == "denied":
-            self.assertEqual(vias, ["load"] * n_fail, where + "the kernel's 403 commits a document (text/plain) and fires load in every engine, so the load listener is the detector on all three, for every failure: %r" % (mine,))
+        shell = _shell_rows(rows, wid)
+        self.assertEqual(shell, [], where + "no pane-load-failed or pane-load-unmarked row: the failure is shown where the user looks and filed nowhere: %r" % (shell,))
+        if mode == "denied" or engine == "chromium":
+            self.assertLess(a.get("ms", -1), 20000, where + "the load listener is the detector (Chromium commits an error page for the abort and fires load; the kernel's 403 commits a document in every engine): the failed state painted within 20 s of the tap, not at the 30 s backstop: %r" % (a,))
         else:
-            self.assertEqual(vias, ["load" if engine == "chromium" else "backstop"] * n_fail, where + "the detector per engine, as observed under the route's abort: Chromium commits an error page and fires load; Firefox and WebKit fire no load event the shell can act on (the frame keeps about:blank), so the 30 s backstop detects it: %r" % (mine,))
+            self.assertGreaterEqual(a.get("ms", -1), 29000, where + "Firefox and WebKit fire no load event the shell can act on for the aborted navigation (the frame keeps about:blank), so the 30 s backstop is the detector: the failed state painted 30 s after the tap: %r" % (a,))
+        if retry_enter:
+            self.assertLess((a.get("retryEnter") or {}).get("ms", -1), 20000, where + "the re-failure, judged by the load listener too: its copy painted within 20 s of the Enter: %r" % (a.get("retryEnter"),))
         la = r.get("loadingAfterTap") or {}
         self.assertFalse(la.get("failed"), where + "the re-tap cleared the failed state: %r" % (la,))
         self.assertIs(la.get("retryHidden"), True, where + "…and the retry button is hidden again after the re-tap's load: %r" % (la,))
@@ -880,17 +885,17 @@ class ReturnFromBackground(unittest.TestCase):
         self._leg("phone", "hung", 12, tap="files")
 
     # review round 4 (2026-09-19, kernel-1 and tests-1): the tapped pane's one request loses its cookie on the wire, so the REAL kernel answers its 403
-    # (text/plain, the body naming the serve-token file's path); the shell must not show it as served: the failed state, the retry road, one
-    # pane-load-failed row via load and no pane-load-unmarked row, and the re-tap (the cookie flowing again) loads the pane. Pass 3's leg fulfilled
-    # a stand-in body here. The load listener is the detector in every engine (a 403 commits a document), so the twins pin the same via
+    # (text/plain, the body naming the serve-token file's path); the shell must not show it as served: the failed state, the retry road, no
+    # pane-load row, and the re-tap (the cookie flowing again) loads the pane. Pass 3's leg fulfilled
+    # a stand-in body here. The load listener is the detector in every engine (a 403 commits a document), so the twins pin the same detector
     def test_phone_hung_12s_tab_tap_denied_document(self):
         self._leg("phone", "hung", 12, tap="fleet", denied=True, retry_enter=True)   # + ui-1 (review round 4): the keyboard's retry keeps its focus across the re-failure, on every engine (the 403 fires load everywhere)
 
     def test_phone_hung_12s_tab_tap_unmarked_document(self):
         # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding tests-1): docState's `doc` answer in a real engine. The tapped pane's fetch is answered by the REAL kernel's 200
         # with the shim's marker statement stripped by the route (a stamped document with no shim, the fallback page's shape): shown as served
-        # (the loader retired on its load, the src kept, no failed state), the stamp read off documentElement in the engine, one pane-load-unmarked
-        # row via load and no pane-load-failed row. Chromium alone: the composition proved engine-invariant in the reviewer's round-4 refuters' probes
+        # (the loader retired on its load, the src kept, no failed state), the stamp read off documentElement in the engine, and no pane-load row.
+        # Chromium alone: the composition proved engine-invariant in the reviewer's round-4 refuters' probes
         self._leg("phone", "hung", 12, tap="fleet", unmarked=True)
 
     def test_the_kernel_stamps_every_200_html_document_at_a_pane_url_and_its_denial_carries_no_stamp(self):

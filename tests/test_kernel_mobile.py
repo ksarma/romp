@@ -24,6 +24,19 @@ sys.path.insert(0, HERE)
 from test_pane_shim_return import HARNESS as _PANE_HARNESS, _run as _run_pane   # noqa: E402  the pane shim's node fakes and its pane-only runner (never its TestCases), for the linked runs below
 
 
+# The page-to-kernel keys the lazy panes' three client-diag rows posted (pane-load-failed and pane-load-unmarked on the shell's socket,
+# reveal-dropped from the feed), WITHHELD: the reviewer's round-7 ruling on regression-1 found none of the seven needed by the feature (no
+# page state moves without them, and no reader in kernel/, bin/, cli/ or ui/ read the rows back), so the rows and the keys were dropped and
+# none went to the owner. A new field a page posts to the kernel is the owner's to approve, field by field (tests/test_client_diag_allowlist.py),
+# so this is written to revert: the owner's yes moves a pair from _DIAG_KEYS_WITHHELD into _DIAG_KEYS_APPROVED with its date, and the pin
+# then holds the pair present. It keys on (surface, key) pairs, so it cannot see a re-route under a key another surface already admits
+# (`n` and `sid` are chat's; `why` is chat's, federation's, pane-shim's and shell's); the writer pins catch that: LazyPanes' unfiltered
+# clientDiag read in tests/test_pane_state_broadcast.py and the posted list in ui/webview/feed-hidden-paint.test.ts.
+_DIAG_KEYS_WITHHELD = (("shell", "pane"), ("shell", "n"),
+                       ("feed", "itemId"), ("feed", "sid"), ("feed", "why"), ("feed", "key"), ("feed", "painted"))
+_DIAG_KEYS_APPROVED = ()   # (surface, key, the owner's date) for a pair moved out of _DIAG_KEYS_WITHHELD on the owner's word
+
+
 def _mobile_js():
     """The phone shell script AS THE PAGE RUNS IT: the served template itself. _landing() splices the layout probe's
     media query inline when the template is built (json.dumps(_MOBILE_MQ) in the template string), so there is no
@@ -199,7 +212,6 @@ class LandingShell(unittest.TestCase):
         self.assertIn("body.pane-failed #pane-load>.rl-in{display:none}", html, "…with the loader down and the message in its place")
         self.assertIn("body.pane-failed #pane-load-msg{display:block}", html)
         self.assertLess(html.index("@media " + km._MOBILE_MQ + "{"), html.index("body.pane-failed #pane-load{display:flex"), "the failed paint lives inside the phone media block too")
-        self.assertIn("pane", km.CLIENT_DIAG_KEYS["shell"]); self.assertIn("n", km.CLIENT_DIAG_KEYS["shell"]); self.assertIn("via", km.CLIENT_DIAG_KEYS["shell"])   # the pane-load-failed row's keys survive the allowlist
         self.assertIn("#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}", html)
         self.assertIn("body.pane-loading #pane-load{display:flex}", html)
         self.assertIn("body.theme-light #pane-load{background:#F1EAE2}", html)
@@ -221,9 +233,21 @@ class LandingShell(unittest.TestCase):
         self.assertLess(js.index("try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}"), js.index("try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}\nwindow.__rompMobileTab=show;"))
         # the boot: the parking of data-src runs before the boot show, whose line is upstream's text
         self.assertLess(js.index("lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');"), js.index("var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);"))
-        self.assertIn("var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},EPI={},TOK={},PEND={},DEAD={};", js)   # + the promoted urls, the failure counts (page-life and per episode, review round 3), and the promotion tokens (HIGH 2, review round 1)
+        self.assertIn("var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},EPI={},TOK={},PEND={},DEAD={};", js)   # + the promoted urls, the failure count per episode (review round 3; the page-life count left with its row in the reviewer's round 7), and the promotion tokens (HIGH 2, review round 1)
         self.assertNotIn("__rompPanePromote", js, "no window export of promote() (review round 3, fresh-3): no production code called it; the three promotion roads (show(), the boot block, the lazyFlip listener) call the local promote() directly, and a re-add would be an unused seam commented as a road")
         self.assertIn("if(en){if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));", km._LANDING_COLLAPSE_JS, "the controller's promotion line is untouched")
+
+    def test_the_seven_lazy_pane_diag_keys_are_withheld_from_the_allowlist(self):
+        # the absence pin of the reviewer's round-7 ruling on regression-1 (_DIAG_KEYS_WITHHELD above says why and how it reverts)
+        self.assertEqual(len(_DIAG_KEYS_WITHHELD) + len(_DIAG_KEYS_APPROVED), 7, "the seven pairs the three rows posted, each in exactly one table")
+        self.assertEqual({(s, k) for s, k, _ in _DIAG_KEYS_APPROVED} & set(_DIAG_KEYS_WITHHELD), set(), "a pair is withheld or approved, never both")
+        for surface, key in _DIAG_KEYS_WITHHELD:
+            with self.subTest(withheld=(surface, key)):
+                self.assertNotIn(key, km.CLIENT_DIAG_KEYS[surface], "%s's %r is withheld: no page-to-kernel key lands without the owner's word" % (surface, key))
+        for surface, key, date in _DIAG_KEYS_APPROVED:
+            with self.subTest(approved=(surface, key, date)):
+                self.assertIn(key, km.CLIENT_DIAG_KEYS[surface], "%s's %r was approved by the owner on %s" % (surface, key, date))
+        self.assertIn("via", km.CLIENT_DIAG_KEYS["shell"], "the shell's `via` is main's key (reveal-post, deeplink, tap-pending), not one of the seven")
 
     def test_shell_reveal_listener_wired(self):
         html = km._landing()
@@ -1510,19 +1534,18 @@ global.__rompMobileTab('waiting');   // the tap: the src is set, the promotion l
 PANES['f-waiting'].contentWindow=window;   // the pane's window IS the frame's contentWindow (before this glue the frame carried a bare fake)
 PANES['f-waiting'].contentDocument={URL:'https://TESTHOST/waiting'};   // its document, committed at the pane's url
 """, scenario=r"""
-shOpen();shRecv({type:'ka'});   // the shell's socket is open: a shell client-diag row goes out at once
+shOpen();shRecv({type:'ka'});   // the shell's socket is open: a clientDiag message would go out at once, so the read below sees any
 var t_marker={type:typeof window.__rompApp,value:window.__rompApp};   // what the REAL shim set at its parse
 var t_before={loading:DIVCLS['f-waiting'].has('loading'),failed:DIVCLS['f-waiting'].has('failed')};
 (LOADFNS['f-waiting']||[]).forEach(function(f){f({type:'load'});});   // the frame's load event: the shell's listener reads the document
-function shRows(what){var all=[];SHSOCKS.forEach(function(s){s.sent.forEach(function(x){var m=JSON.parse(x);if(m.type==='clientDiag'&&m.surface==='shell'&&m.what===what)all.push(m.data);});});return all;}
+function diagAll(){var all=[];SHSOCKS.forEach(function(s){s.sent.forEach(function(x){var m=JSON.parse(x);if(m&&m.type==='clientDiag')all.push(m);});});return all;}   // every clientDiag message, any surface, any what
 out({marker:t_marker,before:t_before,after:{loading:DIVCLS['f-waiting'].has('loading'),failed:DIVCLS['f-waiting'].has('failed')},
-unmarked:shRows('pane-load-unmarked'),failedRows:shRows('pane-load-failed'),listeners:(LOADFNS['f-waiting']||[]).length});""")
+diag:diagAll(),listeners:(LOADFNS['f-waiting']||[]).length});""")
         self.assertEqual(r["marker"], {"type": "string", "value": "waiting"}, "the real shim set the marker on the pane's window at its parse (APP)")
         self.assertEqual(r["before"], {"loading": True, "failed": False}, "after the tap the pane is loading")
         self.assertGreaterEqual(r["listeners"], 1, "the shell's promotion listener is on the frame (a case over no listener would witness nothing)")
-        self.assertEqual(r["after"], {"loading": False, "failed": False}, "the load: the shell read the pane's OWN document (docState 'app') and ended the loading state, no failure")
-        self.assertEqual(r["unmarked"], [], "no pane-load-unmarked row: the shell's reader recognised the marker the real shim set (a renamed marker on either side files one here)")
-        self.assertEqual(r["failedRows"], [], "no pane-load-failed row")
+        self.assertEqual(r["after"], {"loading": False, "failed": False}, "the load: the shell read the pane's OWN document (docState 'app') and ended the loading state, no failure (a renamed marker on either side reads 'other' here, since this document carries no 200 stamp, and fails the pane: the red this pin exists for)")
+        self.assertEqual(r["diag"], [], "no clientDiag message of any surface or what (the lazy panes post none since the reviewer's round 7)")
         # the belt beside the executed case: the two literals, so a rename that keeps the pair in step still shows up in a diff review
         self.assertIn("window.__rompApp=APP;", km._shim_core_js("waiting"), "the shim's marker line")
         self.assertIn("if(w&&typeof w.__rompApp==='string')return 'app';", km._LANDING_MOBILE_JS, "the shell's read of the same name (review round 4: the marker is read first, the kernel's 200 stamp tells doc from other after it)")

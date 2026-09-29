@@ -134,8 +134,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertEqual(d["sets"], 2, "two src sets: the phone's tap and the desktop's promotion: %r" % (d,))
         pa = r["phoneAgain"]
         self.assertEqual((pa["mobile"], pa["src"], pa["divFailed"], pa["bodyFailed"], pa["bodyLoading"], pa["display"], pa["sets"]), (True, "/waiting", False, False, False, "block", 2), "back on the phone the tab shows the loaded pane: no failed overlay over a working pane (the round-2 refuter's rotate-and-back road), no third promotion: %r" % (pa,))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}], "one failure row, the phone's: %r" % (r["rows"],))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-unmarked"], [], "the desktop's load was the pane's own document, not an unmarked one")
+        self.assertEqual(r["rows"], [], "no pane-load-failed or pane-load-unmarked row: the failures are shown, and filed nowhere (the reviewer's round 7, regression-1): %r" % (r["rows"],))
         self.assertEqual(r["errors"], [], "no page errors")
 
     def test_B_a_failure_judged_after_a_flip_mid_load_re_promotes_on_the_desktop_once_and_the_phone_armed_detectors_are_inert(self):
@@ -152,7 +151,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertEqual((a["sets"], a["src"], a["divFailed"]), (2, "/waiting", False), "exactly two promotions (the tap's and the desktop's): no third, the phone's listener and backstop being inert on their stale token: %r" % (a,))
         self.assertEqual(len(r["requests"]), 2, "two document requests for /waiting reached the wire (the aborted one and the real one): %r" % (r["requests"],))
         self.assertEqual(r["routeHeld"], 2, "the route saw the held-then-aborted request and one that passed: %r" % (r["routeHeld"],))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}], "one failure row via load, the desktop-judged one: %r" % (r["rows"],))
+        self.assertEqual(r["rows"], [], "no pane-load-failed or pane-load-unmarked row: the failures are shown, and filed nowhere (the reviewer's round 7, regression-1): %r" % (r["rows"],))
         self.assertEqual(r["errors"], [], "no page errors")
 
     def _case_c(self, recover):
@@ -185,9 +184,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertTrue(rec["url"].endswith("/waiting") and rec["spinGone"] and rec["head"], "its document is the Waiting page, painted: %r" % (rec,))
         self.assertEqual(len(r["requests"]), 3, "three document requests in all: the two aborted and the one that passed: %r" % (r["requests"],))
         self.assertEqual(r["routeHeld"], 3, "the route saw exactly the three: %r" % (r["routeHeld"],))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}, {"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 2}],
-                         "two failure rows: the phone-armed detector's and the desktop's own (pass 3 left the second unsaid); the recovery filed none: %r" % (r["rows"],))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-unmarked"], [], "nothing was shown as served")
+        self.assertEqual(r["rows"], [], "no pane-load-failed or pane-load-unmarked row: the failures are shown, and filed nowhere (the reviewer's round 7, regression-1): %r" % (r["rows"],))
         self.assertEqual(r["errors"], [], "no page errors")
 
     def test_C_when_the_desktop_re_promotion_fails_too_the_flip_back_parks_it_with_the_failed_state_and_the_tab_tap_recovers(self):
@@ -230,17 +227,15 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertEqual((rec["mobile"], rec["src"], rec["lazy"], rec["divFailed"], rec["bodyFailed"], rec["bodyLoading"], rec["sets"]), (True, "/waiting", None, False, False, False, 3), "the third promotion, by the tab tap: the pane loaded, the failed state gone: %r" % (rec,))
         self.assertTrue(rec["url"].endswith("/waiting") and rec["spinGone"] and rec["head"], "its document is the Waiting page, painted: %r" % (rec,))
         self.assertEqual((len(r["requests"]), r["routePassed"]), (3, 1), "three document requests in all: the two denied and the one that passed: %r" % (r["requests"],))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}, {"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 2}],
-                         "two failure rows via load (the 403 commits a document and fires load); the recovery filed none: %r" % (r["rows"],))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-unmarked"], [], "nothing was shown as served")
+        self.assertEqual(r["rows"], [], "no pane-load-failed or pane-load-unmarked row: the failures are shown, and filed nowhere (the reviewer's round 7, regression-1): %r" % (r["rows"],))
         self.assertEqual(r["errors"], [], "no page errors")
 
     def test_E_a_slow_desktop_load_is_held_through_the_backstop_and_lands_on_the_kept_src(self):
         # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 findings tests-2 with extra9-1): every desktop promotion arms the 30 s backstop since pass 4, and its `blank` answer
-        # (a fetch not yet committed) was a failure there too, so a healthy but slow desktop load was torn down at 30 s, re-fetched, and filed a
-        # row (the LazyPanes node cases drive the same lines and the rotation back). Here the Waiting pane's one request is held 34 s by the route
+        # (a fetch not yet committed) was a failure there too, so a healthy but slow desktop load was torn down at 30 s and re-fetched (the
+        # LazyPanes node cases drive the same lines and the rotation back). Here the Waiting pane's one request is held 34 s by the route
         # and then answered by the lab kernel: at the backstop the src is kept and nothing is re-fetched (one request on the wire, one src set),
-        # the row records the 30 s uncommitted document, and the document lands on the kept src and paints.
+        # and the document lands on the kept src and paints.
         r = self._drive("E")
         fl = r["flipped"]
         self.assertEqual((fl["mobile"], fl["src"], fl["lazy"], fl["dataSrc"], fl["sets"], fl["url"]), (False, "/waiting", None, "/waiting", 1, "about:blank"), "the rotation to the desktop promoted the parked pane; its request is held, the frame's document still the initial about:blank: %r" % (fl,))
@@ -255,9 +250,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertTrue(ld["url"].endswith("/waiting") and ld["spinGone"] and ld["head"], "its document is the Waiting page, painted: %r" % (ld,))
         self.assertEqual((r["after"]["sets"], r["after"]["src"]), (1, "/waiting"), "and nothing promoted again: %r" % (r["after"],))
         self.assertEqual((len(r["requests"]), r["routeHeld"]), (1, 1), "one document request in all, the held one: %r" % (r["requests"],))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "backstop", "n": 1}],
-                         "one row via the backstop: the 30 s uncommitted document is recorded (the hold keeps the src; the load that landed ended the episode): %r" % (r["rows"],))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-unmarked"], [], "nothing was shown as served")
+        self.assertEqual(r["rows"], [], "no pane-load-failed or pane-load-unmarked row: the hold is page state alone (the reviewer's round 7, regression-1): %r" % (r["rows"],))
         self.assertEqual(r["errors"], [], "no page errors")
 
 
