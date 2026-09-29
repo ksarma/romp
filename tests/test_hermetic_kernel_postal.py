@@ -1523,6 +1523,8 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal.test_a_tracked_dict_is_read_only_through_the_allowed_reads_and_any_other_reference_is_loud",
     "HermeticKernelPostal.test_an_augmented_write_and_a_key_bound_as_a_target_are_read_with_no_value",
     "HermeticKernelPostal.test_every_shape_named_outside_the_scan_writes_when_run_and_the_scan_reads_none",
+    "HermeticKernelPostal.test_the_conftests_builtin_setattr_delattr_and_compile_defeat_a_literal_key_and_a_def_local",
+    "HermeticKernelPostal.test_the_direct_import_positive_allowlist_refuses_a_false_proof_no_list_holds",
     "HermeticKernelPostal.test_the_fail_closed_anyio_rule_admits_a_key_only_where_it_proves_one_fixed_string_and_refuses_the_rest",
     "HermeticKernelPostal.test_the_fixture_spelling_scan_follows_an_alias_chain_to_the_pass_that_adds_nothing",
     "HermeticKernelPostal.test_the_licence_check_reds_on_a_new_name_on_each_fixed_leak_put_back_and_on_a_value_outside_its_licence",
@@ -6493,6 +6495,9 @@ _ANYIO_ATTRIBUTE_READERS = frozenset(("getattr", "hasattr", "getattr_static", "a
 _ANYIO_FOLD_CAP = 64
 #   the most values THE ANYIO RULE folds one expression to: a fold past it is refused, since a value beyond it could
 #   name anyio unread
+_ANYIO_ALLOWLIST_NAMES_CAP = 8
+#   the most out-of-allowlist names THE POSITIVE ALLOWLIST names in one direct import's refusal before it says "and N
+#   more": one is enough to refuse the module wholesale, and the cap keeps a refusal readable
 _ANYIO_PARSES = frozenset(("parse_args", "parse_known_args", "parse_intermixed_args", "parse_known_intermixed_args"))
 #   the parses of an argument parser that read sys.argv when handed no list of arguments or None (argparse's four, and
 #   optparse's parse_args): THE ANYIO RULE admits one only as a call handed a list it proves, and refuses a value naming
@@ -6585,10 +6590,37 @@ _ANYIO_WRITERS = {"__globals__": "a def's __globals__", "__dict__": "an object's
 #   vars(km), re.compile). Each is 0 live: tests/__init__.py names none of them (it names sys.modules, which is why the
 #   ruling leaves modules out)
 _ANYIO_DIRECT_WHOLESALE = {**_ANYIO_INTROSPECTION, **_ANYIO_REACHERS, **_ANYIO_WRITERS}
-#   what THE ANYIO RULE refuses wholesale anywhere in the whole text of a module of the repository the conftest imports
-#   directly: the four runtime-introspection channels, the fourteen names that reach a frame, a cell or code run from a
-#   string, and the ten names that write a namespace or an attribute by a name or build code, twenty-eight tokens, read
-#   by _anyio_channels
+#   what THE ANYIO RULE names WHOLESALE by category anywhere in the whole text of a module of the repository the conftest
+#   imports directly: the four runtime-introspection channels, the fourteen names that reach a frame, a cell or code run
+#   from a string, and the ten names that write a namespace or an attribute by a name or build code, twenty-eight tokens,
+#   read by _anyio_channels. These give a direct import's refusal its category, but the direct-import check is a POSITIVE
+#   ALLOWLIST (_ANYIO_DIRECT_ALLOWED, below): a name outside the allowlist refuses the module whether or not it is one of
+#   these twenty-eight
+_ANYIO_DIRECT_ALLOWED = frozenset({'AttributeError', 'Exception', 'IndexError', 'KeyError', 'LINEAGE', 'OSError',
+    'PARENT_ROOT', 'ProcessLookupError', 'STATE_DIR', 'SYSTEM_TMPDIR', 'TEST_ROOT_CHILDREN', 'TEST_ROOT_OWNER_MARKER',
+    'TEST_ROOT_PREFIX', 'TMP_ROOT', 'TypeError', 'ValueError', '_HANDED', '_MADE_DIRS', '_REAL_MKDTEMP', '_above',
+    '_env_ring_census', '_fs_clock', '_git_fixture', '_lab_dist', '_lab_dist_stub', '_pid_alive', '_romp_load',
+    '_sdk_blocker', '_tracked_mkdtemp', 'a', 'above', 'abspath', 'all', 'append', 'argv', 'atexit', 'basename',
+    'child', 'clear', 'd', 'depth', 'dict', 'dir', 'dirname', 'dumps', 'encoding', 'env_ring_census', 'environ',
+    'fh', 'fromkeys', 'fs_clock', 'get', 'getattr', 'getpid', 'gettempdir', 'git_fixture', 'handed',
+    'ignore_errors', 'int', 'isdir', 'isinstance', 'islink', 'join', 'json', 'k', 'kill', 'lab_dist',
+    'lab_dist_stub', 'line', 'lineage', 'lines', 'list', 'load', 'loads', 'mint_root', 'mkdtemp', 'modules', 'open',
+    'os', 'out', 'p', 'parent', 'parent_root', 'path', 'pid', 'pop', 'prefix', 'r', 'read', 'realpath', 'rec',
+    'record_child_root', 'register', 'remove_dead_children', 'remove_made_dirs', 'remove_tmp_root', 'reversed',
+    'rindex', 'rmtree', 'romp_load', 'romp_tracked', 'root', 'root_lineage', 'rp', 'sdk_blocker', 'sep',
+    'setdefault', 'shutil', 'split', 'splitlines', 'startswith', 'stat', 'state', 'str', 'survivors', 'sys',
+    'system', 'tempdir', 'tempfile', 'time', 'write', 'write_owner_marker'})
+#   THE POSITIVE ALLOWLIST (the reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894, its first medium): a
+#   list of dangerous names does not converge, since a false proof can reach a builtin by names no list holds
+#   (object.__setattr__, operator.methodcaller, builtins, __import__, importlib), so the direct-import check is turned
+#   around. The identifiers and attribute names a module of the repository the conftest imports directly may name are
+#   held EQUAL to the set tests/__init__.py's text names today (this frozenset), derived by _anyio_identifier_names, the
+#   rule's own reading over that module's whole text; any OTHER identifier or attribute name of a direct import refuses
+#   the module wholesale, naming the name and its line, whatever def, class or statement holds it. 0 live by
+#   construction: tests/__init__.py is the conftest's one in-repo direct import, and its own names ARE the allowlist, so
+#   it names nothing outside it. _anyio_direct_allowed_names re-derives the set from tests/__init__.py and the pin
+#   test_the_direct_import_allowlist_equals_what_tests_init_names asserts it equals this constant, so a new name in
+#   tests/__init__.py is a loud red that names it (the set must then be reviewed and re-committed)
 
 
 def _anyio_channels(node, tokens=_ANYIO_INTROSPECTION):
@@ -6620,6 +6652,45 @@ def _anyio_channels(node, tokens=_ANYIO_INTROSPECTION):
     else:
         return frozenset()
     return frozenset(p for s in spelled for p in (s, *s.split("."))).intersection(tokens)
+
+
+def _anyio_identifier_names(node):
+    """Every identifier and attribute name the node `node` names, by THE ANYIO RULE's own reading (_anyio_channels'
+    forms, but a str or bytes literal names nothing here): a Name's id, an Attribute's attr, an arg's, a keyword's, a
+    def's or a class's name, an alias's name and asname, an ImportFrom's module and the names of a global or nonlocal
+    statement, each whole and by its dotted parts. This is the alphabet of THE POSITIVE ALLOWLIST (_ANYIO_DIRECT_ALLOWED)
+    -- the identifiers and attribute names a module of the repository the conftest imports directly may name -- read the
+    same way over that module's text and over tests/__init__.py, so the derived set and a direct import's names are
+    compared on the same footing (the reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894)."""
+    if isinstance(node, ast.Name):
+        spelled = [node.id]
+    elif isinstance(node, ast.Attribute):
+        spelled = [node.attr]
+    elif isinstance(node, ast.arg):
+        spelled = [node.arg]
+    elif isinstance(node, ast.alias):
+        spelled = [node.name, node.asname or ""]
+    elif isinstance(node, ast.ImportFrom):
+        spelled = [node.module or ""]
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        spelled = [node.name]
+    elif isinstance(node, ast.keyword):
+        spelled = [node.arg or ""]
+    elif isinstance(node, (ast.Global, ast.Nonlocal)):
+        spelled = list(node.names)
+    else:
+        return frozenset()
+    return frozenset(p for s in spelled for p in (s, *s.split(".")) if p)
+
+
+def _anyio_direct_allowed_names(tree):
+    """The identifiers and attribute names `tree` (tests/__init__.py's) names, by _anyio_identifier_names read over its
+    whole text: THE POSITIVE ALLOWLIST derived. The pin asserts this equals _ANYIO_DIRECT_ALLOWED, so a name added to
+    tests/__init__.py reds loudly and names itself (the set is reviewed and re-committed)."""
+    out = set()
+    for n in ast.walk(tree):
+        out |= _anyio_identifier_names(n)
+    return frozenset(out)
 
 
 def _anyio_module_file(dotted, dirs):
@@ -6795,6 +6866,42 @@ def _anyio_literal(name, decls, scope, rebound):
     return d.value.value, None
 
 
+def _anyio_builtin_defeaters(tree, proven):
+    """Why the conftest's own text names a builtin that defeats a literal key and a def's local: a setattr, delattr or
+    object.__setattr__ call -- a BARE NAME (setattr, delattr), through builtins (builtins.setattr, builtins.__setattr__)
+    or object.__setattr__/object.__delattr__ -- whose target name (its second argument) THE PROOF does not prove, since
+    such a call can rewrite the hook's code object, a def's locals or a name of the module's scope; and a BARE-NAME
+    compile() call (bare, or builtins.compile), which builds code the rule does not parse. "" for none (the reviewer's
+    ruling of 2026-09-29 15:08Z on round 2 of fork PR #894, its second medium). The builtin is told from an attribute
+    call of the same name: re.compile and monkeypatch.setattr are attributes of a name other than builtins or object, not
+    the builtin, and are NOT defeaters (the live conftest names both, at re.compile and monkeypatch.setattr). A call whose
+    target name IS proven (setattr(o, 'attr', v) by a literal) names one fixed attribute, not the key, and is no
+    defeater."""
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        kind = None                          # "setattr" | "delattr" | "compile", called as the builtin
+        if isinstance(f, ast.Name) and f.id in ("setattr", "delattr", "compile"):
+            kind = f.id
+        elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+            if f.value.id == "builtins" and f.attr in ("setattr", "delattr", "compile", "__setattr__", "__delattr__"):
+                kind = "compile" if f.attr == "compile" else "setattr" if "set" in f.attr else "delattr"
+            elif f.value.id == "object" and f.attr in ("__setattr__", "__delattr__"):
+                kind = "setattr" if "set" in f.attr else "delattr"
+        if kind is None:
+            continue
+        if kind == "compile":
+            return ("a bare-name compile() call, which builds code the rule does not parse, so a literal key and a def's "
+                    "local beside it are not safe")
+        target = n.args[1] if len(n.args) >= 2 else None
+        if target is None or proven(target)[0] is None:
+            return ("a builtin %s() call whose target name THE PROOF does not prove, which can rewrite the hook's code "
+                    "object, a def's locals or a name of the module's scope, so a literal key and a def's local beside it "
+                    "are not safe" % kind)
+    return ""
+
+
 def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     """[(line, what)] for each read of the anyio option THE ANYIO RULE finds in `tree`, a conftest's text, wherever it
     stands (the module's import-time code and the body of every def, lambda and class, their decorators and defaults
@@ -6822,22 +6929,25 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     a fold ('verb' + 'ose') is refused though the rule folds it. Outside the kinds WHAT IT DOES NOT READ lists, a read
     the rule admits can reach the option one way only, and that way is a defect of the rule: the rule PROVED a key or a
     binding that is false. The kinds of road no honest author writes, whose only effect is to escape the check, are
-    refused wholesale where one syntactic check does it and refuses nothing of tests/conftest.py, its reading of
-    tests/__init__.py included (a write to the module's namespace, at the end of the fifth clause; a double-underscore
-    attribute read on an object of a module of the repository the text imports directly, and a decorated def or class of
-    such a module, the last clause; the RUNTIME-INTROSPECTION channels gc, ctypes, _ctypes and __code__, refused
-    wherever the text names one; exec, eval, f_locals, cell_contents, __closure__, f_globals, f_back and sys._getframe,
-    which defeat THE PROOF of a def's local and of a literal key as well as of a name of the module's scope wherever the
-    text names one; and THE WHOLESALE REFUSAL OF A DIRECT IMPORT, a module of the repository the text imports directly
-    refused whole for any of those twelve names, f_builtins, inspect.currentframe, tb_frame, gi_frame, cr_frame or
-    ag_frame, or a def's __globals__, an object's __dict__, setattr, delattr, globals, vars, locals, compile,
-    types.FunctionType or types.CodeType, anywhere in its text, whatever def, class or statement holds it there, all at
-    the end of THE PROOF; and the checks the other clauses name), and
+    refused, and refuse nothing of tests/conftest.py, its reading of
+    tests/__init__.py included: in the conftest's own text (a write to the module's namespace, at the end of the fifth
+    clause; the RUNTIME-INTROSPECTION channels gc, ctypes, _ctypes and __code__, refused wherever the text names one;
+    exec, eval, f_locals, cell_contents, __closure__, f_globals, f_back and sys._getframe, which defeat THE PROOF of a
+    def's local and of a literal key as well as of a name of the module's scope wherever the text names one; and, since
+    the reviewer's ruling of 2026-09-29 15:08Z, a builtin setattr, delattr or object.__setattr__ call whose target name
+    THE PROOF does not prove, and a bare-name compile call, which defeat a literal key and a def's local too,
+    _anyio_builtin_defeaters -- an attribute call of a name other than builtins or object, monkeypatch.setattr and
+    re.compile, is not one, so the live conftest's own are not refused); and, through a module of the repository the text
+    imports directly, THE POSITIVE ALLOWLIST (_ANYIO_DIRECT_ALLOWED), which refuses the module whole for any identifier or
+    attribute name of its whole text that tests/__init__.py does not name -- the twenty-eight names of
+    _ANYIO_DIRECT_WHOLESALE among them, given a category, and any other (object, __setattr__, operator, methodcaller,
+    builtins, __import__) as one no earlier list held -- plus the last clause's double-underscore attribute read on an
+    object of such a module, and its decorated def or class; and the checks the other clauses name), and
     otherwise are a line of WHAT IT DOES NOT READ, below. It claims no more than that, and never every read: no
     syntactic check over Python sees every read a module's code can make, a read reached only through a module the
     conftest imports transitively (an import of an import) is read by none of it, and through a module it imports
-    directly the rule reads the last clause's shapes and, over the module's whole text, the twenty-eight names of THE
-    WHOLESALE REFUSAL OF A DIRECT IMPORT, and nothing else.
+    directly the rule reads the last clause's shapes and, over the module's whole text, THE POSITIVE ALLOWLIST, and
+    nothing else.
     THE PROOF (_anyio_literal over _anyio_rebinders): a key is proven only as a str literal, or as a name bound once, by
     an assignment of a str literal to it alone (a plain or annotated one), with nothing else in the text that binds it:
     no second declaration of any kind (a rebinding, an augmented assignment, a loop, with, except or match target, a
@@ -6847,7 +6957,13 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     enclosing def's cell; a read of __closure__, which hands that cell to a writer that names neither,
     ctypes.pythonapi.PyCell_Set; or a read of f_globals, f_back or sys._getframe, which reach a frame and the module
     namespace it runs in) -- these eight defeat the proof of a def's local, and of a literal key too, so a literal
-    key is unproven wherever the text names one, and,
+    key is unproven wherever the text names one; and no builtin defeater (_anyio_builtin_defeaters, the reviewer's ruling
+    of 2026-09-29 15:08Z): a builtin setattr, delattr or object.__setattr__ call -- a bare name, through builtins, or
+    object.__setattr__ -- whose target name THE PROOF does not prove, and a bare-name compile call, which can rewrite the
+    hook's code object, a def's locals or a name of the module's scope, so each defeats a def's local and a literal key
+    beside it (an attribute call of a name other than builtins or object -- re.compile, monkeypatch.setattr -- is not one,
+    so the live conftest's own are not refused; a bare setattr whose target THE PROOF proves names one fixed attribute,
+    not the key, and is no defeater); and,
     for a name of the module's scope, nothing that can rebind it unread: a star import; globals(), vars() or locals()
     read other than as a call whose result is only read (by a subscript in a load, a read-only method or `in`); an
     attribute store or del, setattr or delattr naming it, or setattr or delattr naming the attribute it writes by no str
@@ -6862,7 +6978,8 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     has the name, and nothing in the conftest's text can rebind the module's attribute of that name or the conftest's
     own name; that module's literals are THE PROOF read over its own text, so a name of _ANYIO_DEFEATERS anywhere in
     it defeats the proof of each name it binds, as one in the conftest's text defeats the proof of a name of the
-    conftest's module scope (and refuses the module whole, THE WHOLESALE REFUSAL OF A DIRECT IMPORT, below). Anything
+    conftest's module scope (and, since a defeater is a name tests/__init__.py does not hold, refuses the module whole,
+    THE POSITIVE ALLOWLIST OF A DIRECT IMPORT, below). Anything
     else is unproven, whatever the rule could fold it to.
     THE RUNTIME-INTROSPECTION CHANNELS (_ANYIO_INTROSPECTION, the reviewer's ruling of 2026-09-29 04:46Z on round 2 of
     fork PR #894, which refuses them wholesale in the conftest and every direct import): the gc module, the ctypes
@@ -6872,32 +6989,35 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     its memory and __code__ a function's very constants, so a proof over the text cannot bound what they change (_ctypes
     joins the channels as the C half of the ctypes module the ruling names, escape-only and 0 live). The conftest's own
     is refused where it stands. Each is 0 live.
-    THE WHOLESALE REFUSAL OF A DIRECT IMPORT (_ANYIO_DIRECT_WHOLESALE, the same ruling carried to its end for the
-    direct imports by the ninety-ninth round-2 commit of fork PR #894, and widened by the hundredth on the reviewer's
-    ruling of 2026-09-29 09:01Z): a module of the repository the text imports directly is refused whole where its WHOLE
-    TEXT names, anywhere, whatever def, class or statement holds it (a def that returns nothing and has no decorator,
-    which the last clause does not match, included), any of twenty-eight names: the four runtime-introspection
-    channels; the eight defeaters exec, eval, f_locals, cell_contents, __closure__, f_globals, f_back and sys._getframe;
-    the other frame-reaching names f_builtins, inspect.currentframe, tb_frame, gi_frame, cr_frame and ag_frame
-    (_ANYIO_REACHERS holds the fourteen names that are no channel); and the ten names that write a namespace or an
-    attribute by a name, or build code (_ANYIO_WRITERS): a def's __globals__, an object's __dict__, setattr, delattr,
-    globals, vars, locals, compile, types.FunctionType and types.CodeType. Each is read by _anyio_channels, the reading
-    the conftest's channels get, since a def of such a module can rewrite, through an object the conftest hands it (a
-    def, whose cells and globals are the conftest's, the frame that calls it, or the conftest's module), a name or a cell
-    of the conftest THE PROOF proved over the conftest's own text, or build and run code the rule does not parse, where
-    a defeater in that module defeats only the module's own names: the body check at the ninety-eighth round-2 commit
-    rewrote a def's local cell through exec, and through __closure__ and cell_contents with no exec, and the conftest's
-    module name through sys._getframe(1).f_globals, each in a plain def of a direct import, and the rule admitted each;
-    and the four roads the ninety-ninth listed, each in a plain def of a direct import naming none of the eighteen
-    names it refused for (the conftest's module name written through a def's __globals__ the conftest hands it, G1, and
-    by setattr on the conftest's module, G2, and a def's local cell written by code compiled in mode "single" and run
-    through types.FunctionType, G3s, and by setattr with attribute names built at run time, G4), were admitted by the
-    rule while a config's getoption was handed "plugins" at run time, and the ten names refuse each. The module is
-    refused at each import of the text that reads it and at each attribute chain through which the last clause's walk
-    reads it (a submodule a package binds included), one refusal for the channels, one for the names that reach a
-    frame, a cell or code run from a string and one for the names that write a namespace or an attribute by a name or
-    build code, each naming what it found, its line in that module and the module. Each name is 0 live:
-    tests/__init__.py names none.
+    THE POSITIVE ALLOWLIST OF A DIRECT IMPORT (_ANYIO_DIRECT_ALLOWED, the reviewer's ruling of 2026-09-29 15:08Z on round
+    2 of fork PR #894, which turns the wholesale refusal the ninety-eighth to hundredth round-2 commits built around):
+    a list of dangerous names does not converge, since a false proof through a plain def of a direct import can reach a
+    builtin by a name no list holds (object.__setattr__, type(o).__setattr__, operator.methodcaller,
+    getattr(builtins, ...), __import__), so the check is turned around. A module of the repository the text imports
+    directly may name ONLY the identifiers and attribute names tests/__init__.py's text names today (_ANYIO_DIRECT_ALLOWED,
+    derived by _anyio_identifier_names, the rule's own reading over that module's whole text); it is refused WHOLE where
+    its whole text names, anywhere, whatever def, class or statement holds it (a def that returns nothing and has no
+    decorator, which the last clause does not match, included), any OTHER identifier or attribute name, the refusal naming
+    the name and its line. The twenty-eight names of _ANYIO_DIRECT_WHOLESALE (the four runtime-introspection channels; the
+    eight defeaters exec, eval, f_locals, cell_contents, __closure__, f_globals, f_back and sys._getframe; the other
+    frame-reaching names f_builtins, inspect.currentframe, tb_frame, gi_frame, cr_frame and ag_frame, _ANYIO_REACHERS's
+    fourteen that are no channel; and the ten names that write a namespace or an attribute by a name or build code,
+    _ANYIO_WRITERS: a def's __globals__, an object's __dict__, setattr, delattr, globals, vars, locals, compile,
+    types.FunctionType and types.CodeType) are outside the allowlist too, so the allowlist alone refuses a module that
+    names one; a refusal for such a name additionally gives its CATEGORY (why a def of the module could rewrite, through
+    an object the conftest hands it, a name or a cell THE PROOF proved, or build and run code the rule does not parse),
+    while any name no list holds is refused as one tests/__init__.py does not name. The body check's roads at the
+    ninety-eighth to hundredth commits (a def's local cell rewritten through exec, through __closure__ and cell_contents,
+    the conftest's module name through sys._getframe(1).f_globals, through a def's __globals__, by setattr, by compile and
+    types.FunctionType), and the verifier's V1 to V4, R2, R3 and ADV5 (object.__setattr__, type(o).__setattr__,
+    operator.methodcaller, getattr(builtins, ...), __import__), each in a plain def of a direct import, were admitted by
+    the rule before this commit while a config's getoption was handed "plugins" at run time, and the allowlist refuses
+    each. The module is refused at each import of the text that reads it and at each attribute chain through which the
+    last clause's walk reads it (a submodule a package binds included), one refusal for the channels, one for the names
+    that reach a frame, a cell or code run from a string, one for the names that write a namespace or an attribute by a
+    name or build code, and one for each other name outside the allowlist (capped, "and N more" past the cap), each
+    naming what it found, its line in that module and the module. 0 live by construction: tests/__init__.py, the
+    conftest's one in-repo direct import, names nothing outside the allowlist, since the allowlist IS its own names.
     HOW IT FOLLOWS A ROAD: a carrier or a keyed read is read as an attribute of anything, so an alias of the object it
     is read from (sys under another name, the plugin manager bound to a name) changes nothing; a carrier read and bound
     to a name is refused where it is read, and so is a keyed read taken other than as a call (getoption bound to a name
@@ -6993,9 +7113,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
       bind; and every decorated def or class of the module's scope, whatever it holds, since its decorator can make the
       name return, or be, what its body does not (the fail-closed ruling). A def that returns nothing and has no
       decorator is not matched, whatever it reads (tests/__init__.py's write_owner_marker copies the basenames of
-      sys.argv[:3] into the owner marker and returns nothing); a name of THE WHOLESALE REFUSAL OF A DIRECT IMPORT it
-      names (a runtime-introspection channel, a name that reaches a frame, a cell or code run from a string, or a name
-      that writes a namespace or an attribute by a name or builds code) refuses
+      sys.argv[:3] into the owner marker and returns nothing); a name outside THE POSITIVE ALLOWLIST it
+      names (one tests/__init__.py does not name, a name of _ANYIO_DIRECT_WHOLESALE given its category -- a
+      runtime-introspection channel, a name that reaches a frame, a cell or code run from a string, or a name that writes
+      a namespace or an attribute by a name or builds code -- or any other) refuses
       the module all the same, as one anywhere in the module's text does, at each import that reads the module and at
       each attribute chain the walk reads it through (above). A read in the text of such a module
       WHOLE, the name or the
@@ -7034,10 +7155,13 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     line of WHAT IT DOES NOT READ), writes no namespace through globals(), vars() or locals() at the module's level, and
     holds no value naming mainargv, and names none of the runtime-introspection channels gc, ctypes, _ctypes and __code__
     nor any of the eight defeaters exec, eval, f_locals, cell_contents, __closure__, f_globals, f_back and
-    sys._getframe (its one setattr, monkeypatch.setattr in
-    the anyio-place fixture, names the attribute by a literal, and its one compile is re.compile of a state-isolation
-    regex, neither a value the rule refuses; setattr, vars and compile are among the ten names THE WHOLESALE REFUSAL OF
-    A DIRECT IMPORT reads, over a direct import's text and not the conftest's). The direct-import check reads
+    sys._getframe, and no builtin defeater: its one setattr, monkeypatch.setattr in
+    the anyio-place fixture, is an attribute call of monkeypatch, not the builtin, and names the attribute by a literal,
+    and its one compile is re.compile, an attribute call of re, so neither is a builtin defeater (_anyio_builtin_defeaters)
+    and neither is refused; a BARE setattr, delattr, object.__setattr__ or compile in the conftest's own text WOULD be
+    refused since the reviewer's ruling of 2026-09-29 15:08Z, and setattr, delattr, vars and compile are names
+    tests/__init__.py does not hold, so in a direct import's text THE POSITIVE ALLOWLIST refuses them, over that text and
+    not the conftest's). The direct-import check reads
     tests/__init__.py,
     which the conftest imports as
     _tests and, in a def, as `from tests import remove_made_dirs`; its one read, sys.argv in write_owner_marker, is in a
@@ -7045,33 +7169,30 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     one module-level statement holding a read, and it binds no name of the module's scope through global, so no name of
     the module is matched by the statement it stands under, and the module has no decorated def or class; the conftest
     reads _tests only as the root of an attribute chain, never whole and never through a double-underscore attribute;
-    tests/__init__.py names none of the twenty-eight names of THE WHOLESALE REFUSAL OF A DIRECT IMPORT anywhere in its
-    text, so that refusal refuses nothing of it;
+    tests/__init__.py names nothing outside THE POSITIVE ALLOWLIST anywhere in its text (the allowlist IS its own names,
+    _ANYIO_DIRECT_ALLOWED derived from it), so the allowlist refuses nothing of it;
     each of its other imports is of the standard library or of pytest, which the import system finds outside the
     repository, and it reads no sys.path. The refusal test pins the count at 0, and the module road proves every fixture
     of the conftest.
-    WHAT IT DOES NOT READ: the kinds of road no honest author writes that the rule leaves unrefused, where no one check
-    refuses them without refusing the live conftest, the environment lookups the fail-closed ruling leaves listed, and
-    the one line where the direct-import check stops, with the roads of neither shape its ruling names. A road found
-    passing that is of none of these kinds is one more line here where no one check refuses it without refusing the live
-    conftest; a road through a value the rule cannot prove is refused by construction. A read reached only through a
+    WHAT IT DOES NOT READ: the kinds of road no honest author writes that the rule leaves unrefused, each stating EITHER
+    the live site of tests/conftest.py a refusal by its name would hit, with its executed witness (a test id), OR that a
+    0-live check on its name was not built because a list of such names does not converge -- the roads through a module
+    the conftest imports directly are refused by THE POSITIVE ALLOWLIST (a name tests/__init__.py does not hold), and a
+    value naming anyio reached through one in the conftest's own text is still refused. Plus the environment lookups the
+    fail-closed ruling leaves listed, and the one line where the direct-import check stops. A road found passing that is
+    of none of these kinds is one more line here; a road through a value the rule cannot prove is refused by
+    construction. A read reached only through a
     module the conftest imports transitively (an import of an import: a name the imported module itself imports from
     another module, a package's name bound to another of its submodules, from . import argvs as other say, or a def of
     it whose read is a call of another module's def), where the check stops, and, through a module the conftest imports
-    directly whose text names none of the twenty-eight names of THE WHOLESALE REFUSAL OF A DIRECT IMPORT (one it names
-    anywhere refuses the module whole), a road of neither shape the ruling names: what a def of it that returns nothing
-    leaves where the conftest reads it (an item or an attribute of an object, the module's, one the conftest hands it
-    or one another def of the module fills, or a file, as write_owner_marker's marker is), an object of it filled at
-    its import by a module-level
-    statement other than the one its binding stands in (STATE.flags = sys.argv[1:], ARGS.extend(sys.argv)), a name
-    it binds other than by a declaration and by none of those names (an attribute store on its own module found in
-    sys.modules, sys.modules[__name__].K = "plugins"), and a name or a cell of the conftest rewritten by a def of it
-    through an object the conftest hands it by a road that names none of those twenty-eight: an attribute store on the
-    conftest's module found in sys.modules (sys.modules[fn.__module__].K = "plugins"), or setattr reached through a
-    name built at run time, getattr(builtins, "set" + "attr"), called on that module or, with the attribute names built
-    at run time too ("__clo" + "sure__", "cell_" + "contents"), on the cell of a def the conftest hands it; each of the
-    three admitted by the rule at the hundredth round-2 commit while a config's getoption was handed "plugins" at run
-    time (its artifacts).
+    directly whose whole text names nothing outside THE POSITIVE ALLOWLIST (one name it names that tests/__init__.py does
+    not refuses the module whole, so a road that would rewrite the conftest -- an attribute store on the conftest's module
+    found in sys.modules, setattr or object.__setattr__ reached through builtins or a name built at run time, or
+    __import__ -- names object, __setattr__, setattr, builtins, __import__ or another name outside the allowlist and is
+    refused, the verifier's V1 to V4, R2, R3 and ADV5 and the body check's roads among them), a road of neither shape the
+    ruling names that names only allowlisted identifiers: what a def of it that returns nothing leaves where the conftest
+    reads it (an item or an attribute of an object, the module's, one the conftest hands it or one another def of the
+    module fills, or a file, as write_owner_marker's marker is).
     THE ENVIRONMENT (the
     fail-closed ruling's (e1)): an environment lookup by a key THE PROOF does not prove (os.environ.get, pop, setdefault
     or an item by a loop's target, a parameter or a name bound twice; os.getenv so), and the environment read whole
@@ -7094,21 +7215,24 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     whose reads the rule does not parse as code (a string naming anyio there is still refused as a value, and exec or
     eval named in the text defeats THE PROOF of every name of the module's scope, of a def's local and of a literal key,
     so any keyed read beside one is refused, and named in a direct import's text refuses that module whole); code built
-    from a string by compile() in the conftest's own text and run without exec, eval or __code__ named (handed to
-    types.FunctionType and called, say), which the rule leaves listed there rather than refuse the token compile, since
-    tests/conftest.py names it in re.compile at line 2188 for a state-isolation regex, so a refusal by
-    that name would refuse the live conftest, and compile is none of the defeaters and channels the ruling of
-    2026-09-29 04:46Z names and the ninety-ninth round-2 commit carries to its end (exec, eval, f_locals, cell_contents,
-    __closure__, f_globals, f_back, sys._getframe and gc, ctypes, _ctypes, __code__); in the text of a module the
-    conftest imports directly, compile and types.FunctionType refuse the module whole since the hundredth (THE
-    WHOLESALE REFUSAL OF A DIRECT IMPORT); a
-    setattr or delattr whose attribute name THE PROOF does not prove, which the rule refuses as a rebinder of a name of
-    the module's scope (a name bound once to a literal at the module's level is unproven beside it) but leaves listed as
-    a defeater of a def's local and of a literal key, since making it one takes the proof's run and a second check that
-    ruling does not name, and tests/conftest.py's one setattr (monkeypatch.setattr at line 1107) names
-    its attribute by a literal, so a plain refusal by the token setattr would refuse the live conftest (in the text of a
-    module the conftest imports directly, setattr and delattr refuse the module whole since the hundredth, THE
-    WHOLESALE REFUSAL OF A DIRECT IMPORT); a module loaded other than by an
+    from a string by re.compile or another ATTRIBUTE call of the same name (a bare compile is refused, below), which the
+    rule leaves listed, since tests/conftest.py names re.compile at line 2188 for a state-isolation regex, an attribute
+    call of a name other than builtins, so a refusal by the token compile that read attribute calls too would refuse the
+    live conftest (test_the_conftests_builtin_setattr_delattr_and_compile_defeat_a_literal_key_and_a_def_local's re.compile
+    control is the witness); a BARE compile call, or compile through builtins, IS refused since the reviewer's ruling of
+    2026-09-29 15:08Z (_anyio_builtin_defeaters, a builtin defeater of a literal key and a def's local), and in the text
+    of a module the conftest imports directly compile is a name tests/__init__.py does not hold and refuses the module
+    whole (THE POSITIVE ALLOWLIST); a
+    setattr or delattr through an ATTRIBUTE of a name other than builtins or object, whose attribute name THE PROOF does
+    not prove, which the rule refuses as a rebinder of a name of the module's scope (a name bound once to a literal at the
+    module's level is unproven beside it) but leaves listed as a defeater of a def's local and of a literal key, since
+    tests/conftest.py's one setattr (monkeypatch.setattr at line 1107, an attribute of monkeypatch) names its attribute by
+    a literal, so a plain refusal by the token setattr that read attribute calls too would refuse the live conftest (the
+    same test's monkeypatch.setattr control is the witness); a BARE setattr, delattr or object.__setattr__ call whose
+    target name THE PROOF does not prove IS refused since that ruling (delattr among them, though tests/conftest.py names
+    none, since it can unbind a name of the module's scope as setattr rebinds one), and in the text of a module the
+    conftest imports directly setattr and delattr are names tests/__init__.py does not hold and refuse the module whole
+    (THE POSITIVE ALLOWLIST); a module loaded other than by an
     import
     statement (importlib, __import__, sys.modules; tests/conftest.py loads tests/credential_patterns.py through
     importlib); a module of the repository taken, from a directory put on the import path other than by a read of
@@ -7123,9 +7247,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     module outside the repository or imported only transitively, the environment, a file), or one that matches anyio or
     the flag without naming anyio (a prefix, "any" or "no:a", say), handed to a read that is no carrier and no keyed
     read (sys.modules, a fixture's name); a name THE PROOF proves, rebound by what the proof does not read (code outside
-    the text, a def of a module it imports directly handed the conftest's module, or a def whose __globals__ is its
-    namespace, through a road that names none of the twenty-eight names of THE WHOLESALE REFUSAL OF A DIRECT IMPORT, as
-    above, or setattr reached by a name built at run time through a road of this list,
+    the text; a def of a module it imports directly handed the conftest's module, or a def whose __globals__ is its
+    namespace, through a road THE POSITIVE ALLOWLIST does not refuse -- one naming only identifiers tests/__init__.py
+    holds, since a road naming setattr, object.__setattr__, builtins or __import__ is refused, as above; or, in the
+    conftest's own text, setattr reached by a name built at run time through an attribute call this list leaves,
     pydoc.locate("builtins.set" + "attr")); and the plugins the run loaded read
     through what they change elsewhere (how many modules are imported, how many markers or fixtures are registered), the
     third tier's open-valued signal (_conftest_reasserted_names). Each is code the module road takes on trust, and a
@@ -7324,7 +7449,7 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
         it (a namespace package reads as one that binds nothing)."""
         if dotted not in known:
             path = _anyio_module_file(dotted, dirs)
-            known[dotted] = (None if path is None else (frozenset(), {}, None, {}, ()) if path == ""
+            known[dotted] = (None if path is None else (frozenset(), {}, None, {}, (), ()) if path == ""
                              else _anyio_imported_module(path))
         return known[dotted]
 
@@ -7430,6 +7555,14 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
             scope = scope.parent
         return scope is None or scope.kind in ("module", "class")
 
+    if follow:      # the conftest's own text (a direct import is read with follow=False): its builtin defeaters
+        _builtin_defeat = _anyio_builtin_defeaters(tree, proven)
+        if _builtin_defeat:
+            defeated = ", ".join(x for x in (defeated, _builtin_defeat) if x)   # a literal key beside one is unproven
+            _base_rebound = rebound
+
+            def rebound(name, kind, _b=_base_rebound, _r=_builtin_defeat):     # noqa: F811 -- a def's local too
+                return _b(name, kind) or _r
     spelled = {ast.Name: lambda x: [x.id], ast.Attribute: lambda x: [x.attr], ast.arg: lambda x: [x.arg],
                ast.alias: lambda x: [x.name, x.asname or ""], ast.ImportFrom: lambda x: [x.module or ""],
                ast.FunctionDef: lambda x: [x.name], ast.AsyncFunctionDef: lambda x: [x.name],
@@ -7613,18 +7746,18 @@ def _anyio_import_reads(tree, where, bindings, parent, known=None):
     repository the text imports that the check cannot read is refused at the import, and so is an import of a module it
     finds neither as a file of its directories nor, by the import system, outside the repository; and so is the text's
     read of sys.path or its kin (_ANYIO_IMPORT_PATHS), each of which decides where an import finds its module. And a
-    module the check reads whose text names anywhere one of the twenty-eight names of _ANYIO_DIRECT_WHOLESALE
-    (_anyio_imported_module's channels: the runtime-introspection channels gc,
-    ctypes, _ctypes and __code__; the names that reach a frame, a cell or code run from a string, exec, eval,
+    module the check reads whose whole text names anywhere an identifier or attribute name NOT in _ANYIO_DIRECT_ALLOWED
+    (THE POSITIVE ALLOWLIST, _anyio_imported_module's outside), whatever def, class or statement holds it, is refused
+    whole at each import of the text that reads it and at each name or attribute chain of the text through which the walk
+    (reached) reads it, the submodule a package binds included, naming the name and its line. A name of
+    _anyio_imported_module's channels -- the twenty-eight of _ANYIO_DIRECT_WHOLESALE (the runtime-introspection channels
+    gc, ctypes, _ctypes and __code__; the names that reach a frame, a cell or code run from a string, exec, eval,
     f_locals, cell_contents, __closure__, f_globals, f_back, sys._getframe, f_builtins, inspect.currentframe, tb_frame,
     gi_frame, cr_frame and ag_frame; and the names that write a namespace or an attribute by a name, or build code, a
     def's __globals__, an object's __dict__, setattr, delattr, globals, vars, locals, compile, types.FunctionType and
-    types.CodeType), whatever def, class or statement holds it, is refused whole at each import of the text that reads
-    it and at each name or attribute chain of the text through which the walk (reached) reads it, the submodule a
-    package binds included, one refusal for each of the three kinds it names (the reviewer's ruling of 2026-09-29
-    04:46Z on round 2 of fork PR #894, in the conftest and every direct import, carried to its end for the direct
-    imports by the ninety-ninth round-2 commit, and the ruling of 09:01Z, which added the third kind at the
-    hundredth)."""
+    types.CodeType), all outside the allowlist too -- additionally gives its category, one refusal for each of the three
+    kinds it names; a name no list holds is refused as one tests/__init__.py does not name (the reviewer's rulings of
+    2026-09-29 04:46Z, 09:01Z and, turning the list into the allowlist, 15:08Z on round 2 of fork PR #894)."""
     package, dirs = _import_roots(where)
     up = os.path.realpath(where)
     while not os.path.exists(os.path.join(up, ".git")):     # loop-ok: one parent per turn, ends at the root
@@ -7651,18 +7784,23 @@ def _anyio_import_reads(tree, where, bindings, parent, known=None):
         (_anyio_imported_module), None where it is none."""
         if dotted not in known:
             path = located(dotted)
-            known[dotted] = (None if path is None else (frozenset(), {}, None, {}, ()) if path == ""
+            known[dotted] = (None if path is None else (frozenset(), {}, None, {}, (), ()) if path == ""
                              else _anyio_imported_module(path))
         return known[dotted]
 
     def channelled(dotted):
-        """Why THE ANYIO RULE refuses the module `dotted` of the repository, which the text imports directly, for what
-        of _ANYIO_DIRECT_WHOLESALE its text names anywhere (_anyio_imported_module's channels): one line for the
-        runtime-introspection channels among them (_ANYIO_INTROSPECTION), one for the names that reach a frame, a cell
-        or code run from a string (_ANYIO_REACHERS) and one for the names that write a namespace or an attribute by a
-        name or build code (_ANYIO_WRITERS), each where the text names one; [] where it names none."""
+        """Why THE ANYIO RULE refuses the module `dotted` of the repository, which the text imports directly: THE
+        POSITIVE ALLOWLIST (_anyio_imported_module's outside), one line for each identifier or attribute name of its
+        whole text that is not in _ANYIO_DIRECT_ALLOWED (capped, "and N more" past the cap), naming the name and its
+        line; and, before them, the CATEGORY of the twenty-eight names of _ANYIO_DIRECT_WHOLESALE its text names anywhere
+        (_anyio_imported_module's channels), one line for the runtime-introspection channels (_ANYIO_INTROSPECTION), one
+        for the names that reach a frame, a cell or code run from a string (_ANYIO_REACHERS) and one for the names that
+        write a namespace or an attribute by a name or build code (_ANYIO_WRITERS), each where the text names one. Those
+        twenty-eight are outside the allowlist too, so the allowlist alone would refuse the module; the category lines
+        say WHY one is dangerous, the allowlist lines are the gate. [] where the module is None or names nothing outside
+        the allowlist."""
         got = module(dotted)
-        if got is None or not got[4]:
+        if got is None:
             return []
         whys = []
         for kind, table, because in (
@@ -7683,6 +7821,15 @@ def _anyio_import_reads(tree, where, bindings, parent, known=None):
                         "refuses one anywhere in the text of such a module, whatever def, class or statement holds it "
                         "(a def that returns nothing and has no decorator included), since %s" % (
                             kind, sites, " and %d more" % (len(hits) - 4) if len(hits) > 4 else "", dotted, because))
+        for line, nm in got[5][:_ANYIO_ALLOWLIST_NAMES_CAP]:
+            whys.append("the name %s at line %d of the module %s, a module the text imports whose identifiers and "
+                        "attribute names THE POSITIVE ALLOWLIST holds to the set tests/__init__.py names: %s is not among "
+                        "them, so the rule refuses the module wholesale, whatever def, class or statement holds it"
+                        % (nm, line, dotted, nm))
+        if len(got[5]) > _ANYIO_ALLOWLIST_NAMES_CAP:
+            whys.append("and %d more identifier or attribute name of the module %s that tests/__init__.py does not name "
+                        "(THE POSITIVE ALLOWLIST refuses the module wholesale for each)"
+                        % (len(got[5]) - _ANYIO_ALLOWLIST_NAMES_CAP, dotted))
         return whys
 
     def absolute(stmt):
@@ -7751,7 +7898,7 @@ def _anyio_import_reads(tree, where, bindings, parent, known=None):
             got = module(dotted)
             if got is None:
                 return None
-            names, matched, _fault, _literals, _channels = got
+            names, matched, _fault, _literals, _channels, _outside = got
             if part in names and (part in matched or located(dotted + "." + part) is None):
                 return (dotted, matched[part]) if part in matched else None
             if located(dotted + "." + part) is None:
@@ -7906,7 +8053,7 @@ def _anyio_import_reads(tree, where, bindings, parent, known=None):
 
 
 def _anyio_imported_module(path):
-    """(names, matched, fault, literals, channels) for THE DIRECT-IMPORT CHECK (_anyio_import_reads) over the module of
+    """(names, matched, fault, literals, channels, outside) for THE DIRECT-IMPORT CHECK (_anyio_import_reads) over the module of
     the repository at `path`: NAMES, the names its module scope binds; MATCHED, {name: (kind, why)} for each the check
     matches, by the clauses of THE ANYIO RULE read over the module's own text (_anyio_option_reads, not following its
     imports): (i) a def that returns a value (a return with an expression, or a yield) and holds a read, kind "def";
@@ -7927,15 +8074,24 @@ def _anyio_imported_module(path):
     module's text names ANYWHERE, read as the rule reads the conftest's channels (_anyio_channels),
     whatever def, class or statement holds it, a def the check does not match included, for which the check refuses
     the module wholesale (the reviewer's ruling of 2026-09-29 04:46Z on round 2 of fork PR #894, in the conftest and
-    every direct import, carried to its end for the direct imports by the ninety-ninth round-2 commit). Plain values
-    only: the module's tree and bindings are dropped before it returns."""
+    every direct import, carried to its end for the direct imports by the ninety-ninth round-2 commit). These give a
+    refusal its category; the gate is OUTSIDE.
+    OUTSIDE, ((line, name), ...) for each identifier or attribute name of the module's whole text
+    (_anyio_identifier_names) that is not in _ANYIO_DIRECT_ALLOWED, whatever def, class or statement holds it: THE
+    POSITIVE ALLOWLIST (the reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894), for each of which the
+    check refuses the module wholesale, naming the name and its line. A name of _ANYIO_DIRECT_WHOLESALE is outside the
+    allowlist too (tests/__init__.py names none of the twenty-eight), so it appears in both; channels give it a category,
+    outside is the gate that also catches a name no list holds (object, __setattr__, operator, methodcaller, builtins,
+    __import__). Plain values only: the module's tree and bindings are dropped before it returns."""
     try:
         with open(path, encoding="utf-8") as f:
             mtree = ast.parse(f.read(), filename=os.path.basename(path))
     except (OSError, SyntaxError, ValueError) as e:
-        return frozenset(), {}, "%s: %s" % (type(e).__name__, e.strerror if isinstance(e, OSError) else e), {}, ()
+        return frozenset(), {}, "%s: %s" % (type(e).__name__, e.strerror if isinstance(e, OSError) else e), {}, (), ()
     channels = tuple(sorted({(getattr(x, "lineno", 0), tok) for x in ast.walk(mtree)
                              for tok in _anyio_channels(x, _ANYIO_DIRECT_WHOLESALE)}))
+    outside = tuple(sorted({(getattr(x, "lineno", 0), nm) for x in ast.walk(mtree)
+                            for nm in _anyio_identifier_names(x) if nm not in _ANYIO_DIRECT_ALLOWED}))
     found = []
     _anyio_option_reads(mtree, follow=False, nodes=found)
     reads = {id(node): "line %d: %s" % (line, what) for node, line, what in found}
@@ -8037,7 +8193,7 @@ def _anyio_imported_module(path):
         gives = holds = enclosing = matches = rebound = None    # each holds the module's tree or bindings through its
         mbindings.release()                                     # closure
         mbindings = upward = reads = mtree = None
-    return names, matched, None, literals, channels
+    return names, matched, None, literals, channels, outside
 
 
 def _registration_refusals(tree, candidates, real, where=None):
@@ -8048,10 +8204,10 @@ def _registration_refusals(tree, candidates, real, where=None):
     finds naming anyio or reading what carries the run's -p options, other than by a key its proof proves to be one
     fixed string naming something else, has every fixture refused, naming each read. A read that can reach the option
     is admitted only where the rule proves it, and everything else is refused, through the module's text and through a
-    module of the repository it imports directly in the shapes the rule's last clause reads, and for any of the
-    twenty-eight names of _ANYIO_DIRECT_WHOLESALE (a runtime-introspection channel, gc, ctypes, _ctypes or __code__, a
-    name that reaches a frame, a cell or code run from a string, or a name that writes a namespace or an attribute by a
-    name or builds code) anywhere in such a module's text; the rule's docstring says
+    module of the repository it imports directly in the shapes the rule's last clause reads, and for any identifier or
+    attribute name outside THE POSITIVE ALLOWLIST (_ANYIO_DIRECT_ALLOWED, the set tests/__init__.py names) anywhere in
+    such a module's text -- the twenty-eight names of _ANYIO_DIRECT_WHOLESALE given a category, any other name refused as
+    one tests/__init__.py does not hold; the rule's docstring says
     what it claims, and lists in WHAT IT DOES NOT READ the kinds of road no honest author writes that its wholesale
     checks leave unrefused, the environment lookups that ruling leaves listed, the read reached only through an import
     of an import, where it stops, and the roads of neither shape through a module it imports directly."""
@@ -13602,19 +13758,23 @@ class HermeticKernelPostal(unittest.TestCase):
                      argparse_head + hook("_P.parse_known_args(['-x'])[1] == ['-x']"), False),
                     ("an argument parser's parse handed a name bound to a list display",
                      argparse_head + "_ARGS = ['-x']\n\n\n" + hook("_P.parse_known_args(_ARGS)[1] == ['-x']"), False),
-                    ("write_owner_marker's shape: a def of an imported module that reads sys.argv and returns nothing, "
-                     "called from a hook",
-                     "def pytest_configure(config):\n    from _di_helpers import marker\n    marker(str(config.rootpath))\n",
-                     False),
-                    ("a def of an imported module that returns a value and reads no carrier",
-                     "def pytest_configure(config):\n    from _di_helpers import plain\n    if plain():\n        pass\n", False),
-                    ("a name of an imported module bound to a literal",
-                     "def pytest_configure(config):\n    from _di_helpers import WORD\n    if WORD:\n        pass\n", False),
-                    ("the stated limit: a name reached only through an import of an import",
-                     "def pytest_configure(config):\n    from _di_helpers2 import ARGV2\n    if %s:\n        pass\n"
-                     % (ng % "ARGV2"), False),
-                    ("a submodule the conftest imports whole, its package binding its name, that reads no carrier",
-                     "def pytest_configure(config):\n    import _di_quiet.sub\n    if _di_quiet.sub.flags():\n"
+                    ("write_owner_marker's shape: a def of an allowlist-clean imported module that reads sys.argv and "
+                     "returns nothing, called from a hook",
+                     "def pytest_configure(config):\n    from _di_okp import write_owner_marker\n"
+                     "    write_owner_marker(str(config.rootpath))\n", False),
+                    ("a def of an allowlist-clean imported module that returns a value and reads no carrier",
+                     "def pytest_configure(config):\n    from _di_okp import remove_made_dirs\n    if remove_made_dirs('1'):\n"
+                     "        pass\n", False),
+                    ("a name of an allowlist-clean imported module bound to a literal",
+                     "def pytest_configure(config):\n    from _di_okp import TEST_ROOT_PREFIX\n    if TEST_ROOT_PREFIX:\n"
+                     "        pass\n", False),
+                    ("the stated limit: a name reached only through an import of an import (the direct import "
+                     "allowlist-clean)",
+                     "def pytest_configure(config):\n    from _di_okstate import out\n    if %s:\n        pass\n"
+                     % (ng % "out"), False),
+                    ("an allowlist-clean submodule the conftest imports whole, its package binding its name, that reads "
+                     "no carrier",
+                     "def pytest_configure(config):\n    import _di_okq.state\n    if _di_okq.state.remove_made_dirs('1'):\n"
                      "        pass\n", False),
                     ("a directory beside the conftest named like a module of the standard library, which the import "
                      "system takes ahead of it (heapq/)",
@@ -13630,9 +13790,9 @@ class HermeticKernelPostal(unittest.TestCase):
                      "            if r:\n                pass\n", False),
                     ("xdist's workerinput read for another key by a literal",
                      hook("hasattr(config, 'workerinput') and config.workerinput.get('workerid')"), False),
-                    ("a name and a def an imported module binds under a module-level if over os.name",
-                     "def pytest_configure(config):\n    from _di_fos import MODE, mode\n    if MODE and mode():\n"
-                     "        pass\n", False)]
+                    ("a name and a def an allowlist-clean imported module binds under a module-level if over os.sep",
+                     "def pytest_configure(config):\n    from _di_okfos import out, remove_made_dirs\n"
+                     "    if out and remove_made_dirs():\n        pass\n", False)]
         # the module _di_helpers.py beside a conftest that names it (and _di_helpers2.py, which imports a name of it)
         di_helpers = ("import os\nimport sys\n\n\n"
                       "def flags():\n    return [a for a in sys.argv if a.startswith('no:')]\n\n\n"
@@ -13686,6 +13846,22 @@ class HermeticKernelPostal(unittest.TestCase):
                           "    class Mode:\n        blocked = False\n" % argv_flag,
             "_di_fos": "import os\n\n\nif os.name == 'posix':\n    MODE = 1\n\n    def mode():\n        return 1\n"
                        "else:\n    MODE = 2\n\n    def mode():\n        return 2\n"})
+        # THE POSITIVE ALLOWLIST's admitted controls (the reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR
+        # #894): modules of the repository the conftest imports directly whose identifiers and attribute names are ALL in
+        # _ANYIO_DIRECT_ALLOWED (tests/__init__.py's set), so the allowlist refuses nothing of them, each mirroring a
+        # shape admitted for a reason other than the allowlist (a def that reads a carrier and returns nothing, a def
+        # that reads no carrier, a name bound to a literal, a name reached only through an import of an import, a
+        # submodule its package binds, and a name a module-level if over os.sep decides -- not sys.argv, so no carrier)
+        di_modules.update({
+            "_di_okp": "import os\nimport sys\n\n\ndef write_owner_marker(d):\n"
+                       "    out = [os.path.basename(a) for a in sys.argv[:3]]\n"
+                       "    open(os.path.join(d, 'a'), 'w', encoding='utf-8').write(str(out))\n\n\n"
+                       "def remove_made_dirs(root):\n    return int(root)\n\n\nTEST_ROOT_PREFIX = 'x'\n",
+            "_di_okstate": "from state import sep as out\n",
+            "state": "import sys\n\n\nsep = sys.argv[1:]\n",
+            "_di_okq/__init__": "from . import state\n", "_di_okq/state": "def remove_made_dirs(root):\n    return int(root)\n",
+            "_di_okfos": "import os\n\n\nif os.sep == '/':\n    out = 1\n\n    def remove_made_dirs():\n        return 1\n"
+                         "else:\n    out = 2\n\n    def remove_made_dirs():\n        return 2\n"})
         clauses = (("value", "a value naming anyio"), ("addopts", "a value naming PYTEST_ADDOPTS"),
                    ("cap", "cannot fold within"), ("identifier", "an identifier naming anyio"),
                    ("carrier", "a read of the carrier"), ("import", "an import of"), ("keyed", "the keyed read"),
@@ -13894,7 +14070,6 @@ class HermeticKernelPostal(unittest.TestCase):
             "_fc_k7.py": "from _fc_k import KEY\n",
             "_fc_p/__init__.py": "KEY = 'verbose'\n",
             "_fc_p/KEY.py": "X = 1\n",
-            "_fc_i0.py": "def patch(fn=None):\n    return None\n",
             "_fc_i1.py": ("import gc\n\n\ndef patch():\n    for o in gc.get_objects():\n"
                           "        if isinstance(o, dict) and o.get('_K') == 'verbose':\n            o['_K'] = 'plugins'\n"),
             "_fc_i2.py": ("import ctypes\n\n\ndef patch(fn):\n    ctypes.pythonapi.PyCell_Set(ctypes.py_object("
@@ -13909,12 +14084,9 @@ class HermeticKernelPostal(unittest.TestCase):
             "_fc_ip/__init__.py": "from . import sub\n",
             "_fc_ip/sub.py": ("import gc\n\n\ndef patch():\n    for o in gc.get_objects():\n"
                               "        if isinstance(o, dict) and o.get('_K') == 'verbose':\n            o['_K'] = 'plugins'\n"),
-            "_fc_iq/__init__.py": "from . import sub\n",
-            "_fc_iq/sub.py": "def patch():\n    return None\n",
             "_fc_i7.py": "def patch(fn):\n    exec(\"fn.__closure__[0].cell_contents = 'plugins'\", {'fn': fn})\n",
             "_fc_i8.py": "def patch(fn):\n    fn.__closure__[0].cell_contents = 'plugins'\n",
             "_fc_i9.py": "import sys\n\n\ndef patch():\n    sys._getframe(1).f_globals['_K'] = 'plugins'\n",
-            "_fc_ia.py": "def patch(tb=None):\n    return None if tb is None else (tb.tb_lineno, tb.tb_next)\n",
             # the four roads the ninety-ninth round-2 commit listed, each a plain def of a direct import (G1 to G4), and
             # the control that names none of the twenty-eight names
             "_fc_g1.py": "def patch(fn):\n    fn.__globals__['_K'] = 'plugins'\n",
@@ -13922,7 +14094,14 @@ class HermeticKernelPostal(unittest.TestCase):
             "_fc_g3.py": ("import types\n\n\ndef patch(fn):\n    types.FunctionType(compile(\"fn.__closure__[0].cell_contents = "
                           "'plugins'\", '<s>', 'single'), {'fn': fn})()\n"),
             "_fc_g4.py": "def patch(fn):\n    setattr(getattr(fn, '__clo' + 'sure__')[0], 'cell_' + 'contents', 'plugins')\n",
-            "_fc_gc.py": "import sys\n\n\ndef patch():\n    return getattr(sys.modules.get('os'), 'sep', None)\n"}
+            "_fc_gc.py": "import sys\n\n\ndef remove_made_dirs():\n    return getattr(sys.modules.get('os'), 'sep', None)\n",
+            # THE POSITIVE ALLOWLIST's admitted controls: modules whose identifiers and attribute names are all in
+            # _ANYIO_DIRECT_ALLOWED (tests/__init__.py's set), so the allowlist refuses nothing of them; a plain def, a
+            # literal-bound name, a key bound once, and a submodule its package binds, each named as tests/__init__.py
+            # would name it (the reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894)
+            "_fc_ok.py": "import sys\n\n\ndef remove_made_dirs(root):\n    return int(root)\n\n\nTEST_ROOT_PREFIX = 'verbose'\n",
+            "_fc_okp/__init__.py": "from . import state\n",
+            "_fc_okp/state.py": "def remove_made_dirs(root):\n    return int(root)\n"}
         defeating = (("exec", "exec('pass')"), ("eval", "eval('1')"), ("f_locals", "sys._getframe().f_locals"),
                      ("cell_contents", "fn.cell_contents"), ("__closure__", "fn.__closure__"))
         for i, (_word, stmt) in enumerate(defeating):
@@ -14348,12 +14527,12 @@ class HermeticKernelPostal(unittest.TestCase):
             ("getoption by a def's local bound once to a literal", hook("k = 'verbose'\nconfig.getoption(k)")),
             ("getoption by an enclosing def's local read in a nested def",
              hook("k = 'verbose'\n\ndef _in():\n    return config.getoption(k)\n\n_in()")),
-            ("getoption by a key a module the text imports directly binds once, from-imported",
-             hook("config.getoption(KEY)", "from _fc_k import KEY\n\n\n")),
+            ("getoption by a key a module the text imports directly binds once, from-imported (an allowlisted name)",
+             hook("config.getoption(TEST_ROOT_PREFIX)", "from _fc_ok import TEST_ROOT_PREFIX\n\n\n")),
             ("getoption by a key a module the text imports directly binds once, from-imported in the hook",
-             hook("from _fc_k import KEY\nconfig.getoption(KEY)")),
+             hook("from _fc_ok import TEST_ROOT_PREFIX\nconfig.getoption(TEST_ROOT_PREFIX)")),
             ("getoption by a key a module the text imports directly binds once, read on the module",
-             hook("config.getoption(_k.KEY)", "import _fc_k as _k\n\n\n")),
+             hook("config.getoption(_k.TEST_ROOT_PREFIX)", "import _fc_ok as _k\n\n\n")),
             ("getattr by a literal", hook("getattr(config, 'rootpath', None)")),
             ("a thread's __module__ by getattr", hook("import threading\ngetattr(threading.current_thread(), '__module__', '')")),
             ("hasattr of workerinput", hook("hasattr(config, 'workerinput')")),
@@ -14367,25 +14546,24 @@ class HermeticKernelPostal(unittest.TestCase):
             ("globals() read by get", hook("globals().get('__name__')")),
             ("a name sought in globals()", hook("'x' in globals()")),
             ("vars() called with nothing in a def and held whole, the def's own namespace", hook("d = vars()\nd.get('x')")),
-            ("a plain def of a direct import called", hook("_h.quiet()", h)),
-            ("a literal-bound name of a direct import read", hook("_h.NAME", h)),
+            ("a plain def of a direct import called (an allowlist-clean module)",
+             hook("_ok.remove_made_dirs('1')", "import _fc_ok as _ok\n\n\n")),
+            ("a literal-bound name of a direct import read (an allowlist-clean module)",
+             hook("_ok.TEST_ROOT_PREFIX", "import _fc_ok as _ok\n\n\n")),
             ("a setattr naming another attribute by a literal, beside a proven key",
              head + "_K = 'verbose'\n\n\ndef _patch(mp, obj):\n    mp.setattr(obj, 'other', 1)\n\n\n" + use),
             ("the introspection control: a literal key, no channel named",
              head + "def pytest_configure(config):\n    config.getoption('verbose')\n"),
             ("the introspection control: a def's local bound once, no channel named",
              head + "def pytest_configure(config):\n    K = 'verbose'\n    config.getoption(K)\n"),
-            ("the introspection control: a plain def of a direct import naming no channel, called beside a proven key",
-             hook("_i.patch()\nconfig.getoption(_K)", "import _fc_i0 as _i\n\n_K = 'verbose'\n\n\n")),
-            ("the introspection control: a plain def of a submodule the text reaches through its package, naming no "
-             "channel, beside a proven key",
-             hook("_q.sub.patch()\nconfig.getoption(_K)", "import _fc_iq as _q\n\n_K = 'verbose'\n\n\n")),
-            ("the wholesale refusal's control: a plain def of a direct import naming a traceback's tb_lineno and tb_next, "
-             "which share a prefix with tb_frame and are none of the twenty-eight names, beside a proven key",
-             hook("_i.patch()\nconfig.getoption(_K)", "import _fc_ia as _i\n\n_K = 'verbose'\n\n\n")),
-            ("the ten names' control: a plain def of a direct import reading sys.modules and calling getattr with a "
+            ("the allowlist control: a plain def of an allowlist-clean direct import, called beside a proven key",
+             hook("_ok.remove_made_dirs('1')\nconfig.getoption(_K)", "import _fc_ok as _ok\n\n_K = 'verbose'\n\n\n")),
+            ("the allowlist control: a plain def of an allowlist-clean submodule the text reaches through its package, "
+             "beside a proven key",
+             hook("_q.state.remove_made_dirs('1')\nconfig.getoption(_K)", "import _fc_okp as _q\n\n_K = 'verbose'\n\n\n")),
+            ("the allowlist control: an allowlist-clean direct import reading sys.modules and calling getattr with a "
              "literal, none of the twenty-eight names, beside a proven key",
-             hook("_i.patch()\nconfig.getoption(_K)", "import _fc_gc as _i\n\n_K = 'verbose'\n\n\n"))]
+             hook("_i.remove_made_dirs()\nconfig.getoption(_K)", "import _fc_gc as _i\n\n_K = 'verbose'\n\n\n"))]
         classes = (("keyed", "the keyed read"), ("reader", "the attribute reader"),
                    ("option", "a read of option other than"), ("namespace", "a namespace's"),
                    ("holder", "xdist's workerinput"), ("byname", "by its name, through"), ("pattern", "pattern's key"),
@@ -14420,6 +14598,124 @@ class HermeticKernelPostal(unittest.TestCase):
         for label, text in admitted:
             with self.subTest(case="admitted: " + label):
                 self.assertEqual(_anyio_option_reads(ast.parse(text), where), [], "%s: admitted, no read" % label)
+
+    def test_the_direct_import_positive_allowlist_refuses_a_false_proof_no_list_holds(self):
+        """THE POSITIVE ALLOWLIST (the reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894, its first
+        medium): a list of dangerous names does not converge, since a false proof through a plain def of a direct import
+        can reach a builtin by a name no list holds (object.__setattr__, type(o).__setattr__, operator.methodcaller,
+        getattr(builtins, ...), __import__), so the direct-import check is turned around. The identifiers and attribute
+        names a module of the repository the conftest imports directly may name are held EQUAL to the set
+        tests/__init__.py's text names today (_ANYIO_DIRECT_ALLOWED, derived by _anyio_identifier_names); any OTHER name
+        refuses the module wholesale, naming the name and its line. DERIVED == COMMITTED: the set re-derived from
+        tests/__init__.py equals the constant, so a name added to tests/__init__.py reds this pin and names itself. 0
+        LIVE by construction: tests/__init__.py, the conftest's one in-repo direct import, names nothing outside the set
+        (its own names ARE the set). THE PINS: the verifier's four roads (V1 to V4) and the review's R2, R3 and ADV5, each
+        a false proof through a plain def of a direct import that at 1cf3448b9 the rule ADMITTED (here shown by disabling
+        the allowlist -- adding the road's own names to it) and refuses at the fix, naming the name it holds that
+        tests/__init__.py does not; and THE MUTANT, adding a road's one out-of-allowlist name (V4's builtins) to the
+        allowlist greens that road, so the allowlist is what refuses it."""
+        from unittest import mock
+        with open(os.path.join(HERE, "__init__.py"), encoding="utf-8") as f:
+            init = ast.parse(f.read())
+        self.assertEqual(_anyio_direct_allowed_names(init), _ANYIO_DIRECT_ALLOWED,
+                         "DERIVED == COMMITTED: the allowlist re-derived from tests/__init__.py equals the constant; a "
+                         "name added to tests/__init__.py reds this and names itself")
+        self.assertEqual(_anyio_imported_module(os.path.join(HERE, "__init__.py"))[5], (),
+                         "0 LIVE: tests/__init__.py names nothing outside the allowlist (its own names ARE the set)")
+        mod = sys.modules[__name__]
+        where = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, where, True)
+        conf = ("import _ih\n\n\ndef pytest_configure(config):\n    _ih.remove_made_dirs(pytest_configure)\n"
+                "    config.getoption('verbose')\n")
+        roads = [
+            ("V1 object.__setattr__ on the conftest's module in sys.modules",
+             "import sys\n\n\ndef remove_made_dirs(root):\n    object.__setattr__(sys.modules['a'], 'a', 'plugins')\n",
+             ("object", "__setattr__")),
+            ("V2 type(o).__setattr__",
+             "def remove_made_dirs(root):\n    type(root).__setattr__(root, 'a', 'plugins')\n", ("type", "__setattr__")),
+            ("V3 operator.methodcaller('__set' + 'attr__')",
+             "import operator\nimport sys\n\n\ndef remove_made_dirs(root):\n"
+             "    operator.methodcaller('__set' + 'attr__', 'a', 'plugins')(sys.modules['a'])\n",
+             ("operator", "methodcaller")),
+            ("V4 getattr(builtins, 'ex' + 'ec')",
+             "import builtins\n\n\ndef remove_made_dirs(root):\n    getattr(builtins, 'ex' + 'ec')('pass', {})\n",
+             ("builtins",)),
+            ("R2 getattr(builtins, 'set' + 'attr') on the conftest's module",
+             "import builtins\nimport sys\n\n\ndef remove_made_dirs(root):\n"
+             "    getattr(builtins, 'set' + 'attr')(sys.modules['a'], 'a', 'plugins')\n", ("builtins",)),
+            ("R3 getattr(builtins, 'set' + 'attr') on a value the conftest hands it",
+             "import builtins\n\n\ndef remove_made_dirs(root):\n    getattr(builtins, 'set' + 'attr')(root, 'a', 'plugins')\n",
+             ("builtins",)),
+            ("ADV5 __import__('g' + 'c').get_objects()",
+             "def remove_made_dirs(root):\n    for d in __import__('g' + 'c').get_objects():\n"
+             "        if isinstance(d, dict):\n            d['a'] = 'plugins'\n", ("__import__", "get_objects"))]
+        v4_dir = None
+        for i, (label, body, escape) in enumerate(roads):
+            with self.subTest(road=label):
+                d = os.path.join(where, "r%02d" % i)
+                os.mkdir(d)
+                with open(os.path.join(d, "_ih.py"), "w", encoding="utf-8") as f:
+                    f.write(body)
+                with open(os.path.join(d, "conftest.py"), "w", encoding="utf-8") as f:
+                    f.write(conf)
+                if label.startswith("V4"):
+                    v4_dir = d
+                head = _anyio_option_reads(ast.parse(conf), where=d)
+                self.assertTrue(head, "%s: refused at the fix" % label)
+                for name in escape:
+                    self.assertTrue(any("the name %s at line" % name in w for _l, w in head),
+                                    "%s: the refusal names %r and its line: %s" % (label, name, head))
+                names = set().union(*(_anyio_identifier_names(n) for n in ast.walk(ast.parse(body))))
+                with mock.patch.object(mod, "_ANYIO_DIRECT_ALLOWED", _ANYIO_DIRECT_ALLOWED | names):
+                    self.assertEqual(_anyio_option_reads(ast.parse(conf), where=d), [],
+                                     "%s: admitted at 1cf3448b9 (the allowlist disabled), so the allowlist is what "
+                                     "refuses it at the fix" % label)
+        with mock.patch.object(mod, "_ANYIO_DIRECT_ALLOWED", _ANYIO_DIRECT_ALLOWED | {"builtins"}):
+            self.assertEqual(_anyio_option_reads(ast.parse(conf), where=v4_dir), [],
+                             "THE MUTANT: adding V4's one out-of-allowlist name (builtins) to the allowlist greens V4")
+
+    def test_the_conftests_builtin_setattr_delattr_and_compile_defeat_a_literal_key_and_a_def_local(self):
+        """THE CONFTEST'S OWN TEXT (the reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894, its second
+        medium): a builtin setattr, delattr or object.__setattr__ call -- a bare name (setattr, delattr), through builtins
+        (builtins.setattr, builtins.__setattr__) or object.__setattr__/object.__delattr__ -- whose target name (its
+        second argument) THE PROOF does not prove, and a bare-name compile() call, defeat a literal key and a def's local
+        (each can rewrite the hook's code object, a def's locals or a name of the module's scope). The builtin is told
+        from an attribute call of the same name: re.compile and monkeypatch.setattr are attributes of a name other than
+        builtins or object, not the builtin, and are NOT defeaters (the live conftest names both). Each plant is admitted
+        at 1cf3448b9 (the rule before this commit, here _anyio_builtin_defeaters disabled) and refused at the fix; each
+        control (an attribute call, and a bare setattr whose target THE PROOF proves) is admitted at both."""
+        from unittest import mock
+        mod = sys.modules[__name__]
+        head = "import builtins\nimport re\nimport sys\n\nimport pytest\n\n\n"
+        lit = "def pytest_configure(config):\n    config.getoption('verbose')\n    %s\n"
+        loc = "def pytest_configure(config):\n    K = 'verbose'\n    %s\n    config.getoption(K)\n"
+        plants = [
+            ("a bare setattr with an unproven target defeats a literal key",
+             head + lit % "setattr(pytest_configure, '__co' + 'de__', None)"),
+            ("object.__setattr__ with an unproven target defeats a literal key",
+             head + lit % "object.__setattr__(pytest_configure, '__co' + 'de__', None)"),
+            ("builtins.setattr with an unproven target defeats a literal key",
+             head + lit % "builtins.setattr(pytest_configure, '__co' + 'de__', None)"),
+            ("a bare delattr with an unproven target defeats a literal key",
+             head + lit % "delattr(pytest_configure, '__co' + 'de__')"),
+            ("a bare compile call defeats a literal key", head + lit % "compile('x = 1', '<s>', 'single')"),
+            ("a bare setattr with an unproven target defeats a def's local",
+             head + loc % "setattr(pytest_configure, K2, None)")]
+        controls = [
+            ("monkeypatch.setattr, an attribute call of a name other than builtins or object, is no defeater",
+             head + "def _p(mp):\n    mp.setattr(sys, 'a', 1)\n\n\n" + lit % "pass"),
+            ("re.compile, an attribute call, is no defeater", head + "_RE = re.compile('a')\n\n\n" + lit % "pass"),
+            ("a bare setattr whose target name THE PROOF proves (a literal) is no defeater",
+             head + lit % "setattr(config, 'a', 1)")]
+        for label, text in plants:
+            with self.subTest(plant=label):
+                self.assertTrue(_anyio_option_reads(ast.parse(text)), "%s: refused at the fix" % label)
+                with mock.patch.object(mod, "_anyio_builtin_defeaters", lambda *a, **k: ""):
+                    self.assertEqual(_anyio_option_reads(ast.parse(text)), [],
+                                     "%s: admitted at 1cf3448b9 (the builtin-defeater check disabled)" % label)
+        for label, text in controls:
+            with self.subTest(control=label):
+                self.assertEqual(_anyio_option_reads(ast.parse(text)), [], "%s: admitted at both heads" % label)
 
     def test_a_re_asserted_licence_holds_only_where_a_child_pytest_sees_the_fixtures_own_re_assert(self):
         """THE EXECUTION PROOF (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1): the static

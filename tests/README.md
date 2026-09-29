@@ -272,29 +272,41 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   or the module-level statement it stands under, such as an `if` over
   `sys.argv`), and of any decorated function or class there. A function that
   returns nothing, such as `write_owner_marker` in `tests/__init__.py`, is not
-  refused for what it reads, though any of the twenty-eight names listed below
-  anywhere in its module refuses the module. The rule refuses, wholesale, the
-  runtime-introspection channels `gc`, `ctypes`, its C-extension half
-  `_ctypes`, and `__code__` wherever the conftest names one, since each
+  refused for what it reads, though any identifier or attribute name outside
+  the allowlist anywhere in its module refuses the module. The rule refuses,
+  wholesale, the runtime-introspection channels `gc`, `ctypes`, its C-extension
+  half `_ctypes`, and `__code__` wherever the conftest names one, since each
   reaches and rewrites objects a proof over the text cannot bound. In the
   conftest's own text, `exec`, `eval`, and reads of `f_locals`,
   `cell_contents`, `__closure__`, `f_globals`, `f_back` or `sys._getframe`
   defeat the proof of a fixed key and of a function's local as well as of a
-  name of the module's scope. A module of the repository the conftest imports
-  directly is refused whole when any of twenty-eight names appears anywhere in
-  its text, whatever function, class or statement holds it (a plain function
-  the direct-import check does not otherwise match included): those four
-  channels, those eight names, `f_builtins`, `inspect.currentframe`,
-  `tb_frame`, `gi_frame`, `cr_frame` and `ag_frame`, and ten names that write
-  a namespace or an attribute by a name, or build code: a function's
+  name of the module's scope; and, under the reviewer's ruling of 2026-09-29,
+  so do a builtin `setattr`, `delattr` or `object.__setattr__` call (a bare
+  name, or through `builtins`) whose target name the proof does not prove, and
+  a bare-name `compile` call. An attribute call of a name other than `builtins`
+  or `object` is not one of these builtins: `re.compile` and
+  `monkeypatch.setattr`, which `tests/conftest.py` names, are not defeaters.
+  A module of the repository the conftest imports directly is governed by a
+  POSITIVE ALLOWLIST: the identifiers and attribute names it may name are held
+  equal to the set `tests/__init__.py`'s own text names today (derived and
+  committed as `_ANYIO_DIRECT_ALLOWED`); any other identifier or attribute name
+  refuses the module whole, naming the name and its line, whatever function,
+  class or statement holds it (a plain function the direct-import check does not
+  otherwise match included). A list of dangerous names does not converge, since
+  a false proof can reach a builtin by a name no list holds
+  (`object.__setattr__`, `operator.methodcaller`, `builtins`, `__import__`), so
+  the check is turned around: twenty-eight of the refused names carry a category
+  (the four channels; the eight defeaters; `f_builtins`, `inspect.currentframe`,
+  `tb_frame`, `gi_frame`, `cr_frame` and `ag_frame`; and ten that write a
+  namespace or an attribute by a name, or build code: a function's
   `__globals__`, an object's `__dict__`, `setattr`, `delattr`, `globals`,
-  `vars`, `locals`, `compile`, `types.FunctionType` and `types.CodeType`. A
-  function in such a module can rewrite a name or a cell of the conftest
-  through an object the conftest hands it: a function, whose cells and globals
-  are the conftest's, the frame that calls it, or the conftest's module.
-  `tests/__init__.py` names none of the twenty-eight, and `tests/conftest.py`
-  none of the first eighteen (it names `setattr`, `vars` and `compile`, which
-  this refusal reads only in a module the conftest imports).
+  `vars`, `locals`, `compile`, `types.FunctionType` and `types.CodeType`),
+  since a function in such a module can rewrite a name or a cell of the conftest
+  through an object the conftest hands it; any other name is refused as one
+  `tests/__init__.py` does not name. `tests/__init__.py`, the conftest's one
+  in-repo direct import, names nothing outside the allowlist, so the allowlist
+  refuses nothing of it; a name added to `tests/__init__.py` reds the pin that
+  holds the committed set equal to what its text names, and names itself.
   The rule also refuses an import of a module it finds neither among
   the directories it reads nor, through the import system, outside the
   repository (a module on a directory put on the import path, say), and the
@@ -304,21 +316,26 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   handed to `getattr`), and a double-underscore attribute read on an object
   of such a module (a function's `__globals__`, say), since the check cannot
   follow the module there. It refuses a write to the module's namespace
-  through `globals()`. Other roads that no honest author writes, and that no
-  one check refuses without refusing the live conftest, pass and are listed:
-  among them a carrier reached through a function that reads by name and
-  that the rule does not list, the command line read from outside the
-  interpreter's objects (`/proc/self/cmdline`, say), and an environment
-  lookup by a key the rule does not prove, or the environment read whole,
-  which `tests/conftest.py` does 12 times for its state isolation (a lookup
-  that names `PYTEST_ADDOPTS` is refused). It stops at the modules the
-  conftest imports directly: a read reached only through an import of an
-  import passes, and so does a road through such a module in neither shape
-  that names none of the twenty-eight names (what a function that returns
-  nothing leaves behind, an object the module fills at its import, or a
-  function there storing an attribute on the conftest's module found in
-  `sys.modules`, or calling `setattr` reached by a name built at run time).
-  The rule claims no more than this. Its
+  through `globals()`. Other roads that no honest author writes pass and are
+  listed, each stating either the live site of `tests/conftest.py` a refusal
+  by its name would hit or that a name check on it was not built because a list
+  of such names does not converge (the allowlist refuses them in a direct
+  import, and a value naming anyio reached through one in the conftest is still
+  refused): among them a carrier reached through a function that reads by name
+  and that the rule does not list (`pydoc.locate`, `pkgutil.resolve_name`), the
+  command line read from outside the interpreter's objects
+  (`/proc/self/cmdline`, which `tests/conftest.py` reads by that spelling for
+  the processes a test leaves), and an environment lookup by a key the rule does
+  not prove, or the environment read whole, which `tests/conftest.py` does 12
+  times for its state isolation (a lookup that names `PYTEST_ADDOPTS` is
+  refused). It stops at the modules the conftest imports directly: a read
+  reached only through an import of an import passes, and so does a road through
+  such a module in a shape the direct-import check does not match that names
+  only identifiers `tests/__init__.py` holds (what a function that returns
+  nothing leaves behind, an object the module fills at its import); a road that
+  would rewrite the conftest (an attribute store on its module in `sys.modules`,
+  `setattr` reached by a name built at run time, `__import__`) names a name
+  outside the allowlist and is refused. The rule claims no more than this. Its
   docstring, `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`,
   lists in WHAT IT DOES NOT READ what it leaves unrefused. A name
   is licensed only when a child pytest over a copy of the conftest writes the

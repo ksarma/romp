@@ -2476,8 +2476,10 @@ _enumerate = threading.enumerate    # bound at import too: a test's leaked patch
 # The tables concurrent.futures' exit hooks join, as (module, attribute). The two hooks are the only functions the
 # standard library registers with threading._register_atexit (3.10 to 3.14), which threading._shutdown calls before it
 # joins the non-daemon threads; each joins every thread in its module's table, whatever the thread's daemon flag. The
-# guard reads each table by its literal module and attribute names (_exit_join_table_reads), and an assertion there
-# ties the pairs those reads name to this tuple, so the two cannot drift apart.
+# guard reads each table by its literal module and attribute names (_exit_join_table_reads), and an assertion there ties
+# the LABELS (the pair written beside each read) to this tuple, so a label cannot drift from it; a read's own literal is
+# tied to its label by execution, in tests/test_session_end_thread_guard.py's ExitJoinTables (a stand-in table put under
+# each pair is the one the guard reads), not by the assertion.
 EXIT_JOIN_TABLES = (("concurrent.futures.thread", "_threads_queues"),      # ThreadPoolExecutor workers
                     ("concurrent.futures.process", "_threads_wakeups"))    # ProcessPoolExecutor manager threads
 # The guard's failure, in the stash of the item whose teardown it failed, for _guard_failure_into_report.
