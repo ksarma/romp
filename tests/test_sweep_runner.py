@@ -1893,17 +1893,59 @@ class Checkout(_Base):
         self.assertEqual(os.listdir(self.trees()), [], "the checkout is gone")
         self.assertFalse(os.path.exists(w.data()["runs"][-1]["runner"]["tmpdir"]), "TMPDIR is gone")
 
+    @staticmethod
+    def _waiting_in_its_read(root_pid, fifo):
+        """Whether a process in `root_pid`'s tree (the runner, or a git it started) holds `fifo` open and has a thread
+        sleeping in the kernel's pipe read (its /proc wchan); None where /proc has no wchan to tell by."""
+        if not os.path.exists("/proc/%d/wchan" % root_pid):
+            return None
+        want = os.lstat(fifo)
+        todo, seen = [root_pid], set()
+        while todo:
+            pid = todo.pop()
+            if pid in seen:
+                continue
+            seen.add(pid)
+            try:
+                tids = os.listdir("/proc/%d/task" % pid)
+                fds = os.listdir("/proc/%d/fd" % pid)
+            except OSError:
+                continue
+            holds = False
+            for n in fds:
+                try:
+                    st = os.stat("/proc/%d/fd/%s" % (pid, n))
+                except OSError:
+                    continue
+                holds = holds or (st.st_dev, st.st_ino) == (want.st_dev, want.st_ino)
+            for tid in tids:
+                try:
+                    if holds:
+                        with open("/proc/%d/task/%s/wchan" % (pid, tid)) as f:
+                            chan = f.read()
+                        if "pipe_read" in chan or "pipe_wait" in chan:
+                            return True
+                    with open("/proc/%d/task/%s/children" % (pid, tid)) as f:
+                        todo.extend(int(c) for c in f.read().split())
+                except (OSError, ValueError):
+                    pass
+        return False
+
     def stop_in_the_re_read(self, w, *extra, signum=15):
         """Run the runner (with `extra`) while the pytest leg fails and leaves its checkout's .git/info/exclude a FIFO
-        (the fake's "fifo" action), so the re-read after the leg waits in its open of that file. A non-blocking open of
-        the FIFO for writing succeeds only once a reader is in its open: that event, not a timer, is when `signum` is
-        sent. The write end stays open until the runner has exited. Returns (rc, stdout, stderr)."""
+        (the fake's "fifo" action), so the re-read after the leg waits on that file. A non-blocking open of the FIFO for
+        writing succeeds only once a reader is in its open, and `signum` is sent once that reader sleeps in its read of
+        the FIFO (/proc's wchan): events, not a timer. The read and not the open is the event because a signal that
+        lands between the reader's open and its read can wait for that read to return: CPython 3.10 did not run the
+        runner's handler there, and the write end stays open until the runner has exited, so the read never returned
+        and the pins hung on 3.10 alone. Where /proc has no wchan (macOS), the open is the event. Returns (rc, stdout,
+        stderr)."""
         proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2",
                                  *extra], env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 stdin=subprocess.DEVNULL)
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
         pattern = os.path.join(w.xdg, "romp", "sweeps", "trees", "*", ".git", "info", "exclude")
-        fd, deadline = None, time.monotonic() + 60
+        fd, fifo, deadline = None, None, time.monotonic() + 60
         while fd is None:
             if proc.poll() is not None:
                 self.fail("the runner ended before its re-read opened the FIFO: %s" % (proc.communicate(),))
@@ -1912,12 +1954,19 @@ class Checkout(_Base):
             for path in glob.glob(pattern):
                 try:
                     if stat.S_ISFIFO(os.lstat(path).st_mode):
-                        fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+                        fd, fifo = os.open(path, os.O_WRONLY | os.O_NONBLOCK), path
+                        break
                 except OSError:          # not made yet, or ENXIO: no reader has it open yet
                     pass
             if fd is None:
                 time.sleep(0.02)
         try:
+            while self._waiting_in_its_read(proc.pid, fifo) is False:
+                if proc.poll() is not None:
+                    self.fail("the runner ended before its re-read waited in its read of the FIFO: %s" % (proc.communicate(),))
+                if time.monotonic() > deadline:
+                    self.fail("the runner's re-read never waited in its read of the FIFO")
+                time.sleep(0.002)
             proc.send_signal(signum)
             out, err = proc.communicate(timeout=90)
         finally:
