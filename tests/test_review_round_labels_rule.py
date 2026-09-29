@@ -149,8 +149,9 @@ class RoundLabelRule(unittest.TestCase):
         caller's set's and nothing of the helper's; and neither the helper's text nor this module's spells a numbered-round
         form, nor holds an offence under a synthetic set (a pass credited to the reviewer among the forms offences() reads, which
         forms() does not), the docstrings writing N and every probe assembled at run time, so no credit to any PR's round lives in
-        the rule's text and a caller that censuses either file reads it clean (pass 11's closing fixer pass: the two files are
-        added by the branch that carries the rule and sit outside its guard's population, so this is what holds them)."""
+        the rule's text and a caller that censuses either file reads it clean (pass 11's closing fixer pass: the two files were
+        added by the branch that carries the rule, outside its guard's population, and that guard is deleted before the branch
+        lands, so this is what holds them)."""
         tree = _helper_tree()
 
         def ints(node):

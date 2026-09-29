@@ -1034,9 +1034,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         otherwise escapes it), stated here because the alternative is a tool reading git's delta against a base a CI checkout
         may not hold; the pre-push check reads that delta. The cell is what scripts/upstream-ledger.py's render prints for the
         entry's row over the tree's entries (the renderer's own cut applied by the renderer, never spelled here), read from the
-        row and brace-expanded (`tests/test_federated_linkdrop_{a,b}.py` names two paths: five full paths cannot fit under the
-        cut in any order, so the line is one stem); every module of the family is on the cell and every path on the cell is a
-        file of the tree, so a module the cut drops, a module the tree gained, or a stale path on the line is a red naming it.
+        row and brace-expanded (`tests/test_federated_linkdrop_{a,b}.py` names two paths: the family's full paths beside the
+        branch's other paths cannot fit under the cut in any order, so the family is one stem); every module of the family is
+        on the cell and every path on the cell is a file of the tree, so a module the cut drops, a module the tree gained, or a
+        stale path on the line is a red naming it.
         The paths on the cell beyond the family (the branch's other files: since the author's pass 11 the shared round-label
         rule tests/review_round_labels_rule.py and its test, and since the maintainer's round 7 the entry's own path, which
         the line had left out) are git's to derive, the branch's diff against
