@@ -6434,10 +6434,13 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
  *  origin must be `origin`, the page's own, so a file route on another origin, or on this host at another port, is null.
  *  The route is read as the kernel reads the path the browser sends: CPython's parse_request folds a leading run of slashes
  *  into one and urlparse drops the last segment's `;params`, so `//file` and `/file;x` are the /file route there. It is read a
- *  second time with its percent-escapes decoded and then its `.` and `..` segments resolved, since WebKit sends an unreserved
- *  escape decoded (`/%66ile` reaches the kernel as `/file`) while Chromium and Firefox send it as written, which the kernel
- *  does not route; the cap pass (capAuthoredFileUrls) caps no escaped spelling, so its picture loads only with a cap already
- *  in its address, and where it loads it opens here. The query is read as the kernel's parse_qs reads it, a blank value
+ *  second time with its percent-escapes decoded and then its `.` and `..` segments resolved, for an escape the browser's URL
+ *  parser keeps, an escaped letter: WebKit sends it decoded (`/%66ile` reaches the kernel as `/file`) while Chromium and
+ *  Firefox send it as written, which the kernel does not route, and the cap pass (capAuthoredFileUrls) caps no such spelling,
+ *  so its picture loads only in WebKit and only with a cap already in its address, and where it loads it opens here. An
+ *  escaped dot segment (`/%2e/file`, `/x/%2e%2e/file`), and an escaped letter a later `..` removes, are resolved by the
+ *  browser's parser before the fetch in every engine, so each is the plain route to the cap pass and to the kernel and loads
+ *  as it does (the file review's round 20, extra9-1). The query is read as the kernel's parse_qs reads it, a blank value
  *  dropped and the first value left kept: a file at the /file route is the first `path` with the `sid` beside it (null when
  *  the address names none), and at the relay's route, the inverse of the viewer's own URL (preview.ts fileUrl), the host its
  *  one segment names, joined to the sid by hostOf's rule (host-prefix.ts: a colon after the first character). "none" for an

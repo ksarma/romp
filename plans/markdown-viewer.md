@@ -8500,9 +8500,11 @@ coordinator's ruling on the same-origin figure after the file review's round 19,
 check of that build, and the file review's round 20, regression-2, with the coordinator's decision 7 on it, since every
 name past the path, the session and a credential had been refused, file-figure-open.test.ts deriving the names the
 kernel's handler reads, so a name it comes to read reds there until it is placed; a file route on another origin, or on
-this host at another port, stays a web target; WebKit sends an escaped route decoded and Chromium and Firefox send it as
-written, which the kernel does not route, and the cap pass caps no escaped spelling, so its picture loads only with a
-cap already in its address); else the file
+this host at another port, stays a web target; for an escape the browser's URL parser keeps, an escaped letter
+(`/%66ile`), WebKit sends the route decoded and Chromium and Firefox send it as written, which the kernel does not route,
+and the cap pass caps no such spelling, so its picture loads only in WebKit and only with a cap already in its address,
+while an escaped dot segment, and an escaped letter a later `..` removes, are resolved by the browser's parser before the
+fetch and load as the plain route does in every engine, the file review's round 20, extra9-1); else the file
 named by the candidate the browser chose for the figure, as the author wrote it (`chosenSource`,
 the review's round 2: `currentSrc`, when it is set and is not the img's own src, matched against the srcset carriers, a
 `<picture>`'s sources then the img, and named by the authored spelling rewriteFigureSrcs kept beside the rewritten
