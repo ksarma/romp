@@ -309,15 +309,16 @@ subject; `verify` refuses the branch otherwise.
    checkouts and TMPDIRs, and the legs start with both signals at their default action either way. A leg that
    fails is written to the result as soon as it exits, so stopping the runner during the re-read
    after it, or during that write itself, keeps the failure (a stop inside the write lets it finish
-   first, as it does for the write of an invalid mark); a stop in the moments after the leg exits
-   and before the runner has finished its record (the reap of what the leg left running, up to
-   the reap's 30 s timeout, then the reading of the leg's log for its summary and test count)
-   loses that failure, and the next run needs no flake for it. An `npm ci` that a job runs before
+   first, as it does for the write of an invalid mark); a stop between the leg's exit and the
+   write of its failure (the reap of what the leg left running, up to the reap's 30 s timeout,
+   the reading of the leg's log for its summary and test count, which holds a bounded part of the
+   log whatever its size, and the steps from the filled-in record to the write) loses that
+   failure, and the next run needs no flake for it. An `npm ci` that a job runs before
    its legs where the `deps` leg is not among them (the served job's, or one a re-run runs first)
    and that fails marks each of that job's legs after it red, naming it, and writes them as soon as
    it exits, before the check of the checkout after it, so a stop during that check keeps them as
-   failures (a stop in the moments after it exits and before those legs are marked loses them, as
-   for a leg); one that also changed the checkout makes the run invalid, with those legs counted as
+   failures (a stop after it exits and before its blocked legs are written loses them, as for a
+   leg); one that also changed the checkout makes the run invalid, with those legs counted as
    its failures. In a re-run's first job, where nothing is recorded yet, such a failure refuses the
    re-run instead. A run that did not finish (stopped, or its runner died) is read as an invalid
    run is: its failures count and its passes count for nothing, since a later leg's re-read could

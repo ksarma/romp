@@ -244,21 +244,22 @@ the result red, naming the failed run and its logs. Invalidity voids a run's pas
 Class A): a leg that failed in an invalid run counts as a failure, the leg whose re-read made the run invalid included,
 so it blocks a plain full run and uses that leg's one flake, and a second failure inside an invalid run leaves the sha
 unable to pass (the reader reads it red, and the runner exits 1 for such a run, not 3); a pass in an invalid run counts
-for nothing, since its checkout or venv changed. An invalid run that failed no leg needs no flake. The pass line,
-verify's record and the reader's invalid line name each invalid run with the legs it failed. A leg that did not pass
+for nothing, since its checkout or venv changed. An invalid run that failed no leg needs no flake. The pass line and
+verify's record name each invalid run with the legs it failed; the reader's invalid line names the run it reads
+invalid, with the legs that run failed. A leg that did not pass
 is written to the result as soon as it exits, before the re-read after it, so a stop during that re-read keeps its
 failure; a pass is written after its re-read, which could void it. A run that did not finish (stopped, or its runner
 died) is read as an invalid run is: its failures count and its passes count for nothing (round 2, the owner's build
 question 2), since a later leg's re-read could have voided them, and a stop during that re-read keeps its invalid mark
 from being written. A stop that arrives inside the write of a failure,
 or of the run's invalid mark, lets that write finish before the runner stops (_write_under_stop), where write_result
-alone would remove its temp file and the record with it. A stop in the moments between a leg's exit and the
-runner filling in its record (the reap of what the leg left running, which reap_descendants bounds at its 30 s
-timeout, then the reading of its log for the summary and the test count) still loses the rc: the run records that leg
-as never finished, and the next run needs no flake for it. So does a stop in those moments after a setup's npm ci
-exits: the group's legs it would block are recorded as never finished. Writing the rc before the record is whole would not close
-this, since a stop of the runner's whole scope kills the leg with the same signal, and its rc would then read as a
-failure.
+alone would remove its temp file and the record with it. A stop between a leg's exit and the write of its failure
+(the reap of what the leg left running, which reap_descendants bounds at its 30 s timeout, the reading of its log for
+the summary and the test count, which holds a bounded part of the log whatever its size, and the steps from the filled-in
+record to the write) still loses the rc: the run records that leg as never finished, and the next run needs no flake
+for it. So does a stop after a setup's npm ci exits and before its blocked legs are written: the group's legs it would
+block are recorded as never finished. Writing the rc before the record is whole would not close this, since a stop of
+the runner's whole scope kills the leg with the same signal, and its rc would then read as a failure.
 A --leg re-run refuses unless the newest run finished, is valid, and failed that leg, so the flake a failure in an
 invalid full run needs is spent on a full run. A --leg re-run runs each leg it names in a fresh checkout of that leg's
 job, grouped as a full run groups them, so it may name legs of several jobs (pytest with a leg after deps included),
