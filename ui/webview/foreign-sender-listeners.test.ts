@@ -1569,11 +1569,11 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     alias, a binding destructured from a window, Reflect.apply);
 //   - code the build takes from outside ui/: vendor/track-changents and npm packages (marked, dompurify, highlight.js
 //     and katex in the page bundles, CodeMirror in the editor chunk, pdfjs-dist in the pdf chunk), and the pdf worker, an
-//     entry point built from node_modules/pdfjs-dist. Measured at 7c28c230c through the built bundles' source maps, every
+//     entry point built from node_modules/pdfjs-dist. Measured at 72121370c through the built bundles' source maps, every
 //     window message listener in them is one of the 16 gated ui/ sites, and pdfjs-dist listens only on a Worker, a port
 //     or the worker's own scope, never on a window;
 //   - the inline scripts vscode-extension/src/extension.ts writes into the VS Code webview documents (mediaBaseTag's, and
-//     the kernel-base script in buildHtml and buildFeedHtml), which run in the same frame as the bundles. At 7c28c230c
+//     the kernel-base script in buildHtml and buildFeedHtml), which run in the same frame as the bundles. At 72121370c
 //     none of the three adds a message listener, and no file of vscode-extension/src but its tests holds one;
 //   - code handed to the DOM as markup or a URL (a script element, an inline handler attribute, a javascript: URL),
 //     which is no JavaScript the parser reads.
