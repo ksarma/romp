@@ -920,8 +920,8 @@ const codeLines = (src) => {
  *  destructured method called; the author's closing pass after the file review's round 10, mechanism-1: the option read had
  *  needed the colon, so the shorthand the docstring itself named as the form passed, and so did the destructured call). Any
  *  of them defeats a roster's switch as a private launch does, since the switch turns the shared helper's launch skip into a
- *  failure and a leg that skips itself never reaches it; the convention's road for a leg that must not run is the exclusions
- *  file, not a private skip. So a green here says that no leg carries one of the nine, not that no leg stands itself down;
+ *  failure and a leg that skips itself never reaches it; the convention's road for a leg that must not run is to stay off the
+ *  roster (OFF_ROSTER below, with its header's words), not a private skip. So a green here says that no leg carries one of the nine, not that no leg stands itself down;
  *  the bound of the read, each side pinned by execution in the test below (the maintainer's reading of the author's closing
  *  pass after the file review's round 10: both halves were keyed on spellings, and a reader who saw the green took no leg to
  *  stand down privately): a conditional call (`if (x) t.skip(`) is within it, since the spelling stands whatever the
