@@ -387,11 +387,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   plugin blocked with no `-k` are granted (planted; no committed test makes a
   real run under either). A road on `-p no:anyio` not given, which no child
   is, is granted by the run, and the reader counts no fixture of a conftest
-  whose code reads what can reach the flag other than where it proves the
-  read (above), so a licence rests on such a road only where the reader
-  leaves it unrefused: one of the listed roads, one reached only through an
-  import of an import, or one through a module the conftest imports directly
-  in neither shape. Third,
+  in whose code it finds a read of what can reach the flag other than where
+  it proves the read (above), so a licence rests on such a road only where
+  the reader leaves it unrefused: one of the listed roads, which it does not
+  read, one reached only through an import of an import, or one through a
+  module the conftest imports directly in neither shape. Third,
   unmatchable at any
   cost: a hook condition
   keyed on an open-valued signal (a mark, an environment variable, a host name,

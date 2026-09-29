@@ -7971,13 +7971,13 @@ def _conftest_reasserted_names(src=None, where=None):
     on the cache plugin blocked with no -k given, each granted by the proof in the context test; no committed test
     makes a real run under either. A road keyed on -p no:anyio not given, which no child of the proof is (each passes
     the flag, _PROOF_CHILD_FLAG), is granted by the proof (_proof_option_roads' road on it, in the context test), and
-    THE ANYIO RULE refuses, on the filter's two roads, every fixture of a conftest whose code reads what can reach the
-    flag, given or not given, other than where the rule proves the read (_anyio_option_reads, a positive allowlist since
-    the reviewer's fail-closed ruling; its docstring says what it claims), so a licence rests on such a road only where
-    the rule leaves it unrefused: a kind of road no honest author writes that its wholesale checks do not cover, an
-    environment lookup that ruling leaves listed, one reached only through an import of an import, or one through a
-    module the conftest imports directly of neither shape its last clause reads (that docstring lists their kinds in
-    WHAT IT DOES NOT READ).
+    THE ANYIO RULE refuses, on the filter's two roads, every fixture of a conftest in whose code the rule finds a read
+    of what can reach the flag, given or not given, other than where it proves the read (_anyio_option_reads, a positive
+    allowlist since the reviewer's fail-closed ruling; its docstring says what it claims), so a licence rests on such a
+    road only where the rule leaves it unrefused: a kind of road no honest author writes that its wholesale checks do
+    not cover, an environment lookup that ruling leaves listed, one reached only through an import of an import, or one
+    through a module the conftest imports directly of neither shape its last clause reads (that docstring lists their
+    kinds in WHAT IT DOES NOT READ).
     THIRD, UNMATCHABLE at any cost: a conftest hook condition keyed on an open-valued signal, a mark of any name, an
     environment variable, a host name, an option's value (a --durations of 5, where CI's step gives 10: the pair
     matches whether an option is given, not its value; _proof_option_roads' road on it is granted), or another
@@ -8189,14 +8189,15 @@ _PROOF_CHILD_FLAG = ("-p", "no:anyio")
 #   it there as one option of two words, as it reads the developer's -p no:cacheprovider (that ruling, (2);
 #   _proof_ci_option_units). Since each child passes it, every run of the proof has the flag and none lacks it, so the
 #   proof grants a road keyed on it not given; THE ANYIO RULE refuses such a road, and a road on the flag given, on the
-#   filter's two roads wherever the road reads what can reach the flag other than where the rule proves the read, through
-#   the conftest's text and through a module of the repository it imports directly in the shapes the rule's last clause
-#   reads (_anyio_option_reads, a positive allowlist since the reviewer's fail-closed ruling of 2026-09-28 22:30Z, whose
-#   docstring says what it claims, and lists in WHAT IT DOES NOT READ the kinds of road no honest author writes that its
-#   wholesale checks leave unrefused, the environment lookups that ruling leaves listed, the read reached only through
-#   an import of an import, where it stops, and the roads of neither shape), so a licence rests on either road only
-#   where the rule leaves the road unrefused: one of those listed kinds, an environment lookup so, one reached only
-#   through an import of an import, or one through a module the conftest imports directly of neither shape
+#   filter's two roads wherever the rule finds the road reading what can reach the flag other than where it proves the
+#   read, through the conftest's text and through a module of the repository it imports directly in the shapes the
+#   rule's last clause reads (_anyio_option_reads, a positive allowlist since the reviewer's fail-closed ruling of
+#   2026-09-28 22:30Z, whose docstring says what it claims, and lists in WHAT IT DOES NOT READ the kinds of road no
+#   honest author writes that its wholesale checks leave unrefused, the environment lookups that ruling leaves listed,
+#   the read reached only through an import of an import, where it stops, and the roads of neither shape), so a licence
+#   rests on either road only where the rule leaves the road unrefused: one of those listed kinds, an environment lookup
+#   so, one reached only through an import of an import, or one through a module the conftest imports directly of
+#   neither shape
 
 
 def _proof_developer_options():
@@ -12690,10 +12691,11 @@ class HermeticKernelPostal(unittest.TestCase):
         """THE ANYIO RULE (the reviewer's ruling at fork PR #894's landing merge with main, on the proof's launcher: every
         child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution proof refuses a hook keyed on the flag
         given and grants one keyed on it not given; one syntactic check of the filter, _anyio_option_reads, now refuses
-        both, a positive allowlist since the reviewer's fail-closed ruling of 2026-09-28 22:30Z: a read that can reach
-        the option is admitted only where the rule proves it, through the conftest's text and through a module of the
-        repository it imports directly in the shapes its last clause reads, and everything else is refused; its
-        docstring says what it claims and lists in WHAT IT DOES NOT READ what it leaves unrefused, and
+        both wherever it finds the read the hook keys on, a positive allowlist since the reviewer's fail-closed ruling
+        of 2026-09-28 22:30Z: a read that can reach the option is admitted only where the rule proves it, through the
+        conftest's text and through a module of the repository it imports directly in the shapes its last clause reads,
+        and everything else is refused; its docstring says what it claims and lists in WHAT IT DOES NOT READ what it
+        leaves unrefused, and
         test_the_fail_closed_anyio_rule_admits_a_key_only_where_it_proves_one_fixed_string_and_refuses_the_rest pins the
         allowlist's classes and THE PROOF). LIVE: over tests/conftest.py the rule finds no read, its direct-import check's
         reading of tests/__init__.py included (red with _shared_judge_paths put back to its getattr over a loop's name,
@@ -13964,8 +13966,10 @@ class HermeticKernelPostal(unittest.TestCase):
         -p no:anyio given, for every read: each child passes it, _PROOF_CHILD_FLAG); the roads keyed on an option
         neither form gives (--rootdir), on a combination of options neither form has (the cache plugin not loaded with no
         -k given) and on an option's value (a --durations of 5) are granted, and so is the road on CI's -p no:anyio not
-        given, which no run of the proof is and THE ANYIO RULE refuses on the filter's two roads
-        (test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why). The proof runs
+        given, which no run of the proof is and THE ANYIO RULE refuses on the filter's two roads wherever it finds a
+        read of what can reach the flag
+        (test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why; a read of a
+        kind the rule's docstring lists in WHAT IT DOES NOT READ is not read, and not refused). The proof runs
         here with this process's environment carrying the variables pytest-xdist sets in a worker, as on a worker of a
         sweep with -n 8, and its runs with no worker drop them (_proof_child_env), so the variable's road is refused for
         the -n 2 runs' reads alone. V5's worker roads and the conjunctions are refused only where the proof makes the
@@ -14027,7 +14031,7 @@ class HermeticKernelPostal(unittest.TestCase):
                          "on an option one run gives and another does not, given or not, and grants the roads keyed on an "
                          "option neither form gives, on a combination of options neither form has and on an option's value, "
                          "and the road on CI's -p no:anyio not given, which each child passes and THE ANYIO RULE "
-                         "refuses:\n%s"
+                         "refuses where it finds the read:\n%s"
                          % "\n".join("%s: %s" % (label, got["the pair of forms"][name] or "granted")
                                      for name, (label, _f) in option_roads.items()))
         for name, (label, runs) in option_roads.items():
@@ -14142,9 +14146,11 @@ class HermeticKernelPostal(unittest.TestCase):
         road on -p not given fired in no run and the pair-of-forms test failed). From the real ci.yml,
         _proof_ci_option_units reads the flag as one option in each of CI's forms, and _proof_option_roads plants on it
         a road on the flag given, keyed on the two words together as the developer's -p no:cacheprovider is, of every
-        run, since each child passes the flag (_PROOF_CHILD_FLAG), and a road on it not given, granted by the proof (None)
-        and refused by THE ANYIO RULE on the filter's two roads, and no road on the word -p or on no:anyio. Over a copy
-        of ci.yml whose step gives another plugin (-p no:other), or -p alone (at the end of the line, or before
+        run, since each child passes the flag (_PROOF_CHILD_FLAG), and a road on it not given, granted by the proof
+        (None) and refused by THE ANYIO RULE on the filter's two roads wherever the rule finds a read of what can reach
+        the flag (a read of a kind the rule's docstring lists in WHAT IT DOES NOT READ is not read, and not refused),
+        and no road on the word -p or on no:anyio. Over a copy of ci.yml whose step gives another plugin (-p no:other),
+        or -p alone (at the end of the line, or before
         --durations=10), -p is read as the word it was before that ruling:
         roads on -p given and not given, keyed on the word, the first of every run and the second of none (the
         developer's -p no:cacheprovider and each child's flag give -p too), and no road on a plugin."""
@@ -14164,7 +14170,8 @@ class HermeticKernelPostal(unittest.TestCase):
         roads = _proof_option_roads()
         by_label = {label: (condition, runs) for label, condition, runs in roads}
         self.assertEqual(by_label["CI's option -p no:anyio given"], ("' -p no:anyio ' in %s" % line, modes))
-        self.assertEqual(by_label["CI's option -p no:anyio not given, which each child passes, refused by THE ANYIO RULE"],
+        self.assertEqual(by_label["CI's option -p no:anyio not given, which each child passes, refused by THE ANYIO RULE "
+                                  "where it finds the read"],
                          ("' -p no:anyio ' not in %s" % line, None))
         self.assertEqual([label for label in ci_roads(roads) if "-p" in label and flag not in label], [],
                          "no road on the word -p, from the real ci.yml")
@@ -18249,8 +18256,10 @@ def _proof_option_roads(root=None):
     verifier's X2 negated), and a combination of options neither form has (the cache plugin not loaded with no -k
     given), both in the proof's second tier; a condition on an option's value (a --durations of 5, where CI's step gives
     10), in its third, the open-valued; and CI's -p no:anyio not given, which no run of the proof is, a road THE ANYIO
-    RULE refuses on the filter's two roads (_anyio_option_reads), so no licence rests on it. `root` is
-    _proof_mode_options', the checkout whose .github/workflows/ci.yml is read."""
+    RULE refuses on the filter's two roads wherever it finds a read of what can reach the flag other than where it
+    proves the read (_anyio_option_reads), so a licence rests on it only where the rule leaves it unrefused: a read of
+    a kind the rule's docstring lists in WHAT IT DOES NOT READ, which the rule does not read (_PROOF_CHILD_FLAG).
+    `root` is _proof_mode_options', the checkout whose .github/workflows/ci.yml is read."""
     args = "item.config.invocation_params.args"
     line = "(' ' + ' '.join(%s) + ' ')" % args
     modes = _proof_modes()
@@ -18272,7 +18281,8 @@ def _proof_option_roads(root=None):
         if word == flag:
             words = " %s " % flag
             roads += [("CI's option %s given" % flag, "%r in %s" % (words, line), having(lambda g, w=words: w in " %s " % " ".join(g))),
-                      ("CI's option %s not given, which each child passes, refused by THE ANYIO RULE" % flag,
+                      ("CI's option %s not given, which each child passes, refused by THE ANYIO RULE where it finds the read"
+                       % flag,
                        "%r not in %s" % (words, line), None)]
             continue
         roads += [("CI's option %s given" % word, "%r in %s" % (word, args), having(lambda g, w=word: w in g)),
