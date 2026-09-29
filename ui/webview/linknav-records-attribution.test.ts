@@ -800,9 +800,10 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
  *  coordinator's ruling on the same-origin figure after that round (the docstring of ownFileRoute, which reads a figure at this
  *  origin's /file route as a file, and the comment over its call in figureTarget, each names that round); forty-five since the
  *  fixes for the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1 (the comment over the own-chain allowlist's
- *  CHAIN_TYPES and the docstring of chainToken, each names that round).
+ *  CHAIN_TYPES and the docstring of chainToken, each names that round); forty-six since the same round's ui-1 (the comment in
+ *  fetchFile's failure arm, which spends a key step's landing on the new bar's button of its direction, names that round).
  *  A property pin: the count is compared to the derived list, whose lines the message prints. */
-const VIEWER_UNITS = 45;
+const VIEWER_UNITS = 46;
 
 test("road 1, every checkout, a rule over the tree: every file git lists at the repo root, tracked or untracked and not ignored, whose text names the file review or carries an id of the author's family, plus the files the branch created, the plan's section, the guide's Links paragraph and the browser plan's pointer; the created files and the three records in full, the rest keyed on the review named, so another review's rounds are left alone; no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base", (t) => {
   const reviews = convention();
