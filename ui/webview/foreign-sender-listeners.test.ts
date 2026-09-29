@@ -350,8 +350,11 @@ const parsed = new Map<string, Site[]>();
 /** The names a script reaches its own window by: window, self, globalThis and frames (which a browser answers with the
  *  window itself; an indexed frames[i] is a frame's window, another). refKind (at the road census below) decides that an
  *  identifier is this page's own window by TypeScript's binder, not by spelling: its checker symbol IS the global table's
- *  symbol for one of these names (an augmented global still counts, by identity), so a local that shadows the name is not
- *  the window. A receiver refKind resolves to a window other than this page's own, or cannot resolve, is no census site.
+ *  symbol for one of these names (an augmented global still counts, by identity; globalThis by its symbol name, since the
+ *  library gives it no declaration to anchor identity), so a local that shadows the name with a run-time binding is not the
+ *  window, while a shadow that binds nothing at run time (a module-local `declare var window` esbuild drops) is the raw
+ *  global window, which refKind reads as one. A receiver refKind resolves to a window other than this page's own, or cannot
+ *  resolve, is no census site.
  *  The road census refuses a handler assigned on another window whatever its value, and one assigned on a receiver refKind
  *  cannot resolve unless the value sets no handler (null, an unshadowed undefined) or the receiver is a name socketRefusal
  *  proves, through the same checker, a WebSocket. */
@@ -1324,9 +1327,10 @@ test("the addEventListener census reads what it claims: every way around the lit
     "class C { m() { [\"click\"].forEach((k) => { use(this); window.addEventListener(k, f); }); } }",
     "const L = [\"pointerup\", \"pointercancel\"]; L.forEach((t) => el.addEventListener(t, f)); for (const t of L) el.removeEventListener(t, f);",
     "const T = \"click\"; function g() { { const T = \"keydown\"; window.addEventListener(T, f); } }",
-    // a function declared in a block does not bind the name outside it: the checker resolves T to the outer const, and the
-    // socket proof's clause 0 refuses the block function itself, so it is no addEventListener escape (esbuild would refuse
-    // to build it, or its Annex B hoist would make T a function object, which is no message type)
+    // a function declared in a block does not bind the name outside it, so the event name is no message type: in a module
+    // the checker resolves T to the outer const "click", and in a sloppy script Annex B hoists the block function so T is a
+    // function object. (This row has no handler and no socket, so the socket proof's clause 0 does not run on it; esbuild
+    // does build the block function.)
     "const T = \"click\"; function g() { if (f) { function T() { /* */ } } window.addEventListener(T, f); }",
   ];
   for (const src of accepted) assert.deepEqual(loose(src), [], "accepted: " + src);
@@ -1435,8 +1439,10 @@ test("an imported event name is read from the one file esbuild bundles for its b
 // reach. More roads reach a window listener without spelling either, and this census refuses each in a ui/ source file
 // (test and types files excluded), read by the TypeScript parser. It resolves each receiver by TypeScript's binder
 // (refKind), never by spelling: an identifier is a window when its checker symbol IS the global table's symbol for the
-// name (an augmented global still counting; a local that shadows the name is not the window), and a window-name global
-// the source augmented with a declaration outside the default lib is refused outright:
+// name (an augmented global still counting; globalThis by its symbol name, which the library gives no declaration to
+// anchor identity; a local that shadows the name with a run-time binding is not the window, while a shadow that binds
+// nothing at run time, a module-local `declare var window` esbuild drops, is the raw global window and is read as one),
+// and a window-name global the source augmented with a declaration outside the default lib is refused outright:
 //   - this page's own window: window, self, globalThis and frames (which a browser answers with the window itself);
 //     any of them reached through another (window.self, window.frames); this page's document's defaultView
 //     (document, or this window's document, or a local initialised to one); a local initialised to any of
@@ -1617,11 +1623,14 @@ function thisIsGlobal(n: any): boolean {
 /** The kind `n` resolves to by the checker, or null: a name whose checker symbol IS the global window, self, globalThis or
  *  frames is this page's own window; top, parent or opener another; document this page's document (res.windowKind, by
  *  identity, so an augmented window global still counts, and refKind records the augmentation for looseRoads to refuse);
- *  a member by memberKind; an indexed window (frames[0], window[0]) is a frame's, another; a local variable the checker
- *  resolves to, followed through its initialiser (a const w = window hops to window), or destructured from one
- *  (patternKind); an import is not followed (a window imported from another module is on the unseen list). A parameter, a
- *  name with no single variable declaration, or a name the checker cannot resolve is null. Nested more than four deep,
- *  null. */
+ *  a window name whose symbol is a shadow the source added but that binds nothing at run time (its every declaration
+ *  ambient, a module-local `declare var window` esbuild drops) is the raw global at run time, read as this page's own
+ *  window or another by name; a member by memberKind; an indexed window (frames[0], window[0]) is a frame's, another; a
+ *  local variable the checker resolves to, followed through its initialiser (a const w = window hops to window), or
+ *  destructured from one (patternKind); an import is not followed (a window imported from another module is on the unseen
+ *  list). A name declared more than once is a window only when every one of its variable declarations that has an
+ *  initialiser binds a window (var w = window; var w = window). A parameter, a name with no variable declaration bound to
+ *  a window, or a name the checker cannot resolve is null. Nested more than four deep, null. */
 function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
   n = unwrap(n);
   if (depth > 4) return null;
@@ -1642,18 +1651,37 @@ function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
     if (WINDOW_GLOBALS.has(n.text) && res.extraDecl(s)) res.augmented.push({ name: n.text, node: n, sym: s });
     return fam;
   }
+  // a window name whose symbol is a shadow the source added but that binds nothing at run time (its every declaration
+  // ambient, a module-local `declare var window: any` esbuild drops) is the untouched global at run time: the identity
+  // test above answers "not the global" because the shadow is a separate symbol, but nothing binds the name at run time,
+  // so it falls through to the raw global, this page's own window (window, self, globalThis, frames) or another (top,
+  // parent, opener). Every road then reads it as that window, the same as a use with no shadow: a computed write on it is
+  // refused (the receiver is a window), a literal onmessage on this page's own is a census site. 0 live.
+  if (WINDOW_GLOBALS.has(n.text) && bindsNothingAtRuntime(s)) return WINDOW_NAMES.has(n.text) ? "window" : "otherWindow";
   if (s.flags & ts.SymbolFlags.Alias) return null;   // an import: a window imported from another module is unseen
   const ds = s.declarations || [];
-  if (ds.length !== 1) return null;
-  const d = ds[0];
-  if (ts.isBindingElement(d)) {   // destructured: const { frames: w } = window
-    let r: any = d;
-    while (ts.isBindingElement(r) || ts.isObjectBindingPattern(r) || ts.isArrayBindingPattern(r)) r = r.parent;
-    if (!ts.isVariableDeclaration(r) || !r.initializer) return null;
-    return patternKind(r.name, n.text, refKind(r.initializer, res, depth + 1, noThis));
+  if (ds.length === 1) {
+    const d = ds[0];
+    if (ts.isBindingElement(d)) {   // destructured: const { frames: w } = window
+      let r: any = d;
+      while (ts.isBindingElement(r) || ts.isObjectBindingPattern(r) || ts.isArrayBindingPattern(r)) r = r.parent;
+      if (!ts.isVariableDeclaration(r) || !r.initializer) return null;
+      return patternKind(r.name, n.text, refKind(r.initializer, res, depth + 1, noThis));
+    }
+    if (!ts.isVariableDeclaration(d) || !d.initializer) return null;
+    return refKind(d.initializer, res, depth + 1, noThis);
   }
-  if (!ts.isVariableDeclaration(d) || !d.initializer) return null;
-  return refKind(d.initializer, res, depth + 1, noThis);
+  // more than one declaration (a redeclared var w = window; var w = window, and a JavaScript script's top-level var, which
+  // the checker gives a second expando declaration beside its variable declaration): at run time the last-executed
+  // initialiser wins, so the name is a window only when EVERY variable declaration that has an initialiser binds a window;
+  // then it is that window whatever the order the initialisers ran. A declaration whose initialiser binds something else
+  // (a socket beside a window, var ws = new WebSocket; var ws = window) leaves it unresolved for the socket proof; a
+  // declaration with no initialiser (var w;), and a function or expando declaration, carry no run-time value and are not
+  // read. 0 live.
+  const kinds: Array<RefKind | null> = ds.filter((d: any) => ts.isVariableDeclaration(d) && d.initializer).map((d: any) => refKind(d.initializer, res, depth + 1, noThis));
+  if (kinds.length && kinds.every((k) => k === "window")) return "window";
+  if (kinds.length && kinds.every((k) => k === "window" || k === "otherWindow")) return "otherWindow";
+  return null;
 }
 /** The kind destructuring `pattern` from something of kind `from` binds `name` to: each key by memberKind, at any depth
  *  (const { parent: p } = window; const { document: { body } } = window). */
@@ -1731,6 +1759,13 @@ const hasModifier = (n: any, k: number): boolean => !!n.modifiers && n.modifiers
 /** Whether the statement `st` is ambient: it, or a declaration around it, carries `declare`. esbuild drops an ambient
  *  declaration, so its name binds nothing at run time (an ambient var's name is a property of the global object). */
 const isAmbient = (st: any): boolean => { for (let s = st; s; s = s.parent) if (hasModifier(s, ts.SyntaxKind.DeclareKeyword)) return true; return false; };
+/** Whether the symbol `s` binds nothing at run time: it has at least one declaration and each is ambient (a `declare`,
+ *  which esbuild drops) or in a declaration file. A window name that resolves to such a symbol is a module-local shadow
+ *  esbuild erases, so at run time the name is the untouched global window (refKind reads it as one). */
+const bindsNothingAtRuntime = (s: any): boolean => {
+  const ds: any[] = (s && s.declarations) || [];
+  return ds.length > 0 && ds.every((d: any) => isAmbient(d) || d.getSourceFile().isDeclarationFile);
+};
 /** Whether the statement `st` is an export of a namespace body. esbuild reads such a name as a property of the namespace
  *  object, which any code can set, and TypeScript puts it in scope in every block of that namespace, which merge. */
 const isNamespaceExport = (st: any): boolean => !!st && ts.isModuleBlock(st.parent) && hasModifier(st, ts.SyntaxKind.ExportKeyword);
@@ -1892,11 +1927,16 @@ function fixtureChecked(file: string, src: string): Checked {
 //     IDENTITY, not by "every declaration is in the default lib": a window-name global that a JavaScript expando
 //     (a top-level window.foo = 1) or a `declare global` adds a declaration to still IS the window, and the literal rule
 //     would answer "not the window" and let a computed write through (fail open). So the identity answer stands, and the
-//     extra declaration is caught separately (extraDecl), fail closed.
+//     extra declaration is caught separately (extraDecl), fail closed. The library anchors identity by one lib.dom
+//     declaration for window, self, frames, top, parent and opener; globalThis it gives no declaration, so gsym anchors
+//     globalThis by its symbol name (escapedName), whatever its declarations. A declaration-count test ("no declaration,
+//     and named globalThis") would fail open for globalThis too: a .js expando gives its symbol a declaration and no lib
+//     one, dropping globalThis out of the count test and letting a computed write through. Name identity holds it.
 //   - extraDecl(symbol): the window-name global carries a declaration outside TypeScript's default lib. A page whose
 //     source augments a window global (an expando, a `declare global`) is one the census cannot trust is the browser's
 //     own, as with the WebSocket precondition, so refKind records it and looseRoads refuses outright. Live cost 0:
-//     window, self, frames, parent, top and opener each have one lib.dom.d.ts declaration and globalThis has none.
+//     window, self, frames, parent, top and opener each have one lib.dom.d.ts declaration and globalThis none, so an
+//     augmentation of any of them (globalThis included, held by name identity) is the source's and refuses.
 //   - declC(node): the declaration the checker resolves an identifier to (the listener, event-name and timer arms read it): null for a
 //     global or a name every declaration of which is in a .d.ts (no run-time binding of its own), else the declaration,
 //     a binding element climbed to its variable declaration's root. The listener, event-name and timer arms read it.
@@ -1933,14 +1973,18 @@ function resolver(localSf: any, checked: () => Checked): Res {
   const isLib = (d: any): boolean => prog().program.isSourceFileDefaultLibrary(d.getSourceFile());
   // The global table's symbol for `name`, or null. It is the symbol resolveName finds at the global scope, but ONLY the
   // library's own: one with a default-lib declaration (window, self, frames, top, parent, opener, document, each one
-  // lib.dom.d.ts declaration, augmented or not), or globalThis, whose symbol has no declaration. A local of the name that
+  // lib.dom.d.ts declaration, augmented or not), or globalThis, which the library gives no declaration of its own and
+  // which is recognised by its symbol name (escapedName "globalThis") whatever its declarations. A local of the name that
   // shadows the global in a script file (const frames = []) is a different symbol with no library declaration, so it is
-  // not the global; a JavaScript expando or a `declare global` MERGES into the library symbol, which stays the global.
+  // not the global; a JavaScript expando or a `declare global` MERGES into the library symbol (globalThis's included,
+  // which stays globalThis by name), so the global stays the global and extraDecl catches the augmentation. globalThis by
+  // its declaration count would fail open: a .js expando gives its symbol a declaration and no lib declaration, so a
+  // count test drops it out and a computed write on it passes; identity by name holds it and refuses the augmentation.
   const gsym = (name: string): any => {
     if (!gcache.has(name)) {
       const s = prog().checker.resolveName(name, undefined, ts.SymbolFlags.Value, false) || null;
       const ds: any[] = s && s.declarations ? s.declarations : [];
-      gcache.set(name, s && (ds.some(isLib) || (ds.length === 0 && s.escapedName === "globalThis")) ? s : null);
+      gcache.set(name, s && (ds.some(isLib) || s.escapedName === "globalThis") ? s : null);
     }
     return gcache.get(name);
   };
@@ -2540,6 +2584,12 @@ test("the road census reads what it claims: every road around the spelled regist
     ["let ws = window; function h(a = (ws.onmessage = f)) { var ws = new WebSocket(u); } h();", "webview/probe.js", 1],
     ["var ws = window; function h(k = class { static s = 1; }, a = (ws.onmessage = f)) { var ws = new WebSocket(u); } h();", "webview/probe.js", 1],
     ["var ws: any = window; function h(a: any = (ws.onmessage = f)) { var ws: any = new WebSocket(u); } h();", undefined, 1],
+    // PR 923: an onmessage handler on a window named through a module-local ambient shadow (declare var frames) is set on
+    // this page's own window at run time, because esbuild drops the declare and the name is the raw global window, so it is
+    // one census site, not a road. b1bae88f7 read the shadow as an unresolved receiver and refused it as an unprovable
+    // socket
+    ["export {}; declare var frames: any;\nframes.onmessage = function (e: MessageEvent) { void e; };", undefined, 1],
+    ["export {}; declare var self: any;\nself.onmessage = function (e: MessageEvent) { void e; };", undefined, 1],
   ];
   const missed: string[] = [];
   for (const [src, file, sites] of handlerOk) {
@@ -2927,6 +2977,31 @@ test("the road census reads what it claims: every road around the spelled regist
       ["{ function* frames() {} } frames[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
       ["export {}; { async function frames() {} } frames[[\"on\", \"message\"].join(\"\")] = function (e: unknown) { void e; };"],
       ["export {}; { function* frames() {} } frames[[\"on\", \"message\"].join(\"\")] = function (e: unknown) { void e; };"],
+      // PR 923: a module-local `declare var <name>: any` shadows a window name for the checker only; esbuild drops it, so
+      // at run time the name is the raw global (this page's own window for window, self, globalThis, frames; another for
+      // top, parent, opener), and a computed write on it lands on that window. windowKind answers "not the global" for the
+      // shadow's own symbol, and bindsNothingAtRuntime reads that its declarations are all ambient, so refKind reads the
+      // name as the window it is at run time and the computed-name arm sees the write. b1bae88f7 read the shadow as an
+      // unresolved local (a variable declaration with no initialiser) and missed it. Each is a module (export {}), so its
+      // declare is a symbol of its own, not merged into the global.
+      ["export {}; declare var frames: any;\nframes[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
+      ["export {}; declare var self: any;\nself[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
+      ["export {}; declare var window: any;\nwindow[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
+      ["export {}; declare var globalThis: any;\nglobalThis[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
+      ["export {}; declare var top: any;\ntop[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
+      ["export {}; declare var parent: any;\nparent[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
+      ["export {}; declare var opener: any;\nopener[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
+      // PR 923: a name declared more than once, every initialiser a window (a redeclared var w = window; var w = window; and
+      // a JavaScript script's top-level var, which the checker gives a second, expando declaration beside the variable
+      // one): at run time the last initialiser wins and the name is that window, so a computed write on it is seen.
+      // b1bae88f7 returned null for any name with more than one declaration and missed it.
+      ["export {}; var w: any = window;\nvar w: any = window;\nw[[\"on\", \"message\"].join(\"\")] = function (e: unknown) { void e; };"],
+      ["var w = self;\nvar w = self;\nw[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["var w = window;\nw[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      // PR 923: globalThis carries no lib.dom declaration, so its identity is by symbol name, not by a declaration count; a
+      // .js file's computed write is its own expando declaration, and the write is seen. A count test would drop globalThis
+      // out once it has any declaration and let the write through. b1bae88f7's count test accepted it.
+      ["function onMsg(ev) { void ev.data; }\nglobalThis[[\"on\", \"message\"].join(\"\")] = onMsg;", "webview/probe.js"],
     ]],
     // a window-name global the source augmented with a declaration outside the default lib (an expando, a `declare
     // global`): the census resolves the name to the window by IDENTITY (so a computed write on it is still seen) and
@@ -3076,7 +3151,7 @@ test("the socket proof refuses a reference the checker resolves to the declarati
     ["an onmessage handler on a receiver the census cannot resolve to this page's window or to a socket: ws at :2 is its declaration's symbol to the checker and no reference to the language service"]);
 });
 
-test("the socket proof refuses a constructor or a new X.WebSocket base a project .d.ts declares, and a computed write on a window a JavaScript expando augments; each needs a second file, and each is accepted by bd5cf71fd", () => {
+test("the socket proof refuses a constructor or a new X.WebSocket base a project .d.ts declares (B1, B2, which bd5cf71fd accepts), and a computed write on a window or on globalThis a JavaScript expando augments (the window write bd5cf71fd refuses for its computed name too, the augmentation refusal this head's; the globalThis write, which b1bae88f7's declaration-count identity let through, refused here by name identity); each needs a second file", () => {
   // B1: a ui/ .d.ts augments interface Window with a WebSocket member, so frames.WebSocket carries a project declaration
   // beside lib.dom's; the constructor is no library global (clause 4).
   const b1 = censusProgram([
@@ -3094,17 +3169,30 @@ test("the socket proof refuses a constructor or a new X.WebSocket base a project
   ]);
   assert.ok(looseRoads("webview/zz-b2-use.ts", b2use, () => b2("webview/zz-b2-use.ts")).loose
     .some((l) => /whose win at .* has a declaration outside the default lib and @types/.test(l.why)), "B2: win is a project declaration, so its .WebSocket is not the library's");
-  // the expando: a top-level window.foo = 1 in a .js file adds a JavaScript expando declaration to the global window,
-  // program-wide. A .ts file's computed write on window is still seen by identity (the augmented global is still the
-  // window), and refused outright; the literal all-declarations-in-lib rule would let it through.
+  // the window expando: a top-level window.foo = 1 in a .js file adds a JavaScript expando declaration to the global
+  // window, program-wide. A .ts file's computed write on window is seen by identity (the augmented global is still the
+  // window): it is refused for its computed name (bd5cf71fd, which reads window by spelling, refuses it too) and, this
+  // head, outright for the augmentation. The row is red at both heads; the augmentation refusal is what this head adds.
   const expUse = "export const k = \"on\" + \"message\";\nexport const f = function (e: unknown) { void e; };\n(window as any)[k] = f;\n";
   const exp = censusProgram([
     ["webview/zz-exp.js", "window.foo = 1;\n"],
     ["webview/zz-exp-use.ts", expUse],
   ]);
   const expLoose = looseRoads("webview/zz-exp-use.ts", expUse, () => exp("webview/zz-exp-use.ts")).loose.map((l) => l.why);
-  assert.ok(expLoose.some((w) => /reached by a computed name/.test(w)), "the expando: the computed write on the augmented window is seen by identity");
-  assert.ok(expLoose.some((w) => /has a declaration the source added outside TypeScript's default lib/.test(w)), "the expando: the augmented window refuses outright");
+  assert.ok(expLoose.some((w) => /reached by a computed name/.test(w)), "the window expando: the computed write on the augmented window is seen by identity");
+  assert.ok(expLoose.some((w) => /has a declaration the source added outside TypeScript's default lib/.test(w)), "the window expando: the augmented window refuses outright");
+  // the globalThis expando (PR 923): globalThis carries no lib.dom declaration, so a declaration-count identity drops it
+  // out once a .js expando gives its symbol a declaration, and the .ts computed write on it passes (b1bae88f7 accepted
+  // this; bd5cf71fd, which reads globalThis by spelling, refused it). Name identity holds globalThis whatever its
+  // declarations: the write is refused for its computed name and the augmentation refuses outright.
+  const gtUse = "export const k = \"on\" + \"message\";\nexport const f = function (e: unknown) { void e; };\n(globalThis as any)[k] = f;\n";
+  const gt = censusProgram([
+    ["webview/zz-gt.js", "globalThis.foo = 1;\n"],
+    ["webview/zz-gt-use.ts", gtUse],
+  ]);
+  const gtLoose = looseRoads("webview/zz-gt-use.ts", gtUse, () => gt("webview/zz-gt-use.ts")).loose.map((l) => l.why);
+  assert.ok(gtLoose.some((w) => /reached by a computed name/.test(w)), "the globalThis expando: the computed write on augmented globalThis is seen by name identity");
+  assert.ok(gtLoose.some((w) => /has a declaration the source added outside TypeScript's default lib/.test(w)), "the globalThis expando: augmented globalThis refuses outright");
 });
 
 type Leg = { site: string; arm?: string };   // a leg's listener (file:line) and the arm it names, if any
