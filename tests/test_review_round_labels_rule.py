@@ -46,14 +46,34 @@ R, M, V, A = "round", "the maintainer's", "the reviewer's", "the author's"
 D = "2026-09-15"                            # a date, the form the rule consumes after a round
 SET = frozenset({1, 2, 3, 4, 5, 6})        # a synthetic contiguous set, the class probes' (hi and lo below)
 GAPPED = frozenset({1, 3, 4, 5})           # a synthetic set with a hole, the range expansion's
-# the probes' number words, spelled here and never read from the helper's tables, so a wrong table there cannot agree with its probe
-WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
-NTH = ("zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth")
+# the probes' number words, spelled here and never read from the helper's tables, so a wrong table there cannot agree with its probe:
+# zero to nineteen, the tens from twenty and the four large words, each as a cardinal and as an ordinal; card() and ordinal() compose
+# every number from zero to ninety-nine from them, and test_every_number_word_the_reader_knows probes each of them
+WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+         "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+NTH = ("zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth",
+       "thirteenth", "fourteenth", "fifteenth", "sixteenth", "seventeenth", "eighteenth", "nineteenth")
+TENS_WORDS = ("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+TENS_NTH = ("twentieth", "thirtieth", "fortieth", "fiftieth", "sixtieth", "seventieth", "eightieth", "ninetieth")
+BIG = ("hundred", "thousand", "million", "billion")
+BIG_NTH = ("hundredth", "thousandth", "millionth", "billionth")
 
 
 def nth(x):
     """x as a digit ordinal: 1st, 2nd, 3rd, 4th, ..., 11th, 12th, 13th, 21st."""
     return "%d%s" % (x, "th" if 10 <= x % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(x % 10, "th"))
+
+
+def card(x):
+    """x from zero to ninety-nine as a cardinal word: WORDS below twenty, else a tens word, joined by a hyphen to the unit's word
+    unless x is a multiple of ten."""
+    return WORDS[x] if x < 20 else TENS_WORDS[x // 10 - 2] + ("-" + WORDS[x % 10] if x % 10 else "")
+
+
+def ordinal(x):
+    """x from zero to ninety-nine as an ordinal word: NTH below twenty, a tens ordinal for a multiple of ten, else a tens word joined
+    by a hyphen to the unit's ordinal."""
+    return NTH[x] if x < 20 else TENS_WORDS[x // 10 - 2] + "-" + NTH[x % 10] if x % 10 else TENS_NTH[x // 10 - 2]
 
 
 # the two spellings each class is probed in: (the number after the word, the ordinal before it)
@@ -382,6 +402,44 @@ class RoundLabelRule(unittest.TestCase):
             with self.subTest(markup_not_read=s):
                 self.assertEqual(rule.offences(s, SET), [], "markup before another word the word begins, or after the end of another word, is not read: %r" % (s,))
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unnumbered"], s)
+
+    def test_every_number_word_the_reader_knows(self):
+        """Every number from zero to ninety-nine, spelled by this module's own tables (card() and ordinal(), never the helper's):
+        as a cardinal word after the word and as an ordinal word before it, alone and as the second number of a list, each read
+        into its value; alone, clean under a caller set that holds it and refused naming it under one that does not; and the
+        author's credit in either spelling refused as the author's. Then each large word (hundred, thousand, million and billion)
+        and each of their ordinals, which the reader does not read, each refused with its reason: the word after the word, and
+        after a number the reader read; the ordinal after the word, and before it with the separator or "review" between, credited
+        or not; while a large cardinal before the word is a count and is not read."""
+        wrong = []
+        for x in range(100):
+            for text, nums in (("%s %s" % (R, card(x)), [x]), ("%ss %s and %s" % (R, WORDS[1], card(x)), [1, x]), ("the %s %s" % (ordinal(x), R), [x]),
+                               ("the %s and %s %ss" % (NTH[1], ordinal(x), R), [1, x])):
+                got = [(k, n) for _, _, k, n in rule.forms(text)]
+                if got != [("numbered", nums)]:
+                    wrong.append((text, "read as %r" % (got,)))
+            for text in ("%s %s" % (R, card(x)), "the %s %s" % (ordinal(x), R)):
+                if rule.offences(text, frozenset({x})):
+                    wrong.append((text, "refused under a set that holds %d" % x))
+                why = [o[3].split(":")[0] for o in rule.offences(text, frozenset({x + 1}))]
+                if why != ["no ruling exists for a round numbered %d" % x]:
+                    wrong.append((text, "under a set without %d: %r" % (x, why)))
+            for text in ("%s %s %s" % (A, R, card(x)), "%s %s %s" % (A, ordinal(x), R)):
+                why = [o[3].split(":")[0] for o in rule.offences(text, frozenset({x}))]
+                if why != ["a round credited to the author"]:
+                    wrong.append((text, "the author's credit: %r" % (why,)))
+        self.assertEqual(wrong, [], "a number word from zero to ninety-nine the reader does not read into its value, or does not judge")
+        after, before = "a number word the rule does not read, after the word", "a number word the rule does not read, before the word"
+        for big, big_nth in zip(BIG, BIG_NTH):
+            for text, why in (("%s %s" % (R, big), after), ("%s %s %s" % (R, WORDS[1], big), "a further number after a run the list did not consume"),
+                              ("%s %s" % (R, big_nth), after), ("the %s %s" % (big_nth, R), before), ("the %s review %s" % (big_nth, R), before),
+                              ("%s %s %s" % (M, big_nth, R), before), ("%s %s review %s" % (A, big_nth, R), before)):
+                with self.subTest(large=text):
+                    self.assertEqual([k for _, _, k, _ in rule.forms(text)], ["unclassifiable"], "a large number word beside the word is refused: %r" % (text,))
+                    self.assertIn(why, rule.offences(text, SET)[0][3], text)
+            with self.subTest(large_count=big):
+                self.assertEqual(rule.offences("a %s %ss" % (big, R), SET), [], "a large cardinal before the word is a count, not read")
+                self.assertEqual([k for _, _, k, _ in rule.forms("a %s %ss" % (big, R))], ["unnumbered"])
 
     def test_the_credit_keys_on_misattribution(self):
         """The reviewer's ruling of 2026-09-21, each clause by execution under a synthetic set: (a) "the reviewer's round N" is a
