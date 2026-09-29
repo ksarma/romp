@@ -149,9 +149,10 @@ which _response_reads gives "refused"). And so is a fetch through a helper whose
 place, or a Name bound to such a wrapper (`status, raw = _raw(path)` and then `return 200, raw.strip()`, `return 200, raw[3:]`, or
 `text = raw.strip(); return 200, text`; a response attribute, `r.status`, and a `.decode(...)` chain are no wrapper): _response_reads
 gives it "refused" (round 6, X1; x1 in test_d of test_a_returned_name_is_followed_to_its_binding_in_the_helper, a stated bound before).
-A served text inline whose value lands where the census does not read it is REFUSED as well (_fail_closed's check (5)): assigned to
-a subscript or through an annotated or augmented assignment or a walrus, yielded, the body of a lambda, or returned by a function
-that is no text helper, or by a text helper the module hands on uncalled or calls with arguments.
+A served text inline that is itself the whole value of a binding the census does not read is REFUSED as well (_fail_closed's check
+(5)): assigned to a subscript or through an annotated or augmented assignment or a walrus, yielded, the body of a lambda, or returned
+by a function that is no text helper, or by a text helper the module hands on uncalled or calls with arguments (a text nested inside
+another expression there, a returned tuple or a list, is not checked).
 
 Reach (round 6, the coordinator's decisions on PR 858, B.5): the census READS the forms the paragraphs above and readers_of's
 docstring name, and REFUSES the forms they name as refused, each an unclassified row naming its site; the reader census also fails a
@@ -1707,10 +1708,10 @@ def _fail_closed(tree, lines, routes, reads, getters, constants):
         cannot place, so no fetch (_fetched), whose answer is nonetheless read as a response at the call: `.read()`, `.decode()`
         or `.getvalue()` chained on it, or on a Name or a with target the same function binds to it (the first bound's first half:
         `return urlopen(path)` read as `self._open("/").read()`);
-    (5) a served text inline (_text: a getter's call, a constant) whose value lands where the census does not read it: the value of
-        an assignment with a target other than a Name, a self.<attr> or cls.<attr>, or a tuple or list of Names (`d["k"] =
-        km._landing()`), of an annotated or augmented assignment or a walrus, returned or yielded by a function, or the body of a
-        lambda. A return in a text helper of the module (_text_helpers) is read at each call of it, so it is not refused unless the
+    (5) a served text inline (_text: a getter's call, a constant) that is itself the whole value of: an assignment whose targets
+        are not all a Name, a self.<attr> or cls.<attr>, or a tuple or list of Names (`d["k"] = km._landing()`); an annotated or
+        augmented assignment or a walrus; a return, a yield or a yield from; or a lambda. A text nested inside another expression
+        there (`return km._landing(), 1`, `x = [km._landing()]`) is not checked. A return in a text helper of the module (_text_helpers) is read at each call of it, so it is not refused unless the
         module also hands the helper on uncalled or calls it with arguments (`{"login": _render_login}`, then `render()` in a loop).
     A call to a Name the same function binds to an attribute (`seg = km._route_seg`, then `seg("/")`) calls that function, no fetch
     helper of the test's, and is not checked (tests/test_perf_stats.py's route-mark test asserts over `seg("/")` so)."""
