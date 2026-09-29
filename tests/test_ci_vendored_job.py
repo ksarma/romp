@@ -38,10 +38,13 @@ literal, and any change to it is red until the literal changes with it, on purpo
    make node skip every test, and a defaults: run: working-directory moves where the command runs. The ruling allowed either
    a check that those two keys are absent or an equality; the list is compared, so a quoted or spaced spelling of either, a
    merge key, a second YAML document (`---`) and any key added later are red with no spelling listed here. The on: block
-   (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES too, since a paths,
-   paths-ignore, branches or types filter there starts no run for the PRs it filters, and a PR with no CI run reads green
-   to scripts/batch.py when its only checks are the label workflows' (ci_of reads success and skipped as success). The
-   value of name and the concurrency block stay free (tests/test_ci_workflow_concurrency.py reads concurrency).
+   (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES too. CI runs on a push to
+   a batch branch, by hand and on the schedule, and on nothing else (the workflow's header): a paths or paths-ignore
+   filter added to push, or its branch pattern narrowed, starts no run for the batch pushes it filters, and
+   scripts/batch.py land then finds no CI run of the batch head and refuses the batch; an added trigger (a pull_request,
+   a tags pattern on push, or main back on push) runs the whole matrix where no landing reads it. The value of name and
+   the concurrency block stay free (tests/test_ci_workflow_concurrency.py reads concurrency, and its CiTriggers reads the
+   triggers and the push filter).
    tests/test_ci_macos_schedule.py still reads the schedule and the dispatch: this equality refuses any change to the block,
    and that module says what the values held must mean (one weekly cron at a quiet hour Pacific, the manual dispatch kept)
    and ties them to every matrix expression's events, so a change made on purpose updates ON_LINES here and must still
@@ -177,8 +180,7 @@ TOP_KEYS = ["name", "on", "concurrency", "jobs"]
 ON_LINES = (
     "on:",
     "  push:",
-    "    branches: [main]",
-    "  pull_request:",
+    "    branches: ['batch/**']",
     "  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)",
     "  schedule:",
     '    - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the same matrix a manual dispatch does',
@@ -559,11 +561,12 @@ class VendoredToolingJob(unittest.TestCase):
     def test_3_the_workflow_triggers_equal_the_expected_literal(self):
         self.assertNoFaults(check_on_block(raw()), (
             "The workflow's on: block, comment-only lines aside, is not ON_LINES (above: the diff and the block as ci.yml has "
-            "it, or the reason it could not be read). A paths, paths-ignore, branches or types filter there starts no CI run "
-            "for the PRs it filters, and scripts/batch.py reads a PR whose only checks are the label workflows' as green, so "
-            "the whole block is held. If the change is meant, replace ON_LINES in tests/test_ci_vendored_job.py with the lines "
-            "printed above, check that tests/test_ci_macos_schedule.py still passes, and say in the commit why the triggers "
-            "changed."))
+            "it, or the reason it could not be read). A paths or paths-ignore filter added to push, or its branch pattern "
+            "narrowed, starts no CI run for the batch pushes it filters (scripts/batch.py land then finds no CI run of the "
+            "batch head and refuses the batch), and an added trigger runs the whole matrix where no landing reads it, so the "
+            "whole block is held. If the change is meant, replace ON_LINES in tests/test_ci_vendored_job.py with the lines "
+            "printed above, check that tests/test_ci_macos_schedule.py and tests/test_ci_workflow_concurrency.py still pass, "
+            "and say in the commit why the triggers changed."))
 
     def test_4_the_shell_cap_stays_35(self):
         self.assertNoFaults(check_shell_cap(raw()), (
@@ -718,14 +721,15 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
              ["defaults:", "  run:", "    working-directory: tools", "concurrency:"]),
             (check_top_keys, "a quoted workflow env:", "top", "concurrency:", ["\"env\": {NODE_OPTIONS: x}", "concurrency:"]),
             (check_top_keys, "a second YAML document", None, None, ["---", "env:", "  NODE_OPTIONS: x"]),
-            (check_on_block, "a paths-ignore filter on pull_request", "top", "  pull_request:",
-             ["  pull_request:", "    paths-ignore: [tools/**, vendor/**, hooks/**]"]),
-            (check_on_block, "a paths filter on pull_request", "top", "  pull_request:", ["  pull_request:", "    paths: [kernel/**]"]),
-            (check_on_block, "a branches filter on pull_request", "top", "  pull_request:",
-             ["  pull_request:", "    branches: [release]"]),
-            (check_on_block, "a types filter on pull_request", "top", "  pull_request:", ["  pull_request:", "    types: [closed]"]),
-            (check_on_block, "pull_request dropped", "top", "  pull_request:", []),
-            (check_on_block, "a branches filter on push widened", "top", "    branches: [main]", ["    branches: [main, 'x/**']"]),
+            (check_on_block, "a paths-ignore filter on push", "top", "  push:",
+             ["  push:", "    paths-ignore: [tools/**, vendor/**, hooks/**]"]),
+            (check_on_block, "a paths filter on push", "top", "  push:", ["  push:", "    paths: [kernel/**]"]),
+            (check_on_block, "a tags filter on push", "top", "  push:", ["  push:", "    tags: ['v*']"]),
+            (check_on_block, "the push branch pattern narrowed", "top", "    branches: ['batch/**']", ["    branches: ['batch/x']"]),
+            (check_on_block, "a pull_request trigger added", "top", "  push:", ["  pull_request:", "  push:"]),
+            (check_on_block, "push replaced by pull_request", "top", "  push:", ["  pull_request:"]),
+            (check_on_block, "the push branch filter widened to main", "top", "    branches: ['batch/**']",
+             ["    branches: ['batch/**', main]"]),
             (check_top_keys, "a second, quoted on key", "top", "concurrency:", ["\"on\": [workflow_dispatch]", "concurrency:"]),
             (check_shell_cap, "the Shell cap 35 to 12", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 12"]),
             (check_shell_cap, "the Shell cap 35 to 40", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 40"]),
