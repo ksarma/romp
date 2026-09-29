@@ -13,7 +13,7 @@ If you're interested in reporting bugs and making PRs, please try to reproduce t
 ```bash
 python3 -m pytest -q       # the Python pipeline (kernel/, cli/, postal/)
 bats tests/*.bats          # the shell surfaces (hooks, postal, manager)
-node --test tools/ci-browser-legs.test.mjs   # the browser-legs roster against the tree (CI's shell job, no npm ci)
+node --test tools/ci-browser-legs.test.mjs   # the browser-legs roster against the tree (CI's vendored-tooling job, no npm ci)
 cd vscode-extension && npm ci && npm test
 ```
 
@@ -88,7 +88,7 @@ passing test, a skipped test, a failure inside a todo, or a file that failed as 
 the leg or the test; a leg that follows the roster rule and whose launch failed under the switch is
 named with the remedy to check the Chromium install step. The script's header states which results those
 reads cover. Before you push,
-`node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks CI's shell job runs
+`node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks CI's vendored-tooling job runs
 (no `npm ci` needed). From `vscode-extension/`,
 `bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks except the bundle check,
 without starting a browser, and the step itself is `bash scripts/ci-browser-legs.sh` with

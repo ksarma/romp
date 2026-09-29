@@ -22,7 +22,7 @@ stacked with the row's). The three chip states (T343): faded at rest, a hover th
 selected at the strongest level whatever the hover (a themed filter: brighter on the dark card, darker on cream);
 TAG_SHOTS=<dir> writes the picker with all three side by side, dark and light.
 
-Skips LOUDLY without the extension deps or a Playwright browser; under ROMP_SERVED_TESTS_REQUIRE=1 (the CI extension job,
+Skips LOUDLY without the extension deps or a Playwright browser; under ROMP_SERVED_TESTS_REQUIRE=1 (the CI served-pages job,
 which installs Chromium and runs every served file) that skip is a failure, and the Python matrix jobs, with no browser,
 skip. The CI-safe pins ride
 ui/webview/tag-chip-everywhere.test.ts, picker-tag-chips.test.ts and tab-groups.test.ts. All fixtures synthetic (the
@@ -255,7 +255,7 @@ class ServedPickerTagChips(unittest.TestCase):
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         if p.returncode == 3:
-            raise unittest.SkipTest("no playwright browser on this box, and the served guard needs one (the CI extension job installs Chromium and requires this file to run)")
+            raise unittest.SkipTest("no playwright browser on this box, and the served guard needs one (the CI served-pages job installs Chromium and requires this file to run)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
