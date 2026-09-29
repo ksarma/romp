@@ -815,7 +815,7 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # held (held, a flag kept apart from the hold's value, so a hold of 0 counts; the maintainer's round 6 ruling, 2026-09-29: the
         # write had keyed on any reading past the share, so a drag or a continuous pinch overwrote a standing hold), and otherwise
         # the hold road publishes from the hold, or from the re-raise bound rp that the first keyboard-up run after the held
-        # keyboard's down run keeps apart from the hold (gone marks that down run): a pan of a keyboard raised at this zoom (the scale
+        # keyboard's down run keeps apart from the hold (gone marks that down run): a pan inside the layout viewport of a keyboard raised at this zoom (the scale
         # and h unchanged since the previous run with the keyboard up, the value in force written at a raise or a re-raise under the
         # current zoom with no zoom alone since: ps, ph and kz; the maintainer's round 6 ruling, 2026-09-29) re-bounded from the hold
         # into the reading's interval [kbPx, panPx], and any other report inside the layout viewport by the stance: bounded into that

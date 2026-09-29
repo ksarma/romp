@@ -70563,7 +70563,8 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // (L - h > 0) is a PAN of the same keyboard, and the scale changed with h unchanged is a zoom alone. kz is the zoom of the
 // keyboard event that wrote the value in force, 0 where none did: a measured-road write with the keyboard up and h changed since
 // the previous run (a raise) sets it to the scale, and so does the re-raise that writes rp; any other measured-road write (a
-// drag's, h unchanged) sets 0, and a zoom alone clears it. The hold road re-bounds a pan from the hold only where kz is the
+// drag's, h unchanged) sets 0, and a zoom alone clears it. The 0px road leaves it: the hold it clears is 0, from which the pan
+// rule and the stance publish the same value, kbPx. The hold road re-bounds a pan from the hold only where kz is the
 // current zoom (the maintainer's round 6 ruling, 2026-09-29: the reading governs a pan of a keyboard raised at this zoom, the
 // stance a zoom alone and what follows it); that check also refuses a scale that changed in the same report as h (a keyboard
 // swapped in during a pinch), which is no zoom alone and leaves kz standing. Every one of these keys on a run fit() reads, not on
@@ -70655,9 +70656,9 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // (kbPx; the author's pass 9, 2026-09-20: it had stood down at the cut, which with no hold standing published 0 and reopened the band under
 // a light zoom), under a pinch only where no hold is held (held, beside lastPan; the maintainer's round 6 ruling, 2026-09-29), and
 // otherwise the hold road publishes from the hold, or from the re-raise bound rp where one stands (beside lastPan). A PAN of a
-// keyboard raised at this zoom (the scale and h unchanged since the previous run with the keyboard up, and the value in force
-// written at a raise or a re-raise under the current zoom with no zoom alone since: ps, ph and kz, beside lastPan) re-bounds from
-// the hold into the reading's interval [kbPx, panPx], so the shell follows that keyboard's pan wherever the reading allows (the
+// keyboard raised at this zoom, inside the layout viewport (the scale and h unchanged since the previous run with the keyboard up,
+// and the value in force written at a raise or a re-raise under the current zoom with no zoom alone since: ps, ph and kz, beside
+// lastPan), re-bounds from the hold into the reading's interval [kbPx, panPx], so the shell follows that keyboard's pan wherever the reading allows (the
 // maintainer's round 6 ruling, 2026-09-29: keeping the value there left the composer 44 px below the visible band's bottom for a
 // light-zoom hold of 20 at 1.05 dragged to 0, where 0 px leaves 24, and a pan to the share after a no-pan re-raise under a light
 // zoom opened a band under the composer, 2.67 px at 1.008, 3.33 px at 1.01 and 16 px at 1.05; node cells). Any other report inside
@@ -70668,8 +70669,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // not taken here: a pan to the share at 1.05 publishes 40 px, and a zoom alone to 1.1 about the band's centre then publishes 0, a
 // band of 5 px under the composer; test_kernel_mobile's zoomAfterPan cell pins it); and a drag past the value plus the share
 // publishes the excess, which nothing stores. Two costs of the stance, each measured in round 6: a zoom alone leaves the composer below the visible band's bottom by
-// the zoom's own magnification (12 px at 1.05 about the band's centre, served); and after a zoom alone, or over a value a drag
-// wrote, a pan of the same keyboard above the value keeps it where the share reaches it, the composer below the band's bottom by
+// the zoom's own magnification (12 px at 1.05 about the band's centre, served); and where the rule does not apply (after a zoom
+// alone, for example, or over a value a drag wrote), a pan of the same keyboard above the value keeps it where the share reaches it, the composer below the band's bottom by
 // the drag until the keyboard goes down (a hold of 83 from scale 1, pinched to 2 and dragged to the top: 83 px published where the
 // reading allows 0, the composer 337 px below the band's bottom where 0 px leaves 254; node cells). Everything the hold road
 // publishes is CLAMPED AT USE to the layout
