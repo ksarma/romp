@@ -2256,6 +2256,10 @@ _ESBUILD_TEXT_READERS = {
     # test_settings_page.py (upstream's, the same pull-in) reads esbuild.js's TEXT to pin the settings page's bundle entry
     # beside the kernel's served script tag: a source pin, no build and no copy
     "test_settings_page.py",
+    # test_sweep_runner.py holds synthetic pytest skip reasons that name esbuild.js, copied from the SkipTest text
+    # lab_dist.py raises when node cannot load the config, so the runner's deps-skip rule is held to the real wording:
+    # strings in a test, never a read, a build or a copy of the file
+    "test_sweep_runner.py",
 }
 _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_github_repo copies a repo, never dist
                  "test_perf_bench.py",                                  # upstream's copies kernel/ into a scratch checkout, never dist
