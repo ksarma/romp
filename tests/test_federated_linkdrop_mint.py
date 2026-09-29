@@ -39,7 +39,13 @@ module other than `import subprocess` (an import under another name, a name impo
 bare name `subprocess` read anywhere but as the value of an attribute, an attribute named `subprocess` on any other value,
 a constant "subprocess"); a spawning function of subprocess BOUND rather than called (`_run = subprocess.run`, a dict value,
 a default argument, a functools.partial, a class attribute: the maintainer's round 4 (its addendum) found such a binding, made before the recorder is
-installed, calls the real module past it); the reflective primitives (REFLECTIVE_CALLS and REFLECTIVE_ATTRS: exec, eval,
+installed, calls the real module past it); a MODULE read as a value (a name, or an attribute chain, rooted at a name the
+censused module's import statements bind that resolves to a module through the import tables, the source's own imports
+and each foreign module's top-level imports read by path, refused wherever it is read but as an attribute's value or a
+call's function: `_m9 = mock`, `g(mock)`, `[mock][0]`, `(lambda: mock)()`, `match mock:`, `return mock`; the maintainer's
+round 7, extra4-1, found `_m9 = mock` then `_m9.builtins.__import__` passing, since the attribute chains were resolved from
+an import binding and from nothing else; a member an import binds, such as `Path`, is no module and is not refused, and a
+chain rooted at a sibling's binding is not resolved, since the sibling is censused itself); the reflective primitives (REFLECTIVE_CALLS and REFLECTIVE_ATTRS: exec, eval,
 compile, __import__, vars, globals, locals; import_module, __getattribute__, __dict__, sys.modules, attrgetter; getattr
 over os, and, since pass 10, getattr over ANY name the source imports with a name that is not a string constant, since a
 name built at run time over a module is a name the census cannot read) as nodes whatever their argument; and any import
@@ -64,7 +70,9 @@ chain rooted at a foreign import binding is RESOLVED step by step through the mo
 pkgutil, 3.11 and later, since the tables are THIS interpreter's standard library and a plant that rides one Python's imports
 is a sample of the matrix: pass 11, after the two pkgutil plants redded Python 3.10 alone), and a member of a module
 whose source the census cannot read that the censused set does not read today (UNREAD_MEMBERS: `sys._getframe`,
-`sys.meta_path`, `mock.sys.modules`), are refused. What remains is a call of an allowed module's OWN function whose body
+`sys.meta_path`, `mock.sys.modules`), are refused. A module an import binding resolves to is refused wherever it is read
+but as an attribute's value or a call's function, so a rebinding (`_m9 = mock`, `g(mock)`) is refused at the read of the
+module and is never followed to its later reads (the maintainer's round 7, extra4-1). What remains is a call of an allowed module's OWN function whose body
 resolves a name from the string it is handed (`mock.patch("sub" + "process.run")` resolves its target by import inside
 mock). The modules whose own source does so are DERIVED, the second family `_foreign_reflective_roads` scans for and the
 disclosure cell prints (on this Python `subprocess`, which reads a frame, and `unittest.mock`, which runs exec and resolves
@@ -205,8 +213,11 @@ REFLECTIVE_NAMES = ("__builtins__",)
 # ctypes and _posixsubprocess, and importlib, builtins and operator, which reach one by reflection) are a red the moment one is
 # imported; the cell holds the tuple EQUAL to the imports in use, so a name here that nothing imports is a red too. The tuple
 # does NOT say that no allowed module starts a program: which of them do inside their own source is DERIVED by
-# _foreign_spawn_roads (FOREIGN_ROADS, held equal) and printed by the disclosure cell, the module docstring's third road; what
-# the censused set REACHES through an allowed module's own imports is resolved and refused by _reach.
+# _foreign_spawn_roads (FOREIGN_ROADS, held equal) and printed by the disclosure cell, the module docstring's third road. An
+# attribute chain ROOTED AT AN IMPORT BINDING is resolved through the allowed modules' own imports and refused by _reach where
+# it reaches a module outside this tuple, and a module an import binding resolves to is refused wherever it is read as a value
+# (_module_of); what neither resolver reads (a chain rooted at a sibling's binding, a module that comes from no read of an
+# import-bound name) is outside, under the rule the module docstring states.
 ALLOWED_IMPORTS = ("base64", "contextlib", "errno", "fcntl", "fnmatch", "hashlib", "http", "json", "os", "pathlib", "re", "select",
                    "shlex", "shutil", "signal", "socket", "subprocess", "sys", "tempfile", "threading", "time", "unittest", "urllib", "uuid")
 # the hand-kept DENY list the import pin keys on beside the equality: none of these eight is allowed (the check is this list,
@@ -319,9 +330,19 @@ def _commands_around_the_recorder(src, siblings=(), stdlib=None):
     BINDING and not on the attribute spelling (the maintainer's round 6, extra6-1: `from sys import _getframe` escaped where
     `sys._getframe` was refused); and a star import from ANY module (`from sys import *`), since it binds names the census
     cannot resolve without importing the module (pass 11's fixer pass: the os arm refused `from os import *` alone, and
-    `from sys import *` followed by a read of the star-bound `modules` was silent). A chain rooted at anything but an import binding (a class attribute holding a module, a
-    default argument, a container, an assignment `_s = sys`) is not resolved: the rule over what stays unread, since the census
-    resolves import bindings and nothing else. `stdlib` is the standard library the modules' own sources are read from (a
+    `from sys import *` followed by a read of the star-bound `modules` was silent); and a MODULE read as a value, the module
+    arm: a name or an attribute chain whose root is a name the source's import statements bind (a sibling's binding and the
+    package's excepted) and that _module_of resolves to a module through the import tables, read anywhere but as an
+    attribute's value or a call's function (`_m9 = mock`, `g(mock)`, `setattr(h, "m", mock)`, `[mock][0]`, `(lambda: mock)()`,
+    `match mock:`, `return mock`, `_m9 = unittest.mock`, `_s = sys`: the maintainer's round 7, extra4-1, where `_m9 = mock`
+    then `_m9.builtins.__import__` passed); a member an import binds (`Path`, `mock.patch`) is no module and is not refused.
+    What stays unread, the rule over the two resolvers (_reach and _module_of): each starts from a name an import statement of
+    the source binds and follows the source's own imports and the foreign modules' top-level imports, and nothing else, so a
+    chain rooted at a SIBLING's binding (`_lab.mock.builtins`, the sibling being censused itself), a module no table records (a
+    foreign module's import nested in an if, a try or a function, as `os.path` is in os), and a module value that comes from
+    no read of an import-bound name (a sibling's attribute, a value a foreign function returns) are not resolved; a rebinding
+    of an import-bound module (a class attribute, a default argument, a container, an assignment, a parameter bound by a call)
+    is refused at the read of the module and not followed to its later reads. `stdlib` is the standard library the modules' own sources are read from (a
     synthetic one in the cells). A comment or a docstring is no node of these kinds, so the words in one do not
     count; a docstring is one constant equal to its whole text, so a docstring that names os.system is not equal to "system"."""
     found = []
@@ -416,6 +437,12 @@ def _commands_around_the_recorder(src, siblings=(), stdlib=None):
             hit = _reach(chain, bindings, loaded, siblings, stdlib) if chain else None
             if hit is not None:
                 found.append((n.lineno, "%s.%s %s" % (hit[0], hit[1], hit[2])))
+        if isinstance(n, (ast.Name, ast.Attribute)) and isinstance(n.ctx, ast.Load) and not (isinstance(p, ast.Attribute) and p.value is n) and not (isinstance(p, ast.Call) and p.func is n):
+            chain = n.id if isinstance(n, ast.Name) else _dotted(n)   # the module arm: a module read as a value, wherever it is read
+            module = _module_of(chain, bindings, loaded, siblings, stdlib) if chain else None
+            if module is not None:
+                found.append((n.lineno, "%s read as a value: an import binding resolves it to the module %s, and a module is refused wherever it is read but as an "
+                                        "attribute's value or a call's function" % (chain, module)))
         if isinstance(n, ast.Call) and not in_a_body(n):
             if isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id == "subprocess" and n.func.attr in SPAWNERS:
                 found.append((n.lineno, "subprocess.%s(...) outside every function body: it runs at import, before any recorder" % n.func.attr))
@@ -548,6 +575,30 @@ def _reach(chain, bindings, loaded, siblings=(), stdlib=None):
             return None
         module = nxt
     return None
+
+
+def _module_of(chain, bindings, loaded, siblings=(), stdlib=None):
+    """The MODULE a name or an attribute chain resolves to through the import tables, else None: the chain's root must be a
+    name the censused module's import statements bind (`bindings`; a sibling's binding and the package's are not resolved,
+    since the sibling is censused itself), and each step must land on a module, either one the source loads (`loaded`) or a
+    module a foreign module's own top-level import binds (_module_imports, read by path). A step that lands on a member (a
+    function, a class, a constant, a name imported by `from M import n` where n is no module) or on a module whose source
+    the census cannot read (built in, an extension module) ends the walk with None: `Path` is a member and `mock.patch` a
+    function, so neither is a module here. The census's module arm keys on this (the maintainer's round 7, extra4-1)."""
+    names = chain.split(".")
+    bound = bindings.get(names[0])
+    if bound is None or bound[0].split(".")[0] in siblings or bound[0].split(".")[0] == PACKAGE:
+        return None
+    module = bound[0]
+    for attr in ([bound[1]] if bound[1] is not None else []) + names[1:]:
+        if module + "." + attr in loaded:
+            module = module + "." + attr
+            continue
+        table = _module_imports(module, stdlib)
+        if table is None or attr not in table or table[attr][1] is not None:
+            return None
+        module = table[attr][0]
+    return module
 
 
 def _foreign_spawn_roads(mods, stdlib=None):
@@ -1131,17 +1182,22 @@ class OldHubMintIsPrivate(unittest.TestCase):
         such a bare name, no spawning function of subprocess bound rather than called, no bare read of the name subprocess,
         no attribute named subprocess on another value, no import of subprocess or of os under another name or of a name
         from subprocess, no constant "subprocess" or one naming an os spawner, no reflective primitive as a node, no import
-        outside ALLOWED_IMPORTS. OS_SPAWNERS is pinned against this Python's os module (every name beginning spawn, exec or
+        outside ALLOWED_IMPORTS, no module read as a value (a name or chain an import binding resolves to a module, read
+        anywhere but as an attribute's value or a call's function: the maintainer's round 7, extra4-1, one row per rebinding
+        class its checks found passing, the round's own plant first). OS_SPAWNERS is pinned against this Python's os module (every name beginning spawn, exec or
         posix_spawn, plus system and popen); the derivation must reach the lab module and lab_dist; and the detector is pinned
         on a synthetic source of each form it refuses and on the allowed spellings (import os, import subprocess,
         subprocess.run(...) called, subprocess.PIPE read, os.path.join, a sibling imported by any spelling, getattr on
-        anything but os, the words in a docstring), so an empty census is a red and not a pass. The module object itself
+        anything but os, a member an import binds read as a value, a chain rooted at a sibling's binding, the words in a
+        docstring), so an empty census is a red and not a pass. The module object itself
         passed or bound anywhere (`getattr(subprocess, ...)` included, though the recorder would see that lookup) is a bare
-        read and refused: the road is the module reaching a name, not what is then done with it. What the census cannot see is the rule in the module
+        read and refused, and since the maintainer's round 7 so is every module an import binding resolves to: the road is
+        the module reaching a name, not what is then done with it. What the census cannot see is the rule in the module
         docstring and the derived lists in test_what_the_census_cannot_see_is_a_rule_with_its_list_derived."""
         wanted = {n for n in dir(os) if n.startswith(("spawn", "exec", "posix_spawn")) or n in ("system", "popen")}
         self.assertTrue(wanted, "this Python's os module names program-starting functions")
         self.assertEqual(sorted(wanted - set(OS_SPAWNERS)), [], "every program-starting os function of this Python is in OS_SPAWNERS")
+        mock_read = "mock read as a value: an import binding resolves it to the module unittest.mock"
         forms = (('import os\nos.system("true")\n', ".system"),
                  ('import os as o\no.popen("true")\n', "import os as o"),
                  ('import os as o\no.popen("true")\n', ".popen"),
@@ -1249,7 +1305,44 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  # pass 11's fixer pass: a star import from any module binds names the census cannot resolve (the os arm above refused
                  # `from os import *` alone, and `from sys import *` then a read of the star-bound `modules` was silent on both interpreters)
                  ('from sys import *\ndef f():\n    return modules["subpro" + "cess"].run(["true"])\n', "from sys import * (a star import binds names the census cannot resolve)"),
-                 ('from unittest.mock import *\n', "from unittest.mock import * (a star import binds names the census cannot resolve)"))
+                 ('from unittest.mock import *\n', "from unittest.mock import * (a star import binds names the census cannot resolve)"),
+                 # the maintainer's round 7, extra4-1: a MODULE read as a value is refused wherever it is read but as an attribute's value or
+                 # a call's function (the module arm, _module_of). The round's own plant first, byte for byte, then one row per rebinding
+                 # class the round's checks found passing the census: each is refused at the read of the module, whatever binds it after
+                 ('def _linkdrop_plant9():\n    from unittest import mock\n    _m9 = mock\n    imp = _m9.builtins.__import__\n    return imp("subpro" + "cess").run(["true"])\n', mock_read),
+                 ('from unittest import mock\n_m9 = mock\n', mock_read),
+                 ('from unittest import mock\nclass K:\n    m = mock\n', mock_read),
+                 ('from unittest import mock\n_m9, _x = mock, 1\n', mock_read),
+                 ('from unittest import mock\n_m9: object = mock\n', mock_read),
+                 ('from unittest import mock\n_m9 = None\n_m9 += mock\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    if (_m9 := mock):\n        return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    for _m9 in (mock,):\n        return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    return [m for m in (mock,)]\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    with mock as _m9:\n        return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f(_m9=mock):\n    return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f(*, _m9=mock):\n    return _m9\n', mock_read),
+                 ('from unittest import mock\nf = lambda _m9=mock: _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    _m9, *_r = mock, 0\n    return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    *_m9, = mock,\n    return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    for _m9, _x in [(mock, 0)]:\n        return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    return [a for a, b in [(mock, 0)]]\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    match mock:\n        case _m9:\n            return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    match mock:\n        case object() as _m9:\n            return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    match (mock, 0):\n        case (_m9, _):\n            return _m9\n', mock_read),
+                 ('from unittest import mock\ndef g(m):\n    return m\ndef f():\n    return g(mock)\n', mock_read),
+                 ('from unittest import mock\ndef h():\n    return mock\n', mock_read),
+                 ('from unittest import mock\nclass _PlantHolder:\n    pass\ndef f():\n    setattr(_PlantHolder, "m", mock)\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    _m9 = mock or None\n    return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    _m9 = mock if 1 else None\n    return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    for _m9 in (m for m in [0] if 0) or [mock]:\n        return _m9\n', mock_read),
+                 ('from unittest import mock\n_ms = []\n_ms += [mock]\n', mock_read),
+                 ('import contextlib\nfrom unittest import mock\ndef f():\n    with contextlib.nullcontext(mock) as _m9:\n        return _m9\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    return (lambda: mock)()\n', mock_read),
+                 ('from unittest import mock\ndef f():\n    return [mock][0]\n', mock_read),
+                 ('import unittest.mock\ndef f():\n    _m9 = unittest.mock\n    return _m9\n', "unittest.mock read as a value: an import binding resolves it to the module unittest.mock"),
+                 ('import sys\ndef f():\n    _s = sys\n    return _s._getframe(0)\n', "sys read as a value: an import binding resolves it to the module sys"),
+                 ('import http.server\n_h = http.server\n', "http.server read as a value: an import binding resolves it to the module http.server"),
+                 ('from unittest import mock\n_b = mock.builtins\n', "mock.builtins read as a value: an import binding resolves it to the module builtins"))
         for src, form in forms:
             with self.subTest(form=form, src=src):
                 hits = _commands_around_the_recorder(src, siblings=("test_federated_dial_terms_served",))
@@ -1279,13 +1372,18 @@ class OldHubMintIsPrivate(unittest.TestCase):
                    'getattr(cls, "procs", [])\ngetattr(type(self), "result", None)\ngetattr(lab_dist, "build", None)\nhasattr(x, "y")\n"""os.system in a docstring; exec and eval too"""\n'
                    'import time\nimport http.server\nimport urllib.request\nfrom unittest import mock\nfrom pathlib import Path\nfrom unittest.mock import patch as _patch\nfrom sys import path as _syspath\n'
                    'def k():\n    time.monotonic()\n    time.sleep(1)\n    mock.patch.object(a, "b", c)\n    http.server.ThreadingHTTPServer\n    urllib.request.urlopen(u)\n    subprocess.PIPE\n    subprocess.os.path\n    Path.home()\n'
+                   # the module arm's reach (the maintainer's round 7, extra4-1): a MEMBER an import binds read as a value is no module; a chain
+                   # rooted at a sibling's binding is not resolved, since the sibling is censused itself (the stated outside, NOT refused)
+                   '    _P = Path\n    _sib = lab_dist.os\n'
                    # the residual's road (4) after the recorder is lifted, stated and NOT refused: a callable deferred past it from inside a function body
                    'import threading\ndef w():\n    threading.Timer(0.2, lambda: subprocess.run(["true"])).start()\n')
         self.assertEqual(_commands_around_the_recorder(allowed, siblings=("lab_dist", "fs_clock")), [], "the allowed spellings (a spawner CALLED inside a function body, a nested import of another module, a "
                                                                                                           "module-level call with no callable argument, a lambda handed to a call inside a function, a constant name to getattr or hasattr, a module's own "
                                                                                                           "definition or an allowed module reached through a binding, a source-less module's member the set reads, as an attribute or as a from-import "
-                                                                                                          "binding; `patch` from unittest.mock is mock's own definition and stays the disclosed class; a callable deferred by a timer inside a "
-                                                                                                          "function body, the residual's road (4) after the recorder is lifted), and the words in a docstring, are not refused")
+                                                                                                          "binding; `patch` from unittest.mock is mock's own definition and stays the disclosed class; a member an import binds read as a value "
+                                                                                                          "(`_P = Path`), which is no module; a sibling handed to getattr and a chain rooted at a sibling's binding read as a value, which the module "
+                                                                                                          "arm does not resolve (the stated outside); a callable deferred by a timer inside a function body, the residual's road (4) after the recorder "
+                                                                                                          "is lifted), and the words in a docstring, are not refused")
         mods = _lab_modules()
         self.assertTrue({LAB_MODULE, "lab_dist"} <= set(mods), "the derivation reaches the lab module and lab_dist: %r" % sorted(mods))
         found = {name: hits for name, src in sorted(mods.items()) for hits in [_commands_around_the_recorder(src, siblings=set(mods))] if hits}
