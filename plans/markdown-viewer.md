@@ -8489,10 +8489,14 @@ does, the file its query names in the session it names (at the relay route, that
 Cmd/Ctrl-click, in its own tab off the /file route, and never as a web tab at the address, since the cap pass caps such
 a figure's src so the picture loads under a page key while a tab at the address as written carries no cap and the kernel
 refused it, and a tab would keep in its address and history a cap an author copied into the source; where the viewer
-cannot open the picture shown, for a pin beside the path, a query naming more than the path, the session and a
-credential, a host-prefixed sid at the /file route or a relay address of another shape, the figure has nothing to open,
-no control and no gesture, and no web tab either (the coordinator's ruling on the same-origin figure after the file
-review's round 19, read over the route's other forms by a check of that build; a file route on another origin, or on
+cannot open the picture shown, for a query the route answers with something other than the file it names (a pin, a
+download of 1 or a slice of 1, read as the kernel reads them), a host-prefixed sid at the /file route or a relay address
+of another shape, the figure has nothing to open, no control and no gesture, and no web tab either, while a name the
+route does not read, a cache-buster v or a t, or a download or a slice of another value, leaves the file to open (the
+coordinator's ruling on the same-origin figure after the file review's round 19, read over the route's other forms by a
+check of that build, and the file review's round 20, regression-2, with the coordinator's decision 7 on it, since every
+name past the path, the session and a credential had been refused, file-figure-open.test.ts deriving the names the
+kernel's handler reads, so a name it comes to read reds there until it is placed; a file route on another origin, or on
 this host at another port, stays a web target; WebKit sends an escaped route decoded and Chromium and Firefox send it as
 written, which the kernel does not route, and the cap pass caps no escaped spelling, so its picture loads only with a
 cap already in its address); else the file
@@ -9325,9 +9329,11 @@ figure written with this origin's /file address, in Chromium, Firefox and WebKit
 escaped route, a .. segment and a . segment open in the viewer, in the session the address names, and open no tab, red
 at dcaa80ec4, and, since a check of that build, the double slash and params spellings with a cap the author copied open
 there too and the relay route in its host's session, while a host-prefixed sid at the /file route and a pin beside the
-path wear no control and open nothing, red at d140285a4, and a /file address on another origin or on this host at
-another port still opens a web tab, while ui/webview/file-figure-open.test.ts runs the classifier over those forms and
-more in CI) and, since the fixes
+path wear no control and open nothing, red at d140285a4, and, since the file review's round 20, regression-2, a v, a t
+and a download of 0, which the route does not read or act on, open there too, the v at the relay route as well, red at
+bef9ff8fc, while a download of 1 wears no control and opens nothing, and a /file address on another origin or on this
+host at another port still opens a web tab, while ui/webview/file-figure-open.test.ts runs the classifier over those
+forms and more in CI, and derives from kernel.py the names the route reads) and, since the fixes
 for that round's extra9-1 (with the coordinator's decision 4), ui/webview/file-figure-open-stacking.ts (the one gate's stacking
 cells, a module of the cells alone that the same two legs run in the three engines, on the chat modal and the Files pane: a remote
 picture in a top-level table, inside author elements of page classes that would make a stacking context around it and inside an
