@@ -2744,7 +2744,7 @@ class LegEnvironment(_Base):
     reader compares with its own."""
 
     def all_legs_world(self):
-        """A head on a branch of its own; every head owes every leg, so all nine legs run."""
+        """A head on a branch of its own; every head owes every leg, so every leg of sweep.LEGS runs."""
         self.w.change({"kernel/kernel.py": "VERSION = 2\n"})
         return self.w
 
@@ -2765,7 +2765,7 @@ class LegEnvironment(_Base):
         w.ctl({"marker": marker})
         w.run(env=dict(w.env, **planted, **narrowing), check=0)
         calls = w.calls()
-        self.assertEqual(sorted(c["leg"] for c in calls), sorted(sweep.LEGS), "all nine legs ran")
+        self.assertEqual(sorted(c["leg"] for c in calls), sorted(sweep.LEGS), "every leg ran")
         for c in calls:
             with self.subTest(leg=c["leg"]):
                 self.assertEqual(c["marked"], [], "a planted value reached the leg")
