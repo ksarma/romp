@@ -152,7 +152,7 @@ test("what it opens for a figure at this origin's /file route (ownFileRoute, the
   assert.deepEqual(sids.map((s) => ownFileRoute(HERE + "/file?path=" + encodeURIComponent(P) + "&sid=" + encodeURIComponent(s), PAGE, HERE) === "none"), sids.map((s) => hostOf(s) !== ""), "a sid is refused where hostOf reads a host in it, and only there: " + JSON.stringify(sids));
 });
 
-test("what it opens for a figure at this origin's file routes read as the kernel reads them (ownFileRoute, the coordinator's ruling on the same-origin figure after the file review's round 19, read over the route's other forms by a check of that build): a leading run of slashes and the last segment's ;params, which CPython's parse_request and urlparse drop, still name the /file route and open its file; the relay's route /remote/<host>/file is the file its query names in that host's session, the inverse of the viewer's own URL; a query naming more than the path, the session and a credential (a pin, a download), a relay host of another shape, a relay address with no sid or a host-prefixed one, and a respelled relay route are \"none\", never a web tab", () => {
+test("what it opens for a figure at this origin's file routes read as the kernel reads them (ownFileRoute, the coordinator's ruling on the same-origin figure after the file review's round 19, read over the route's other forms by a check of that build): a leading run of slashes and the last segment's ;params, which CPython's parse_request and urlparse drop, still name the /file route and open its file; the relay's route /remote/<host>/file is the file its query names in that host's session, the inverse of the viewer's own URL; a query the route answers with something other than the file it names (a pin, a download of 1, a slice of 1), read as the kernel's parse_qs reads it, a relay host of another shape, a relay address with no sid or a host-prefixed one, and a respelled relay route are \"none\", never a web tab, while a name the route does not read (v, t), a download or a slice of another value and a credential keep the file, at the /file route and the relay's (the file review's round 20, regression-2, with the coordinator's decision 7 on it: every name past the path, the session and a credential had been \"none\")", () => {
   const PAGE = "http://notes-api.test/files", HERE = "http://notes-api.test";
   const P = "/repo/notes-api/docs/figs/b.svg", S = "11111111-2222-3333-4444-555555555555";
   const q = "?path=" + encodeURIComponent(P) + "&sid=" + S;
@@ -167,14 +167,28 @@ test("what it opens for a figure at this origin's file routes read as the kernel
     ["a cap the author copied, a credential", HERE + "/file" + q + "&cap=" + "A".repeat(22), FILE],
     ["a blank pin, which the kernel's parse_qs drops", HERE + "/file" + q + "&pin=", FILE],
     ["a pin, whose snapshot the viewer's URL cannot carry", HERE + "/file" + q + "&pin=" + "0".repeat(32), "none"],
-    ["a download", HERE + "/file" + q + "&download=1", "none"],
-    ["any other name", HERE + "/file" + q + "&v=2", "none"],
+    ["a pin of the kernel's own shape, a sha256 and an extension", HERE + "/file" + q + "&pin=" + "0".repeat(64) + ".png", "none"],
+    ["a download, answered as an attachment", HERE + "/file" + q + "&download=1", "none"],
+    ["a download after a blank one, which the kernel's parse_qs drops", HERE + "/file" + q + "&download=&download=1", "none"],
+    ["a download with its name escaped, which parse_qs decodes", HERE + "/file" + q + "&%64ownload=1", "none"],
+    ["a slice, answered as JSON", HERE + "/file" + q + "&slice=1", "none"],
+    ["a cache-buster the route does not read", HERE + "/file" + q + "&v=2", FILE],
+    ["a t the route does not read", HERE + "/file" + q + "&t=1727580000", FILE],
+    ["a download of 0, which the route does not answer as one", HERE + "/file" + q + "&download=0", FILE],
+    ["a download of 0 before a download of 1, the kernel reading the first", HERE + "/file" + q + "&download=0&download=1", FILE],
+    ["a download spelled in capitals, a name the route does not read", HERE + "/file" + q + "&Download=1", FILE],
+    ["a slice of 0", HERE + "/file" + q + "&slice=0", FILE],
+    ["an anchor, which the route reads only under a slice", HERE + "/file" + q + "&anchor=intro", FILE],
+    ["a token and a code, credentials", HERE + "/file" + q + "&token=" + "B".repeat(12) + "&c=" + "C".repeat(12), FILE],
     ["an escaped colon in a host-prefixed sid", HERE + "/file?path=" + encodeURIComponent(P) + "&sid=gpu1%3A" + S, "none"],
     ["the relay's route", HERE + "/remote/gpu1/file" + q, RELAYED],
     ["the relay's route, its host escaped", HERE + "/remote/gpu%31/file" + q, RELAYED],
     ["the relay's route with a double slash before it", HERE + "//remote/gpu1/file" + q, RELAYED],
     ["the relay's route with params", HERE + "/remote/gpu1/file;x" + q, RELAYED],
     ["the relay's route with a pin", HERE + "/remote/gpu1/file" + q + "&pin=" + "0".repeat(32), "none"],
+    ["the relay's route with a download, which the relay answers itself", HERE + "/remote/gpu1/file" + q + "&download=1", "none"],
+    ["the relay's route with a slice, which its host answers", HERE + "/remote/gpu1/file" + q + "&slice=1", "none"],
+    ["the relay's route with a cache-buster the route does not read", HERE + "/remote/gpu1/file" + q + "&v=2", RELAYED],
     ["the relay's route with no sid", HERE + "/remote/gpu1/file?path=" + encodeURIComponent(P), "none"],
     ["the relay's route with a host-prefixed sid", HERE + "/remote/gpu1/file?path=" + encodeURIComponent(P) + "&sid=gpu2:" + S, "none"],
     ["the relay's route with no path", HERE + "/remote/gpu1/file?sid=" + S, "none"],
@@ -192,6 +206,40 @@ test("what it opens for a figure at this origin's file routes read as the kernel
   for (const [p, sid] of [[P, "gpu1:" + S], ["~/notes/a b.png", "host-2:" + S], ["rel/c.svg", "h:" + S]] as Array<[string, string]>) {
     assert.deepEqual(ownFileRoute(HERE + fileUrl(p, sid), PAGE, HERE), { path: p, sid }, "fileUrl(" + JSON.stringify(p) + ", " + JSON.stringify(sid) + ") = " + fileUrl(p, sid) + " reads back");
   }
+});
+
+test("the names this origin's file routes read, derived from the kernel (kernel.py's _file_preview, the /file route's handler, and _remote_file, the relay's): the path and the session name the file, and a download of 1, a slice of 1 and a pin are the handler's three answers other than the file, which ownFileRoute refuses at both routes; a name the handler does not read, and a download or a slice of another value, keeps the file, so a name the kernel comes to read reds here until it is ruled an answer or a name that leaves the file (the file review's round 20, regression-2, with the coordinator's decision 7 on it)", () => {
+  const KERNEL = fs.readFileSync(path.join(ROOT, "kernel", "kernel.py"), "utf8");
+  const handler = between(KERNEL, "    def _file_preview(self, q, head=False):", "\n    def ");
+  const relay = between(KERNEL, "    def _remote_file(self, host, query, head=False):", "\n    def ");
+  const reads = (body: string): string[] => [...new Set([...body.matchAll(/\bq\.get\("([^"]+)"\)/g)].map((m) => m[1]))].sort();
+  // the names the handler compares with one value, and the value that turns its answer
+  const turned: Record<string, string> = Object.fromEntries([...handler.matchAll(/\(q\.get\("([^"]+)"\) or \[""\]\)\[0\] == "([^"]*)"/g)].map((m) => [m[1], m[2]]));
+  assert.deepEqual(turned, { download: "1", slice: "1" }, "the handler turns its answer on a download of 1 (an attachment) and a slice of 1 (JSON)");
+  assert.match(handler, /pin = \(q\.get\("pin"\) or \[""\]\)\[0\]\n\s*if pin and _PIN_ID_RE\.match\(pin\):/, "the pin, read as an id of the kernel's own shape, whose snapshot the handler serves while its copy is on disk");
+  const ANSWERS: Record<string, string> = { ...turned, pin: "0".repeat(64) + ".png" };   // a pin of the kernel's shape (_PIN_ID_RE: a sha256 and an extension)
+  assert.deepEqual(reads(handler), ["path", "sid", ...Object.keys(ANSWERS)].sort(), "the names the /file handler reads: the file's path and session and the three answers other than the file; a name it comes to read is ruled here first, an answer ownFileRoute refuses or a name that leaves the file");
+  // every other road the query takes out of the handler: the helpers it is handed to, found by the call around each bare q
+  const handedTo = [...handler.matchAll(/\bq\b(?!\.get\()/g)].slice(1).map((m) => {
+    let depth = 0, i = m.index as number;
+    while (--i >= 0) { const ch = handler[i]; if (ch === ")") depth++; else if (ch === "(") { if (depth === 0) break; depth--; } }
+    return (/(\w+)$/.exec(handler.slice(0, i)) || ["", "?"])[1];
+  }).sort();
+  assert.deepEqual(handedTo, ["_file_slice", "_too_large_page"], "the query reaches two helpers besides, each on a road no picture's load takes: the slice's, under a slice of 1 alone, and the page of an oversize PDF opened in a tab");
+  assert.match(handler, /if \(q\.get\("slice"\) or \[""\]\)\[0\] == "1" and not head:\n\s*return self\._file_slice\(fp, q\)/, "the slice's helper, under a slice of 1 alone");
+  assert.deepEqual(reads(relay), ["cap", "download", "path"], "the relay's own reads: the browser's cap, the download it answers itself and the path its type is judged by");
+  assert.match(relay, /"\/file\?" \+ urlencode\(q, doseq=True\)/, "and the rest of the query handed to its host's own /file route, the handler above");
+  const PAGE = "http://notes-api.test/files", HERE = "http://notes-api.test";
+  const P = "/repo/notes-api/docs/figs/b.svg", S = "11111111-2222-3333-4444-555555555555";
+  const q = "?path=" + encodeURIComponent(P) + "&sid=" + S;
+  const FILE = { path: P, sid: S }, RELAYED = { path: P, sid: "gpu1:" + S };
+  const both = (extra: string) => [ownFileRoute(HERE + "/file" + q + extra, PAGE, HERE), ownFileRoute(HERE + "/remote/gpu1/file" + q + extra, PAGE, HERE)];
+  const rows: Array<[string, unknown]> = [
+    ...Object.entries(ANSWERS).map(([n, v]): [string, unknown] => [n + "=" + v, ["none", "none"]]),
+    ...Object.keys(turned).map((n): [string, unknown] => [n + "=0", [FILE, RELAYED]]),
+    ...["v", "t", "anchor", "cap", "token", "c", "k", "x", "Download", "slices"].map((n): [string, unknown] => [n + "=1", [FILE, RELAYED]]),
+  ];
+  assert.deepEqual(rows.map(([extra]) => [extra, both("&" + extra)]), rows, "each name at the /file route and the relay's: the three answers other than the file \"none\", and a name the handler does not read, or a value it does not act on, the file");
 });
 
 test("where it is decided: mdBlock's file arm after the anchors are sorted; a figure the browser answers for after the paint through one capture-phase load and error pair on the body, armed per open and dropped with the viewer; a URL document adds none", () => {

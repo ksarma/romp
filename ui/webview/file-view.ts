@@ -6404,8 +6404,10 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // its origin the page's own, its route read as the kernel reads it and again with its escapes decoded and its dot segments
 // resolved), is no remote picture, read before the web arm, and never a web tab at the address: a file of a session, the file
 // the address's query names in the session it names, opened as a local picture is opened (the viewer, or its own tab off the
-// /file route on a Cmd/Ctrl-click), or nothing to open where the viewer cannot open the picture shown (a pin's snapshot, a
-// host-prefixed sid at the /file route, a query naming more than the file). The cap pass (capAuthoredFileUrls) caps such a
+// /file route on a Cmd/Ctrl-click), or nothing to open where the viewer cannot open the picture shown (a query the route
+// answers with something other than the file it names, a pin's snapshot, a download or a slice's JSON, and a host-prefixed
+// sid at the /file route), while a name the route does not read, a cache-buster among them, leaves the file to open (the
+// file review's round 20, regression-2, with the coordinator's decision 7 on it). The cap pass (capAuthoredFileUrls) caps such a
 // figure's src so the picture loads under a page key, and a tab at the address as written carries no cap, so the kernel
 // refused it, or carries the cap an author copied, which a tab's address and history would keep (the coordinator's ruling on
 // the same-origin figure after the file review's round 19; a file route on another origin, or on this host at another port,
@@ -6436,12 +6438,22 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
  *  dropped and the first value left kept: a file at the /file route is the first `path` with the `sid` beside it (null when
  *  the address names none), and at the relay's route, the inverse of the viewer's own URL (preview.ts fileUrl), the host its
  *  one segment names, joined to the sid by hostOf's rule (host-prefix.ts: a colon after the first character). "none" for an
- *  address naming no path; for one whose query names more than the path, the session and a credential (a `pin`, whose
- *  snapshot the viewer's URL cannot carry, a `download`, anything else), so the picture opened is always the one shown; for a
- *  sid with a host prefix at the /file route, where the kernel reads an absolute path from its own disk while the viewer's URL
- *  would send the open through that host's relay; and at the relay's route for a host of another shape, no sid, or a sid with
- *  a host prefix of its own. file-figure-open.test.ts holds the prefix rule to hostOf's answer over its sids and runs the
- *  relay's inverse against fileUrl. */
+ *  address naming no path; for one whose query the route answers with something other than the file it names, read as the
+ *  kernel reads it (kernel.py's _file_preview, and at the relay's route _remote_file, which answers a download itself and
+ *  hands the rest of the query to its host's own /file): a `download` of "1", answered as an attachment, a `slice` of "1",
+ *  answered as JSON, which no picture loads from, and a `pin` of any value, whose snapshot the viewer's URL cannot carry (the
+ *  kernel serves the snapshot only for an id of its own shape whose copy is still on its disk, which the page cannot see, so
+ *  a pin the kernel ignores opens nothing here too); for a sid with a host prefix at the /file route, where the kernel reads
+ *  an absolute path from its own disk while the viewer's URL would send the open through that host's relay; and at the
+ *  relay's route for a host of another shape, no sid, or a sid with a host prefix of its own. Every other name keeps the
+ *  file: a name the route does not read (a cache-buster `v`, which the viewer's own picture URL carries too, a `t`), a
+ *  `download` or a `slice` of another value, and a credential (`cap`, `token`, `c`), which decides only whether the route
+ *  answers, so the picture opened is the one shown (the file review's round 20, regression-2, with the coordinator's
+ *  decision 7 on it: every name past the path, the session and a credential had been refused, so a picture the viewer can
+ *  open as shown opened nothing). A name the kernel comes to read later that changes its answer would open the live file in
+ *  the viewer until it joins the three, never a web tab, and file-figure-open.test.ts derives the names the kernel's handler
+ *  reads and fails on one this rule does not name. That module also holds the prefix rule to hostOf's answer over its sids
+ *  and runs the relay's inverse against fileUrl. */
 export function ownFileRoute(dest: string, base: string, origin: string): { path: string; sid: string | null } | "none" | null {
   if (!/^https?:/i.test(dest) && !dest.startsWith("//")) return null;   // a path figure is the model's join, never this
   let u: URL;
@@ -6464,10 +6476,8 @@ export function ownFileRoute(dest: string, base: string, origin: string): { path
   const relay = /^\/remote\/([^/]+)\/file$/.exec(route);
   const relayShaped = [route, decoded].some((p) => p !== null && /^\/remote\/(?:[\s\S]*\/)?file$/.test(p));   // the kernel's own test for its relay route, its prefix and its last segment
   if (!local && !relayShaped) return null;
-  let more = false;
-  u.searchParams.forEach((v, k) => { if (v !== "" && ["path", "sid", "cap", "token", "c", "k"].indexOf(k) < 0) more = true; });
-  if (more) return "none";
   const first = (name: string): string => { for (const v of u.searchParams.getAll(name)) if (v !== "") return v; return ""; };
+  if (first("download") === "1" || first("slice") === "1" || first("pin") !== "") return "none";   // the route's three answers other than the file: an attachment, JSON, a pin's snapshot
   const path = first("path"), sid = first("sid");
   if (!path) return "none";
   if (local) return sid.indexOf(":") > 0 ? "none" : { path, sid: sid || null };   // a host-prefixed sid, by hostOf's rule

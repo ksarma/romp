@@ -176,10 +176,15 @@
 // the viewer, in the session it names (another than the report's), through the viewer's own capped /file URL, with Back to the
 // report and no tab; a figure at the relay's route (/remote/gpu1/file) opens the same way in that host's session, through the
 // viewer's own capped relay URL; a host-prefixed sid at the /file route and a pin beside the path wear no control and open
-// nothing on a click or a Cmd/Ctrl-click. The first four forms red at dcaa80ec4, where each opened a tab at the address as
+// nothing on a click or a Cmd/Ctrl-click. A name the route does not read, a cache-buster v or a t, and a download of 0 leave
+// the file to open, at the /file route and the relay's, while a download of 1, which the route answers as an attachment,
+// wears no control and opens nothing (the file review's round 20, regression-2, with the coordinator's decision 7 on it).
+// The first four forms red at dcaa80ec4, where each opened a tab at the address as
 // written, which carries no cap, so the kernel's cap rule refuses it; the next five red at d140285a4, where the respelled
 // forms opened a tab whose address kept the author's cap, the relay's route and the host-prefixed sid a tab at the address as
-// written, and the pin the live file in the viewer. A /file address on another origin, or on this host at another port,
+// written, and the pin the live file in the viewer; the four forms naming what the route does not read red at bef9ff8fc,
+// where each wore no control and opened nothing, and the download of 1 reds under a rule that leaves the download out of the
+// three it refuses. A /file address on another origin, or on this host at another port,
 // still opens a web tab at its address. The cap pass leaves the escaped route's src and the respelled forms' as written, and
 // the escaped route loads here only because the harness answers it (file-view.ts ownFileRoute says when it loads at the
 // kernel); file-figure-open.test.ts runs the classifier over these forms and more in CI.
@@ -365,6 +370,11 @@ const OWN_FORMS: Array<[string, string, "file" | "relay" | "none" | "web"]> = [
   ["the relay's route", ORIGIN + "/remote/gpu1/file" + OWN_Q, "relay"],
   ["a host-prefixed sid at the /file route", ORIGIN + "/file?path=" + encodeURIComponent(OWN_PIC) + "&sid=gpu1:" + OWN_SID, "none"],
   ["a pin beside the path", ORIGIN + "/file" + OWN_Q + "&pin=" + "0".repeat(32), "none"],
+  ["a cache-buster the route does not read", ORIGIN + "/file" + OWN_Q + "&v=2", "file"],
+  ["a t the route does not read", ORIGIN + "/file" + OWN_Q + "&t=1727580000", "file"],
+  ["a download of 0, which the route does not answer as one", ORIGIN + "/file" + OWN_Q + "&download=0", "file"],
+  ["the relay's route with a cache-buster the route does not read", ORIGIN + "/remote/gpu1/file" + OWN_Q + "&v=2", "relay"],
+  ["a download of 1, answered as an attachment", ORIGIN + "/file" + OWN_Q + "&download=1", "none"],
   ["another origin", "http://other.test/file" + OWN_Q, "web"],
   ["this host at another port", "http://notes-api.test:8080/file" + OWN_Q, "web"],
 ];
@@ -405,7 +415,7 @@ async function ownFormScene(browser: any, dest: string, key: string): Promise<{ 
 }
 for (const engine of ["chromium", "firefox", "webkit"] as const) {
   const named = engine === "chromium" ? "Chromium" : engine === "firefox" ? "Firefox" : "WebKit (Playwright's, on Linux)";
-  test("in " + named + ", under a page key, a figure written with this origin's /file address opens in the viewer and no tab, in the plain spelling, an escaped route, a .. segment and a . segment, and, with a cap the author copied, respelled with a double slash or params the kernel drops, as a local picture opens: the control wears the local words, the viewer shows the file the query names, in the session it names, through its own capped /file URL, and Back returns to the report; a figure at the relay's route opens the same way in its host's session, through the viewer's own capped relay URL; a host-prefixed sid at the /file route and a pin beside the path, which the viewer cannot open as the picture shown, wear no control and open nothing on a click or a Cmd/Ctrl-click; a /file address on another origin, or on this host at another port, still opens a web tab at its address (the coordinator's ruling on the same-origin figure after the file review's round 19, read over the route's other forms by a check of that build; the first four forms red at dcaa80ec4, where each opened a tab at the address as written, which carries no cap, and the next five red at d140285a4, where the two respelled forms opened a tab whose address kept the author's cap, the relay's route and the host-prefixed sid a tab at the address as written, and the pin the live file in the viewer)", async (t) => {
+  test("in " + named + ", under a page key, a figure written with this origin's /file address opens in the viewer and no tab, in the plain spelling, an escaped route, a .. segment and a . segment, and, with a cap the author copied, respelled with a double slash or params the kernel drops, as a local picture opens: the control wears the local words, the viewer shows the file the query names, in the session it names, through its own capped /file URL, and Back returns to the report; a figure at the relay's route opens the same way in its host's session, through the viewer's own capped relay URL; a host-prefixed sid at the /file route and a pin beside the path, which the viewer cannot open as the picture shown, wear no control and open nothing on a click or a Cmd/Ctrl-click; a name the route does not read (a cache-buster v, a t) and a download of 0 leave the file to open, at the /file route and the relay's, and a download of 1, which the route answers as an attachment, wears no control and opens nothing; a /file address on another origin, or on this host at another port, still opens a web tab at its address (the coordinator's ruling on the same-origin figure after the file review's round 19, read over the route's other forms by a check of that build, and the file review's round 20, regression-2, with the coordinator's decision 7 on it; the first four forms red at dcaa80ec4, where each opened a tab at the address as written, which carries no cap, the next five red at d140285a4, where the two respelled forms opened a tab whose address kept the author's cap, the relay's route and the host-prefixed sid a tab at the address as written, and the pin the live file in the viewer, and the four forms naming what the route does not read red at bef9ff8fc, where each wore no control and opened nothing)", async (t) => {
     const key = "k" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);   // a page key minted at run time
     const got: Array<[string, OwnRead]> = [];
     const errs: string[] = [];
