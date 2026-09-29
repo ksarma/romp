@@ -330,8 +330,9 @@ class KeyboardGap(unittest.TestCase):
         after a no-pan re-raise at 1.05 had left a band of 16 px under the composer), re-bounded from the larger of the hold and the
         value in force (a pan back up after a deep re-raise at scale 2 had published the hold, 83, and left a band of 85 px), a
         keyboard swapped in at that zoom is a pan on its own run, so a refit at the swap's report publishes what the swap's run did
-        (it had published 236 and then 40), and a pan after a zoom keeps the hold (the stance: any change of scale since the raise
-        disarms the rule). The values are the rules
+        (it had published 236 and then 40), and a pan after a zoom keeps the hold (the stance: any change of scale since the raise,
+        between runs on the measured or hold road, disarms the rule; a fine pointer's runs record no scale, so a change only they
+        saw does not disarm it). The values are the rules
         test_kernel_mobile.MobileFitExecutes derives cell by cell; here the served shell publishes them and lays the body and the
         composer out at them. Every cell is checked before the leg fails."""
         cells = r["r6"]
