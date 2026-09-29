@@ -1000,8 +1000,9 @@ print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms
          ("%.0f" % (dl("judge", "cpu_ms_sum") / jp)) if jp else "-", workers_note,
          dl("memos", "chain", "hit"), dl("memos", "chain", "miss"), jw, jev, jbs, max(0, jw - jev)))
 # the evidence gate, per gated tier: per-session runs the tier made against the ones it declined. On the child
-# road (judge.child present) the gate runs in the child and this process's counters stay at zero, so the line
-# prints "no gated runs in the window" while the child judges (the done line carries no tiers block)
+# road (judge.child present) the gate runs in the child and this line still reads this process's counters, which
+# stay at zero, so it prints "no gated runs in the window" while the child judges; the child's gate figures ride
+# judge.child.tierGate, its last pass's alone, from which no window's difference can be taken
 # (skipped / (ran + skipped) is the acceptance number for the gate), then the runs that ended without a
 # stamp when there were any (incomplete: a deferral or a failed call; due_clock: a background deadline
 # made the run due; bypassed: no signature could be computed, or the parse ran under another cut)

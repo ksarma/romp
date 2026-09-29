@@ -596,19 +596,32 @@ jobs:
     # 15 min 16 s), then 40 (PR 1790's run 35138058863 was cancelled at 25 min 04 s mid served lab on a
     # slow runner, 2026-09-16). At the fork's main 1d591384e (run 36388144219) the job took 36 min 22 s
     # of its 40: that step 1930 s, the steps before it 250 s. The step now has a job of its own
-    # (served-pages, below; its comment gives the figures and the reason). The cap stays at 40 until
-    # a run on main of this job without that step measures the job: the Browser legs step's comment
-    # records the job at a head where it still ran the served step, and tools/ci-browser-legs.test.mjs
-    # derives that step's margin from that record and this cap, so a lower cap here waits for the
-    # record to be re-measured. tests/test_ci_served_job.py holds this job, its comments aside, equal
-    # to a literal (every key, step and field, the cap included), so a change here changes that literal
-    # too, on purpose. The Browser legs step below carries a bound of
-    # its own, 5 minutes (its timeout-minutes), the roster's budget, which fits within the job's margin
-    # under this cap at the head the step's own comment names (tools/ci-browser-legs.test.mjs derives
-    # the margin from that comment and this cap, so the figures have one home), so a step that runs to
-    # its bound fails by name and the job still ends under this cap. A roster whose legs together exceed
-    # that bound raises the step's timeout-minutes and this cap in the same PR.
-    timeout-minutes: 40
+    # (served-pages, below; its comment gives the figures and the reason). Without that step the job
+    # took 4 min 45 s on main's run 36555049532 at 6dd80a6e7, the first run on main after the move,
+    # and its Browser legs step 2 s, as on main's run 36388144219. The cap was set to 17 minutes on
+    # 2026-09-29, sized for a head that rosters the legs open PRs were known to add: fork PR 931's
+    # chat leg, about 227 s on a development box (by that PR's review); fork PR 860's gear leg, about
+    # 29 s (the step took 31 s on its run 36519655646); and fork PR 862's nine legs, about 24 s (26 s
+    # on its run 36456120720). Added one after another, those give a job of about 565 s and a Browser
+    # legs step of about 282 s. Node runs roster files side by side on the runner (on 862's run the
+    # 41 tests add up to 68.55 s in the step's 26 s), so the sum overstates the legs as timed; it is
+    # kept because 931's leg, one file whose tests run in order, was timed on a development box and
+    # not on the runner, where it may take longer. A bound of 7 minutes (420 s) is about that step
+    # time and half again, the rule the vendored-tooling and served-pages jobs size their caps by,
+    # applied here to the step's bound. tools/ci-browser-legs.test.mjs holds the step's bound within
+    # the cap less the recorded job time, which counts the step's own seconds as well: 565 s and
+    # 420 s make 16 min 25 s, so 17. The job's own time and half again, about 14 min 8 s, is under it
+    # too.
+    # tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal (every key,
+    # step and field, the cap included), so a change here changes that literal too, on purpose. The
+    # Browser legs step below carries a bound of its own, 5 minutes (its timeout-minutes), the
+    # roster's budget, which fits within the job's margin under this cap at the head the step's own
+    # comment names (tools/ci-browser-legs.test.mjs derives the margin from that comment and this cap,
+    # so the margin's figures have one home; the cap's sizing above names its own runs), so a step
+    # that runs to its bound fails by name and the job still ends under this cap. A roster whose legs
+    # together exceed that bound raises the step's timeout-minutes, and this cap too when the new
+    # bound does not fit that margin, in the same PR.
+    timeout-minutes: 17
     defaults:
       run:
         working-directory: vscode-extension
@@ -701,11 +714,11 @@ jobs:
         # one hung leg fails by name (node cancels that file and ends its process at the bound, naming it, and runs the
         # other files on; a leg's own { timeout } does not end the process, since a live browser handle keeps it up
         # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in
-        # its own run, raises the step's timeout-minutes and the job's cap together when the total needs it (the job
-        # comment above), and node's --test-timeout when one leg's own bound or its whole-file seconds need it. Step
-        # seconds, job minutes and the job's 40-minute cap:
-        # (measured on the runner at 74db18d9c, the merge of the fork's main into this branch before the review's round 3, the merge whose title says so, one leg rostered, the launcher's own switch test: 15 s for this step in a job of 35 min 0 s, under the 40-minute cap, a margin of 300 s. The script then also ran a census of the tree's test modules and checks over an exclusions file before node --test; both have left this branch since (the fork's branch ci-browser-legs-census keeps them), so this step now runs less than was measured: at b6fd829bf, the author's landing merge for the review's round 11, whose subject names main at ffab236bd, three runs of this step's command from vscode-extension/ on a development box, with the bundles built and the switch set, took 1.87 s, 1.89 s and 1.87 s at a load average of about 22 on 60 cores (node's own duration in the first, 1.77 s). Three runs at 84cc6c142, the commit of the review's round 11 whose subject names condition 4 first, took 2.69 s, 2.70 s and 2.55 s at a load average of about 46 (node's own duration in the first, 2.55 s), three at 789b8252c, the commit of the author's closing pass after the review's round 11 whose subject names the script's header first, took 2.90 s, 2.65 s and 2.89 s at a load average of about 46, three at c0046a3b8, the commit of the review's round 11 whose subject names correctness-4 first and then seen_at and the post-run key, took 2.31 s, 2.38 s and 2.46 s at a load average of about 28, three at 2e4104fad, the commit of the author's closing pass after the review's round 10 whose subject names the reporter's file-level mark first, took 1.89 s, 1.99 s and 2.03 s at a load average of about 18, three at 345805840, the commit of the review's round 10 whose subject names extra5-1 first, took 1.69 s, 1.67 s and 1.84 s at a load average of about 17, and three at f6f736f31, the commit of the review's round 9 whose subject names regression-1 first, took 1.82 s each at a load average of about 12. The files this step runs are the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts): between 74db18d9c and f6f736f31 the roster changes in its header comment alone, the reporter in its header comment alone, the script by that removal, by refusing a bundle path that is not canonical, by the wording of its reds and by its comments, and the switch test by its narrowed title and comments and by an assertion that reads the script's phrase, and the roster's one line and the launcher are as measured; between f6f736f31 and 2e4104fad, through 345805840, the roster, the reporter and the script change in their comments alone, and the switch test and the launcher not at all; between 2e4104fad and c0046a3b8 the roster changes in its header comment alone, the script by handing awk two values through its environment in place of -v (the line its duplicate check compares and the path its post-run pass keys on) and by its comments, the switch test by its comments, its second test's title and one assertion's message, and the reporter and the launcher not at all; between c0046a3b8 and 789b8252c the script changes by one line of its header comment and by the wording of its skip red under the switch, and the roster, the switch test, the reporter and the launcher not at all; between 789b8252c and 84cc6c142 the script changes in its header comment alone, and the roster, the switch test, the reporter and the launcher not at all; and between 84cc6c142 and b6fd829bf the switch test changes by giving each child run a temporary directory of its own, in a scratch directory it removes, with two assertions on them, by its first test's report of its temporary directory and by its comments, the roster and the script change in their comments alone, the launcher changes by the fork's main that b6fd829bf merges, where PR 912 adds a clause to bundleViewer's docstring and previewFull to its esbuild entry, and the reporter not at all. A later commit, or a merge of the fork's main when the branch takes one, is read against the same files from its diff, and one that changes none of them leaves those files as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds and the job's length, which moves with the suite, are re-read from CI at each pushed head in the PR's body. This description of the measured heads and of what changed after them is NOT PINNED: tools/ci-browser-legs.test.mjs pins the figures beside it by shape and against the cap and the step's own bound, and each head is named by its sha and by its merge's title or its commit's subject, which the fork's merge-commit landings keep in main's history (a rebase or an offer elsewhere re-measures and renames them), while the vendored-tooling job, which runs that test, checks out at depth 1, so no pin there can read a sha's title, subject or diff, and a reader checks them against the branch's history. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; the first pushed head, with the roster empty, took 9 s inside a job that lasted 33 min 51 s; each PR that adds a leg states its own leg's numbers in its body.)
-        # The rostered legs' sources named in that parenthesis are the measured heads' own: the roster also holds
+        # its own run, raises the step's timeout-minutes when the total needs it, and the job's cap with it when the new
+        # bound does not fit the margin (the job comment above), and node's --test-timeout when one leg's own bound or
+        # its whole-file seconds need it. Step seconds, job minutes and the job's cap:
+        # (measured on the runner at 6dd80a6e7, the fork's main after batch 932, in main's run 36555049532, the first run on main after the served-page tests moved to a job of their own, one leg rostered, the launcher's own switch test: 2 s for this step (node's own duration 2.36 s) in a job of 4 min 45 s, under the 17-minute cap, a margin of 735 s. The step's and the job's times are the jobs API's, in whole seconds. A later commit is read against the files this step runs: the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts); one that changes none of them leaves the step as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds and the job's length, which moves with the suite, are re-read from CI at each pushed head in the PR's body. tools/ci-browser-legs.test.mjs holds the job time here against the cap and the step's own bound, and the cap's figure to the job's timeout-minutes line; of its other figures it checks only that one spelled N s is present, and reads the step's seconds, the stated margin, the sha and the run not at all. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; each PR that adds a leg states its own leg's numbers in its body.)
+        # The rostered leg's source named in that parenthesis is the measured head's own: the roster also holds
         # ui/webview/gear-sub-focus-browser.test.ts since fork PR 860 added its line, and that PR's body states the leg's
         # whole-file seconds.
         timeout-minutes: 5
@@ -737,9 +750,15 @@ jobs:
     # The served-page tests have a job of their own (since 2026-09-28) because they outgrew the
     # vscode-extension job, where they ran last. At the fork's main 1d591384e (run 36388144219) that
     # job took 36 min 22 s of its 40-minute cap, 1930 s of it this step, and fork PRs 821, 857 and
-    # 860 each add served labs (about 205 s, 90 s and 90 s): 821 with either of the others in one
-    # batch would have run that job past its cap, and 857 with 860 would have left it 38 s. Raising
-    # that cap was declined, since it would hide the growth.
+    # 860 each add served labs (about 205 s, 90 s and 34 s). 860's figure is the own times of the
+    # three kernel-backed tests it adds to the step, on a development box in CI's configuration, by
+    # that PR's review: the two-host lab about 20 s, the held-pair module 5.43 s and the redial lab
+    # 8.86 s (the rest it adds there is kernel-free tests and a change to an existing lab); its
+    # served step took 32 min 21 s on its run 36519655646 at bb1f4a927, 11 s over main's 32 min 10 s
+    # in the run above. 821 with 857 in one batch would have run that job about 77 s past its cap,
+    # and 821 with 860 about 21 s past it by 860's figure above (2 s under it by the whole step's),
+    # while 857 with 860 would have left it 94 s. Raising that cap was declined, since it would hide
+    # the growth.
     # In a job of its own the step is held to a cap sized for it alone, it runs beside the
     # vscode-extension job instead of after that job's steps, and a red step there no longer skips it.
     # The job repeats the setup the step needs and nothing else: the checkout, node with its npm
@@ -753,7 +772,7 @@ jobs:
     # The cap is the expected time and half again: the step's 1930 s and about 16 s of setup is
     # about 32 min 30 s, and half again is about 49 minutes, so 50. That also covers the step's
     # other rule, the phase plus the 600 s per-test timeout plus setup (about 42 min 30 s), and the
-    # three PRs above together (about 385 s more, a job of about 38 min 50 s).
+    # three PRs above together (about 329 s more, a job of about 37 min 55 s).
     # No strategy key: the job has no matrix, so fail-fast would have no effect (it cancels a
     # matrix's other cells when one fails, and this job has one cell).
     # Last in the file: tests/test_ci_sdk_pin.py appends synthetic steps at the end of the file and

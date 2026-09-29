@@ -53,7 +53,7 @@ import { CHIP_LABEL, chipWords, statusChip, type ChipState } from "./status-chip
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail, RENAME_SUBLINE, END_SESSION_STANDING } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { historyMarks, historyBands, windowSpans, HIST_H, HIST_GAP } from "./glow-history";
-import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind } from "./skeleton-tabs";
+import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, onLayoutWord, nextPrefetch, renderKind, gateOnFrame, gateOnStrip, gateOnShow } from "./skeleton-tabs";
 import { reconcileTabOrder, adoptArrival } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned, reachableFrom, headWords,
@@ -1891,9 +1891,10 @@ function fileLink(path: string): HTMLElement {
 // on the RIGHT of the tool's HEAD line; the expandable content hangs below the
 // head, hidden until clicked — so each tool stays ONE row by default (the user:
 // vertical-compact). `head` must already be appended to `turn`.
-function inlineFold(head: HTMLElement, turn: HTMLElement, label: string, content: HTMLElement, key?: string) {
+function inlineFold(head: HTMLElement, turn: HTMLElement, label: string | HTMLElement, content: HTMLElement, key?: string) {
   const toggle = el("span", "tool-fold-toggle");
-  toggle.textContent = label;   // just the clickable summary ("+14 −0" / "12 lines") — no caret/bullet
+  if (typeof label === "string") toggle.textContent = label;   // just the clickable summary ("12 lines"), no caret or bullet
+  else toggle.appendChild(label);                                // or a dressed one: an edit's totals in the diff colours (diffTotals)
   toggle.title = "click to expand";
   applyFold(turn, "fold-open", key);
   toggle.addEventListener("click", (e) => { e.stopPropagation(); rememberFold(turn, "fold-open", key); });
@@ -5602,7 +5603,7 @@ function renderTool(ev: Extract<ChatEvent, { kind: "tool" }>): HTMLElement {
       row.append(og, ng, sign, txt);
       pre.appendChild(row);
     }
-    inlineFold(head, turn, `+${add} -${del}`, pre, fkey);   // the row's one totals text, the approved shape (+A -R, a hyphen minus); the head prints none beside it (T418 round two)
+    inlineFold(head, turn, diffTotals(add, del), pre, fkey);   // the row's one totals, the approved shape (+A -R, a hyphen minus) in the diff colours, the folded summary's dress; the head prints none beside it (T418 round two; the colours 2026-09-18)
   } else if (ev.name === "Read") {
     if (ev.output) { const n = countLines(ev.output); inlineFold(head, turn, `${n} line${n === 1 ? "" : "s"}`, preEl(ev.output, fkey && fkey + ":out"), fkey); }   // "1 line", not "1 lines" (T418, seen in the lab)
   } else if (ev.name === "Skill") {
@@ -6114,6 +6115,14 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
   colSets = readColSets();   // membership is fresh for the restore below (the chat split)
   if (back && heldHere(back) && restoreIfShown(back)) { /* focus is back on the tab the pane named; nothing more to paint here. Only a tab this column holds (the chat split): another column's session is its owner's to restore, and no record of it is this column's to keep */ }
   else if (!activeId) showActive();   // the strip changed under an unfocused pane (it may have emptied), or the tab it names is listed but hidden: the body's line and the box's placeholder follow it (the review's low)
+  // The idle prefetch's start gate, the strip half (stage 0, 2026-09-18; skeleton-tabs.ts gateOnStrip): the local kernel's
+  // strip that lists no LOCAL tab this pane shows or awaits as active (the stored tab ended while the page was away, none is
+  // stored, or the stored tab is another host's, whose full comes over that host's relay socket and is not this chain's to
+  // wait for) is the event that says no full is coming for one from this kernel, so the chain may start on it; a strip that
+  // lists a local want leaves the gate to that tab's first frame (upsert). Only the local strip: a re-emission is empty on a
+  // fresh page and says nothing. On every layout (the gate reads none). Ahead of the render below (schedulePrebuild queues
+  // one idle pass, so the order costs nothing).
+  if (localStrip(report) && gateOnStrip(skeletonTabs, kernelOrder, activeId || wantActive)) schedulePrebuild();
   // The board has been heard on this socket ONLY when this frame is the local kernel's own strip (tab-order.ts localStrip):
   // a synthetic re-emission is re-served from the manager's store, EMPTY on a fresh page (order []), and another host's
   // fresh push says nothing about this kernel's sessions. The vanishing tab (the user 2026-09-12): a view-order storage
@@ -14364,14 +14373,20 @@ function toolGroupKey(first: ChatEvent): string { return "tg:" + (first.uuid || 
 // end in the diff colours (+37 -0). Clicking the line toggles expand → the full non-compact rows (the user 2026-06-14). Carries
 // the rail dot + time-marker + hover wiring like any event so it anchors on the timeline; the dot is a green ✓ disc, red ✗ if any
 // errored.
-/** The edits' totals of a head, summed over every edit in the group, appended once in the diff colours. */
-function appendTotals(line: HTMLElement, add: number, del: number): void {
-  if (!add && !del) return;
+/** An edit's totals in the diff colours: "+A -R" as two spans (tool-plus green, tool-minus red, the theme tokens) inside one
+ *  tool-totals span. ONE dress for both places the numbers show (the user 2026-09-18: the folded group's summary was coloured,
+ *  the expanded rows' numbers were plain text): the collapsed group's head (appendTotals) and each row's diff-fold toggle. */
+function diffTotals(add: number, del: number): HTMLElement {
   const tot = el("span", "tool-totals");
   const plus = el("span", "tool-plus"); plus.textContent = "+" + add;
   const minus = el("span", "tool-minus"); minus.textContent = "-" + del;
-  tot.append(" ", plus, " ", minus);
-  line.appendChild(tot);
+  tot.append(plus, " ", minus);
+  return tot;
+}
+/** The edits' totals of a head, summed over every edit in the group, appended once in the diff colours. */
+function appendTotals(line: HTMLElement, add: number, del: number): void {
+  if (!add && !del) return;
+  line.append(" ", diffTotals(add, del));
 }
 function renderToolGroup(tools: Extract<ChatEvent, { kind: "tool" }>[], prevEpoch: number | null, key: string, open: boolean): HTMLElement {
   const turn = el("div", "turn turn-toolgroup" + (open ? " expanded" : ""));
@@ -14573,6 +14588,7 @@ function silentActivate(id: string): void {
   noteMru(id);                 // enter the recency stack, as setActive opens (round two, low c)
   if (activeId === id) return;
   activeId = id;
+  if (gateOnShow(skeletonTabs, id)) schedulePrebuild();   // a whole tab adopted as active: the visible tab has its frame, so the idle chain may start (the start gate, stage 0)
   loadComposerFor(id, true);   // the tab's own draft
   persistActive(id);           // the column's blob, so the next dial carries the shown tab
   renderTabs();                // mark the shown tab active in this column's strip
@@ -14641,8 +14657,20 @@ function cancelPrebuild(): void {
 function paneHidden(): boolean {
   try { return (window.parent !== window && (window.innerWidth === 0 || window.innerHeight === 0)) || (window as PaneHiddenHost).__rompPaneHidden === true; } catch { return false; }
 }
+// The shell's LAYOUT, read at the wsup arm (the owner's decision of 2026-09-19: after a return on the phone the other chat tabs
+// reload only when tapped, so the redial's chain is held there; skeleton-tabs.ts onSocketUp's returnHold). The shell publishes
+// window.__rompMobileOn in its head, read off window.parent the way paneHidden reads the shell's hidden word above; a standalone
+// page or the VS Code webview has no shell and reads false (the desktop's chain). The start gate itself reads no layout. The
+// hold's SECOND read is the shell's own layout word (panes `mob`, the panes handler below, review round 3): the shell re-tells it on
+// every media-query flip, so a flip inside the socket's life re-decides the hold instead of the arm's sample outliving the layout.
+function phoneShell(): boolean {
+  try { const p = window.parent as unknown as { __rompMobileOn?: unknown }; return window.parent !== window && typeof p.__rompMobileOn === "function" && !!(p.__rompMobileOn as () => unknown)(); } catch { return false; }
+}
 // The prefetch never runs while the browser tab is hidden (nextPrefetch); coming back is the event that re-arms
 // it. (A display:none pane has no event for its CSS flip — it re-arms on the next upsert / click instead.)
+// [fork] On the phone the chat pane's show re-arms it too: the chat-visibility observer's hidden-to-shown flip (watchChatVisibility's
+// onShown, schedulePrebuild) and the shell's panes word (the belt in the panes handler, for a browser whose observer does not run over a
+// hidden iframe); the next upsert or click still re-arms it as well (the reviewer's round-7 finding fresh-4).
 document.addEventListener("visibilitychange", () => { if (!document.hidden) schedulePrebuild(); });
 // the rail's minute tick (T406, refreshRelativeMarkers above): armed once here for the page, re-armed by each fire; a
 // window shown again after minutes hidden catches its today labels up at once rather than at the next boundary
@@ -19438,6 +19466,7 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
     clearSeek();
   }
   activeId = id;
+  gateOnShow(skeletonTabs, id);   // a tap onto a tab already whole on this socket opens the idle chain's start gate (stage 0); the tail's arm below runs it
   vanishedId = null; vanishedWhy = null; vanishedName = ""; wantActive = null; wantActiveGone = null; vanishedByDecline = false;   // any activation ends the unfocused state (T357)
   persistActive(id);   // the name rides beside the id: after a reload the unfocused body names the awaited tab before its host relays (T357)
   renderTabs();
@@ -19478,6 +19507,7 @@ function sharesAnyUuid(a: ChatEvent[], b: ChatEvent[]): boolean {
 
 function upsert(msg: any) {
   retryCmtCreates(String(msg.id || ""));   // a session frame = the kernel re-parsed → retry a lag-refused create (T106)
+  const gateWant = activeId || wantActive;   // the tab the strip shows as active, read BEFORE this frame's own adoption moves it (the start gate at the tail; stage 0)
   // The LOCAL kernel's own machine name rides its session frames (the kernel's _self_host, as the tabOrder
   // and feed frames carry it): the chat reads a postal card's sender host against it (postalSenderHost). It
   // was learned only from the + picker's sessionList reply before, so that reading was inert in any chat
@@ -19676,6 +19706,11 @@ function upsert(msg: any) {
   if (adoptsProvisional(existed, msg.name, pendingNewSession)) {
     adoptProvisional(msg.id);
   }
+  // The idle prefetch's start gate, the frame half (stage 0, 2026-09-18; skeleton-tabs.ts gateOnFrame): the first full applied
+  // for the tab the strip shows as active, the tab this pane showed at the frame's arrival or the one it awaited after a reload
+  // (gateWant, read above) or adopted from this very frame (activeId now), opens the chain; the arm below then runs it. Until
+  // then no background ask leaves: the visible tab's full never waits behind a tab nobody is looking at.
+  gateOnFrame(skeletonTabs, msg.id, [gateWant, activeId]);
   schedulePrebuild(); // startup + new content: build the off-screen tabs in idle so they open instantly
 }
 
@@ -20767,9 +20802,12 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   // replace: a key the shell stopped naming must not linger as on.
   if (m.romp === "panes") {
     if (m.on && typeof m.on === "object") {
+      const wasChatOff = panesOn.chat === false;   // the shell's last word said this pane was off screen (a phone tab other than Chat)
       const on: Record<string, boolean> = {};
       for (const k of Object.keys(m.on)) on[k] = m.on[k] === true;
       panesOn = on;
+      if (wasChatOff && on.chat === true) schedulePrebuild();   // the shell shows the chat tab: the idle chain re-arms on the word too (the belt beside the visibility flip's hook, for a browser whose observer does not run over a hidden iframe; runPrebuild re-reads paneHidden() at fire time, so a word ahead of the observer costs one null pass)
+      if (typeof m.mob === "boolean" && onLayoutWord(skeletonTabs, m.mob) && ((activeId && gateOnShow(skeletonTabs, activeId)) || skeletonTabs.gate)) schedulePrebuild();   // the shell's LAYOUT word (review round 3, extra8-1): the return hold is re-decided on every flip (skeleton-tabs.ts onLayoutWord), and a hold lifted by a flip to the desktop arms the chain when the gate is open for it: opened now for the shown tab whose full applied on this socket (gateOnShow), or open already (review round 4, verdict 1: a desktop redial's chain, stopped by a flip to the phone, resumes on the flip back; gateOnShow reports an OPENING and refuses an open gate, so the gate itself is the second read, and before this the flip back armed nothing and the chain waited for an unrelated arm). The lift is the one trigger and onLayoutWord reports it once per standing hold, so a repeat word arms nothing; a flip to the phone after a redial sets the hold, which nextPrefetch reads
     }
     // which panes exist to bring forward (the Files control's setting): whole-set replace as well
     const avail: Record<string, boolean> = {};
@@ -20777,12 +20815,18 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     panesAvail = avail;
     return;
   }
-  // [fork] D3 (2026-09-18, review round 2): the shell's link word ({romp:'link', link}), posted to every iframe outside the six
-  // pane frames on the shell socket's open, close and abandon (kernel.py _LANDING_COLLAPSE_JS tellLink), so a split chat
-  // column's pane shim can end its return await on it. The shim reads it on window itself; this handler has nothing to do with
-  // it, and it is not a kernel message: without this return a link-DOWN word fell through to retryFailedPreviews below, and
-  // each split column re-fetched its failed previews on a path the shell had just declared down.
-  if (m.romp === "link") return;
+  // [fork] D3 (2026-09-18, review round 2): the shell's link word ({romp:'link', link, mob}), posted to every iframe outside the six
+  // pane frames on the shell socket's open, close and abandon and on every tab switch and layout flip (kernel.py _LANDING_COLLAPSE_JS
+  // tellLink), so a split chat column's pane shim can end its return await on it. The shim reads the link on window itself; the one
+  // thing this handler takes from the word is the LAYOUT (review round 4, 2026-09-19, kernel-3): a split column hears no panes word,
+  // so before this a return hold it armed on the phone outlived a flip to the desktop for the socket's life, against skeleton-tabs.ts's
+  // "never outlives the layout"; the arm is the panes branch's expression, character for character (a lift over an open gate arms too:
+  // review round 4, verdict 1). Not a kernel message: without the return a link-DOWN word fell through to retryFailedPreviews below,
+  // and each split column re-fetched its failed previews on a path the shell had just declared down.
+  if (m.romp === "link") {
+    if (typeof m.mob === "boolean" && onLayoutWord(skeletonTabs, m.mob) && ((activeId && gateOnShow(skeletonTabs, activeId)) || skeletonTabs.gate)) schedulePrebuild();   // the layout word on the link word (kernel-3): the same arm as the panes branch above
+    return;
+  }
   // the pipe's down edge is the VS Code twin of the shim's romp:wsdown: unconfirmed sends say so (markPendingLost), and it
   // clears awaitingFull (an ask lost with the pipe must not suppress the re-ask after the reconnect's resync; see
   // requestFullSession; onWireDown clears the chat wire's window asks, not this set)
@@ -20819,7 +20863,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   else if (m.type === "chatEpisode") chatEpisode(m);
   else if (m.type === "subagent") applySubagentFrame(m);
   else if (m.type === "update") update(m);
-  else if (m.type === "wsup") { onSocketUp(skeletonTabs); skeletonDiagArmed = true; }   // the shim's socket-flip marker, in FRAME order: the dead socket's frames may still be draining from the FIFO when onopen fires (review find 2026-09-07)
+  else if (m.type === "wsup") { onSocketUp(skeletonTabs, phoneShell()); skeletonDiagArmed = true; }   // the shim's socket-flip marker, in FRAME order: the dead socket's frames may still be draining from the FIFO when onopen fires (review find 2026-09-07); on the phone the redial holds the chain (the owner's decision, 2026-09-19)
   else if (m.type === "status") statusOnly(m);
   else if (m.type === "glossary" && typeof m.id === "string") {   // the session's glossary index (T351 stage 2): a new one re-links the view
     glossaries.set(m.id, m as GlossaryIndex);
@@ -23276,7 +23320,7 @@ setupSettings();
 })();
 // The chat page's hidden word for the kernel's pane shim (chat-visibility.ts): the chat gates no paint, so this
 // is the one place it measures its own visibility. Once, at top level, over the page's body.
-watchChatVisibility(document.body, browserChatVisibilityDeps());
+watchChatVisibility(document.body, browserChatVisibilityDeps(), schedulePrebuild);   // the pane's show (its hidden word flipping true to false) re-arms the idle chain: on the phone the chat can be display:none at boot, where runPrebuild reads paneHidden() and asks nothing (stage 0)
 // right-click a selection in the transcript → Reply (quote it) / Copy
 document.getElementById("content")?.addEventListener("contextmenu", showSelectionMenu);
 // The chat document hosts the viewer itself (openPath), so it boots the viewer's listener with the
