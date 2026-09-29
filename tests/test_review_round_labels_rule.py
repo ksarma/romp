@@ -186,6 +186,7 @@ class RoundLabelRule(unittest.TestCase):
         serial comma in the plural, a range before it among them, and the singular's comma followed by "and" read as lists, and the
         singular's other commas refused; a number word after the word read into its value (a qualified, an author's and a plural
         word form refused, a range and a list in words, a tens word joined to a unit, a digit form beside a word elsewhere clean),
+        a list and a range whose continuation is capitalised or in capitals read the same (a range over GAPPED naming the hole),
         and a number word the reader does not read, or does not place, refused; and an ordinal before the word read whether
         credited or not (the author's credit in words and in digits, the maintainer's and the reviewer's past the set, an
         unqualified one by the default), as a list and a range, a tens ordinal joined to a unit, and each ordinal shape the reader
@@ -320,6 +321,17 @@ class RoundLabelRule(unittest.TestCase):
         self.assertEqual(rule.offences("%s %ss %s and %s" % (M, R, WORDS[lo], WORDS[hi]), SET), [], "a list in words over ruled rounds is clean")
         self.assertEqual(rule.offences("%s %s %d found %s defects" % (M, R, hi, WORDS[hi + 1]), SET), [], "a digit form beside a number word elsewhere is clean")
         self.assertEqual(rule.offences("the %s pass %s" % (M[4:], WORDS[hi]), SET)[0][3].split(":")[0], "a pass credited to the maintainer", "a pass numbered in words is read")
+        # the continuation in any letter case: a number word, a list word and a range word capitalised or in capitals, a range still
+        # expanded, so over GAPPED a capitalised range across the hole names the hole
+        for s, nums in (("%s %ss %s and %s" % (M, R, WORDS[lo].capitalize(), WORDS[hi].capitalize()), [lo, hi]), ("%s %ss %d AND %d" % (M, R, lo, hi), [lo, hi]),
+                        ("%s %ss %s, %s" % (M, R, WORDS[lo].capitalize(), WORDS[hi].upper()), [lo, hi])):
+            with self.subTest(case_list=s):
+                self.assertEqual([(k, n) for _, _, k, n in rule.forms(s)], [("numbered", nums)], "a list in any letter case is read: %r" % (s,))
+                self.assertEqual(rule.offences(s, SET), [], "and over ruled rounds it is clean: %r" % (s,))
+        for s in ("%s %ss %d Through %d" % (M, R, 1, 5), "%s %ss %s Through %s" % (M, R, WORDS[1].capitalize(), WORDS[5].capitalize()), "%s %ss %d TO %d" % (M, R, 1, 5),
+                  "%s %ss %s Thru %s" % (M, R, WORDS[1].capitalize(), WORDS[5].capitalize())):
+            with self.subTest(case_range=s):
+                self.assertEqual([o[3].split(":")[0] for o in rule.offences(s, GAPPED)], ["no ruling exists for a round numbered 2"], "a range in any letter case is expanded, naming the hole: %r" % (s,))
         for s, why in (("%s %s %s" % (R, WORDS[lo], "hundred"), "a further number after a run"), ("%s %s" % (R, "thousand"), "a number word the rule does not read, after the word"),
                        ("%s %s" % (R, NTH[hi]), "a number word the rule does not read, after the word"), ("%s\n    # %s" % (R, NTH[hi]), "a number word the rule does not read, after the word"),
                        ("%s: %s" % (R, WORDS[hi]), "punctuation or markup between the word and a number"), ("%s (%s)" % (R, NTH[hi]), "punctuation or markup between the word and a number"),
