@@ -2332,6 +2332,29 @@ class Checkout(_Base):
                       "(kernel/__pycache__/other.cpython-399.pyc)", run.get("invalid") or "")
         self.assertEqual(run["legs"][PYTEST_LEG].get("rc"), 0)
 
+    def test_a_stop_inside_the_write_of_a_failed_setups_blocked_legs_keeps_them(self):
+        """The same for the write that marks the legs a failed setup blocks (the owner's build question 1): a --leg re-run
+        of pytest and served, whose served job runs npm ci before the served leg, and that npm ci fails. The pytest leg's
+        pass is written, and the runner is stopped inside the next write, the one that marks served blocked by the setup.
+        The stopped run records served blocked, finished, so served has failed in runs 1 and 2."""
+        flake = Runner.FLAKE
+        w = self.w
+        w.ctl({"rc": {PYTEST_LEG: 1, "served": 1}})
+        w.run(check=1)
+        w.ctl({"rc": {"deps": 1}})
+        rc, out, err = self.stop_in_the_write(w, "--leg", PYTEST_LEG, "--leg", "served", "--flake", "pytest=" + flake,
+                                              "--flake", "served=" + flake, nth=2)
+        self.assertEqual(rc, 128 + 15, out + err)
+        run = w.data()["runs"][1]
+        self.assertEqual((run["finished"], run["verdict"]), (None, "running"), "the stopped run stays unfinished")
+        served = run["legs"]["served"]
+        self.assertEqual((served.get("rc"), bool(served.get("finished"))), (None, True), "the blocked leg is on disk")
+        self.assertIn("its checkout's setup, npm ci as the vscode-extension job's legs runs it, rc 1", served.get("error") or "")
+        w.ctl({})
+        p = w.run("--flake", "served=" + flake)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("no run at %s can pass: served failed in runs 1 and 2" % w.head()[:10], p.stderr)
+
     # A --wrap for the deps leg that counts its calls: the first (the extension job's deps leg) runs npm ci as given; the
     # second (the served-pages job's npm ci setup) makes its checkout's .git/info/exclude a FIFO, so the setup's re-read
     # waits in its read, and fails without running npm ci.
