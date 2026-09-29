@@ -669,10 +669,8 @@ jobs:
         # purpose, so the conftest's REQUIRE rule does not read it; the module itself turns its precondition
         # skips, no built dist or a kernel that never served, into failures under the switch, and its gen-key
         # skip alone stays a skip here); and ROMP_CORNER_TWO_HOSTS
-        # runs the two-host lab (TwoHostsBytesByHost in the corners module), about a minute of three kernels
-        # and Chromium, whose knob keeps every other runner unchanged. The figure above (12 min 44 s) is 2026-09-14's and the
-        # step has grown since; the job's time against the 40-minute cap above is read from the Actions API, not from this
-        # comment, and the cap and the job's structure are main's item, unchanged here.
+        # runs the two-host lab (TwoHostsBytesByHost in the corners module: three kernels and Chromium),
+        # whose knob keeps every other runner unchanged.
         # -p no:anyio, as on every pytest invocation in this file (tests/test_ci_sdk_pin.py's population
         # check holds the flag on each, with no exemption): this interpreter has no anyio today (the pip
         # line below installs pip, pytest, pytest-timeout and cryptography, none of which depends on it;
