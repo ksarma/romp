@@ -633,12 +633,12 @@ for (const [name, src] of BUILDERS) {
     // A LOST RELEASE (the check of dace68d57): a mouse pressed on the backdrop, moved past the frame's or the window's edge and
     // released there, so neither its pointerup nor its click reaches the overlay (logged at the root element in Chromium and
     // WebKit; in Firefox with no element target, or not at all); then the same pointer pressed in the answer box, dragged onto
-    // the backdrop and released there, its click at the overlay (WebKit). Only the press inside the sheet forgets the stale
-    // backdrop press: with that forgetting removed from both builders every other pin stayed green, and in WebKit this gesture
-    // closed the sheet with the answer in both panes
+    // the backdrop and released there, its click at the overlay (Chromium and WebKit, as the browser legs drive it). Only the
+    // press inside the sheet forgets the stale backdrop press: with that forgetting removed from both builders every other pin
+    // stayed green, and in Chromium and WebKit this gesture closed the sheet with the answer in both panes
     press(overlay, 1);   // released past the edge: no pointerup reaches the overlay
     press(input, 1); release(overlay, 1); click(overlay);
-    assert.equal(closed, 0, "a press inside the sheet forgets that pointer's backdrop press: after a backdrop press whose release never reached the overlay (released past the frame's or the window's edge), a drag out of the answer box released on the backdrop is not a backdrop tap (without the forgetting, the stale press and the release on the backdrop completed a tap, and in WebKit the sheet closed with the answer)");
+    assert.equal(closed, 0, "a press inside the sheet forgets that pointer's backdrop press: after a backdrop press whose release never reached the overlay (released past the frame's or the window's edge), a drag out of the answer box released on the backdrop is not a backdrop tap (without the forgetting, the stale press and the release on the backdrop completed a tap, and in Chromium and WebKit the sheet closed with the answer)");
     // A CANCELLED POINTER is forgotten, and clears a pending tap: in the engines a cancelled pointer (a touch that became a pan)
     // fires no pointerup and no click, so these two halves are argued, not observed, there; this is their pin
     press(overlay, 4); cancel(4); release(overlay, 4); click(overlay);
