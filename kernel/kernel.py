@@ -70542,8 +70542,8 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // as document.documentElement.clientHeight through the fork line after the h assignment.
 // [fork] D1 (2026-09-19): the pinch road's state, the only values fit() keeps from one run to the next (the upstream sentence
 // above, every run recomputes from scratch, is about --app-h, which every run still does). lastPan is the HOLD, the pan a WRITING
-// road of fit() last stored: the measured road stores what it publishes (kbPx below, the reading itself under the cut) and the
-// 0px road a zero, in a no-pan state only. The hold road writes nothing into it, so what the page is using can differ from the
+// road of fit() last stored: the measured road stores what it publishes before the clamp at use it applies under a pinch (kbPx
+// below, the reading itself under the cut) and the 0px road a zero, in a no-pan state only. The hold road writes nothing into it, so what the page is using can differ from the
 // hold until a road WRITES it (the author's pass 8, 2026-09-20; the author's pass 6, 2026-09-20: it had read "the pan last
 // published, on every road"). held says the hold was WRITTEN with a keyboard up: every measured-road write sets it to L - h > 0,
 // and the 0px road clears it with the hold. It is kept apart from the hold's value because a hold of 0 (the keyboard up at scale
@@ -70562,17 +70562,19 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // took the measured road or the hold road, so a run can tell what changed since: the scale unchanged with a keyboard up (L - h >
 // 0) is a PAN, a keyboard of another height swapped in at that zoom included (the maintainer's round 6 ruling, 2026-09-29: with h
 // unchanged also required, a swap's own run took the stance and a refit at the same report the pan rule, so --app-top moved with
-// no new information), and the scale changed with h unchanged is a zoom alone. kz is the zoom of the keyboard event that wrote
-// the value in force, 0 where none did: a measured-road write with the keyboard up and h changed since the previous run (a raise)
-// sets it to the scale, and so does the re-raise that writes rp; any other measured-road write (a drag's, h unchanged) sets 0, and
-// a zoom alone clears it. The 0px road leaves it: the hold it clears is 0, from which the pan rule and the stance publish the same
-// value, kbPx. The hold road re-bounds a pan, from the larger of the hold and the value in force, only where kz is the current zoom
-// (the maintainer's round 6 ruling, 2026-09-29: the reading governs a pan of a keyboard raised at this zoom, the stance a zoom alone
-// and what follows it). A report that changes the scale and h together is no zoom alone and leaves kz standing (such as a keyboard
-// swapped in during a pinch, h's rounding flipping by a pixel during one with the same keyboard, or the keyboard going down with the
-// visual viewport outside the layout viewport); that check refuses a pan at the zoom such a report moved to, and refuses nothing once a
-// later such report comes back to kz's zoom, which is no pan on its own run while its refit is one (the corner the fit() comment
-// discloses). Every one of these keys on a run fit() reads, not on a time window.
+// no new information), and the scale changed is a ZOOM, a zoom alone where h is unchanged. kz is the zoom of the keyboard event
+// that wrote the value in force, 0 where none did: a measured-road write with the keyboard up and h changed since the previous run
+// (a raise) sets it to the scale, and so does the re-raise that writes rp; any other measured-road write (a drag's, h unchanged)
+// sets 0, and the hold road clears it at any change of scale, h changed with it or not (the maintainer's round 6 ruling, 2026-09-29:
+// any zoom disarms the rule; while only a zoom alone cleared it, kz stood through a report that changed the scale and h together, a
+// keyboard swapped in during a pinch, h's rounding flipping by a pixel during one with the same keyboard, or the keyboard going down
+// with the visual viewport outside the layout viewport, and a later such report back at kz's zoom, no pan on its own run, took the
+// stance there and the pan rule on its refit, so --app-top moved with no new information). The 0px road leaves it: the hold it
+// clears is 0, from which the pan rule and the stance publish the same value, kbPx. The hold road re-bounds a pan, from the larger
+// of the hold and the value in force, only where kz is the current zoom (the maintainer's round 6 ruling, 2026-09-29: the reading
+// governs a pan of a keyboard raised at this zoom, the stance a zoom and what follows it); every road that sets kz sets ps with it
+// and a change of scale clears it, so at a pan (the scale unchanged since the previous run) a kz that stands is the current zoom,
+// and that check adds nothing to kz standing. Every one of these keys on a run fit() reads, not on a time window.
 // Nothing adjusts the hold in place: the clamp is at use (the author's pass 4, 2026-09-20).
 var lastPan=0,held=false,gone=false,rp=null,ps=0,ph=0,kz=0;
 // [fork] the author's pass 8 (2026-09-20): the ONE reading of the pan both writing roads share: the measured road stores it under the cut (at
@@ -70663,7 +70665,7 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // otherwise the hold road publishes from the hold, or from the re-raise bound rp where one stands (beside lastPan). A PAN of a
 // keyboard raised at this zoom, inside the layout viewport (the scale unchanged since the previous run with a keyboard up, a
 // keyboard swapped in at that zoom included, and the value in force written at a raise or a re-raise under the current zoom with no
-// zoom alone since: ps, ph and kz, beside lastPan), re-bounds the larger of the hold and the value in force into the reading's
+// change of scale since: ps, ph and kz, beside lastPan), re-bounds the larger of the hold and the value in force into the reading's
 // interval [kbPx, panPx] (the maintainer's round 6 ruling, 2026-09-29: keeping the value there left the composer 44 px below the
 // visible band's bottom for a light-zoom hold of 20 at 1.05 dragged to 0, where 0 px leaves 24, and a pan to the share after a
 // no-pan re-raise under a light zoom opened a band under the composer, 2.67 px at 1.008, 3.33 px at 1.01 and 16 px at 1.05; node
@@ -70693,9 +70695,9 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // pan where the value in force is a re-raise bound was measured and not built, the maintainer's round 6 ruling, 2026-09-29: it
 // closes these bands, but the zoom alone's own run takes the stance and its refit is a pan, so a refit with nothing new would move
 // --app-top). Everything the hold road
-// publishes is CLAMPED AT USE to the layout
+// publishes, and what the measured road publishes under a pinch, is CLAMPED AT USE to the layout
 // viewport's height less h (the author's pass 2,
-// 2026-09-19): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
+// 2026-09-19; the measured road under a pinch since the maintainer's round 6 ruling, 2026-09-29, below): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
 // gone would otherwise place the body's bottom, the composer row, below the layout viewport until the zoom ended. The layout
 // height is document.documentElement.clientHeight, on this road (the author's pass 7, 2026-09-20) and on the fine-pointer road above
 // (the author's pass 8, 2026-09-20; one read for every road since the author's pass 9); both had read window.innerHeight. TWO PREMISES rest here and nowhere else in this file: the other
@@ -70730,35 +70732,38 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // the new keyboard's own height, so a band under the composer can open for a taller keyboard and the body's bottom sit below the
 // band for a shorter one, by up to the height difference (the author's pass 5, 2026-09-20, disclosed: re-measuring under a zoom only
 // when the height changes is a design call not taken here; the harness's swapZoom and swapRefit cells drive a swap). fit() is
-// IDEMPOTENT at an unchanged report outside two cases (below): a refit with nothing new publishes what the run before it did (the
-// maintainer's round 6 ruling, 2026-09-29), and fit() runs again on ordinary events (a visual viewport resize or scroll, a window
-// resize, focus and focusout among them). With h unchanged also in the pan test, the swap's own run had taken the stance and a
-// refit the pan rule: a 471 px keyboard raised at scale 2 with offsetTop 657.5 publishes 236, and the 508 px keyboard swapped in at
-// offsetTop 40 had published 236 on the swap's run, the composer 364 px below the band's bottom, and 40 on a refit; it now
-// publishes 40 on both, 168 below, the zoom's own magnification (node cells, test_kernel_mobile's swapRefit cells and its
-// doubled-step fuzz, 48000 steps with no move, a figure for that fuzz's generator only). The corner, disclosed by its condition:
-// kz stands through any report that changes the scale and h together, which is no zoom alone, and a later such report that comes
-// back to kz's zoom is no pan on its own run (the scale changed) and takes the stance, while its refit is a pan at kz's zoom and
-// takes the pan rule, so --app-top can move there with no new information. At least three roads reach it: a keyboard of another
-// height swapped in during a pinch, h's rounding flipping by a pixel during a pinch with the same keyboard, and the keyboard going down
-// with the visual viewport outside the layout viewport, a report the keyboard-down run does not read, so the keyboard's return is
-// no re-raise (the 508 px keyboard raised at 2 with offsetTop 500 publishes 78; after one report at 1.5 that brings in the 471 px
-// keyboard, keeps the 508 px keyboard with h rounding to 337, or puts the keyboard down at offsetTop 300, the report back to 2 with
-// the 508 px keyboard at 40 publishes 78 on its run and 40 on its refit; test_kernel_mobile's swapZoomBack, roundFlip and
-// downOutside cells pin the three roads; the tree's doubled-step fuzz does not reach the corner, and a fuzz weighted to return to
-// earlier scales exactly reaches it at 1 of 1,008,000 steps, and at 5 when it also flips h's rounding, node cells; whether the pan
-// rule governs a report at kz's zoom whatever else changed with it, or any scale change clears kz, is the maintainer's call). The
-// second case, disclosed: under a pinch with no hold held the measured road publishes kbPx unclamped and writes the hold, and the
-// refit takes the hold road, which clamps at L - h, so where rounding puts kbPx a pixel above L - h the refit publishes a pixel
-// less. That needs the visual viewport within half a pixel of the layout viewport's bottom and the zoom's share of the band's
-// shortfall, (L - h)(1 - 1/s), under about half a pixel, so it is confined to light zooms, the shortfall it allows shrinking as the
-// zoom grows (a scan of 35.5 million such reports, node cells: every move 1 px, the shortfall up to 280 px under a zoom below 1.002, 35 px from 1.01 to 1.05
-// and 2 px past 1.2, no move past 1.482; the tree's doubled-step fuzz does not reach it, and a fuzz with small keyboards and h's
-// rounding flips reaches it at 16 of 1,008,000 steps). A visual viewport 841.3459 tall at offsetTop 2.6541 under a zoom of
-// 1.00155, h 843, publishes 2 px and then 1 px on its refit, and one 692.4298 tall at 151.5702 under 1.00169, h 694, 151 and then
-// 150 (test_kernel_mobile's clampFace cells pin both); publishing the clamp on the measured road while still writing kbPx closes
-// it, a behaviour change left to the maintainer. Two roads WRITE the hold and
-// each writes the value it publishes: the measured road its measurement less the zoom's share (kbPx, the measurement itself below
+// IDEMPOTENT at an unchanged report: a refit with nothing new publishes what the run before it did (the maintainer's round 6 ruling,
+// 2026-09-29), and fit() runs again on ordinary events (a visual viewport resize or scroll, a window resize, focus and focusout among
+// them). The case argument: the measured road below the cut runs there whatever the flag, so its refit takes it again; under a
+// pinch with the band not short of the layout viewport it writes no flag, so its refit takes it again too; with the band short it
+// writes the hold and the flag, so its refit
+// takes the hold road, whose pan rule and stance both publish that hold, kbPx, clamped at L - h as the measured road now publishes
+// it; a report the hold road takes, it takes again (the hold road writes no hold and no flag), and its refit takes the pan rule
+// exactly where its own run did, since a run that changed the scale cleared kz, and on the re-raise run, which sets kz, the rule
+// and the stance both publish rp. Three kinds of report had moved --app-top at a refit, each closed by that ruling.
+// With h unchanged also in the pan test, the swap's own run had taken the stance and a refit the pan rule: a 471 px keyboard
+// raised at scale 2 with offsetTop 657.5 publishes 236, and the 508 px keyboard swapped in at offsetTop 40 had published 236 on the
+// swap's run, the composer 364 px below the band's bottom, and 40 on a refit; it now publishes 40 on both, 168 below, the zoom's
+// own magnification (test_kernel_mobile's swapRefit cells). While only a zoom alone cleared kz (beside lastPan), a report back at
+// kz's zoom after one that changed the scale and h together took the stance on its own run and the pan rule on its refit: the 508 px
+// keyboard raised at 2 with offsetTop 500 publishes 78, and after one report at 1.5 that brings in the 471 px keyboard, keeps the
+// 508 px keyboard with h rounding to 337, or puts the keyboard down at offsetTop 300, the report back to 2 with the 508 px keyboard
+// at 40 had published 78 and then 40 on its refit; a change of scale now clears kz, so it publishes 78 on both (test_kernel_mobile's
+// swapZoomBack, roundFlip and downOutside cells). And under a pinch with no hold held the measured road had published kbPx
+// unclamped while the refit, on the hold road, clamps at L - h, so where rounding put kbPx a pixel above L - h the refit published
+// a pixel less. That needs the visual viewport within half a pixel of the layout viewport's bottom and the zoom's share of the
+// band's shortfall, (L - h)(1 - 1/s), under about half a pixel: light zooms, with the shortfall up to 280 px under a zoom below
+// 1.002 in a scan of 35.5 million such reports (node cells). A visual viewport 841.3459 tall at offsetTop 2.6541 under a zoom of
+// 1.00155, h 843, had published 2 px and then 1 px on its refit, and one 692.4298 tall at 151.5702 under 1.00169, h 694, 151 and
+// then 150; the measured road now clamps what it publishes under a pinch at use, as the hold road does, and still writes kbPx, so
+// they publish 1 and 150 on both runs (test_kernel_mobile's clampFace cells). Below the cut it publishes its reading unclamped as
+// before (its refit takes the measured road again and publishes the same; the clamp there would move the harness's scale-1 sweep,
+// whose visual viewport it drives past the layout viewport's bottom). The refit pin in test_kernel_mobile reads every designed
+// family with each report fired twice, these cells among them, and its seeded doubled-step fuzz, 48000 steps with no move; out of
+// the tree that fuzz's generator over 21 seeds, one weighted to return to earlier scales exactly, and one that also flips h's
+// rounding and drives small keyboards, move it at no step of 1,008,000 each (node cells). Two roads WRITE the hold and
+// each writes the value it publishes, before the clamp at use the measured road applies under a pinch: the measured road its
+// measurement less the zoom's share (kbPx, the measurement itself below
 // the cut; under a pinch only where no hold is held), and the 0px road a zero, only in a true no-pan state, one the measured road would
 // store as 0: no visual viewport, or one under the cut, taken at the layout viewport L on both roads (the author's pass 9, 2026-09-20: the
 // coarse road had taken it at its own h, the band's height with the keyboard up, so the two roads' cuts differed; pinched reads
@@ -70779,8 +70784,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // to belong to and publishes unconditionally (only its write into the hold carries the no-pan condition above). The visual
 // viewport's scroll event, where a pan lands, is already bound below, so no new listener.
 if(!coarse||!vv){if(!vv||(!pinched(vv,L)&&!(panPx(vv)>0))){lastPan=0;held=false;gone=false;rp=null;}document.documentElement.style.setProperty('--app-top','0px');}
-else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;kz=held&&h!==ph?(vv.scale||1):0;ps=vv.scale||1;ph=h;document.documentElement.style.setProperty('--app-top',lastPan+'px');}
-else if(h){var S=vv.scale||1,pan=S===ps&&L-h>0;if(S!==ps&&h===ph)kz=0;ps=S;ph=h;if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;kz=S;}}var H=rp===null?lastPan:rp;document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:pan&&kz===S?Math.max(kbPx(vv,L),Math.min(Math.max(lastPan,H),panPx(vv))):zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}
+else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;kz=held&&h!==ph?(vv.scale||1):0;ps=vv.scale||1;ph=h;document.documentElement.style.setProperty('--app-top',(pinched(vv,L)?Math.min(Math.max(0,L-h),lastPan):lastPan)+'px');}
+else if(h){var S=vv.scale||1,pan=S===ps&&L-h>0;if(S!==ps)kz=0;ps=S;ph=h;if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;kz=S;}}var H=rp===null?lastPan:rp;document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:pan&&kz===S?Math.max(kbPx(vv,L),Math.min(Math.max(lastPan,H),panPx(vv))):zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
 // (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.
