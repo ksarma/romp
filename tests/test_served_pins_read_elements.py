@@ -27,7 +27,8 @@ of the kernel's served TEXTS: a call to one of its page getters, or one of its s
 Name bound to either in the same function (a tuple assignment counts by position; a Name bound to a SLICE of one counts
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
-the author's pass 7), or a `self.<attr>` bound to one in any method of the same class (a setUp), or a body FETCHED by a literal path
+the author's pass 7), or a `self.<attr>` bound to one in any method of the same class (a setUp, or a setUpClass's `cls.<attr>`;
+round 6, CLS: a class attribute had been outside the derivation, 98 rows in four suite modules), or a body FETCHED by a literal path
 (the author's pass 8, 2026-09-20: `_, body = _serve_get("/sw.js", ...)`, `page = self._get_text("/")`, through `.read(...)` and
 `.decode(...)`, alone or by tuple unpack; the fixer pass of the author's pass 8: a FORMATTED url too, `with urllib.request.urlopen(
 "http://127.0.0.1:%d/timeline?token=testtok" % self.port) as r:` binding `r` and `body = r.read().decode(...)` after it, the
@@ -66,7 +67,8 @@ read a comment reads the comment spans affirmatively (test_kernel_webpush's vani
 The population's floor is derived, not a literal: a second census over the same files, by logical line with regular
 expressions and no AST, finds the `assertIn("<lit>", X)`, `assert "<lit>" in X`, `assertTrue("<lit>" in X)` and
 `X.index("<lit>")` (find, rindex, rfind, count) forms whose X is `<alias>.<getter>()` or `<alias>.<CONST>` inline, or a
-name bound to one by an assignment of its own (a self.<attr> in any method of the class), by a tuple assignment, or by a
+name bound to one by an assignment of its own (a self.<attr> or a cls.<attr> in any method of the class, the second read as the
+first: round 6, TXTCLS), by a tuple assignment, or by a
 `for` over served texts inside that loop; every such site must be a row (so a module with such a site the derivation stops
 reading fails here), the row count is at least the site count, and the modules with rows in a form the textual census reads
 are exactly the modules with sites (a module the derivation reads in such a form and the textual census does not, or the
@@ -96,8 +98,8 @@ branch the walk found the service worker alone on the merged kernel, so every fe
 the container census below read no page; with it the kernel's routes are the ten they were before the table (the landing twice,
 the seven pane pages, the service worker). The walk is shape-sensitive: it reads those three shapes and no other, so a fourth
 (a `match`, a comparison through a helper, a table whose value is a lambda or a getter called with arguments) is outside it
-until a branch is added and pinned in the form-space tests below (a naive equality walk misses the landing). A fetch is a call to a Name or a
-self.<method> (a test helper over the handler or an HTTP client) whose first argument is a string literal beginning with `/`
+until a branch is added and pinned in the form-space tests below (a naive equality walk misses the landing). A fetch is a call to a Name, a
+self.<method> or a cls.<method> (a test helper over the handler or an HTTP client) whose first argument is a string literal beginning with `/`
 that, without its ?query, is such a route (or a concatenation led by such a literal that holds the whole path, its `?` inside
 the literal: `self._req("/?token=" + tok)`, the form main's login cookie split added to the suite, merged 2026-09-28), or a
 call to an attribute named `urlopen` whose first argument is a string literal,
@@ -214,7 +216,7 @@ _IN_INLINE = re.compile(_LIT + r"\s+in\s+" + _TEXT + r"(?![\w.(\[])")
 _IN_BOUND = re.compile(_LIT + r"\s+in\s+" + _NAME + r"(?![\w.(\[])")
 _POS_INLINE = re.compile(_TEXT + r"\.(?P<form>index|find|rindex|rfind|count)\(\s*" + _LIT + r"\s*[,)]")
 _POS_BOUND = re.compile(r"(?<![\w.])" + _NAME + r"\.(?P<form>index|find|rindex|rfind|count)\(\s*" + _LIT + r"\s*[,)]")
-_BOUND_DEF = re.compile(r"^\s*" + _NAME + r"\s*=\s*" + _TEXT + r"\s*(?:#.*)?$")
+_BOUND_DEF = re.compile(r"^\s*(?P<target>(?:self\.|cls\.)?[A-Za-z_]\w*)\s*=\s*" + _TEXT + r"\s*(?:#.*)?$")   # a cls.<attr> reads as the self.<attr> (TXTCLS)
 _ITEM = r"[A-Za-z_]\w*\.[A-Za-z_]\w*(?:\(\))?"
 _TUPLE_DEF = re.compile(r"^\s*(?P<targets>[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\s*=\s*(?P<values>.+?)\s*(?:#.*)?$")
 _ITEM_ONLY = re.compile(r"^" + _ITEM + r"$")
@@ -627,18 +629,19 @@ def _response_reads(tree):
 
 
 def _callee(call):
-    """The name a call to a Name or a self.<method> calls (`_serve_get(...)` gives `_serve_get`, `self._req(...)` gives `_req`);
-    None for any other callee."""
+    """The name a call to a Name, a self.<method> or a cls.<method> calls (`_serve_get(...)` gives `_serve_get`, `self._req(...)`
+    and `cls._req(...)` give `_req`; round 6, CLS: a classmethod's fetch had been no fetch); None for any other callee."""
     f = call.func
     if isinstance(f, ast.Name):
         return f.id
-    if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self":
+    if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in ("self", "cls"):
         return f.attr
     return None
 
 
 def _fetched(node, names, routes, reads=None):
-    """The served text a fetched value stands for (the author's pass 8, 2026-09-20): a call to a Name or a self.<method> whose first argument
+    """The served text a fetched value stands for (the author's pass 8, 2026-09-20): a call to a Name, a self.<method> or a cls.<method>
+    (_callee) whose first argument
     is a string literal beginning with `/` that, without its ?query, is a route in `routes` (`_serve_get("/sw.js", ...)`,
     `self._get_text("/")`), or a concatenation led by such a literal holding the whole path (_fetch_path); a call to an attribute named `urlopen` whose first argument is a string literal, bare or `%`-formatted,
     naming such a route with the token in its query (_url_route; the fixer pass of the author's pass 8); or the `.read(...)` or `.decode(...)`
@@ -753,7 +756,8 @@ def _resolve(node, names, attrs, getters, constants):
 
 
 def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=None, reads=None):
-    """Record Name and self.<attr> targets bound to a served text, or to a slice of one; a tuple assignment binds by position; a
+    """Record Name and self.<attr> targets bound to a served text, or to a slice of one (a cls.<attr> target binds as the self.<attr>:
+    round 6, CLS); a tuple assignment binds by position; a
     FETCHED value (_fetched, with `routes`) unpacked into a tuple binds the positions its helper's own return statements read a
     response at (`reads`, a callable giving the module's _response_reads; the rulings at the merge of main's login cookie split,
     2026-09-28): `status, body, headers = self._req("/")` binds `body` alone where `_req` returns `r.status, r.read(), r.headers`,
@@ -819,7 +823,7 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
             # response at is, by a constant index (`resp[1]`, and `resp[-2]` for a 3-tuple; _position_key), the reading the tuple
             # branch below gives an unpacked target
             at = (reads().get(_callee(v)) or frozenset()) - {"refused"}   # a refused return binds nothing (readers_of refuses the call)
-            if at and not at & {"whole", "unknown"} and (isinstance(t, ast.Name) or isinstance(t.value, ast.Name) and t.value.id == "self"):
+            if at and not at & {"whole", "unknown"} and (isinstance(t, ast.Name) or isinstance(t.value, ast.Name) and t.value.id in ("self", "cls")):
                 store, base = (names, t.id) if isinstance(t, ast.Name) else (attrs, t.attr)
                 store.pop(base, None)
                 for i in at:
@@ -839,8 +843,8 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
                     names[e.id] = g
                     if sliced is not None:
                         sliced.discard(e.id)
-        elif isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self":
-            attrs[t.attr] = g
+        elif isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id in ("self", "cls"):
+            attrs[t.attr] = g   # a setUpClass's `cls.<attr>` binds the class's attribute as a setUp's `self.<attr>` does (CLS)
 
 
 def _literals(node):
@@ -1033,7 +1037,7 @@ def textual_census(path, getters, constants, routes=None):
     derived floor rests on: `assertIn("<lit>", X)`, an `assert "<lit>" in X` or `assertTrue("<lit>" in X)` line (every
     conjunct on it), and `X.index("<lit>")` with find, rindex, rfind and count, where X is `<alias>.<getter>()` or
     `<alias>.<CONST>` inline, a Name bound to one by an assignment of its own earlier in the same function (a `self.<attr>`
-    so bound in any method of the class), by a tuple assignment, by a `for` over served texts inside that loop (one site per
+    or a `cls.<attr>` so bound in any method of the class, the second read as the first), by a tuple assignment, by a `for` over served texts inside that loop (one site per
     text), or by a fetch of a literal path the dispatch maps (`_FETCH_DEF`, every target; `_DECODE_DEF` for the body read from
     one; the author's pass 8) or of a formatted url with the token in its query (`_URLOPEN_DEF`, the `as` target; the fixer pass of the author's pass
     8). A binding a later line rebinds keeps the served text, as the derivation reads it. containers is the set of
@@ -1051,8 +1055,10 @@ def textual_census(path, getters, constants, routes=None):
             names = {}
         m = _BOUND_DEF.match(line)
         if m:
-            # a binding at column 0 is the module's, read in every function (the fixer pass of the author's pass 9)
-            (attrs if m.group("target").startswith("self.") else modnames if indent == 0 else names)[m.group("target")] = [(m.group("name"), bool(m.group("call")))]
+            # a binding at column 0 is the module's, read in every function (the fixer pass of the author's pass 9); a setUpClass's
+            # `cls.<attr> = ...` binds the class's attribute, read as `self.<attr>` (round 6, TXTCLS, the mirror of the derivation's CLS)
+            target = "self." + m.group("target")[4:] if m.group("target").startswith("cls.") else m.group("target")
+            (attrs if target.startswith("self.") else modnames if indent == 0 else names)[target] = [(m.group("name"), bool(m.group("call")))]
         m = _TUPLE_DEF.match(line)
         if m:
             targets = [t.strip() for t in m.group("targets").split(",")]
@@ -2781,6 +2787,46 @@ def call_only(self):
         pages_ = {g for g in real.values() if getter_kind(g) == "markup"}
         self.assertGreaterEqual(len(pages_), 8, "the landing and the pane pages on the kernel, through its route table: %r" % (real,))
         self.assertEqual(sorted(pages_ - set(page_getters())), [], real)
+
+
+    def test_a_class_attribute_bound_in_setupclass_is_read_by_both_censuses(self):
+        # round 6 (the coordinator's decisions on PR 858, B.1, CLS and TXTCLS): a setUpClass's `cls.<attr> = <text>` binds the class's
+        # attribute as a setUp's `self.<attr> = <text>` does, a fetched tuple bound to one `cls.<attr>` binds its body position as
+        # one bound to a `self.<attr>` does, and a classmethod's `cls.<method>(...)` is a fetch-shaped call as `self.<method>(...)`
+        # is. Before the round each was outside the derivation, so a pin over `self.html` bound in setUpClass was in neither census
+        # (98 pins rows across four suite modules at the round's head). The textual census reads the one-line `cls.<attr> =
+        # <alias>.<text>` binding as it reads `self.<attr> = ...` (TXTCLS), so the floor holds the rows CLS adds (k1 is a site); it
+        # reads no fetch bound to an attribute (k2 and k3 are declined rows, a subscript and an unpack of one). Dropping CLS reds
+        # the rows here, dropping TXTCLS the site. The rows of both derivations are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest
+class T(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.html = km._landing()
+        cls.resp = cls._req("/chat?token=x")
+    @classmethod
+    def _req(cls, path):
+        return r.status, r.read(), r.headers
+    def test_a(self):
+        self.assertIn("k1", self.html)
+        self.assertIn("k2", self.resp[1])
+        status, page, heads = self.resp
+        self.assertIn("k3", page)
+        self.assertEqual(status, 200)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            sites, _ = textual_census(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(rows, [(11, "k1", "_landing", "in", True, False), (12, "k2", "_chat_page", "in", False, True), (14, "k3", "_chat_page", "in", False, True)])
+        self.assertEqual(sites, [(11, "k1", "_landing", "in")])
+        self.assertEqual([r[:3] for r in readers], [(11, "assert", "_landing"), (12, "assert", "_chat_page"), (14, "assert", "_chat_page")],
+                         "the class attribute read as the page, the body position as the fetched page, and no read of the status a read of it")
 
 
 if __name__ == "__main__":

@@ -928,9 +928,12 @@ class Skin(unittest.TestCase):
         self.assertIn("#rail-api[data-dot=errors] .ah-dot,.ah-dot[data-dot=errors]{background:var(--st-blocked-bg,#e5484d);opacity:1}", self.html)
         self.assertIn("#rail-api[data-dot=quiet] .ah-dot,.ah-dot[data-dot=quiet]{background:var(--dim,#9aa4ad);opacity:.55}", self.html)
         self.assertNotIn("data-state=thrashing", self.html, "the machine's words are not colours any more")
-        rules = re.findall(r"[^{}]*\.ah-err[^{}]*\{[^}]*\}", self.html)
+        # the parsed rules, comments stripped: a regex over the page read rule text inside comments too, and the census reads this
+        # page since it reads a setUpClass's cls.html (tests/test_served_pins_read_elements.py, round 6)
+        rules = [r for r in served_css.rules(self.html) if ".ah-err" in r.selector]
+        self.assertTrue(rules, "the failure line's rules are served")
         for rule in rules:
-            self.assertNotIn("var(--accent", rule, "the failure line is never the accent: " + rule)
+            self.assertNotIn("var(--accent", rule.declarations, "the failure line is never the accent: " + rule.selector)
         self.assertIn(".ah-hword{opacity:.8}.ah-hsub{opacity:.55}.ah-boot .ah-hword{font-style:italic;opacity:.6}", self.html)
         self.assertIn(".ah-hname{margin-top:6px}.ah-err{color:#ef6b6f}.ah-wait{margin:5px 0 2px}", self.html)
         self.assertIn("body.theme-light .ah-err{color:#B02A1C}", self.html, "the light theme's error-text red")
