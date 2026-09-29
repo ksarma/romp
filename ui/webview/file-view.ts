@@ -1271,8 +1271,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // button) land in the new file's body as any open does, and so would a key step whose group is hidden (defensive: moveTrail
   // falls to a root, leaving nothing either way, only when the trail's target is not the file opened, and the buttons pass
   // their entry's own path, so by reading no press reaches it). A key step whose read fails paints the
-  // failure pane, which takes the keyboard nowhere, as after any open whose read fails: the document's body keeps it, where
-  // the old card's removal left it.
+  // failure pane and then spends the same landing on the new bar's button of the step's direction, with its ring, as a step
+  // that reads does, so a second press steps again where the trail goes on, and at the trail's end the aria-disabled button
+  // keeps the keyboard (the file review's round 20, ui-1: that landing had been left unspent, the keyboard on the document's
+  // body where the old card's removal left it); an open that is no key step and whose read fails takes the keyboard nowhere.
   const trailNow = liveTrail();
   const nav = el("span", "fileview-group fileview-nav");
   const navBtn = (dir: "back" | "forward"): HTMLButtonElement => {
@@ -4707,7 +4709,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       dropLatin1Line();                                         // a Latin-1 line a previous landing raised says the file can be read here; the pane says it could not be, so the line goes with the pane's paint, and a later "0" landing raises it again (the Slice 7 review's round 2), as does a format pick that puts the text back over the pane (pickFormat; round 3)
       body.replaceChildren(why);
       syncOutline();                                            // the pane holds no heading: the Outline button goes with the text it listed (the review's round 1: it stayed, and a click opened nothing)
-      viewError = msg;                                          // the seam's error(): the pane's words, until the next content paint clears them (plans/markdown-viewer.md Slice 7, item 3; contract C1)
+      if (keyHolder) keyboardOnLanding();                       // a key step on Back or Forward whose read fails: the pending landing is spent on the new bar's button of the step's direction, with the old button's ring, as a step that reads spends it, so a second press steps again (the file review's round 20, ui-1)
+      viewError = msg;                                         // the seam's error(): the pane's words, until the next content paint clears them (plans/markdown-viewer.md Slice 7, item 3; contract C1)
       fireRendered();                                           // the pane is a paint of the body like imgFailed's: fired AFTER the swap (a hook reading the body finds the pane) and before the re-arm (the re-arm reads the keyboard after the hooks), on every failure path, a first open's included, so a hook waiting on a reload hears it fail at the paint (before: no hook fired, and the Comments panel's loader stood until its 15 s deadline)
       rearmDiskBar(my);                                         // the changed-on-disk bar's own Reload failed: its button is armed again above the pane, AFTER the pane's paint: a keyboard the reader put on the old body's content during the flight (a link, a fold's summary), which that paint removed, then reads as nothing holding it and goes back on the button (the review's round 3: read before the paint, the link held it, the re-arm stood down, and the removal left the keyboard on the document's body)
       if (again) armWayBack();                                  // a re-ask's pane (an svg picture's address asked again): the way back is armed

@@ -417,8 +417,11 @@ test("in a browser, the Files page: Alt+Left and Alt+Right step the trail while 
 // Space with Back. The two roads that land in the new file's body as any open does are read too: Alt+Left, a shortcut tied to no
 // focused button, from the keyboard on Back, and a pointer's click on Forward. Red at ddb446fae at the first Enter's read (the
 // keyboard went to the new file's body, and a keyboard user reached Back again with about ten Shift+Tab presses per step). Last,
-// the stated boundary: a key step whose read fails leaves the keyboard on the document's body, as any failed open does.
-test("in a browser, the Files page and the chat modal: Enter on a Tab-focused Back steps back and leaves the keyboard on the new bar's Back with its ring, so a second Enter steps again and a third on the aria-disabled end keeps it and opens nothing; Space does the same on Forward and on Back; Alt+Left and a pointer's click land the keyboard in the new file's body (the file review's round 19, ui-1)", async (t) => {
+// a key step whose read fails spends its landing on the new bar's button of its direction, with the ring, as a step that reads
+// does (the file review's round 20, ui-1): a failed Back step with an entry behind it, whose second Enter steps to that entry
+// (red at bef9ff8fc, where the keyboard stayed on the document's body and the base stayed notes.md), and a failed Forward step,
+// which leaves the keyboard on the new bar's Forward.
+test("in a browser, the Files page and the chat modal: Enter on a Tab-focused Back steps back and leaves the keyboard on the new bar's Back with its ring, so a second Enter steps again and a third on the aria-disabled end keeps it and opens nothing; Space does the same on Forward and on Back; Alt+Left and a pointer's click land the keyboard in the new file's body (the file review's round 19, ui-1); a key step whose read fails leaves the keyboard on the new bar's button of its direction, so a second Enter after a failed Back step steps to the entry behind it (the file review's round 20, ui-1)", async (t) => {
   for (const host of ["files", "chat"] as const) {
     await inViewer(t, host, async (h) => {
       // the keyboard's holder, read off the live DOM: which nav button (or the body), its title, its ring, and the shown file
@@ -472,18 +475,38 @@ test("in a browser, the Files page and the chat modal: Enter on a Tab-focused Ba
       await h.painted("notes.md");
       assert.deepEqual(await held(), { on: "body", title: null, ring: false }, host + ": a pointer's click on Forward lands the keyboard in the new file's body, with no ring");
       assert.deepEqual(await h.shape(), { back: ["report.md@rendered"], current: "notes.md@rendered", forward: ["guide.md@rendered"] }, host + ": the trail after the steps");
-      // a key step whose read fails: the failure pane takes the keyboard nowhere, as after any open whose read fails, so it stays
-      // on the document's body, where the old card's removal left it (the stated boundary, read so a change to it is seen)
+      // a key step whose read fails: the failure pane is painted and the landing is spent on the new bar's button of the step's
+      // direction, with the ring, so a second Enter steps again where the trail goes on (the file review's round 20, ui-1).
+      // First a failed Back step with an entry behind it: over report, notes and guide, Back from guide with notes unreadable.
       assert.ok(await tabTo("forward", "Shift+Tab") > 0, host + ": Shift+Tab from the body reaches Forward");
-      const guide = DOCS[GUIDE];
-      delete DOCS[GUIDE];
+      await h.page.keyboard.press("Enter");
+      await h.painted("guide.md");
+      assert.deepEqual(await held(), { on: "forward", title: "Forward", ring: true }, host + ": Enter on Forward stepped to guide.md, the keyboard on the end's Forward");
+      assert.equal(await tabTo("back", "Shift+Tab"), 1, host + ": Shift+Tab moves from Forward to Back");
+      const notes = DOCS[NOTES];
+      delete DOCS[NOTES];
       try {
         await h.page.keyboard.press("Enter");
-        await h.page.locator("#romp-fileview .fileview-base", { hasText: "guide.md" }).waitFor({ timeout: 10000 });
+        await h.page.locator("#romp-fileview .fileview-base", { hasText: "notes.md" }).waitFor({ timeout: 10000 });
         await h.page.locator("#romp-fileview .fileview-body .fileview-err").waitFor({ timeout: 10000 });
         await h.frames(3);
-      } finally { DOCS[GUIDE] = guide; }
-      assert.equal((await held()).on, "page", host + ": a key step whose read fails leaves the keyboard on the document's body");
+      } finally { DOCS[NOTES] = notes; }
+      // FAILS BEFORE (bef9ff8fc): the failed step left the keyboard on the document's body, so this Enter stepped nothing
+      await h.page.keyboard.press("Enter");
+      await h.page.locator("#romp-fileview .fileview-base", { hasText: "report.md" }).waitFor({ timeout: 5000 }).catch(() => undefined);
+      await h.frames(3);
+      assert.equal(await h.base(), "report.md", host + ": the second Enter after a failed Back step steps to the entry behind it");
+      assert.deepEqual(await held(), { on: "back", title: "Back", ring: true }, host + ": and the keyboard is on the end's Back, with its ring");
+      // then a failed Forward step: from report, Forward to notes with notes unreadable
+      assert.equal(await tabTo("forward", "Tab"), 1, host + ": Tab moves from Back to Forward");
+      delete DOCS[NOTES];
+      try {
+        await h.page.keyboard.press("Enter");
+        await h.page.locator("#romp-fileview .fileview-base", { hasText: "notes.md" }).waitFor({ timeout: 10000 });
+        await h.page.locator("#romp-fileview .fileview-body .fileview-err").waitFor({ timeout: 10000 });
+        await h.frames(3);
+      } finally { DOCS[NOTES] = notes; }
+      assert.deepEqual(await held(), { on: "forward", title: "Forward to guide.md", ring: true }, host + ": a key step on Forward whose read fails leaves the keyboard on the new bar's Forward, with its ring");
     });
   }
 });

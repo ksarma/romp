@@ -8348,9 +8348,12 @@ keyboard to the new bar's button of that direction (`keyHolder`) in place of the
 the ring the old button wore (`priorRing`). A step onto the trail's end lands on that end's `aria-disabled` button, which
 keeps the keyboard and steps nothing, so the text-size ends are the precedent for every button of the pair. A pointer's
 click and the chords (shortcuts tied to no focused button) land in the new file's body as any open does. A key step whose
-read fails paints the failure pane, which takes the keyboard nowhere, as after any open whose read fails, so the
-document's body keeps it; a key step onto a hidden group would land in the body too, which by reading no press reaches
-(moveTrail falls to a root only when the trail's target is not the file opened). The file review's round 19 (ui-1): a key
+read fails paints the failure pane and then spends the same landing on the new bar's button of the step's direction, with
+its ring, as a step that reads does, so a second press steps again where the trail goes on (the file review's round 20,
+ui-1: the landing had been left unspent and the document's body kept the keyboard; an open that is no key step and whose
+read fails still takes the keyboard nowhere); a key step onto a hidden group would land in the body, which by reading no
+press reaches (moveTrail falls to a root only when the trail's target is not the file opened). The file review's
+round 19 (ui-1): a key
 step had handed the keyboard to the new file's body, and a keyboard user reached Back again with about ten Shift+Tab
 presses per step, in a dashboard pane on Linux and Windows the only keyboard way to step the trail, the shell taking
 Alt+Left and Alt+Right. The chords: Alt+Left and Alt+Right, and on a Mac Cmd+[ and Cmd+] as well (`navChord`, pure over
