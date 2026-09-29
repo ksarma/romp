@@ -347,10 +347,13 @@ test("no frame kept (the panel opened before the bytes landed) and a render that
   t.mock.timers.enable({ apis: ["setTimeout"] });
   pdf.defer = true;
   const o = await start(DECK, t);
+  let replaced = 0;
+  o.ctx.onReplaced!(() => { replaced++; });
   o.ctx.aside(panel());                                  // the click lands mid-fetch
   await settle();
   assert.equal(pdf.pending.length, 1, "the render is in flight");
   assert.deepEqual(classesOf(o.body), ["fileview-load", "fileview-pdfhost"], "the loader and the chunk's host are the whole body: no frame under an open panel");
+  assert.equal(replaced, 1, "onReplaced told once, as the pages' loader and host go up in place of the body (onReplaced's doc in file-view.ts)");
   assert.equal(paints, 0, "nothing has painted");
   t.mock.timers.tick(o.fv.PDF_RENDER_BACKSTOP_MS - 1); await settle();
   assert.deepEqual(classesOf(o.body), ["fileview-load", "fileview-pdfhost"], "short of the deadline: still waiting, nothing else");
@@ -367,6 +370,7 @@ test("no frame kept (the panel opened before the bytes landed) and a render that
   assert.equal(o.ctx.mediaElement(), f as unknown as HTMLElement, "whole-file comments work on it");
   assert.deepEqual(o.ctx.pdfPages(), []);
   assert.equal(paints, 1, "the panel hears the fallback");
+  assert.equal(replaced, 1, "the fallback's frame at the deadline tells onRendered alone");
   pdf.release(0); await settle();
   assert.equal(pdf.disposed, 1, "the resolution landing after the deadline is disposed on arrival: the document and its worker released");
   assert.equal(frameIn(o.body), f); assert.equal(col.childNodes.length, 2); assert.deepEqual(classesOf(o.body), ["fileview-pdffall"]);

@@ -1110,7 +1110,7 @@ class ByteIdenticalFrames(unittest.TestCase):
         # names row resolved the session's cwd to the worktree, the worktree was read inside a signature (the repo index's
         # tree and index stats and the CLAUDE.md chain are path stats: the tree has no subdirectory, so no DirEntry stat is
         # made under it), the task store was scanned there (a DirEntry stat per task file, through _entry_stat), the postal
-        # store was stat'ed there (_chat_postal_key, in the tail), and the names and registry reads landed
+        # store was stat'ed there (_postal_index, the tail's postal branch), and the names and registry reads landed
         for p in furnished:
             self.assertTrue(p.exists(), "premise: the furnished file stands until cleanup: %s" % p)
         self.assertEqual(km._cwd_of(self.SID), world["wt"], "premise: the names row resolved the session's cwd to the worktree")
@@ -2252,8 +2252,10 @@ class ChatSigHelpers(unittest.TestCase):
         """The tail's two stat sites, driven through their real caller (2026-09-19 review, tests-2): _chat_sig_deps over a
         record naming an existing task output and a missing one, with a postal dependency, inside the scope, counts
         exactly the stats the outside interception saw, at least three (one per recorded task output, the missing one
-        included, plus the postal log's); the helper-level three calls hold the same equality and read exactly three; an
-        empty record counts zero."""
+        included, plus the postal log's, which the postal branch reads once through _postal_index since upstream 1818
+        replaced the log-identity key _chat_postal_key with this session's revision, _chat_postal_rev, a dict lookup over
+        that index); the helper-level three calls hold the same equality and read exactly three; an empty record counts
+        zero."""
         td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
         existing, missing = os.path.join(td.name, "out.txt"), os.path.join(td.name, "gone.txt")
         with open(existing, "w") as f:
@@ -2268,11 +2270,19 @@ class ChatSigHelpers(unittest.TestCase):
         self.assertEqual(pl, ())
         self.assertEqual(n, ic.total, "the tail's stats, whoever made them: %r" % {"stat": ic.stat, "lstat": ic.lstat, "dirent": ic.dirent})
         self.assertGreaterEqual(n, 3, "one per recorded task output, the missing one included, plus the postal log's")
+        log = str(km.jd.STATE / "timeline" / "messages.jsonl")
+        self.assertIn(log, ic.paths, "the postal branch stat'ed the log inside the scope (_postal_index's key read): %r"
+                      % sorted(k for k in ic.paths if isinstance(k, str)))
+        # the log's read is _postal_index's own stat, memoized on the log's (mtime_ns, size): warmed outside the scope so the
+        # read inside is the key check's one stat whether this state root holds a log (a hit) or none (an OSError, counted
+        # as attempted); a cold index would also pay the incremental reader's stat of the same file
+        km._postal_index()
         before = km._chat_sig_stats_report()["stats"]
         with _StatInterceptor(km._CHAT_SIG_TL) as ic2, km._chat_sig_scope():
-            km._chat_stat_key(existing); km._chat_stat_key(missing); km._chat_postal_key()
+            km._chat_stat_key(existing); km._chat_stat_key(missing); km._chat_postal_rev(self.SIDS[0], km._postal_index())
         self.assertEqual(km._chat_sig_stats_report()["stats"] - before, ic2.total)
-        self.assertEqual(ic2.total, 3, "each attempt counted, a missing file's included")
+        self.assertEqual(ic2.total, 3, "each attempt counted, a missing file's included; the revision itself stats nothing")
+        self.assertEqual(ic2.paths.get(log), 1, "the log stat'ed once: the index's key read")
         before = km._chat_sig_stats_report()["stats"]
         with _StatInterceptor(km._CHAT_SIG_TL) as ic3, km._chat_sig_scope():
             self.assertEqual(km._chat_sig_deps(self.SIDS[0], None), ((), (), None))

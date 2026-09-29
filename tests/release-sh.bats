@@ -457,7 +457,8 @@ STUB
 # ── the suite-environment resolver (the v0.13.0 lesson) ───────────────
 # release.sh died mid-release on a bare ModuleNotFoundError on a box with only a repo venv.
 # It now resolves its own suite runner: a WORKING ambient `python3 -m pytest` first, else uv's
-# throwaway env with CI's exact dep set, else a LOUD failure naming both remedies — before any
+# throwaway env with pytest and cryptography (CI's Python set less pytest-timeout, pytest-xdist and
+# the pinned SDK, so the SDK-gated tests may skip there), else a LOUD failure naming both remedies, before any
 # release state is at stake. PATH is narrowed per test so the resolver sees exactly the world
 # each case describes; the stubbed runners record their argv so the invocation shape is pinned.
 
@@ -505,6 +506,30 @@ _env_path() {                           # a narrowed PATH: the stubs + the bare 
     [ "$status" -eq 0 ]
     [[ "$output" == *"throwaway env"* ]]
     grep -q -- "uvx --with pytest --with cryptography pytest tests/ -q" "$UVX_LOG"
+}
+
+@test "release: the uv fallback's message names the packages it installs, and calls them CI's set only when they are" {
+    # The message once called the fallback's packages CI's dep set while ci.yml's Python job installed more (#922).
+    # The property, read from both sources rather than from a wording: the line's parenthetical names exactly the
+    # packages the uvx argv installs (its --with set), and the line names CI only while ci.yml's Python-job install set,
+    # pip itself left out, equals that set.
+    _stub_gh; _stub_python3 no-pytest; _stub_uvx
+    run env PATH="$(_env_path)" "$REPO/scripts/release.sh"
+    [ "$status" -eq 0 ]
+    say_line=$(printf '%s\n' "$output" | grep -F "throwaway env")
+    [ "$(printf '%s\n' "$say_line" | grep -c .)" -eq 1 ]
+    with_set=$(awk '{for (i = 1; i < NF; i++) if ($i == "--with") print $(i + 1)}' "$UVX_LOG" | sort -u)
+    [ -n "$with_set" ]
+    named=$(printf '%s\n' "$say_line" | sed -n 's/.*(\([^()]*\))[^()]*$/\1/p' \
+        | awk '{gsub(/ \+ |, | and /, "\n"); print}' | awk 'NF {sub(/^ +/, ""); sub(/ +$/, ""); print}' | sort -u)
+    [ "$named" = "$with_set" ]
+    ci_set=$(awk '/^  python:$/ {f = 1; next} f && /^  [a-z][a-z0-9_-]*:$/ {f = 0} f' "$ROMP_DIR/.github/workflows/ci.yml" \
+        | awk '{for (i = 1; i < NF; i++) if ($i == "pip" && $(i + 1) == "install") {for (j = i + 2; j <= NF; j++) if ($j !~ /^-/ && $j != "pip") print $j}}' \
+        | sort -u)
+    [ -n "$ci_set" ]
+    if [ "$ci_set" != "$with_set" ]; then
+        [ "$(printf '%s\n' "$say_line" | grep -c -w 'CI')" -eq 0 ]
+    fi
 }
 
 @test "release: neither pytest nor uv → a LOUD refusal naming both remedies, before any release work" {

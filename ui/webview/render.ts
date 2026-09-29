@@ -82,6 +82,8 @@ import { parseAgentNotif, notifHead, type AgentNotif } from "./agent-notif";
 import { injectedHead, type InjectedSource } from "./injected-source";
 import { subTabId, isSubId, subParts, subLabel, gistLines, stepLines, stepsNote, agentFoldLabel, subHeadParts, subWaitTail, openIconSvg, pinIconSvg, type SubMeta, type AgentGist, type AgentGistRow, type GistLine } from "./subagent-view";
 import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, mdImgPostPass, setLightboxNav, type LightboxNavEntry } from "./preview";
+import { capAuthoredFileUrls } from "./authored-file-caps";   // every authored-markdown renderer caps the /file URLs its author wrote (the list: authored-file-caps.test.ts)
+import { withFileCap } from "./file-cap";   // a typed address of this origin's /file route carries this page's cap (the code-span link below)
 import { openFileClick, type At } from "./file-view";                  // a clicked file WITH its gesture (pdf-new-tab.test.ts)
 import { openPathLink, linkifyPathTokens, selectionOpenIn } from "./path-links";   // the path matcher the chat's links are made from (a shared module)
 import { linkTarget, type PathLinkOptions } from "./path-links";   // a todo link's target (`docs/a.md#results`, `docs/a.md:12`): the one reader the hosts share (Slice 6 of plans/markdown-viewer.md)
@@ -1481,6 +1483,7 @@ function md(src: string, repo: string | null = prRepoFor()): string {
     // the sanitizer's verdicts stand and a marked-autolinked GitHub URL is never wrapped twice.
     const clean = sanitizeMd(dirty);   // the sanitized <body>, its math rendered
     linkifyPrRefs(clean, repo);
+    capAuthoredFileUrls(clean);   // a /file URL the author wrote carries this page's cap, as the page's own fileUrl does (authored-file-caps.ts)
     mdImgPostPass(clean);   // a markdown image whose URL failed this page life is parked before the browser fetches it (T291c)
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
@@ -1496,6 +1499,7 @@ function userMd(src: string, repo: string | null = prRepoFor()): string {
   try {
     const clean = sanitizeMd(userMdHtml(src));   // the sanitized <body>, its math rendered
     linkifyPrRefs(clean, repo);
+    capAuthoredFileUrls(clean);   // the same cap pass as md()
     mdImgPostPass(clean);   // a markdown image whose URL failed this page life is parked before the browser fetches it (T291c)
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
@@ -1887,9 +1891,10 @@ function fileLink(path: string): HTMLElement {
 // on the RIGHT of the tool's HEAD line; the expandable content hangs below the
 // head, hidden until clicked — so each tool stays ONE row by default (the user:
 // vertical-compact). `head` must already be appended to `turn`.
-function inlineFold(head: HTMLElement, turn: HTMLElement, label: string, content: HTMLElement, key?: string) {
+function inlineFold(head: HTMLElement, turn: HTMLElement, label: string | HTMLElement, content: HTMLElement, key?: string) {
   const toggle = el("span", "tool-fold-toggle");
-  toggle.textContent = label;   // just the clickable summary ("+14 −0" / "12 lines") — no caret/bullet
+  if (typeof label === "string") toggle.textContent = label;   // just the clickable summary ("12 lines"), no caret or bullet
+  else toggle.appendChild(label);                                // or a dressed one: an edit's totals in the diff colours (diffTotals)
   toggle.title = "click to expand";
   applyFold(turn, "fold-open", key);
   toggle.addEventListener("click", (e) => { e.stopPropagation(); rememberFold(turn, "fold-open", key); });
@@ -2259,7 +2264,7 @@ function healPathImgs(): void {
 // the page shim fires romp:wsup when THIS pane's kernel socket reconnects (kernel.py ws.onopen) —
 // the same kernel-is-back event a hostUp is for a federated tunnel; heal everything on it
 window.addEventListener("romp:wsup", () => { retryFailedPreviews(); refreshSettledPreviews(); healPathImgs(); });
-installMdImgHeal();   // markdown-inline <img> failures are PARKED (capture-phase, once) and heal on the reconnect-class events (T291c);
+installMdImgHeal();   // a markdown-inline <img> that fails at an address is PARKED (capture-phase, once; a data: figure, which no server can heal, keeps its src) and heals on the reconnect-class events (T291c);
 //                       md() and userMd() run mdImgPostPass on their own output, so a re-render parks a known-failed image before it fetches
 // The page's own bundle build, filed once per page load (T291c, the user's 2026-09-09 report could not tell the
 // page's build from the kernel's): the ?v= the kernel stamped on the render.js script this page loaded (the
@@ -2604,7 +2609,7 @@ function renderFilePreview(p: HTMLElement, c: PreviewContent, sid: string | null
     body.classList.add("md");
     body.replaceChildren(...Array.from(previewMdClean(c.body.markdown).childNodes));   // its paths stay text here (the viewer, one click away, links them)
   }
-  else if (c.body.html != null) { const clean = sanitizeMd(c.body.html); stripRemoteLoads(clean, location.origin, location.href); body.replaceChildren(clean); }   // a provider's own HTML, through the one sanitizer and the same strip
+  else if (c.body.html != null) { const clean = sanitizeMd(c.body.html); stripRemoteLoads(clean, location.origin, location.href); capAuthoredFileUrls(clean); body.replaceChildren(clean); }   // a provider's own HTML, through the one sanitizer, the same strip and the same cap pass
   else if (c.body.url && c.kind === "image") { const img = el("img", "fp-img") as HTMLImageElement; img.src = c.body.url; img.alt = c.title; body.appendChild(img); }
   else if (c.body.url && c.kind === "pdf") { const f = el("iframe", "fp-pdf") as HTMLIFrameElement; f.src = c.body.url + "#page=1&toolbar=0"; f.title = c.title; body.appendChild(f); }
   else if (c.kind === "code") {
@@ -2630,6 +2635,7 @@ function previewMdClean(src: string): HTMLElement {
   try { clean = sanitizeMd(marked.parse(src) as string); }
   catch { clean = document.createElement("div"); clean.textContent = src; }
   stripRemoteLoads(clean, location.origin, location.href);
+  capAuthoredFileUrls(clean);   // a same-origin /file picture the file names carries this page's cap (authored-file-caps.ts)
   return clean;
 }
 function showFilePreview(a: HTMLElement): void {
@@ -2728,7 +2734,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
     if (!/^https?:\/\/\S+$/.test(t)) continue;
     if (code.closest("pre") || code.closest("a")) continue;
     const a = document.createElement("a");
-    a.href = t;
+    a.href = withFileCap(t);   // an address of this origin's /file route carries this page's cap (file-cap.ts)
     a.className = "url-code-link";
     a.title = t + " — opens in a new tab";
     code.replaceWith(a);
@@ -5597,7 +5603,7 @@ function renderTool(ev: Extract<ChatEvent, { kind: "tool" }>): HTMLElement {
       row.append(og, ng, sign, txt);
       pre.appendChild(row);
     }
-    inlineFold(head, turn, `+${add} -${del}`, pre, fkey);   // the row's one totals text, the approved shape (+A -R, a hyphen minus); the head prints none beside it (T418 round two)
+    inlineFold(head, turn, diffTotals(add, del), pre, fkey);   // the row's one totals, the approved shape (+A -R, a hyphen minus) in the diff colours, the folded summary's dress; the head prints none beside it (T418 round two; the colours 2026-09-18)
   } else if (ev.name === "Read") {
     if (ev.output) { const n = countLines(ev.output); inlineFold(head, turn, `${n} line${n === 1 ? "" : "s"}`, preEl(ev.output, fkey && fkey + ":out"), fkey); }   // "1 line", not "1 lines" (T418, seen in the lab)
   } else if (ev.name === "Skill") {
@@ -14359,14 +14365,20 @@ function toolGroupKey(first: ChatEvent): string { return "tg:" + (first.uuid || 
 // end in the diff colours (+37 -0). Clicking the line toggles expand → the full non-compact rows (the user 2026-06-14). Carries
 // the rail dot + time-marker + hover wiring like any event so it anchors on the timeline; the dot is a green ✓ disc, red ✗ if any
 // errored.
-/** The edits' totals of a head, summed over every edit in the group, appended once in the diff colours. */
-function appendTotals(line: HTMLElement, add: number, del: number): void {
-  if (!add && !del) return;
+/** An edit's totals in the diff colours: "+A -R" as two spans (tool-plus green, tool-minus red, the theme tokens) inside one
+ *  tool-totals span. ONE dress for both places the numbers show (the user 2026-09-18: the folded group's summary was coloured,
+ *  the expanded rows' numbers were plain text): the collapsed group's head (appendTotals) and each row's diff-fold toggle. */
+function diffTotals(add: number, del: number): HTMLElement {
   const tot = el("span", "tool-totals");
   const plus = el("span", "tool-plus"); plus.textContent = "+" + add;
   const minus = el("span", "tool-minus"); minus.textContent = "-" + del;
-  tot.append(" ", plus, " ", minus);
-  line.appendChild(tot);
+  tot.append(plus, " ", minus);
+  return tot;
+}
+/** The edits' totals of a head, summed over every edit in the group, appended once in the diff colours. */
+function appendTotals(line: HTMLElement, add: number, del: number): void {
+  if (!add && !del) return;
+  line.append(" ", diffTotals(add, del));
 }
 function renderToolGroup(tools: Extract<ChatEvent, { kind: "tool" }>[], prevEpoch: number | null, key: string, open: boolean): HTMLElement {
   const turn = el("div", "turn turn-toolgroup" + (open ? " expanded" : ""));
@@ -15349,6 +15361,15 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // before the clear and hands its keep in; the emptied scroller here would read as the bottom for anyone)
   if (reshow && keep === undefined) v.stick = reshowStick(v.stick, atBottom(content));
   const keepAnchor = reshow ? (keep !== undefined ? keep : (!atBottom(content) ? captureScrollAnchor(content, v) : null)) : null;   // follow mode: off the true bottom keeps its place
+  // Does the scroller hold THIS view's reader as the show begins? Only when the view was already on screen (displayed, in a visible pane)
+  // and no deferred build is pending (followReader's transient: while one is, the scroller can hold the reveal's clamp). Then the
+  // scroller's own scrollTop is the reader's place and the view's record can only lag it, by the one frame between a page write that does
+  // not sync the record (the re-window's) and that write's scroll event, so landActive reads the saved place from the scroller (the landing
+  // lab's road 16). A switch fails the first test (the scroller still holds the leaving tab), a hidden pane has no reader, and the deferred
+  // build's land below passes nothing: while a build is pending the scroller can hold the reveal's clamp, which followReader keeps out of
+  // the record. That gate keeps out every scroll event of the pending interval, a re-window's echo too, so a deep link that defers its build
+  // on the view already on screen still reads a record that can lag the scroller (a residual no road reaches)
+  const scrollerHolds = v.el.style.display !== "none" && content.clientHeight > 0 && pendingBuildRaf == null;
   // Bound the switch. A view the user scrolled to the top of has had its window expanded to the WHOLE
   // transcript (winStart crept to 0 via lazy-expand), and compact mode renders the whole folded stream —
   // either way, revealing thousands of nodes is the big-session switch lag (the user 2026-06-25: 4144 turns
@@ -15375,7 +15396,7 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // `length > 0` guard is what stops a zero-event session from flashing (or sticking on) "Loading…".
   const heavy = s.events.length > 0 && (v.el.childNodes.length === 0 || (settings.compact && (v.rendered !== s.events.length || v.stale)));
   if (!heavy) {
-    syncView(activeId!); landActive(content, v);
+    syncView(activeId!); landActive(content, v, scrollerHolds);
     if (keepAnchor) keepPlaceAcrossWindow(content, v, keepAnchor);   // the line being read stays put across the rebuild (T249; T262l for a re-windowed view)
     return;
   }
@@ -15464,7 +15485,7 @@ function whenChatVisible(cb: () => void): void {
   window.addEventListener("resize", fire);
 }
 
-function landActive(content: HTMLElement | null, v: View): void {
+function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean = false): void {
   if (!content) return;
   // DEEP-LINK INTO A HIDDEN CHAT PANE (the user 2026-06-30): a jump from the Outline/feed/timeline can arrive
   // while the chat pane is toggled OFF (display:none → #content clientHeight 0). A scroll can't land in a
@@ -15476,13 +15497,22 @@ function landActive(content: HTMLElement | null, v: View): void {
     whenChatVisible(() => { const c = document.getElementById("content"); const vv = activeId ? views.get(activeId) : null; if (c && vv) landActive(c, vv); });
     return;
   }
+  // THE SAVED PLACE on a view the scroller already holds (showActive's `scrollerHolds`: on screen before this show, no deferred build between)
+  // is the scroller's own position. The record follows the reader through the scroll listener and lags the scroller by one frame after a page
+  // write that does not sync it (the re-window's); a deep link inside that frame captured the row at the record's stale place, and when its land
+  // missed the restore wrote the reader back there (the landing lab's road 10 once PR 861 moved the fallback to that capture; road 16 enters the
+  // frame on every run, land-active-keep.test.ts executes the roads). Synced here, the record also feeds the raw land-saved write below, which
+  // read the same lag before PR 861; that write still reads the record after the attempt, so on the raw roads (no row held, or the held row
+  // gone) a pre-jump that synced it in this pass stands, while a restore that puts a held row back returns the reader to that row
+  if (scrollerHolds) v.scrollTop = content.scrollTop;
   // the view is now VISIBLE (display set in showActive): the spacers take the figures the view holds, and the land takes the figures the
   // observer parked since the last paint on every road but the nothing-armed re-show (`saved`), BEFORE its landing attempt: an anchor's or
   // a moment's land reads the target's live rect (scrollToAnchor, landOn) and a resident target rebuilds nothing, so a take after the
   // attempt would re-size the spacer under a row just placed; a seek, the reload restore and the bottom land put the reader over the
   // result too. The take is decided on what is ARMED, not on the outcome: a land whose anchor misses (nowhere in the transcript, the wrong
   // kind, a fetch armed) falls through to the saved-place restore below with the spacers re-sized, so the row the SAVED place held is
-  // captured here, at that place (the scroller does not hold it yet on a switch: the leaving tab's position is still under the viewport),
+  // captured here, at that place (the scroller does not hold it yet on a switch: the leaving tab's position is still under the viewport; on a view
+  // the scroller already holds, the record was synced to the scroller above),
   // and the fallback puts it back at its offset (anchor-restore). The raw land-saved write stands whenever that restore finds no row to
   // put back, three roads: nothing was armed (no take: the saved scrollTop is exact, and the figures wait for keepPlaceAcrossWindow,
   // which showActive runs after this land with the reader's own row, or for the next tail paint); no row was at the saved place (inside

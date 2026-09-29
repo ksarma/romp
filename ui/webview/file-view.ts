@@ -23,6 +23,8 @@ import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
+import { probeServed } from "./preview";   // one probe of a picture's address off the page: the way back from a failed svg picture's pane
+import { VIEWER_PICTURE_MARK } from "./preview";   // the picture box's data mark, which the chat page's markdown-image heal skips by (imgBlock)
 import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS } from "./icons";   // the bar's glyphs (T367)
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
 import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
@@ -30,6 +32,8 @@ import { headVerdict, mtimeMoved, ABSENT } from "./file-comments-model";   // th
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
+import { capAuthoredFileUrls } from "./authored-file-caps";   // a /file URL the document names with a scheme carries this page's cap (mdBlock)
+import { withFileCap } from "./file-cap";   // whether the cap pass will change a figure's URL, so its authored spelling is kept first (keepAuthoredSpellings)
 import { pictureDest } from "./file-comments";       // the authored source a failed figure's label names (armFigureLabels): the panel's own rule, not a second reading of data-fv-src
 import { readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts, followPlace: the last measured place into the text a reload landed under a boxless body (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
@@ -483,6 +487,11 @@ function bomOnlyLine(): HTMLElement {
  *  Slice 7 review's round 1). The pane shows it with the path as the hint and the Download offer under it; error() is the
  *  sentence alone. */
 export const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";
+/** The pane's sentence over an svg picture that failed to load a second time, after its address was asked again and answered
+ *  with the bytes (imgFailed): the picture loads from its /file address in a request of its own, so its error event names no
+ *  cause, and the sentence names both, a load that failed and bytes that will not decode. The pane shows it with the path as
+ *  the hint and the Download offer under it, as the decode pane does; error() is the sentence alone. */
+export const SVG_PICTURE_FAILED = "this image failed to load or decode: the connection may have dropped, or the file may be mid-write or truncated";
 /** The note bar's line over a file the kernel decoded as Latin-1 (plans/markdown-viewer.md Slice 7, item 5): the kernel serves
  *  such a file re-encoded as UTF-8 under `X-Romp-Text-Utf8: 0`, and the Edit gate hides its button on that verdict, which said
  *  nothing to the reader. The line names the fact and its consequence in one sentence. Raised at every text landing whose
@@ -678,9 +687,10 @@ let probeLive: (() => void) | null = null;
 function dropProbe(): void {
   if (probeLive) { const f = probeLive; probeLive = null; f(); }
 }
-// ONE live media object URL at a time (images used to render as line-numbered mojibake; now an
-// image/PDF view holds its bytes in an object URL). The URL is per-open state, but — like editHooks
-// and onKeyLive above — the teardown must be reachable from BOTH exits (closeFileView and the replace
+// ONE live media object URL at a time (images used to render as line-numbered mojibake; now a PDF, or
+// an image other than an svg, shows from an object URL of its bytes; an svg's picture loads from its
+// /file address, which holds nothing to release). The URL is per-open state, but, like editHooks and
+// onKeyLive above, the teardown must be reachable from BOTH exits (closeFileView and the replace
 // path), so the open viewer registers its URL here and each exit revokes it. Without the revoke
 // every image view leaks its blob for the page's life.
 let mediaUrlLive: string | null = null;
@@ -690,6 +700,9 @@ function dropMediaUrl(): void {
     mediaUrlLive = null;
   }
 }
+// The version key of an svg picture's address when its answer carried no mtime (a kernel that sends no X-Romp-Mtime-Ns):
+// each such landing takes the next number, so no two share an address in the page's life (fetchFile's svg landing).
+let svgLandingSeq = 0;
 // ONE in-flight URL read at a time, the same shape as mediaUrlLive: the URL viewer registers its
 // AbortController here and BOTH exits (closeFileView and either replace path) abort it, so a modal
 // torn down mid-body cancels its fetch and its stream — a stale read must never keep pulling bytes
@@ -789,7 +802,8 @@ export interface FileViewActionCtx {
   pdfPages(): HTMLElement[];
   /** the figures inside a Rendered markdown body, in document order, as of the latest onRendered; [] in every other
    *  view. A path figure's `src` (relative or absolute) is the kernel's /file URL by then and its authored value rides
-   *  in `data-fv-src` (rewriteFigureSrcs); the figures' own load events are the caller's to await */
+   *  in `data-fv-src` (rewriteFigureSrcs), as does that of a /file URL of this origin written with its scheme, whose
+   *  `src` the cap pass changes (keepAuthoredSpellings); the figures' own load events are the caller's to await */
   renderedImages(): HTMLImageElement[];
   /** the session the file was opened from, as the hosting document resolves it (the title-bar chip's source) */
   identity(): FileViewIdentity | null;
@@ -802,10 +816,16 @@ export interface FileViewActionCtx {
    *  A failure pane is a paint too (plans/markdown-viewer.md Slice 7, item 3): the fetch chain's catch (a refused or failed
    *  fetch, a reload's or a first open's, text() null then) and a picture's decode failure (imgFailed) fire the hooks after
    *  their swap, with error() the pane's words, so a hook waiting on a reload hears it fail at the paint and never at a deadline.
-   *  Also once at Edit, as the editor takes the body (Slice 5), with editing() true: the panel's paint pass stands down
-   *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
-   *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
-   *  repaint hands the read-mode state back.
+   *  An svg picture's failed load first asks its address again behind the romp loader, which fires no onRendered (onReplaced
+   *  tells its swap): the answer's paint does (the picture's load, or a pane, SVG_PICTURE_FAILED's among them). A picture still loading when the Source toggle is
+   *  pressed fires none at its load either: the body's next paint is the paint (the Source view's at the decode, unless a
+   *  failed reload's pane or a landing of another type paints first).
+   *  Also once at Edit, at the editor's entry (Slice 5), with editing() true, before the chunk's loader goes up and while the
+   *  body still shows the read view: the panel's paint pass stands down then, and its cards, which read editing() at render
+   *  time, take their edit-mode state from this render (the panel's own begin() ran before the flip, so its render could
+   *  not). The editor's swaps after it, the chunk's loader and then the CodeMirror host or the fallback textarea, fire no
+   *  hook (onReplaced's doc); no other paint while the editor holds the body; the exit's repaint hands the read-mode state
+   *  back.
    *  Every call above is a PAINT (`why` "paint", the default a caller passing nothing gets): the body's nodes are new, and a
    *  hook that wraps or measures them starts over.
    *  Also after a text view REFLOWS with its text unchanged (`why` "reflow"): a text-size step (the A− / A+ buttons, the
@@ -817,11 +837,43 @@ export interface FileViewActionCtx {
    *  file blocked the page for seconds a frame). A media body's own observers (the figure layer's, the PDF chunk's)
    *  already cover theirs, and the editor lays out its own text, so neither reflow fires for those */
   onRendered(cb: (why?: FileViewRenderWhy) => void): void;
+  /** runs when a fetch lands the bytes of an svg picture: the bytes are in hand (the Source view reads them) and mtimeNs()
+   *  answers the landed mtime. Their paint, and with it onRendered, is the picture's load from its /file address, in a request
+   *  of its own, or, when the bytes go to the Source view (a reload under it, or a landing while a press of the Source toggle
+   *  waits for its decode), that view's paint at their decode. The order between the two may go either way: the decode's paint
+   *  comes after, and so does a picture's load that asks the network, but a picture the page still holds (a reload at an
+   *  unchanged mtime) is complete once its src is set, and its onRendered runs first. The Comments panel ends its wait for a
+   *  reload's bytes at whichever comes first; when its change cards move is the card-state rule's (file-comments.ts,
+   *  #cardState's doc), and a landing is no event of it. Optional, so a stand-in seam need not carry it */
+  onLanded?(cb: () => void): void;
+  /** runs as the viewer swaps into the body something whose paint may not come with it. Which swaps fire which hook:
+   *  onReplaced, with onRendered at the paint: renderBody's media arm, once its picture or its PDF frame is up (a picture's
+   *  paint is its load, or follows at once, in the same call, when the page still holds it; a frame's paint follows at once,
+   *  in the same call), the romp loader of an svg picture's re-ask (the answer's paint), and the PDF pages' loader (its paint
+   *  is page 1's draw, or the fallback's frame).
+   *  onRendered alone, as it swaps: a text view's rows, the Source view's, a failure pane, and the PDF pages' fallback frame,
+   *  fresh or kept, and a frame kept as the panel closes, whose paint is at once.
+   *  Neither: the editor's swaps. onRendered fires once at the editor's entry, before its chunk's loader goes up and while the
+   *  body still shows the read view (onRendered's doc); the chunk's loader, the CodeMirror host when the chunk resolves and
+   *  the fallback textarea when it rejects fire neither hook, and a rejection with changes pending leaves the editor, whose
+   *  exit repaints. The editor holds the body until that exit's repaint (exitEdit's renderBody), and the Comments panel reads
+   *  editing() for that span. A press of the Source toggle that waits for its decode swaps nothing (the picture stays until
+   *  the body's next paint: the decode's, unless a failed reload's pane or a landing of another type paints first).
+   *  The Comments panel's card-state rule keys on it (file-comments.ts, #cardState's doc). Optional, so a stand-in seam need
+   *  not carry it */
+  onReplaced?(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body, BEFORE the quote-chip gate, so it works with no chat pane.
    *  A selection made or changed from the keyboard reaches no mouseup and runs no hook here: the comments panel listens to the
    *  document's selectionchange itself for those (file-comments.ts onSelectionChange), so the chip's per-gesture fetch never runs per keystroke */
   onSelection(cb: (sel: Selection) => void): void;
-  /** runs when a direct edit's save is acknowledged (fileSaved carries `logged` since Slice 1) */
+  /** runs when a direct edit's save is acknowledged, a save through saveFile (fileSaved carries `logged` since Slice 1) or one
+   *  through the Comments panel (the tracked route, TrackedEdit.save). For the editor that saved, on either route, it runs once
+   *  mtimeNs() answers the saved bytes' mtime, which that editor, if it stays up (keystrokes typed while the save was out; on
+   *  the Comments panel's route also a decision clicked then, or a landed decision undone), now holds as the file it loaded;
+   *  the stay or the exit comes after it, in the same call. When that editor is gone by the ack (Cancel while the save was
+   *  out) the routes part. The Comments panel's save runs it with mtimeNs() where it was, and the viewer re-reads the saved
+   *  bytes itself, at once or at the exit of an editor opened since. A saveFile ack is handled only while editHooks holds its
+   *  save, which Cancel nulls, so that ack is dropped: no onSaved runs and nothing is re-read */
   onSaved(cb: (info: { mtimeNs: string; logged: boolean }) => void): void;
   /** runs once when this open ends — close, Escape, or a replace-open — so per-open timers and listeners leave with it */
   onClose(cb: () => void): void;
@@ -1193,13 +1245,46 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // r.text() on ANY 200. All read from the KERNEL's Content-Type, never a client-side extension
   // re-test (the authoritative-source rule; the kernel derives the mime locally and the relay
   // re-derives it, so the header is a verdict, not an echo).
-  let isImage = false;                        // image/* → one <img> at an object URL
+  let isImage = false;                        // image/* → one <img> at an object URL of the bytes, or an svg's /file address
   let isPdf = false;                          // application/pdf → the lightbox's iframe treatment
-  let isSvgImage = false;                     // image/svg+xml exactly — unlocks the Source toggle
+  let isSvgImage = false;                     // an answer the viewer takes as an image whose media type is image/svg+xml, any parameter aside: unlocks the Source toggle
   let svgSource = false;                      // the SVG Source view is up (the highlighted XML)
   let svgText: string | null = null;          // the decoded SVG bytes: read on the first toggle, a reload's replace or drop it
+  let svgTextOf: Blob | null = null;          // the bytes svgText was decoded from: a press to the Source view paints svgText only while they are mediaBlob
   let mediaBlob: Blob | null = null;          // the fetched bytes — the Source toggle decodes THESE, the PDF chunk renders them
-  let objUrl: string | null = null;           // this open's object URL (registered as mediaUrlLive)
+  let objUrl: string | null = null;           // this open's picture or frame URL: an object URL (registered as mediaUrlLive), or an svg's /file address with its version key
+  // ── an svg picture that fails to load (imgFailed): its address is asked again (fetchFile(true)), one re-ask per picture
+  // failure, and a pane from that re-ask waits for a way back (wayBack). `shownByReask`: the picture showing was landed by such a
+  // fetch, so its own failure shows the pane instead of a second re-ask, unless a reconnect-class event arrived during its
+  // attempt (`picLink`, below); a press of the Source toggle ends that attempt whole (viewChanged clears both), so the picture
+  // painted when the person returns to it is a first showing, whose failure asks the address again once. `wayBack`: a pane
+  // from a re-ask stands, so the reconnect-class events run fetchFile again
+  // and each kernel message may send one probe of the address (onKernelMessage);
+  // `wayBackSeq` numbers the panes, so a probe that settles after its pane went acts on nothing. `wayBackProbes` is the probes'
+  // budget: each probe spends one when it is sent, whatever it meets, and a new pane keeps what is left, the pane a probe's own
+  // fetch paints included; fillProbes refills it to three at an open or a reload, a reconnect-class event, the Source toggle,
+  // and a landing whose picture shows. `wayBackProbing`: one probe at a time. `linkSeq` counts the reconnect-class events, so an
+  // attempt that asked the address again (a fetchFile(true), then the picture its landing shows) and fails after one arrived
+  // during it asks once more at once: its fetch, when that fails, runs again over the pane it painted, and its picture, when
+  // that fails, asks again in place of the pane. `picLink` is the count that fetch started with, held from its landing until
+  // that picture shows or a press of the Source toggle takes it from the body (null then). `viewSeq` counts the Source toggle's
+  // presses, so the answer of a fetch that asked the address again (fetchFile(true)) paints only over the view it started from;
+  // `picView` and `paneView` are the count when the body's picture and the pane from a re-ask were painted, so a picture failure,
+  // a probe that loads or a reconnect-class event starts nothing once a press has come since that paint. `srcDecode`: the bytes
+  // a press of the Source toggle is decoding for the Source view's first paint, until that decode paints (decodeForSource), or
+  // for its first paint over bytes that landed after its XML was decoded (svgTextOf); a landing of another type ends it.
+  let shownByReask = false;
+  let wayBack = false;
+  let wayBackSeq = 0;
+  let wayBackProbes = 0;
+  let wayBackProbing = false;
+  let linkSeq = 0;
+  let picLink: number | null = null;
+  let srcDecode: Blob | null = null;
+  let viewSeq = 0;
+  let picView = 0;
+  let paneView = 0;
+  const fillProbes = (): void => { wayBackProbes = 3; };
   // ── the PDF pages (plans/file-review.md Slice 4): with the Comments panel open, a PDF's body is the pages the pdf.js
   // chunk draws (one canvas per page, so a region comment has a page to sit on); closed, it is the browser's own frame
   // as before. `asideOpen` follows the seam's aside() — the panel mounting IS the event — and the body re-renders on the
@@ -1569,12 +1654,34 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const srcBtn = el("button", "fileview-btn") as HTMLButtonElement;
   srcBtn.type = "button"; srcBtn.textContent = "Source"; srcBtn.title = "The SVG's XML, highlighted";
   srcBtn.hidden = true;
+  // A press that changes the view: the answer of a fetch still out that asked the picture's address again paints nothing
+  // (fetchFile's `view`), so the Source view stands, and the way back's probes are refilled for any pane that a fresh load of
+  // the picture brings when the person returns to it. From the press on, while the Source view may still wait for the bytes to
+  // decode, a failure of the picture painted before it, a probe that loads and a reconnect-class event start nothing
+  // (imgFailed's `picView`, paneWaits's `paneView`), and the press ends the attempt of a fetch that asked again, whole
+  // (`shownByReask` and `picLink`): the picture painted when the person returns is a first showing, so its failure asks the
+  // address again once, in a fetch sent after any reconnect-class event heard while that picture's own request, or the one it
+  // joins, was out.
+  const viewChanged = (): void => { viewSeq++; fillProbes(); picLink = null; shownByReask = false; };
+  // The Source view's first paint decodes the fetched bytes (`srcDecode` holds the ones being decoded) and paints at the
+  // decode. An svg landing while that decode is out hands its own bytes here (fetchFile's landing): the decode of the older
+  // bytes then paints nothing, and the Source view paints at the decode of the landed ones.
+  const decodeForSource = (b: Blob): void => {
+    srcDecode = b;
+    void b.text().then((t) => { if (srcDecode !== b) return; srcDecode = null; svgText = t; svgTextOf = b; svgSource = true; renderBody(); takeKeyboard(); });
+  };
+  // A press to the Source view paints the XML on hand only when it was decoded from the bytes that landed last (svgTextOf):
+  // after a reload under the Source view, its decode still out, the XML on hand is the older bytes', so a press from the
+  // picture back to the Source view decodes the landed bytes and paints at that decode, as a press over a picture does, and
+  // the hooks hear that paint alone, over the landed XML.
   srcBtn.addEventListener("click", () => {
-    if (svgText === null) {
+    if (svgText === null || (!svgSource && svgTextOf !== mediaBlob)) {
       if (!mediaBlob) return;
-      void mediaBlob.text().then((t) => { svgText = t; svgSource = true; renderBody(); takeKeyboard(); });
+      viewChanged();
+      decodeForSource(mediaBlob);
       return;
     }
+    viewChanged();
     svgSource = !svgSource;
     renderBody();
     takeKeyboard();
@@ -1756,7 +1863,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const renderHooks: Array<(why?: FileViewRenderWhy) => void> = [];
   const selHooks: Array<(sel: Selection) => void> = [];
   const savedHooks: Array<(info: { mtimeNs: string; logged: boolean }) => void> = [];
+  const landedHooks: Array<() => void> = [];
+  const fireLanded = () => { for (const cb of landedHooks) { try { cb(); } catch { /* a hook must never cost the view */ } } };
   const fireRendered = (why: FileViewRenderWhy = "paint") => { for (const cb of renderHooks) { try { cb(why); } catch { /* a hook must never cost the view */ } } };
+  const replacedHooks: Array<() => void> = [];
+  const fireReplaced = () => { for (const cb of replacedHooks) { try { cb(); } catch { /* a hook must never cost the view */ } } };   // the seam's onReplaced (its doc)
   // A REFLOW's paint keeps the person's selection. The hooks run with `why` "reflow": the panel answers that by re-placing
   // its cards and leaves its marks standing (file-comments.ts), so the selection now outlives the panel untouched; the
   // keeping below stands for any hook that does re-wrap on a reflow (a test's marks action does, and the panel did until
@@ -1811,6 +1922,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     pdfPages: () => (ctx.mode() === "media" && isPdf ? Array.from(body.querySelectorAll(".fileview-pdf .fileview-pdf-page")) as HTMLElement[] : []),
     identity: () => (sid ? identityOf(sid) : null),
     onRendered: (cb) => { renderHooks.push(cb); },
+    onLanded: (cb) => { landedHooks.push(cb); },
+    onReplaced: (cb) => { replacedHooks.push(cb); },
     onSelection: (cb) => { selHooks.push(cb); },
     onSaved: (cb) => { savedHooks.push(cb); },
     onClose: (cb) => { closeHooks.push(cb); },
@@ -2241,8 +2354,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
 
   // ── download (the user 2026-08-09) ── Any linked file can be SAVED, including everything the pane
   // cannot show: the kernel's ?download=1 serves anything on disk (the rationale lives with
-  // _file_download in kernel.py). Same-origin and cookie-authed like the view fetch, and
-  // federation-aware for free — fileUrl already routes a remote session's file through the relay.
+  // _file_download in kernel.py). Same-origin, authorized by the cap fileUrl adds (file-cap.ts) as the
+  // view is, and federation-aware for free: fileUrl already routes a remote session's file through the relay.
   const dlUrl = fileUrl(path, sid) + "&download=1";
   const dl = el("button", "fileview-btn") as HTMLButtonElement;
   dl.type = "button"; dl.innerHTML = ICON_DOWNLOAD; dl.classList.add("fileview-icon"); dl.dataset.icon = "1";   // the tray glyph the lightbox wears (icons.ts)
@@ -2322,17 +2435,32 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   /** The line is the notice standing (the same words): a landing that would raise it again leaves the element as it is. */
   const latin1LineStands = (): boolean => note !== null && note.textContent === LATIN1_NOTICE;
 
-  // A 200 whose bytes will not DECODE — a zero-byte file, a mid-write/truncated image — fires the
-  // img's error event and used to leave the browser's mute broken-image glyph: no reason, no way
-  // out. This is the 413/415 pane idiom instead: plain words naming what happened, the path, and
-  // the Download the view could not be. Keyed on the img's own error event, the exact deciding
-  // signal (never a timer, never a byte sniff). The PDF iframe has no equivalent failure event —
-  // the browser's viewer owns that surface and reports inside it — so this covers images only,
-  // deliberately.
-  const imgFailed = () => {
+  // The picture's img fired its error event. An error from an img the body no longer holds (a Source toggle or a reload
+  // replaced it; the browser also fires one failed request's error on every img that shares it) paints nothing, as
+  // whenShown's load listener does. For any picture but an svg, whose picture is made from the fetched bytes, the error
+  // means those bytes will not DECODE (a zero-byte file, a mid-write or truncated image), and the browser used to leave its
+  // mute broken-image glyph: no reason, no way out. This is the 413/415 pane idiom instead: plain words naming what
+  // happened, the path, and the Download the view could not be. An svg's picture loads from its /file address in a request
+  // of its own, so its error names no cause: a failure asks the address again (reaskPicture: the romp loader, then fetchFile,
+  // whose answer paints the picture again or the fetch chain's own pane in its own words), one re-ask per picture failure, and
+  // a failure of the picture that re-ask landed shows SVG_PICTURE_FAILED, worded for both causes, then arms the way back
+  // (armWayBack), unless a reconnect-class event arrived during that re-ask's attempt, its fetch or this picture's own load
+  // (`picLink`): the picture was asked for before the link came back, so the address is asked once more at once in place of
+  // the pane, and that ask records the count it starts with, so it runs once per event. A failure after a press of the Source
+  // toggle since the picture's paint starts nothing (`picView`): the Source view is on its way (its bytes may still be
+  // decoding), and returning to the picture loads it afresh, as a first showing (the press ends the re-ask's attempt,
+  // viewChanged), so that picture's failure asks the address again once.
+  // Keyed on the img's own error event, the exact deciding signal (never a timer, never a byte sniff). The PDF iframe has
+  // no equivalent failure event (the browser's viewer owns that surface and reports inside it), so this covers images
+  // only, deliberately.
+  const imgFailed = (e: Event) => {
     if (!wrap.isConnected) return;              // settled after a close/replace — paint nothing
+    if (!(e.target as Node).isConnected) return;   // a picture the body no longer holds: its failure paints over nothing it shows
+    if (picView !== viewSeq) return;            // the Source toggle was pressed since this picture's paint: the Source view stands, and back to the picture a fresh load runs
+    if (isSvgImage && !shownByReask) { reaskPicture(); return; }   // an svg's failure: its address is asked again
+    if (isSvgImage && picLink !== null && picLink !== linkSeq) { reaskPicture(); return; }   // a reconnect-class event arrived during the attempt that landed this picture: asked once more at once, in place of the pane
     const why = el("div", "fileview-err");
-    why.textContent = DECODE_FAILED;            // the exported sentence (the guide's pin reads it there)
+    why.textContent = isSvgImage ? SVG_PICTURE_FAILED : DECODE_FAILED;   // the exported sentences (the guide's pin reads them there)
     const words = why.textContent;              // the sentence alone, taken before the hint and the button join the pane: error()'s answer, never read back off the body
     const hint = el("div", "fileview-err-hint");
     hint.textContent = path;
@@ -2344,6 +2472,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     why.appendChild(offer);
     body.replaceChildren(why);
     viewError = words;                          // the pane's paint: the seam's error() answers its sentence until a content paint clears it (Slice 7, item 3)
+    if (isSvgImage) armWayBack();               // the pane after a re-ask: the reconnect-class events and the kernel's messages bring the picture back
     // The pane is a paint of the body like any other, so the seam's hooks hear it: whenShown fires only for a
     // picture that decoded, and until this line the panel kept the layer it had built over the PREVIOUS picture
     // when a reload's bytes failed to decode — the overlay stood, armed, over a body with no picture, and the
@@ -2351,6 +2480,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // panel's hook disposes a layer whose picture left: mediaElement() is null now).
     fireRendered();
   };
+  // The svg picture's re-ask: the romp loader takes the body and fetchFile asks the address again, the same fetch a first open
+  // and a reload run, so its answer paints what theirs would: the picture again (with its loader in the picture box until it
+  // loads) or the fetch chain's pane, in the relay's or the kernel's words, or the browser's own for no answer at all, with the
+  // path. The loader fires no onRendered, only the seam's onReplaced: the Comments panel keeps its layer until the answer paints,
+  // and error() stays null through the wait, as over any loader. A press of the Source toggle during the wait drops the answer
+  // (fetchFile's `view`): the Source view stands, and the picture loads afresh when the person returns to it.
+  const reaskPicture = () => {
+    body.replaceChildren(loaderEl());
+    fireReplaced();
+    fetchFile(true);
+  };
+  // A pane from a re-ask stands (imgFailed's, or the fetch chain's when the re-ask's fetch failed): the way back is armed, for
+  // the view the pane was painted in (`paneView`). The probes' budget is left as it is (fillProbes refills it only at the events
+  // named with its state above), so the panes that the probes' own fetches paint share one budget.
+  const armWayBack = () => { wayBack = true; wayBackSeq++; wayBackProbing = false; paneView = viewSeq; };
 
   // Chooses the body for the current prefs and syncs the buttons. The pressed state flips SYNCHRONOUSLY
   // in the click handler — the immediate acknowledgement ui/CLAUDE.md requires — and so does the content
@@ -2410,9 +2554,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (keepShownFrame()) return;           // the panel closing over a frame at these bytes: the frame stays; the notice, or the attempt under way, goes
       notePdfPage();                          // the reader's page, off the shells, before dropPdf removes them
       dropPdf();                              // the frame (or a picture) replaces any pages a closed panel leaves behind
+      picView = viewSeq;                      // the view this picture is painted in: its failure (imgFailed) and its load (below) act only while no press has come since
       const shown = isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed);
       body.replaceChildren(shown);
-      whenShown(shown, fireRendered);         // the seam's onRendered for a media body: once the picture shows (Slice 3)
+      fireReplaced();                         // the seam's onReplaced: a picture or a frame is up, its paint to come at whenShown
+      // the seam's onRendered for a media body: once the picture shows (Slice 3). A picture still loading when the Source toggle
+      // is pressed stays in the body until the body's next paint (the Source view's at its decode, unless a failed reload's pane
+      // or a landing of another type paints first), and its load then fires nothing, so no paint hook runs with the view's mtime
+      // (a landing's, when one came while the decode was out) over the picture painted before the press
+      whenShown(shown, () => { if (picView === viewSeq) fireRendered(); });
       aimFrame(shown);                        // …and the frame opens on the reader's page, not page 1
       return;
     }
@@ -2817,6 +2967,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // frame's column and the host follows the column, so the frame itself is never moved.
     if (col) { col.prepend(wait); body.appendChild(host); }
     else body.replaceChildren(wait, host);
+    fireReplaced();                            // the seam's onReplaced: the pages' loader is up, over the kept frame or in place of the body
     // The backstop (ui/CLAUDE.md, loading states; the constant's comment sizes it). Every other end of this attempt is an
     // event — the resolve, a rejection, the panel or the viewer closing — but a render that never settles fires none: a
     // worker stuck in a pathological content stream, or a chunk fetch that stalls without erroring, leaves the promise
@@ -2907,7 +3058,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // editor, Accept and Reject dimmed with those words, no Reveal or link into a read view that is gone: setMode and
     // scrollToOffset are no-ops now), and nothing above rendered them with the flag set: begin() ran before it, as it must
     // (a refused begin() leaves the read view untouched), and renderBody paints nothing in edit mode. So the seam's
-    // onRendered fires here, once, as the editor takes the body: the panel's paint pass stands down on editing() and its
+    // onRendered fires here, once, at the editor's entry and before the chunk's loader goes up (the swaps after it fire
+    // no hook: onReplaced's doc): the panel's paint pass stands down on editing() and its
     // cards take their edit-mode state. Without it a panel open at Edit kept its read-mode cards, live-looking controls
     // that did nothing, until some status happened to land (the review's cards-keep-read-mode finding). The exit's
     // repaint hands the read-mode state back.
@@ -3427,8 +3579,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // from the fallback itself or from the passes after the try that can throw through (the folds' restore, the width stamp,
   // the Outline's sync, the seat): a bug, not a file. Never a hook's own throw: fireRendered runs each hook in its own
   // try and swallows it (the review's round 2 corrected this list, which named the hooks).
-  const fetchFile = () => {
+  // `again`: this fetch asks an svg picture's address again (reaskPicture, the way back): its landing's picture shows the pane if
+  // it fails too, until a press of the Source toggle ends that attempt (viewChanged), and its failure pane arms the way back.
+  // Every fetch ends a standing pane's way back when it starts, and any
+  // other fetch (an open, a reload) refills the way back's probes. `view`: the Source toggle's count when the fetch starts; an
+  // answer of a fetch that asked again lands or paints its pane only while the count is the same (inView), so a press of the
+  // toggle while it is out leaves the Source view standing. `link`: the reconnect-class events' count when the fetch starts; a
+  // fetch that asked again and fails after one of them arrived (the link came back after it was sent) runs once more at once,
+  // over the pane its failure painted, and that run's own failure arms the way back as any pane does. Its landing hands the
+  // count on to the picture it shows (`picLink`), whose failure after such an event asks once more in place of the pane.
+  const fetchFile = (again = false) => {
     const my = ++fetchSeq;
+    const view = viewSeq;
+    const link = linkSeq;
+    wayBack = false;
+    if (!again) fillProbes();
     type Verdict = { isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean; bytes: number | null };
     // this fetch's verdicts off the headers, held here until its bytes land and applied with them below
     let v: Verdict | null = null;
@@ -3444,6 +3609,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // round 3, 2026-09-09; file-view-landing-order-browser.test.ts). An answer that does not stand paints nothing, parks
     // nothing and displaces nothing; the guards re-run inside the parked run for what changes while it is parked.
     const stands = (): boolean => wrap.isConnected && my === fetchSeq;
+    // A fetch that asked the picture's address again answers only over the view it started from (the romp loader or the pane,
+    // the picture's media view): after a press of the Source toggle its answer, a landing or a failure, paints nothing. Read
+    // inside the runs, so a press on the toggle that parks the answer and then clicks it counts too.
+    const inView = (): boolean => !again || view === viewSeq;
     // `parked`: the hold parks this landing under a press now under way, read once before the defer and handed to the run, which
     // learns from it whether it ran at once or at a release (the Outline's re-open below reads it; the PR review's round 2).
     const land = (run: (parked: boolean) => void): Promise<void> | void => {
@@ -3472,11 +3641,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       v.mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
       // Media branches on the SAME kernel verdict (an image 200 wears image/* and no X-Romp-Text-Utf8 —
       // tests/test_kernel_preview.py pins that contract server-side). The bytes below are the one fetch
-      // either way: media takes them as a blob for an object URL, never a second request.
+      // either way: media takes them as a blob for an object URL, except an svg, whose <img> loads its picture from the
+      // /file address (the Source view decodes this blob).
       const ct = r.headers.get("Content-Type") || "";
       v.isImage = ct.startsWith("image/");
       v.isPdf = ct.startsWith("application/pdf");
-      v.isSvgImage = ct === "image/svg+xml";
+      v.isSvgImage = v.isImage && ct.split(";")[0].trim().toLowerCase() === "image/svg+xml";   // the media type alone: a parameter such as charset changes nothing
       // The Latin-1 verdict keys on the header's VALUE with the text type, never on !isText: an image or a PDF carries no
       // X-Romp-Text-Utf8 at all (tests/test_kernel_preview.py pins that absence), and an old kernel that sends none leaves
       // isText true with Edit off through !mtimeNs. The text landing below says so in the note bar (LATIN1_NOTICE;
@@ -3493,6 +3663,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       return isImage || isPdf ? r.blob() : r.text();
     }).then((t) => land((parked) => {   // parked while a pointer is pressed over the card; the guards re-run at the release
       if (!stands()) return;                                    // closed, replaced or overtaken while it was parked
+      if (!inView()) { rearmDiskBar(my); return; }              // asked again, and the Source toggle was pressed since: the Source view stands, and the changed-on-disk bar, if this fetch took over its Reload, is armed again, since the moved bytes did not land
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
       const got = v!;                                           // set with the headers above; a failure never reaches here
       isText = got.isText; notUtf8 = got.notUtf8; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage; textBytes = got.bytes;
@@ -3503,20 +3674,47 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         // REPLACED mid-flight creates nothing to leak, and never clobbers the new open's mediaUrlLive registration.
         if (objUrl !== null) dropMediaUrl();    // a reload: the previous bytes' URL goes before the new one is minted
         mediaBlob = t;
-        objUrl = URL.createObjectURL(t);
-        mediaUrlLive = objUrl;                   // registered so close/replace can revoke (dropMediaUrl)
-        if (svgSource && svgText !== null) {
+        if (isSvgImage) {
+          // An svg's picture loads from its /file address, as the composer chip, the lightbox, a notice attachment, the file
+          // hover card and a chat image's first attempt already do; these bytes stay for the Source view, so the picture's
+          // load fetches the file a second time. The address carries the landed mtime as a version key (v,
+          // which the kernel ignores): while the page still holds the picture of an address it has loaded, a new <img> at
+          // that address shows it and asks for nothing, so a reload that brings new bytes needs a new address. An answer
+          // with no mtime takes the next number of svgLandingSeq instead. Nothing is minted, so nothing is registered for
+          // the teardowns to release.
+          objUrl = fileUrl(path, sid) + "&v=" + encodeURIComponent(mtimeNs || String(++svgLandingSeq));
+          shownByReask = again;
+          picLink = link;                        // the attempt's count, the fetch's start, held until this picture shows (imgFailed reads it)
+        } else {
+          objUrl = URL.createObjectURL(t);
+          mediaUrlLive = objUrl;                 // registered so close/replace can revoke (dropMediaUrl)
+        }
+        if (svgSource && svgText !== null && isSvgImage) {
           // A reload under the Source view: the XML swaps in when the new bytes decode, and the old
           // text stands until then — nulling it first would flap mode() to "media" and flash the image
           // for the decode's duration. A decode a newer reload overtook, or one landing after the
           // viewer closed, paints nothing: the newest bytes are what show, and a drained panel hears
-          // no onRendered.
-          void t.text().then((s) => { if (mediaBlob !== t || !wrap.isConnected) return; svgText = s; renderBody(); });
+          // no onRendered. Nor does one whose bytes a press of the Source toggle is decoding by then (srcDecode: the
+          // person went to the picture and back), or one those bytes' own decode painted first (svgTextOf): the Source
+          // view paints these bytes once. A landing of another type is no Source view's: it paints its picture below.
+          fireLanded();                          // the bytes are in hand before their decode paints the Source view: the seam's onLanded, as at a picture's landing (the panel's wait ends here)
+          void t.text().then((s) => { if (mediaBlob !== t || !wrap.isConnected || srcDecode !== null || svgTextOf === t) return; svgText = s; svgTextOf = t; renderBody(); });
           return;
         }
-        svgText = null;   // any decode on hand was the OLD bytes': the next Source toggle decodes this blob
+        if (isSvgImage && srcDecode !== null) {
+          // An svg landing while a press of the Source toggle waits for its bytes to decode: the person chose the Source view, so
+          // no picture paints over it. The seam's onLanded runs first, at the landing, as at a picture's landing (the panel's wait
+          // for the bytes ends here, not at their decode); then these bytes go to that view, which paints at their decode as
+          // the press's would have, and the decode of the older bytes paints nothing (decodeForSource).
+          fireLanded();
+          decodeForSource(t);
+          return;
+        }
+        svgText = null; svgTextOf = null; svgSource = false; srcDecode = null;   // any decode on hand, or out for a press, was the OLD bytes': the next Source toggle decodes this blob, and no older XML paints over this landing's picture
         renderBody();
         landMedia();                             // the open's first paint (a picture, a PDF frame): the target named and the body taking the keyboard, over a body with a box
+        if (isSvgImage) fireLanded();            // the bytes are in hand: the seam's onLanded, after renderBody, so a picture the page still holds has painted by now and one that asks the network has not (the panel's wait ends at the first of the two)
+        if (isSvgImage) whenShown(body, () => { fillProbes(); picLink = null; });   // a landing whose picture shows (its load event, or at once when the browser holds it) refills the way back's probes and ends its attempt (picLink); one whose picture fails refills nothing
         return;
       }
       text = t;
@@ -3549,6 +3747,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (reopenOutline) openOutline();
     })).catch((err) => land(() => {
       if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
+      if (!inView()) { rearmDiskBar(my); return; }              // …nor over the Source view a press put up while a fetch that asked again was out, the changed-on-disk bar armed again as at a failure…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)
       const why = el("div", "fileview-err");
       const msg = String(err && err.message || err);
@@ -3577,8 +3776,47 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       viewError = msg;                                          // the seam's error(): the pane's words, until the next content paint clears them (plans/markdown-viewer.md Slice 7, item 3; contract C1)
       fireRendered();                                           // the pane is a paint of the body like imgFailed's: fired AFTER the swap (a hook reading the body finds the pane) and before the re-arm (the re-arm reads the keyboard after the hooks), on every failure path, a first open's included, so a hook waiting on a reload hears it fail at the paint (before: no hook fired, and the Comments panel's loader stood until its 15 s deadline)
       rearmDiskBar(my);                                         // the changed-on-disk bar's own Reload failed: its button is armed again above the pane, AFTER the pane's paint: a keyboard the reader put on the old body's content during the flight (a link, a fold's summary), which that paint removed, then reads as nothing holding it and goes back on the button (the review's round 3: read before the paint, the link held it, the re-arm stood down, and the removal left the keyboard on the document's body)
+      if (again) armWayBack();                                  // a re-ask's pane (an svg picture's address asked again): the way back is armed
+      if (again && link !== linkSeq) askAgain();                // a reconnect-class event arrived while this fetch was out, so the link came back after it was sent: it runs once more at once
     }));
   };
+  // The way back from a pane over an svg picture (armWayBack): events, never a timer. romp:wsup (this page's socket is back),
+  // hostUp (a session's tunnel is back; federation dispatches it as a message) and romp:hostRelayUp (a host's relay socket
+  // reopened, which a remote kernel's restart fires alone) each refill the probes' budget and run fetchFile again. One that
+  // arrives while a fetch that asked again is out, or while the picture that fetch landed is still loading, is counted
+  // (linkSeq): that fetch, if it fails, runs once more at once (fetchFile's `link`), and that picture, if it fails, asks once
+  // more at once in place of its pane (imgFailed's `picLink`). Every other kernel message may send one probe of the picture's
+  // address off the page (preview.ts probeServed, the parked markdown images' probe, for an address the kernel serves), one
+  // at a time, each spending one of the budget when it is sent, and a probe that loads runs fetchFile: a relay that comes
+  // back with no tunnel event is heard too.
+  // The pane that fetch paints when it fails keeps what is left of the budget, so three probes in all run until fillProbes
+  // refills it, however many of them load (a new picture at an address the page has loaded before may load from the page's own
+  // memory, with no request, while the page still holds that picture). Nothing runs once the Source toggle has been pressed
+  // since the pane's paint (`paneView`). The listeners leave with the viewer (closeHooks: both exits).
+  const paneWaits = (): boolean => wayBack && viewError !== null && wrap.isConnected && !editing && paneView === viewSeq;
+  const askAgain = (): void => { if (paneWaits()) fetchFile(true); };
+  const wayBackEvent = (): void => { linkSeq++; fillProbes(); askAgain(); };
+  const onKernelMessage = (e: MessageEvent): void => {
+    const m = e.data;
+    if (!m || typeof m.type !== "string") return;
+    if (m.type === "hostUp") { wayBackEvent(); return; }
+    if (!paneWaits() || wayBackProbing || wayBackProbes <= 0 || objUrl === null) return;
+    const pane = wayBackSeq;
+    wayBackProbing = true;
+    wayBackProbes--;
+    const sent = probeServed(objUrl,
+      () => { if (pane !== wayBackSeq) return; wayBackProbing = false; askAgain(); },
+      () => { if (pane !== wayBackSeq) return; wayBackProbing = false; });
+    if (!sent) { wayBackProbing = false; wayBackProbes = 0; }
+  };
+  window.addEventListener("romp:wsup", wayBackEvent);
+  window.addEventListener("romp:hostRelayUp", wayBackEvent);
+  window.addEventListener("message", onKernelMessage);
+  closeHooks.push(() => {
+    window.removeEventListener("romp:wsup", wayBackEvent);
+    window.removeEventListener("romp:hostRelayUp", wayBackEvent);
+    window.removeEventListener("message", onKernelMessage);
+  });
   fetchFile();
   return true;
 }
@@ -3596,8 +3834,8 @@ function offersDownload(status: number | undefined): boolean {
 // It presents here instead: same modal, same Rendered ⇄ Raw preference (FMT_KEY), same loader-first
 // wait, same mdBlock — fetched by the BROWSER from the URL itself, with no kernel in the loop. Zero new
 // kernel surface is the point: the kernel's /file relay is a preview relay and has stayed one on
-// purpose (_remote_file's docstring), and a same-origin URL needs no relay — the browser already has
-// the cookie. Cross-origin .md links are never routed here (render.ts checks isMarkdownUrl first).
+// purpose (_remote_file's docstring), and a same-origin URL needs no relay: the fetch carries the
+// page key like every other. Cross-origin .md links are never routed here (render.ts checks isMarkdownUrl first).
 //
 // The shell is built here rather than threaded through openFileView because almost everything in that
 // row is keyed on the KERNEL's reply — Edit on the text/plain + mtime verdicts, Download on the
@@ -3813,7 +4051,7 @@ export function openUrlView(href: string): void {
     parts = urlTitleParts(loc);
     dir.textContent = parts.dir; base.textContent = parts.base; name.title = loc;
   };
-  // Same-origin, cookie-authed, cache: no-store like every viewer fetch, on this open's abort signal.
+  // Same-origin (the fetch wrapper adds the page key), cache: no-store like every viewer fetch, on this open's abort signal.
   // mode: "same-origin" holds the rule through REDIRECTS too: the clicked URL passed isMarkdownUrl, but
   // a same-origin alias that 302s to a foreign host answering with a permissive CORS header would
   // otherwise be fetched and rendered with that host as the base for every relative figure (review
@@ -3852,7 +4090,7 @@ export function openUrlView(href: string): void {
 }
 
 // Kick the browser's downloader at `url` without touching the pane: a clicked <a download> starts a
-// same-origin, cookie-authed request the BROWSER owns (its progress UI, its save location), and since
+// same-origin request, authorized by the cap in its URL, that the BROWSER owns (its progress UI, its save location), and since
 // the kernel answers with Content-Disposition: attachment the page never navigates — the viewer, the
 // feed behind it, and the scroll position all stay put. The button acknowledges the click itself
 // (ui/CLAUDE.md), because the browser's download UI can take a beat to appear over a slow tunnel.
@@ -4301,7 +4539,16 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // gated, so a file's own attachments load on open; the list is read at every paint (loadSettings inside), so a
     // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
     gateRemoteFigures(clean, document.baseURI);
+    // The cap pass below changes the src of a figure written with its scheme, which the rewrite left as written, so the
+    // spelling the author wrote is kept first, where the comments panel reads it (keepAuthoredSpellings).
+    keepAuthoredSpellings(clean);
   }
+  // A /file URL of this origin that the document names as written, with its scheme (a figure `![](http://<this host>/file?...)`
+  // or a link to one), carries this page's cap, as every authored-markdown renderer's does (authored-file-caps.ts): the
+  // rewrite above re-points relative and absolute-path figures through fileUrl, which caps them, and leaves a URL with a
+  // scheme as written. Before the adoption, like every pass that sets a fetching attribute (the chain block above); an
+  // absolute URL stays absolute (file-cap.ts withFileCap), so linkMarkdownAnchors below still opens such a link in a new tab.
+  capAuthoredFileUrls(clean);
   // Adopted as they are, no re-parse here or after (the fence pass's re-parse ran above, before the chain), every fetching
   // attribute gated or repointed above, so the adoption starts no fetch to an unlisted host and none at a pre-rewrite URL, in
   // any engine; what it does start is the fetch of every figure left with a live attribute, the folder's through /file and an
@@ -4412,15 +4659,35 @@ function mintHeadingIds(root: ParentNode): void {
   heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
 }
 
-/** The authored candidates of a srcset rewriteFigureSrcs rewrote, kept on the element beside the rewrite (the label of a figure
- *  that failed names the candidate the browser asked for by them, failedSource). */
+/** The authored candidates of a srcset rewriteFigureSrcs rewrote or the cap pass capped (keepAuthoredSpellings), kept on the
+ *  element beside the rewrite (the label of a figure that failed names the candidate the browser asked for by them,
+ *  failedSource). */
 const FV_SRCSET = "data-fv-srcset";
+/** For a file document, just before the cap pass (capAuthoredFileUrls, in mdBlock): the spelling the author wrote, for each
+ *  figure whose URL that pass is about to change. The rewrite (rewriteFigureSrcs) leaves a URL written with its scheme as
+ *  written, and the cap pass then adds this page's cap to one that names this origin's /file route, so without this an img's
+ *  `src` would read as the capped URL, not the embed's destination, and the comments panel could not pair the picture with
+ *  its embed (pictureDest, embedFor, imgForRange in file-comments.ts). So an img whose `src` withFileCap would change, and
+ *  that has no `data-fv-src`, gets its current `src` there (an img's src alone, as rewriteFigureSrcs keeps it); a srcset
+ *  whose candidates the pass would change gets FV_SRCSET, unless one already stands: rewriteFigureSrcs stamps the authored
+ *  candidates of every srcset it rewrote, one that mixes path and scheme candidates included, and that stamp holds the
+ *  author's spelling of each. */
+function keepAuthoredSpellings(root: ParentNode): void {
+  for (const ref of figureRefs(root)) {
+    const el = ref.el as HTMLElement;
+    if (ref.attr === "srcset") {
+      if (!el.hasAttribute(FV_SRCSET) && parseSrcset(ref.value).some((c) => withFileCap(c.url) !== c.url)) el.setAttribute(FV_SRCSET, ref.value);
+      continue;
+    }
+    if (el.tagName === "IMG" && ref.attr === "src" && !el.hasAttribute("data-fv-src") && withFileCap(ref.value) !== ref.value) el.setAttribute("data-fv-src", ref.value);
+  }
+}
 /** A markdown file's path figures — `![](plot.png)`, `<img src="figs/a.png">`, `![](/srv/notes-api/figs/a.png)` — name
  *  files on the kernel's disk, and a browser resolving them against the page URL (/files, /chat, /feed) 404'd every
  *  one: a relative src against the page's directory, an absolute path against the dashboard ORIGIN, where no route
  *  serves it; only http(s), data: and other URLs ever rendered (plans/file-review.md, Images and PDFs; Slice 3). So
  *  each path `src` in the sanitized rendered DOM is re-pointed at the kernel's /file route — fileUrl: same-origin,
- *  cookie-authed, and a remote session's figure relays through /remote/<host>/file exactly as the file itself did.
+ *  capped (file-cap.ts), and a remote session's figure relays through /remote/<host>/file exactly as the file itself did.
  *  A relative src names `<dir of the open file>/<src>`; an absolute one (`/…`) names that path itself, which is how
  *  every other reader of an embed's destination already takes it — the panel's embed matching (embedPath, in
  *  file-comments.ts), the poll's figurePath (file-comments-model.ts) and the host's resolveSrc (file-comments-host.mjs)
@@ -4439,7 +4706,9 @@ const FV_SRCSET = "data-fv-srcset";
  *  the attribute is decoded back to a path first (decodeURI; a malformed escape is taken as written). The authored
  *  attribute value survives as `data-fv-src` on every rewritten figure: the panel's embed matching (embedFor /
  *  imgForRange in file-comments.ts) and a region comment's `src` need the source's own spelling, not a URL. An
- *  untouched figure's `src` IS that value, and an authored `data-fv-src` on one is dropped so the attribute means one
+ *  untouched figure's `src` is that value unless mdBlock stamped `data-fv-src` after this rewrite (keepAuthoredSpellings,
+ *  for a /file URL of this origin written with its scheme, whose src the cap pass then changes), and an authored
+ *  `data-fv-src` on one is dropped here so the attribute means one
  *  thing: this viewer rewrote this src. Runs on the DOM after DOMPurify, never on marked's HTML string — a string
  *  rewrite would re-parse attribute syntax the sanitizer already settled, and a src the sanitizer removed must stay
  *  removed. `dir` carries its trailing slash ("" for a bare relative file name, which then resolves against the
@@ -4501,8 +4770,10 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
 // the paint's own task, the fact the seam's onRendered doc relies on) and parks a label after the img naming the fact and
 // the source (FIGURE_FAILED, the authored src by pictureDest's rule, the alt when there is one). Its twin, a capture-phase
 // `load` listener, removes the label when a retry lands. Installed once per open beside the body's other listeners and
-// dropped with the viewer, never per paint, so the chat page's heal (preview.ts installMdImgHeal, which re-fetches every
-// failed `<img>` per kernel message and on romp:wsup) re-fires into the same listener; the heal skips an img with an
+// dropped with the viewer, never per paint, so the chat page's heal (preview.ts installMdImgHeal, which parks every
+// failed `<img>` at an address and probes that address off the page, on the first three kernel messages for an address the
+// kernel serves and on each reconnect-class event, putting the src back when a probe loads) re-fires into the same
+// listeners; the heal skips a data: figure, which no server can heal and which keeps its src, and an img with an
 // `onerror` property, and none is set here: the img is only listened to. The img stays in the DOM as the browser draws it
 // with every attribute untouched: the Comments panel pairs pictures by img order and `data-fv-src` (file-comments.ts
 // embedFor), the regions layer wraps THE img (file-comments-regions.ts) and the reader's place counts `<img` tags in a row,
@@ -4567,8 +4838,8 @@ function absUrl(u: string): string {
  *  a label naming `src` for a picture or a srcset img named a file the browser never asked for, one that may well be there
  *  (the review's round 1). `img.currentSrc` is the browser's answer: when it is set and is not the img's own src, the
  *  candidate it names is matched against the srcset carriers (the picture's sources, then the img) and named by the authored
- *  spelling rewriteFigureSrcs kept beside the rewritten candidates (FV_SRCSET), or as written when the candidates were left as
- *  written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs by
+ *  spelling kept beside the rewritten or capped candidates (FV_SRCSET: rewriteFigureSrcs, keepAuthoredSpellings), or as
+ *  written when the candidates were left as written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs by
  *  resolveFigureRefs with no data-fv-src and no FV_SRCSET stamp, so its label names the resolved URL). The img's own src, or an
  *  img with no currentSrc to read (the node stand-in), keeps pictureDest's rule: `data-fv-src` when the viewer rewrote the src,
  *  else `src`; a figure with neither names nothing. */
@@ -4600,7 +4871,8 @@ function shownSource(src: string): string {
  *  label printed that string, "Image failed to load:  (alt)", a dangling colon before two spaces and nothing named. */
 const FIGURE_NO_SOURCE = "the source is empty";
 /** The label's words (the slice's contract C2, and its round 1 line): FIGURE_FAILED, the source the browser asked for as the
- *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src, else `src`, or
+ *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src or the cap pass
+ *  changed it, else `src`, or
  *  the srcset candidate the browser chose; a data: source cut to its head, shownSource) or FIGURE_NO_SOURCE when there is
  *  none to name, and the alt in parentheses when it is not empty. */
 function figureLabelText(img: Element): string {
@@ -4774,31 +5046,51 @@ function textPoint(root: Node, n: number, start: boolean): [Node, number] {
 // The media body's "shown" moment, for the seam's onRendered (Slice 3: the region overlay sizes itself against
 // the picture, so it must run once there IS one). A PDF frame counts as shown the moment it is in the body — the
 // browser's viewer owns everything inside it and gives no signal to wait for (the same reason pdfBlock arms no
-// error listener). An <img> counts once it has decoded: at once when it already had (`complete` — a blob the
-// browser still holds), else on its load event. A load that lands after the img left the document fires nothing:
-// a reload replaced it, the decode failed and imgFailed's pane took the body (a paint of its own, which fires the
-// hooks itself), or the viewer closed — what shows then is something else, and an overlay sized against the old
-// picture would frame nothing anyone sees.
+// error listener). An <img> counts once it has decoded: at once when it already had (`complete`: a blob the
+// browser still holds, or the picture of an address it has loaded, while it still holds that picture), else on its
+// load event, which for an svg's picture is the end of its own request to the /file address; imgBlock's loader leaves
+// on that event first, in a listener armed before this one. A load that lands after the img left the document fires
+// nothing: a reload replaced it, the picture failed and imgFailed took the body (the pane, a paint of its own that
+// fires the hooks itself, or an svg's re-ask, whose answer paints), or the viewer closed. What shows then is something
+// else, and an overlay sized against the old picture would frame nothing anyone sees. The picture can also stay in the
+// document while the view moves on (a press of the Source toggle while its decode is out leaves it up): the media arm's
+// callback reads the press count for that (renderBody), so its load then fires nothing either.
 function whenShown(shown: HTMLElement, cb: () => void): void {
   const img = shown.querySelector("img.fileview-img") as HTMLImageElement | null;
   if (!img || img.complete) { cb(); return; }
   img.addEventListener("load", () => { if (img.isConnected) cb(); }, { once: true });
 }
 
-// The image body: ONE <img> aimed at the object URL — never innerHTML, never an iframe. That is the
+// The image body: ONE <img> aimed at objUrl (an object URL, or an svg's /file address), never innerHTML, never an iframe. That is the
 // whole SVG-safety story (an <img> never runs SVG scripts — the same surface the kernel's preview
 // comments and the relay's local type re-derivation rely on), and for every other image it is simply
 // the right element. Centered and capped like the lightbox's image (.romp-lightbox-img), so a huge
-// plot fits the card and a small icon renders at its own size. Bytes that will not decode fire the
-// img's error event into onDecodeFail (armed before src, so no event can slip past), where the open
-// viewer swaps in its failure pane — the caller owns the pane; this stays a pure element builder.
-function imgBlock(objUrl: string, path: string, onDecodeFail: () => void): HTMLElement {
+// plot fits the card and a small icon renders at its own size. The img's error event goes to onFail with
+// the event (armed before src, so no event can slip past): bytes that will not decode, or for an svg's picture,
+// which loads from its /file address, a load that failed too, and the open viewer decides what the body shows
+// (imgFailed). A picture that loads from the network (any src but an object URL of bytes in hand: an svg's /file
+// address) and is not complete once its src is set has the romp loader beside it in the box until its load event,
+// in a listener armed before whenShown's, so the loader is gone before the seam's hooks measure; on an error the
+// caller's paint takes the whole box. The box fills the body (min-height: 100%), so the loader sits in the part of
+// the body on screen. A picture the browser already holds (a repaint at the same address) is complete and shows
+// with no loader, and so does an object URL's picture, whose bytes are in hand and only decode. The caller owns
+// every pane; this stays a pure element builder. The box carries the viewer's data mark (VIEWER_PICTURE_MARK) beside
+// its class, which is for the sheets: the chat page's markdown-image heal leaves a picture inside the mark to the viewer,
+// and knows the box by the mark because no author's markup can carry it (the sanitizer strips every data-* attribute an
+// author writes), while an author can type the class.
+function imgBlock(objUrl: string, path: string, onFail: (e: Event) => void): HTMLElement {
   const box = el("div", "fileview-imgbox");
+  box.setAttribute(VIEWER_PICTURE_MARK, "");
   const img = el("img", "fileview-img") as HTMLImageElement;
-  img.addEventListener("error", onDecodeFail, { once: true });
+  img.addEventListener("error", onFail, { once: true });
   img.src = objUrl;
   img.alt = path;
   box.appendChild(img);
+  if (!img.complete && !objUrl.startsWith("blob:")) {
+    const wait = loaderEl();
+    box.appendChild(wait);
+    img.addEventListener("load", () => { if (img.isConnected) wait.remove(); }, { once: true });
+  }
   return box;
 }
 

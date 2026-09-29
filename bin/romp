@@ -178,9 +178,10 @@ if [[ "${1:-}" == "spend-repair" ]]; then
     exec romp-spend-repair "$@"
 fi
 
-# The kernel serve token — required on EVERY kernel/bus request, loopback included (Jupyter's
-# model: the 0600 file, not the socket, is the same-user trust boundary). Same resolution order
-# as the kernel's _load_token: env override, else the state file.
+# The kernel serve token: required on EVERY kernel/bus request, loopback included, presented directly
+# or, by a browser, through a sign-in made with it (Jupyter's model: the 0600 file, not the socket, is
+# the same-user trust boundary). Same resolution order as the kernel's _load_token: env override, else
+# the state file.
 _romp_token() {
     if [[ -n "${ROMP_SERVE_TOKEN:-}" ]]; then printf '%s' "$ROMP_SERVE_TOKEN"; return; fi
     cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/serve-token" 2>/dev/null || true
@@ -966,8 +967,9 @@ print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms
          ("%.0f" % (dl("judge", "cpu_ms_sum") / jp)) if jp else "-", workers_note,
          dl("memos", "chain", "hit"), dl("memos", "chain", "miss"), jw, jev, jbs, max(0, jw - jev)))
 # the evidence gate, per gated tier: per-session runs the tier made against the ones it declined. On the child
-# road (judge.child present) the gate runs in the child and this process's counters stay at zero, so the line
-# prints "no gated runs in the window" while the child judges (the done line carries no tiers block)
+# road (judge.child present) the gate runs in the child and this line still reads this process's counters, which
+# stay at zero, so it prints "no gated runs in the window" while the child judges; the child's gate figures ride
+# judge.child.tierGate, its last pass's alone, from which no window's difference can be taken
 # (skipped / (ran + skipped) is the acceptance number for the gate), then the runs that ended without a
 # stamp when there were any (incomplete: a deferral or a failed call; due_clock: a background deadline
 # made the run due; bypassed: no signature could be computed, or the parse ran under another cut)
@@ -3054,7 +3056,14 @@ print("\x1f".join([r.get("parentIgnored") or "", "existing" if r.get("existing")
             _refused="$(python3 -c 'import json,sys; v=json.loads(sys.argv[1]).get("refused"); print(v if isinstance(v, str) else "")' "$_resp" 2>/dev/null || true)"
             [[ -n "$_refused" ]] && echo "romp new: $_refused" >&2
             _effask="$effort_arg"; [[ -n "$_refused" ]] && _effask=""
-            _envask="${env_args[*]-}$_noenv"
+            # an `envRefused` echo is the kernel's ANSWER to --env / --no-env, in the same shape (review round 2
+            # of the env-pick door, 2026-09-19: the kernel dropped set_env's verdict, so a pick its backend
+            # refused printed here as applied): its own slot, so a refused --env is never confused
+            # with a dropped one below, and never counted as unacknowledged. The sentence names nothing of the
+            # pick (its values can be secrets); the kernel's problem row says why.
+            _envrefused="$(python3 -c 'import json,sys; v=json.loads(sys.argv[1]).get("envRefused"); print(v if isinstance(v, str) else "")' "$_resp" 2>/dev/null || true)"
+            [[ -n "$_envrefused" ]] && echo "romp new: $_envrefused" >&2
+            _envask="${env_args[*]-}$_noenv"; [[ -n "$_envrefused" ]] && _envask=""
             # the tags ask is named for what it was: --in, or the inheritance a parent implies
             _taglab=""; if [[ ${#in_args[@]} -gt 0 ]]; then _taglab="--in"; elif [[ -n "$_parent" ]]; then _taglab="the parent's tags"; fi
             _dropped="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print("/".join(lab for k,lab,a in (("model","--model",sys.argv[2]),("effort","--effort",sys.argv[3]),("env","--env",sys.argv[4]),("tags",sys.argv[6],sys.argv[5])) if a and r.get(k) is None))' "$_resp" "$model_arg" "$_effask" "$_envask" "$_tagask" "$_taglab" 2>/dev/null || echo "--model/--effort/--env/--in")"

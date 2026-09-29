@@ -242,15 +242,19 @@ else
     say "running the Python suite..."
     # Resolve a suite environment instead of assuming a system-wide pytest (the v0.13.0 run died
     # on a bare ModuleNotFoundError mid-release on a box with only a repo venv). Prefer a WORKING
-    # ambient `python3 -m pytest`; else run through uv's throwaway env with CI's exact dep set
-    # (pytest + cryptography — .github/workflows/ci.yml's install step: cryptography is the Web
-    # Push soft dependency, without it the webpush tests silently skip); neither → die LOUDLY
-    # naming both remedies BEFORE any release state is at stake.
+    # ambient `python3 -m pytest`; else run through uv's throwaway env with pytest and cryptography
+    # (cryptography is the Web Push soft dependency, without it the webpush tests silently skip).
+    # That is not CI's whole set: the Python cells in .github/workflows/ci.yml also install
+    # pytest-timeout, for a per-test timeout this run does not ask for; pytest-xdist, without which
+    # the few tests that run a child pytest under -n skip; and the pinned Claude Agent SDK, without
+    # which the SDK-gated tests skip in that env unless the box's own SDK venv reaches sys.path
+    # (tests/test_host_transport.py adds it at import). With neither an ambient pytest nor uv, die
+    # LOUDLY naming both remedies BEFORE any release state is at stake.
     if [ -z "$PYTEST" ]; then
         if python3 -m pytest --version >/dev/null 2>&1; then
             PYTEST="python3 -m pytest"
         elif command -v uvx >/dev/null 2>&1; then
-            say "no ambient pytest — running the suite through uv's throwaway env (pytest + cryptography, CI's dep set)"
+            say "no ambient pytest: running the suite through uv's throwaway env (pytest + cryptography), without pytest-timeout, pytest-xdist or the pinned Claude Agent SDK, so the tests that need xdist or the SDK may skip"
             PYTEST="uvx --with pytest --with cryptography pytest"
         else
             die "no way to run the Python suite: python3 has no pytest and uv is not installed.

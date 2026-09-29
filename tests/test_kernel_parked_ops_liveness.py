@@ -23,10 +23,11 @@ test starts km._producer against judge tiers stuck on a gate. Two things went wr
      side effect). The module under -n 9: red. A full -n 10 sweep: a prior latcher in the target's worker is likely but
      not guaranteed: five full sweeps checked on 2026-09-21 did not fire it (those for 853, 862 twice and 887, and 781's
      at c7e51ae47) and one did (box 2's control at 65f1895f6). An isolated-level certainty and a sweep-level flake at the
-     same time, decided by which tests ran before it in that worker's process; never in CI (serial). The red-before
-     measurement is the single test alone, serially. setUp neutralises the hold with the stub tests/test_judges_process.py
-     uses (a lambda returning True), here as one of setUp's patchers, each stopped by a cleanup registered as it starts
-     (unittest skips tearDown when setUp raises, and runs the cleanups), so every road restores it.
+     same time, decided by which tests ran before it in that worker's process; never in CI, whose cells then ran
+     serially. The red-before measurement is the single test alone, serially. setUp neutralises the hold with the stub
+     tests/test_judges_process.py uses (a lambda returning True), here as one of setUp's patchers, each stopped by a
+     cleanup registered as it starts (unittest skips tearDown when setUp raises, and runs the cleanups), so every road
+     restores it.
   2. The stop on the tail. The stop seam, the gate release and the join were the body's LAST lines, so the failed
      assertion skipped them, the with-block's eleven patches were undone on the way out while the producer was still in
      its hold, and a live, fully unpatched judge loop ran for the rest of the worker's life, wherever that failure fired;

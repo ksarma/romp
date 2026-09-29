@@ -21,8 +21,8 @@
 //    enters and leaves: the highlights standing in them are unpainted and painted again with the target inside them, then the one
 //    trim runs (lineBoxOf; repaintPresel's docblock). So while the composer is pending: no padding-only mark of either class, no
 //    bare rendered blank in the item, the target's marks nested inside the highlight's (the pass's order), and the marks are what a
-//    paint pass leaves under the same target (the settings signal runs paintAll with the composer standing: the same blank-mark
-//    counts), with the seam reporting neither a paint nor a reflow (the path was the repaint, not the hooks).
+//    paint pass leaves under the same target (the settings signal runs #latchCardState's pass with the composer standing: the
+//    same blank-mark counts), with the seam reporting neither a paint nor a reflow (the path was the repaint, not the hooks).
 // 2. Cancel unpaints the target (closeComposer runs the same repaint) and the wrap points move back: round 14's trim left the blanks
 //    its stand had unwrapped bare, 4, 4, 3 and 2 of them at 300 to 600 px with the whole item selected and 3 and 2 at 300 and 400 px
 //    with four links selected, until the next paint pass (a status move, a reload), the ring gapped for as long as a quiet file
@@ -80,7 +80,7 @@ const read = (page: any): Promise<Read> => page.evaluate(() => {
   return { paints: w.__paints, reflows: w.__reflows, hl: scan("fc-hl"), presel: scan("fc-presel"), nested: body.querySelectorAll("mark.fc-hl > mark.fc-presel").length, inverted: body.querySelectorAll("mark.fc-presel > mark.fc-hl").length, bare, column: getComputedStyle(body.parentElement!).flexDirection === "column" };
 });
 /** A paint pass with everything as it stands, the composer included: the shared settings signal (settings.ts onExternalSettingsChange,
- *  the `romp:settings` event) flips Show changes inline off and back on, and the panel answers each change it sees with paintAll. The
+ *  the `romp:settings` event) flips Show changes inline off and back on, and the panel answers each change it sees with #latchCardState's pass. The
  *  note carries no change, so the marks the pass paints are the highlight's and the target's alone. */
 const paintPass = (page: any): Promise<void> => page.evaluate(() => {
   const cur = JSON.parse(localStorage.getItem("romp:settings") || "{}");
