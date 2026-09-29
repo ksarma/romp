@@ -14661,6 +14661,9 @@ function phoneShell(): boolean {
 }
 // The prefetch never runs while the browser tab is hidden (nextPrefetch); coming back is the event that re-arms
 // it. (A display:none pane has no event for its CSS flip — it re-arms on the next upsert / click instead.)
+// [fork] On the phone the chat pane's show re-arms it too: the chat-visibility observer's hidden-to-shown flip (watchChatVisibility's
+// onShown, schedulePrebuild) and the shell's panes word (the belt in the panes handler, for a browser whose observer does not run over a
+// hidden iframe); the next upsert or click still re-arms it as well (the reviewer's round-7 finding fresh-4).
 document.addEventListener("visibilitychange", () => { if (!document.hidden) schedulePrebuild(); });
 // the rail's minute tick (T406, refreshRelativeMarkers above): armed once here for the page, re-armed by each fire; a
 // window shown again after minutes hidden catches its today labels up at once rather than at the next boundary
