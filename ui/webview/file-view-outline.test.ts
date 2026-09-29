@@ -2266,7 +2266,7 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // mouse-typed event), M-NOTAPPAIR (it refuses a tap's chain with a compatibility mouseout or mouseover), M-NOBLURPAIR (it refuses
 // every chain with an element's blur), M-NOKEY (the chain listener hears keydown and the grammar reads it as it reads any other
 // token), M-B0OK (a press's chain reads no mouse event with no button down), M-TAPMOUSEPTR (a tap's chain reads no mouse-typed pointer
-// event), M-NOMOVEREQ (a tap's chain with no compatibility mousemove read as if it had one), M-LONEBLUR (an element's blur the focus
+// event), M-NOMOVEREQ (a tap's chain with no compatibility mousemove read as if it had one), M-PEN0E (a pen's press admits the mouse's pointerout and pointerover with no button down to an element), M-WASE (the token reads a blur's or a focus's target the window as an element), M-LONEBLUR (an element's blur the focus
 // does not follow read as absent), M-W1OFF (the widening to a tap's mouseup of detail 2 dropped), M-W2OFF (the widening to the focus
 // arriving before a press's mousedown and in a tap before its pointerup dropped), M-W3OFF (the widening to the mouse's boundary
 // events to no element during a finger's contact dropped), M-NOMOUSE, M-NOPEN and M-NOTOUCH (the grammar refuses every mouse's, pen's
@@ -2871,7 +2871,7 @@ test("how a click finds its press, a tap whose compatibility events went to anot
   assert.deepEqual(got, { button: refused, noButton: refused, none: opened, inside: opened, own: opened, mouse: refused },
     "each row's click and the next click's opens and reveals, [that click, the next]: the click after a mouseout to no element while the tap's compatibility mousedown was due refused by the own-chain allowlist and revealing, the next opening; the order with no mouseout, the compatibility pair to elements and the viewer's own tap opening; the mouse's click with a mouseout to no element in its chain refused (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, a blur of this window, a guard CI runs (the file review's round 19, extra5-1, extra8-1 and extra8-2; and the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): a blur whose target is the window itself, the keyboard focus leaving this document for another document or window, is in no chain the viewer's own gestures make, so the own-chain allowlist refuses the click whose chain carries it: the mouse pressed on the control with the control shown, then that blur, as another document's element that takes its own press's mousedown without cancelling it moves the focus, then that element's click reaching this window as a pointerup under the held press's pointerId, a mouseup of detail 1 and a click (WebKit's order after the top page hid and showed the frame, and Chromium's still one), opens nothing and reveals the control, and so does a pen's press held so (Chromium's order), and the viewer's own tap on the picture with that blur between its pointerup and another document's tap on an element over the control, in Firefox's order and in WebKit's; the costs, each refused once: the viewer's own press held while the focus moves, the viewer's own tap whose pointerup the focus moves at, and, refused by the allowlist where bef9ff8fc's gate opened them, the focus moved between a mouse click's pointerup and its mouseup and a finger held while the focus moves (round 19's measurement of the blur's rule read both opening in the browser: the first 18, 14 and 18 in Chromium, Firefox and WebKit, the second 14 in Chromium), and an element's blur inside this document during a press with no element's focus after it before the pointerup, the chain of the viewer's own press released before retakeAfterHide's focus returns and of extra5-1's covered click with the focus not back; the next click opens once in each; while the first click and the first tap after a blur and Firefox's blur after the viewer's own open, each outside any chain, open, and a press begun with the control covered stays refused after the blur, and a record left standing refuses a click under its own pointerId, which never falls through to the slot (a property pin over window.open's calls and the scrollIntoView record; the closing rows and the first two cost rows red at d61eb027d, whose gate heard no blur, and, the blur's rule retired, under M-OFF, the element's blur row under M-LONEBLUR too, the three cost rows bef9ff8fc's gate opened red at bef9ff8fc, the covered row read at the press, and the standing record's row under OWNREF-OFF)", async (t) => {
+test("how a click finds its press, a blur of this window, a guard CI runs (the file review's round 19, extra5-1, extra8-1 and extra8-2; and the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): a blur whose target is the window itself, the keyboard focus leaving this document for another document or window, is in no chain the viewer's own gestures make, so the own-chain allowlist refuses the click whose chain carries it: the mouse pressed on the control with the control shown, then that blur, as another document's element that takes its own press's mousedown without cancelling it moves the focus, then that element's click reaching this window as a pointerup under the held press's pointerId, a mouseup of detail 1 and a click (WebKit's order after the top page hid and showed the frame, and Chromium's still one), opens nothing and reveals the control, and so does a pen's press held so (Chromium's order), and the viewer's own tap on the picture with that blur between its pointerup and another document's tap on an element over the control, in Firefox's order and in WebKit's, and the mouse held on the control with that blur and the focus back before the covered pointerup, the window's and an element's (Chromium's order) or the window's alone (WebKit's), which a token reading the window as an element would pair and admit (10 covered clicks of the round's recorded rows, Chromium 8 and WebKit 2); the costs, each refused once: the viewer's own press held while the focus moves, the viewer's own tap whose pointerup the focus moves at, and, refused by the allowlist where bef9ff8fc's gate opened them, the focus moved between a mouse click's pointerup and its mouseup and a finger held while the focus moves (round 19's measurement of the blur's rule read both opening in the browser: the first 18, 14 and 18 in Chromium, Firefox and WebKit, the second 14 in Chromium), and an element's blur inside this document during a press with no element's focus after it before the pointerup, the chain of the viewer's own press released before retakeAfterHide's focus returns and of extra5-1's covered click with the focus not back; the next click opens once in each; while the first click and the first tap after a blur and Firefox's blur after the viewer's own open, each outside any chain, open, and a press begun with the control covered stays refused after the blur, and a record left standing refuses a click under its own pointerId, which never falls through to the slot (a property pin over window.open's calls and the scrollIntoView record; the closing rows and the first two cost rows red at d61eb027d, whose gate heard no blur, and, the blur's rule retired, under M-OFF, the element's blur row under M-LONEBLUR too, the three cost rows bef9ff8fc's gate opened red at bef9ff8fc, the two rows of the focus back red under M-OFF and under M-WASE, a token that reads a blur's or a focus's target the window as an element, and refused at bef9ff8fc by its blur's rule, the covered row read at the press, and the standing record's row under OWNREF-OFF)", async (t) => {
   const got: Record<string, unknown> = {};
   const windowBlur = (): void => onWindow("blur", win);                   // the blur of the window itself, its target the window
   const m1: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
@@ -2988,6 +2988,35 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
     engineTap(g.img, "chromium", 8);
     return [first, opens()];
   });
+  got.focusBack = await gateCell(t, "the mouse held on the control, a blur of this window, then the window's focus and an element's before the pointerup (Chromium's order), | then the covered pointerup, mouseup and click", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.ctl, { ...m1 });
+    onWindow("mousedown", g.ctl, { button: 0 });
+    windowBlur();                                                           // the focus leaves this window
+    onWindow("focus", win);                                                 // and comes back to it and to an element before the pointerup
+    onWindow("focus", g.body);
+    g.cover(new El("div"));
+    onWindow("pointerup", g.ctl, { ...m1 });
+    gateClick(g.ctl, 1, 1, true, "mouse");
+    const first = opens();
+    g.cover(null);
+    mouseClick(g.img);
+    return [first, opens()];
+  });
+  got.windowFocusBack = await gateCell(t, "the mouse held on the control, a blur of this window, then the window's focus alone before the pointerup (WebKit's order), | then the covered pointerup, mouseup and click", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.ctl, { ...m1 });
+    onWindow("mousedown", g.ctl, { button: 0 });
+    windowBlur();
+    onWindow("focus", win);                                                 // the window's focus, no element's
+    g.cover(new El("div"));
+    onWindow("pointerup", g.ctl, { ...m1 });
+    gateClick(g.ctl, 1, 1, true, "mouse");
+    const first = opens();
+    g.cover(null);
+    mouseClick(g.img);
+    return [first, opens()];
+  });
   got.afterClick = await gateCell(t, "the first own click after a blur, on the control, and the click after it", (g, opens) => {
     g.place(IN_BOX);
     windowBlur();
@@ -3042,8 +3071,8 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
   });
   t.diagnostic("record " + JSON.stringify(got));
   const refused = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], opened = [{ opened: 1, reveals: 0 }, { opened: 1, reveals: 0 }];
-  assert.deepEqual(got, { mouse: refused, pen: refused, firefoxTap: refused, webkitTap: refused, held: refused, tapUp: refused, element: refused, afterUp: refused, finger: refused, afterClick: opened, afterTap: opened, popup: opened, covered: refused, marked: refused },
-    "each row's click and the next click's opens and reveals, [that click, the next]: the click whose chain carries a blur of the window, and the press whose element's blur no focus follows, refused by the own-chain allowlist and revealing, the next opening; the first click and tap after a blur and Firefox's blur after an own open opening; the covered press refused and the standing record refusing its own pointer's click (a property pin over window.open's calls and the scrollIntoView record)");
+  assert.deepEqual(got, { mouse: refused, pen: refused, firefoxTap: refused, webkitTap: refused, held: refused, tapUp: refused, element: refused, afterUp: refused, finger: refused, focusBack: refused, windowFocusBack: refused, afterClick: opened, afterTap: opened, popup: opened, covered: refused, marked: refused },
+    "each row's click and the next click's opens and reveals, [that click, the next]: the click whose chain carries a blur of the window, with the focus back before the pointerup or not, and the press whose element's blur no focus follows, refused by the own-chain allowlist and revealing, the next opening; the first click and tap after a blur and Firefox's blur after an own open opening; the covered press refused and the standing record refusing its own pointer's click (a property pin over window.open's calls and the scrollIntoView record)");
 });
 // ── the own-chain allowlist, the guards and rows CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with
 // the coordinator's decisions on them) ── A click takes the slot only when the chain of events this window heard from the slot's
@@ -3055,7 +3084,7 @@ test("how a click finds its press, a blur of this window, a guard CI runs (the f
 // Chromium's tap, red only under a grammar that refuses a whole pointer type); the widening rows the same for the three clauses the
 // check added to the draft's grammar; and the record's rows pin the fold of a run of moves and the chain's cap. The mutants are named
 // in the chain rule's block above.
-test("the own-chain allowlist refuses a chain the viewer's own gestures do not make, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): with the control shown at each press, the click after each of these orders opens nothing and reveals the control, and the next click opens once: extra7-1's two forms, WebKit's moved click under a cover that cancels its mousedown, a mouse's pointermove with no button down inside the held press, and after a held move a pointerout with no button down to an element of this document and its pointerover; extra6-1's, WebKit's delayed hover update after a scroll under a resting mouse, the mouse's pointerout, pointerover and pointermove with no button down between a tap's pointerup and its compatibility mousedown; extra5-2's, Firefox's tap whose cover hid with no layout flush before its compatibility mousemove, a compatibility mousedown with no mousemove; and extra5-1's still shape with the focus not back, an element's blur in a press that no element's focus follows before the pointerup, a chain the viewer's own press also makes when it is released before retakeAfterHide's focus returns or held on the control while the viewer's own input holds the focus, so this guard pins a cost as well as a closure (a property pin over window.open's calls and the scrollIntoView record; every order open at bef9ff8fc and under M-OFF, the first two under M-B0OK too, the hover update under M-TAPMOUSEPTR, the missing mousemove under M-NOMOVEREQ and the lone blur under M-LONEBLUR)", async (t) => {
+test("the own-chain allowlist refuses a chain the viewer's own gestures do not make, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): with the control shown at each press, the click after each of these orders opens nothing and reveals the control, and the next click opens once: extra7-1's two forms, WebKit's moved click under a cover that cancels its mousedown, a mouse's pointermove with no button down inside the held press, and after a held move a pointerout with no button down to an element of this document and its pointerover; extra6-1's, WebKit's delayed hover update after a scroll under a resting mouse, the mouse's pointerout, pointerover and pointermove with no button down between a tap's pointerup and its compatibility mousedown; extra5-2's, Firefox's tap whose cover hid with no layout flush before its compatibility mousemove, a compatibility mousedown with no mousemove; a pen's press with the mouse's pointerout and pointerover with no button down to an element, with and without the focus fixup's element blur and the focus back, Chromium's frame-hide order of the 44 covered clicks of a pen; and extra5-1's still shape with the focus not back, an element's blur in a press that no element's focus follows before the pointerup, a chain the viewer's own press also makes when it is released before retakeAfterHide's focus returns or held on the control while the viewer's own input holds the focus, so this guard pins a cost as well as a closure (a property pin over window.open's calls and the scrollIntoView record; every order open at bef9ff8fc and under M-OFF, the first two under M-B0OK too, the hover update under M-TAPMOUSEPTR, the missing mousemove under M-NOMOVEREQ, the pen's two rows under M-PEN0E, a pen's press that admits the mouse's pointerout and pointerover with no button down to an element, and the lone blur under M-LONEBLUR)", async (t) => {
   const got: Record<string, unknown> = {};
   const m1: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
   const f0: GatePtr = { pointerId: 0, pointerType: "touch", isPrimary: true, button: 0 };
@@ -3126,6 +3155,25 @@ test("the own-chain allowlist refuses a chain the viewer's own gestures do not m
     engineTap(g.img, "firefox", 0);
     return [first, opens()];
   });
+  const p2: GatePtr = { pointerId: 2, pointerType: "pen", isPrimary: true, button: 0 };
+  for (const [key, fixup] of [["penMouse0", false], ["penMouse0Fixup", true]] as Array<[string, boolean]>) {
+    got[key] = await gateCell(t, "a pen's press on the control, the mouse's pointerout and pointerover with no button down to an element of this document inside it (Chromium's order, under the mouse's pointerId 1)" + (fixup ? ", with the focus fixup's element blur and the focus back" : "") + ", | then the covered pointerup, mouseup and click", (g, opens) => {
+      g.place(IN_BOX);
+      onWindow("pointerdown", g.ctl, { ...p2 });
+      onWindow("mousedown", g.ctl, { button: 0 });
+      g.cover(new El("div"));
+      if (fixup) onWindow("blur", g.body);                                  // the focus fixup's blur of the body box while the frame is hidden
+      ptr("pointerout", g.ctl, "mouse", 1, 0, g.body);                      // the mouse's pointer, no button down, out to an element and over it
+      ptr("pointerover", g.body, "mouse", 1, 0, g.ctl);
+      if (fixup) onWindow("focus", g.body);                                 // and the keyboard given back at the show
+      onWindow("pointerup", g.ctl, { ...p2 });
+      gateClick(g.ctl, 2, 1, true, "pen");
+      const first = opens();
+      g.cover(null);
+      mouseClick(g.img);
+      return [first, opens()];
+    });
+  }
   got.loneBlur = await gateCell(t, "extra5-1, the focus not back: the mouse's press on the control, an element's blur and no element's focus after it, | then the covered pointerup, mouseup and click", (g, opens) => {
     g.place(IN_BOX);
     onWindow("pointerdown", g.ctl, { ...m1 });
@@ -3141,7 +3189,7 @@ test("the own-chain allowlist refuses a chain the viewer's own gestures do not m
   });
   t.diagnostic("record " + JSON.stringify(got));
   const refused = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
-  assert.deepEqual(got, { moveNoButton: refused, heldMove: refused, hoverUpdate: refused, noMove: refused, loneBlur: refused },
+  assert.deepEqual(got, { moveNoButton: refused, heldMove: refused, hoverUpdate: refused, noMove: refused, penMouse0: refused, penMouse0Fixup: refused, loneBlur: refused },
     "each order's click opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record); the lone blur's row is also the viewer's own press released before the focus returns, or held on the control while the viewer's own input holds the focus, which the allowlist refuses once, a cost");
 });
 test("the own-chain allowlist admits a chain of each family of the viewer's own gestures the round measured, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): with the control shown, each opens once: a click; a click with the focus arriving by the window, by the document (Firefox) or by an element; a double click's second click; a press with its button held moving (jitter); a drag out to an element of this document and back; a pen's press, and one with the mouse-typed boundary events Chromium sends in it; Chromium's, WebKit's and Firefox's taps, WebKit's and Firefox's with their compatibility boundary pair; a tap with the focus arriving; a finger's move in the tap; the press held across a frame hide with the fixup's blur and the focus back, the chain the 119 covered clicks of Chromium's still shape carry, admitted by the coordinator's decision 2; a modifier key pressed during a press; and a tap with a compatibility mouseover from no element and the focus arriving, the chain of the viewer's own tap with the mouse last outside the viewer and the focus elsewhere that the 74 covered taps of Firefox and WebKit carry, admitted by decision 10; and the three widenings: a finger's double tap, its second tap's mouseup and click of detail 2, which opens a second tab as bef9ff8fc's gate does; the focus arriving before a press's mousedown and in a tap before its pointerup, as the Outline popover's close gives it; and the mouse's boundary events to no element with no button down during a finger's contact, as Chromium sends them for a finger held across a frame hide (a property pin over window.open's calls and the scrollIntoView record; each row red under the mutant that drops its clause: the focus rows under M-NOFOCUS, the double click's under M-NOD2, the jitter, the drag and the finger's move under M-NOBMOVE, the pen's boundary events under M-NOPENMOUSE, the compatibility pairs and the 74's chain under M-NOTAPPAIR, the fixup's blur under M-NOBLURPAIR and M-NOFOCUS, the key under M-NOKEY, the widenings under M-W1OFF, M-W2OFF and M-W3OFF; the click, the pen's press and Chromium's tap under M-NOMOUSE, M-NOPEN and M-NOTOUCH alone)", async (t) => {
