@@ -75,6 +75,7 @@ import atexit
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -853,6 +854,25 @@ class RunEnd(unittest.TestCase):
         self.assertEqual(len(lines), 1, "one report line names pid %d:\n%s" % (pid, out))
         return lines[0]
 
+    # a rule of pytest's terminal output with a title: `____ <title> ____` heads one test's report, `==== <title> ====` a
+    # part of the output (ERRORS, the short test summary); pytest pads the title with at least one rule character a side
+    _RULE = re.compile(r"^([=_])\1* (.+) \1+$")
+
+    def _report(self, stdout, title):
+        """The one test report the child run's stdout heads `title` (its `____ <title> ____` line, under ERRORS or
+        FAILURES), from below that line to the next titled rule (the next report, or the next part of the output, the
+        short test summary among them), or a failure quoting the stdout. A count of what one report names is taken here
+        and not over the whole stdout: the short test summary repeats each failed report's crash message, cut to its
+        first line unless pytest finds CI or BUILD_NUMBER set and non-empty (GitHub Actions sets CI) or runs at -vv, and
+        whole where it does, so a name on a later line of the message is in the whole stdout once outside CI and twice
+        in it. The summary is left as each environment prints it."""
+        lines = stdout.splitlines()
+        heads = [i for i, line in enumerate(lines)
+                 if (m := self._RULE.match(line)) and m.group(1) == "_" and m.group(2) == title]
+        self.assertEqual(len(heads), 1, "one report headed %r:\n%s" % (title, stdout))
+        end = next((i for i in range(heads[0] + 1, len(lines)) if self._RULE.match(lines[i])), len(lines))
+        return "\n".join(lines[heads[0] + 1:end])
+
     @procfs
     def test_a_run_that_leaves_a_process_holding_its_root_ends_red_and_names_the_process_and_its_test(self):
         """The two controls, red at every head: a detached child inheriting the test's environment (named with the test's
@@ -1067,7 +1087,8 @@ class RunEnd(unittest.TestCase):
         self.assertEqual((pids, r.returncode), ({}, 1), "no process, and the guard's red: " + out)
         self.assertNotIn("hold its temp root", out)
         self.assertEqual(r.stdout.count("ERROR at teardown of Leaker.test_leaves_nothing"), 1, out)
-        self.assertEqual(r.stdout.count("thread 'leaker-idle-pool_0' (ident "), 1, "the guard's report names the worker "
+        report = self._report(r.stdout, "ERROR at teardown of Leaker.test_leaves_nothing")
+        self.assertEqual(report.count("thread 'leaker-idle-pool_0' (ident "), 1, "the guard's report names the worker "
                          "once: " + out)
         self.assertEqual(r.stderr.count("thread 'leaker-idle-pool_0' (ident "), 1, "and stderr, the guard's second "
                          "channel, once: " + out)
@@ -1099,7 +1120,8 @@ class RunEnd(unittest.TestCase):
         self.assertIn("sleep 120", line)
         self.assertEqual(out.count("process(es) of this run still hold its temp root at run end"), 1, out)
         self.assertEqual(r.stdout.count("ERROR at teardown of Leaker.test_leaves_a_detached_child"), 1, out)
-        self.assertEqual(r.stdout.count("thread 'leaker-idle-pool_0' (ident "), 1, "the guard's report names the worker "
+        report = self._report(r.stdout, "ERROR at teardown of Leaker.test_leaves_a_detached_child")
+        self.assertEqual(report.count("thread 'leaker-idle-pool_0' (ident "), 1, "the guard's report names the worker "
                          "once: " + out)
         self.assertEqual(r.stderr.count("thread 'leaker-idle-pool_0' (ident "), 1, "and stderr, the guard's second "
                          "channel, once: " + out)
