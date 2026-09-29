@@ -48,8 +48,13 @@
 // refuses the roads that spell neither (a method of the window, of the body element or of a prototype read by a
 // computed name, a function run with the window as its `this`, an onmessage handler set other than by an assignment the
 // fourth accepts, a handler or a message listener on a window other than this page's own, code run from a string (a
-// module imported from a data: URL or from a URL built at run time among it), a test or types file imported as a
-// module, a `with` statement, and the name WebSocket anywhere but as the constructor a `new` calls, or in a type). What
+// module imported from a data: URL or from a URL built at run time among it, and a timer, a callee named setTimeout or
+// setInterval on any receiver, handed a string literal, a template, a + expression, an array or object literal or a
+// variable whose initialiser is one, or used as a template's tag), a test or types file imported as a module, a module
+// specifier holding a ? or a # or ending in / or /. (which esbuild rewrites before it resolves), a require() whose
+// specifier is no string literal (which esbuild bundles as every file its pattern can match), a `with` statement, and
+// the name WebSocket anywhere but as the constructor a `new` calls, or in a type). A test of its own holds the repo root
+// to no package.json, tsconfig.json or jsconfig.json, which esbuild would read to resolve a ui/ module's specifier. What
 // those cannot see is listed at the fourth.
 // Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
@@ -478,7 +483,10 @@ test("the legs of a listener declared in ARMS tell its arms apart: in each leg's
  *  modules, every suffix esbuild 0.21.5's default loaders read as code (.ts .tsx .mts .cts .js .jsx .mjs .cjs) in any
  *  directory, the files every census here reads; and the files no census reads, each class named: stylesheets, the
  *  anchor map's fixtures (its directory's data: markdown, json, a python file, an html page with no script, a csv, an
- *  svg, a .gitattributes) and the markdown at ui/'s own top (its README and CLAUDE.md). No census reads a test or types
+ *  svg, a .gitattributes; never a package.json, tsconfig.json or jsconfig.json, which esbuild reads to resolve a
+ *  specifier, a package.json's main or browser field and a tsconfig's or jsconfig's paths, so such a file there has no
+ *  class, as it has none anywhere else under ui/) and the markdown at ui/'s own top (its README and CLAUDE.md). The
+ *  repo root, above ui/, is held to none of the three by its own test (RESOLVER_CONFIGS). No census reads a test or types
  *  file, and esbuild bundles either like any module when a module imports it, so the road census refuses that import (a
  *  file the build puts in a page by an entry point or an alias is on the road census's list of what it cannot see). A
  *  file no class takes reds uiPartition, named with its suffix, so a file of a kind no class names is loud, never
@@ -490,7 +498,7 @@ const UI_CLASSES: Array<[string, RegExp]> = [
   ["tests and types", /\.test\.([mc]?[tj]s|[tj]sx)$|\.d\.[mc]?ts$/],
   ["modules", /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/],
   ["stylesheets", /\.css$/],
-  ["the anchor map's fixtures", /^webview\/anchor-map-fixtures\/[^/]+$/],
+  ["the anchor map's fixtures", /^webview\/anchor-map-fixtures\/(?!(package|tsconfig|jsconfig)\.json$)[^/]+$/],
   ["ui's own markdown", /^[^/]+\.md$/],
 ];
 /** The class of the file at `rel` (relative to ui/): the first of UI_CLASSES whose test matches it, or null. */
@@ -1208,7 +1216,18 @@ test("census: every file under ui/ is in a named class, and the censuses read th
   assert.deepEqual(uiSources(), parts["modules"], "the censuses walk the modules class");
 });
 
-test("the file classes read what they claim: a module of every suffix esbuild reads as code is read by the censuses in any directory, a .d.tsx among them; a test file of each suffix and a .d.ts, .d.mts or .d.cts file is not; a stylesheet, test or types file under node_modules or dist takes its class; and a file of any other kind outside the named classes has no class", () => {
+/** The resolver configurations esbuild reads in a module's directory and in every directory above it: a package.json
+ *  (its main or browser field can map a specifier to another file) and a tsconfig.json or jsconfig.json (its paths). Under
+ *  ui/ such a file has no class and reds uiPartition; at the repo root, the directory between ui/ and the tree's top, the
+ *  test below refuses it; a directory above the repo root is on the road census's list of what it cannot see. */
+const RESOLVER_CONFIGS = ["package.json", "tsconfig.json", "jsconfig.json"];
+test("census: the repo root holds no package.json, tsconfig.json or jsconfig.json, whose browser field or paths esbuild would read to resolve a ui/ module's specifier", () => {
+  const root = path.resolve(UI, "..");
+  const found = RESOLVER_CONFIGS.filter((f) => fs.existsSync(path.join(root, f)));
+  assert.deepEqual(found, [], "a resolver configuration at the repo root, which esbuild reads for every ui/ module and no census reads: " + found.join(", "));
+});
+
+test("the file classes read what they claim: a module of every suffix esbuild reads as code is read by the censuses in any directory, a .d.tsx among them; a test file of each suffix and a .d.ts, .d.mts or .d.cts file is not; a stylesheet, test or types file under node_modules or dist takes its class; and a file of any other kind outside the named classes has no class, nor does a package.json, tsconfig.json or jsconfig.json among the fixtures", () => {
   // synthetic names only: uiClassOf reads a name, and no fixture file may sit in ui/
   const NAMES: Array<[string, string | null]> = [
     ["webview/probe.ts", "modules"], ["webview/probe.tsx", "modules"], ["webview/probe.mts", "modules"], ["webview/probe.cts", "modules"],
@@ -1222,6 +1241,10 @@ test("the file classes read what they claim: a module of every suffix esbuild re
     ["webview/probe.d.mts", "tests and types"], ["webview/probe.d.cts", "tests and types"],
     ["webview/probe.css", "stylesheets"], ["webview/anchor-map-fixtures/probe.json", "the anchor map's fixtures"],
     ["webview/anchor-map-fixtures/.gitattributes", "the anchor map's fixtures"], ["README.md", "ui's own markdown"],
+    // a resolver configuration esbuild reads (a package.json's main or browser field, a tsconfig's or jsconfig's paths) is
+    // no fixture: among the fixtures it has no class, as it has none anywhere else under ui/
+    ["webview/anchor-map-fixtures/package.json", null], ["webview/anchor-map-fixtures/tsconfig.json", null],
+    ["webview/anchor-map-fixtures/jsconfig.json", null], ["webview/anchor-map-fixtures/probe.package.json", "the anchor map's fixtures"],
     // under node_modules or dist a stylesheet, a test or a types file takes its class as anywhere; nothing else does
     ["webview/node_modules/pkg/index.d.ts", "tests and types"], ["webview/node_modules/pkg/style.css", "stylesheets"],
     ["webview/dist/a.test.js", "tests and types"], ["webview/node_modules/pkg/package.json", null], ["dist/README.md", null],
@@ -1343,12 +1366,23 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //   - a message or messageerror listener added to a window other than this page's own (parent.addEventListener(...)),
 //     where a check at its head could not be about this page's senders;
 //   - code run from a string: eval, the Function constructor (by name, or reached through a function's .constructor),
-//     setTimeout or setInterval handed a string, an import() whose specifier is not a string literal (the URL it builds
-//     at run time can be a data: or blob: URL holding code), and a module specifier that is a data: URL (in an import, an
-//     export ... from, an import() or a require; esbuild bundles the URL's text as code);
+//     a timer handed a string, an import() whose specifier is not a string literal (the URL it builds at run time can be
+//     a data: or blob: URL holding code), and a module specifier that is a data: URL (in an import, an export ... from,
+//     an import() or a require; esbuild bundles the URL's text as code). The timer arm reads a callee named setTimeout
+//     or setInterval, as a name or as a member on any receiver (w.setTimeout, document.defaultView["setTimeout"]), after
+//     parentheses and a comma expression's last operand ((0, setTimeout)), handed a string literal, a template, a +
+//     expression, an array or object literal (a timer turns what is no function into a string) or a variable (const, let
+//     or var) whose initialiser is one of those; and such a callee used as a template's tag (setTimeout`go()`), which
+//     hands it the template's strings as an array;
 //   - a module specifier naming a test or types file (one UI_CLASSES' first class takes, as written or with a suffix
 //     esbuild adds or swaps: ./x.d finds x.d.ts, ./x.test.js finds x.test.ts), which esbuild bundles like any module and
 //     no census reads; a type-only import is erased, and left;
+//   - a module specifier holding a ? or a #, or ending in / or /., whatever it names: esbuild strips the query or the
+//     hash, and normalizes the trailing / or /., before it resolves, so the census cannot tell what the specifier names
+//     (./zz.test.ts?v=1 and ./zz.test/ bundle a test file);
+//   - a require() whose specifier is not a string literal (a concatenation, a template with a substitution, (require)(...)
+//     among them), which esbuild bundles as every file its pattern can match, test and types files among them; an alias
+//     of require and window.require are no pattern esbuild reads, and left;
 //   - a `with` statement, which answers any name inside it from an object the census cannot read (a write to a socket's
 //     binding, the WebSocket constructor, undefined);
 //   - the name WebSocket, as a name or a string, anywhere but as the constructor a `new` calls (bare or as a member) and
@@ -1372,12 +1406,24 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //   - a reflective function under another name (const R = Reflect; R.get(window, k)), and a Function.prototype.call
 //     reached any way but by name;
 //   - an object built elsewhere with a computed key and copied onto the window (Object.assign(window, make()) is read as
-//     its call only), which can also replace the global WebSocket, so a socket the census accepts is the window; and a key computed in another module and passed to a reflective read or write through a helper;
+//     its call only), which can also replace the global WebSocket, so a socket the census accepts is the window; and a
+//     key computed in another module and passed to a reflective read or write through a helper;
 //   - a top-level var of a classic script rebound through the global object (this.ws = window, window.ws = window): the
 //     census reads a var's writes by its name. No ui/ source runs as a classic script today: esbuild bundles each, and
 //     the kernel inlines romp-timeline-view.js inside a function;
 //   - a test or types file the build puts in a page other than through a module specifier: a bundle's entry point or an
 //     alias in vscode-extension/esbuild.js or its tsconfig.json, which no census reads;
+//   - a resolver configuration in a directory above the repo root (a package.json's browser field, a tsconfig.json's or
+//     jsconfig.json's paths), which esbuild reads on its way up from a ui/ module and no census reads; ui/ and the repo
+//     root are held to none;
+//   - a string that reaches a timer other than as the timer arm reads it: through a parameter, a later assignment, a
+//     call's result, a member or an import; and a timer handed on before it is called (setTimeout.call or .apply, an
+//     alias, a binding destructured from a window, Reflect.apply);
+//   - code the build takes from outside ui/: vendor/track-changents and npm packages (marked, dompurify, highlight.js
+//     and katex in the page bundles, CodeMirror in the editor chunk, pdfjs-dist in the pdf chunk), and the pdf worker, an
+//     entry point built from node_modules/pdfjs-dist;
+//   - the inline scripts vscode-extension/src/extension.ts writes into the VS Code webview documents (mediaBaseTag's, and
+//     the kernel-base script in buildHtml and buildFeedHtml), which run in the same frame as the bundles;
 //   - code handed to the DOM as markup or a URL (a script element, an inline handler attribute, a javascript: URL),
 //     which is no JavaScript the parser reads.
 
@@ -1697,6 +1743,18 @@ function namesTestOrTypes(spec: string): boolean {
   const testsAndTypes = UI_CLASSES.find(([k]) => k === "tests and types")![1];
   return [spec, spec.replace(/\.([mc]?)js$/, ".$1ts"), ...RESOLVE_ORDER.map((x) => spec + x)].some((c) => testsAndTypes.test(c));
 }
+/** The timers that run a string handed to them as code. */
+const TIMERS = new Set(["setTimeout", "setInterval"]);
+/** The name a timer's callee ends in, read on any receiver: after parentheses and a comma expression's last operand
+ *  ((0, setTimeout)), a name, or a member of that name (w.setTimeout, document.defaultView["setTimeout"]); else "". */
+function timerName(c: any): string {
+  c = unwrap(c);
+  while (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.CommaToken) c = unwrap(c.right);
+  if (ts.isIdentifier(c)) return c.text;
+  if (ts.isPropertyAccessExpression(c)) return c.name.text;
+  if (ts.isElementAccessExpression(c) && ts.isStringLiteralLike(unwrap(c.argumentExpression))) return unwrap(c.argumentExpression).text;
+  return "";
+}
 /** Every road in `src` the comment above lists, with where it is and why, and how many onmessage and onmessageerror names
  *  it read. */
 function looseRoads(file: string, src: string): { onmessage: number; loose: LooseAdd[] } {
@@ -1739,6 +1797,9 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
       }
     }
     if (ts.isWithStatement(n)) refuse(n, "a with statement, which answers the names inside it from an object the census cannot read");
+    if (ts.isTaggedTemplateExpression(n) && TIMERS.has(timerName(n.tag))) {
+      refuse(n, timerName(n.tag) + " as a template's tag, which hands it the template's strings as an array it turns into a string and runs as code");
+    }
     if ((ts.isIdentifier(n) || ts.isStringLiteralLike(n)) && n.text === "WebSocket" && !inType(n) && !isNewCallee(n)) {
       refuse(n, "the name WebSocket other than as the constructor a new calls, which could replace the socket the census accepts");
     }
@@ -1753,7 +1814,8 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
         && holdsWindowMethods(n.right) && computedKeyIn(unwrap(n.left))) {
       refuse(n, "a member of a window, the body element or a prototype destructured by a computed key, which the censuses cannot read");
     }
-    // a module whose code no census reads: an import() of a URL built at run time, a data: URL's text, a test or types file
+    // a module whose code no census reads: an import() of a URL built at run time, a data: URL's text, a test or types file,
+    // a file a specifier esbuild rewrites names, and every file a require() of a computed specifier can reach
     const spec = ts.isImportDeclaration(n) || ts.isExportDeclaration(n) ? (n.moduleSpecifier ? unwrap(n.moduleSpecifier) : null)
       : ts.isExternalModuleReference(n) ? unwrap(n.expression)
       : ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || calleeName(n.expression) === "require") && n.arguments[0] ? unwrap(n.arguments[0])
@@ -1762,6 +1824,14 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
       refuse(n, "an import() whose specifier is not a string literal, which can run code from a string as a module");
     }
     const typeOnly = (ts.isImportDeclaration(n) && !!n.importClause && n.importClause.isTypeOnly) || (ts.isExportDeclaration(n) && n.isTypeOnly);
+    // esbuild strips a query or a hash off a specifier, and normalizes a trailing / or /., before it resolves it, so the
+    // census cannot tell what such a specifier names (./zz.test.ts?v=1 bundles a test file): refused whatever it names
+    if (spec && ts.isStringLiteralLike(spec) && /[?#]|(^|\/)\.?$/.test(spec.text)) {
+      refuse(spec, "a module specifier holding a ? or a #, or ending in / or /., which esbuild strips or normalizes before it resolves, so the census cannot tell what it names");
+    }
+    if (ts.isCallExpression(n) && calleeName(n.expression) === "require" && n.arguments[0] && !ts.isStringLiteralLike(unwrap(n.arguments[0]))) {
+      refuse(n, "a require() whose specifier is not a string literal, which esbuild bundles as every file its pattern can match, test and types files among them");
+    }
     if (spec && ts.isStringLiteralLike(spec) && !typeOnly) {
       if (/^\s*data:/i.test(spec.text)) refuse(spec, "a module specifier that is a data: URL, whose text esbuild bundles as code no census reads");
       else if (namesTestOrTypes(spec.text)) refuse(spec, "a module specifier naming a test or types file, which esbuild bundles like any module and no census reads");
@@ -1782,11 +1852,14 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
     }
     if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
       const base = globalName(n.expression), args = n.arguments || [];
-      if ((base === "setTimeout" || base === "setInterval") && args[0]) {
+      const timer = timerName(n.expression);
+      if (TIMERS.has(timer) && args[0]) {
         const a = unwrap(args[0]);
-        const stringy = (x: any): boolean => ts.isStringLiteralLike(x) || ts.isTemplateExpression(x) || ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.PlusToken;
+        // a timer turns what it is handed into a string when it is no function, so an array or object literal runs as code
+        const stringy = (x: any): boolean => ts.isStringLiteralLike(x) || ts.isTemplateExpression(x) || ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.PlusToken
+          || ts.isArrayLiteralExpression(x) || ts.isObjectLiteralExpression(x);
         const strings = stringy(a) || ts.isIdentifier(a) && (() => { const d = declOf(a); return !!d && ts.isVariableDeclaration(d) && !!d.initializer && stringy(unwrap(d.initializer)); })();
-        if (strings) refuse(n, base + " handed a string, which it runs as code");
+        if (strings) refuse(n, timer + " handed a string, or an array or object literal it turns into one, which it runs as code");
       }
       if (args[0] && holdsWindowMethods(args[0])) {
         if (REFLECT_READ.has(base) && !isLiteralKey(args[1])) refuse(n, base + " of a window, the body element or a prototype with a computed key, which the censuses cannot read");
@@ -1825,7 +1898,7 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
   return { onmessage, loose };
 }
 
-test("census: no ui/ source reaches a window listener by a computed name, runs a function with the window as its this, sets an onmessage handler other than by an assignment the census accepts, adds a message listener to another window, runs code from a string, imports a test or types file, holds a with statement, or names WebSocket but to construct one", () => {
+test("census: no ui/ source reaches a window listener by a computed name, runs a function with the window as its this, sets an onmessage handler other than by an assignment the census accepts, adds a message listener to another window, runs code from a string, imports a test or types file, names a module by a specifier esbuild rewrites, requires a computed specifier, holds a with statement, or names WebSocket but to construct one", () => {
   const bad: string[] = [];
   const readIn = new Map<string, number>();
   for (const f of uiSources()) {
@@ -1940,11 +2013,17 @@ test("the road census reads what it claims: every road around the spelled regist
     ["const o = { defaultView: 1 }; const { [k]: v } = obj; ({ [k]: v } = other);"],
     ["const wrapped = function (this: object, ...a: unknown[]) { return orig.apply(this, a); };"],
     ["Object.prototype.hasOwnProperty.call(n, \"_nid\"); Array.prototype.forEach.call(nodes, g); g.bind(obj); frames[0].focus();"],
-    // a module named by a string literal that is no data: URL and no test or types file, a type-only import (erased), a
-    // .d.tsx (a module the censuses read), and a data: URL that is no module specifier
+    // a module named by a string literal that is no data: URL and no test or types file and holds no ? or # and ends in
+    // no / or /., a type-only import (erased), a .d.tsx (a module the censuses read), and a data: URL that is no module
+    // specifier
     ["import { a } from \"./x\"; export { b } from \"../y\"; import(\"./lazy\"); import x = require(\"./z\"); const img = \"data:image/png;base64,AAAA\";"],
     ["import type { T } from \"./vendor-track-changents.d\"; export type { U } from \"./zz.d\"; import \"./zz.d.tsx\";"],
     ["const g = require(\"./gear.js\"); const h = require(\"./gesture-clock.js\");", "webview/probe.js"],
+    // a require() esbuild does not read as a pattern (window.require, an alias), a specifier with no query, hash or
+    // trailing slash, and a timer handed a function, a name bound to none of the strings the arm reads, or a number
+    ["window.require(\"./d/\" + x); const r = require; r(\"./d/\" + x);", "webview/probe.js"],
+    ["import \"./ok\"; require(\"./ok2\"); import \"../x/y\"; import \"./a.b\";"],
+    ["setTimeout(() => go(), 0); req.setTimeout(1000); w.setTimeout(fn, 0);", "webview/probe.js"],
   ];
   for (const [src, file] of accepted) assert.deepEqual(roads(src, file), [], "accepted: " + src);
   // an onmessage or onmessageerror handler is accepted on this page's own window (a census site the census above holds),
@@ -2131,7 +2210,8 @@ test("the road census reads what it claims: every road around the spelled regist
       ["e.view[k] = f;"], ["Reflect.set(e.view, k, f);"], ["Object.assign(ev.view, { [k]: f });"], ["e.target[k] = f;"],
       ["ev.currentTarget[k] = f;"], ["e.srcElement[k] = f;"],
     ]],
-    // a module whose code no census reads: one imported from a URL built at run time, from a data: URL, or a test or types file
+    // a module whose code no census reads: one imported from a URL built at run time, from a data: URL, or a test or types
+    // file, and (below) one named by a specifier esbuild rewrites or reached by a require() of a computed specifier
     [/an import\(\) whose specifier is not a string literal/, false, [
       ["import(\"data:text/javascript,\" + encodeURIComponent(code));"], ["import(URL.createObjectURL(new Blob([code], { type: \"text/javascript\" })));"],
       ["const u = \"data:text/javascript,go()\"; import(u);"], ["import(`data:text/javascript,${code}`);"], ["(async () => { await import((spec)); })();"],
@@ -2146,6 +2226,27 @@ test("the road census reads what it claims: every road around the spelled regist
       ["import \"./zz.d\";"], ["import { X } from \"./zz.d.ts\";"], ["export { X } from \"./zz.d.mts\";"], ["import { type X, Y } from \"./zz.d.cts\";"],
       ["import \"./zz.test\";"], ["import(\"./zz.test.js\");"], ["import \"./zz.d.js\";"], ["import x = require(\"./zz.d\");"],
       ["require(\"./zz.test.ts\");", "webview/probe.js"],
+    ]],
+    // a specifier esbuild rewrites before it resolves: a query or a hash stripped, a trailing / or /. normalized
+    [/a module specifier holding a \? or a #, or ending in \/ or \/\., which esbuild strips or normalizes before it resolves/, false, [
+      ["import \"./zz?x\";"], ["import \"./zz#x\";"], ["import \"./zz/\";"], ["import \"./zz/.\";"], ["import \"./zz.test.ts?v=1\";"],
+      ["export * from \"./zz?x\";"], ["const m = require(\"./zz#x\");", "webview/probe.js"], ["import(\"./zz/\");"], ["import \"./zz.test/\";"],
+      ["import { X } from \"./zz.d.ts?x\";"],
+    ]],
+    // a require() of a specifier that is no string literal, which esbuild bundles as every file its pattern can match
+    [/a require\(\) whose specifier is not a string literal/, false, [
+      ["declare const x: string; require(\"./d/\" + x);"], ["declare const x: string; require(`./d/${x}`);"],
+      ["declare const x: string; (require)(\"./d/\" + x);"], ["require(\"./d/\" + x);", "webview/probe.js"],
+      ["require(\"./d/a\" + \".test.ts\");", "webview/probe.js"],
+    ]],
+    // a timer, read on any receiver or behind a comma, handed a string or an array or object literal, or used as a tag
+    [/(setTimeout|setInterval) (handed a string|as a template's tag)/, false, [
+      ["const w = window; w.setTimeout(\"go()\", 0);"], ["document.defaultView.setTimeout(\"go()\", 0);"], ["frames.setTimeout(\"go()\", 0);"],
+      ["(0, setTimeout)(\"go()\", 0);"], ["w.setTimeout(\"go()\", 0);", "webview/probe.js"], ["(0, setTimeout)(\"go()\");", "webview/probe.js"],
+      ["req.setInterval(`go()`);", "webview/probe.js"], ["d[\"setTimeout\"](\"go()\");", "webview/probe.js"],
+      ["(0, window.setTimeout)(\"go()\");", "webview/probe.js"],
+      ["setTimeout([\"go()\"]);", "webview/probe.js"], ["setTimeout({ toString() { return \"go()\"; } });", "webview/probe.js"],
+      ["setTimeout`go()`;", "webview/probe.js"], ["window.setTimeout`go()`;", "webview/probe.js"],
     ]],
     // a messageerror handler set another way
     [/an onmessageerror handler set some way other than an assignment the census reads/, false, [
