@@ -52,9 +52,12 @@ refused the retired spelling "review round N" alone, and the spelling that same 
 round-N", passed its numeric rule). The probes derive their number from REVIEWER_ROUNDS, so raising the constant when
 a ruling lands keeps the module green: _form_space_checks builds the red and green probe tables and runs the plants of every
 spelling under the constant's current value, and test_the_form_space calls it at the held value and again with the constant
-rebound to two other values, the tables rebuilt after each rebind, so a probe that spells a round as a literal where it
-should derive it from the constant (the reviewer's round-6 finding extra9-1) reds at one of the three values (the reviewer's
-round-7 finding tests-1: before, the rebind case replayed one plant pair and never the tables).
+rebound to three other values, one below the held value and two above it, the tables rebuilt after each rebind. A probe that
+spells as a literal the round it should derive from the constant (the reviewer's round-6 finding extra9-1) therefore reds at
+one of them: a red probe spelled one above the held count reds at a rebind above the held value, where its literal falls
+within the count, and a green probe spelled at the held count reds at the rebind below it, where its literal falls above the
+count (the reviewer's round-7 finding tests-1: before, the rebind case replayed one plant pair and never the tables; with
+rebinds above the held value alone, a green probe spelled as a literal stayed green).
 
 THE POPULATION is derived, not listed: the branch's ADDED lines, `git diff -U0 <merge base with origin/main> HEAD`, the
 COMMITTED head, every changed file's added lines, kernel/kernel.py's like any other file's, tagged or not (the `[fork]`
@@ -435,15 +438,17 @@ class ReviewRoundLabels(unittest.TestCase):
     def test_the_form_space(self):
         """The classifier over every spelling the branch uses, so the census is known to read them; the probes are assembled
         at run time (this module is in the population and reads itself). _form_space_checks runs at the held REVIEWER_ROUNDS
-        and again with the constant rebound to two other values, each call rebuilding the probe tables from the value it runs
-        under (the reviewer's round-7 finding tests-1), so a probe that spells a round as a literal reds at one of them."""
+        and again with the constant rebound to one value below it and two above it, each call rebuilding the probe tables from
+        the value it runs under (the reviewer's round-7 finding tests-1), so a probe that spells as a literal the round it should
+        derive reds at one of them: a red probe (one above the held count) at a rebind above, a green probe (the held count) at
+        the rebind below."""
         unclassified = [(p, t.label) for p, _, text in LINES for t in tokens(text) if t.rule not in RULES]
         self.assertEqual(unclassified, [], "a token outside the five rules (%s)" % self._where())
         self._form_space_checks()
         g = globals()
         held = g["REVIEWER_ROUNDS"]
         try:
-            for k in (held + 1, held + 3):
+            for k in (held - 1, held + 1, held + 3):   # below the held value a literal green probe is an offence; above it a literal red one is clean
                 g["REVIEWER_ROUNDS"] = k
                 with self.subTest(rebound=k):
                     self._form_space_checks()
