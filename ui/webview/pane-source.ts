@@ -5,9 +5,9 @@
 // are left out here because they name a plan and a test file the fork does not have. A later fold of the project's
 // file resolves the code lines as IDENTICAL; this header and those six lines conflict, and the fold keeps this header
 // in their place by hand.
-// What it reads: the shell's first inline script defines window.__rompPaneSourceOk (kernel.py _LANDING_BOOT_JS, adopted
-// from the same commit), which counts a message only when its immediate source is an iframe of the shell's document and
-// its origin is the shell's location.origin. The shell's bundled palette (palette-main.ts, the shell page's
+// What it reads: window.__rompPaneSourceOk, which the shell's boot script (kernel.py _LANDING_BOOT_JS, adopted from the
+// same commit) defines ahead of every shell listener, and which counts a message only when its immediate source is an
+// iframe of the shell's document and its origin is the shell's location.origin. The shell's bundled palette (palette-main.ts, the shell page's
 // palette-main.js) reads it through here and FAILS CLOSED: with no check on the page, no message is acted on, and a
 // check that throws or answers anything but true refuses too. ui/webview/foreign-sender-listeners.test.ts runs the
 // palette's two window listeners through this helper and takes their census; tests/test_shell_source_check.py takes the
