@@ -139,7 +139,9 @@ an operand, a returned or yielded fetch, an annotated assignment and an await.
 A fetch by a url spelled otherwise than the census reads it, where the url's static path is a page route and whole, is REFUSED too
 (round 6, _fail_closed's check (2), extra8-3): a `%`-format, an f-string or a `.format` url handed to a fetch helper, and an
 f-string url or a `Request` object handed to urlopen, and (FC2X, narrowed) a url whose path is not whole but whose static part is a
-page route other than the landing's `/` (`"/chat" + rest`, `"/chat%s" % q`).
+page route other than the landing's `/` (`"/chat" + rest`, `"/chat%s" % q`). So is a fetch whose url is a Name a loop over one of
+the kernel's route tables binds (`for route in sorted(km._PAGE_RENDERERS): self._get(route)`: every page the table names, none of
+which the census can tell apart; _fail_closed's check (3)).
 
 Bound: a formatted url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
 membership asserted through a helper (`_has(self, lit, body)` in tests/test_files_pane.py and tests/test_settings_page.py, whose
@@ -1602,6 +1604,14 @@ def _spelled_path(a):
     return (kind, lit[:hole], False) if hole < len(lit) else (kind, lit, True)
 
 
+@functools.lru_cache(maxsize=None)
+def _route_tables():
+    """The names of the kernel's route tables: its module-level dicts, read from the loaded kernel, holding at least two of the page
+    routes (route_getters) as keys (`_PAGE_RENDERERS`, the route walk's third shape)."""
+    routes = set(route_getters())
+    return frozenset(n for n, v in vars(km).items() if isinstance(v, dict) and len({k for k in v if isinstance(k, str)} & routes) >= 2)
+
+
 def _fail_closed(tree, lines, routes, reads):
     """The refusals of round 6 (the coordinator's decisions on PR 858, B.1): reads the census cannot place, each an unclassified row
     naming its site, where each had left both censuses in silence. The checks, over every call of the module:
@@ -1618,7 +1628,11 @@ def _fail_closed(tree, lines, routes, reads):
         slash, `"/%s/x" % name`, can make any path): to an attribute urlopen, an f-string or a `.format` url, or a `Request` object wrapping any
         spelled url (a `%`-formatted literal handed to urlopen itself is read, or stated where its query carries no token); to a
         Name, a self.<method> or a cls.<method> the module does not define or whose returns place a read (_response_reads), a
-        `%`-format, an f-string, a `.format` url or such a concatenation.
+        `%`-format, an f-string, a `.format` url or such a concatenation;
+    (3) a fetch through such a helper whose url is a Name the same function's for loop or comprehension binds, as its target or a
+        Name inside it, over an expression naming one of the kernel's route tables (_route_tables: `for route in
+        sorted(km._PAGE_RENDERERS): self._get(route)`), which fetches every page the table names by a url the census cannot
+        read; a Name bound any other way (`for path in ("/", "/chat")`, an assignment, a parameter) is not read and not refused.
     A call to a Name the same function binds to an attribute (`seg = km._route_seg`, then `seg("/")`) calls that function, no fetch
     helper of the test's, and is not checked (tests/test_perf_stats.py's route-mark test asserts over `seg("/")` so)."""
     rows, seg = [], lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
@@ -1630,9 +1644,14 @@ def _fail_closed(tree, lines, routes, reads):
             p = parents.get(id(p))
         return p or tree
     aliases = {}   # per scope, the Names bound to an attribute: a function aliased (`seg = km._route_seg`), no fetch helper
+    tables, table_vars = _route_tables(), {}   # per scope, the Names a loop over a route table binds (check (3))
     for a in ast.walk(tree):
         if isinstance(a, ast.Assign) and len(a.targets) == 1 and isinstance(a.targets[0], ast.Name) and isinstance(a.value, ast.Attribute):
             aliases.setdefault(id(scope(a)), set()).add(a.targets[0].id)
+        table = next((x.attr for x in ast.walk(a.iter) if isinstance(x, ast.Attribute) and x.attr in tables), None) \
+            if isinstance(a, (ast.For, ast.comprehension)) else None
+        if table:
+            table_vars.setdefault(id(scope(a)), {}).update((x.id, table) for x in ast.walk(a.target) if isinstance(x, ast.Name))
 
     def chain_top(node):   # the outermost call of a `.read()`/`.decode()`/`.getvalue()` chain led by node
         while True:
@@ -1687,6 +1706,11 @@ def _fail_closed(tree, lines, routes, reads):
         helper = reads().get(callee)
         if helper is not None and not helper - {"refused"}:
             continue   # a helper of the module whose returns place no read: no fetch helper (_fetched)
+        # (3) a url a loop over a route table binds
+        if isinstance(a0, ast.Name) and a0.id in table_vars.get(id(scope(node)), {}):
+            rows.append((node.lineno, "unclassified", table_vars[id(scope(node))][a0.id], "fetch through %s of every route of the kernel's route table, which the census does not read: %s"
+                         % (callee, seg(node))))
+            continue
         sp = _spelled_path(a0)
         if sp and sp[1] in routes and (sp[2] or sp[1] != "/"):
             rows.append((node.lineno, "unclassified", str(routes[sp[1]]), "fetch by a url the census does not read (%s): %s" % (sp[0], seg(node))))
@@ -1881,6 +1905,11 @@ _LISTED_READERS = (
       "fetched tuple self.worker: for route, (_, body) in list(self.pages.items()) + [(\"/sw.js\", self.worker[:2])]:"),
      "a slice of the fetched worker tuple (NoOtherWindowsFetch), which the census does not follow: it reads a fetched tuple by a "
      "constant index or an unpack, and the worker's body reaches the member scan through the slice"),
+    (("test_fetch_wrapper_census.py", "unclassified", "_PAGE_RENDERERS",
+      "fetch through _get of every route of the kernel's route table, which the census does not read: cls._get(route, {\"Cookie\": cls.cookie})"),
+     "_Served.setUpClass fetches every page the route table names by the loop's Name url (_fail_closed's check (3)), so the census "
+     "cannot tell which page each body is, and the module's reads of the pages (the wrapper's place, the fetch calls' order, the "
+     "member scan) are in neither census"),
 )
 
 
@@ -3455,6 +3484,45 @@ class T(unittest.TestCase):
         where = "fetch by a url the census does not read (%s)"
         self.assertEqual([(r[0], r[2], r[3].split(":")[0]) for r in readers if r[1] == "unclassified"],
                          [(8, "_chat_page", where % "concat"), (9, "_chat_page", where % "percent"), (10, "_sw_js", where % "concat")])
+
+
+    def test_a_fetch_through_every_route_of_the_route_table_is_refused(self):
+        # round 6 (B.1, _fail_closed's check (3)): a fetch whose url is a Name a loop over one of the kernel's route tables binds
+        # (`for route in sorted(km._PAGE_RENDERERS): self._req(route)`) fetches every page the table names, and the census cannot
+        # tell which page each body is, so every read of them had been in neither census (main's tests/test_fetch_wrapper_census.py
+        # fetches its pages so; the visible listing holds that row). Each is refused now, an unclassified row at the call naming
+        # the table: a for (9), a comprehension (10) and a Name inside a tuple target (12). A Name a loop over literal routes binds
+        # (14; the stated loop-literal url of tests/test_session_cookie_auth.py), a helper whose returns place no read (16) and a
+        # function the loop is not in (18) are no row. Dropping the check reds the rows here. The rows are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest
+class T(unittest.TestCase):
+    def _req(self, path):
+        return r.status, r.read(), r.headers
+    def _conf(self, path, name):
+        return os.pathconf(path, name)
+    def test_a(self):
+        for route in sorted(set(km._PAGE_RENDERERS) - {""}):
+            st, body, hd = self._req(route)
+        got = [self._req(r) for r in km._PAGE_RENDERERS]
+        for rt, render in km._PAGE_RENDERERS.items():
+            st, body, hd = self._req(rt)
+        for path in ("/", "/chat"):
+            st, body, hd = self._req(path)
+        for route in km._PAGE_RENDERERS:
+            self._conf(route, "PC_NAME_MAX")
+    def test_b(self, route):
+        st, body, hd = self._req(route)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        where = "fetch through _req of every route of the kernel's route table, which the census does not read"
+        self.assertEqual([(r[0], r[2], r[3].split(":")[0]) for r in readers if r[1] == "unclassified"],
+                         [(9, "_PAGE_RENDERERS", where), (10, "_PAGE_RENDERERS", where), (12, "_PAGE_RENDERERS", where)])
 
 
 if __name__ == "__main__":
