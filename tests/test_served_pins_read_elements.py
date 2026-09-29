@@ -32,8 +32,10 @@ call with no arguments, to a Name, a self.<method> or a cls.<method>, of a funct
 returns one such text inline, every function of the module with that name returning the same one (round 6, RETTEXT; a form the
 textual census declines; such a call is read where the census reads a getter's call, refused by check (5) below where that check
 refuses a text inline, and unread where a getter's call is unread, an await or a text nested in another expression; the same call
-through any other callee, `T._js()`, reads nothing, and so does a call of a name two functions of the module define with different
-returns, a method per class; check (5) refuses such a function's returns), or a
+through any other callee that names the function, by a Name or an attribute, `T._js()`, or by a string constant equal to its name,
+`getattr(self, "_js")()`, reads nothing, and check (5) refuses the function's returns, while a name built at run time,
+`getattr(self, "_" + k)()`, is unread; a call of a name two functions of the module define with different returns, a method per
+class, reads nothing, and check (5) refuses their text returns), or a
 Name bound to either in the same function (a tuple assignment counts by position; a Name bound to a SLICE of one counts
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
@@ -165,9 +167,10 @@ place, or a Name bound to such a wrapper (`status, raw = _raw(path)` and then `r
 gives it "refused" (round 6, X1; x1 in test_d of test_a_returned_name_is_followed_to_its_binding_in_the_helper, a stated bound before).
 A served text inline that is itself the whole value of a binding the census does not read is REFUSED as well (_fail_closed's check
 (5)): assigned to a subscript or through an annotated or augmented assignment or a walrus, yielded, the body of a lambda, or returned
-by a function that is no text helper, or by a text helper the module hands on uncalled, calls with arguments or calls through
-any callee but a Name, a self.<method> or a cls.<method>, `T._js()` (a text nested inside another expression there, a returned
-tuple or a list, is not checked, and neither is an await of one). A text helper's call that RETTEXT reads as its text is checked
+by a function that is no text helper, or by a text helper the module hands on uncalled, calls with arguments, calls through
+any callee but a Name, a self.<method> or a cls.<method>, `T._js()`, or names in a string constant, `getattr(self, "_js")()` (a
+name built at run time is unread; a text nested inside another expression there, a returned tuple or a list, is not checked, and
+neither is an await of one). A text helper's call that RETTEXT reads as its text is checked
 as that text inline (`d["k"] = _page()`, or `return _page()` in a function that is no text helper, is refused).
 
 Reach (round 6, the coordinator's decisions on PR 858, B.5): the census READS the forms the paragraphs above and readers_of's
@@ -1343,12 +1346,13 @@ def _text_helpers(tree, getters, constants):
     _bind): such a call to a Name, a self.<method> or a cls.<method> (_callee) reads as the text, inline and bound, where the census
     reads the getter's call (round 6, RETTEXT); _fail_closed's check (5) refuses it where it refuses a text inline, and it is unread
     where the getter's call is unread (an await, a text nested in another expression). A function with a return of anything else,
-    or of two texts, is no such helper, and a call with arguments, or through any other callee (`T._js()`, `obj._page()`), reads as
-    nothing: _fail_closed's check (5) refuses the helper's returns then. The key is the bare name, so a name two or more functions
-    of the module define (a method per class) is a helper only where every one of them returns the same one text; where they
-    disagree (`A._page` returns the landing and `B._page` the chat page, or anything else) the name is no helper, its calls read as
-    nothing and check (5) refuses the text returns (round 6's internal check of part B: the last definition walked had won, and
-    every call was judged against its text)."""
+    or of two texts, is no such helper, and a call with arguments, or through any other callee (`T._js()`, `obj._page()`,
+    `getattr(self, "_js")()`), reads as nothing: _fail_closed's check (5) refuses the helper's returns where the module names the
+    helper by a Name, an attribute or a string constant equal to its name, and a name built at run time (`getattr(self, "_" + k)()`)
+    is unread. The key is the bare name, so a name two or more functions of the module define (a method per class) is a helper
+    only where every one of them returns the same one text; where they disagree (`A._page` returns the landing and `B._page` the
+    chat page, or anything else) the name is no helper, its calls read as nothing and check (5) refuses the text returns (round 6's
+    internal check of part B: the last definition walked had won, and every call was judged against its text)."""
     out, split = {}, set()
     for fn in ast.walk(tree):
         if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1365,7 +1369,8 @@ def _module_bindings(tree, getters, constants, routes):
     and under the keys `"<name>()"` the module's text helpers (_text_helpers; round 6, RETTEXT), which every function reads at a
     call with no arguments to a Name, a self.<method> or a cls.<method> where the census reads a getter's call (_resolve, _bind;
     _fail_closed's check (5) refuses such a call where it refuses a text inline; a call through any other callee reads nothing, and
-    check (5) refuses the helper's returns)."""
+    check (5) refuses the helper's returns where the module names the helper by a Name, an attribute or a string constant equal to
+    its name, a name built at run time being unread)."""
     names, reads = _text_helpers(tree, getters, constants), functools.partial(_response_reads, tree)
     for st in tree.body:
         if isinstance(st, ast.Assign):
@@ -1775,8 +1780,10 @@ def _fail_closed(tree, lines, routes, reads, getters, constants):
         getter's call (_resolve), refused here where a text inline is, and unread where a getter's call is. It is refused where
         the module also hands the helper on uncalled (`{"login": _render_login}`, then `render()` in a loop), calls it with
         arguments, or calls it through any other callee (`T._js()`, `obj._page()`), which the census does not read and counts as
-        handing it on. A function whose name another function of the module defines with other returns is no text
-        helper (_text_helpers), so its text return is refused.
+        handing it on, and where a string constant of the module equals its name (`getattr(self, "_js")()`, `globals()["_page"]()`,
+        counted as handing it on too); a name built at run time (`getattr(self, "_" + k)()`) is neither read nor refused. A
+        function whose name another function of the module defines with other returns is no text helper (_text_helpers), so its
+        text return is refused.
     A call to a Name the same function binds to an attribute (`seg = km._route_seg`, then `seg("/")`) calls that function, no fetch
     helper of the test's, and is not checked (tests/test_perf_stats.py's route-mark test asserts over `seg("/")` so)."""
     rows, seg = [], lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
@@ -1819,6 +1826,8 @@ def _fail_closed(tree, lines, routes, reads, getters, constants):
     called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call) and not n.args and not n.keywords and _callee(n) is not None}
     handed = {x.id if isinstance(x, ast.Name) else x.attr for x in ast.walk(tree) if isinstance(x, (ast.Name, ast.Attribute))
               and isinstance(x.ctx, ast.Load) and (x.id if isinstance(x, ast.Name) else x.attr) in helpers and id(x) not in called}
+    # and a string constant equal to a helper's name, a reach by name the census does not read (`getattr(self, "_js")()`)
+    handed |= {x.value for x in ast.walk(tree) if isinstance(x, ast.Constant) and isinstance(x.value, str) and x.value in helpers}
     for node in ast.walk(tree):
         t = _text(node, getters, constants)
         if not t and isinstance(node, ast.Call) and not node.args and not node.keywords and _callee(node) is not None:
@@ -3890,9 +3899,13 @@ class T(unittest.TestCase):
         # text is checked as that text inline (round 6's follow-up: it had been neither read nor refused where it landed
         # anywhere but a binding the census reads): returned by a function that is no text helper (40), assigned to a subscript
         # (44) and through an annotated assignment (45) are refused, and bound to a Name it is read (46, 47). An await is unread,
-        # of a helper's call (49) as of a getter's (50): no row, the outside the check (5) docstring states. Dropping the check
-        # reds every row here, dropping the text helpers' exemption refuses 25 and 27 as well, counting a call through any callee
-        # as a call drops 32, and dropping the helper-call clause drops 40, 44 and 45. The rows are named, never inferred.
+        # of a helper's call (49) as of a getter's (50): no row, the outside the check (5) docstring states. A helper reached by a
+        # string constant equal to its name (round 6's follow-up: neither read nor refused before), through getattr (55) or a
+        # globals() lookup (60), counts as handed on, so its return is refused (53, 57); a name built at run time (64) is unread,
+        # its return not refused (62): no row, the stated outside. Dropping the check reds every row here, dropping the text
+        # helpers' exemption refuses 25 and 27 as well, counting a call through any callee as a call drops 32, dropping the
+        # helper-call clause drops 40, 44 and 45, and dropping the string-constant clause drops 53 and 57. The rows are named,
+        # never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 class T(unittest.TestCase):
@@ -3944,6 +3957,20 @@ class E(unittest.TestCase):
     async def test_f(self):
         self.assertIn("z5", await _pg())
         x = await km._landing()
+class G(unittest.TestCase):
+    def _gs(self):
+        return km._landing()
+    def test_g(self):
+        self.assertIn("z6", getattr(self, "_gs")())
+def _vs():
+    return km._chat_page()
+class H(unittest.TestCase):
+    def test_h(self):
+        self.assertIn("z7", globals()["_vs"]())
+    def _bs(self):
+        return km._landing()
+    def test_b(self):
+        self.assertIn("z8", getattr(self, "_" + "bs")())
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3957,12 +3984,15 @@ class E(unittest.TestCase):
                           (12, "_landing", where % "NamedExpr"), (13, "_landing", where % "Lambda"), (15, "_landing", where % "Yield"),
                           (19, "_landing", where % "Return"), (21, "_landing", where % "Return"), (23, "_chat_page", where % "Return"),
                           (32, "_LANDING_MOBILE_JS", where % "Return"), (40, "_landing", where % "Return"), (44, "_landing", where % "Assign"),
-                          (45, "_landing", where % "AnnAssign")])
+                          (45, "_landing", where % "AnnAssign"), (53, "_landing", where % "Return"), (57, "_chat_page", where % "Return")])
         # and the call through the class reads nothing: no row over its text at 34 to 36
         self.assertEqual([r for r in readers if 33 <= r[0] <= 36], [])
         # the helper's calls: refused at 40, 44 and 45, read at 47, and no row at the awaits (49, 50), the stated outside
-        self.assertEqual([r[:3] for r in readers if r[0] >= 37],
+        self.assertEqual([r[:3] for r in readers if 37 <= r[0] <= 50],
                          [(40, "unclassified", "_landing"), (44, "unclassified", "_landing"), (45, "unclassified", "_landing"), (47, "assert", "_landing")])
+        # the helpers reached by a string: the two returns refused (53, 57), no row at their calls (55, 60), and none at the name
+        # built at run time (62, 64)
+        self.assertEqual([r[:3] for r in readers if r[0] >= 51], [(53, "unclassified", "_landing"), (57, "unclassified", "_chat_page")])
 
 
     def test_a_literal_membership_no_pins_row_judges_is_unclassified(self):
