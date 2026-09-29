@@ -50,10 +50,10 @@ chain rooted at a sibling's binding is not resolved, since the sibling is census
 __getattribute__, __getattr__, __dict__, modules, attrgetter and the dunder roads the comment above REFLECTIVE_CALLS
 names), each refused as a node whatever its argument in three places: read as a bare name, called or not; as an attribute
 of any value, compile excepted (REFLECTIVE_ATTR_OUTSIDE, since lab_dist calls `re.compile`); and as a string constant
-handed as the name to getattr, setattr, delattr or hasattr (the maintainer's round 7: `[mock][0].builtins.exec`,
-`(lambda: mock)().builtins.__import__` and `getattr(x, "__import__")` each passed); getattr over os, and, since pass 10,
-getattr, setattr, delattr or hasattr over ANY value with a name that is not a string constant, since a name built at run
-time is a name the census cannot read; and any import
+handed as the name to a bare call of getattr, setattr, delattr or hasattr (the maintainer's round 7:
+`[mock][0].builtins.exec`, `(lambda: mock)().builtins.__import__` and `getattr(x, "__import__")` each passed); a bare call
+of getattr over os, and, since pass 10, of getattr, setattr, delattr or hasattr over ANY value with a name that is not a
+string constant, since a name built at run time is a name the census cannot read; and any import
 outside ALLOWED_IMPORTS, the modules the censused set uses today, held equal to the imports in use so that a new module is a
 red until it is read. The recorder closes the alias
 road on its own side too: before it is installed, _spy walks the lab module's namespace by IDENTITY (its globals, its own
@@ -63,16 +63,15 @@ real subprocess module, however it was spelled, and any object it cannot read (_
 property's getter, a SimpleNamespace, a bound method and a generator held `subprocess.run` unseen and unlisted).
 
 What the census cannot see is stated as a rule, not a count: it refuses the nodes it enumerates and nothing else, so a road
-to a process is unseen exactly when no enumerated node spells it. On the census's side the class is a spawning name resolved
-from a STRING inside a function of an allowed module that the censused set calls with it. The enumerated primitives are
-refused as nodes whatever their argument (exec over text that carries the spelling whole is refused at the exec, where the
-earlier disclosure, which called this class "built text", let it pass, whether exec is called bare or reached as an
-attribute of any value, and eval and __import__ the same: the attribute since the maintainer's round 7, when
-`[mock][0].builtins.exec` passed, while compile as an attribute stays outside, since lab_dist calls `re.compile`; the dunder
-roads since pass 9's fixer pass; a built name handed to getattr over any imported name since pass 10, and since its fixer
-pass over ANY value, with a reflective primitive read bare, a second binding of `subprocess`, a spawn or a callable at
-import time refused too; a reflective name handed to getattr, setattr, delattr or hasattr as a string constant since the
-maintainer's round 7), and an attribute
+to a process is unseen exactly when no enumerated node spells it. That rule is the reach; on the census's side what follows
+names instances of it, not a list. The enumerated primitives are refused as nodes whatever their argument: exec over text
+that carries the spelling whole is refused at the exec, called bare or reached as an attribute of any value, and eval and
+__import__ the same (the earlier disclosure, which called the string instance below "built text", let it pass; the
+attribute since the maintainer's round 7, when `[mock][0].builtins.exec` passed; compile as an attribute stays outside,
+since lab_dist calls `re.compile`); the dunder roads since pass 9's fixer pass; a built name handed to a bare call of
+getattr over any imported name since pass 10, and since its fixer pass over ANY value, with a reflective primitive read
+bare, a second binding of `subprocess`, a spawn or a callable at import time refused too; a reflective name handed as a
+string constant to a bare call of getattr, setattr, delattr or hasattr since the maintainer's round 7. An attribute
 chain rooted at a foreign import binding is RESOLVED step by step through the modules' own import tables, read by path
 (_reach): a module ALLOWED_IMPORTS does not name, reached through an allowed module's own import (`mock.builtins`,
 `mock.partial` from functools, `subprocess.builtins`, `http.server.socketserver`; `mock.pkgutil` on a Python whose mock imports
@@ -81,11 +80,16 @@ is a sample of the matrix: pass 11, after the two pkgutil plants redded Python 3
 whose source the census cannot read that the censused set does not read today (UNREAD_MEMBERS: `sys._getframe`,
 `sys.meta_path`, `mock.sys.modules`), are refused. A module an import binding resolves to is refused wherever it is read
 but as an attribute's value or a call's function, so a rebinding (`_m9 = mock`, `g(mock)`) is refused at the read of the
-module and is never followed to its later reads (the maintainer's round 7, extra4-1). What remains is a call of an allowed module's OWN function whose body
-resolves a name from the string it is handed (`mock.patch("sub" + "process.run")` resolves its target by import inside
-mock). The modules whose own source does so are DERIVED, the second family `_foreign_reflective_roads` scans for and the
-disclosure cell prints (on this Python `subprocess`, which reads a frame, and `unittest.mock`, which runs exec and resolves
-names); which call of the censused set hands which string to one of them is not read, and that is the class.
+module and is never followed to its later reads (the maintainer's round 7, extra4-1). One instance of what remains is a
+spawning name resolved from a STRING inside a function of an allowed module that the censused set calls with it: a call of
+an allowed module's OWN function whose body resolves a name from the string it is handed (`mock.patch("sub" +
+"process.run")` resolves its target by import inside mock). The modules whose own source does so are DERIVED, the second
+family `_foreign_reflective_roads` scans for and the disclosure cell prints (on this Python `subprocess`, which reads a
+frame, and `unittest.mock`, which runs exec and resolves names); which call of the censused set hands which string to one
+of them is not read. A second instance is an attribute chain rooted at a SIBLING's binding, which neither resolver follows,
+since the sibling is censused itself: `_lab.mock.sys._getframe(0)`, `_lab.mock.builtins.getattr(...)` and `_lab.mock.patch(...)`
+reach members of the modules a sibling imports through the sibling's own name, and on such a chain only the attribute names
+the census enumerates (the spawner families, `subprocess`, the reflective names) are refused.
 On the recorder's side the residual is FIVE roads, and the rule over them: the recorder sees a call only through the lab
 module's own `subprocess` attribute, and only while it is installed, and it records the argv the lab module hands that
 attribute and nothing of what the program then does; the census reads only the censused set's own Python sources; so a
@@ -210,10 +214,11 @@ OTHER_SPAWNER_MODULES = {"pty": pty, "asyncio": asyncio, "_posixsubprocess": _po
 # object's type, code or bound function; the bare name `__builtins__` reaches `__import__` by a string) are refused the
 # same way, as attributes or as a bare name (REFLECTIVE_NAMES), whatever follows them.
 REFLECTIVE_CALLS = ("exec", "eval", "compile", "__import__", "vars", "globals", "locals")
-# the attribute-reading builtins: refused with a name that is not a string constant over ANY value (a name built at run time is one
-# the census cannot read) or with a string constant equal to a REFLECTIVE_CALLS or REFLECTIVE_ATTRS name (the reflective-name
-# layer below), and, like REFLECTIVE_CALLS, refused read as a bare name anywhere but as the function of a call (an alias
-# carries the road under another name: pass 10's fixer pass, `_gi = __import__`, `_ga = getattr`, `map(exec, [...])`)
+# the attribute-reading builtins: a bare call of one is refused with a name that is not a string constant over ANY value (a name
+# built at run time is one the census cannot read) or with a string constant equal to a REFLECTIVE_CALLS or REFLECTIVE_ATTRS name
+# (the reflective-name layer below), and, like REFLECTIVE_CALLS, each is refused read as a bare name anywhere but as the function
+# of a call (an alias carries the road under another name: pass 10's fixer pass, `_gi = __import__`, `_ga = getattr`,
+# `map(exec, [...])`); one reached as an attribute of another value (`_lab.mock.builtins.getattr`) is not read by these arms
 ATTR_BUILTINS = ("getattr", "setattr", "delattr", "hasattr")
 REFLECTIVE_ATTRS = ("import_module", "__getattribute__", "__getattr__", "__dict__", "modules", "attrgetter",
                     "__globals__", "__spec__", "__loader__", "__builtins__", "__class__", "__subclasses__", "__code__", "__closure__", "__wrapped__", "__self__", "__func__")
@@ -222,7 +227,7 @@ REFLECTIVE_NAMES = ("__builtins__",)
 # in three places, whatever its argument: read as a BARE name (a REFLECTIVE_CALLS name called or read, a REFLECTIVE_ATTRS name
 # read); as an ATTRIBUTE of ANY value, except the names of this tuple (`[mock][0].builtins.exec`, `x.__import__`, `x.vars`:
 # the round found an exec and an `__import__` reached as attributes past a bare-name arm); and as a string CONSTANT handed as
-# the name to one of ATTR_BUILTINS (`getattr(x, "__import__")`, `getattr(f, "__globals__")`: the round found both passing,
+# the name to a bare call of one of ATTR_BUILTINS (`getattr(x, "__import__")`, `getattr(f, "__globals__")`: the round found both passing,
 # since the constant arm read "subprocess" and the OS_SPAWNERS names alone). compile as an attribute stays outside: its live
 # sites, measured at the maintainer's round 7 and not enforced, are lab_dist's two `re.compile` calls.
 REFLECTIVE_ATTR_OUTSIDE = ("compile",)
@@ -329,14 +334,15 @@ def _commands_around_the_recorder(src, siblings=(), stdlib=None):
     equal to an OS_SPAWNERS name (the road through a string handed to a primitive); a call to one of REFLECTIVE_CALLS, an
     attribute on ANY value named as one of REFLECTIVE_ATTRS, or as one of REFLECTIVE_CALLS but the names of
     REFLECTIVE_ATTR_OUTSIDE (compile, since lab_dist calls `re.compile`; the maintainer's round 7: `[mock][0].builtins.exec`
-    and `(lambda: mock)().builtins.__import__` passed), a bare read of one of REFLECTIVE_NAMES or REFLECTIVE_ATTRS, a getattr
-    whose first argument is the os module, a getattr, setattr, delattr or hasattr whose name argument is not a string constant
-    over ANY first argument (pass 10: `getattr(_dial, "subproce" + "ss")` was inside the stated class with no red, and the
-    fixer pass found the same over an alias of os and over an attribute; a built name over any value is a name the census
-    cannot read), the same four over ANY first argument with a string constant name equal to a REFLECTIVE_CALLS or
-    REFLECTIVE_ATTRS name (the maintainer's round 7: `getattr(x, "__import__")` and
+    and `(lambda: mock)().builtins.__import__` passed), a bare read of one of REFLECTIVE_NAMES or REFLECTIVE_ATTRS, a bare
+    call of getattr whose first argument is the os module, a bare call of getattr, setattr, delattr or hasattr whose name
+    argument is not a string constant over ANY first argument (pass 10: `getattr(_dial, "subproce" + "ss")` was inside the
+    stated class with no red, and the fixer pass found the same over an alias of os and over an attribute; a built name over
+    any value is a name the census cannot read), a bare call of the same four over ANY first argument with a string constant
+    name equal to a REFLECTIVE_CALLS or REFLECTIVE_ATTRS name (the maintainer's round 7: `getattr(x, "__import__")` and
     `getattr(subprocess.CompletedProcess.__init__, "__globals__")` passed, since the constant arm above reads "subprocess"
-    and the OS_SPAWNERS names alone; a bytes name is no attribute name), a reflective primitive or an attribute-reading builtin read as a BARE NAME anywhere but
+    and the OS_SPAWNERS names alone; a bytes name is no attribute name; one of the four reached as an attribute of another
+    value, `_lab.mock.builtins.getattr(...)`, is read by none of these arms), a reflective primitive or an attribute-reading builtin read as a BARE NAME anywhere but
     as the function of a call (`_gi = __import__`, `map(exec, [...])`: an alias carries the road under another name, the rule
     the bare name `subprocess` already had), or an import of such a name, each refused as a node whatever its argument, so the
     text it carries is not what is matched, a constant compared by its decoded text (b"subprocess" is "subprocess"); the name
@@ -707,7 +713,9 @@ def _foreign_reflective_roads(mods, stdlib=None):
     (import_module, resolve_name, _getframe, __import__). Read the same way as the spawner roads, by path and never imported, at
     the direct depth. A program a module
     starts by resolving a name inside its own function from a string the censused set hands it (`mock.patch("sub" +
-    "process.run")`) is the residual's fourth road; this is its derived list, printed by the disclosure cell."""
+    "process.run")`) is the census side's first named instance of the rule the module docstring states, not one of the
+    recorder side's five roads; this is the derived list of the modules whose own source does so, printed by the disclosure
+    cell, and which call hands which string to one of them is not read."""
     stdlib = stdlib or sysconfig.get_paths()["stdlib"]
     roads = {}
     for name in sorted(_dotted_foreign_imports(mods, stdlib)):
@@ -1211,8 +1219,8 @@ class OldHubMintIsPrivate(unittest.TestCase):
         such a bare name, no spawning function of subprocess bound rather than called, no bare read of the name subprocess,
         no attribute named subprocess on another value, no import of subprocess or of os under another name or of a name
         from subprocess, no constant "subprocess" or one naming an os spawner, no reflective primitive as a node (a reflective
-        name read bare, as an attribute of any value but compile, or as a string constant handed as the name to getattr,
-        setattr, delattr or hasattr: the maintainer's round 7, the round's three plants among the rows and every name of the
+        name read bare, as an attribute of any value but compile, or as a string constant handed as the name to a bare call
+        of getattr, setattr, delattr or hasattr: the maintainer's round 7, the round's three plants among the rows and every name of the
         two tables in each place), no import outside ALLOWED_IMPORTS, no module read as a value (a name or chain an import binding resolves to a module, read
         anywhere but as an attribute's value or a call's function: the maintainer's round 7, extra4-1, one row per rebinding
         class its checks found passing, the round's own plant first). OS_SPAWNERS is pinned against this Python's os module (every name beginning spawn, exec or
