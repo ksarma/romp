@@ -136,8 +136,11 @@ of test_a_returned_name_is_followed_to_its_binding_in_the_helper), a tuple targe
 self._req("/")`, p7 in test_a_fetched_tuple_binds_the_position_its_helper_reads_a_response_at), the call inline as an argument or
 an operand, a returned or yielded fetch, an annotated assignment and an await.
 
-Bound: a url built otherwise than as a bare or `%`-formatted literal or a concatenation led by the whole path (a `Request`
-object, an f-string, `.format`, `"/chat" + rest`), a formatted
+A fetch by a url spelled otherwise than the census reads it, where the url's static path is a page route and whole, is REFUSED too
+(round 6, _fail_closed's check (2), extra8-3): a `%`-format, an f-string or a `.format` url handed to a fetch helper, and an
+f-string url or a `Request` object handed to urlopen.
+
+Bound: a concatenation whose literal stops before the query (`"/chat" + rest`: its path is not whole), a formatted
 url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
 membership asserted through a helper (`_has(self, lit, body)` in tests/test_files_pane.py and tests/test_settings_page.py, whose
 formatted fetches bind a name no form here reads), a fetch of a path the dispatch does not map to a getter
@@ -1558,6 +1561,45 @@ def readers_of(path, getters, constants, routes=None):
 # are no read of its body (a fetched value landing in one of those is not lost to the census)
 _BODY_READS = ("read", "decode", "getvalue")
 _NOT_BODY = {"status", "headers", "code", "reason", "getcode", "getheader", "getheaders", "info", "close", "geturl", "url"}
+# an absolute loopback url whose port is a format hole (`%d`, `%s`, `{...}`), and the path after it
+_URL_ANY = re.compile(r"^https?://127\.0\.0\.1:(?:%d|%s|\{[^}]*\})(?P<rest>/.*)?$")
+
+
+def _spelled_path(a):
+    """(spelling, static path, whole) for a url argument spelled otherwise than the census reads it (_fail_closed's checks (2)): a
+    `%`-format of a string literal, an f-string, a `.format` of a string literal, or a concatenation led by a string literal that
+    names no path whole (_fetch_path gives None: `"/chat" + rest`). The literal's text, an f-string's with `{}` for each replacement
+    field, is read as an absolute loopback url whose port is a hole (_URL_ANY) or as a path beginning with `/`; the static path
+    runs to its `?` (whole True) or to its first hole before any `?` (whole False), and a concatenation's path, which goes on past
+    its literal, is never whole. None for any other node."""
+    if isinstance(a, ast.BinOp) and isinstance(a.op, ast.Mod) and isinstance(a.left, ast.Constant) and isinstance(a.left.value, str):
+        kind, lit = "percent", a.left.value
+    elif isinstance(a, ast.JoinedStr) and a.values:
+        kind, lit = "fstring", "".join(v.value if isinstance(v, ast.Constant) else "{}" for v in a.values)
+    elif isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute) and a.func.attr == "format" and isinstance(a.func.value, ast.Constant) \
+            and isinstance(a.func.value.value, str):
+        kind, lit = "format", a.func.value.value
+    elif isinstance(a, ast.BinOp) and isinstance(a.op, ast.Add) and _fetch_path(a) is None:
+        left = a
+        while isinstance(left, ast.BinOp) and isinstance(left.op, ast.Add):
+            left = left.left
+        if not (isinstance(left, ast.Constant) and isinstance(left.value, str)):
+            return None
+        kind, lit = "concat", left.value
+    else:
+        return None
+    m = _URL_ANY.match(lit)
+    if m:
+        lit = m.group("rest") or "/"
+    if not lit.startswith("/"):
+        return None
+    q = lit.find("?")
+    hole = min([i for i in (lit.find("%"), lit.find("{")) if i != -1] or [len(lit)])
+    if kind == "concat":   # the url goes on past the literal, so its path is never whole
+        return kind, lit[:min(i for i in (q, hole, len(lit)) if i != -1)], False
+    if q != -1 and q < hole:
+        return kind, lit[:q], True
+    return (kind, lit[:hole], False) if hole < len(lit) else (kind, lit, True)
 
 
 def _fail_closed(tree, lines, routes, reads):
@@ -1570,6 +1612,11 @@ def _fail_closed(tree, lines, routes, reads):
         (`page = self._req("/?token=x")[1]`), a tuple target holding a starred name (`first, *rest = self._req("/")`), the call
         inline as an argument or an operand (`self.assertIn("x", self._get_text("/"))`), a returned or yielded fetch, an
         annotated assignment and an await are refused.
+    (2) a fetch whose url is spelled otherwise than the census reads it, where the url's static path (_spelled_path) is a page
+        route and the path is whole: to an attribute urlopen, an f-string or a `.format` url, or a `Request` object wrapping any
+        spelled url (a `%`-formatted literal handed to urlopen itself is read, or stated where its query carries no token); to a
+        Name, a self.<method> or a cls.<method> the module does not define or whose returns place a read (_response_reads), a
+        `%`-format, an f-string or a `.format` url.
     A call to a Name the same function binds to an attribute (`seg = km._route_seg`, then `seg("/")`) calls that function, no fetch
     helper of the test's, and is not checked (tests/test_perf_stats.py's route-mark test asserts over `seg("/")` so)."""
     rows, seg = [], lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
@@ -1620,6 +1667,27 @@ def _fail_closed(tree, lines, routes, reads):
                 or isinstance(p, ast.Attribute) and p.value is top and p.attr in _NOT_BODY
             if not ok:
                 rows.append((node.lineno, "unclassified", str(text), "fetched page bound nowhere the census reads (%s): %s" % (type(p).__name__, seg(top))))
+        if not node.args:
+            continue
+        a0, f = node.args[0], node.func
+        # (2) a url the census does not read
+        if isinstance(f, ast.Attribute) and f.attr == "urlopen":
+            req = isinstance(a0, ast.Call) and (getattr(a0.func, "id", None) or getattr(a0.func, "attr", None)) == "Request" and bool(a0.args)
+            if not req and isinstance(a0, ast.BinOp) and isinstance(a0.op, ast.Mod):
+                continue   # a %-formatted literal to urlopen: read (_url_route), or a stated token-less url
+            sp = _spelled_path(a0.args[0] if req else a0)
+            if sp and sp[2] and sp[1] in routes:
+                rows.append((node.lineno, "unclassified", str(routes[sp[1]]), "fetch by a url the census does not read (%s%s): %s" % ("Request " if req else "", sp[0], seg(node))))
+            continue
+        callee = _callee(node)
+        if callee is None or _fetch_path(a0) is not None:
+            continue
+        helper = reads().get(callee)
+        if helper is not None and not helper - {"refused"}:
+            continue   # a helper of the module whose returns place no read: no fetch helper (_fetched)
+        sp = _spelled_path(a0)
+        if sp and sp[2] and sp[1] in routes:
+            rows.append((node.lineno, "unclassified", str(routes[sp[1]]), "fetch by a url the census does not read (%s): %s" % (sp[0], seg(node))))
     return rows
 
 
@@ -3299,6 +3367,58 @@ class T(unittest.TestCase):
         self.assertEqual(refused, [(10, "_chat_page", where % "Return"), (12, "_chat_page", where % "Assign"), (13, "_chat_page", where % "Subscript"),
                                    (14, "_chat_page", where % "Call"), (15, "_chat_page", where % "AnnAssign"), (16, "_chat_page", where % "Attribute"),
                                    (25, "_chat_page", where % "Await"), (27, "_chat_page", where % "Yield")])
+
+
+    def test_a_fetch_by_a_url_the_census_does_not_read_is_refused(self):
+        # round 6 (B.1, _fail_closed's check (2), extra8-3): a fetch reads its page only through a url the census reads (a literal
+        # path, a concatenation led by the whole path, a `%`-formatted literal handed to urlopen). A `%`-format, an f-string or a
+        # `.format` url handed to a fetch helper, an f-string url or a `Request` object handed to urlopen, had fetched a page into
+        # neither census. Each is refused now where the url's static path (_spelled_path) is a page route and whole: an
+        # unclassified row at the call (9 to 14, and 18 through a helper the module does not define). A `%`-formatted url handed to
+        # urlopen is read (16), a helper whose returns place no read is no fetch helper (19), a path that is no route (20) and a
+        # path that is not whole (21, a concatenation; 22, a hole right after the slash) are no row. Dropping the check reds the
+        # rows here. The rows are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest, urllib.request
+class T(unittest.TestCase):
+    def _get_text(self, path):
+        with urllib.request.urlopen(path) as r:
+            return r.read().decode()
+    def _conf(self, path, name):
+        return os.pathconf(path, name)
+    def test_a(self):
+        page = self._get_text("/chat?token=%s" % tok)
+        page = self._get_text(f"/chat?token={tok}")
+        page = self._get_text("/chat?token={}".format(tok))
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/chat?token=x") as r:
+            pass
+        with urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%d/chat?token=x" % self.port)) as r:
+            pass
+        with urllib.request.urlopen("http://127.0.0.1:%d/chat?token=x" % self.port) as r:
+            pass
+        fetch("/sw.js?v=%s" % v)
+        self._conf("/?x=%s" % name, "PC_NAME_MAX")
+        self._get_text("/nope?token=%s" % tok)
+        self._get_text("/chat" + rest)
+        self._get_text("/%s/x" % name)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        where = "fetch by a url the census does not read (%s)"
+        self.assertEqual([(r[0], r[2], r[3].split(":")[0]) for r in readers if r[1] == "unclassified"],
+                         [(9, "_chat_page", where % "percent"), (10, "_chat_page", where % "fstring"), (11, "_chat_page", where % "format"),
+                          (12, "_chat_page", where % "fstring"), (14, "_chat_page", where % "Request percent"), (18, "_sw_js", where % "percent")])
+        # the url's static path, as the check reads it: the path to its `?` (whole) or to its first hole (not whole), a
+        # concatenation's never whole, and a literal that is no path none
+        sp = lambda text: _spelled_path(ast.parse(text, mode="eval").body)
+        self.assertEqual([sp('"/chat?token=%s" % t'), sp('f"http://127.0.0.1:{p}/chat?token=x"'), sp('"/c/{}".format(x)'), sp('"/chat" + rest'),
+                          sp('"http://127.0.0.1:" + str(p)'), sp('"/%s/x" % m'), sp('"x%s" % m'), sp('page')],
+                         [("percent", "/chat", True), ("fstring", "/chat", True), ("format", "/c/", False), ("concat", "/chat", False), None,
+                          ("percent", "/", False), None, None])
 
 
 if __name__ == "__main__":
