@@ -1016,6 +1016,13 @@ for (const [p, s, tag] of [[30, 1.05, 'p30-s1.05'], [83, 1.2, 'p83-s1.2'], [83, 
 { const f = 'fineClear'; r6rest(f); r6step(f, 'kbUp', 460, 83, 1);
   global.matchMedia = () => ({ matches: false }); r6step(f, 'fineRest', 844, 0, 1); global.matchMedia = savedMatchMedia;
   r6step(f, 'Z1-kbUpZ', 230, 83, 2); r6step(f, 'Z2-drag500', 230, 500, 2); r6step(f, 'Z3-back83', 230, 83, 2); }
+// and the rule's other half, the flag left where the hold is: the same hold, the pointer fine with the keyboard's pan standing
+// (the 0px road leaves the hold and the flag), then the same three reports. The hold stands held, so the drag past the share
+// writes nothing and publishes the larger of the hold and the excess, and the drag back publishes the hold; a 0px road that
+// cleared the flag on every run would leave the hold unheld, and the drag would write its excess over it
+{ const f = 'fineKeep'; r6rest(f); r6step(f, 'kbUp', 460, 83, 1);
+  global.matchMedia = () => ({ matches: false }); r6step(f, 'finePan', 460, 83, 1); global.matchMedia = savedMatchMedia;
+  r6step(f, 'Z1-kbUpZ', 230, 83, 2); r6step(f, 'Z2-drag500', 230, 500, 2); r6step(f, 'Z3-back83', 230, 83, 2); }
 out.r6 = r6;
 // extra6-1 (the maintainer's round 6 ruling, 2026-09-29): the coarse road takes the pinch cut at the layout viewport L, not at its
 // own h. A hold of 83 (the keyboard up at scale 1, h 460), then a report BETWEEN the two cuts (scale 1.0008: at or over L/(L - 0.5),
@@ -1611,6 +1618,27 @@ class MobileFitExecutes(unittest.TestCase):
                          "(a flag left standing publishes 0 there): %r" % (t,))
         self.assertEqual([px(t[k]["appTop"]) for k in after], [px(n[k]["appTop"]) for k in after],
                          "the flip at rest leaves the no-hold state: the nohold family's values: %r %r" % (t, n))
+
+    def test_the_0px_road_leaves_the_written_hold_flag_where_it_leaves_the_hold(self):
+        # the flag's clearing rule, its other half: the 0px road clears the flag only where it clears the hold. The same hold and
+        # the same three reports under the pinch as the cell above, with the pointer turned fine while the keyboard's pan stands
+        # (the 0px road leaves the hold, test_the_0px_road_clears_the_hold_only_where_no_pan_stands): the hold stays held, so the
+        # drag past the share writes nothing and publishes the larger of the hold and the excess, and the drag back publishes the
+        # hold. The source pin in test_shell_viewport_fit reads the clearing's spelling only; a 0px road that cleared the flag on
+        # every run leaves the hold unheld, and the drag writes its excess over it (the excess on the drag and on the drag back).
+        px = self._r6_px
+        t, c = self._r6("fineKeep"), self._r6("fineClear")
+        after = ("Z1-kbUpZ", "Z2-drag500", "Z3-back83")
+        self.assertEqual([(t[k]["height"], t[k]["offsetTop"], t[k]["scale"]) for k in ("kbUp",) + after],
+                         [(c[k]["height"], c[k]["offsetTop"], c[k]["scale"]) for k in ("kbUp",) + after],
+                         "the cell's premise: the reports before and after the flip are the cell above's; only the flip's own report differs")
+        self.assertEqual((t["finePan"]["offsetTop"], t["finePan"]["scale"]), (83, 1), "the cell's premise: the flip with the keyboard's pan standing")
+        excess = self._r6_interval(t["Z2-drag500"])[0] + 1   # the reading less the share, 500 - 422
+        self.assertTrue(0 < excess < 83, "the cell's premise: the drag passes the share and leaves an excess under the hold: %r" % (t["Z2-drag500"],))
+        self.assertEqual((px(t["kbUp"]["appTop"]), px(t["finePan"]["appTop"])), (83, 0), "the hold, then the fine pointer: %r" % (t,))
+        self.assertEqual([px(t[k]["appTop"]) for k in after], [83, 83, 83],
+                         "the flag left with the hold: the hold stays held, the drag publishes the larger of it and the excess, the drag back "
+                         "the hold (a flag cleared on every run gives the excess on the drag and on the drag back): %r" % (t,))
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and
