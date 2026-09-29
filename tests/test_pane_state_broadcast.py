@@ -1777,6 +1777,33 @@ out.mirror = snap();
 console.log(JSON.stringify(out));
 """
 
+# The backstop's PEND half (the reviewer's round-7 ruling on regression-1, which found it pinned by source text alone once the rows were
+# gone): failed() zeroes PEND, and on the phone a failure is not promoted again, so the failed promotion's OWN 30 s backstop still fires
+# later on the same token (TOK unchanged: no retry was made). Its guard `PEND[k]!==tok` is what stands it down; without that half it reads
+# a document that is neither `app` nor `doc` and calls failed() a second time, and the copy escalates by itself from the first failure's
+# to the second's with no gesture from the user. Driven for both answers a phone load fails on: the browser's error page (docState none)
+# and a document the kernel did not serve as a 200 (other).
+_LAZY_OWN_BACKSTOP_DRIVER = _LAZY_TOOLS + r"""
+SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
+shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
+const snap = (k) => ({ tab: TAB, src: src()[k], lazy: lazy()[k], div: divCls(k), bodyFailed: BODY_CLS.has('pane-failed'), bodyLoading: BODY_CLS.has('pane-loading'), msg: MSG.textContent, retryHidden: RETRY.hidden, sets: Object.assign({}, SETS), listeners: (LOADS[k] || []).length, diag: diagAll() });
+const t30 = () => TIMERS.filter((t) => t.ms === 30000);
+window.__rompMobileTab('waiting');   // the first tap: one promotion, its load listener and its own 30 s backstop, on token 1
+const ownWaiting = t30().slice(-1);   // that promotion's backstop (the feed's boot promotion armed the one before it)
+frames['f-waiting'].contentDocument = null; (LOADS.waiting || []).forEach((f) => f());   // the fetch fails on its load: Chromium's error page (none)
+out.noneFailed = snap('waiting');
+ownWaiting.forEach((t) => t.f());   // 30 s later, with no retry: the failed promotion's own backstop fires on its own token
+out.noneOwnBackstop = snap('waiting');
+window.__rompMobileTab('fleet');   // a second pane, the same road for the other failing answer
+const ownFleet = t30().slice(-1);
+otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the kernel's 403 line at the pane's url: other, a failure
+out.otherFailed = snap('fleet');
+ownFleet.forEach((t) => t.f());
+out.otherOwnBackstop = snap('fleet');
+out.ownTimers = ownWaiting.length + ownFleet.length;
+console.log(JSON.stringify(out));
+"""
+
 # the author's pass-4 verify (2026-09-19): the FEED through the recorded-failure road. The feed is exempt from the phone's off-screen parking (it
 # loads at boot) and lazyFlip's phone branch skipped it with the chat, before the DEAD check, so a feed recorded DEAD on the desktop (the phone
 # boot's promotion failed, the flip promoted it again, that failed too: the bound) kept its src over the dead document on the flip back, and
@@ -3180,6 +3207,21 @@ class LazyPanes(unittest.TestCase):
         self.assertIn(sw, js, "a tab switch clears it, on a fork line of its own inside show()")
         self.assertLess(js.index("pw.__rompPaneShown();}catch(e){}"), js.index(sw), "…after the show hook's line")
         self.assertLess(js.index(sw), js.index("for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);"), "…and before the upstream tab-class line, which is untouched")
+
+    def test_a_failed_panes_own_backstop_fired_with_no_retry_keeps_the_first_failures_copy(self):
+        # the backstop's PEND half, by page state (_LAZY_OWN_BACKSTOP_DRIVER says why): after a phone failure and no retry, the failed
+        # promotion's own backstop changes nothing the user sees, for the error page and for the kernel's denial alike. Without
+        # `||PEND[k]!==tok` the backstop calls failed() again and the copy escalates to the second failure's by itself.
+        o = _lazy(self.seed, _LAZY_OWN_BACKSTOP_DRIVER)
+        self.assertEqual(o["ownTimers"], 2, "each failed promotion's own backstop was found and fired (a case over no timer would witness nothing)")
+        for road in ("none", "other"):
+            with self.subTest(road=road):
+                f, b = o[road + "Failed"], o[road + "OwnBackstop"]
+                self.assertEqual((f["div"], f["bodyFailed"], f["msg"], f["retryHidden"], f["src"]), (["failed"], True, "Couldn't load this pane.", False, None),
+                                 "the first failure on the phone: the failed state, the first failure's copy, the button, the src removed")
+                self.assertEqual(b, f, "the failed promotion's own backstop, fired with no retry, changes nothing: the first failure's copy stands "
+                                       "(without the guard's PEND half it reads the failed frame again and the copy escalates to \"Still not loading\")")
+                self.assertEqual(b["diag"], [], "and nothing is posted")
 
     def test_the_promotion_token_makes_a_stale_listener_and_a_stale_backstop_inert_across_a_retry(self):
         # HIGH 2, review round 2 closeout: the two `if(TOK[k]!==tok)return;` guards were unpinned (the failed-load case above reaches its
