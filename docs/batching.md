@@ -36,7 +36,7 @@ reached main (`finish` runs it, and it also runs on every push to main).
 3. Sweep your head before its review round and again before its closing check:
    `scripts/sweep.py run --tree <your worktree> --python <python>` (step 3 under "If you are the
    batcher" says what that interpreter needs). It owes every leg at your head, as at a batch
-   head, the webview legs and the served leg included, whatever you changed. The round and the check read that result
+   head, the webview legs, the PDF smoke test and the served leg included, whatever you changed. The round and the check read that result
    (`scripts/sweep.py check --tree <your worktree>`, which reads it as `verify` and `plan` do)
    where they read CI before, and it must pass at the head they read; a push after the sweep
    needs a new one. `scripts/batch.py plan` leaves out a PR whose head has no passing result,
@@ -212,7 +212,10 @@ subject; `verify` refuses the branch otherwise.
    it: the browser-backed tests skip there, as in CI, and the other tests in the served files run
    with the SDK. The legs are pytest, `npm ci` from the sha's lockfile, bats, the manager and
    tooling node tests, the ledger check (in a checkout of its own: CI runs it in a workflow of its
-   own), `npm run typecheck`, `npm test`, `npm run build` and the served leg: every leg at every
+   own), `npm run typecheck`, `npm test`, the PDF renderer smoke test (`node --test
+   tools/pdf-smoke.test.mjs`, after `npm ci` in the extension job's checkout, as CI's step runs it,
+   so it opens a PDF with the installed `pdfjs-dist` and is red if it skips), `npm run build` and
+   the served leg: every leg at every
    head, whatever it changed, since the webview tests and the served tests
    also read files outside `kernel/kernel.py`, `ui/` and `vscode-extension/`. The served leg runs
    what CI's served step runs. The runner finds that step by its name, "Browser-backed served-page
@@ -255,10 +258,8 @@ subject; `verify` refuses the branch otherwise.
    where CI's served step runs, after the steps its job runs before it. The pane bench
    (`tests/ui-bench.test.mjs`), the Browser legs step (its roster checks, and the rostered browser
    tests with `ROMP_BROWSER_LEGS_REQUIRE=1`; the sweep's `npm test` runs those tests without the
-   switch, so a Chromium that fails to launch there skips instead of failing), the PDF renderer
-   smoke step (the tooling leg runs `tools/pdf-smoke.test.mjs` with no `node_modules`, where it
-   skips, as in CI's job for that leg), the other Python versions and macOS run only in the
-   batch's CI. CI's free-threaded cell runs pytest with
+   switch, so a Chromium that fails to launch there skips instead of failing), the other Python
+   versions and macOS run only in the batch's CI. CI's free-threaded cell runs pytest with
    `PYTHON_GIL=0`, which the sweep does not set, so a free-threaded `--python` runs with its own
    default. Each
    leg gets an allowlisted environment: a TMPDIR of its own, made when the leg starts and removed

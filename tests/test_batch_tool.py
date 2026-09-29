@@ -335,17 +335,17 @@ class Fixture:
 
     def sweep(self, name, sha=None, webview=False, **over):
         """A sweep result for batch/<name>'s current head (or `sha`), written through scripts/sweep.py's own
-        writer where the runner writes it: every leg rc 0 but deps, the webview legs and served, not owed for the one
-        reason the runner gives (the fixture's worlds have no vscode-extension/package.json), unless `webview` is True,
-        which records the webview legs and served owed and rc 0; `over` replaces top-level keys, and the verdict is the
+        writer where the runner writes it: every leg rc 0 but deps, the webview legs, pdf-smoke and served, not owed for
+        the one reason the runner gives (the fixture's worlds have no vscode-extension/package.json), unless `webview` is
+        True, which records the webview legs, pdf-smoke and served owed and rc 0; `over` replaces top-level keys, and the verdict is the
         runner's rule over the result unless given."""
         sha = sha or self.dev_git("rev-parse", "batch/" + name)
         return self.result(sha, "batch/" + name, webview=webview, tree=self.wt(name), **over)
 
     def result(self, sha, branch, webview, tree, runs=None, **over):
         """The result the runner would write for `sha`, recorded for `branch`: one full run (schema 2 keeps every run
-        at the sha in `runs`), every leg rc 0 but deps, not owed, and the webview legs and served owed and rc 0 when
-        `webview`, else not owed; deps, the webview legs and served are marked not owed for the one reason the runner
+        at the sha in `runs`), every leg rc 0 but deps, not owed, and the webview legs, pdf-smoke and served owed and rc 0
+        when `webview`, else not owed; deps, the webview legs, pdf-smoke and served are marked not owed for the one reason the runner
         gives, a sha with no vscode-extension/package.json. `over` replaces keys of that run, `runs` the whole history; a run's verdict is
         its own legs' unless given."""
         if runs is None:
@@ -353,7 +353,7 @@ class Fixture:
             legs = {n: {"owed": True, "rc": 0, "cmd": ["true"], "started": stamp, "finished": stamp} for n in sweep.LEGS}
             for n in sweep.TEST_LEGS:
                 legs[n].update(tests=1, failed=0)
-            for n in () if webview else sweep.EXTENSION_LEGS[1:]:      # the webview legs and served
+            for n in () if webview else sweep.EXTENSION_LEGS[1:]:      # the webview legs, pdf-smoke and served
                 legs[n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
             # the fixture's worlds have no vscode-extension/, and this is the one reason the runner gives for deps
             legs["deps"] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
@@ -649,8 +649,8 @@ class PlanReadsTheMemberSweep(_Base):
         fx.sweep("b1")
         fx.ok("verify", "b1")
         body = fx.ok("summarize", "b1", "--print-only").stdout
-        legs = ("pytest rc 0, bats rc 0, manager rc 0, tools rc 0, ledger rc 0, typecheck rc 0, npm-test rc 0, build rc 0, "
-                "served rc 0; not owed: deps")
+        legs = ("pytest rc 0, bats rc 0, manager rc 0, tools rc 0, ledger rc 0, typecheck rc 0, npm-test rc 0, pdf-smoke rc 0, "
+                "build rc 0, served rc 0; not owed: deps")
         self.assertIn("| #101 | PR 101 on a | fix | not stated | pass @%s: %s |" % (a[:10], legs), body)
         self.assertIn("| #102 | PR 102 on b | fix | 3 | pass @%s: %s |" % (b[:10], legs), body)
         self.assertNotIn("@0123456789", body, "the trailer's sweep_head, another sha, is not shown")
@@ -1800,7 +1800,7 @@ class VerifyReadsTheSweep(_Base):
         path = fx.sweep("b1")
         p = fx.ok("verify", "b1")
         self.assertIn("ok   sweep at %s: pass, finished " % head[:10], p.stdout)
-        self.assertIn("(pytest 0, bats 0, manager 0, tools 0, ledger 0; not owed: deps, typecheck, npm-test, build, served); %s" % path,
+        self.assertIn("(pytest 0, bats 0, manager 0, tools 0, ledger 0; not owed: deps, typecheck, npm-test, pdf-smoke, build, served); %s" % path,
                       p.stdout)
         st = fx.state("b1")
         self.assertTrue(st["verified"]["ok"])
@@ -1810,8 +1810,8 @@ class VerifyReadsTheSweep(_Base):
         # to tests/test_ci_sdk_pin.py's census of child launchers (PR 872)
         self.assertEqual([n for n, _rc in st["sweep"]["legs"]], list(sweep.LEGS))
         self.assertEqual(dict(st["sweep"]["legs"]), {"deps": "not owed", "pytest": 0, "bats": 0, "manager": 0, "tools": 0, "ledger": 0,
-                                                     "typecheck": "not owed", "npm-test": "not owed", "build": "not owed",
-                                                     "served": "not owed"})
+                                                     "typecheck": "not owed", "npm-test": "not owed", "pdf-smoke": "not owed",
+                                                     "build": "not owed", "served": "not owed"})
 
     def test_a_result_at_the_old_head_is_stale_after_a_batch_commit(self):
         fx = self.fx
@@ -1869,7 +1869,7 @@ class VerifyReadsTheSweep(_Base):
         head = fx.branch("a", {"vscode-extension/package.json": "{}\n"}, swept=False)
         legs = self.legs()
         legs["deps"] = {"owed": True, "rc": 0, "started": sweep.now(), "finished": sweep.now()}
-        for n in sweep.EXTENSION_LEGS[1:]:          # the webview legs and served
+        for n in sweep.EXTENSION_LEGS[1:]:          # the webview legs, pdf-smoke and served
             legs[n] = {"owed": True, "rc": 0, "tests": 1, "failed": 0, "started": sweep.now(), "finished": sweep.now()}
         fx.result(head, "a", webview=True, tree=fx.author, legs=legs)
         fx.pr(101, "a", title="the extension's manifest", labels=["fix"], body=TRAILER)
@@ -2969,7 +2969,7 @@ class SweepThenVerify(_Base):
         self.assertTrue(os.path.exists(os.path.join(fx.xdg, "romp", "sweeps", head + ".json")))
         p = fx.ok("verify", "b1")
         self.assertIn("ok   sweep at %s: pass" % head[:10], p.stdout)
-        self.assertIn("pytest 0, bats 0, manager 0, tools 0; not owed: deps, ledger, typecheck, npm-test, build, served", p.stdout)
+        self.assertIn("pytest 0, bats 0, manager 0, tools 0; not owed: deps, ledger, typecheck, npm-test, pdf-smoke, build, served", p.stdout)
         with open(os.path.join(fx.xdg, "romp", "sweeps", head + ".json")) as f:
             sdk = json.load(f)["runs"][-1]["runner"]["sdk"]
         self.assertEqual((sdk["dist"], sdk["pin"], sdk["version"]), ("claude-agent-sdk", "1.2.3", "1.2.3"),
@@ -3558,8 +3558,8 @@ class Body(unittest.TestCase):
         self.assertIn("Land with `scripts/batch.py land %s`: it reads main again right before the merge and refuses if the "
                       "batch head no longer contains it. "
                       "Verified at ffffffffff: sweep pass: pytest rc 0 (1 passed in 0.1s), "
-                      "bats rc 0 (1 ok, 0 not ok), manager rc 0, tools rc 0, ledger rc 0; not owed: deps, typecheck, npm-test, build, "
-                      "served; "
+                      "bats rc 0 (1 ok, 0 not ok), manager rc 0, tools rc 0, ledger rc 0; not owed: deps, typecheck, npm-test, "
+                      "pdf-smoke, build, served; "
                       "provenance clean; main at %s contained at verify time; ledger check clean. " % (st["name"], "e" * 10), body)
         self.assertIn("No CI runs on the merge to main, so if main has moved past %s, do not merge with the button or "
                       "`gh pr merge`: the batch needs main merged in, a new sweep and verify first." % ("e" * 10), body)
@@ -3625,7 +3625,8 @@ class Body(unittest.TestCase):
         other["sweep"] = dict(recorded["sweep"], head="ab" * 20)
         body = batch.render_body(self.state([recorded, older, other]), {"resolutions": [], "entries": []})
         self.assertIn("| #1 | t | fix | 2 | pass @%s: pytest rc 0, bats rc 0 (4 ok, 0 not ok), manager rc 0, tools rc 0, ledger rc 0, "
-                      "typecheck rc 0, npm-test rc 0, build rc 0, served rc 0; not owed: deps |" % recorded["head"][:10], body)
+                      "typecheck rc 0, npm-test rc 0, pdf-smoke rc 0, build rc 0, served rc 0; not owed: deps |" % recorded["head"][:10],
+                      body)
         self.assertIn("| #2 | t | fix | 2 | not recorded |", body)
         self.assertIn("| #3 | t | fix | 2 | not recorded (the pass read was at %s, the pinned head is %s) |"
                       % ("ab" * 5, other["head"][:10]), body)

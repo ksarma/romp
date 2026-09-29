@@ -38,8 +38,8 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     `Depends-on` cycle excludes its members (and their dependents), not the plan; plan --only N plans N
     alone (a single PR lands as a one-member batch), refusing a number that is not an open PR;
   - plan excludes a candidate whose pinned head has no passing sweep result of its own (read through the
-    reader verify uses, so a member's head owes every leg, the webview legs and the served leg included, as a
-    batch head does),
+    reader verify uses, so a member's head owes every leg, the webview legs, pdf-smoke and the served leg
+    included, as a batch head does),
     naming the case, and its dependents with it; assemble --repin refuses a re-read head without one; both record
     on the member the pass they read, and the body's members table shows that record, never the author's trailer
     (a member recorded without one reads "not recorded");
@@ -58,9 +58,9 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     head's tree holds that script (plan and --repin refuse the same at a member's head), and a batch head
     that does not contain main as origin has it now (CI does not run on the merge to main, so the tree that
     lands must be the tree the sweep and the batch branch's CI ran on); a result that marks deps, a webview
-    leg or the served leg not owed for any other reason reads invalid, whatever the diff (every head owes the
-    webview legs and the served leg), and so does one that marks the ledger not owed for any reason but a
-    missing ledger script;
+    leg, pdf-smoke or the served leg not owed for any other reason reads invalid, whatever the diff (every head
+    owes the webview legs, pdf-smoke and the served leg), and so does one that marks the ledger not owed for any
+    reason but a missing ledger script;
     land re-runs verify and refuses the same. The reader reads the result's whole history (append-only
     runs): a failed run that no later run excused with --flake naming the leg reads red, naming the run and
     its logs, and a result recorded under another leg environment (the allowlist hash) reads invalid; verify
@@ -1592,7 +1592,7 @@ def member_sweep(root, sweep, m):
     """A member PR owes a passing sweep of its own head before its review round and before its closing check
     (docs/batching.md), so the steps that take a member in (plan, assemble --repin) read it. Returns (fault, record):
     (None, the pass as sweep_record has it) when the result at the member's pinned head is a pass (every leg owed, the
-    webview legs and the served leg included, as at a batch head: the reader refuses one of them marked not owed for
+    webview legs, pdf-smoke and the served leg included, as at a batch head: the reader refuses one of them marked not owed for
     any reason but a missing extension, and the ledger for any reason but a missing ledger script) and any leg it marks
     not owed for a missing vscode-extension/package.json or ledger script is one the head's tree lacks, else (the reader's line naming the case, None). The caller records the pass on the member, and the
     body's members table shows that record (round 1, fresh-3). The result is read from this machine's state dir; one

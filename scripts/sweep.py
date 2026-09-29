@@ -57,8 +57,10 @@ or not, is reparented to the runner and reaped as soon as it exits while the leg
 leg's group as a defunct process.
 
 The legs (LEGS) are pytest (all of tests/, below), deps (`npm ci` from the sha's lockfile), bats, manager and tools
-(node --test), ledger (scripts/upstream-ledger.py check), the three webview legs (typecheck, npm-test, build), and
-served (the browser-backed served-page tests, below). They are grouped as CI's jobs group their steps (round 2, the
+(node --test), ledger (scripts/upstream-ledger.py check), the three webview legs (typecheck, npm-test, build),
+pdf-smoke (node --test tools/pdf-smoke.test.mjs, CI's PDF renderer smoke step, which opens a synthetic PDF with the
+pdfjs-dist npm ci installs; round 2, the owner's build question 4), and served (the browser-backed served-page tests,
+below). They are grouped as CI's jobs group their steps (round 2, the
 coordinator's decision 13; leg_groups). Each leg mirrors one step of the swept sha's ci.yml, found by its name
 (LEG_STEPS). The legs whose steps one job holds run in one fresh checkout, in that job's step order, as CI's steps in
 one job share its checkout, and each such group starts from a checkout of its own, as each of CI's jobs does. The
@@ -73,10 +75,12 @@ and no browser: in a checkout where npm ci never runs, with PLAYWRIGHT_BROWSERS_
 browser-backed tests skip there as they do in CI, and the other tests in the served globs' files (63 in six files when
 the served rulings were made) run with the SDK, as CI runs them; and the bats, manager and tools legs, whose CI jobs
 run no npm ci, run with no node_modules, as there. Each group runs in its job's step order, so the npm-test leg runs
-over a checkout holding no bundle a served test built, as CI's Test step does. Every head owes every leg, a member's
+over a checkout holding no bundle a served test built, as CI's Test step does, and the pdf-smoke leg runs in the
+extension job's checkout after npm ci, where pdfjs-dist is installed, as CI's step does (the tools leg runs the same
+file with no node_modules, where it skips). Every head owes every leg, a member's
 head included, whatever its diff: the webview legs read files outside kernel/kernel.py, ui/ and vscode-extension/ (tests, other kernel
 modules, docs), and the served tests boot the kernel and serve the webview bundle, so no set of changed paths shows
-either may be skipped. deps, the webview legs and served are marked not owed only when the sha has no
+either may be skipped. deps, the webview legs, pdf-smoke and served are marked not owed only when the sha has no
 vscode-extension/package.json, and the ledger only when it has no ledger script; a reader refuses any other not-owed
 mark, and batch.py's verify, plan and --repin and `check` refuse either reason when the sha's tree holds the file it
 names (round 2, correctness-4, for the ledger). Every leg runs even after an earlier one is red, so the result carries every leg's status.
@@ -199,7 +203,8 @@ as that user. The result records the allowlist's hash (runner.leg_env), and a re
 recorded under another; the hash covers what the runner itself sets, that the served leg adds its step's env:
 block, and the shape each leg runs in (its own TMPDIR, HOME and state root; one checkout per ci.yml job, the steps it
 groups by), so a result written before round 2's fixes, whose legs shared one TMPDIR, HOME, state root and checkout,
-reads as recorded under another (decision 15); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
+reads as recorded under another (decision 15), and so does one written before the pdf-smoke leg, since the hash names
+every leg's set values and step (the owner's build question 4); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
 in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups).
 The result also records the versions of node, npm, bats, git and gitleaks the legs found, and, per
 leg, the names it left in its private HOME (runner.home_left, {leg: names}; a setup's are in its own record), with
@@ -223,10 +228,8 @@ file in any of these that a later leg reads.
 
 The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
 the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
-switch, so a Chromium that fails to launch there skips instead of failing), the PDF renderer smoke step (CI's
-extension job runs tools/pdf-smoke.test.mjs after its npm ci; the tools leg runs that file with no node_modules, as
-CI's job for the tools step does, where it skips), the Python versions other than --python's, and macOS run only in the
-batch's CI. CI's free-threaded cell also runs pytest with PYTHON_GIL=0, which the
+switch, so a Chromium that fails to launch there skips instead of failing), the Python versions other than --python's,
+and macOS run only in the batch's CI. CI's free-threaded cell also runs pytest with PYTHON_GIL=0, which the
 runner does not set, so a free-threaded --python runs with its own default.
 
 The result is append-only (schema 2): `runs` keeps every run at the sha, oldest first, and a run is never
@@ -294,34 +297,43 @@ SCHEMA = 2
 # The legs a result records. They run grouped by the ci.yml job that holds each one's step (leg_groups, round 2's
 # decision 13), not in this order: the pytest leg's job first, in a checkout where npm ci never runs and with no browser,
 # as CI's Python cells run pytest over all of tests/ (the served ruling's item 1, 2026-09-28).
-LEGS = ("pytest", "deps", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "build", "served")
+LEGS = ("pytest", "deps", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "pdf-smoke", "build", "served")
 WEBVIEW_LEGS = ("typecheck", "npm-test", "build")
+# CI's PDF renderer smoke step (round 2, the owner's build question 4): node --test over tools/pdf-smoke.test.mjs, which
+# opens a synthetic PDF with the pdfjs-dist the extension job's npm ci installs, and skips where it is not installed. It
+# runs in the job that holds its step, after that job's npm ci (leg_groups), so it asserts there as in CI; the tools leg
+# runs the same file with no node_modules, where it skips, as CI's job for the tools step does. It is a test leg: a run
+# of it that passes no test (its one test skipped, pdfjs-dist missing) is red.
+PDF_LEG = "pdf-smoke"
 # The browser-backed served-page tests, the files CI's served step selects: a leg of their own, as CI runs them in a
 # step of their own (the served ruling, 2026-09-28). Last in LEGS; it runs in the job that holds its step, after that
 # job's steps before it (leg_groups). It also runs the tests outside those files that the pytest leg skipped for want of the deps (DEPS_SKIP).
 SERVED_LEG = "served"
-TEST_LEGS = ("pytest", "bats", "manager", "tools", "npm-test", "served")
+TEST_LEGS = ("pytest", "bats", "manager", "tools", "npm-test", PDF_LEG, "served")
 # The test legs pytest runs, whose tests are counted from pytest's summary line.
 PYTEST_LEGS = ("pytest", "served")
 # The legs the runner owes at every head; the others it marks not owed only with a reason (`why`): deps, the webview
-# legs and served (EXTENSION_LEGS) only when the sha has no vscode-extension/package.json (NO_PACKAGE_JSON), and the
-# ledger only when it has no ledger script.
+# legs, pdf-smoke and served (EXTENSION_LEGS) only when the sha has no vscode-extension/package.json (NO_PACKAGE_JSON),
+# and the ledger only when it has no ledger script.
 ALWAYS_OWED = ("pytest", "bats", "manager", "tools")
 # The legs owed wherever the sha has vscode-extension/package.json. The webview legs are owed at every such head,
 # a member's included, whatever its diff (round 1, decision 11): they read files outside kernel/kernel.py, ui/ and
 # vscode-extension/ (a census of their reads found 82 such tracked files), so a rule over the changed paths passes
 # heads that turn them red. The served leg is owed on the same terms: its tests boot the kernel and serve the webview
 # bundle, whose inputs lie outside those three as well, and they need the extension's node_modules (playwright,
-# esbuild), which deps installs from the same package.json.
-EXTENSION_LEGS = ("deps",) + WEBVIEW_LEGS + (SERVED_LEG,)
+# esbuild), which deps installs from the same package.json. So is pdf-smoke, whose test opens the pdfjs-dist that
+# package.json names.
+EXTENSION_LEGS = ("deps",) + WEBVIEW_LEGS + (PDF_LEG, SERVED_LEG)
 WEBVIEW_WHY = "owed at every head: the webview legs read files outside kernel/kernel.py, ui/ and vscode-extension/"
+PDF_WHY = ("owed at every head that has vscode-extension/package.json: CI's PDF renderer smoke step runs it after the "
+           "extension job's npm ci, which installs the pdfjs-dist it opens")
 SERVED_WHY = ("owed at every head: the served tests boot the kernel and serve the webview bundle, which reads files "
               "outside kernel/kernel.py, ui/ and vscode-extension/")
 VERDICTS = ("pass", "red", "running", "invalid")
-# The one reason the runner gives for deps, the webview legs and served not owed: the sha's tree has no extension. A
-# result that marks one of them not owed for any other reason did not come from this runner (every checkout is fresh,
-# so it never holds node_modules, and no diff excuses a webview leg or the served leg), and batch.py and `check` accept
-# this one only when the sha's tree really has no such file (excuse_contradiction).
+# The one reason the runner gives for deps, the webview legs, pdf-smoke and served not owed: the sha's tree has no
+# extension. A result that marks one of them not owed for any other reason did not come from this runner (every checkout
+# is fresh, so it never holds node_modules, and no diff excuses a webview leg, pdf-smoke or the served leg), and batch.py
+# and `check` accept this one only when the sha's tree really has no such file (excuse_contradiction).
 NO_PACKAGE_JSON = "no vscode-extension/package.json"
 # The one reason the runner gives for the ledger not owed: the sha's tree has no ledger script (round 2, correctness-4).
 # The reader refuses any other reason for it, and batch.py and `check` accept this one only when the sha's tree really
@@ -411,9 +423,10 @@ SETUP_PYTHON = "actions/setup-python"
 # the group's setup in any other job whose legs come after it. CiParity holds each name to the step whose command the
 # leg runs.
 DEPS_STEP = "Install deps"
+PDF_STEP = "PDF renderer dependency smoke test (node --test)"
 LEG_STEPS = {"pytest": PYTEST_STEP, "deps": DEPS_STEP, "bats": "Run bats", "manager": "Manager handshake tests (node --test)",
              "tools": "Vendored tooling and host-script tests (node --test)", "typecheck": "Typecheck", "npm-test": "Test",
-             "build": "Build", SERVED_LEG: SERVED_STEP}
+             PDF_LEG: PDF_STEP, "build": "Build", SERVED_LEG: SERVED_STEP}
 # The legs whose check is in no job of ci.yml, each run in a fresh checkout of its own after the ci.yml groups: CI runs
 # scripts/upstream-ledger.py check in a workflow of its own (.github/workflows/ledger.yml).
 OWN_CHECKOUT_LEGS = ("ledger",)
@@ -473,10 +486,14 @@ NO_BROWSERS = "no-browsers"
 # the same commands there; deps adds --no-audit --no-fund, which change what npm prints, not what it installs).
 DEPS_CMD = ("npm", "ci", "--no-audit", "--no-fund")
 NPM_CMDS = {"typecheck": ("npm", "run", "typecheck"), "npm-test": ("npm", "test"), "build": ("npm", "run", "build")}
+# The files each node --test leg and the bats leg run, from the checkout's root (CiParity holds each to its step's
+# command). pdf-smoke's one file is a pattern like the others, so a tree without it is red naming it, as CI's step
+# would be.
 GLOBS = {
     "bats": ("tests/*.bats",),
     "manager": ("tests/manager-*.test.js",),
     "tools": ("tools/*.test.mjs", "vendor/track-changents/hooks/*.test.mjs"),
+    PDF_LEG: ("tools/pdf-smoke.test.mjs",),
 }
 # The leg environment is an allowlist (leg_env). A leg inherits these names from the runner's environment when they
 # are set, and nothing else: every other variable it sees is one the runner sets (leg_sets), so no credential, session
@@ -599,9 +616,10 @@ def write_result(path, data):
 def excuse_fault(name, leg):
     """Why a leg's not-owed mark is one the runner never writes, or None: a leg of ALWAYS_OWED marked not
     owed, another leg marked not owed with no reason, or marked not owed for any reason but the one the runner gives for
-    it (NOT_OWED_WHY): deps, a webview leg or served (EXTENSION_LEGS) for any reason but NO_PACKAGE_JSON (every checkout
-    is fresh, so deps is owed wherever the sha has vscode-extension/package.json, and every head owes the webview legs
-    and served whatever its diff), and the ledger for any reason but NO_LEDGER_SCRIPT (round 2, correctness-4)."""
+    it (NOT_OWED_WHY): deps, a webview leg, pdf-smoke or served (EXTENSION_LEGS) for any reason but NO_PACKAGE_JSON
+    (every checkout is fresh, so deps is owed wherever the sha has vscode-extension/package.json, and so is pdf-smoke,
+    and every head owes the webview legs and served whatever its diff), and the ledger for any reason but
+    NO_LEDGER_SCRIPT (round 2, correctness-4)."""
     if not (isinstance(leg, dict) and leg.get("owed") is False):
         return None
     if name in ALWAYS_OWED:
@@ -952,8 +970,8 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
         text += ["%s marked not owed for a reason other than %r (%r)" % (", ".join(names), own, why)
                  for (own, why), names in by_why.items()]
         return done("invalid", "sweep invalid at %s: %s, which the runner never records (%s always run; deps, the webview "
-                               "legs and served are owed at every head that has vscode-extension/package.json, whatever its "
-                               "diff, and the ledger at every head that has %s); sweep again with this checkout's "
+                               "legs, pdf-smoke and served are owed at every head that has vscode-extension/package.json, "
+                               "whatever its diff, and the ledger at every head that has %s); sweep again with this checkout's "
                                "scripts/sweep.py" % (short(sha), "; ".join(text), ", ".join(ALWAYS_OWED), LEDGER_SCRIPT), rec)
     history = read_history(runs)
     rec.update(flake_notes=flake_notes(history), invalid_notes=invalid_notes(history))
@@ -1014,7 +1032,7 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
 
 def excuse_contradiction(tree, result, sha, subject="HEAD"):
     """The legs a result marks not owed for the one reason the runner gives for them (NOT_OWED_WHY: deps, the webview
-    legs and served for having no vscode-extension/package.json, round 1's excuse rule, and the ledger for having no
+    legs, pdf-smoke and served for having no vscode-extension/package.json, round 1's excuse rule, and the ledger for having no
     scripts/upstream-ledger.py, round 2's correctness-4) while the sha's tree does hold the file that reason names, as a
     line naming them and the file; None when none is so marked or the tree really has no such file. Read with the
     runner's own git hygiene (no inherited GIT_*, no global or system config, refs/replace ignored). batch.py's verify,
@@ -3253,8 +3271,8 @@ def served_also(pytest_rec):
 def plan_legs(tree, python, workers, served=None):
     """{leg: record} with each leg's owed decision, command and cwd, planned over the fresh checkout; nothing runs
     here. deps (npm ci from the sha's lockfile) is owed whenever the sha has vscode-extension/package.json, since a
-    fresh checkout never holds node_modules, and so are the webview legs and served, whatever the head changed
-    (WEBVIEW_WHY, SERVED_WHY). The pytest leg collects all of tests/, the served globs' files included, as CI's Python
+    fresh checkout never holds node_modules, and so are the webview legs, pdf-smoke and served, whatever the head changed
+    (WEBVIEW_WHY, PDF_WHY, SERVED_WHY). The pytest leg collects all of tests/, the served globs' files included, as CI's Python
     cells do. `served` is ci.yml's served step as read_served_step reads it (read from the tree when not given): the
     served leg runs the files its globs select, in one process, and at run time also the tests the pytest leg skipped
     for want of the deps (deps_skipped), which join its command before it runs."""
@@ -3278,10 +3296,14 @@ def plan_legs(tree, python, workers, served=None):
                 rec.update(cmd=served_cmd(python, served_files), cwd=".", globs=list(served["globs"]), why=SERVED_WHY)
                 if served_empty:
                     rec.update(empty_glob=served_empty)
+        elif name == PDF_LEG and not package:
+            rec.update(owed=False, why=NO_PACKAGE_JSON)
         elif name in GLOBS:
             files, empty = expand(tree, GLOBS[name])
             tool = ["bats", "--print-output-on-failure"] if name == "bats" else ["node", "--test"]
             rec.update(cmd=tool + files, cwd=".", globs=list(GLOBS[name]))
+            if name == PDF_LEG:
+                rec.update(why=PDF_WHY)
             if empty:
                 rec.update(empty_glob=empty)
         elif name == "ledger":

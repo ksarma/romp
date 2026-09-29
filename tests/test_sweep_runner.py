@@ -180,7 +180,9 @@ if name == "python":
 elif name == "npm":
     leg = {"ci": "deps", "test": "npm-test"}.get(args[0] if args else "") or {"typecheck": "typecheck", "build": "build"}.get(args[1] if len(args) > 1 else "", "npm?")
 elif name == "node":
-    leg = "manager" if any(a.startswith("tests/manager-") for a in args) else "tools"
+    # the pdf-smoke leg runs its one file alone; the tools leg's glob holds that file among others
+    leg = ("manager" if any(a.startswith("tests/manager-") for a in args)
+           else "pdf-smoke" if args == ["--test", "tools/pdf-smoke.test.mjs"] else "tools")
 elif name == "upstream-ledger.py":
     leg = "ledger"
 else:
@@ -489,7 +491,8 @@ elif act == "idle":
 # What each test leg's real tool prints at the end of a run (pytest -q's summary, bats' TAP, node's TAP summary):
 # the runner counts the tests a leg ran from its log, and a test leg with rc 0 and no test counted is red.
 out = {"pytest": "3 passed in 0.01s\n", "bats": "1..1\nok 1 a\n", "manager": "# pass 1\n# fail 0\n",
-       "tools": "# pass 2\n# fail 0\n", "npm-test": "# pass 4\n# fail 0\n", "served": "2 passed in 0.01s\n"}
+       "tools": "# pass 2\n# fail 0\n", "npm-test": "# pass 4\n# fail 0\n", "pdf-smoke": "# pass 1\n# fail 0\n",
+       "served": "2 passed in 0.01s\n"}
 sys.stdout.write(ctl.get("out", {}).get(leg, out.get(leg, "")))
 if ctl.get("signal", {}).get(leg):                 # the leg dies by this signal instead of exiting
     sys.stdout.flush()
@@ -516,7 +519,8 @@ elif name.startswith("python"):
 elif name == "npm":
     leg = {"ci": "deps", "test": "npm-test", "run": {"typecheck": "typecheck", "build": "build"}.get(args[1] if len(args) > 1 else "")}.get(args[0] if args else "")
 elif name == "node":
-    leg = "manager" if any(a.startswith("tests/manager-") for a in args) else "tools"
+    leg = ("manager" if any(a.startswith("tests/manager-") for a in args)
+           else "pdf-smoke" if args == ["--test", "tools/pdf-smoke.test.mjs"] else "tools")
 else:
     leg = name
 with open(LOG, "a") as f:
@@ -600,15 +604,18 @@ jobs:
         run: npm run typecheck
       - name: Test
         run: npm test
+      - name: PDF renderer dependency smoke test (node --test)
+        working-directory: ${{ github.workspace }}
+        run: node --test tools/pdf-smoke.test.mjs
       - name: Build
         run: npm run build
 """ + SEED_SERVED_PYTHON + SEED_SERVED_STEP
 # The order the legs run in at the seed's ci.yml (round 2, decision 13): the python job's, the shell job's, the
 # extension job's, each job's legs in its step order, then the ledger, whose check is in no job of ci.yml. Each job's
 # legs share one fresh checkout; each group starts from its own.
-SEED_ORDER = [PYTEST_LEG, "bats", "manager", "tools", "deps", "typecheck", "npm-test", "build", "served", "ledger"]
+SEED_ORDER = [PYTEST_LEG, "bats", "manager", "tools", "deps", "typecheck", "npm-test", "pdf-smoke", "build", "served", "ledger"]
 SEED_GROUPS = [("python", [PYTEST_LEG]), ("shell", ["bats", "manager", "tools"]),
-               ("vscode-extension", ["deps", "typecheck", "npm-test", "build", "served"]), (None, ["ledger"])]
+               ("vscode-extension", ["deps", "typecheck", "npm-test", "pdf-smoke", "build", "served"]), (None, ["ledger"])]
 # The seed's ci.yml in the shape main's ci.yml has had since fork PR 928 for the served step: a served-pages job of its
 # own that runs npm ci before it, so the served leg runs in that job's checkout after npm ci as the group's setup, while
 # the deps leg stays in the extension job (the first job that holds npm ci).
@@ -640,6 +647,7 @@ SEED = {
     "tests/test_b_browser.py": "def test_b():\n    pass\n",
     "tests/manager-a.test.js": "// manager\n",
     "tools/a.test.mjs": "// tools\n",
+    "tools/pdf-smoke.test.mjs": "// the PDF renderer smoke test\n",
     "vendor/track-changents/hooks/a.test.mjs": "// hooks\n",
 }
 
@@ -896,7 +904,7 @@ class Runner(_Base):
             self.assertIs(r["legs"][name]["owed"], True, "%s at the merge commit" % name)
 
     def test_a_sha_without_the_extension_marks_deps_and_the_webview_legs_not_owed_for_that_alone(self):
-        """The one reason the runner gives for deps, the webview legs and served not owed: the sha has no
+        """The one reason the runner gives for deps, the webview legs, pdf-smoke and served not owed: the sha has no
         vscode-extension/package.json."""
         w = self.w
         w.change({"vscode-extension/package.json": None})
@@ -904,10 +912,37 @@ class Runner(_Base):
         r = w.result()
         for name in sweep.EXTENSION_LEGS:
             self.assertEqual((r["legs"][name]["owed"], r["legs"][name]["why"]), (False, sweep.NO_PACKAGE_JSON), name)
-        self.assertIn("served", sweep.EXTENSION_LEGS)
+        self.assertTrue({"served", "pdf-smoke"} <= set(sweep.EXTENSION_LEGS))
         self.assertEqual(r["owed"], {"webview": {"owed": False, "why": sweep.NO_PACKAGE_JSON},
                                      "served": {"owed": False, "why": sweep.NO_PACKAGE_JSON}})
         self.assertEqual(w.legs_called(), [n for n in sweep.LEGS if n not in sweep.EXTENSION_LEGS])
+
+    def test_the_pdf_smoke_leg_runs_after_npm_ci_in_the_extension_jobs_checkout(self):
+        """The owner's build question 4: CI's PDF renderer smoke step is a leg, pdf-smoke, in the extension job's group
+        after npm ci: it runs node --test over tools/pdf-smoke.test.mjs alone, from the root of the checkout the deps leg
+        installed node_modules in, between npm-test and build as the step stands in the job, and its test count is read
+        from its log. A run of it that passes no test (its one test skipped for want of pdfjs-dist) is red. The tools leg
+        still runs the same file, with no node_modules. Before, the step ran only in CI."""
+        w = self.w
+        w.ctl({"action": {"deps": "ignored"}})          # the fake npm ci leaves vscode-extension/node_modules
+        w.run(check=0)
+        calls = {c["leg"]: c for c in w.calls()}
+        self.assertIn("pdf-smoke", calls, "the pdf-smoke leg ran: %s" % w.legs_called())
+        pdf = calls["pdf-smoke"]
+        self.assertEqual(pdf["argv"], ["--test", "tools/pdf-smoke.test.mjs"])
+        self.assertEqual((pdf["cwd"], pdf["root"]), (calls["deps"]["root"], calls["deps"]["root"]),
+                         "from the root of the deps leg's checkout")
+        self.assertIs(pdf["node_modules"], True, "after npm ci")
+        order = w.legs_called()
+        self.assertEqual(order[order.index("npm-test") + 1:order.index("build")], ["pdf-smoke"])
+        self.assertIn("tools/pdf-smoke.test.mjs", calls["tools"]["argv"], "the tools leg runs the file too")
+        self.assertIs(calls["tools"]["node_modules"], False, "with no node_modules")
+        rec = w.result()["legs"]["pdf-smoke"]
+        self.assertEqual((rec["rc"], rec["tests"], rec["failed"], rec["why"]), (0, 1, 0, sweep.PDF_WHY))
+        w.change({"notes.txt": "a head where the smoke test skips\n"})
+        w.ctl({"action": {"deps": "ignored"}, "out": {"pdf-smoke": "# tests 1\n# pass 0\n# skipped 1\n# fail 0\n"}})
+        p = w.run(check=1)
+        self.assertIn("pdf-smoke (rc 0 but no test ran)", p.stdout)
 
     def test_a_dirty_tree_is_swept_at_its_sha_and_the_edits_named_as_not_swept(self):
         """Round 1, A3 and decision 17 (replacing the dirty-tree refusal): the batcher's tree is read for its HEAD sha
@@ -1101,7 +1136,7 @@ class Runner(_Base):
         p = w.run("--wrap", "*=true", check=1)
         r = w.result()
         self.assertEqual(r["verdict"], "red", p.stdout + p.stderr)
-        self.assertEqual(r["red"], [PYTEST_LEG, "bats", "manager", "tools", "npm-test", "served"])
+        self.assertEqual(r["red"], [PYTEST_LEG, "bats", "manager", "tools", "npm-test", "pdf-smoke", "served"])
         for name in r["red"]:
             if name == "served":
                 # the pytest leg's log holds no summary, so the tests it skipped for want of the deps are not known, and
@@ -1525,7 +1560,7 @@ class Runner(_Base):
     def test_check_refuses_what_verify_refuses_after_a_pass(self):
         """Round 1, extra5-7 and C1: check prints what verify reads. A result that marks a webview leg not owed for any
         reason but a missing extension reads invalid (the reader's refusal, so check has it too), and one that marks deps,
-        the webview legs and served not owed for having no vscode-extension/package.json reads invalid when the sha's tree
+        the webview legs, pdf-smoke and served not owed for having no vscode-extension/package.json reads invalid when the sha's tree
         holds one, which the reader alone cannot tell (verify, plan and --repin read the tree)."""
         w = self.w
         w.run(check=0)
@@ -1545,7 +1580,7 @@ class Runner(_Base):
         self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "pass", "the reader alone reads no tree")
         p = self.check()
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
-        self.assertIn("FAIL sweep invalid at %s: the result marks deps, typecheck, npm-test, build, served not owed for having no "
+        self.assertIn("FAIL sweep invalid at %s: the result marks deps, typecheck, npm-test, pdf-smoke, build, served not owed for having no "
                       "vscode-extension/package.json, but HEAD's tree holds vscode-extension/package.json" % w.head()[:10], p.stdout)
 
     def test_check_refuses_the_runners_ledger_reason_at_a_sha_that_holds_the_ledger_script(self):
@@ -2701,12 +2736,17 @@ class LegGroups(unittest.TestCase):
         # the job's step order decides the group's order, not LEGS
         build = "      - name: Build\n        run: npm run build\n"
         test = "      - name: Test\n        run: npm test\n"
-        swapped = SEED_CI.replace(test + build, build + test)
+        pdf = ("      - name: PDF renderer dependency smoke test (node --test)\n        working-directory: ${{ github.workspace }}\n"
+               "        run: node --test tools/pdf-smoke.test.mjs\n")
+        swapped = SEED_CI.replace(test + pdf + build, build + pdf + test)
         self.assertNotEqual(swapped, SEED_CI)
-        self.assertIn(("vscode-extension", ["deps", "typecheck", "build", "npm-test", "served"], None), self.groups(swapped))
+        self.assertIn(("vscode-extension", ["deps", "typecheck", "build", "pdf-smoke", "npm-test", "served"], None),
+                      self.groups(swapped))
 
     def test_a_rerun_gets_npm_ci_where_its_job_runs_it(self):
         self.assertEqual(self.groups(SEED_CI, ["typecheck"]), [("vscode-extension", ["typecheck"], "typecheck")])
+        # the owner's build question 4: the pdf-smoke leg runs after npm ci, where its job runs it
+        self.assertEqual(self.groups(SEED_CI, ["pdf-smoke"]), [("vscode-extension", ["pdf-smoke"], "pdf-smoke")])
         self.assertEqual(self.groups(SEED_CI, ["deps", "served"]), [("vscode-extension", ["deps", "served"], None)])
         self.assertEqual(self.groups(SEED_CI, ["tools"]), [("shell", ["tools"], None)], "the shell job runs no npm ci")
         self.assertEqual(self.groups(SEED_CI, ["served"], npm=False), [("vscode-extension", ["served"], None)],
@@ -2725,7 +2765,7 @@ class LegGroups(unittest.TestCase):
               + "  served-pages:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
               + "      - name: Install deps\n        run: npm ci\n" + served)
         self.assertEqual(self.groups(ci), [("python", [PYTEST_LEG], None), ("shell", ["bats", "manager"], None),
-                                           ("vscode-extension", ["deps", "typecheck", "npm-test", "build"], None),
+                                           ("vscode-extension", ["deps", "typecheck", "npm-test", "pdf-smoke", "build"], None),
                                            ("vendored-tooling", ["tools"], None), ("served-pages", ["served"], "served"),
                                            (None, ["ledger"], None)])
         self.assertEqual(self.groups(ci, ["served"]), [("served-pages", ["served"], "served")])
@@ -3435,6 +3475,18 @@ class LegEnvironment(_Base):
         w.ctl({})
         p = w.run("--leg", "bats", "--flake", Runner.FLAKE, check=2)
         self.assertIn("was recorded under another leg environment (hash %s" % old[:12], p.stderr)
+
+    def test_the_hash_names_the_pdf_smoke_leg(self):
+        """The owner's build question 4 added the pdf-smoke leg, and the leg environment hash names every leg's set values
+        and step, so it changed with it: the document without the leg hashes to another value, the one the runner before
+        it recorded, and a result recorded under that reads as recorded under another leg environment."""
+        import hashlib
+        doc = sweep.policy_doc()
+        self.assertEqual(doc["checkout"]["steps"].get("pdf-smoke"), sweep.PDF_STEP)
+        self.assertIn("pdf-smoke", doc["set"])
+        before = json.loads(json.dumps(doc))
+        del before["set"]["pdf-smoke"], before["checkout"]["steps"]["pdf-smoke"]
+        self.assertNotEqual(hashlib.sha256(json.dumps(before, sort_keys=True).encode("utf-8")).hexdigest(), sweep.policy_hash())
 
     def test_the_tool_versions_are_recorded_and_run_no_leg(self):
         w = self.w
@@ -4538,7 +4590,10 @@ class ServedLeg(_Base):
         runner reads is refused by name, nothing recorded: the runner runs no served leg it has not read in full."""
         w = self.w
         step, env_line = SEED_SERVED_STEP, '          ROMP_SERVED_TESTS_REQUIRE: "1"\n'
-        wd = "        working-directory: ${{ github.workspace }}\n"
+        # the served step's working-directory: line, read with the step's name line above it (the PDF smoke step holds
+        # the same working-directory: line)
+        served_name = "      - name: Browser-backed served-page tests (pytest)\n"
+        wd = served_name + "        working-directory: ${{ github.workspace }}\n"
         pytest_line = "          python -m pytest tests/test_*_browser.py"
         defaults = "    defaults:\n      run:\n        working-directory: vscode-extension\n"
         env_block = '        env:\n          ROMP_SERVED_TESTS_REQUIRE: "1"\n          ROMP_SERVED_TESTS_ENGINES: chromium\n'
@@ -4574,8 +4629,9 @@ class ServedLeg(_Base):
              "%s has an env: block in a shape the runner does not read" % name),
             ("a key given twice", SEED_CI.replace(wd, wd + "        timeout-minutes: 5\n        timeout-minutes: 6\n"),
              "%s gives timeout-minutes: twice" % name),
-            ("another working directory", SEED_CI.replace(wd, "        working-directory: kernel\n"), "%s runs in kernel" % name),
-            ("no working directory under the job's defaults", SEED_CI.replace(wd, ""),
+            ("another working directory", SEED_CI.replace(wd, served_name + "        working-directory: kernel\n"),
+             "%s runs in kernel" % name),
+            ("no working directory under the job's defaults", SEED_CI.replace(wd, served_name),
              "%s names no working-directory: and its job has a defaults:" % name),
             ("a key it does not read", SEED_CI.replace(wd, wd + "        uses: example/run@v1\n"), "%s has uses:, which the runner does not read" % name),
             ("a line it does not read", SEED_CI.replace(pytest_line, "          export ROMP_Y=1\n" + pytest_line),
@@ -4594,7 +4650,7 @@ class ServedLeg(_Base):
             # a job's defaults: written on its own line moves the step as the block form does, and the step names no
             # working-directory: here, so CI would run it in vscode-extension/, where the globs match nothing
             ("a job defaults: in flow form", SEED_CI.replace(defaults, "    defaults: {run: {working-directory: vscode-extension}}\n")
-             .replace(wd, ""),
+             .replace(wd, served_name),
              "the vscode-extension job has a defaults: other than one run: working-directory: line"),
             # the served venv is built from the Python version the setup-python step before the served step names, read
             # only in the form that cannot be misread: a quoted MAJOR.MINOR
@@ -5305,6 +5361,7 @@ def ci_jobs(src=None):
 # (sweep.py's SERVED_STEP, held equal to this below), and CiParity finds it the same way, by name, in any job.
 SERVED_LABEL = "Browser-backed served-page tests (pytest)"
 VENDORED_LABEL = "Vendored tooling and host-script tests (node --test)"
+PDF_LABEL = "PDF renderer dependency smoke test (node --test)"
 
 
 def served_pytest_line(run):
@@ -5470,19 +5527,17 @@ class CiParity(unittest.TestCase):
         "Scan every commit", "Scan the tree as it stands",
         # the pane bench runs only in CI (the runner's docstring and docs/batching.md say so)
         "Dashboard pane bench (node --test)",
-        # the PDF renderer smoke step runs tools/pdf-smoke.test.mjs after the extension job's npm ci; the tools leg runs
-        # that file in the checkout of its own job, which runs no npm ci, where it skips, as in CI's job for the tools
-        # step (round 2, decision 13), so the step runs only in CI (the runner's docstring and docs/batching.md say so)
-        "PDF renderer dependency smoke test (node --test)",
         # the rostered browser legs' run under ROMP_BROWSER_LEGS_REQUIRE=1 after CI's Chromium install (PR 887): the
         # sweep's npm-test leg runs the same bundles in its npm test with this machine's Playwright browsers, without
         # the switch, so a launch that fails there skips, as in CI's Test step, instead of failing (the runner's
         # docstring and docs/batching.md say so)
         "Browser legs (node --test over ci-browser-legs.txt)",
     }
+    # the PDF renderer smoke step is compared with the pdf-smoke leg since the owner's build question 4 (before it the
+    # step was CI-only here)
     COMPARED = {"Install pytest", "Install cryptography", "Install the Claude Agent SDK", "Run pytest", "Run bats",
-                "Manager handshake tests (node --test)", VENDORED_LABEL, "Install deps", "Typecheck", "Test", "Build",
-                SERVED_LABEL}
+                "Manager handshake tests (node --test)", VENDORED_LABEL, "Install deps", "Typecheck", "Test", PDF_LABEL,
+                "Build", SERVED_LABEL}
     # The steps a job of the served step's own repeats from the extension job (its own checkout, node, npm ci and
     # Chromium install; the served-pages job PR 928 added has no Build step, and Build stays here so a job that repeats
     # it is compared too) and the unnamed setup every job has: each may stand in more than one job, and every copy of a
@@ -5836,12 +5891,29 @@ class CiParity(unittest.TestCase):
         for step, leg in (("Manager handshake tests (node --test)", "manager"), (VENDORED_LABEL, "tools")):
             _job, _env, run = self.step(step)
             self.assertEqual(shlex.split(run), self.legs[leg]["cmd"][:2] + list(sweep.GLOBS[leg]))
-        # tools/pdf-smoke.test.mjs, its own step in the extension job (CI-only here), is in the tools leg's glob too; the
-        # tools leg runs it with no node_modules, as the CI job for the tools step does, where it skips
-        _job, _env, run = self.step("PDF renderer dependency smoke test (node --test)")
-        self.assertEqual(shlex.split(run), ["node", "--test", "tools/pdf-smoke.test.mjs"])
-        self.assertIn("tools/pdf-smoke.test.mjs", self.legs["tools"]["cmd"])
         self.assertNotIn(sweep.DEPS_STEP, self.jobs[self.step(VENDORED_LABEL)[0]], "the tools step's job runs no npm ci")
+
+    def test_the_pdf_smoke_leg_runs_the_pdf_renderer_smoke_step_after_its_jobs_npm_ci(self):
+        """The owner's build question 4: the PDF renderer smoke step, read by its name, is the pdf-smoke leg's. The leg runs
+        the step's command from the repository root (the step's working-directory:) with no switch (the step sets none),
+        and it runs where the step stands: in the job whose npm ci comes before it, after that npm ci (the deps leg in
+        that group, first), so tools/pdf-smoke.test.mjs opens the installed pdfjs-dist and asserts, as in CI. The tools
+        leg's glob holds the same file, which it runs with no node_modules in a job that runs no npm ci, where it skips,
+        as in CI's job for the tools step."""
+        self.assertEqual(sweep.LEG_STEPS[sweep.PDF_LEG], PDF_LABEL)
+        job, env, run = self.step(PDF_LABEL)
+        self.assertEqual(shlex.split(run), self.legs[sweep.PDF_LEG]["cmd"][:2] + list(sweep.GLOBS[sweep.PDF_LEG]),
+                         "the runner passes the pattern's expansion, CI the file")
+        self.assertEqual(self.legs[sweep.PDF_LEG]["cmd"], ["node", "--test", "tools/pdf-smoke.test.mjs"])
+        self.assertEqual(ci_job(job, self.text)["steps"][PDF_LABEL]["values"].get("working-directory"), "${{ github.workspace }}",
+                         "CI runs the step from the repository root")
+        self.assertEqual(self.legs[sweep.PDF_LEG]["cwd"], ".", "and so does the leg")
+        self.assertEqual((env, sweep.LEG_ENV.get(sweep.PDF_LEG)), ({}, None), "no switch on either side")
+        names = list(self.jobs[job])
+        self.assertLess(names.index(sweep.DEPS_STEP), names.index(PDF_LABEL), "the step comes after its job's npm ci")
+        group = [g for g in sweep.leg_groups(self.ci_tree, "HEAD", list(sweep.LEGS)) if sweep.PDF_LEG in g["legs"]][0]
+        self.assertEqual((group["job"], group["legs"][0]), (job, "deps"), "the leg runs in that job's group, after the deps leg")
+        self.assertIn("tools/pdf-smoke.test.mjs", self.legs["tools"]["cmd"])
 
     def test_the_webview_legs_run_the_extension_jobs_commands(self):
         """Typecheck and Test stand in the extension job alone; npm ci and the build stand there and in any job of the
@@ -5907,8 +5979,8 @@ class Reader(unittest.TestCase):
 
     def legs(self, **rcs):
         """A full run's legs as the runner writes them at a sha with no vscode-extension/package.json: every leg that
-        is always owed, and the ledger, run with rc 0 (or `rcs`), and deps, the webview legs and served not owed for
-        that reason alone."""
+        is always owed, and the ledger, run with rc 0 (or `rcs`), and deps, the webview legs, pdf-smoke and served not
+        owed for that reason alone."""
         legs = {n: {"owed": True, "rc": rcs.get(n, 0), "started": "2026-01-01T00:00:01Z", "finished": "2026-01-01T00:00:02Z",
                     "log": "logs/%s.log" % n} for n in sweep.LEGS}
         for n in sweep.TEST_LEGS:
@@ -5952,7 +6024,7 @@ class Reader(unittest.TestCase):
         case, line = self.case()
         self.assertEqual(case, "pass")
         self.assertIn("sweep at 1234567890: pass, finished 2026-01-01T00:01:00Z (pytest 0, bats 0, manager 0, tools 0, ledger 0; "
-                      "not owed: deps, typecheck, npm-test, build, served)", line)
+                      "not owed: deps, typecheck, npm-test, pdf-smoke, build, served)", line)
 
     def test_a_malformed_failed_count_reads_red_and_is_named(self):
         """Round 1, extra5-6: a test leg at rc 0 whose failed count is not an int of 0 or more (a string, a float, a bool,
@@ -6045,9 +6117,10 @@ class Reader(unittest.TestCase):
 
 
     def test_a_not_owed_mark_the_runner_never_writes_is_invalid(self):
-        """The runner always owes pytest, bats, manager and tools, marks deps, the webview legs and served not owed only
-        when the sha has no vscode-extension/package.json (round 1, decision 11: every head owes the webview legs, whatever
-        it changed, and the served ruling: the served leg on the same terms), and the ledger only when the sha has no
+        """The runner always owes pytest, bats, manager and tools, marks deps, the webview legs, pdf-smoke and served not
+        owed only when the sha has no vscode-extension/package.json (round 1, decision 11: every head owes the webview legs,
+        whatever it changed, and the served ruling: the served leg on the same terms; pdf-smoke since the owner's build
+        question 4), and the ledger only when the sha has no
         scripts/upstream-ledger.py (round 2, correctness-4: before it, any reason passed). A record that says otherwise did not come from the runner (or
         came from a runner with another roster), and a leg it marks not owed ran nothing, so the reader refuses it by
         name: verify, plan, --repin and check read through it."""
@@ -6086,6 +6159,10 @@ class Reader(unittest.TestCase):
         legs["served"] = {"owed": False, "rc": None, "why": untouched}
         cases.append(("the served leg by the changed-path rule", legs,
                       "served marked not owed for a reason other than 'no vscode-extension/package.json' ('%s')" % untouched))
+        legs = self.legs()
+        legs["pdf-smoke"] = {"owed": False, "rc": None, "why": "skipped by hand"}
+        cases.append(("the pdf-smoke leg by hand", legs,
+                      "pdf-smoke marked not owed for a reason other than 'no vscode-extension/package.json' ('skipped by hand')"))
         # round 2, correctness-4: the ledger's one reason is the runner's (a sha with no ledger script), and each clause
         # names the reason the runner gives for its own legs, so one reason given to a webview leg and the ledger reads
         # as two clauses
@@ -6100,8 +6177,8 @@ class Reader(unittest.TestCase):
                       "ledger marked not owed for a reason other than 'no scripts/upstream-ledger.py in the tree' "
                       "('skipped by hand'); npm-test marked not owed for a reason other than 'no vscode-extension/package.json' "
                       "('skipped by hand'), which the runner never records (pytest, bats, manager, tools always run; deps, the "
-                      "webview legs and served are owed at every head that has vscode-extension/package.json, whatever its "
-                      "diff, and the ledger at every head that has scripts/upstream-ledger.py)"))
+                      "webview legs, pdf-smoke and served are owed at every head that has vscode-extension/package.json, "
+                      "whatever its diff, and the ledger at every head that has scripts/upstream-ledger.py)"))
         for label, legs, named in cases:
             with self.subTest(label):
                 self.write(self.result(legs=legs))
@@ -6119,7 +6196,7 @@ class Reader(unittest.TestCase):
         self.write(self.result(legs=legs))
         case, line = self.case()
         self.assertEqual(case, "pass", line)
-        self.assertIn("not owed: deps, ledger, typecheck, npm-test, build, served", line)
+        self.assertIn("not owed: deps, ledger, typecheck, npm-test, pdf-smoke, build, served", line)
         self.assertEqual(sweep.NO_LEDGER_SCRIPT, "no scripts/upstream-ledger.py in the tree", "the runner's one reason")
 
     FLAKE = "tests/test_notes.py::test_order (known)"
