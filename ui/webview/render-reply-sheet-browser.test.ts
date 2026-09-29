@@ -58,7 +58,9 @@
 // is a stated residual); the sheet now stands through each, and a plain tap on the backdrop still dismisses. The same test
 // drives two more roads the maintainer's focused re-check of round 2 found while the gesture was two records shared by every
 // pointer: a chorded mouse released over the sheet (three engines) and a mouse or a pen dragged out of the sheet while a
-// finger rests on the backdrop (Chromium); the gesture is now recorded per pointer and the sheet stands. A dragged height is the person's
+// finger rests on the backdrop (Chromium); the gesture is now recorded per pointer and the sheet stands. In WebKit it also
+// drives a backdrop press released past the window's edge and then a drag out of the answer box, which closed the sheet with
+// the answer when a press inside did not forget the pointer's stale backdrop press (the check of dace68d57). A dragged height is the person's
 // PREFERENCE on the resize path (composition-3): pulled to 215px at 900, the keyboard opening clamps the box to the room,
 // not to its content, and the keyboard closing returns it to 215px; before, the dragged height stood through the resize
 // and Send lay below the frame.
@@ -962,9 +964,12 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // answer box and dragged out onto the backdrop while a finger rests on the backdrop, the sheet read at the mouse's or the
   // pen's release. While the gesture was two records shared by every pointer the chord closed the sheet with the answer in
   // Chromium and Firefox in both orders and in WebKit with the right button first, and the resting finger with a mouse and
-  // with a pen in Chromium (fbc7972ce). Then a plain tap on the backdrop still dismisses: the mouse's in every engine, a
-  // finger's in Chromium
-  test(`in ${name}: a press on the backdrop released inside the sheet is not a backdrop tap (the mouse's reverse drags${name === "chromium" ? ", and a finger pressed just outside the box's edge and lifted inside it" : ""}), nor is a chorded mouse released over the sheet${name === "chromium" ? ", nor a mouse or a pen dragged out of the sheet while a finger rests on the backdrop" : ""}, at 900 and 508; a plain tap on the backdrop still dismisses`, async (t) => {
+  // with a pen in Chromium (fbc7972ce). In WebKit, a lost release (the check of dace68d57): the mouse pressed on the backdrop
+  // and released past the window's right edge, so neither its pointerup nor its click reaches the overlay, then pressed in the
+  // answer box and dragged out onto the backdrop, whose release and click WebKit dispatches at the overlay; the press inside
+  // forgets the stale backdrop press, and with that forgetting removed the sheet closed with the answer. Then a plain tap on
+  // the backdrop still dismisses: the mouse's in every engine, a finger's in Chromium
+  test(`in ${name}: a press on the backdrop released inside the sheet is not a backdrop tap (the mouse's reverse drags${name === "chromium" ? ", and a finger pressed just outside the box's edge and lifted inside it" : ""}), nor is a chorded mouse released over the sheet${name === "chromium" ? ", nor a mouse or a pen dragged out of the sheet while a finger rests on the backdrop" : ""}${name === "webkit" ? ", nor a drag out of the answer box after a backdrop press released past the window's edge" : ""}, at 900 and 508; a plain tap on the backdrop still dismisses`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py drives the touch road in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
@@ -1063,6 +1068,42 @@ for (const name of ["chromium", "firefox", "webkit"]) {
               t.diagnostic(`${name} at ${h}, ${what}: after the finger lifted on the backdrop the sheet is ${after.up ? "up" : "dismissed by the finger's own tap"}`);
               assert.equal(after.posted, 0, `at ${h}, ${what}: nothing was posted after the finger lifted`);
             } finally { await cdp.detach(); }
+          });
+        }
+        // A LOST RELEASE (WebKit; the check of dace68d57): the mouse pressed on the backdrop above the box, moved past the window's
+        // right edge and released there, where its pointerup and its click go to the page's root element, not the overlay; then
+        // the same mouse pressed in the answer box, dragged out onto the backdrop above and released there, and WebKit dispatches
+        // that release and its click at the overlay. The press in the answer box forgets the mouse's stale backdrop press, so the
+        // sheet stands; with that forgetting removed the release on the backdrop completed a tap and the sheet closed with the
+        // answer. Each half's premise is read at the overlay, so the step cannot pass without reaching the backdrop's click. In
+        // Chromium the drag out of the answer box ends in a pointercancel and in Firefox its release and click go to the answer
+        // box, so neither engine gives the backdrop's click this gesture, and the step runs in WebKit only
+        if (name === "webkit") {
+          const what = "a backdrop press released past the window's right edge, then a press in the answer box dragged out onto the backdrop above";
+          await t.test(`at ${h}: ${what}`, async () => {
+            await fresh();
+            const p = await points();
+            // what reaches the overlay (capture phase, so it is read before the backdrop's own listeners): each pointerup and
+            // click, and whether its target is the overlay itself
+            await page.evaluate(() => {
+              const w = window as any;
+              const o = document.getElementById("ut-reply-prompt") as HTMLElement;
+              w.__atOverlay = [];
+              for (const ty of ["pointerup", "click"]) o.addEventListener(ty, (e: Event) => { w.__atOverlay.push(ty + ":" + (e.target === o ? "overlay" : "inside")); }, true);
+            });
+            const atOverlay = (): Promise<string[]> => page.evaluate(() => (window as any).__atOverlay.splice(0));
+            await mouseDrag(p.back, { x: PHONE_W + 15, y: p.back.y });
+            const lost = await atOverlay();
+            assert.deepEqual(lost, [], `at ${h}, ${what}: the backdrop press's pointerup and click went past the window's edge, not to the overlay (the step's premise; ${JSON.stringify(p)})`);
+            const mid = await sheetState();
+            assert.equal(mid.up, true, `at ${h}, ${what}: a press released past the window's edge leaves the sheet up`);
+            await mouseDrag(p.input, p.back);
+            const drag = await atOverlay();
+            assert.ok(drag.includes("pointerup:overlay") && drag.includes("click:overlay"), `at ${h}, ${what}: the drag's release and its click reached the overlay itself (the step's premise: ${JSON.stringify(drag)})`);
+            const st = await sheetState();
+            assert.equal(st.up, true, `at ${h}, ${what}: the sheet stands: the press in the answer box forgot the mouse's stale backdrop press, so the release on the backdrop completed no tap (${JSON.stringify(p)}); without the forgetting the sheet closed with the answer`);
+            assert.equal(st.value, TYPED, `at ${h}, ${what}: the answer is intact`);
+            assert.equal(st.posted, 0, `at ${h}, ${what}: nothing was posted`);
           });
         }
         const taps: Array<[string, (p: Awaited<ReturnType<typeof points>>) => Promise<void>]> = [["a mouse tap on the backdrop", (p) => mouseDrag(p.back, p.back)]];
