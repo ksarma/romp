@@ -5050,8 +5050,8 @@ class CiParity(unittest.TestCase):
     them with what the runner builds (pytest_cmd, served_cmd, plan_legs' commands, LEG_ENV). Every difference is named
     here with its reason; a change to either side that adds one reds. Every step of every job is either compared with a
     leg or named as CI-only, by its name wherever it stands, so a new step reds until it is placed, and a step that
-    moves to another job is still read (fork PR 928 moves the served step and the vendored tooling step into jobs of
-    their own; CiParityServedJobOfItsOwn runs every case here over ci.yml as 928 leaves it). The python job's install
+    moves to another job is still read (fork PR 928 moved the served step and the vendored tooling step into jobs of
+    their own, served-pages and vendored-tooling, and the cases here read them there). The python job's install
     steps are not hand copies: the runner reads them from ci.yml and builds the pytest leg's venv with them (the SDK
     ruling), and the cases below hold that read to the file and run it. Nor is the served step: the runner reads its
     env: block, its globs, its pip line and the Python version its job sets up from ci.yml by its name (the served
@@ -5477,90 +5477,11 @@ def _step_span(lines, job, label):
     start, end = _job_span(lines, job)
     hits = [i for i in range(start, end) if lines[i] == "      - name: %s" % label]
     if len(hits) != 1:
-        raise AssertionError("ci.yml's %s job holds %d steps named %r: re-anchor served_job_of_its_own" % (job, len(hits), label))
+        raise AssertionError("ci.yml's %s job holds %d steps named %r: re-anchor CiParity" % (job, len(hits), label))
     i = hits[0] + 1
     while i < end and not lines[i].startswith("      - "):
         i += 1
     return hits[0], i
-
-
-def _step_in(lines, job, label):
-    """Whether `job` holds a step named `label` (a job the file lacks holds none)."""
-    if "  %s:" % job not in lines:
-        return False
-    start, end = _job_span(lines, job)
-    return any(lines[i] == "      - name: %s" % label for i in range(start, end))
-
-
-def served_job_of_its_own(src):
-    """ci.yml as fork PR 928 leaves it, built from `src` (this tree's ci.yml) as 928's round-1 rulings describe it: the
-    served step moves out of the extension job, with the setup-python step before it, into a job of its own with its own
-    setup (the checkout, node, npm ci, the build, and the extension job's Playwright cache and Chromium install, copied)
-    and fail-fast off; and the vendored tooling step moves out of the Shell job into a job of its own. Each block is cut
-    from the real file by its anchors, each held to one occurrence, so a change to ci.yml that this construction no
-    longer reads reds here by name. Each move is made only while its step still stands in its old job: once 928 has
-    landed, ci.yml already has that shape and comes back as it is, and CiParityServedJobOfItsOwn reads the real file."""
-    lines = src.split("\n")
-    cut, vendored, served, setup = [], None, None, []
-    if _step_in(lines, "shell", VENDORED_LABEL):
-        v_start, v_end = _step_span(lines, "shell", VENDORED_LABEL)
-        if v_end != _job_span(lines, "shell")[1]:
-            raise AssertionError("the vendored tooling step is not the Shell job's last step: re-anchor served_job_of_its_own")
-        vendored = lines[v_start:v_end]
-        cut.append((v_start, v_end))
-    if _step_in(lines, "vscode-extension", SERVED_LABEL):
-        ext_start, ext_end = _job_span(lines, "vscode-extension")
-        s_start, s_end = _step_span(lines, "vscode-extension", SERVED_LABEL)
-        if s_end != ext_end:
-            raise AssertionError("the served step is not the extension job's last step: re-anchor served_job_of_its_own")
-        py = [i for i in range(ext_start, s_start) if lines[i] == "      - uses: actions/setup-python@v5"]
-        if len(py) != 1 or any(lines[i].startswith("      - ") for i in range(py[0] + 1, s_start)):
-            raise AssertionError("the extension job's setup-python step does not come right before the served step: "
-                                 "re-anchor served_job_of_its_own")
-        setup = (lines[slice(*_step_span(lines, "vscode-extension", "Cache Playwright's browsers"))] +
-                 lines[slice(*_step_span(lines, "vscode-extension", "Install the pinned Playwright Chromium"))])
-        served = lines[py[0]:s_end]
-        cut.append((py[0], s_end))
-    out, at = [], 0
-    for start, end in sorted(cut):
-        out += lines[at:start]
-        at = end
-    out += lines[at:]
-    while out and out[-1] == "":
-        out.pop()
-    if vendored:
-        out += ["", "  vendored-tooling:", "    name: Vendored tooling (node --test)", "    runs-on: ubuntu-latest",
-                "    timeout-minutes: 30", "    steps:", "      - uses: actions/checkout@v4", "      - uses: actions/setup-node@v4",
-                "        with:", "          node-version: '22'"] + vendored
-    if served:
-        out += ["", "  served-pages:", "    name: Browser-backed served-page tests", "    runs-on: ubuntu-latest",
-                "    timeout-minutes: 40", "    strategy:", "      fail-fast: false", "    defaults:", "      run:",
-                "        working-directory: vscode-extension", "    steps:", "      - uses: actions/checkout@v4",
-                "      - uses: actions/setup-node@v4", "        with:", "          node-version: '22'", "      - name: Install deps",
-                "        run: npm ci", "      - name: Build", "        run: npm run build"] + setup + served
-    return "\n".join(out) + "\n"
-
-
-class CiParityServedJobOfItsOwn(CiParity):
-    """Every CiParity case over ci.yml as fork PR 928 leaves it (served_job_of_its_own): the served step in a job of its
-    own, and the vendored tooling step in another. The runner finds the served step by its name there and nothing in
-    CiParity reads a compared step by its job, so this branch holds when 928 lands (the served ruling, 2026-09-28)."""
-
-    def ci_text(self):
-        return served_job_of_its_own(CI_YML.read_text(encoding="utf-8"))
-
-    def test_the_construction_moves_both_steps(self):
-        """The served step and the vendored tooling step each stand in a job of their own, not in their old ones, and
-        the runner read the served step in its job. Before 928 lands the construction moved them (the jobs it names);
-        after, the real file already stands so, and the construction changes nothing."""
-        served_job, vendored_job = self.step(SERVED_LABEL)[0], self.step(VENDORED_LABEL)[0]
-        self.assertNotIn(served_job, ("vscode-extension", "python", "shell", "secrets"))
-        self.assertNotIn(vendored_job, ("vscode-extension", "python", "shell", "secrets", served_job))
-        self.assertEqual(self.served["job"], served_job, "the runner read the step in its new job")
-        self.assertEqual(served_job_of_its_own(self.text), self.text, "a file already in 928's shape comes back as it is")
-        real = CI_YML.read_text(encoding="utf-8")
-        if _step_in(real.split("\n"), "vscode-extension", SERVED_LABEL):
-            self.assertEqual((served_job, vendored_job), ("served-pages", "vendored-tooling"), "the construction moved both")
 
 
 # The private-checkout record every run of the runner carries (runner.checkout: one clone per ci.yml job, round 2's
