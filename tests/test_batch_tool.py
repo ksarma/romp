@@ -1903,7 +1903,7 @@ class VerifyReadsTheSweep(_Base):
         """Round 2, correctness-4: the ledger is marked not owed only when the head has no ledger script. A result that
         gives the runner's own reason for it fails verify at a batch head whose tree holds scripts/upstream-ledger.py,
         naming the file; one that gives any other reason reads invalid through the reader; once the ledger ran, verify
-        passes. At c60fb907e both marks passed."""
+        passes. Before round 2 both marks passed."""
         fx = self.fx
         prose_only = "# Upstream\n\nProse.\n\nEntries live in upstream/.\n\nWhen offering: tail.\n"
         fx.commit_main({"UPSTREAM.md": prose_only, "scripts/upstream-ledger.py": FAKE_LEDGER}, "ledger migration")
@@ -2665,7 +2665,7 @@ class LandReadsTheCI(_Base):
     def test_a_run_list_that_is_json_but_not_a_list_of_runs_is_refused_by_name(self):
         """Round 2, extra8-3: a `gh run list` answer that is JSON but not a list (an error object, a string, null), a
         list holding a row that is not an object, and an empty answer are each refused naming the shape, never read as a
-        missing run, and nothing is merged or retargeted. At c60fb907e each read as no run: land refused it as missing,
+        missing run, and nothing is merged or retargeted. Before round 2 each read as no run: land refused it as missing,
         "push the batch and wait for its run"."""
         fx = self.fx
         self.ready()
@@ -2707,18 +2707,18 @@ class LandReadsTheCI(_Base):
 
     def test_a_success_over_label_checks_alone_is_not_a_green_run(self):
         """Decision 18's ruled pin: a success whose latest attempt lists only the label checks (the tier-label check and
-        Tier policy's skipped row, what a read of the checks on a fork head holds) is refused as incomplete. At
-        c60fb907e it merged on the run's conclusion alone."""
+        Tier policy's skipped row, what a read of the checks on a fork head holds) is refused as incomplete. Before
+        round 2 it merged on the run's conclusion alone."""
         self.incomplete(self.LABEL_CHECKS, "%s, the secrets job" % self.PYTHON_UNMET,
                         "its job runs: Exactly one tier label: success; Tier policy: skipped")
 
     def test_a_success_over_no_job_run_is_not_a_green_run(self):
-        """A success whose latest attempt lists no job run at all is refused as incomplete. At c60fb907e it merged."""
+        """A success whose latest attempt lists no job run at all is refused as incomplete. Before round 2 it merged."""
         self.incomplete([], "%s, the secrets job" % self.PYTHON_UNMET, "it lists no job run")
 
     def test_a_success_with_one_of_cis_jobs_skipped_is_not_a_green_run(self):
         """A skipped job reports success, so a success in which one of ci.yml's jobs was skipped is refused as
-        incomplete, naming that job. At c60fb907e it merged."""
+        incomplete, naming that job. Before round 2 it merged."""
         skipped = [dict(j) for j in SEED_CI_JOBS]
         skipped[2]["conclusion"] = "skipped"
         self.incomplete(skipped, "the secrets job", "its job runs: Python 3.12 (ubuntu-latest): success; "

@@ -907,7 +907,7 @@ class Runner(_Base):
         """Round 2, fresh-4 and decision 12: the uncommitted-edits notice's git status runs with the runner's neutral git
         like every other runner git call, so an fsmonitor hook in the batcher's global config (GIT_CONFIG_GLOBAL) or in
         their repository's own config does not run: the hook would run with the runner's whole environment, not the leg
-        allowlist. The notice still counts the edits. At c60fb907e both hooks ran (the notice used the batcher's git);
+        allowlist. The notice still counts the edits. Before round 2 both hooks ran (the notice used the batcher's git);
         the repository's hook is kept off by core.fsmonitor=false alone, since the neutral git reads the repository's
         config."""
         w = self.w
@@ -937,7 +937,7 @@ class Runner(_Base):
     def test_the_notice_leaves_the_untracked_cache_of_the_batchers_repository_alone(self):
         """Round 2, decision 12: core.untrackedCache=false in the runner's neutral git outranks the batcher's repository
         config, so the notice's git status does not add an untracked cache to the batcher's index when their repository
-        turns it on. At c60fb907e, and under the neutral git without that setting, git status wrote one there."""
+        turns it on. Before round 2, and under the neutral git without that setting, git status wrote one there."""
         w = self.w
         w.write({"notes/new.txt": "new\n"})
         w.git("config", "core.untrackedCache", "true")
@@ -1519,7 +1519,7 @@ class Runner(_Base):
         """Round 2, correctness-4: the ledger is marked not owed only when the sha has no ledger script, so the runner's
         own reason for it reads invalid in check (and verify, plan and --repin, which apply the same rule) when the sha's
         tree holds scripts/upstream-ledger.py, as the seed's does; a hand-given reason reads invalid through the reader.
-        At c60fb907e both read pass."""
+        Before round 2 both read pass."""
         w = self.w
         w.run(check=0)
         data = w.data()
@@ -1624,7 +1624,7 @@ class Checkout(_Base):
         """Round 2, extra6-4: the SWEEP_TEST_PLANT seam refuses, before it applies any entry, a path that resolves outside
         the checkout: a `..` path (here beside the checkout under sweeps/trees, and the result file of another sha two
         levels up), an absolute path, and an escaping entry after one inside. Each run is refused naming the path, nothing
-        is written outside, nothing is run or recorded, and the checkout is removed. At c60fb907e each plant was written
+        is written outside, nothing is run or recorded, and the checkout is removed. Before round 2 each plant was written
         where it pointed, the verification saw nothing, and the run passed."""
         w = self.w
         w.change({"notes.txt": "a head of its own\n"})
@@ -1708,7 +1708,7 @@ class Checkout(_Base):
         """A5: a stop signal during a leg whose children write into TMPDIR, one in the leg's process group and one under
         setsid. The group gets SIGTERM first (the group writer records it), the subreaper kills the setsid writer, and
         TMPDIR and the checkout are gone afterwards and stay gone. Once per stop signal (round 2, extra5-1 and decision
-        14): SIGTERM, SIGHUP and SIGINT each exit 128 plus the signal's number and say so; at the head SIGINT raised
+        14): SIGTERM, SIGHUP and SIGINT each exit 128 plus the signal's number and say so; before round 2 SIGINT raised
         KeyboardInterrupt, a traceback and death by the signal, and a runner that handles SIGTERM alone dies by SIGHUP
         with TMPDIR and the checkout left behind."""
         if not sys.platform.startswith("linux"):
@@ -1775,7 +1775,7 @@ class Checkout(_Base):
     def test_a_stop_during_a_slow_removal_of_a_legs_tmpdir_still_removes_it_the_run_tmpdir_and_the_checkout(self):
         """Round 2, correctness-3, keyed on an event: the last leg (the ledger) fills its TMPDIR with 40000 files, and the
         runner is stopped once their removal has begun (the fill directory's count drops). The leg's TMPDIR, the run's
-        TMPDIR and the checkout are all gone afterwards, and the runner says so and exits 143. At the head that TMPDIR
+        TMPDIR and the checkout are all gone afterwards, and the runner says so and exits 143. Before round 2 that TMPDIR
         was the run's, removed in the finally, where the stop cut the removal short and skipped the checkout's."""
         w = self.w
         marks = os.path.join(w.tmp, "marks")
@@ -1829,7 +1829,7 @@ class Checkout(_Base):
         """Round 2, extra5-2, keyed on events: the runner is stopped while its first clone waits, once after the real
         clone made the checkout's directory (during make_checkout), once before it (the marker made, the clone not
         started). Either way nothing is left under <state dir>/sweeps/trees, nothing is recorded, and the runner exits
-        143 saying so. At the head make_checkout had no cleanup of its own, so the directory and the marker were left."""
+        143 saying so. Before round 2 make_checkout had no cleanup of its own, so the directory and the marker were left."""
         for when in ("after", "before"):
             with self.subTest(when=when):
                 w = World()
@@ -1853,7 +1853,7 @@ class Checkout(_Base):
         """Round 2, correctness-3, keyed on an event: the pytest leg leaves a large file in its venv, so the run is invalid
         after it, and the runner is stopped while its way out reads the venv's tree again (the result already names the
         change, and the runner has the large file open). The venv is still retired (its marker gone, whatever a leg could
-        have written into it), so the next run builds it again, and TMPDIR and the checkout are gone. At the head the stop
+        have written into it), so the next run builds it again, and TMPDIR and the checkout are gone. Before round 2 the stop
         cut that read short, so the marker stayed and the checkout with it."""
         if not os.path.isdir("/proc/self/fd"):
             self.skipTest("reads the runner's open files from /proc")
@@ -1977,7 +1977,7 @@ class Checkout(_Base):
         """Round 2, decision 14 (A6, scenario SIGW): the pytest leg fails and the runner is stopped while the re-read
         after it waits on the FIFO. The failure is already on disk, so the stopped run records pytest's rc 1 and
         finish, and a plain run is then refused naming that run's failure. Once per stop signal (SIGTERM, SIGHUP,
-        SIGINT). At the head, and with the history rule alone, the leg was written only after its re-read, so the
+        SIGINT). Before round 2, and with the history rule alone, the leg was written only after its re-read, so the
         stopped run showed pytest never finished and the next plain run passed."""
         for signum in (15, 1, 2):
             with self.subTest(signal=signum):
@@ -2081,7 +2081,7 @@ class Checkout(_Base):
         a later group sees the plants or the bytecode (so the pytest leg's bytecode does not reach the served leg); the
         shell job's legs and the ledger see no node_modules (CI's shell job runs no npm ci), and the extension job's legs
         after deps do. The run passes: the re-read after a leg does not read .git's hooks or info/attributes, so the job
-        boundary is what keeps them from the next job. At the head every leg ran in one checkout."""
+        boundary is what keeps them from the next job. Before round 2 every leg ran in one checkout."""
         w = self.group_world()
         w.ctl({"action": {PYTEST_LEG: "leftovers", "deps": "ignored"}})
         w.run(check=0)
@@ -2134,7 +2134,7 @@ class Checkout(_Base):
         """Round 2, decision 13: each later group's fresh checkout is verified against the sha's tree as the first one is.
         The clone reads the batcher's object store (git clone --shared), and git checks out a loose object without
         checking its hash, so the pytest leg rewrites kernel/other.py's blob there: the shell job's fresh checkout holds
-        other bytes, the run is invalid naming the file, and no later leg runs. At the head the one checkout was made
+        other bytes, the run is invalid naming the file, and no later leg runs. Before round 2 the one checkout was made
         before any leg, and this run passed."""
         w = self.w
         w.ctl({"action": {PYTEST_LEG: "corrupt"}})
@@ -2395,7 +2395,7 @@ class WorkflowCommentLines(unittest.TestCase):
 
     def test_a_python_job_step_after_a_shallow_comment_is_read_and_refused(self):
         """A step the runner does not read, placed after a comment at column 0 or 2 inside the python job, is refused by
-        name: the comment no longer ends the job. At c60fb907e the step was read by no one and the plan built without it."""
+        name: the comment no longer ends the job. Before round 2 the step was read by no one and the plan built without it."""
         for comment in ("# a comment at column 0\n", "  # a comment at column 2\n"):
             with self.subTest(comment=comment):
                 ci = SEED_CI.replace(self.PYTEST_STEP, comment + self.EXTRA_STEP + self.PYTEST_STEP)
@@ -2405,7 +2405,7 @@ class WorkflowCommentLines(unittest.TestCase):
 
     def test_a_job_key_after_a_shallow_comment_in_the_served_steps_job_is_refused(self):
         """The refuter's unguarded road: a job-level env: or container: after a comment at column 0 in the served step's
-        job (the seed's last job) reaches the served step in CI, and the runner refuses it by name. At c60fb907e the key
+        job (the seed's last job) reaches the served step in CI, and the runner refuses it by name. Before round 2 the key
         was read by no one and the served step was read as if the job had none."""
         for key, block in (("env", '    env:\n      ROMP_SERVED_TESTS_REQUIRE: "0"\n'), ("container", "    container: node:20\n")):
             with self.subTest(key=key):
@@ -2415,7 +2415,7 @@ class WorkflowCommentLines(unittest.TestCase):
                 self.assertIn("the vscode-extension job has %s:, which reaches the step" % key, str(cm.exception))
 
     def test_a_comment_inside_the_served_env_keeps_every_entry(self):
-        """A comment between the served env's two entries, at any indent, leaves both read. At c60fb907e one indented 4
+        """A comment between the served env's two entries, at any indent, leaves both read. Before round 2 one indented 4
         to 9 spaces (and one at column 0 or 2, which ended the job) ended the block, and ENGINES was dropped from the leg."""
         require, engines = self.SERVED_ENV.splitlines(True)
         for indent in (0, 2, 4, 8, 10):
@@ -2427,7 +2427,7 @@ class WorkflowCommentLines(unittest.TestCase):
     def test_any_other_shallow_line_in_a_job_is_refused_naming_it(self):
         """A line under a job indented one to three spaces that is not a comment, the next job's line or a top-level key
         (a stray key, a sequence item, a job line with a flow value) is refused naming the job and the line, by every
-        reader. At c60fb907e it ended the job there, silently."""
+        reader. Before round 2 it ended the job there, silently."""
         for line in ("   stray: 1", "  - item", "  second: {runs-on: x}", " x"):
             with self.subTest(line=line):
                 ci = SEED_CI.replace("  shell:\n", line + "\n  shell:\n")
@@ -2942,7 +2942,7 @@ class LegEnvironment(_Base):
         made at its start and removed when it ends. The pytest leg plants an .npmrc and a .gitconfig in its HOME,
         session-hosts on in its state root and a file in its TMPDIR: no later leg sees any of them, each leg's three
         directories are its own, every earlier leg's TMPDIR is gone when a later leg starts (not only after the run), and
-        the result names what the pytest leg left in its HOME. At the head the ten legs shared one HOME, state root and
+        the result names what the pytest leg left in its HOME. Before round 2 the ten legs shared one HOME, state root and
         TMPDIR, made once per run and removed at its end."""
         w = self.w
         w.ctl({"action": {PYTEST_LEG: "plant"}})
@@ -2974,7 +2974,7 @@ class LegEnvironment(_Base):
     def test_the_setup_of_a_leg_rerun_gets_a_home_state_root_and_tmpdir_of_its_own(self):
         """Round 2, Class B (B1): the npm ci setup of a --leg re-run runs as a leg does, in a TMPDIR of its own with a
         private HOME and state root under it, removed when it ends: what it plants there does not reach the leg it set up
-        for, and its record names what it left in its HOME. At the head the setup and the re-run leg shared one."""
+        for, and its record names what it left in its HOME. Before round 2 the setup and the re-run leg shared one."""
         w = self.w
         w.ctl({"rc": {"served": 1}})
         w.run(check=1)
@@ -3100,7 +3100,7 @@ class NpmBuiltin(_Base):
     def test_a_builtin_npmrc_that_sets_a_key_but_prefix_refuses_the_run(self):
         """node-options (the refuter's road), userconfig pointing at a file that sets node-options (the completeness
         check's road, which a list of named keys misses), a section and a bare key are each refused naming the file and
-        the key, before anything is recorded or run. At c60fb907e each run passed, the node-options line reaching the npm
+        the key, before anything is recorded or run. Before round 2 each run passed, the node-options line reaching the npm
         legs."""
         w = self.w
         hook = os.path.join(w.tmp, "hook.js")
@@ -3389,7 +3389,7 @@ class PytestEnvironment(_Base):
         is in the marker and the records (runner.sdk.get_pip, runner.served.get_pip), not in the key. Through the runner:
         a build from file A, then a run naming file B builds both venvs anew under other keys, then a run naming A again,
         with the file gone, reuses A's without a fetch, its records read from the markers. In process: a key without the variable differs from one with it,
-        and an interpreter with ensurepip, which fetches nothing, keeps one key either way. At c60fb907e the run naming B
+        and an interpreter with ensurepip, which fetches nothing, keeps one key either way. Before round 2 the run naming B
         reused A's venvs, and no field named the file."""
         w = self.w
         w.ctl({"ensurepip": False})
@@ -4070,8 +4070,8 @@ class ServedLeg(_Base):
     def test_a_short_summary_the_reader_does_not_read_blocks_the_served_leg_naming_the_line(self):
         """Round 2, Class C, through the runner: a pytest leg whose short summary holds a line the closed reader does not
         read (here a SUBSKIPPED line whose node id could start at two places, decision 5) leaves the set unknown: the
-        pytest leg's record names the line, and the served leg is red naming it, never run with a set read wrong. At
-        c60fb907e the line was glued onto the reason of the skip before it, which then read as a deps skip, and the served
+        pytest leg's record names the line, and the served leg is red naming it, never run with a set read wrong. Before
+        round 2 the line was glued onto the reason of the skip before it, which then read as a deps skip, and the served
         leg ran that unrelated test and passed."""
         w = self.w
         line = "SUBSKIPPED(case='a) tests/test_other.py::C - x') tests/test_real.py::T::test_z - Skipped: node_modules missing"
@@ -4269,7 +4269,7 @@ class ServedLeg(_Base):
     def test_a_leg_rerun_of_pytest_and_served_runs_each_in_its_jobs_own_checkout(self):
         """Round 2, decision 13: a --leg re-run runs each leg it names in a fresh checkout of the leg's ci.yml job, with
         npm ci first where that job runs it: pytest in the python job's, with no node_modules and no npm ci, and served in
-        the extension job's, after npm ci as its setup. At the head the re-run had one checkout, so one naming pytest and
+        the extension job's, after npm ci as its setup. Before round 2 the re-run had one checkout, so one naming pytest and
         a leg after the deps was refused."""
         w = self.w
         w.ctl({"rc": {"pytest": 1, "served": 1}})
@@ -4480,7 +4480,7 @@ class ShortSummaryReader(unittest.TestCase):
     def test_a_subtest_skipped_for_want_of_the_deps_selects_its_test_and_no_other(self):
         """Real pytest, the pytest leg's own command, in process and under xdist: each subtest skipped for want of the
         deps selects the test it belongs to, and the skips for other reasons right before them stay unselected, their
-        reasons whole. At c60fb907e, under pytest 9, the SUBSKIPPED lines were glued onto the reasons of the skips before
+        reasons whole. Before round 2, under pytest 9, the SUBSKIPPED lines were glued onto the reasons of the skips before
         them, which then read as deps skips: the unrelated tests were selected and the subtests' tests ran in no leg."""
         tmp = tempfile.mkdtemp(prefix="sweepsr-")
         self.addCleanup(shutil.rmtree, tmp, True)
@@ -5727,7 +5727,7 @@ class Reader(unittest.TestCase):
         """The runner always owes pytest, bats, manager and tools, marks deps, the webview legs and served not owed only
         when the sha has no vscode-extension/package.json (round 1, decision 11: every head owes the webview legs, whatever
         it changed, and the served ruling: the served leg on the same terms), and the ledger only when the sha has no
-        scripts/upstream-ledger.py (round 2, correctness-4: at c60fb907e any reason passed). A record that says otherwise did not come from the runner (or
+        scripts/upstream-ledger.py (round 2, correctness-4: before it, any reason passed). A record that says otherwise did not come from the runner (or
         came from a runner with another roster), and a leg it marks not owed ran nothing, so the reader refuses it by
         name: verify, plan, --repin and check read through it."""
         cases = []
