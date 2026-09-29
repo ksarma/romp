@@ -36,9 +36,12 @@ classify. The tokenizer's CDATA end-tag and comment rules were tightened in the 
 `--!>`); the shapes this module's unit cases pin read the same under 3.10, 3.11, 3.12, 3.13 and 3.14, and the eight served
 pages gave byte-identical spans, scripts and rules under each at the author's pass 8. Refuses a script or style element the page never
 closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML). Containers (the author's pass 9, 2026-09-20, the maintainer's
-round 5 ruling): the reader keeps a stack of the open elements (its own: a start tag pushes, a void element and a self-closing
-foreign element do not, an end tag pops to its nearest open match, no implied end tags and no foreign-content breakout, so the
-stack can only over-report an ancestor, never lose one) and REFUSES a tracked element (script, style, link, meta) whose stack
+round 5 ruling): the reader keeps a stack of the open elements (its own: a start tag pushes, and so does a self-closing one, whose
+flag HTML ignores on an HTML element, except a void element and a self-closing `<svg/>` or `<math/>`, which are empty to HTML; an
+end tag pops to its nearest open match; no implied end tags, no foreign-content breakout and no scope rule. So the stack
+over-reports an ancestor HTML has closed, and it loses one where HTML ignores an end tag whose element is not in scope, such as a
+`</details>` with a `<table>` open inside it, which this reader pops: both engines keep the details open there, measured with
+synthetic pages at round 6) and REFUSES a tracked element (script, style, link, meta) whose stack
 holds a container whose content HTML does not parse as this reader parses the element (REFUSED_CONTAINERS): inside `<svg>` and
 `<math>` both engines parse a script's or style's content as MARKUP, not raw text, and an svg `<link>` loads nothing; a
 `<template>`'s content is inert; a `<noscript>`'s is text to a scripting browser; `<title>`, `<textarea>`, `<iframe>`, `<noembed>`,
@@ -52,8 +55,11 @@ table, td, colgroup: a style there is live to the engines and to this reader). T
 justification is a CENSUS now, derived over every page the kernel's GET dispatch serves (tests/test_served_pins_read_elements.py:
 the containers each tracked element sits under, and the pages carrying each container), red when a tracked element sits under
 a refused container or a new refused container appears on a page (the reader refuses first; the census states the figures).
-The stack's one-sided error is disclosed: a `<style>` in HTML content after a breakout tag closed the svg (`<svg><b>...`) is
-refused here where HTML would read it, a loud over-refusal, never a silent over-read.
+The stack's errors are disclosed: a `<style>` in HTML content after a breakout tag closed the svg (`<svg><b>...`) is refused here
+where HTML would read it, a loud over-refusal; and an end tag HTML ignores and this reader pops drops an ancestor from the stack
+(the scope case above), a silent over-read this reader does not refuse: after `<div><template><table></div>` a `<style>` reads as
+live here where both engines keep it inside the template, inert, and the fold reader below reads the text after `<details><table>
+</details>` as outside the fold where both engines keep it inside (each measured with synthetic pages at round 6).
 
 Attribute compares (the author's pass 9, 2026-09-20): every value this module compares is compared as HTML compares that attribute, and the
 population is every compare of an `attr()` value in this file plus the tokenizer's own name handling; the rows are in
@@ -141,10 +147,12 @@ attribute is read and not judged: a data block (`<script type=application/json>`
 Text by fold (the rulings at the merge of main's login cookie split, 2026-09-28): `fold_text(html)` is the page's text split
 by its <details> folds, the text the page shows with every fold closed (each fold's summary included) and the text a closed fold
 hides, with each fold's summary, every attribute name with whether its element is a details or sits in one, and the leading
-DOCTYPE (FoldText). It runs on the element layer, so it makes every refusal that layer makes, and adds its own where the split
-would part from what HTML shows by the fold structure (an open fold, a summary that is not its fold's first summary child, a
-self-closing details or summary, a hidden element, text inside a refused container, a numeric reference or a NUL HTML reads
-otherwise, a page ending in `&` and one letter, which the tokenizer's releases flush differently); _FoldText names each and what the reader does not read (CSS, rendering). It exists because a test of the token
+DOCTYPE (FoldText). It runs on the element layer, so it makes every refusal that layer makes, and adds its own for these shapes,
+where the split would part from what HTML shows by the fold structure: an open fold, a summary that is not its fold's first summary
+child on the element layer's stack, a self-closing details or summary, a hidden element, text inside a refused container, a numeric
+reference or a NUL HTML reads otherwise, and a page ending in `&` and one letter, which the tokenizer's releases flush differently.
+_FoldText names each, what the reader does not read (CSS, rendering), and the stack shape it reads otherwise than HTML without
+refusing (an end tag HTML ignores, the element layer's disclosed error). It exists because a test of the token
 login page read the page's folds with an HTMLParser of its own, the parser beside this one that the served-pins census refuses;
 its cases are in tests/test_served_pins_read_elements.py.
 
@@ -388,8 +396,8 @@ class _Elements(HTMLParser):
 
     def _container(self, tag, pos):
         # the author's pass 9 (2026-09-20): a tracked element under a container whose content HTML does not parse as this reader parses the
-        # element refuses (the module docstring names each); the stack can only over-report an ancestor, so this refuses too much,
-        # never too little
+        # element refuses (the module docstring names each); an over-reported ancestor makes this refuse too much, and an ancestor the
+        # stack lost to an end tag HTML ignores makes it refuse too little (the module docstring's disclosed error)
         held = [c for c in self.stack if c in REFUSED_CONTAINERS]
         assert not held, "a <%s> at offset %d inside <%s>: HTML does not parse its content as this reader does (%s), so the element is refused rather than read" % (
             tag, pos, held[-1], "foreign content, parsed as markup" if held[-1] in ("svg", "math") else "a start tag HTML ignores there" if held[-1] == "frameset" else "inert or text content")
@@ -433,7 +441,10 @@ class _Elements(HTMLParser):
             self._container(tag, pos)
             self._references(tag, pos)
             self._void(tag, pos, attrs)
-        if tag in REFUSED_CONTAINERS - {"svg", "math"}:   # HTML ignores the self-closing flag on an HTML element (it honours it on a foreign one)
+        # HTML ignores the self-closing flag on an HTML element and opens it (`<div/>` is `<div>`), and honours it on the foreign roots,
+        # so every self-closing tag but a void one, svg and math is pushed. Before round 6 only the refused containers were, and a
+        # `<div/>` inside a <template> let the next `</div>` pop the template (the review's correctness-2)
+        if tag not in _VOID and tag not in ("svg", "math"):
             self.stack.append(tag)
 
     def handle_endtag(self, tag):
@@ -529,11 +540,14 @@ class _FoldText(_Elements):
     boundary. A run is SHOWN when it sits outside every details element, or inside the summary of every details it sits in (a
     fold's summary shows while the fold is closed; a details nested in a closed fold is hidden whole, its summary included); every
     other run is FOLDED. A summary is its
-    fold's only where it is the first summary child of the details, read on this reader's container stack, which pushes a start tag,
-    pops an end tag to its nearest open match and takes no implied end tag, so it can over-report an ancestor and never loses one.
-    Refuses, where the split would part from what HTML shows by the fold structure: a details carrying `open` (its content shows on
-    load; the reader reads every fold closed); a summary inside a details that is not the details' first summary child by that stack
-    (HTML hides it with the fold's content; an over-reported ancestor makes this a loud over-refusal, never a silent over-read); a
+    fold's only where it is the first summary child of the details, read on the element layer's container stack, which pushes a
+    start tag and a self-closing HTML element (`<div/>` opens a div to HTML), pops an end tag to its nearest open match and takes no
+    implied end tag and no scope rule, so it can over-report an ancestor, and it loses one where HTML ignores an end tag whose element
+    is not in scope: after `<details><table></details>` this reader reads the text as outside the fold, where HTML keeps it inside
+    (the element layer's disclosed error, not refused). Refuses, where the split would part from what HTML shows by the fold
+    structure: a details carrying `open` (its content shows on load; the reader reads every fold closed); a summary inside a details
+    that is not the details' first summary child by that stack (HTML hides it with the fold's content: `<details><div/><summary>`
+    puts the summary in the div; an over-reported ancestor makes this a loud over-refusal); a
     self-closing `<details/>` or `<summary/>` (HTML ignores the flag on an HTML element and opens it, where the tokenizer's event opens
     nothing); an element carrying the `hidden` attribute (every engine's default style sheet hides it, and this reader reads no CSS);
     text other than whitespace inside a refused container (REFUSED_CONTAINERS: its text is inert, foreign content or text to HTML

@@ -358,7 +358,11 @@ class ParsedSheetReads(unittest.TestCase):
                      "<svg><link rel=stylesheet href=x.css></svg>", "<svg><meta name=viewport content=x></svg>",
                      "<template><style>#a{top:0}</style></template>", "<template/><style>#a{top:0}</style>",
                      "<noscript><style>#a{top:0}</style></noscript>", "<div><svg><g><style>#a{top:0}</style></g></svg></div>",
-                     "<html><head></head><frameset><style>#a{top:0}</style></frameset></html>", "<frameset><link rel=stylesheet href=x.css></frameset>"):
+                     "<html><head></head><frameset><style>#a{top:0}</style></frameset></html>", "<frameset><link rel=stylesheet href=x.css></frameset>",
+                     # round 6 (correctness-2): a self-closing HTML element opens to HTML, so the `</div>` closes the div inside the template
+                     # and the style stays in the template, inert in both engines (measured); the reader had not pushed `<div/>`, popped the
+                     # template at the `</div>` and read the style as live
+                     "<div><template><div/></div><style>p{color:red}</style></template></div>"):
             with self.assertRaises(AssertionError, msg=page) as cm:
                 served_css.elements(page)
             self.assertIn("HTML does not parse its content as this reader does", str(cm.exception), page)
@@ -381,10 +385,15 @@ class ParsedSheetReads(unittest.TestCase):
                 self.assertEqual(served_css.rules(page), [], page)
             except AssertionError as e:
                 self.assertIn("HTML does not parse its content as this reader does", str(e), page)
-        # the stack's one-sided error, disclosed: HTML's breakout tags (<b>, <p>, <div> and the rest) close the svg, so HTML reads
-        # this style as HTML content; the reader keeps the svg open and refuses, too much and never too little
+        # the stack's errors, disclosed: HTML's breakout tags (<b>, <p>, <div> and the rest) close the svg, so HTML reads this style
+        # as HTML content; the reader keeps the svg open and refuses, too much
         with self.assertRaises(AssertionError):
             served_css.rules("<svg><b>x</b><style>#a{top:0}</style></svg>")
+        # and too little where HTML ignores an end tag whose element is not in scope (round 6): both engines ignore this `</div>` (the
+        # table inside the template is a scope boundary) and keep the style in the template, inert (measured with this page); the
+        # reader pops the template and reads the style as live. The module docstring discloses it; this witness pins the reading, so
+        # a reader that learns the scope rule changes it here on purpose
+        self.assertEqual([r.selector for r in served_css.rules("<div><template><table></div><style>p{color:red}</style></template></div>")], ["p"])
         # the stack an element carries, outermost first, and the tag counts the census reads
         page = "<html><head><meta name=x content=y><link rel=icon href=i></head><body><div><style>#a{top:0}</style></div><svg></svg></body></html>"
         self.assertEqual([(e.kind, e.stack) for e in served_css.elements(page)],

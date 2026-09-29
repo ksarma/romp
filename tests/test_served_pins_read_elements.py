@@ -1956,7 +1956,8 @@ def test_module_level():
         # inside which both engines parse a style's or script's content as markup. The reader refuses a tracked element under such
         # a container now (served_css.REFUSED_CONTAINERS), and the justification is this census, DERIVED over every page the
         # kernel's GET dispatch serves (route_getters, the markup kind), never listed by hand: the containers each tracked element
-        # sits under (the reader's own stack, one-sided: it can over-report an ancestor, never lose one) and the pages carrying each
+        # sits under (the reader's own stack: it can over-report an ancestor, and it loses one where HTML ignores an end tag whose
+        # element is not in scope, served_css's disclosed error) and the pages carrying each
         # refused container as a live start tag. The figures are asserted where they carry the argument: at least one served page
         # carries svg as live markup (so the refusal is exercised against the live case, not a hypothetical one), and no tracked
         # element sits under any refused container (the reader would have refused first; this states it as a count). A new refused
@@ -2590,7 +2591,9 @@ def _outer(path):
         # The reader's split, its records and each refusal are pinned here on synthetic pages: text outside every fold and inside a
         # fold's summary is shown, a nested fold is hidden whole, a fold inside a summary shows its own summary alone; references
         # decode as HTML decodes text; the title, script and style content and comments are text of neither part; and each shape
-        # where the split would part from what HTML shows refuses, the element layer's refusals included.
+        # the reader names as one where the split would part from what HTML shows refuses, the element layer's refusals included
+        # (round 6, correctness-2: a summary after a self-closing `<div/>` or `<span/>`, which HTML opens, is not its fold's first
+        # summary child; the element layer had not pushed the tag, and the summary read as the fold's).
         split = lambda page: (served_css.fold_text(page).shown, served_css.fold_text(page).folded)
         self.assertEqual(split("<p>a</p><details><summary>b <code>c</code></summary>d<p>e</p></details>f"), ("ab cf", "de"))
         self.assertEqual(split("<details><summary>s1</summary>h1<details><summary>s2</summary>h2</details></details>t"), ("s1t", "h1s2h2"))
@@ -2608,6 +2611,8 @@ def _outer(path):
         refusals = (("<details open><summary>s</summary>x</details>", "reads every fold closed"),
                     ("<details><summary>a</summary><summary>b</summary></details>", "not its first summary child"),
                     ("<details><div><summary>a</summary></div></details>", "not its first summary child"),
+                    ("<details><div/><summary>S</summary>C</details>", "not its first summary child"),
+                    ("<details><span/><summary>S</summary>C</details>", "not its first summary child"),
                     ("<details/><p>x</p>", "self-closing <details/>"),
                     ("<details><summary/>x</details>", "self-closing <summary/>"),
                     ("<p hidden>x</p>", "default style sheet hides it"),
@@ -2625,6 +2630,10 @@ def _outer(path):
             with self.assertRaises(AssertionError, msg=page) as cm:
                 served_css.fold_text(page)
             self.assertIn(message, str(cm.exception), page)
+        # the disclosed error (round 6, served_css's docstring): both engines ignore this `</details>` (the table inside it is a scope
+        # boundary) and keep S as the fold's summary and H as its content (measured with this page); the reader pops the details and
+        # shows both. A witness of the reading, so a reader that learns the scope rule changes it here on purpose
+        self.assertEqual(split("<details><table></details><summary>S</summary>H</details>"), ("SH", ""))
 
     def test_a_fetched_page_is_judged_as_served_and_a_row_with_no_hit_fails(self):
         # the rulings at the merge of main's login cookie split (2026-09-28), Q5: since that change Handler._send puts the sign-in
