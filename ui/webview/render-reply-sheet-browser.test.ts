@@ -534,7 +534,11 @@ function assertShort(s: Short, what: string, strict = false) {
   assert.ok(s.detailH >= floorOf(s.detailLineH), `${what}: the detail keeps its floor of two lines (${s.detailH}px against a ${s.detailLineH}px line); without the floor it resolved to 0px, invisible and unscrollable (${rec})`);
   assert.ok(s.detailScrolls, `${what}: the detail scrolls within itself (${rec})`);
   if (strict) assert.equal(s.linkHit, "target", `${what}: the address on the detail's first line is under a finger where the engine's own scroll left it (scrollIntoView nearest), not under the kept actions row: the maintainer's round 2 accepted the row's cover of that address at 230 only (${rec})`);
-  assert.equal(s.linkHitScrolled, "target", `${what}: the address on the detail's first line is under a finger once the box is scrolled to bring its line to the top of the box's view (where the engine's own scroll left it, a finger reached ${s.linkHit}: the kept actions row covers the box's bottom) (${rec})`);
+  // with `strict` the read above has passed, so a failure here is the scrolled read alone: the row's cover is not the cause
+  const scrolledWhy = strict
+    ? `the address was under a finger where the engine's own scroll left it, but not once its line was scrolled to the box's top, where a finger reached ${s.linkHitScrolled}`
+    : `where the engine's own scroll left it, a finger reached ${s.linkHit}: the kept actions row covers the box's bottom`;
+  assert.equal(s.linkHitScrolled, "target", `${what}: the address on the detail's first line is under a finger once the box is scrolled to bring its line to the top of the box's view (${scrolledWhy}) (${rec})`);
   assert.ok(s.boxScrollH > s.boxClientH + 1 && s.boxScrollTop > 0, `${what}: the box scrolls: the floors alone overflow this window, and the deficit past them is a scroll of the box, never a clip (${rec})`);
   assert.ok(s.sendInBoxAtBottom && s.sendHitAtBottom === "target", `${what}: scrolled to the box's bottom, Send is inside the clip and under a finger (${rec})`);
 }

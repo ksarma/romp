@@ -576,13 +576,15 @@ function assertShort(s: Short, what: string, strict = false) {
   assert.ok(s.detailH >= floorOf(s.detailLineH), `${what}: the detail keeps its floor of two lines (${s.detailH}px against a ${s.detailLineH}px line); without the floor it resolved to 0px, invisible and unscrollable (${rec})`);
   assert.ok(s.detailScrolls, `${what}: the detail scrolls within itself (${rec})`);
   if (strict) assert.equal(s.linkHit, "target", `${what}: the address on the detail's first line is under a finger where the engine's own scroll left it (scrollIntoView nearest), not under the kept actions row: the maintainer's round 2 accepted the row's cover of that address at 230 only (${rec})`);
-  assert.equal(s.linkHitScrolled, "target", `${what}: the address on the detail's first line is under a finger once the box is scrolled to bring its line to the top of the box's view (where the engine's own scroll left it, a finger reached ${s.linkHit}: the kept actions row covers the box's bottom) (${rec})`);
+  // with `strict` the read above has passed, so a failure here is the scrolled read alone: the row's cover is not the cause
+  const scrolledWhy = strict
+    ? `the address was under a finger where the engine's own scroll left it, but not once its line was scrolled to the box's top, where a finger reached ${s.linkHitScrolled}`
+    : `where the engine's own scroll left it, a finger reached ${s.linkHit}: the kept actions row covers the box's bottom`;
+  assert.equal(s.linkHitScrolled, "target", `${what}: the address on the detail's first line is under a finger once the box is scrolled to bring its line to the top of the box's view (${scrolledWhy}) (${rec})`);
   assert.ok(s.boxScrollH > s.boxClientH + 1 && s.boxScrollTop > 0, `${what}: the box scrolls: the floors alone overflow this window, and the deficit past them is a scroll of the box, never a clip (${rec})`);
   assert.ok(s.sendInBoxAtBottom && s.sendHitAtBottom === "target", `${what}: scrolled to the box's bottom, Send is inside the clip and under a finger (${rec})`);
 }
 
-// Send is INSIDE the box's clip (its rect within the box's rect) and inside the frame, so a finger on it reaches it. The
-// box's rect is its clip: overflow hidden or auto, content past its edges is not hit-testable
 // the alpha of a computed background-color: engines serialize it as rgb() (alpha 1) or rgba(), and transparent as
 // rgba(0, 0, 0, 0); any other form reads as NaN, which no check passes
 const alphaOf = (c: string): number => {
@@ -591,6 +593,8 @@ const alphaOf = (c: string): number => {
   const p = m[1].split(/[\s,\/]+/).filter(Boolean);
   return p.length === 3 ? 1 : p.length === 4 ? parseFloat(p[3]) : NaN;
 };
+// Send is INSIDE the box's clip (its rect within the box's rect) and inside the frame, so a finger on it reaches it. The
+// box's rect is its clip: overflow hidden or auto, content past its edges is not hit-testable
 const sendInsideBox = (m: Sheet) => m.sendRect.top >= m.boxTop - 0.5 && m.sendRect.bottom <= m.boxBottom + 0.5;
 const cancelInsideBox = (m: Sheet) => m.cancelRect.top >= m.boxTop - 0.5 && m.cancelRect.bottom <= m.boxBottom + 0.5;
 const boxInsideFrame = (m: Sheet) => m.boxTop >= -0.5 && m.boxBottom <= m.frameH + 0.5;
