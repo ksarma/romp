@@ -558,6 +558,1238 @@ test("an image body is media: mode() media, media() image, text() null, no Edit;
   assert.equal(revoked, 1, "the bytes leave with the viewer");
 });
 
+// ── an svg's picture loads from the kernel's /file address, as the composer chip, the lightbox, a notice attachment, the file
+// hover card and a chat image's first attempt already do; any other image keeps the object URL of its fetched bytes ──
+/** Record every URL.createObjectURL and URL.revokeObjectURL for the test's duration; both still run. */
+function watchObjectUrls(t: TestContext): { minted: string[]; revoked: string[] } {
+  const minted: string[] = [], revoked: string[] = [];
+  const realCreate = URL.createObjectURL, realRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = ((b: any) => { const u = realCreate.call(URL, b); minted.push(u); return u; }) as typeof URL.createObjectURL;
+  URL.revokeObjectURL = ((u: string) => { revoked.push(u); realRevoke.call(URL, u); }) as typeof URL.revokeObjectURL;
+  t.after(() => { URL.createObjectURL = realCreate; URL.revokeObjectURL = realRevoke; });
+  return { minted, revoked };
+}
+
+test("an svg picture shows from its /file address, the one the viewer fetched, keyed on the landed mtime (v); no object URL is made for it, so the close releases none", async (t) => {
+  const urls = watchObjectUrls(t);
+  const { fv, ctx, body } = await open(FIG, t);
+  assert.equal(ctx.media(), "svg"); assert.equal(ctx.mode(), "media");
+  const src = body.querySelector("img.fileview-img")!.src;
+  assert.ok(!src.startsWith("blob:"), "the svg's picture is its /file address, not an object URL; got " + src);
+  assert.equal(src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "the fetched address with the landed mtime as its key");
+  assert.ok(fetches.includes("GET /file?path=" + encodeURIComponent(FIG) + "&sid=" + SID), "the viewer's own fetch read the same address, unkeyed: " + fetches.join(" | "));
+  assert.deepEqual(urls.minted, [], "no object URL for the svg");
+  fv.closeFileView();
+  assert.deepEqual(urls.revoked, [], "so the close releases none");
+});
+
+test("a remote session's svg picture shows from the relay's /file address with the bare sid, keyed on the landed mtime; no object URL is made for it", async (t) => {
+  const urls = watchObjectUrls(t);
+  const { body } = await open(FIG, t, "TESTHOST:" + SID);
+  const src = body.querySelector("img.fileview-img")!.src;
+  assert.ok(!src.startsWith("blob:"), "the svg's picture is its /file address, not an object URL; got " + src);
+  assert.equal(src, "/remote/TESTHOST/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "the relay's address with the landed mtime as its key");
+  assert.deepEqual(urls.minted, [], "no object URL for the svg");
+});
+
+test("an svg answer whose Content-Type carries a parameter (image/svg+xml; charset=utf-8) is an svg all the same, and so is one whose subtype is upper-case with a space before the parameter: the picture is its /file address keyed on the landed mtime, the Source toggle offered, no object URL made", async (t) => {
+  const urls = watchObjectUrls(t);
+  for (const [name, type] of [["figure-utf8.svg", "image/svg+xml; charset=utf-8"], ["figure-upper.svg", "image/SVG+XML ; charset=UTF-8"]]) {
+    const fig = ROOT + "/docs/" + name;
+    disk[fig] = { bytes: SVG, type, mtimeNs: MT };
+    t.after(() => { delete disk[fig]; });
+    const { ctx, wrap, body } = await open(fig, t);
+    const src = body.querySelector("img.fileview-img")!.src;
+    assert.equal(src, "/file?path=" + encodeURIComponent(fig) + "&sid=" + SID + "&v=" + MT, type + ": the svg's picture is its /file address, not an object URL; got " + src);
+    assert.equal(ctx.media(), "svg", type + ": the media type decides, the parameter aside");
+    assert.equal(wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === "Source")?.hidden, false, type + ": the Source toggle is offered");
+  }
+  assert.deepEqual(urls.minted, [], "no object URL for either svg");
+});
+
+test("a png's picture keeps the object URL of its fetched bytes (the control for the svg cases above)", async (t) => {
+  const urls = watchObjectUrls(t);
+  const { body } = await open(PLOT, t);
+  const src = body.querySelector("img.fileview-img")!.src;
+  assert.ok(src.startsWith("blob:"), "a png shows from its object URL; got " + src);
+  assert.deepEqual(urls.minted, [src], "the one object URL made is the picture's");
+});
+
+test("an answer typed IMAGE/SVG+XML is not taken as an svg picture: the viewer takes only a type that starts with image/ as an image, so it reads this one as text (raw, no Edit, media() null), with no picture and so no /file picture address, no Source toggle and no object URL", async (t) => {
+  const urls = watchObjectUrls(t);
+  const fig = ROOT + "/docs/figure-caps.svg";
+  disk[fig] = { bytes: SVG, type: "IMAGE/SVG+XML", mtimeNs: MT };
+  t.after(() => { delete disk[fig]; });
+  const { ctx, wrap, body, b } = await open(fig, t);
+  assert.equal(ctx.media(), null, "IMAGE/SVG+XML is no image to the viewer, so no svg verdict either; got " + ctx.media());
+  assert.equal(ctx.mode(), "raw", "read as text");
+  assert.equal(ctx.text(), SVG, "the answer's text is the body");
+  assert.equal(b.edit.hidden, true, "not text/plain: no Edit");
+  assert.deepEqual(body.querySelectorAll("img").map((i) => i.src), [], "no picture, so no /file picture address");
+  assert.equal(wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === "Source")?.hidden, true, "no Source toggle");
+  assert.deepEqual(urls.minted, [], "no object URL");
+});
+
+// ── the svg picture's own load (it loads from its /file address in a request of its own): the loader in the picture box, the
+// replaced picture's error ignored, the address asked again once, the pane in that answer's words, the way back, and the seam's
+// onLanded at the landing ──
+/** The Source toggle of the open viewer. */
+const sourceBtn = (wrap: El): El => wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === "Source")!;
+/** The viewer's own GETs of `p` so far (never the picture's request, which the stand-in makes none of). */
+const asksOf = (p: string): number => fetches.filter((f) => f.startsWith("GET /file?path=" + encodeURIComponent(p) + "&") || f === "GET /file?path=" + encodeURIComponent(p)).length;
+
+test("an svg picture still loading has the romp loader beside it in the picture box, gone at the picture's load before the seam's hooks run; a png's picture, an object URL of bytes in hand, has none", async (t) => {
+  const { ctx, body } = await open(FIG, t);
+  const img = body.querySelector("img.fileview-img")!;
+  assert.ok(body.querySelector(".fileview-imgbox .fileview-load"), "the loader waits in the picture box beside the loading picture");
+  assert.equal(body.childNodes.length, 1, "the body holds the picture box alone");
+  let loaderAtHook: boolean | null = null;
+  ctx.onRendered(() => { loaderAtHook = !!body.querySelector(".fileview-load"); });
+  img.dispatchEvent(new Ev("load"));
+  assert.equal(loaderAtHook, false, "the loader left before the hooks ran, so they measure the picture alone");
+  assert.equal(body.querySelector(".fileview-load"), null, "and it is gone");
+  const png = await open(PLOT, t);
+  assert.ok(png.body.querySelector("img.fileview-img"), "a png's picture");
+  assert.equal(png.body.querySelector(".fileview-load"), null, "an object URL's picture, its bytes in hand, has no loader beside it");
+});
+
+test("the picture's error paints nothing once the body no longer holds that picture: the Source view stands after a Source toggle and the new picture after a reload, error() stays null and no re-ask runs; a png's reload is the control on the same handler", async (t) => {
+  const { ctx, body, wrap } = await open(FIG, t);
+  const img = body.querySelector("img.fileview-img")!;
+  sourceBtn(wrap).click();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view is up");
+  const asks = asksOf(FIG), p0 = paints;
+  img.dispatchEvent(new Ev("error"));                    // the replaced picture's request fails late
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "after a Source toggle: the Source view stands");
+  assert.equal(body.querySelector(".fileview-err"), null, "no pane");
+  assert.equal(ctx.error(), null, "error() stays null");
+  assert.equal(asksOf(FIG), asks, "no re-ask");
+  assert.equal(paints, p0, "no paint");
+  sourceBtn(wrap).click();                               // back to the picture
+  const shown = body.querySelector("img.fileview-img")!;
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: "1757145600000000007" };
+  ctx.reload();
+  await settle();
+  const fresh = body.querySelector("img.fileview-img")!;
+  assert.notEqual(fresh, shown, "the reload built a new picture");
+  const asks2 = asksOf(FIG);
+  shown.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(body.querySelector("img.fileview-img"), fresh, "after a reload: the new picture stands");
+  assert.equal(ctx.error(), null, "error() stays null");
+  assert.equal(asksOf(FIG), asks2, "no re-ask");
+  const png = await open(PLOT, t);
+  const pimg = png.body.querySelector("img.fileview-img")!;
+  disk[PLOT] = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0a]), type: "image/png", mtimeNs: "1757145600000000007" };
+  png.ctx.reload();
+  await settle();
+  const pfresh = png.body.querySelector("img.fileview-img")!;
+  assert.notEqual(pfresh, pimg, "the png's reload built a new picture");
+  pimg.dispatchEvent(new Ev("error"));
+  assert.equal(png.body.querySelector("img.fileview-img"), pfresh, "the png control: the new picture stands on the same handler");
+  assert.equal(png.ctx.error(), null, "and error() stays null");
+});
+
+test("an svg picture's failed load asks its address again: the romp loader takes the body with no paint and error() null through the wait, one fetch runs, and its answer paints the picture again at the address; that picture's failure shows SVG_PICTURE_FAILED with the path and Download, error() that sentence, and asks nothing more; a png's failure shows DECODE_FAILED and asks nothing", async (t) => {
+  const { ctx, body } = await open(FIG, t);
+  const fv = await mod();
+  const img = body.querySelector("img.fileview-img")!;
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  const asks = asksOf(FIG);
+  img.dispatchEvent(new Ev("error"));
+  assert.ok(body.querySelector(".fileview-load") && !body.querySelector(".fileview-imgbox"), "the romp loader takes the body while the address is asked again");
+  assert.equal(paints, 0, "the loader fires no onRendered (it tells onReplaced, the case on onReplaced below): the panel keeps its layer until the answer paints");
+  assert.equal(ctx.error(), null, "error() is null through the wait, as over any loader");
+  await settle();
+  assert.equal(asksOf(FIG) - asks, 1, "one re-ask: the viewer's own fetch of the address");
+  const again = body.querySelector("img.fileview-img")!;
+  assert.ok(again && again !== img, "the answer painted the picture again");
+  assert.equal(again.src, address, "at its /file address; got " + again.src);
+  assert.equal(paints, 0, "not loaded yet: no paint");
+  again.dispatchEvent(new Ev("error"));
+  const pane = body.querySelector(".fileview-err")!;
+  assert.ok(pane, "the pane is up");
+  assert.equal(pane.childNodes[0].textContent, fv.SVG_PICTURE_FAILED, "worded for both causes");
+  assert.equal(pane.querySelector(".fileview-err-hint")!.textContent, FIG, "with the path");
+  assert.ok(pane.querySelector(".fileview-err-dl"), "and Download");
+  assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, "error() is that sentence");
+  assert.equal(paints, 1, "the pane is the paint");
+  await settle();
+  assert.equal(asksOf(FIG) - asks, 1, "one re-ask per picture failure, and the failure of the picture it landed asks nothing more");
+  const png = await open(PLOT, t);
+  const pasks = asksOf(PLOT);
+  png.body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(png.ctx.error(), fv.DECODE_FAILED, "a png's failure is its bytes' verdict: DECODE_FAILED");
+  assert.equal(asksOf(PLOT), pasks, "and it asks nothing");
+});
+
+test("when the re-ask's own fetch fails, the pane is the fetch chain's in its own words, and it waits for a way back: romp:wsup, hostUp and romp:hostRelayUp each run the fetch again, while nothing runs it over a picture that shows", async (t) => {
+  const { ctx, body } = await open(FIG, t);
+  const img = body.querySelector("img.fileview-img")!;
+  win.dispatchEvent(new Event("romp:wsup"));
+  await settle();
+  const base = asksOf(FIG);
+  assert.equal(base, 1, "over a picture that shows, romp:wsup runs no fetch");
+  delete disk[FIG];                                       // the file is gone when the address is asked again
+  img.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(asksOf(FIG), 2, "one re-ask");
+  assert.equal(ctx.error(), "no such file: " + FIG, "the pane carries the kernel's words, never a decode sentence");
+  assert.equal(body.querySelector(".fileview-err")!.childNodes[0].textContent, "no such file: " + FIG, "the fetch chain's own pane");
+  win.dispatchEvent(new Event("romp:wsup"));
+  await settle();
+  assert.equal(asksOf(FIG), 3, "romp:wsup asks again");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }));
+  await settle();
+  assert.equal(asksOf(FIG), 4, "hostUp asks again");
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+  win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }));
+  await settle();
+  assert.equal(asksOf(FIG), 5, "romp:hostRelayUp asks again");
+  assert.equal(ctx.error(), null, "the file answered: the pane gave way to the picture");
+  assert.equal(body.querySelector("img.fileview-img")!.src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "at its /file address");
+  win.dispatchEvent(new Event("romp:wsup"));
+  await settle();
+  assert.equal(asksOf(FIG), 5, "and with a picture up again, the way back is disarmed");
+});
+
+test("over the pane after a re-ask, each kernel message sends one probe of the picture's address off the page, one at a time and three in all, and a probe that loads runs the fetch again", async (t) => {
+  const probes: Array<{ src: string; onload: (() => void) | null; onerror: (() => void) | null }> = [];
+  const realImage = (globalThis as any).Image, realLocation = (globalThis as any).location;
+  (globalThis as any).Image = class { onload: (() => void) | null = null; onerror: (() => void) | null = null; private s = ""; get src() { return this.s; } set src(v: string) { this.s = v; probes.push(this as any); } };
+  (globalThis as any).location = { protocol: "http:", href: "http://notes-api.test/" };
+  t.after(() => { (globalThis as any).Image = realImage; (globalThis as any).location = realLocation; });
+  const { ctx, body } = await open(FIG, t);
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(asksOf(FIG), 2, "the picture's failure asked its address again");
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));   // the re-ask's picture fails too: the pane
+  assert.equal(ctx.error(), (await mod()).SVG_PICTURE_FAILED, "the pane after the re-ask");
+  const message = () => win.dispatchEvent(new MessageEvent("message", { data: { type: "sessions", sessions: [] } }));
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  for (let i = 0; i < 3; i++) {
+    message();
+    message();                                            // a second message while the probe is out sends nothing
+    assert.equal(probes.length, i + 1, "message pair " + (i + 1) + ": one probe");
+    assert.equal(probes[i].src, address, "of the picture's /file address");
+    probes[i].onerror!();
+  }
+  message();
+  assert.equal(probes.length, 3, "three probes in all for this pane");
+  assert.equal(asksOf(FIG), 2, "failed probes run no fetch");
+  win.dispatchEvent(new Event("romp:wsup"));             // the way back refills the budget and asks again: the same bytes, the picture fails again, a new pane
+  await settle();
+  assert.equal(asksOf(FIG), 3, "romp:wsup asked again");
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  message();
+  assert.equal(probes.length, 4, "romp:wsup refilled the budget: one probe");
+  probes[3].onload!();
+  await settle();
+  assert.equal(asksOf(FIG), 4, "the probe loaded: the fetch runs again");
+  assert.equal(ctx.error(), null, "and its answer painted the picture");
+});
+
+type Probe = { src: string; onload: (() => void) | null; onerror: (() => void) | null };
+/** The page's Image replaced for the case, as the way back's probes are made of it: every probe sent, for the case to settle by
+ *  hand (onload: the address answered with a picture; onerror: it did not). */
+function fakeProbes(t: TestContext): Probe[] {
+  const probes: Probe[] = [];
+  const realImage = (globalThis as any).Image, realLocation = (globalThis as any).location;
+  (globalThis as any).Image = class { onload: (() => void) | null = null; onerror: (() => void) | null = null; private s = ""; get src() { return this.s; } set src(v: string) { this.s = v; probes.push(this as any); } };
+  (globalThis as any).location = { protocol: "http:", href: "http://notes-api.test/" };
+  t.after(() => { (globalThis as any).Image = realImage; (globalThis as any).location = realLocation; });
+  return probes;
+}
+/** A kernel message of no kind the way back reads, as the kernel pushes many. */
+const kernelMessage = (): void => { win.dispatchEvent(new MessageEvent("message", { data: { type: "sessions", sessions: [] } })); };
+
+test("the probes' budget spans the panes their own fetches paint: a probe that loads while the viewer's fetch still fails runs that fetch, and the pane it paints keeps what is left, so over twelve kernel messages three probes run three fetches in all; romp:wsup, hostUp and romp:hostRelayUp each refill it", async (t) => {
+  const probes = fakeProbes(t);
+  const { ctx, body } = await open(FIG, t);
+  delete disk[FIG];                                       // the address does not answer the viewer's fetch from here on
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), "no such file: " + FIG, "the re-ask's pane, in the kernel's words");
+  const asks = asksOf(FIG);
+  for (let i = 0; i < 12; i++) {
+    const sent = probes.length;
+    kernelMessage();
+    if (probes.length > sent) { probes[probes.length - 1].onload!(); await settle(); }   // every probe loads, as one may while the page still holds the picture of an address it has loaded
+  }
+  assert.equal(probes.length, 3, "three probes over twelve messages, though every one of them loaded");
+  assert.equal(asksOf(FIG) - asks, 3, "three fetches in all, one per loaded probe: each pane they painted kept what was left of the budget");
+  assert.equal(ctx.error(), "no such file: " + FIG, "the pane stands");
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  for (const [name, fire] of ways) {
+    const n: number = probes.length, a: number = asksOf(FIG);
+    fire();
+    await settle();
+    assert.equal(asksOf(FIG) - a, 1, name + ": the way back asked again and met the same failure");
+    for (let i = 0; i < 6; i++) { const sent = probes.length; kernelMessage(); if (probes.length > sent) probes[probes.length - 1].onerror!(); }
+    assert.equal(probes.length - n, 3, name + " refilled the budget: three probes over the pane its fetch painted");
+  }
+});
+
+test("the probes' budget refills at a reload, at the Source toggle and at a landing whose picture shows; a landing whose picture fails refills nothing", async (t) => {
+  const probes = fakeProbes(t);
+  const fv = await mod();
+  /** The kernel messages' probes, each failing, until a message sends none: what the budget held. */
+  const spend = (): number => {
+    const n = probes.length;
+    for (let i = 0; i < 8; i++) { const sent = probes.length; kernelMessage(); if (probes.length === sent) break; probes[probes.length - 1].onerror!(); }
+    return probes.length - n;
+  };
+  const gone = "no such file: " + FIG;
+  const { ctx, body, wrap } = await open(FIG, t);
+  delete disk[FIG];
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), gone, "the re-ask's pane");
+  assert.equal(spend(), 3, "the open filled the budget: three probes over the re-ask's pane");
+  assert.equal(spend(), 0, "and they are spent");
+  // a reload: the file answers with new bytes, their picture fails, and the re-ask meets the file gone again
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: "1757145600000000007" };
+  ctx.reload();
+  await settle();
+  delete disk[FIG];
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), gone, "the re-ask's pane after the reload");
+  assert.equal(spend(), 3, "the reload refilled the budget");
+  // the Source toggle: the Source view of the bytes in hand, then back to the picture, whose fresh load fails and asks again
+  sourceBtn(wrap).click();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view");
+  sourceBtn(wrap).click();
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), gone, "the re-ask's pane after the Source view and back");
+  assert.equal(spend(), 3, "the Source toggle refilled the budget");
+  // a probe that loads while the file answers again: its fetch lands the picture; whether that picture showed decides the
+  // budget of the pane its failure then paints (the stand-in fails the picture after its load, to reach a pane over a landing
+  // whose picture showed)
+  for (const shows of [true, false]) {
+    const o = await open(FIG, t);
+    delete disk[FIG];
+    o.body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+    await settle();
+    const n = probes.length;
+    kernelMessage();
+    assert.equal(probes.length, n + 1, "one probe over the re-ask's pane");
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    probes[n].onload!();
+    await settle();
+    const pic = o.body.querySelector("img.fileview-img")!;
+    assert.ok(pic && o.ctx.error() === null, "the probe loaded and the file answered: the landing painted the picture");
+    if (shows) pic.dispatchEvent(new Ev("load"));
+    pic.dispatchEvent(new Ev("error"));
+    assert.equal(o.ctx.error(), fv.SVG_PICTURE_FAILED, "the landed picture failed: the pane worded for both causes");
+    assert.equal(spend(), shows ? 3 : 2, shows ? "a landing whose picture showed refilled the budget" : "a landing whose picture failed refilled nothing: the pane keeps what the probe left");
+  }
+});
+
+test("a failed reload's pane, and a failed first open's, try nothing again by themselves, as before for every file type: over a failed reload of an svg shown as a picture, of an svg over the pane a failed picture's re-ask left, of a png and of a text file, kernel messages send no probe and romp:wsup, hostUp and romp:hostRelayUp run no fetch; over a failed first open of an svg, a png and a markdown file, the three events run no fetch", async (t) => {
+  const probes = fakeProbes(t);
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  const roads: Array<[string, string]> = [["an svg shown as a picture", FIG], ["an svg over the pane a failed picture's re-ask left", FIG], ["a png", PLOT], ["a text file", APP]];
+  for (const [road, p] of roads) {
+    const { ctx, body } = await open(p, t);
+    const img = body.querySelector("img.fileview-img");
+    if (road === "an svg shown as a picture" || road === "a png") img!.dispatchEvent(new Ev("load"));
+    if (road === "an svg over the pane a failed picture's re-ask left") {
+      delete disk[FIG];
+      img!.dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(ctx.error(), "no such file: " + FIG, road + ": the premise: the re-ask's pane");
+    }
+    delete disk[p];                                       // the file is gone when the reload reads it
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.error(), "no such file: " + p, road + ": the failed reload's pane, in the kernel's words");
+    const asks = asksOf(p), n = probes.length;
+    kernelMessage(); kernelMessage();                     // before any reconnect-class event: an svg's picture address is the kernel's /file, which a probe would take
+    await settle();
+    assert.equal(probes.length, n, road + ": no kernel message sends a probe over the failed reload's pane");
+    for (const [way, fire] of ways) {
+      fire();
+      await settle();
+      assert.equal(asksOf(p), asks, road + ": " + way + " runs no fetch over the failed reload's pane");
+    }
+  }
+  for (const name of ["gone.svg", "gone.png", "gone.md"]) {
+    const gone = ROOT + "/docs/" + name;
+    const { ctx } = await open(gone, t);
+    assert.equal(ctx.error(), "no such file: " + gone, name + ": the failed first open's pane");
+    const asks = asksOf(gone);
+    for (const [way, fire] of ways) {
+      fire();
+      await settle();
+      assert.equal(asksOf(gone), asks, name + ": " + way + " runs no fetch over a failed first open's pane");
+    }
+  }
+});
+
+test("a probe that settles after its pane gave way to a newer one acts on nothing: a late loaded probe of an earlier pane runs no fetch, and a late failed one leaves the newer pane's probe the one out, so the next kernel message sends none", async (t) => {
+  const probes = fakeProbes(t);
+  for (const late of ["loads", "fails"]) {
+    const { ctx, body } = await open(FIG, t);
+    delete disk[FIG];                                     // the address does not answer the viewer's fetch from here on
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+    await settle();
+    assert.equal(ctx.error(), "no such file: " + FIG, late + ": the re-ask's pane (the earlier pane)");
+    const n = probes.length;
+    kernelMessage();
+    assert.equal(probes.length, n + 1, late + ": one probe over the earlier pane");
+    win.dispatchEvent(new Event("romp:wsup"));            // the way back's fetch meets the same failure and paints the newer pane
+    await settle();
+    kernelMessage();
+    assert.equal(probes.length, n + 2, late + ": the newer pane's probe goes out while the earlier one is still out");
+    const asks = asksOf(FIG);
+    if (late === "loads") {
+      probes[n].onload!();                                // the earlier pane's probe loads late
+      await settle();
+      assert.equal(asksOf(FIG), asks, "a late loaded probe of an earlier pane runs no fetch");
+      assert.equal(ctx.error(), "no such file: " + FIG, "and the newer pane stands");
+    } else {
+      probes[n].onerror!();                               // the earlier pane's probe fails late
+      await settle();
+      kernelMessage();
+      assert.equal(probes.length, n + 2, "a late failed probe of an earlier pane leaves the newer pane's probe the one out: the next kernel message sends none");
+      assert.equal(asksOf(FIG), asks, "and no fetch runs");
+    }
+  }
+});
+
+test("the way back's three window listeners (romp:wsup, romp:hostRelayUp and the kernel's messages) leave with the viewer, at a close and at a replacing open: the window's count of each is back where it stood before the open", async (t) => {
+  const kinds = ["romp:wsup", "romp:hostRelayUp", "message"];
+  const live = new Map<string, Set<unknown>>();
+  const add = win.addEventListener, remove = win.removeEventListener;
+  win.addEventListener = function (this: any, type: string, cb: unknown, o?: unknown) { if (!live.has(type)) live.set(type, new Set()); live.get(type)!.add(cb); return add.call(this, type, cb, o); };
+  win.removeEventListener = function (this: any, type: string, cb: unknown, o?: unknown) { live.get(type)?.delete(cb); return remove.call(this, type, cb, o); };
+  t.after(() => { delete win.addEventListener; delete win.removeEventListener; });
+  const count = (): number[] => kinds.map((k) => live.get(k)?.size ?? 0);
+  const fv = await mod();
+  await open(FIG, t);                                     // a first open and close: any listener the page installs once and keeps is in place before the count
+  fv.closeFileView();
+  const start = count();
+  await open(FIG, t);
+  const up = count();
+  assert.deepEqual(up.map((c, i) => c - start[i]), [1, 1, 1], "the open viewer holds one listener of each kind: " + JSON.stringify({ start, up }));
+  await open(PLOT, t);                                    // a replacing open: the first viewer's listeners leave, the second's arrive
+  assert.deepEqual(count(), up, "a replacing open leaves one of each, the new viewer's");
+  fv.closeFileView();
+  assert.deepEqual(count(), start, "the close leaves none of the viewer's: the count is back where it stood");
+});
+
+test("a press of the Source toggle while a fetch that asked the picture's address again is out: its answer, a failure or a landing, paints nothing, so the Source view stands with error() null and mode() the Source view's; back to the picture, it loads afresh at its /file address with no fetch, and its failure asks again; the same over the way back's fetch, and when a press on the toggle parks the failure before its click", async (t) => {
+  const realFetch = (globalThis as any).fetch;
+  let gate: Promise<void> | null = null;
+  (globalThis as any).fetch = async (u: string, i?: { method?: string }) => {
+    if (gate && u.includes("path=" + encodeURIComponent(FIG))) { const g = gate; gate = null; await g; }
+    return realFetch(u, i);
+  };
+  t.after(() => { (globalThis as any).fetch = realFetch; });
+  /** Hold the next fetch of the svg until the returned function runs. */
+  const holdNext = (): (() => void) => { let r!: () => void; gate = new Promise<void>((res) => { r = res; }); return r; };
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  for (const answer of ["a failure", "a landing"]) {
+    const { ctx, body, wrap } = await open(FIG, t);
+    const release = holdNext();
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+    assert.ok(body.querySelector(".fileview-load") && !body.querySelector(".fileview-imgbox"), answer + ": the re-ask's loader, its fetch held");
+    sourceBtn(wrap).click();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), answer + ": the Source view is up");
+    const p0 = paints;
+    if (answer === "a failure") delete disk[FIG];
+    release();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), answer + ": the re-ask's answer painted nothing: the Source view stands");
+    assert.equal(body.querySelector(".fileview-err"), null, answer + ": no pane");
+    assert.equal(ctx.error(), null, answer + ": error() null");
+    assert.equal(sourceBtn(wrap).getAttribute("aria-pressed"), "true", answer + ": Source still pressed");
+    assert.equal(ctx.mode(), "raw", answer + ": mode() the Source view's");
+    assert.equal(paints, p0, answer + ": no paint");
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const asks = asksOf(FIG);
+    sourceBtn(wrap).click();
+    const pic = body.querySelector("img.fileview-img")!;
+    assert.equal(pic && pic.src, address, answer + ": back to the picture, a fresh load at its /file address");
+    await settle();
+    assert.equal(asksOf(FIG), asks, answer + ": with no fetch");
+    pic.dispatchEvent(new Ev("error"));
+    await settle();
+    assert.equal(asksOf(FIG) - asks, 1, answer + ": that picture's failure asks its address again, once");
+  }
+  // the way back's fetch: a pane stands, romp:wsup asks again, and the toggle is pressed while that fetch is out
+  const { ctx, body, wrap } = await open(FIG, t);
+  delete disk[FIG];
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), "no such file: " + FIG, "the re-ask's pane");
+  const release = holdNext();
+  win.dispatchEvent(new Event("romp:wsup"));
+  sourceBtn(wrap).click();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view over the pane, the way back's fetch held");
+  release();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the way back's failure painted nothing: the Source view stands");
+  assert.equal(body.querySelector(".fileview-err"), null, "no pane");
+  assert.equal(ctx.error(), null, "error() null");
+  // a press on the toggle parks the answer (the landing's hold reads the card) and the press's click then changes the view:
+  // the parked failure paints nothing at the release (the Source view seen once before, so its text is in hand)
+  const o = await open(FIG, t);
+  sourceBtn(o.wrap).click();
+  await settle();
+  sourceBtn(o.wrap).click();
+  const release2 = holdNext();
+  o.body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  const down = new Ev("pointerdown");
+  (down as unknown as { button: number }).button = 0;
+  dispatch(sourceBtn(o.wrap), down);
+  delete disk[FIG];
+  release2();
+  await settle();
+  assert.ok(o.body.querySelector(".fileview-load") && !o.body.querySelector(".fileview-err"), "the failure is parked under the press: the loader still up");
+  sourceBtn(o.wrap).click();
+  assert.ok(o.body.querySelector("code.hljs"), "the press's click put the Source view up");
+  win.dispatchEvent(new Event("pointerup"));
+  await new Promise<void>((r) => setTimeout(r, 5));      // the hold runs a parked landing on a zero timer after the release
+  assert.ok(o.body.querySelector("code.hljs"), "the parked failure painted nothing at the release: the Source view stands");
+  assert.equal(o.body.querySelector(".fileview-err"), null, "no pane");
+  assert.equal(o.ctx.error(), null, "error() null");
+});
+
+test("a reconnect-class event heard while a fetch that asked the picture's address again is out runs nothing then; if that fetch fails it runs once more at once over the pane it painted, and that run's failure arms the way back as any pane does, with nothing more until the next event; for romp:wsup, hostUp and romp:hostRelayUp, over the re-ask's fetch and over the way back's", async (t) => {
+  const realFetch = (globalThis as any).fetch;
+  let gate: Promise<void> | null = null, failHeld = false;
+  (globalThis as any).fetch = async (u: string, i?: { method?: string }) => {
+    if (gate && u.includes("path=" + encodeURIComponent(FIG))) {
+      const g = gate; gate = null; await g;
+      if (failHeld) {                                     // the held fetch meets the relay's 502, whatever the file says now
+        failHeld = false;
+        fetches.push("GET " + u);
+        return { ok: false, status: 502, headers: { get: () => null }, text: async () => "tunnel to TESTHOST is not answering; re-dialing" };
+      }
+    }
+    return realFetch(u, i);
+  };
+  t.after(() => { (globalThis as any).fetch = realFetch; });
+  /** Hold the next fetch of the svg until the returned function runs; `fail`: it then meets the relay's 502. */
+  const holdNext = (fail: boolean): (() => void) => { let r!: () => void; failHeld = fail; gate = new Promise<void>((res) => { r = res; }); return r; };
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  const gone = "no such file: " + FIG;
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  for (const [name, fire] of ways) {
+    // over the re-ask's fetch, which meets the relay's 502; the file answers the run after it
+    {
+      const { ctx, body } = await open(FIG, t);
+      const asks = asksOf(FIG);
+      const release = holdNext(true);
+      body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));   // the re-ask's fetch, held
+      fire();
+      await settle();
+      assert.equal(asksOf(FIG), asks, name + ": nothing more runs while the re-ask's fetch is out");
+      release();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": the re-ask's fetch failed and ran once more at once");
+      assert.equal(ctx.error(), null, name + ": the run after it answered: the pane gave way to the picture");
+      assert.equal(body.querySelector("img.fileview-img")!.src, address, name + ": at its /file address");
+    }
+    // over the re-ask's fetch, the file gone: the run after it fails too, arms the way back, and nothing more runs until the next event
+    {
+      const { ctx, body } = await open(FIG, t);
+      const asks = asksOf(FIG);
+      const release = holdNext(false);
+      body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+      fire();
+      await settle();
+      delete disk[FIG];
+      release();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": the re-ask's fetch failed and ran once more at once, and that run failed too");
+      assert.equal(ctx.error(), gone, name + ": its pane, in the kernel's words");
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": and nothing more runs: the run's failure only arms the way back");
+      fire();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 3, name + ": that pane is armed as any pane: the next event runs the fetch once");
+    }
+    // over the way back's fetch: a pane stands, one event runs the fetch, and the same event again arrives while it is out
+    {
+      const { ctx, body } = await open(FIG, t);
+      delete disk[FIG];
+      body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(ctx.error(), gone, name + ": the re-ask's pane");
+      const asks = asksOf(FIG);
+      const release = holdNext(true);
+      fire();                                             // the way back's fetch, held
+      fire();                                             // the second event, while it is out
+      await settle();
+      assert.equal(asksOf(FIG), asks, name + ": the second event runs nothing while the way back's fetch is out");
+      disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+      release();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": the way back's fetch failed and ran once more at once");
+      assert.equal(ctx.error(), null, name + ": the run after it answered: the picture");
+      assert.equal(body.querySelector("img.fileview-img")!.src, address, name + ": at its /file address");
+    }
+  }
+});
+
+test("a reconnect-class event heard while the picture landed by a fetch that asked the address again is still loading: that picture's failure asks the address once more at once, behind the loader, in place of the pane, and that ask's own picture, failing with no event since, shows SVG_PICTURE_FAILED and arms the way back as any pane does, with nothing more until the next event; the same when the event came while that fetch was out, over the way back's landing and over the ask's own landing, for romp:wsup, hostUp and romp:hostRelayUp; an event after that picture showed changes nothing at a later failure of it; a press of the Source toggle ends the attempt whole, so the picture painted when the person returns is a first showing, whose failure asks the address again once (after an event before the press, over the re-ask's pane, after the re-ask's picture showed, and over the way back's pane), and that ask's own picture, failing with no event since, shows the pane", async (t) => {
+  const fv = await mod();
+  const realFetch = (globalThis as any).fetch;
+  let gate: Promise<void> | null = null;
+  (globalThis as any).fetch = async (u: string, i?: { method?: string }) => {
+    if (gate && u.includes("path=" + encodeURIComponent(FIG))) { const g = gate; gate = null; await g; }
+    return realFetch(u, i);
+  };
+  t.after(() => { (globalThis as any).fetch = realFetch; });
+  /** Hold the next fetch of the svg until the returned function runs; it then answers as the file does. */
+  const holdNext = (): (() => void) => { let r!: () => void; gate = new Promise<void>((res) => { r = res; }); return r; };
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  const gone = "no such file: " + FIG;
+  const pic = (body: El): El => body.querySelector("img.fileview-img")!;
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  for (const [name, fire] of ways) {
+    // the re-ask's landing: the event arrives while its picture loads, and then that picture fails
+    {
+      const { ctx, body } = await open(FIG, t);
+      const asks = asksOf(FIG);
+      pic(body).dispatchEvent(new Ev("error"));             // the re-ask, which lands
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 1, name + ": one re-ask, landed");
+      const landed = pic(body);
+      fire();                                               // while the landed picture loads
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 1, name + ": the event runs nothing while that picture loads");
+      landed.dispatchEvent(new Ev("error"));
+      assert.ok(body.querySelector(".fileview-load") && !body.querySelector(".fileview-err") && !body.querySelector(".fileview-imgbox"), name + ": the picture's failure after the event asks the address once more at once, behind the loader, in place of the pane");
+      assert.equal(ctx.error(), null, name + ": error() null through the wait");
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": one fetch more");
+      const again = pic(body);
+      assert.equal(again && again.src, address, name + ": that ask's picture, at its /file address");
+      again.dispatchEvent(new Ev("error"));                 // no event since that ask began
+      assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, name + ": that ask's own picture, failing with no event since, shows the pane");
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": and nothing more runs");
+      fire();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 3, name + ": that pane is armed as any pane: the next event runs the fetch once");
+    }
+    // the event while the re-ask's fetch is out, and that fetch lands: the attempt counts from the fetch's start
+    {
+      const { ctx, body } = await open(FIG, t);
+      const asks = asksOf(FIG);
+      const release = holdNext();
+      pic(body).dispatchEvent(new Ev("error"));             // the re-ask's fetch, held
+      fire();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 0, name + ": nothing runs while the re-ask's fetch is out");
+      release();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 1, name + ": the held fetch landed");
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": its picture's failure, after an event heard while the fetch was out, asks once more at once");
+      assert.equal(ctx.error(), null, name + ": in place of the pane");
+    }
+    // over the way back's landing, and then over that ask's own landing
+    {
+      const { ctx, body } = await open(FIG, t);
+      delete disk[FIG];
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(ctx.error(), gone, name + ": the re-ask's pane");
+      disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+      const asks = asksOf(FIG);
+      fire();                                               // the way back's fetch, which lands
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 1, name + ": the way back's fetch landed");
+      fire();                                               // while its picture loads
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": the way back's picture, failing after an event heard while it loaded, asks once more at once");
+      assert.equal(ctx.error(), null, name + ": in place of the pane");
+      fire();                                               // while that ask's picture loads
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 3, name + ": and so does that ask's own picture, after another event");
+      pic(body).dispatchEvent(new Ev("error"));
+      assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, name + ": with no event since, the pane");
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 3, name + ": and nothing more");
+    }
+  }
+  // the attempt ends when its picture shows
+  {
+    const { ctx, body } = await open(FIG, t);
+    pic(body).dispatchEvent(new Ev("error"));
+    await settle();
+    const asks = asksOf(FIG);
+    const landed = pic(body);
+    landed.dispatchEvent(new Ev("load"));                   // the re-ask's picture shows
+    win.dispatchEvent(new Event("romp:wsup"));
+    await settle();
+    landed.dispatchEvent(new Ev("error"));                  // the stand-in fails it after its load
+    assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, "an event after the landed picture showed: a later failure of that picture shows the pane");
+    await settle();
+    assert.equal(asksOf(FIG), asks, "and asks nothing");
+  }
+  // …and at a press of the Source toggle, which ends the attempt whole: the picture painted when the person returns is a first
+  // showing, so its failure asks the address again once, whatever the landing before the press was and whatever it met
+  for (const before of ["an event while the re-ask's picture loads", "the re-ask's picture failing to the pane", "the re-ask's picture showing", "the way back's picture failing to the pane"]) {
+    const { ctx, body, wrap } = await open(FIG, t);
+    if (before === "the way back's picture failing to the pane") {
+      delete disk[FIG];
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(ctx.error(), gone, before + ": the re-ask's pane");
+      disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+      win.dispatchEvent(new Event("romp:wsup"));            // the way back's fetch, which lands
+    } else {
+      pic(body).dispatchEvent(new Ev("error"));             // the re-ask, which lands
+    }
+    await settle();
+    const asks = asksOf(FIG);
+    if (before === "an event while the re-ask's picture loads") win.dispatchEvent(new Event("romp:wsup"));
+    else if (before === "the re-ask's picture showing") pic(body).dispatchEvent(new Ev("load"));
+    else {
+      pic(body).dispatchEvent(new Ev("error"));
+      assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, before + ": that landing's picture fails to the pane, with no event since its fetch began");
+    }
+    await settle();
+    assert.equal(asksOf(FIG), asks, before + ": nothing runs then");
+    sourceBtn(wrap).click();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), before + ": the Source view is up");
+    sourceBtn(wrap).click();                                // back to the picture
+    const back = pic(body);
+    assert.equal(back && back.src, address, before + ": back to the picture, at its /file address");
+    await settle();
+    assert.equal(asksOf(FIG), asks, before + ": with no fetch");
+    back.dispatchEvent(new Ev("error"));
+    assert.ok(body.querySelector(".fileview-load") && !body.querySelector(".fileview-err") && !body.querySelector(".fileview-imgbox"), before + ": the press ended the attempt: the picture painted after it is a first showing, whose failure asks the address again behind the loader, not the pane");
+    assert.equal(ctx.error(), null, before + ": error() null through the wait");
+    await settle();
+    assert.equal(asksOf(FIG) - asks, 1, before + ": the address asked again, once");
+    const again = pic(body);
+    assert.equal(again && again.src, address, before + ": that ask's picture, at its /file address");
+    again.dispatchEvent(new Ev("error"));
+    assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, before + ": that ask's own picture, failing with no event since, shows the pane");
+    await settle();
+    assert.equal(asksOf(FIG) - asks, 1, before + ": and nothing more runs");
+  }
+});
+
+test("a press of the Source toggle while the Source view waits for its bytes to decode: a failure of the picture painted before the press starts nothing, and so do a probe that loads and a reconnect-class event over the pane; the Source view paints at the decode, and back to the picture, it loads afresh at its /file address with no fetch, and a failure of that picture asks again", async (t) => {
+  const probes = fakeProbes(t);
+  const realText = Blob.prototype.text;
+  let textGate: Promise<void> | null = null;
+  Blob.prototype.text = function (this: Blob): Promise<string> { const g = textGate; return g ? g.then(() => realText.call(this)) : realText.call(this); };
+  t.after(() => { Blob.prototype.text = realText; });
+  /** Hold the next decodes of the fetched bytes until the returned function runs. */
+  const holdDecode = (): (() => void) => { let r!: () => void; textGate = new Promise<void>((res) => { r = res; }); return () => { textGate = null; r(); }; };
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  const gone = "no such file: " + FIG;
+  {
+    const { ctx, body, wrap } = await open(FIG, t);
+    const img = body.querySelector("img.fileview-img")!;
+    const decode = holdDecode();
+    sourceBtn(wrap).click();
+    assert.equal(body.querySelector("img.fileview-img"), img, "the decode is held: the picture is still up");
+    const asks = asksOf(FIG), p0 = paints;
+    img.dispatchEvent(new Ev("error"));
+    assert.ok(body.querySelector(".fileview-imgbox") && body.querySelector("img.fileview-img") === img, "the picture's failure after the press starts nothing: the picture box stands, with no re-ask's loader in its place");
+    await settle();
+    assert.equal(asksOf(FIG), asks, "and no re-ask");
+    decode();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), "the Source view painted at the decode");
+    assert.equal(body.querySelector(".fileview-err"), null, "no pane");
+    assert.equal(ctx.error(), null, "error() null");
+    assert.equal(ctx.mode(), "raw", "mode() the Source view's");
+    assert.equal(paints, p0 + 1, "the Source view's paint alone");
+    sourceBtn(wrap).click();
+    const pic = body.querySelector("img.fileview-img")!;
+    assert.equal(pic && pic.src, address, "back to the picture, a fresh load at its /file address");
+    await settle();
+    assert.equal(asksOf(FIG), asks, "with no fetch");
+    pic.dispatchEvent(new Ev("error"));
+    await settle();
+    assert.equal(asksOf(FIG) - asks, 1, "that picture's failure asks its address again: no press came since its paint");
+  }
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  for (const what of ["a probe that loads", ...ways.map(([n]) => n)]) {
+    const { ctx, body, wrap } = await open(FIG, t);
+    delete disk[FIG];
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+    await settle();
+    assert.equal(ctx.error(), gone, what + ": the re-ask's pane");
+    const n = probes.length;
+    if (what === "a probe that loads") { kernelMessage(); assert.equal(probes.length, n + 1, what + ": one probe out over the pane"); }
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };   // the address answers from here on
+    const decode = holdDecode();
+    sourceBtn(wrap).click();                              // the Source view waits for the decode; the pane is still up
+    const asks = asksOf(FIG);
+    if (what === "a probe that loads") probes[n].onload!();
+    else ways.find(([w]) => w === what)![1]();
+    await settle();
+    assert.equal(asksOf(FIG), asks, what + " after the press, the Source view waiting for its decode: nothing starts");
+    kernelMessage();
+    assert.equal(probes.length, what === "a probe that loads" ? n + 1 : n, what + ": and a kernel message sends no probe");
+    decode();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), what + ": the Source view painted at the decode");
+    assert.equal(ctx.error(), null, what + ": error() null");
+    sourceBtn(wrap).click();
+    const pic = body.querySelector("img.fileview-img")!;
+    assert.equal(pic && pic.src, address, what + ": back to the picture, a fresh load at its /file address");
+    await settle();
+    assert.equal(asksOf(FIG), asks, what + ": with no fetch");
+  }
+});
+
+test("a reload that lands while a press of the Source toggle waits for its bytes to decode paints no picture over the press: the landed bytes go to the Source view, which paints at their decode with their XML and the landed mtime, while the decode of the older bytes paints nothing; back to the picture, it loads at the landed address with no fetch but the reload's", async (t) => {
+  const realText = Blob.prototype.text;
+  let textGate: Promise<void> | null = null;
+  Blob.prototype.text = function (this: Blob): Promise<string> { const g = textGate; return g ? g.then(() => realText.call(this)) : realText.call(this); };
+  t.after(() => { Blob.prototype.text = realText; });
+  /** Hold the decodes of the fetched bytes until the returned function runs. */
+  const holdDecode = (): (() => void) => { let r!: () => void; textGate = new Promise<void>((res) => { r = res; }); return () => { textGate = null; r(); }; };
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  const { ctx, body, wrap } = await open(FIG, t);
+  const img = body.querySelector("img.fileview-img")!;
+  const decode = holdDecode();
+  sourceBtn(wrap).click();                                  // the Source view waits for the decode; the picture is still up
+  disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+  const asks = asksOf(FIG), p0 = paints;
+  ctx.reload();
+  await settle();
+  assert.equal(asksOf(FIG) - asks, 1, "the reload's fetch ran");
+  assert.equal(ctx.mtimeNs(), MT7, "and landed: mtimeNs() the landed mtime");
+  assert.equal(body.querySelector("img.fileview-img"), img, "the landing painted no picture over the press: the body holds the picture the press was made over");
+  assert.equal(paints, p0, "and no paint");
+  decode();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view painted at the decode");
+  assert.equal(ctx.text(), SVG2, "with the landed bytes' XML, not the older bytes'");
+  assert.equal(ctx.mode(), "raw", "mode() the Source view's");
+  assert.equal(ctx.error(), null, "error() null");
+  assert.equal(paints, p0 + 1, "one paint, the Source view's: the decode of the older bytes painted nothing");
+  sourceBtn(wrap).click();
+  const back = body.querySelector("img.fileview-img")!;
+  assert.equal(back && back.src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT7, "back to the picture, at the landed address");
+  await settle();
+  assert.equal(asksOf(FIG) - asks, 1, "with no fetch but the reload's");
+});
+
+test("a picture still loading when the Source toggle is pressed fires no paint hook at its load: with a reload landing while the Source view waits for its decode, the load of the picture painted before the press runs nothing and the Source view's paint at the decode is the one onRendered, at the landed mtime; with no landing, the same, at the open's mtime; pressed to the Source view and back while the picture still loads, the picture painted on the way back runs onRendered once at its load and the one pressed over runs nothing; with no press, the load runs it once", async (t) => {
+  const realText = Blob.prototype.text;
+  let textGate: Promise<void> | null = null;
+  Blob.prototype.text = function (this: Blob): Promise<string> { const g = textGate; return g ? g.then(() => realText.call(this)) : realText.call(this); };
+  const kept = disk[FIG];
+  t.after(() => { Blob.prototype.text = realText; disk[FIG] = kept; });
+  /** Hold the decodes of the fetched bytes until the returned function runs. */
+  const holdDecode = (): (() => void) => { let r!: () => void; textGate = new Promise<void>((res) => { r = res; }); return () => { textGate = null; r(); }; };
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  const key = (mt: string): string => "&v=" + mt;
+  /** Every onRendered from here on, as the hook reads the view: its mtime, its mode and what the body holds. */
+  const heard = (ctx: FileViewActionCtx, body: El): string[] => {
+    const out: string[] = [];
+    ctx.onRendered(() => {
+      const img = body.querySelector("img.fileview-img");
+      out.push(ctx.mtimeNs() + " " + ctx.mode() + " " + (img ? "picture" + img.src.slice(img.src.indexOf("&v=")) : body.querySelector("code.hljs") ? "source" : "other"));
+    });
+    return out;
+  };
+  // (i) a reload lands while the press waits for its decode (the change card's road: file-view-svg-reask-browser.test.ts runs it
+  // under the real Comments panel, where a paint heard at this load moved the card before the Source view showed the new bytes)
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    const img = body.querySelector("img.fileview-img")!;
+    const decode = holdDecode();
+    sourceBtn(wrap).click();                                // the Source view waits for the decode; the picture, still loading, stays up
+    disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT7, "(i) the reload landed: mtimeNs() the landed mtime");
+    assert.equal(body.querySelector("img.fileview-img"), img, "(i) the body still holds the picture painted before the press");
+    img.dispatchEvent(new Ev("load"));                      // that picture's own request ends
+    assert.deepEqual(rendered, [], "(i) its load fires no paint hook: the view's mtime is the landing's, and the body shows the picture painted before the press");
+    assert.equal(paints, 0, "(i) no paint at all yet");
+    decode();
+    await settle();
+    assert.deepEqual(rendered, [MT7 + " raw source"], "(i) the one paint: the Source view's at the decode, over the landed bytes");
+    assert.equal(ctx.text(), SVG2, "(i) with the landed bytes' XML");
+  }
+  // (ii) no landing: the picture painted before the press loads while the decode is out
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    const img = body.querySelector("img.fileview-img")!;
+    const decode = holdDecode();
+    sourceBtn(wrap).click();
+    img.dispatchEvent(new Ev("load"));
+    assert.deepEqual(rendered, [], "(ii) the load of the picture pressed over fires no paint hook");
+    decode();
+    await settle();
+    assert.deepEqual(rendered, [MT + " raw source"], "(ii) the decode's paint runs onRendered once, the Source view over the open's bytes");
+  }
+  // (iii) to the Source view and back while the picture still loads: the way back paints a new picture, at the same address
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    const img = body.querySelector("img.fileview-img")!;
+    sourceBtn(wrap).click();
+    await settle();
+    assert.deepEqual(rendered, [MT + " raw source"], "(iii) the Source view painted at the decode, the picture still loading");
+    sourceBtn(wrap).click();                                // back to the picture
+    const back = body.querySelector("img.fileview-img")!;
+    assert.ok(back && back !== img && back.src.endsWith(key(MT)), "(iii) the way back paints a new picture at the same address");
+    img.dispatchEvent(new Ev("load"));                      // the request both joined ends: the picture pressed over hears it first
+    back.dispatchEvent(new Ev("load"));
+    assert.deepEqual(rendered, [MT + " raw source", MT + " media picture" + key(MT)], "(iii) the picture shown on the way back runs onRendered once at its load, and the one pressed over nothing");
+    back.dispatchEvent(new Ev("load"));
+    assert.equal(rendered.length, 2, "(iii) once: a second load event on it runs nothing more");
+  }
+  // (iv) no press: the control
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
+    assert.deepEqual(rendered, [MT + " media picture" + key(MT)], "(iv) with no press the picture's load runs onRendered once, over the picture");
+  }
+});
+
+test("a press from the picture back to the Source view while a reload that landed under it still decodes paints no older XML: the press decodes the landed bytes and the Source view paints at that decode, the one onRendered, with the landed XML, also when the two decodes of those bytes finish in the other order; pressed back after the decode, the XML on hand is the landed bytes' and paints at once; a second landing during the wait paints its own XML at its decode; a landing of another type during the wait, or under the Source view, paints its own picture and no XML; a failed reload during the wait paints its pane, and the decode then the landed XML; with no landing, back to the Source view the XML on hand paints at once", async (t) => {
+  const realText = Blob.prototype.text;
+  // while `holding`, every decode of the fetched bytes waits in `pending` until a road releases it, in the order it chooses
+  const pending: Array<() => void> = [];
+  let holding = false;
+  Blob.prototype.text = function (this: Blob): Promise<string> {
+    if (!holding) return realText.call(this);
+    return new Promise<string>((res, rej) => { pending.push(() => { realText.call(this).then(res, rej); }); });
+  };
+  const kept = disk[FIG];
+  t.after(() => { Blob.prototype.text = realText; disk[FIG] = kept; });
+  /** Release the held decodes, one at a time in the order given (indices in the order they were asked; by default that order). */
+  const release = async (order?: number[]): Promise<void> => {
+    holding = false;
+    const run = pending.splice(0);
+    for (const i of order ?? run.map((_, k) => k)) { run[i](); await settle(); }
+  };
+  const MT7 = "1757145600000000007", MT8 = "1757145600000000008";
+  const SVG2 = SVG.replace("p95", "p99"), SVG3 = SVG.replace("p95", "p50");
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const xmlOf = (x: string | null): string => (x === SVG ? "SVG" : x === SVG2 ? "SVG2" : x === SVG3 ? "SVG3" : String(x));
+  /** Every onRendered from here on, as the hook reads the view: its mtime, its mode, and what the body holds (the picture's
+   *  version key, or blob for an object URL; the Source view's XML, by fixture name; a pane). */
+  const heard = (ctx: FileViewActionCtx, body: El): string[] => {
+    const out: string[] = [];
+    ctx.onRendered(() => {
+      const img = body.querySelector("img.fileview-img");
+      const what = body.querySelector(".fileview-err") ? "pane"
+        : img ? "picture " + (img.src.startsWith("blob:") ? "blob" : img.src.slice(img.src.indexOf("&v=") + 3))
+        : body.querySelector("code.hljs") ? "source " + xmlOf(ctx.text()) : "other";
+      out.push(ctx.mtimeNs() + " " + ctx.mode() + " " + what);
+    });
+    return out;
+  };
+  /** The svg open with the Source view up over the open's bytes, then a reload whose new bytes land under it, their decode held. */
+  const underSource = async (road: string): Promise<{ ctx: FileViewActionCtx; body: El; wrap: El; rendered: string[] }> => {
+    const { ctx, body, wrap } = await open(FIG, t);
+    sourceBtn(wrap).click();
+    await settle();
+    assert.equal(ctx.text(), SVG, road + ": the premise: the Source view up over the open's bytes");
+    const rendered = heard(ctx, body);
+    holding = true;
+    disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT7, road + ": the reload landed under the Source view");
+    assert.equal(ctx.text(), SVG, road + ": and its decode is held, the older XML still up");
+    return { ctx, body, wrap, rendered };
+  };
+  {
+    const road = "(i) to the picture and back before the decode";
+    const { ctx, body, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click();                                      // to the picture
+    const pic = body.querySelector("img.fileview-img")!;
+    assert.equal(pic && pic.src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT7, road + ": the press to the picture paints the landed bytes' picture, at its /file address");
+    sourceBtn(wrap).click();                                      // back to the Source view, the landed bytes' decode still held
+    assert.deepEqual(rendered, [], road + ": the press back paints no Source view of the older XML");
+    assert.equal(body.querySelector("img.fileview-img"), pic, road + ": the picture stays up while the landed bytes decode");
+    pic.dispatchEvent(new Ev("load"));                            // the picture pressed over loads
+    assert.deepEqual(rendered, [], road + ": and its load runs no hook");
+    await release();
+    assert.deepEqual(rendered, [MT7 + " raw source SVG2"], road + ": after the landing one onRendered, at the decode, with the landed XML");
+    assert.equal(ctx.text(), SVG2, road + ": the Source view shows the landed bytes' XML");
+  }
+  {
+    const road = "(ii) the same, the two decodes of the landed bytes finishing in the other order";
+    const { wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    assert.equal(pending.length, 2, road + ": two decodes of the landed bytes out, the reload's under the Source view and the press's");
+    await release([1, 0]);                                        // the press's first, then the reload's
+    assert.deepEqual(rendered, [MT7 + " raw source SVG2"], road + ": one paint, the Source view's with the landed XML; the reload's decode, finishing after it, paints nothing more");
+  }
+  {
+    const road = "(iii) to the picture before the decode, and back after it";
+    const { body, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click();
+    await release();                                              // the reload's decode ends with the picture up: the XML on hand is the landed bytes'
+    assert.equal(body.querySelector("code.hljs"), null, road + ": the decode paints no Source view over the picture the person went to");
+    sourceBtn(wrap).click();
+    assert.deepEqual(rendered, [MT7 + " raw source SVG2"], road + ": back after the decode, the Source view paints at once, once, with the landed XML");
+  }
+  {
+    const road = "(iv) a second landing during the wait";
+    const { ctx, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    disk[FIG] = { bytes: SVG3, type: "image/svg+xml", mtimeNs: MT8 };
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT8, road + ": the second reload landed");
+    assert.deepEqual(rendered, [], road + ": and painted nothing over the press, nor did the press paint the older XML");
+    await release();
+    assert.deepEqual(rendered, [MT8 + " raw source SVG3"], road + ": the one paint, the Source view's at the second landing's decode, with its XML");
+  }
+  {
+    const road = "(v) a landing of another type during the wait";
+    const { ctx, body, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    disk[FIG] = { bytes: PNG, type: "image/png", mtimeNs: MT8 };
+    ctx.reload();
+    await settle();
+    const png = body.querySelector("img.fileview-img");
+    assert.ok(png && png.src.startsWith("blob:"), road + ": it paints its own picture");
+    png!.dispatchEvent(new Ev("load"));
+    await release();
+    assert.deepEqual(rendered, [MT8 + " media picture blob"], road + ": its picture's load is the one paint: the landed svg's decode paints no XML over it");
+    assert.equal(body.querySelector("img.fileview-img"), png, road + ": the picture stands");
+  }
+  {
+    const road = "(vi) a landing of another type under the Source view";
+    const { ctx, body, wrap, rendered } = await underSource(road);
+    disk[FIG] = { bytes: PNG, type: "image/png", mtimeNs: MT8 };
+    ctx.reload();
+    await settle();
+    const png = body.querySelector("img.fileview-img");
+    assert.ok(png && png.src.startsWith("blob:"), road + ": it paints its own picture, not its bytes as XML");
+    png!.dispatchEvent(new Ev("load"));
+    await release();
+    assert.deepEqual(rendered, [MT8 + " media picture blob"], road + ": its picture's load is the one paint: the svg's decode paints no XML over it");
+    assert.equal(ctx.mode(), "media", road + ": mode() the picture's");
+    disk[FIG] = { bytes: SVG3, type: "image/svg+xml", mtimeNs: "1757145600000000009" };
+    ctx.reload();                                                 // an svg lands again: its picture, with the Source view not up
+    await settle();
+    assert.equal(sourceBtn(wrap).getAttribute("aria-pressed"), "false", road + ": the Source toggle reads not pressed over the picture");
+  }
+  {
+    const road = "(vii) a failed reload during the wait";
+    const { ctx, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    delete disk[FIG];
+    ctx.reload();
+    await settle();
+    assert.deepEqual(rendered, [MT7 + " media pane"], road + ": the failed reload paints its pane, and the press painted no older XML before it");
+    await release();
+    assert.deepEqual(rendered, [MT7 + " media pane", MT7 + " raw source SVG2"], road + ": the decode then paints the Source view with the landed bytes' XML");
+  }
+  {
+    const road = "(viii) with no landing, to the picture and back";
+    const { ctx, body, wrap } = await open(FIG, t);
+    sourceBtn(wrap).click();
+    await settle();                                               // the Source view's first paint, at its decode
+    const rendered = heard(ctx, body);
+    holding = true;
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();             // to the picture and back: the XML on hand is these bytes'
+    assert.equal(pending.length, 0, road + ": no second decode");
+    assert.deepEqual(rendered, [MT + " raw source SVG"], road + ": the Source view paints at once from the XML on hand");
+    await release();
+  }
+});
+
+test("a reload's decode under the Source view paints nothing once a press has gone to the picture and back while it was out, the press decoding the landed bytes itself: that decode released alone leaves the picture up and runs no hook, and the press's decode then paints the Source view once (file-view.ts, the reload decode's srcDecode check; road (i) above passes without that check, since the one paint it counts can come from either decode)", async (t) => {
+  const realText = Blob.prototype.text;
+  const pending: Array<() => void> = [];
+  let holding = false;
+  Blob.prototype.text = function (this: Blob): Promise<string> {
+    if (!holding) return realText.call(this);
+    return new Promise<string>((res, rej) => { pending.push(() => { realText.call(this).then(res, rej); }); });
+  };
+  t.after(() => { Blob.prototype.text = realText; });
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  const { ctx, body, wrap } = await open(FIG, t);
+  sourceBtn(wrap).click();
+  await settle();
+  assert.equal(ctx.text(), SVG, "the premise: the Source view up over the open's bytes");
+  const rendered: string[] = [];
+  ctx.onRendered(() => { rendered.push(ctx.mtimeNs() + " " + ctx.mode() + " " + (body.querySelector("code.hljs") ? "source" : body.querySelector("img.fileview-img") ? "picture" : "other")); });
+  holding = true;
+  disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+  ctx.reload();
+  await settle();
+  assert.equal(ctx.mtimeNs(), MT7, "the premise: the reload landed under the Source view, its decode held");
+  sourceBtn(wrap).click();                                      // to the picture
+  const pic = body.querySelector("img.fileview-img")!;
+  assert.ok(pic, "the premise: the press put the landed bytes' picture up");
+  sourceBtn(wrap).click();                                      // back to the Source view: the press decodes the landed bytes
+  assert.equal(pending.length, 2, "the premise: two decodes held, the reload's and then the press's");
+  holding = false;
+  const [reloadDecode, pressDecode] = pending.splice(0);
+  reloadDecode(); await settle();
+  assert.equal(body.querySelector("img.fileview-img"), pic, "the reload's decode released alone: the picture is still up");
+  assert.deepEqual(rendered, [], "and no hook ran: that decode paints nothing while the press's is out");
+  pressDecode(); await settle();
+  assert.deepEqual(rendered, [MT7 + " raw source"], "the press's decode paints the Source view once, over the landed bytes");
+  assert.equal(ctx.text(), SVG2, "with their XML");
+});
+
+test("the seam's onLanded runs at an svg picture's landing, with mtimeNs() the landed mtime and before the picture's load, once per landing; a png's landing runs none", async (t) => {
+  const { ctx, body } = await open(FIG, t);
+  assert.equal(typeof ctx.onLanded, "function", "the seam carries onLanded");
+  const landed: string[] = [];
+  ctx.onLanded!(() => { landed.push(ctx.mtimeNs() + " " + paints); });
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: "1757145600000000007" };
+  ctx.reload();
+  await settle();
+  assert.deepEqual(landed, ["1757145600000000007 0"], "one call at the reload's landing, the new mtime in hand and the picture not yet loaded");
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
+  assert.equal(landed.length, 1, "the picture's load is onRendered's, not onLanded's");
+  const png = await open(PLOT, t);
+  const pl: string[] = [];
+  png.ctx.onLanded!(() => { pl.push("landed"); });
+  png.ctx.reload();
+  await settle();
+  assert.deepEqual(pl, [], "a png's picture is made from the bytes in hand: no onLanded");
+});
+
+test("the seam's onLanded also runs at a landing whose bytes go to the Source view, before their decode paints it: a reload under the Source view, and a reload while a press of the Source toggle waits for its decode, each once, with mtimeNs() the landed mtime and no paint yet", async (t) => {
+  const realText = Blob.prototype.text;
+  let textGate: Promise<void> | null = null;
+  Blob.prototype.text = function (this: Blob): Promise<string> { const g = textGate; return g ? g.then(() => realText.call(this)) : realText.call(this); };
+  const kept = disk[FIG];
+  t.after(() => { Blob.prototype.text = realText; disk[FIG] = kept; });
+  /** Hold the decodes of the fetched bytes until the returned function runs. */
+  const holdDecode = (): (() => void) => { let r!: () => void; textGate = new Promise<void>((res) => { r = res; }); return () => { textGate = null; r(); }; };
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  for (const road of ["a reload under the Source view", "a reload while a press of the Source toggle waits for its decode"]) {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const landed: string[] = [];
+    ctx.onLanded!(() => { landed.push(ctx.mtimeNs() + " " + paints); });
+    const under = road === "a reload under the Source view";
+    if (under) {
+      sourceBtn(wrap).click();
+      await settle();
+      assert.ok(body.querySelector("code.hljs"), road + ": the Source view is up");
+    }
+    const decode = holdDecode();
+    if (!under) sourceBtn(wrap).click();                    // the Source view waits for the decode
+    disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+    const p0 = paints;
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT7, road + ": the reload landed");
+    assert.deepEqual(landed, [MT7 + " " + p0], road + ": onLanded ran at the landing, the landed mtime in hand, before any paint (the decode is held)");
+    decode();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), road + ": the Source view painted at the decode");
+    assert.equal(ctx.text(), SVG2, road + ": with the landed bytes' XML");
+    assert.equal(paints, p0 + 1, road + ": one paint, at the decode");
+    assert.equal(landed.length, 1, road + ": the decode's paint is onRendered's, not onLanded's");
+  }
+});
+
+test("the seam's onReplaced (its doc in file-view.ts) runs as the viewer swaps in a picture still loading or the re-ask's loader, before the onRendered that comes later: a reload's picture (and its landing's onLanded after it), the re-ask's romp loader and its answer's picture, a press back to the picture; never at a text view's paint, the Source view's paint, a pane or a press to the Source view whose decode is still out", async (t) => {
+  const { ctx, body, wrap } = await open(FIG, t);
+  assert.equal(typeof ctx.onReplaced, "function", "the seam carries onReplaced");
+  const seen: string[] = [];
+  ctx.onReplaced!(() => { seen.push("replaced " + (body.querySelector("img.fileview-img") ? "picture" : body.querySelector(".fileview-load") ? "loader" : "other")); });
+  ctx.onLanded!(() => { seen.push("landed"); });
+  ctx.onRendered((why) => { seen.push("rendered " + (why || "paint") + (ctx.error() === null ? "" : " pane")); });
+  const MT7 = "1757145600000000007";
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT7 };
+  ctx.reload();
+  await settle();
+  assert.deepEqual(seen, ["replaced picture", "landed"], "a reload's landing: the landed bytes' picture goes up, onReplaced told at the swap and onLanded after it, no paint yet");
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
+  assert.deepEqual(seen.slice(2), ["rendered paint"], "its load is the paint");
+  seen.length = 0;
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  assert.deepEqual(seen, ["replaced loader"], "the picture's failure: the re-ask's loader goes up, onReplaced told, no paint");
+  await settle();
+  assert.deepEqual(seen.slice(1), ["replaced picture", "landed"], "the re-ask's answer: its picture goes up, onReplaced told again");
+  seen.length = 0;
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  assert.deepEqual(seen, ["rendered paint pane"], "the answer's picture failing: SVG_PICTURE_FAILED's pane is a paint, with no onReplaced");
+  seen.length = 0;
+  sourceBtn(wrap).click();                                 // to the Source view: its decode is out, the pane stands until it paints
+  assert.deepEqual(seen, [], "a press to the Source view whose decode is still out puts nothing up");
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view painted at the decode");
+  assert.deepEqual(seen, ["rendered paint"], "the Source view's paint fires onRendered alone");
+  seen.length = 0;
+  // back to the picture, which the page holds this time (complete once its src is set, as at the case on an img the browser
+  // already holds below): imgs made from here on are complete, the reload and re-ask steps above having kept the shim's own
+  const realCreate = doc.createElement;
+  doc.createElement = (tag: string) => { const e = realCreate(tag); if (tag === "img") (e as unknown as { complete: boolean }).complete = true; return e; };
+  t.after(() => { doc.createElement = realCreate; });
+  sourceBtn(wrap).click();
+  doc.createElement = realCreate;
+  assert.deepEqual(seen, ["replaced picture", "rendered paint"], "a press back to a picture the page holds: onReplaced told first, then the picture's paint in the same call (onReplaced's doc)");
+  const text = await open(REPORT, t);
+  const tseen: string[] = [];
+  text.ctx.onReplaced!(() => { tseen.push("replaced"); });
+  text.ctx.onRendered((why) => { tseen.push("rendered " + (why || "paint") + (text.ctx.error() === null ? "" : " pane")); });
+  disk[REPORT] = { bytes: DOC.replace("p95", "p99"), type: "text/plain; charset=utf-8", mtimeNs: MT7 };
+  text.ctx.reload();
+  await settle();
+  text.b.raw.click();
+  delete disk[REPORT];
+  text.ctx.reload();
+  await settle();
+  assert.deepEqual(tseen, ["rendered paint", "rendered paint", "rendered paint pane"], "a text view's landing, a format click and a failed reload's pane each fire onRendered alone");
+});
+
 // ── Slice 3: the media paint, the media element, the rendered figures (plans/file-review.md, Images and PDFs) ──
 
 test("onRendered for an image fires on the img's load, once; mediaElement() is that img until the decode-failure pane replaces it, which is a paint of its own; a load on the replaced img fires nothing", async (t) => {
@@ -616,6 +1848,9 @@ test("an img the browser already holds (complete) paints at once, without waitin
   assert.equal(ctx.mediaElement(), body.querySelector("img.fileview-img") as unknown as HTMLElement);
   body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
   assert.equal(paints, 1, "no listener was armed for a picture that had already loaded");
+  const svg = await open(FIG, t);
+  assert.equal(paints, 1, "an svg picture the browser already holds (its address loaded before) paints at once too");
+  assert.equal(svg.body.querySelector(".fileview-load"), null, "with no loader beside it");
 });
 
 test("a PDF body: mediaElement() is the frame, onRendered fires at once (the frame gives no signal to wait for), text() null", async (t) => {
@@ -629,6 +1864,19 @@ test("a PDF body: mediaElement() is the frame, onRendered fires at once (the fra
   assert.equal(b.edit.hidden, true);
 });
 
+test("the viewer's picture box carries the chat page heal's data mark, for an svg's picture and for a raster picture (file-view.ts imgBlock builds both and sets VIEWER_PICTURE_MARK on the box; preview.ts installMdImgHeal skips a picture inside the mark)", async (t) => {
+  const { VIEWER_PICTURE_MARK } = await import("./preview");
+  for (const p of [FIG, PLOT]) {
+    const { body } = await open(p, t);
+    const box = body.querySelector(".fileview-imgbox");
+    assert.ok(box, p + ": the picture's box is up");
+    const src = body.querySelector("img.fileview-img")!.src;
+    if (p === FIG) assert.equal(src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "the svg picture's src is its /file address, never an object or data URL");
+    else assert.ok(src.startsWith("blob:"), "the raster picture keeps its object URL: " + src);
+    assert.ok(box!.hasAttribute(VIEWER_PICTURE_MARK), p + ": the box carries the viewer's picture mark, which the heal keys on to leave the viewer's own picture alone. The composition, the heal leaving this picture to the viewer on a real page, is file-view-svg-reask-browser.test.ts's (its probes per message in the chat modal), in Chromium, whose cases CI's Test step skips, since that step runs before the job installs Chromium");
+  }
+});
+
 // ── Slice 4: the PDF's pages while the Comments panel is open (plans/file-review.md Slice 4; contract F3) ──
 
 test("a PDF with the panel open: the loader over the kept frame, then the chunk's pages in its place — mediaElement() the pages root, pdfPages() the shells, onRendered after page 1 and per page; the panel closing brings the frame back and disposes", async (t) => {
@@ -636,9 +1884,12 @@ test("a PDF with the panel open: the loader over the kept frame, then the chunk'
   assert.equal(paints, 1, "the frame showed first: the panel is closed at open");
   assert.equal(pdf.renders, 0, "the chunk is not asked for a PDF nobody is commenting on");
   const shown = body.querySelector("iframe.fileview-frame")!;
+  let replaced = 0;
+  ctx.onReplaced!(() => { replaced++; });
   const aside = new El("div");
   ctx.aside(aside as unknown as HTMLElement);                                      // the panel opens: the seam's aside() IS the event
   assert.ok(body.querySelector(".fileview-load"), "the romp loader first (the loading-state rule)");
+  assert.equal(replaced, 1, "onReplaced told once, as the pages' loader goes up over the kept frame (onReplaced's doc)");
   const host = body.querySelector(".fileview-pdfhost")!;
   assert.ok(host && host.isConnected, "the chunk's host is in the body before render(): the pages fit its width");
   // The frame is NOT dropped for the loader: it stays through the attempt, in place, so the document is not
@@ -665,6 +1916,7 @@ test("a PDF with the panel open: the loader over the kept frame, then the chunk'
   assert.equal(pages.length, 2, "one shell per page");
   assert.deepEqual(pages.map((pg) => (pg as unknown as El).dataset.page), ["1", "2"], "in page order, data-page 1-based");
   assert.equal(paints, 2, "onRendered once page 1 is drawn (the first onPage fired before the resolve, and counted nothing)");
+  assert.equal(replaced, 1, "and onReplaced not again at page 1's draw, which is onRendered's");
   pdf.opts!.onPage!({ index: 2, canvas: pages[1], width: 800, height: 1035 });
   assert.equal(paints, 3, "…and again for every page the chunk draws after that");
   assert.equal(fetches.filter((f) => f.includes("deck.pdf")).length, 1, "one fetch of the file, ever");
@@ -1072,18 +2324,23 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /renderedImages: \(\) => \(ctx\.mode\(\) === "rendered" \? Array\.from\(body\.querySelectorAll\("\.fileview-md img"\)\) as HTMLImageElement\[\] : \[\]\),/);
   // the media arm: build, mount, THEN wait for the picture — so the element is in the DOM when the hook runs
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
-  assert.match(mediaBranch, /const shown = isPdf \? pdfBlock\(objUrl, path\) : imgBlock\(objUrl, path, imgFailed\);\n\s*body\.replaceChildren\(shown\);\n\s*whenShown\(shown, fireRendered\);/);
+  assert.match(mediaBranch, /const shown = isPdf \? pdfBlock\(objUrl, path\) : imgBlock\(objUrl, path, imgFailed\);\n\s*body\.replaceChildren\(shown\);\n\s*fireReplaced\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*whenShown\(shown, \(\) => \{ if \(picView === viewSeq\) fireRendered\(\); \}\);/, "the media arm tells onReplaced after the mount and before whenShown (a source pin; the exact order is executed in this file's case on the seam's onReplaced, whose press back to a picture the page holds records onReplaced and then onRendered in the same call), then arms whenShown, its hooks gated on no press of the Source toggle since the picture's paint: a source pin; executed in this file's case on a picture still loading when the Source toggle is pressed");
   const when = VIEW.split("function whenShown(")[1].split("\n}\n")[0];
   assert.match(when, /const img = shown\.querySelector\("img\.fileview-img"\) as HTMLImageElement \| null;/);
   assert.match(when, /if \(!img \|\| img\.complete\) \{ cb\(\); return; \}/, "a frame, or an already-complete img: at once");
   assert.match(when, /img\.addEventListener\("load", \(\) => \{ if \(img\.isConnected\) cb\(\); \}, \{ once: true \}\);/, "else the load event, once, and only for a picture still in the document");
-  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 8, "the SVG Source view, the text views, the decode-failure pane, the fetch chain's catch (Slice 7 of plans/markdown-viewer.md, item 3: a refused or failed fetch's pane is a paint, on a first open too), the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) call fireRendered directly as a paint; the media arm hands it to whenShown (file-comments.test.ts pins the floor); the two reflows of a text view with its text unchanged (a text-size step, the body's width changing) go through fireRenderedKeepingSelection, which fires the hooks with why 'reflow' (below) so the panel re-places its cards and leaves its marks standing, and a standing selection outlives any hook that does re-wrap (file-view-text-size.test.ts, file-view-reflow-browser.test.ts)");
+  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 9, "the nine direct calls of fireRendered, each a paint: the media arm's, inside the callback it hands whenShown and gated on the press count there (executed in this file's case on a picture still loading when the Source toggle is pressed), the SVG Source view, the text views, the decode-failure pane, the fetch chain's catch (Slice 7 of plans/markdown-viewer.md, item 3: a refused or failed fetch's pane is a paint, on a first open too), the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) (file-comments.test.ts pins the floor); the PDF paths' kept frame, column and fallback hand fireRendered itself to whenShown; the two reflows of a text view with its text unchanged (a text-size step, the body's width changing) go through fireRenderedKeepingSelection, which fires the hooks with why 'reflow' (below) so the panel re-places its cards and leaves its marks standing, and a standing selection outlives any hook that does re-wrap (file-view-text-size.test.ts, file-view-reflow-browser.test.ts)");
   assert.equal((VIEW.match(/fireRendered\("reflow"\);/g) || []).length, 1, "the reflows' one call, inside fireRenderedKeepingSelection");
+  assert.equal((VIEW.match(/fireReplaced\(\);/g) || []).length, 3, "the seam's onReplaced told at three swaps: the media arm's picture or frame, the re-ask's loader and the PDF pages' loader (onReplaced's doc says which of them paint at once; a source pin only; this file's case on onReplaced executes the first two, and the third, the PDF pages' loader, is executed in this file's case on a PDF with the panel open, over the kept frame, and in file-view-pdf-backstop.test.ts's case with no frame kept, in place of the body)");
   assert.equal((VIEW.match(/fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the two reflow triggers, and nothing else, keep the selection");
-  const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
+  // imgFailed takes the error event since the replaced-picture guard (the case "the picture's error paints nothing once the body no
+  // longer holds that picture" above is the executed witness of the guard; this split only finds the function's body)
+  const failed = VIEW.split("const imgFailed = (e: Event) => {")[1].split("\n  };\n")[0];
   assert.match(failed, /body\.replaceChildren\(why\);\n\s*viewError = words;[^\n]*\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none; error() is set between them (Slice 7, item 3)");
-  assert.match(failed, /why\.textContent = DECODE_FAILED;[^\n]*\n\s*const words = why\.textContent;/, "the exported sentence alone (DECODE_FAILED, hoisted for the guide's pin in the Slice 7 review's round 1), taken before the hint and the button join the pane");
+  assert.match(failed, /if \(!\(e\.target as Node\)\.isConnected\) return;/, "the guard on a picture the body no longer holds: a source pin; executed in the case named above");
+  assert.match(failed, /why\.textContent = isSvgImage \? SVG_PICTURE_FAILED : DECODE_FAILED;[^\n]*\n\s*const words = why\.textContent;/, "the exported sentence alone, DECODE_FAILED for a picture made from its bytes and SVG_PICTURE_FAILED for an svg's picture after its re-ask, taken before the hint and the button join the pane: a source pin; executed in this file, the svg's failed load asking its address again and the png's DECODE_FAILED in the same case");
   assert.match(VIEW, /\nexport const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";\n/, "the constant's export line, the guide's pin");
+  assert.match(VIEW, /\nexport const SVG_PICTURE_FAILED = "this image failed to load or decode: the connection may have dropped, or the file may be mid-write or truncated";\n/, "the svg sentence's export line, the guide's pin (tests/test_guide_files_failures.py)");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify; no fallback stands between them since Slice 7 of
   // plans/markdown-viewer.md (item 1): a throw propagates to renderBody's try, whose catch paints the failure line over Raw rows
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
@@ -1371,8 +2628,8 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
   const bindAt = mdCode.indexOf(bind), adoptAt = mdCode.indexOf(adopt);
   assert.ok(bindAt > 0 && adoptAt > bindAt, "the body is bound to `clean` and adopted later");
   const between = mdCode.slice(bindAt + bind.length, adoptAt);
-  assert.deepEqual(between.match(/\w+\(clean\b/g), ["resolveFigureRefs(clean", "gateRemoteFigures(clean", "rewriteFigureSrcs(clean", "gateRemoteFigures(clean"],
-    "between the sanitize and the adoption `clean` is handed to the four chain calls (the URL kind's resolution and gate, the file kind's rewrite and gate) and to nothing else");
+  assert.deepEqual(between.match(/\w+\(clean\b/g), ["resolveFigureRefs(clean", "gateRemoteFigures(clean", "rewriteFigureSrcs(clean", "gateRemoteFigures(clean", "keepAuthoredSpellings(clean", "capAuthoredFileUrls(clean"],
+    "between the sanitize and the adoption `clean` is handed to the four chain calls (the URL kind's resolution and gate, the file kind's rewrite and gate), to the file kind's keepAuthoredSpellings (it writes data-fv-src and data-fv-srcset, attributes nothing fetches through, with the spelling the cap pass is about to change), and to the cap pass (authored-file-caps.ts: it adds this page's cap to this origin's /file URLs, and sets no other attribute), and to nothing else");
   assert.deepEqual(between.match(/\bclean\.\w+/g), ["clean.querySelectorAll"], "and the one property read of `clean` there is the fence pass's (a new use of the body before the adoption, a call or a read, is red here first)");
   assert.deepEqual(between.match(/\bdocument\.\w+/g), ["document.baseURI", "document.baseURI", "document.baseURI"], "the live document is read there for its base URI alone");
   assert.doesNotMatch(between, /\bbox\b|adoptNode|importNode|appendChild|\bappend\(|prepend\(|insertBefore|replaceChildren|replaceWith|\bafter\(|\bbefore\(/, "nothing moves a node into the live document before the chain is done");
@@ -1462,8 +2719,8 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   for (const l of locals) assert.deepEqual(codeOnly(VIEW.split("function " + l + "(")[1].split("\n}\n")[0]).split("\n").filter((x) => RE_PARSE.test(x)), [], l + " re-parses nothing (a style write)");
   const queue = [...modules];
   while (queue.length) { const m = queue.shift() as string; for (const dep of new Set(Object.values(importsOf(web(m))))) if (!modules.has(dep)) { modules.add(dep); queue.push(dep); } }
-  assert.deepEqual([...modules].sort(), ["file-view-links.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-sanitize.ts", "path-links.ts", "url-links.ts"],
-    "the modules a post-adoption pass reaches, transitively over `./` imports (a new import widens this list first)");
+  assert.deepEqual([...modules].sort(), ["file-cap.ts", "file-view-links.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-sanitize.ts", "path-links.ts", "url-links.ts"],
+    "the modules a post-adoption pass reaches, transitively over `./` imports (a new import widens this list first; file-cap.ts came in through url-links.ts, whose anchors carry this page's cap, and computes a string)");
   for (const m of modules) assert.doesNotMatch(codeOnly(web(m)), NS_OR_DEFAULT_LOCAL, m + ": no namespace or default import from `./` (the resolver would not follow one)");
   for (const m of modules) assert.deepEqual(codeOnly(web(m)).split("\n").filter((l) => RE_PARSE.test(l)), [], m + ": no re-parsing or re-serializing write in a module a post-adoption pass reaches");
   // code-block.ts, the fence pass's module: its one such write is wrapCodeLines's, and the pass that calls it runs before the chain (pinned above)
@@ -1515,6 +2772,203 @@ test("Edit over pending changes: the mount carries the status's records and the 
   assert.equal(posted.filter((x) => x.type === "fileComments" && x.verb === "status").length, statusAsks,
     "no status re-ask after the save: the reply IS the panel's status");
   assert.equal(wrap.querySelector(".fileview-fc button")!.textContent, "Comments · 0", "…and the glance follows the reply (a sidecar, no changes left)");
+});
+
+// ── the Comments panel's change cards over a save through the panel that lands with the editor still up: the viewer's saved()
+// moves mtimeNs() to the saved bytes, which the editor then holds, and tells the seam's onSaved (its doc), which the panel takes
+// as the card-state rule's content paint of those bytes (file-comments.ts, #cardState's doc, event 1). The real viewer and the
+// real panel. ──
+const P95 = DOC.indexOf("p95");
+/** A substitution over "p95" (the change's own text), which keeps its offsets in DOC with lines added after it. */
+const overP95 = (id: string): Hunk => ({ ...hunk(id), curFrom: P95, curTo: P95 + 3, baseFrom: P95, baseTo: P95 + 3 });
+/** A second substitution, over "40%". */
+const over40 = (id: string): Hunk => ({ ...hunk(id), curFrom: DOC.indexOf("40%"), curTo: DOC.indexOf("40%") + 3, baseFrom: DOC.indexOf("40%"), baseTo: DOC.indexOf("40%") + 3, oldText: "30%", newText: "40%" });
+const SAVED_TEXT = DOC + "\nMore.\n";
+const EDIT_CARD = { buttons: ["Accept", "Reject", "Comment on this change"], link: false };
+const NS9 = "1757145600000000009", NS10 = "1757145600000000010", NS11 = "1757145600000000011";
+/** The change card `id` in the open Comments panel: its buttons, and whether its reference links to its mark. */
+const changeCard = (o: Open, id: string): { buttons: string[]; link: boolean } => {
+  const c = o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:' + id + '"]');
+  assert.ok(c, "the change card of " + id + " is listed");
+  return { buttons: c!.querySelectorAll(".fc-actions button").map((x) => x.textContent), link: c!.querySelector(".fc-ref")!.classes.includes("fc-link") };
+};
+/** REPORT open with `hunks` pending, the Comments panel opened, then the editor up; `id`'s card read at each step, the read
+ *  view's returned with the open viewer. */
+async function editUnderPanel(t: TestContext, hunks: Hunk[], id: string): Promise<{ o: Open; read: { buttons: string[]; link: boolean } }> {
+  const o = await open(REPORT, t, SID, undefined, true);   // the Raw preference: the view Edit leaves as it found it
+  await answerStatus(status(hunks));
+  o.wrap.querySelector(".fileview-fc button")!.click();
+  await answerStatus(status(hunks));                   // the open's own read of the status
+  const read = changeCard(o, id);
+  assert.ok(read.buttons.includes("Comment on this change"), "the read view shows the status's bytes: the card offers Comment on this change");
+  await enterEdit(o);
+  assert.deepEqual(changeCard(o, id), EDIT_CARD, "the editor up: Accept and Reject answer in place, no Reveal or link into the read view it replaced");
+  return { o, read };
+}
+/** The panel closed and opened again, its status read as `s`. */
+async function reopenPanel(o: Open, s: Status): Promise<void> {
+  const btn = o.wrap.querySelector(".fileview-fc button")!;
+  btn.click(); await settle();
+  assert.equal(o.wrap.querySelector(".fileview-aside"), null, "the panel closed");
+  btn.click(); await answerStatus(s);
+}
+
+test("a save whose reply lands with the editor kept up by keystrokes typed above the change while the save was out (file-comments.ts, #cardState's doc, event 1): the substitution's card keeps Comment on this change at the reply, at a render and at a later status for the saved bytes; the composer it opens quotes the saved bytes' span, the text the offsets index, not the buffer's; the editor's exit gives the card the read view gave", async (t) => {
+  const { o, read } = await editUnderPanel(t, [overP95("h1")], "h1");
+  const m = saveTracked(o, SAVED_TEXT);
+  typeInto("Draft. " + SAVED_TEXT);                    // typed above the change while the save is out
+  await saveReply(m.reqId, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.equal(o.ctx.editing(), true, "the keystrokes keep the editor up");
+  assert.equal(o.ctx.mtimeNs(), NS9, "the viewer's mtime is the saved bytes'");
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "at the reply the card keeps Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "a render moves nothing");
+  await reopenPanel(o, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS11 }));
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "nor does a later status for the saved bytes, the sidecar moved");
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  aside.querySelector('[data-act="fcchangecomment"][data-id="h1"]')!.click(); await settle();
+  assert.notEqual(o.ctx.text()!.slice(P95, P95 + 3), "p95", "the buffer's text at the change's offsets is other words (control)");
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-quote")!.textContent, "p95", "the composer quotes the change's own text, cut from the saved bytes (#cardState's doc)");
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-tag"), null, "no passage-changed tag");
+  o.b.cancel.click(); await settle();                  // the buffer is dirty: the confirm says yes
+  assert.equal(o.ctx.editing(), false);
+  assert.deepEqual(changeCard(o, "h1"), read, "the exit repaints the saved bytes: the card as the read view gave it before the editor");
+});
+
+test("a save whose reply lands with the editor kept up by a decision clicked in it while the save was out (file-comments.ts, #cardState's doc, event 1): the substitution's card keeps Comment on this change at the reply, at a render and at a later status for the saved bytes", async (t) => {
+  const { o } = await editUnderPanel(t, [overP95("h1")], "h1");
+  const m = saveTracked(o, SAVED_TEXT);
+  decideInEditor("accepted", "h1", "p95", "p99");      // clicked while the save is out: not in this save
+  await saveReply(m.reqId, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.equal(o.ctx.editing(), true, "the decision keeps the editor up");
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "at the reply the card keeps Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "a render moves nothing");
+  await reopenPanel(o, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS11 }));
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "nor does a later status for the saved bytes, the sidecar moved");
+});
+
+test("a save whose reply lands with the editor kept up by the accept it carried, undone in the editor while the save was out (file-comments.ts, #cardState's doc, event 1): the other substitution's card keeps Comment on this change at the reply, at a render and at a later status for the saved bytes", async (t) => {
+  const { o } = await editUnderPanel(t, [overP95("h1"), over40("h2")], "h2");
+  decideInEditor("accepted", "h1", "p95", "p99");
+  const m = saveTracked(o, SAVED_TEXT);
+  assert.deepEqual(m.args.accepted, [{ id: "h1", oldText: "p95", newText: "p99" }], "the save carries the accept");
+  ed.records = [record("h1"), record("h2")]; ed.decisions = { accepted: [], rejected: [] }; ed.trackOpts!.onDecisions(ed.decisions);   // the accept undone while the save is out
+  await saveReply(m.reqId, status([over40("h2")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.equal(o.ctx.editing(), true, "the undone accept keeps the editor up");
+  assert.match(errBar(o.body)!.textContent, /had already landed with this save/, "and the bar says the accept landed");
+  assert.deepEqual(changeCard(o, "h2"), EDIT_CARD, "at the reply the card keeps Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h2"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h2"), EDIT_CARD, "a render moves nothing");
+  await reopenPanel(o, status([over40("h2")], { fileMtimeNs: NS9, storeMtimeNs: NS11 }));
+  assert.deepEqual(changeCard(o, "h2"), EDIT_CARD, "nor does a later status for the saved bytes, the sidecar moved");
+});
+
+// ── the two roads where a save's onSaved is no event for the change cards (file-comments.ts, #cardState's doc, event 1) ──
+const INTRO = "Intro line.\n";                          // a line above the change: the saved bytes' offsets are the loaded text's plus its length
+/** overP95 in the saved bytes INTRO + DOC, where the same "p95" sits INTRO.length further on. */
+const overP95Saved = (id: string): Hunk => ({ ...overP95(id), curFrom: P95 + INTRO.length, curTo: P95 + INTRO.length + 3, baseFrom: P95 + INTRO.length, baseTo: P95 + INTRO.length + 3 });
+
+test("a save through saveFile (Edit clicked before the panel's first status, so the save does not go through the panel), the first status answered and keystrokes typed while it was out (file-comments.ts, #cardState's doc, event 1): the card keeps Comment on this change at the ack; a status for the saved bytes then takes it away, so no composer can quote the loaded text at the saved bytes' offsets; the editor's exit paints the saved bytes and the card offers it again, quoting them", async (t) => {
+  const o = await open(REPORT, t, SID, undefined, true);
+  await enterEdit(o);                                  // before the panel's first status: nothing rode in, and Save follows the status (none yet)
+  const reqId = save(o, INTRO + DOC);                  // the saveFile frame (save() asserts it went out)
+  assert.equal(lastOf("fileComments", "save"), undefined, "the save did not go through the panel");
+  await answerStatus(status([overP95("h1")]));         // the panel's first status, answered while the save is out
+  o.wrap.querySelector(".fileview-fc button")!.click();
+  await answerStatus(status([overP95("h1")]));         // the open's own read of it
+  const before = changeCard(o, "h1");
+  assert.ok(before.buttons.includes("Comment on this change"), "the premise: with a status for the loaded bytes the card offers Comment on this change");
+  typeInto("Draft. " + INTRO + DOC);                   // typed while the save is out
+  disk[REPORT] = { bytes: INTRO + DOC, type: "text/plain; charset=utf-8", mtimeNs: NS9 };
+  fileSaved(reqId, { mtimeNs: NS9, logged: true }); await settle();
+  assert.equal(o.ctx.editing(), true, "the keystrokes keep the editor up");
+  assert.equal(o.ctx.mtimeNs(), NS9, "the viewer's mtime is the saved bytes'");
+  assert.deepEqual(changeCard(o, "h1"), before, "at the ack the card is as it was (#cardState's doc, event 1)");
+  await answerStatus(status([overP95Saved("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));   // onSaved's re-read of the status: the saved bytes'
+  assert.deepEqual(changeCard(o, "h1"), { buttons: ["Accept", "Reject"], link: false }, "a status for the saved bytes takes Comment on this change away (#cardState's doc, event 2)");
+  o.b.cancel.click(); await settle();                  // the buffer is dirty: the confirm says yes
+  assert.equal(o.ctx.editing(), false);
+  assert.ok(changeCard(o, "h1").buttons.includes("Comment on this change"), "the exit paints the saved bytes: the card offers Comment on this change again (#cardState's doc, event 1)");
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  aside.querySelector('[data-act="fcchangecomment"][data-id="h1"]')!.click(); await settle();
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-quote")!.textContent, "p95", "the composer quotes the change's own text, cut from the saved bytes");
+});
+
+test("a late ack over a pane: a save through the panel, Cancel while it was out, a reload landing the saved bytes, a second reload failing to a pane, then the save's reply (file-comments.ts, #cardState's doc, event 1): the card offers no Reveal and no Comment on this change over the pane, at the ack and at a render", async (t) => {
+  const { o } = await editUnderPanel(t, [overP95("h1")], "h1");
+  const m = saveTracked(o, SAVED_TEXT);
+  o.b.cancel.click(); await settle();                  // Cancel while the save is out (the buffer is dirty: the confirm says yes)
+  assert.equal(o.ctx.editing(), false);
+  disk[REPORT] = { bytes: SAVED_TEXT, type: "text/plain; charset=utf-8", mtimeNs: NS9 };
+  o.ctx.reload(); await settle();                      // the saved bytes land
+  assert.equal(o.ctx.mtimeNs(), NS9);
+  delete disk[REPORT];
+  o.ctx.reload(); await settle();                      // a second reload fails to a pane
+  assert.notEqual(o.ctx.error(), null, "the pane stands");
+  assert.equal(o.ctx.mtimeNs(), NS9, "the view's mtime is still the saved bytes'");
+  await saveReply(m.reqId, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.notEqual(o.ctx.error(), null, "the pane still stands after the ack's re-read");
+  const pane = { buttons: ["Accept", "Reject"], link: false };
+  assert.deepEqual(changeCard(o, "h1"), pane, "at the ack over the pane: no Reveal and no Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h1"), pane, "a render moves nothing");
+});
+
+/** What the person sees of the change cards h1 and h2 (buttons, link, Reveal's title, tags), the whole aside's text and the viewer's
+ *  bar. */
+const seen2 = (o: Open): { cards: Array<{ id: string; buttons: string[]; link: boolean; reveal: string | null; tags: string[] }>; aside: string; bar: string | null } => {
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  const cards = ["h1", "h2"].map((id) => {
+    const c = aside.querySelector('.fc-card[data-id="chg:' + id + '"]')!;
+    const rv = c.querySelectorAll(".fc-actions button").find((x) => x.dataset.act === "fcreveal");
+    return { id, buttons: c.querySelectorAll(".fc-actions button").map((x) => x.textContent), link: c.querySelector(".fc-ref")!.classes.includes("fc-link"), reveal: rv ? rv.title : null, tags: c.querySelectorAll(".fc-card-head .fc-tag").map((x) => x.textContent) };
+  });
+  const bar = errBar(o.body);
+  return { cards, aside: aside.textContent, bar: bar ? bar.textContent : null };
+};
+
+test("a late ack under a later editor: a save through the panel, Cancel while it was out, the editor taken up again over the bytes from before the save or over the saved bytes a reload landed first, then the save's reply (file-comments.ts, #cardState's doc, event 1: under a later editor the latch's run at that ack changes nothing a card reads): at the ack and after that editor's exit the change cards, the aside and the viewer's bar read as they do where the ack runs no latch (before this change the save latch did not run at this ack, and the reads were these); over the old bytes the ack itself still moves the cards and the bar, the reply's status taking Comment on this change away (event 2) and the bar saying the earlier save landed under the reopened editor (SAVE_LANDED_UNDER_NEW_EDITOR)", async (t) => {
+  const fv = await mod();
+  const cards = (buttons: string[], reveal: string | null = null, tags: string[] = []) => ["h1", "h2"].map((id) => ({ id, buttons, link: false, reveal, tags }));
+  const AR = ["Accept", "Reject"], ARC = ["Accept", "Reject", "Comment on this change"];
+  for (const over of ["old", "saved"] as const) {
+    const hs = [overP95("h1"), over40("h2")];
+    const o = await open(REPORT, t, SID, undefined, true);
+    await answerStatus(status(hs));
+    o.wrap.querySelector(".fileview-fc button")!.click();
+    await answerStatus(status(hs));
+    await enterEdit(o);
+    const m = saveTracked(o, SAVED_TEXT);
+    o.b.cancel.click(); await settle();                  // Cancel while the save is out
+    assert.equal(o.ctx.editing(), false, over + ": the premise: the editor that sent the save is gone");
+    if (over === "saved") {
+      disk[REPORT] = { bytes: SAVED_TEXT, type: "text/plain; charset=utf-8", mtimeNs: NS9 };
+      o.ctx.reload(); await settle();
+      await reopenPanel(o, status(hs, { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+    }
+    await enterEdit(o);                                  // the later editor
+    const before = seen2(o);
+    assert.deepEqual(before.cards, cards(ARC), over + ": the premise: under the later editor each card answers in place and offers Comment on this change");
+    await saveReply(m.reqId, status(hs, { fileMtimeNs: NS9, storeMtimeNs: "1757145600000000012" }));
+    assert.equal(o.ctx.editing(), true, over + ": the premise: the later editor is still up at the ack");
+    const ack = seen2(o);
+    if (over === "old") {
+      assert.deepEqual(ack.cards, cards(AR), "old bytes, at the ack: the reply's status, for the saved bytes, is not the text the later editor loaded, so Comment on this change goes (event 2)");
+      assert.equal(ack.aside, before.aside.split("Comment on this change").join(""), "old bytes, at the ack: the aside moves by that alone");
+      assert.equal(ack.bar, fv.SAVE_LANDED_UNDER_NEW_EDITOR + "Reload file", "old bytes, at the ack: the viewer's bar says the earlier save landed under the reopened editor");
+    } else {
+      assert.deepEqual(ack.cards, cards(ARC), "saved bytes, at the ack: the cards as before it");
+      assert.equal(ack.aside, before.aside, "saved bytes, at the ack: the aside as before it");
+      assert.equal(ack.bar, null, "saved bytes, at the ack: no bar");
+    }
+    o.b.cancel.click(); await settle();                  // the later editor's exit
+    const exit = seen2(o);
+    assert.deepEqual(exit.cards, over === "old" ? cards(AR) : cards([...ARC, "Reveal"], "Show the change in the Raw view (line 4)", ["not shown"]),
+      over + ": after the exit the read view's cards, as its repaint takes them (event 1): " + JSON.stringify(exit.cards));
+    assert.equal(exit.bar, null, over + ": and no bar");
+    assert.ok(exit.aside.includes("Show changes inline"), over + ": the read view's head is back");
+  }
 });
 
 test("a tracked file with nothing pending, or one with only a sidecar, still saves through the panel with no records; an untracked file saves through saveFile, byte for byte", async (t) => {

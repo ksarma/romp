@@ -19,21 +19,22 @@
 // the first, second and last no module uses at this head, and the third is in the browser modules
 // `grep -l 'sanitizeMd(marked\.parse' ui/webview/*.test.ts` lists, split by whether the page declares a `<div class="fileview-md">`
 // (`grep -l 'class="fileview-md"'` over those); the fourth test below recomputes both sets and holds the two lists and the three
-// counts here to them. The probe is in 10 browser modules: 6 whose pages declare no such div and fill a chat body, a bubble or a
-// plain `#out` div with it (md-sanitize-chat-links-browser.test.ts, md-sanitize-chat-schemeless-browser.test.ts,
+// counts here to them. The probe is in 12 browser modules: 8 whose pages declare no such div and fill a chat body, a bubble or a
+// plain div with it (md-sanitize-chat-links-browser.test.ts, md-sanitize-chat-schemeless-browser.test.ts,
 // md-sanitize-chat-modified-click-browser.test.ts, md-sanitize-chat-fragment-browser.test.ts,
-// md-config-math-inks-browser.test.ts and md-sanitize-postpass-browser.test.ts) and 4 whose pages declare one, the viewer's box,
-// and fill it that way (md-config-mark-classes-browser.test.ts, md-config-feed-callout-tints-browser.test.ts,
+// md-config-math-inks-browser.test.ts, md-sanitize-postpass-browser.test.ts, authored-file-caps.test.ts and md-img-park-browser.test.ts)
+// and 4 whose pages declare one, the viewer's box, and fill it that way (md-config-mark-classes-browser.test.ts, md-config-feed-callout-tints-browser.test.ts,
 // md-config-callout-title-ink-browser.test.ts and md-config-chat-styles-browser.test.ts), over fixtures with no unclosed inline
 // tag (marked.parse and viewerHtml render each of their six fixtures the same, executed in Chromium at the closing check of the
-// slice's PR review, 2026-09-19). The fifth test holds the upstream ledger entry's list of converted stand-ins to the callers of
+// slice's PR review, 2026-09-19; md-img-park-browser.test.ts's two, its figures in a message and in a note, render the same through
+// marked.parse and viewerHtml's steps, executed under node, 2026-09-26). The fifth test holds the upstream ledger entry's list of converted stand-ins to the callers of
 // viewerHtml less the modules its where line names elsewhere, so that count is recomputed too. Within that reach: none calls
 // marked's parser itself (`marked.parser(`, the tail of any copy of the steps); no module holding a node stand-in (a
 // `parseHTML(` shim, or an `innerHTML` setter over it) has a `marked.parse(` line but an assert's, the output compared and not
 // filled, or one of two named lines: the contrast anchor-map-cells-formulas.test.ts draws with the tree the viewer built before
 // the rule, and md-config-footnote-paint.test.ts's HTML-string oracle; so a stand-in filled from marked.parse in one statement
 // or two goes red; and every module that calls `viewerHtml(` imports it from file-view.ts. Source reads only, no marked (the
-// CI shell job runs no npm ci), so this module runs wherever node does. Run: node --test tools/file-review-viewer-recipe.test.mjs
+// CI vendored-tooling job runs no npm ci), so this module runs wherever node does. Run: node --test tools/file-review-viewer-recipe.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -74,7 +75,7 @@ test('file-view.ts exports viewerHtml, the five statements in order and nothing 
   assert.equal((view.match(/literalizeUnclosedTags\(/g) || []).length, 1, 'one call in the viewer, the recipe\'s');
   assert.ok(view.includes('\n  const clean = sanitizeMd(dirty, mintHeadingIds);'), 'the sanitizer stays mdBlock\'s own step after the recipe');
   // a presence pin: where the figure chain sits relative to the adoption is ui/webview/file-view-seam.test.ts's to check, on
-  // comment-stripped code (this module runs in CI's shell job with no node_modules, so it cannot read through that stripper)
+  // comment-stripped code (this module runs in CI's vendored-tooling job with no node_modules, so it cannot read through that stripper)
   assert.ok(view.includes('\n  box.replaceChildren(...Array.from(clean.childNodes));\n'), 'and its body is adopted as a step of its own (2026-09-20)');
   assert.ok(view.includes('import { marked, type Token, type Tokens } from "marked";'), 'the walk\'s parameter type comes from marked');
 });

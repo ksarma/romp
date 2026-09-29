@@ -4,13 +4,19 @@ any test that skips its own rebind writes into the REAL ~/.local/state/romp (the
 judge-errors.jsonl lines from legacy-flag fixtures made that visible). conftest.py imports before every
 test module, so this is a suite-wide floor; per-class _rebind_state/tempdir isolation still layers on
 top exactly as before."""
+import ast
 import atexit
+import collections
+import concurrent.futures.thread    # the session-end thread guard reads its exit-join table (EXIT_JOIN_TABLES)
 import importlib.util
 import os
 import re
 import shutil
 import sys
 import tempfile
+import threading
+import time
+import traceback
 
 import pytest
 from _pytest._code.code import ReprExceptionInfo, ReprFileLocation, ReprTracebackNative
@@ -93,13 +99,19 @@ def pytest_configure(config):
     built with can_use_tool set beside a permission mode or an allowed_tools entry that auto-approves a tool
     before the callback is consulted. tests/test_host_transport.py and tests/test_session_host.py put romp's
     SDK venv on sys.path and drive that path; under pytest-xdist the worker ships the warning to the
-    controller, whose venv has no claude_agent_sdk, and xdist's unserialize_warning_message imports the
+    controller, whose venv on a box has no claude_agent_sdk, and xdist's unserialize_warning_message imports the
     warning's module to rebuild it: ModuleNotFoundError, the node goes down, the run ends in INTERNALERROR
     (before this every -n run needed -p no:warnings). Matched on the MESSAGE PREFIX with the base category,
     never on the class: pytest parses each filterwarnings entry every time it applies them (configure,
     collection, each test), and an entry naming a class it cannot import is dropped with a
-    PytestConfigWarning, which is every worker until the emitting module inserts the venv path, the
-    controller always and CI always. A module-level warnings.filterwarnings in the emitting module does not
+    PytestConfigWarning, which is: every xdist worker whose interpreter has no SDK, which on a box is every
+    worker, until the emitting module inserts the venv path; a controller whose interpreter has no SDK,
+    which on a box is every controller; and the CI steps that install
+    no SDK, today the served-pages job's served-page pytest step, which loads this conftest (the Python matrix
+    cells' interpreter, the five Linux cells and the two macOS cells on a weekly or dispatch run, imports the class
+    since the SDK install step, in the controller and, on the Linux cells' two workers since batch 917, in each
+    worker, since the package is installed in that interpreter rather than added to the path at import). A
+    module-level warnings.filterwarnings in the emitting module does not
     hold either: pytest wraps collection and each test in catch_warnings, which restores the filter list on
     exit. addinivalue_line appends to the ini list, so an ini file added later merges with this line. Both
     of the SDK's message forms ("...: permission_mode ..." and "... for: <tools>") start with the prefix."""
@@ -128,6 +140,9 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # bus refuses its fixed port under a test unless the port is the run's own, which the marker beside a port says
 os.environ.pop("ROMP_POSTAL_PORT", None)
 os.environ["ROMP_POSTAL_HERMETIC"] = "1"
+os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # no in-process kernel of the run owns a bus: its ensure and its revive start none (2026-09-18: a revive
+#                                                on a daemon thread outran a test's environment restore and left a real bus detached on the box, whose
+#                                                port record under the shared state root redirected a later module's dial); a lab sets its own trio
 os.environ["ROMP_CKPT_FIRST_DOC_KB"] = "0"   # the young-session floor is off for the suite's small fixtures (a document under 1 MB of
 #                                                pre-cut bytes is never written live); the floor's own test sets it. A plain assignment: an
 #                                                exported value in the shell (64, say) would red every checkpoint fixture (1721 round two);
@@ -302,6 +317,7 @@ def _dead_manager_port():
     os.environ["ROMP_MANAGER_PORT"] = "1"
     os.environ["ROMP_KERNEL_PORT"] = "1"
     os.environ["ROMP_SERVE_PORT"] = "1"
+    os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # re-floored per test: tests/test_postal_peers.py pops it outright (1848's floor, 2026-09-18)
     yield
 
 
@@ -484,6 +500,727 @@ def restore_env(name, prior):
         os.environ.pop(name, None)
     else:
         os.environ[name] = prior
+
+
+# No test may leave the kernel's backend singleton changed, or over a directory that is gone, and the test
+# that did it is the one named (2026-09-19). kernel.py builds its SdkBackend lazily: the first km._sdk() call
+# constructs it over jd.STATE as it stands at that moment and caches it in km._sdk_backend for the life of
+# the process (_sdk_locked), and every later reader in the worker (the chat signature's fork component, the
+# registry readers, the restart routes) takes that one object. A test that points jd.STATE at a sandbox and
+# reaches km._sdk(), through a card build or a route, builds the singleton over its sandbox; a tearDown that
+# restores jd.STATE and removes the sandbox without touching the singleton leaves every later test's backend
+# over a removed directory. Its fork_children then stats a registry that is gone, answers {} on the OSError
+# and scans no registry, so a derivation counting registry stats read 0 against 39 in a module that did
+# nothing wrong (tests/test_kernel_delta_send.py after tests/test_kernel.py::ViewBuilder, 2026-09-19); the
+# module alone passes, and a kernel load between cause and victim hides it, since re-executing kernel.py
+# resets the singleton.
+#
+# THE POPULATION, measured at this branch's base (2026-09-19): six classes in five modules leaked the
+# singleton. ViewBuilder (tests/test_kernel.py), CostWeighting (tests/test_token_usage.py),
+# BuildSessionDiffRows (tests/test_kernel_patch_rows.py), FeedWarmResolveBumpsTheLedgerRevision
+# (tests/test_ledger_anchors.py), and SharedViewInBuilds and PushSurvivesOneFailedChatBuild
+# (tests/test_kernel_goal_cache_wiring.py), each fixed in a commit of its own on this branch with one shape
+# (ViewBuilder's before this fixture; the other four after it, one per module, found by the review round
+# that ran the modules alone): save km._sdk_backend beside the saved jd.STATE and put it back where jd.STATE
+# is restored, before the directory goes. The count comes from running every module ALONE with this fixture
+# on, over a population that is a union, every set saved beside the list with the script that derives it:
+# the 237 modules a census plugin (a scratch pytest plugin over two full -n 4 runs) saw take a road to a
+# root change (a jd.STATE assignment, a jd._rebind_state call, a singleton construction, or a singleton that
+# changed), the 94 that load the kernel under its shared name, the 272 whose text assigns jd.STATE or calls
+# _rebind_state in process (the private-kernel modules among them included: the private name isolates the
+# kernel's globals and not jd's, so they move the shared jd.STATE, and their own singletons are outside this
+# fixture by the stated limit below), and the 316 the first sweep ran; 364 modules in all. The first sweep,
+# over its 316 at the base, found these 4 modules red and 1 unrelated pre-existing red
+# (tests/test_sdk_rate_limit_usage.py: an unrestored ROMP_SERVE_TOKEN setdefault that
+# _shared_state_restored's environment check names, identical with this fixture off and byte-identical at
+# the base); the sweep repeated over all 364 after the fixes (2026-09-19) was green alone except that one. The
+# full-suite census saw
+# none of the five: an earlier first builder in every worker made their builds cache hits. A green suite run
+# is therefore no evidence a module is clean; the module-alone sweep is the measurement, and the review
+# round that found the four ran the modules that way.
+# THE ROAD EACH FIGURE WAS TAKEN ON, since the two families came from opposite roads. Every module-alone
+# figure above (the 316-module first sweep, the 364-module sweep repeated after the fixes, and the per-module
+# triage counts behind them) was taken on the missing road, each module alone on a box venv without the SDK:
+# the test venv's interpreter has no claude_agent_sdk, and a module run alone does not import
+# tests/test_host_transport.py; that module is the one exception in the union, since it puts the venv on
+# sys.path itself. Every full-run figure above (the two full -n 4 census runs and their 237-module set, and
+# "the full-suite census saw none of the five") was taken on the SDK-importable road: when claude_agent_sdk
+# is not importable, tests/test_host_transport.py puts the box's SDK venv on sys.path at import, and every
+# xdist worker imports every collected module, so a full run here takes that road. CI's Python cells take
+# the importable road since #872 installed the SDK in each, so no CI run of the suite is a missing-road
+# datum. The figures in this fixture's own tests (tests/test_sdk_singleton_ratchet.py) carry no inherited
+# road: each scratch head forces its road.
+#
+# THE TRANSITION MODEL. The fixtures below read the singleton at fixed moments and judge what changed
+# between two reads, never the after value on its own: an absolute read of the after value (the first form
+# of this fixture) failed every test that merely INHERITED a singleton over a removed directory, each with
+# a false accusation and a remedy it could not act on, and buried the one cause under the tests that
+# followed it in the worker: one cause and 193 inheritors on the first full run, a full run here and so on the
+# SDK-importable road, THE ROAD EACH FIGURE WAS TAKEN ON above. Three windows:
+#   * the test: a function-scoped autouse fixture reads before the test and after its own teardown
+#     (unittest's tearDown runs inside the call phase, and the test's requested fixtures tear down before
+#     this one, so their restores are seen) and fails the test whose own transition made the bad state;
+#   * the class and module boundaries: a class-scoped and a module-scoped autouse fixture read at the
+#     scope's start (before setUpClass or setUpModule) and at its end (after tearDownClass or
+#     tearDownModule; pytest reports a failure there as an ERROR at the scope's last test) and fail the
+#     scope whose setup or teardown made the bad state, naming the boundary;
+#   * the setup before a test: a singleton found over a gone directory that no verdict has named yet was
+#     made by something that escaped every window (import-time code, or a leak from before the fixture
+#     was armed) and is reported ONCE per worker, at the first test that meets it, worded as inherited,
+#     with no remedy addressed to that test; every later test that inherits the same object is quiet.
+#     The report is computed at the setup and raised after the test's own teardown, beside its own verdict
+#     if it has one, so the test runs and its own transition is still judged (the first form failed the
+#     setup, and one test per worker lost its run whenever a leak escaped every window). The same report,
+#     at the worker's FIRST test window only, covers a real backend over a directory that stands but is not
+#     jd.STATE AS THE MODULE BOUNDARY'S START READ RECORDED IT, and only when that backend IS the object that read
+#     found (_SDK_MODULE_START, compared by identity, never by state_dir or class). The premise holds at that
+#     START READ, not at the window: when the module boundary reads, only import-time code and any fixture of a
+#     scope wider than the function has run (pytest collects every module before the first test runs; a session-
+#     or package-scoped fixture sets up before the module boundary's start read, and setUpModule, setUpClass and
+#     a module- or class-scoped fixture after it, the order a scratch run showed), so the identity term and the
+#     start read's reference make the window's report a statement about that read: a singleton the start read
+#     saw over a root other than the jd.STATE it recorded is import-time code's or such a fixture's build over a
+#     root that is not the run's, or its move of jd.STATE after the build, left in place (the wording names both
+#     causes and both shapes), while one the start read did NOT see was installed by the module's or a class's
+#     own setup and is left unnamed here, so the boundary that brackets the install judges it, names the scope
+#     and prints the sandbox remedy; and a jd.STATE the window finds moved from the start read's is a scope
+#     setup's move for its tests (K.One's shape), not a leak, so the window's own jd.STATE is never the reference
+#     (compared against it, the kernel's own import-time build over the run root got the report, blaming import-time
+#     code for a build or a move that did not happen, whenever setUpModule or setUpClass moved jd.STATE for its
+#     tests). Before the identity term the report fired on the setup's object too, blamed import-time code, gave
+#     no remedy, and its naming silenced the boundary that would have been right. A missing module start read
+#     refuses the report. Later windows do not apply that test: a legitimate first build followed by a STATE move
+#     the judge fixture names leaves the same picture, and a test window or a boundary made it, where it was
+#     judged. The first window spends the flag whether or not it takes the report, and never defers it: a
+#     report deferred to a later window would fire where a test body has run, with its premise sentence
+#     ("before any test in this worker has run") false, a wrong attribution in place of a silence. THE REFUSAL
+#     (_sdk_swapped): when the slot at the worker's first window does not hold the object the module start read
+#     found (the identity term fails), and that read's object is a real backend over a directory that stands and
+#     is not the jd.STATE it recorded (an import-time or wider-scoped fixture's build over a kept root, met first
+#     by a class that swapped the singleton out around its tests, K.Two's shape: saved, reset, put back), the
+#     window raises a refusal in the report's place, at the moment the flag is spent: the leak is named from the
+#     start read's fields (the object, its root and jd.STATE at that read, recorded before the swap), the slot's
+#     value at the window is said, the swap is attributed to a module or class setup between the two reads
+#     without naming it, no test is accused and no scope is named, since which test will start under the object,
+#     and whether it is put back, cannot be said there, and the cause family is the kept-root report's. A start
+#     read's object over the run root is no leak and gets no refusal. One over a gone directory is refused too,
+#     under the gone wording and with the cause family narrowed to what could have run before the start read,
+#     whatever its root: the swapping scope may never put the object back, and then no window starts under it,
+#     the gone report never fires, and the scope's boundary verdict names the swap and not the object's origin
+#     (S10); when the scope does put it back, the test that then starts under the object carries the gone report
+#     as well, two lines on two items each saying what the other does not (S9), the completes-a-leak pattern
+#     below, and that report names the object as the one this worker's first window refused to attribute, the
+#     link keyed on the object and not on its rendered path, which a repoint between the two reads changes (S9B).
+#     The boundary verdict of a scope that found the refused object and ended on another value carries a clause of
+#     its own with the same key (_sdk_found_refused, on the start-to-end judgment alone, the road whose rendered
+#     before value IS the object the scope found): in S10 One's verdict on the swap, beside the refusal in One.a's
+#     one teardown, says the object it found is the one the refusal named; in S10B setUpModule repoints the object
+#     between the module start read and One's reads, so the refusal renders the root the start read recorded and the
+#     verdict the live one, two paths for one object, and the clause is still there, keyed on the object. The refusal
+#     marks nothing on _SDK_REPORTED: no later window takes the kept-root report, and a mark would silence that later
+#     gone report; the fixture records the refused object on _SDK_REFUSED instead, the list both links read. The
+#     fixture's tests pin it, every case whose outer class reads the refusal's line or a link clause, present or
+#     absent, through one of that module's named copies of these texts, by a reference in the class, in a
+#     module-defined base other than _NestedRun, or in a function that module defines as a statement of its own
+#     level or under a module-level if or try, referenced from there, directly or through other such functions,
+#     each reference a name resolved in the scope it is read in to the module's declaration, so a local spelled
+#     like one is none, the names derived there from this file's texts by refusal_text_names,
+#     a roster derived from the classes and held equal to them both ways by
+#     TheCaseRostersNameEveryCase in tests/test_sdk_singleton_ratchet.py, whose failure names the ids missing here
+#     and the ids here with no class
+#     (S7, beside S6, the same leak with no swapping class, reported as inherited; S7B, the refusal as the first
+#     window's and no later one's; S8, the run-root shape, no refusal; S9 and S10, the gone shape, the object put back
+#     and not, each pair linked at the object; S11, the refusal's roots from the start read's recorded fields; S12, a
+#     real object in the slot at the window; S13, the named-object guard; S9B and S10B, each pair with the object
+#     repointed between its two lines, linked at the object; S14, a second gone object after the refusal, its report
+#     without the link clause; S10C, the refused object found by a class whose verdicts render other objects, its
+#     verdicts without the boundary's clause; M, verdicts with no refusal in the run, none with the clause; E, a gone
+#     report on an import-time leak with no refusal before it, its link clause absent; U and V, the same read on a
+#     leak a setUpClass or a setUpModule completed; T, a first window whose start read saw None over a setUpClass
+#     build, no refusal; S15, a test's own verdict on the refused object without the clause and the module end's
+#     start-to-end verdict with it; and S16, the scope that found the refused object ending on the reload road, its
+#     verdict without the clause).
+# Three module-level lists of STRONG references (identity membership; strong so an id is never reused by a
+# later object) keep the kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
+# goes on _SDK_NAMED, the list the boundary's quiet-on-a-named-object rule consults. Every object the
+# INHERITED report named goes on _SDK_REPORTED, and the report is silent on an object in either list, which
+# is what makes "once" work (under xdist, once per worker process). Every object the first window's REFUSAL
+# named goes on _SDK_REFUSED, which silences nothing: the gone report on an object it holds, and the start-to-end
+# boundary verdict of a scope that found one, say it is the object the refusal named, so the two lines are linked
+# at the object, by identity (a gone object of another scope's making after the refusal carries no such clause,
+# S14; a boundary verdict on a found object no refusal named carries none, S10C, M). THE RULE, which both links
+# follow and any later one must: ANY PAIR OF LINES NAMING ONE OBJECT IS LINKABLE BY IDENTITY, NEVER BY A RENDERED
+# PATH. A rendered path is not an identity: one object renders two paths when a repoint falls between the two
+# lines' reads (S9B, S10B), and two objects render one path when one is rebuilt over the other's directory; so a
+# link is membership on a list of strong references (_sdk_refused), read on the object the linked line RENDERS
+# (the gone report's own object; the start-to-end verdict's before value, the object the scope found), and a
+# third pair, should one arise (a test's own verdict naming the refused object, say), is linked the same way,
+# never by matching text. The boundary never consults
+# _SDK_REPORTED: an inherited report says what a test did NOT do, not what its scope did, so a class or
+# module setup that completes a leak (builds, restores jd.STATE and removes the root before any test) yields
+# two error lines for one leak, the inherited gone report on the scope's first test and the boundary
+# verdict, naming the scope with the sandbox remedy, on its last. With one list the report's naming silenced
+# the boundary and the leak was never attributed to the scope.
+#
+# WHAT ONE READ RECORDS (_sdk_read): the value in the shared kernel's slot (vars(km)["_sdk_backend"]),
+# the marker (the function object kernel.py defines as _sdk_locked; a re-execution replaces it; None when
+# no module has loaded the kernel under its shared name), the value's state_dir as text, os.path.isdir
+# of it (a regular file at the path is False, on purpose: a backend over a file is as gone as one over
+# nothing), and km.jd.STATE as text, the reference root. Only the kernel loaded under its SHARED name is
+# read: a kernel a module loads under a private name (load_source under romp_kernel_<x>) has an
+# _sdk_backend of its own, so a lazy build under a rebound state through that handle lands there and the
+# shared singleton stays untouched (the browser-driven served modules load their kernels this way); the
+# private name isolates the kernel's globals and NOT jd's, since judge.py loads under its shared name
+# even when the kernel is private, so a test that assigns jd.STATE through a private kernel handle is
+# moving the shared judge state (_shared_state_restored's concern, not this one's). A private kernel's own
+# dangling singleton is outside this fixture, a stated limit, and what it leaves unprotected is this fixture's
+# own defect class on a private name: a private-name kernel's dangling backend over a removed directory that
+# a sibling file reads and gets the silent empty-registry answer this fixture exists to stop. It is live
+# today: romp_kernel_mc is loaded by three files (tests/test_kernel_interrupt_machine_cut.py,
+# tests/test_kernel_msgcaption.py and tests/test_model_catalog.py), the first file's _FeedHarness leaves its
+# backend over a removed TemporaryDirectory, and two of the three read the dangling object, the machine-cut
+# file's own later tests and the caption file's timeline builds (build_timeline's fork_children, the reader
+# the incident above names); measured 2026-09-19 over the three files in one run, on the missing road (none of
+# the three is tests/test_host_transport.py), 90 of 108 teardowns end with that one object over a removed root
+# (33, 5 and 52 by file) and the catalog file reads it zero times;
+# nine private names are shared by two or three files each. The blocker, and the order: the same rule
+# looped over every sys.modules name starting with romp_kernel (round 1's proposed fix) is the arm that would
+# cover it, and the loop cannot land here because the private-kernel harnesses carry 90 or more pre-existing
+# teardown leaks (the 90 above are one name's, on the missing road; the round-1 refuters counted 574 would-fail
+# outcomes over the 18 files that then shared a private name, their count, its road not recorded: a teardown's leaving a
+# dangling backend does not depend on the road, since SdkBackend constructs on both), so their save-and-restore
+# product code lands first, then the
+# ratchet's private-kernel arm.
+#
+# THE JUDGMENT (_sdk_judge), same marker: the same object is a pass, unless its state_dir text differs
+# between the two reads, the test having REPOINTED the singleton it found (the readers hold the object and
+# read its state_dir on every registry scan, so a repoint to a root that stands moves every later test's
+# registry root as surely as a rebuild over it: named with the changed wording, both sides rendered from the
+# reads' recorded text since the live attribute shows the after path on both, the gone clause when the new
+# path is not a directory, and a remedy of its own, _SDK_REMEDY_C, put the state_dir back), or its
+# directory was present at the before read and is not at the after read, the test having removed the
+# directory under the singleton it found. A removal never changes the text, so the two are disjoint and the
+# text comparison comes first. A different value is a leak, with TWO allowances derived from the transition,
+# never from a list of test names. (1) None before and, after, the kernel's own class (type module romp_sdk_backend,
+# qualname SdkBackend: NOT isinstance, which a shared-name reload of sdk_backend.py breaks, since
+# load_source re-executes into the same module name and the class object changes while a backend built
+# before the reload keeps the old one; 11 test modules load romp_sdk_backend under the shared name) whose
+# state_dir equals jd.STATE AT THE TEST'S START and is a directory: the worker's lazy first build of the
+# singleton under the root the test inherited, the kernel's own design, leaving nothing dangling. The
+# reference is the inherited root because it is the one value the test could not have made, and equality
+# proves the build used it: a real backend's state_dir IS the root it was built over, by construction
+# (kernel.py's _sdk_locked constructs sbmod.SdkBackend(jd.STATE, ...) and SdkBackend.__init__ stores
+# Path(state_dir)), so no wrapper on the build is needed to learn the build root (the census's wrapper on
+# _sdk_locked in the module dict changes the marker function's identity and is not a shape for a
+# production fixture). jd.STATE AFTER the test would admit a first build over a sandbox the test left
+# jd.STATE pointed at (the singleton agrees with the state it moved); requiring both before and after
+# would refuse a legitimate first build followed by a STATE move the judge fixture already names. WHICH
+# test performs the first build is a property of the run (the xdist scheduler, the subset selected, the
+# module order), not of the test: the census that found ViewBuilder saw three first builders across four
+# workers, a different test on each, so a name list could never be right. A look-alike over that same
+# root (a test's class named SdkBackend, a SimpleNamespace, a MagicMock) is refused: installed as the
+# worker's first value it would be inherited by every later test, and the class check is what refuses
+# it. A value that is not the kernel's class is rendered without the gone clause: the clause says a
+# state_dir is NO LONGER a directory, true of the kernel's own class alone (its state_dir is the directory
+# it was built over), and false of a MagicMock's attribute or a SimpleNamespace's string, which never was
+# one; so the clause on a changed value is gated on the class check as well as on isdir. (2) None before
+# and False after: the kernel's own unavailable outcome (_sdk_locked's except branch
+# sets False when the backend cannot be built), which the test did not choose. Everything else is a leak:
+# a test that installs a fake or a rebuilt backend and puts back the OBJECT it found is quiet; one that
+# puts back an equal backend (the same state_dir, another object) is not, because the readers hold the
+# object, its threads and its registry state, not its path, and its message says so. A reference root
+# that cannot be read (km.jd.STATE unreadable) grants no allowance: the fixture fails and says so (not
+# constructible today, since the kernel always binds jd; unverified defaults to the restricted side).
+#
+# THE REMEDY, one per road (the message shape is "<who> <clause>. Fix: <remedy>"). The sandbox road, when
+# the value left is the kernel's own class over a root that is not the reference or is not a directory:
+# save km._sdk_backend before moving jd.STATE and put it back where jd.STATE is restored, before the
+# directory is removed (setUp and tearDown, or setUpClass and tearDownClass when the class moves it). The
+# object road, everything else (a None, a False, a fake, a rebuild over the same root): put back the
+# object the test found, None or False included, not an equal one. The repoint road, the same object with
+# its state_dir text changed: put the singleton's state_dir back where it was found. The first form printed
+# the sandbox remedy on every road, so a test that left a None was told to save the singleton before a
+# sandbox that did not exist.
+#
+# MARKER CHANGED (_sdk_judge_reload): the test re-executed kernel.py into the one module object (a
+# different function in the slot), loaded the shared kernel for the first time in this worker (None, then
+# a function), or popped it from sys.modules (a function, then None: the read gives None). The before
+# value is stale by construction (the re-executed module's slot started at None), so only what the test
+# LEFT is judged: None or False pass; the kernel's own class over jd.STATE with that directory present is
+# the lazy build over the loader's root and passes; the kernel's class anywhere else is a build over a
+# root the test made, named with the re-execution wording (and the gone clause when its directory is not
+# one); anything else is a value the test left. The reference on this road is jd.STATE at the AFTER read:
+# the reload re-bound STATE from the environment as it stands, which other modules' import-time writes
+# decide, so the root the test inherited is stale here. A None marker before is a first load, never an
+# exemption: a test that loads the shared kernel itself and then leaves the singleton over a sandbox it
+# keeps is FirstBuildOverAKeptSandbox's leak by another road, and the first form of this fixture let it
+# through (it compared nothing when the marker changed, and the surviving gone check misses a directory
+# that stands). Stated limit: a test that reloads, moves jd.STATE, builds and LEAVES jd.STATE moved passes
+# this fixture, since the singleton agrees with jd.STATE as left; that is a STATE leak, and
+# _shared_state_restored's reload branch shares the limit by design (it compares no values after a
+# re-execution). No test does this today.
+#
+# THE BOUNDARY (_sdk_judge_scope): with S = the scope's start read, L = the last read anywhere before the
+# end and E = the end read: E the same object as L with its state_dir text changed is the teardown
+# repointing the singleton its last test left, and E the same object as L with its directory present at L
+# and gone at E is the teardown removing the directory under it, both named before the quiet rules and even
+# when the object was already named, because the state got worse inside the teardown; E the object S found
+# is a restore, a pass, unless the state_dir text S recorded is not E's (put back repointed) or S saw its
+# directory and E does not; E the object L left and already named is a pass (the test that made it was
+# judged); otherwise S -> E is judged as a test transition with S's jd.STATE as the
+# reference (the scope's own setUpClass moved jd.STATE, a test built under it, allowed at its own window
+# because it inherited that root, and the scope did not put the singleton back: the scope is the author);
+# and E different from both S and L is the teardown itself installing a value, judged the same way. The
+# S -> E judgment alone carries the link clause to the first window's refusal (_sdk_found_refused): its before
+# value is the object S found, the object the clause names; the other roads render other objects or end on the
+# found one, and carry none. Before that S -> E judgment the boundary yields to the tests' own windows: the
+# function fixture records
+# every test window that changed the slot (_SDK_WINDOWS: the before and after values and the reference the
+# window was judged against; cleared at each module end, since no later scope starts before that read),
+# and when the first such window inside the scope started from the value S found, the last left the value
+# E holds, and that last window's reference is S's jd.STATE, every step from S to E was a test's, judged
+# where it happened, and the boundary returns None. Without it a test's accused reset to None or False (a
+# value _sdk_name skips, so the named rule cannot cover it) or an allowed lazy rebuild after an accused
+# reset was re-attributed to the class and module boundary, sending the reader to a tearDownClass or
+# tearDownModule that does not exist; in the rebuild shape the boundary's verdict landed as an ERROR on
+# the innocent test that made the allowed rebuild (2026-09-19). K.One is the counter-case: its build's
+# reference is the class root setUpClass moved jd.STATE to, not S's, so the class stays the author. The
+# module end runs after the class end, so a class-end verdict names the object and the module end is
+# quiet on it. Cost: four dict lookups (the kernel module, its slot, its marker, its jd), two getattr and
+# one isdir per read; two reads per test, two per class and two per module, plus one list scan per
+# boundary over the module's changing windows (a handful in any module: net changes of the slot are rare).
+_SdkRead = collections.namedtuple("_SdkRead", "be marker sd isdir jd_state")
+_SdkWindow = collections.namedtuple("_SdkWindow", "seq before after ref")
+_SDK_LAST = _SdkRead(None, None, None, None, None)     # the last read anywhere in this worker (the boundary's L)
+_SDK_READS = 0                                         # reads so far in this worker; a scope keeps the count at its start read
+_SDK_WINDOWS = []                                      # the test windows that changed the slot since the module started
+_SDK_FIRST_WINDOW = True                               # no test window has run yet in this worker; the kept-root report is taken
+                                                       # at this window only, and only for the module start read's object, against
+                                                       # the jd.STATE that read recorded (at that read only import-time code and
+                                                       # any fixture of a scope wider than the function has run); when the slot
+                                                       # does not hold that object here, the refusal (_sdk_swapped) is consulted
+                                                       # in its place and taken under its own guards (a real backend neither list
+                                                       # has named, over a directory that is gone or that stands and is not the
+                                                       # jd.STATE that read recorded), and the flag is spent either way, never
+                                                       # deferred
+_SDK_MODULE_START = None                               # the current module boundary's start read (_SdkRead): the first-window
+                                                       # kept-root report's object and reference root
+_SDK_NAMED = []                                        # strong references to every object a verdict named (a test's own, a boundary's)
+_SDK_REPORTED = []                                     # strong references to every object the inherited report named
+_SDK_REFUSED = []                                      # strong references to every object the first window's refusal named:
+                                                       # the gone report's (_sdk_inherited) and the start-to-end
+                                                       # boundary verdict's (_sdk_found_refused) link to that line, by
+                                                       # identity; silences nothing
+_SDK_REAL = ("romp_sdk_backend", "SdkBackend")
+_SDK_GONE = ", whose state_dir is no longer a directory"
+_SDK_REMEDY_A = ("A test that reaches km._sdk() under a sandboxed jd.STATE builds the kernel's backend singleton over the "
+                 "sandbox and every later test's backend reads that root: save km._sdk_backend before moving jd.STATE and "
+                 "put it back where jd.STATE is restored, before the directory is removed (setUp and tearDown, or "
+                 "setUpClass and tearDownClass when the class moves it).")
+_SDK_REMEDY_B = ("Put back the object the test found, None or False included, not an equal one: the kernel's readers hold "
+                 "the object, its threads and its registry state, and a None makes the next reader rebuild over whatever "
+                 "jd.STATE is at that moment.")
+_SDK_REMEDY_C = ("Put back the singleton's state_dir where it was found: the kernel's readers hold the object and read its "
+                 "state_dir on every registry scan, so a moved state_dir moves every later test's registry root.")
+_SDK_LIVE = object()                                   # _sdk_singleton_text: render the live state_dir attribute
+
+
+def _sdk_read():
+    """One read of the kernel's backend singleton under its shared name: (value, marker, state_dir text, isdir,
+    jd.STATE text), every field None when the kernel is not loaded as romp_kernel; recorded as the worker's last
+    read."""
+    global _SDK_LAST, _SDK_READS
+    km = sys.modules.get("romp_kernel")
+    if km is None:
+        rec = _SdkRead(None, None, None, None, None)
+    else:
+        d = vars(km)
+        be = d.get("_sdk_backend")
+        sd = None
+        if be is not None and be is not False:
+            p = getattr(be, "state_dir", None)
+            sd = None if p is None else str(p)
+        jd_state = getattr(d.get("jd"), "STATE", None)
+        rec = _SdkRead(be, d.get("_sdk_locked"), sd, None if sd is None else os.path.isdir(sd),
+                       None if jd_state is None else str(jd_state))
+    _SDK_READS += 1
+    _SDK_LAST = rec
+    return rec
+
+
+def _sdk_is_real(be):
+    """The kernel's own class, by module and qualname: load_source re-executes sdk_backend.py into the same module
+    name, so an isinstance against the class loaded now would refuse a backend built before a shared-name reload."""
+    t = type(be)
+    return (t.__module__, t.__qualname__) == _SDK_REAL
+
+
+def _sdk_named(be):
+    """Whether a verdict (a test's own, a boundary's) has named the object: the boundary's quiet rule reads this alone."""
+    return any(x is be for x in _SDK_NAMED)
+
+
+def _sdk_name(be):
+    if be is not None and be is not False and not _sdk_named(be):
+        _SDK_NAMED.append(be)
+
+
+def _sdk_reported(be):
+    """Whether the inherited report has named the object; with _sdk_named, that report's once-per-worker rule."""
+    return any(x is be for x in _SDK_REPORTED)
+
+
+def _sdk_report(be):
+    if be is not None and be is not False and not _sdk_reported(be):
+        _SDK_REPORTED.append(be)
+
+
+def _sdk_refused(be):
+    """Whether the first window's refusal named the object: the gone report's and the start-to-end boundary verdict's
+    link clauses read this, by identity, never by a rendered path (THE RULE in the comment above: a repoint between two
+    reads renders two paths for one object), each on the object its own line renders."""
+    return any(x is be for x in _SDK_REFUSED)
+
+
+def _sdk_refuse(be):
+    if be is not None and be is not False and not _sdk_refused(be):
+        _SDK_REFUSED.append(be)
+
+
+def _sdk_singleton_text(be, sd=_SDK_LIVE):
+    """The value as "<class> over <state_dir>", None and False said in words. `sd` is the state_dir text to render: the
+    live attribute by default, or a read's recorded text, since the same object's state_dir can have been repointed
+    between two reads and the live attribute would then show the after path on both sides of the transition."""
+    if be is None:
+        return "None (not built)"
+    if be is False:
+        return "False (the build failed)"
+    state_dir = getattr(be, "state_dir", None) if sd is _SDK_LIVE else sd
+    t = type(be)
+    name = "SdkBackend" if _sdk_is_real(be) else "%s.%s" % (t.__module__, t.__qualname__)
+    return "%s over %s" % (name, "no state_dir" if state_dir is None else state_dir)
+
+
+_SDK_INHERITED_TAIL = ("This test did not make it: %s, outside every window the singleton fixtures judge; reported once per "
+                       "worker, at the first test that meets it, after that test's own teardown (so the test runs and its own "
+                       "transition is judged too), and the tests after it that inherit the same object are not accused.")
+
+
+def _sdk_inherited(before, start):
+    """The once-per-worker report on a singleton state no window made, or None: a real backend over a directory that is
+    gone, at any test; or, with `start` (the module boundary's start read, passed only at the worker's FIRST test window
+    AND when the object is the one that read found, else None), a real backend over a directory other than jd.STATE AS
+    THAT READ RECORDED IT, which only import-time code or a fixture of a scope wider than the function could have made:
+    at the start read nothing else has run, and the identity term with the start read's reference make the window's
+    report a statement about that read (jd.STATE at the window itself may have been moved since by setUpModule,
+    setUpClass or a module- or class-scoped fixture, which is no leak; compared against the window's jd.STATE, a
+    legitimate import-time build over the run root got the report whenever a scope setup moved jd.STATE for its tests);
+    an object the start read did not see was installed by the module's or a class's own setup, which that scope's
+    boundary judges. Silent on an object either list has named (_sdk_named, _sdk_reported). A gone report on an object
+    the worker's first window REFUSED (_sdk_refused: _sdk_swapped's object, recorded by the fixture when the refusal is
+    taken) opens its tail by saying it is that object, so the two lines are linked at the object and not at the rendered
+    path, which is no identity and which a repoint between the two reads changes (S9, S9B); membership is by identity, so a
+    gone report on an object no refusal named carries no clause whatever refusal the worker took before it (S14)."""
+    be = before.be
+    if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
+        return None
+    if before.isdir is False:
+        link = (("It is the object this worker's first test window refused to attribute: that refusal names its origin, "
+                 "this line the test that lives under it. ") if _sdk_refused(be) else "")
+        return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists: %s. %s%s"
+                % (_sdk_singleton_text(be), link,
+                   _SDK_INHERITED_TAIL % "an earlier test, a class or module setup or teardown, or import-time code did"))
+    if start is not None and before.sd != start.jd_state:
+        return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that is not jd.STATE, before "
+                "any test in this worker has run: %s, jd.STATE %s at this module's start read. %s"
+                % (_sdk_singleton_text(be), start.jd_state,
+                   _SDK_INHERITED_TAIL % "import-time code did, or a session- or package-scoped fixture did (one that set up "
+                   "before this module's own reads), building the singleton over a root that is not the run's, or moving "
+                   "jd.STATE after the build and leaving it there"))
+    return None
+
+
+_SDK_SWAPPED_HEAD = ("opens the worker's first test window, and this module's start read had found the kernel's backend singleton "
+                     "(km._sdk_backend) over a directory that is not jd.STATE, before any test in this worker has run")
+_SDK_SWAPPED_GONE_HEAD = ("opens the worker's first test window, and this module's start read had found the kernel's backend singleton "
+                          "(km._sdk_backend) over a directory that no longer exists, before any test in this worker has run")
+
+
+def _sdk_swapped(start, before):
+    """The first window's refusal, or None: consulted only at the worker's FIRST test window and only when the kept-root
+    report's identity term fails there (the slot does not hold the object the module boundary's start read found). Taken
+    when that start read (`start`) found a real backend in a state no test made, over a directory that stands and is not
+    jd.STATE as that read recorded it (the kept-root picture) or over a directory that is gone, which at that read only
+    import-time code or a fixture of a scope wider than the function could have made; the slot's value at the window
+    (`before`) is what a module or class setup (setUpModule, setUpClass, or a module- or class-scoped fixture, the
+    actors between the two reads) swapped in. The leak is named from the start read's fields, both objects rendered from
+    the reads' recorded state_dir: the start read's because the live attribute may have been repointed since (S11, a
+    class that repoints the object before swapping it out), the window's for one convention, since nothing runs between
+    the before read and this render, so its recorded text and the live attribute agree by construction and no run can
+    tell them apart (annotated at the call, not a cell); no test is accused and no scope is named, because which test
+    will start under the object, and whether it is put back, cannot be said at this window, and the premise sentence,
+    true here, would be false at any later one (the flag is spent with this line, never deferred: a deferred report
+    would fire where a test body has run, a wrong attribution in place of a silence). Two heads, the inherited report's
+    two shapes: the kept-root wording and cause family for the standing directory, the gone wording with the cause
+    family narrowed to what could have run before the start read for the gone one, whatever its root. The gone shape is
+    refused here rather than left to the gone report because the swapping scope may never put the object back, and then
+    no window starts under it, the gone report never fires, and the scope's boundary verdict names the swap and not the
+    object's origin; when the scope does put it back, the later test that starts under the object carries the gone
+    report as well, two lines each saying what the other does not, and the later line says it is the object this window
+    refused, keyed on the object (the rendered path is not an identity, and a repoint between the two reads changes it;
+    S9B). Silent when the start read's object stands over jd.STATE as it recorded it (no leak); on an object a verdict
+    has named (_sdk_named, reachable: a class or module scope that touches the singleton and then skips or errors before
+    any function window runs files a naming verdict while the flag is still armed, the boundary fixture reading at the
+    scope's first item and the flag spent only in the function fixture; S13, a module pair); and, as a belt, on one the
+    inherited report has named (_sdk_reported, empty at this window by construction: the one site that fills that list,
+    the function fixture's report line, runs after this refusal is computed in the same first window, and no earlier
+    window exists in the worker). The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root
+    report, so a mark would change nothing there, and it would silence that later gone report; the fixture records its
+    object on _SDK_REFUSED instead, the list the gone report's link clause reads, as does the boundary's: the scope
+    that found the refused object and ended on another value says, on its start-to-end verdict, that the object it
+    found is the one this window refused, the same key (_sdk_found_refused; S10, S10B). This function stays pure, text
+    or None, as _sdk_inherited is."""
+    be = start.be
+    if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
+        return None
+    if start.isdir is False:
+        head, cause = _SDK_SWAPPED_GONE_HEAD, ("building the singleton over a directory since removed, or removing the directory "
+                                               "it was built over")
+    elif start.sd == start.jd_state:
+        return None
+    else:
+        head, cause = _SDK_SWAPPED_HEAD, ("building the singleton over a root that is not the run's, or moving jd.STATE after the "
+                                          "build and leaving it there")
+    return ("%s: %s, jd.STATE %s at that read. The slot does not hold that object at this window (it holds %s): a module or "
+            "class setup that ran between the two reads (setUpModule, setUpClass, or a module- or class-scoped fixture) swapped "
+            "it out, so this test does not start under it, and which test will, or whether it is put back, cannot be said here; "
+            "no test is accused and no scope is named. Import-time code did, or a session- or package-scoped fixture did (one "
+            "that set up before this module's own reads), %s; a swap left in place is judged at its own scope's end."
+            % (head, _sdk_singleton_text(be, start.sd), start.jd_state,
+               _sdk_singleton_text(before.be, before.sd),   # the recorded text for one convention: the before read and this
+               cause))                                       # render are one fixture call with no test code between, so the live
+                                                             # attribute agrees with it by construction; no run can tell them apart
+
+
+def _sdk_remedy(after, ref):
+    """The sandbox road's remedy when the value left is the kernel's own class over a root that is not the reference
+    or is not a directory; the object road's otherwise."""
+    if _sdk_is_real(after.be) and (after.sd != ref or not after.isdir):
+        return _SDK_REMEDY_A
+    return _SDK_REMEDY_B
+
+
+def _sdk_repointed_text(head, be, before, after):
+    """The clause for the same object whose state_dir text changed between two reads, both sides from the recorded text
+    (the live attribute shows the after path on both), the gone clause when the new path is not a directory."""
+    return "%s: before %s, after %s%s" % (head, _sdk_singleton_text(be, before.sd), _sdk_singleton_text(be, after.sd),
+                                          _SDK_GONE if after.isdir is False and _sdk_is_real(be) else "")
+
+
+def _sdk_judge(before, after, ref):
+    """The transition from one read to another, judged as a test's: None for a pass, else (clause, remedy) for
+    the caller to frame as "<who> <clause>. Fix: <remedy>". `ref` is the root the lazy-first-build allowance
+    compares the after value's state_dir with."""
+    be0, be1 = before.be, after.be
+    if after.marker is not before.marker:
+        return _sdk_judge_reload(before, after)
+    if be1 is be0:
+        if before.sd != after.sd:              # the same object, repointed: the readers hold the object and read its state_dir
+            return (_sdk_repointed_text("left the kernel's backend singleton (km._sdk_backend) changed after its teardown",
+                                        be1, before, after), _SDK_REMEDY_C)
+        if before.isdir and after.isdir is False:
+            return ("left the kernel's backend singleton (km._sdk_backend) over a directory it removed: %s%s"
+                    % (_sdk_singleton_text(be1), _SDK_GONE), _sdk_remedy(after, ref))
+        return None
+    unreadable = ""
+    if be0 is None:
+        if be1 is False:                       # the kernel's own unavailable outcome
+            return None
+        if _sdk_is_real(be1) and after.isdir:
+            if ref is None:
+                unreadable = "; the reference root (km.jd.STATE) was unreadable, so the lazy first build could not be allowed"
+            elif after.sd == ref:
+                return None                    # the lazy first build over the root the test inherited
+    if _sdk_is_real(be0) and _sdk_is_real(be1) and before.sd == after.sd and after.isdir:
+        after_text = "another SdkBackend over the same directory (the readers hold the object, not the path)"
+    else:
+        after_text = _sdk_singleton_text(be1) + (_SDK_GONE if after.isdir is False and _sdk_is_real(be1) else "")
+    return ("left the kernel's backend singleton (km._sdk_backend) changed after its teardown: before %s, after %s%s"
+            % (_sdk_singleton_text(be0), after_text, unreadable), _sdk_remedy(after, ref))
+
+
+def _sdk_judge_reload(before, after):
+    """The changed-marker road (a re-execution, a first load, or a popped kernel inside the test): the after value
+    alone, judged against jd.STATE as the reload re-bound it (the after read); see the comment above for why the
+    before value and the before reference are stale here."""
+    be1 = after.be
+    if be1 is None or be1 is False:
+        return None
+    head = ("re-executed the kernel (or loaded it for the first time) and left the kernel's backend singleton "
+            "(km._sdk_backend) ")
+    if not _sdk_is_real(be1):
+        return (head + "as a value that is not the kernel's build: %s" % _sdk_singleton_text(be1), _SDK_REMEDY_B)
+    ref = after.jd_state
+    if ref is None:
+        return (head + "over %s while the reference root (km.jd.STATE) was unreadable, so the lazy build could not be "
+                "allowed" % _sdk_singleton_text(be1), _SDK_REMEDY_A)
+    if after.sd == ref:
+        if after.isdir:
+            return None
+        return (head + "over jd.STATE, which is no longer a directory: %s%s" % (_sdk_singleton_text(be1), _SDK_GONE),
+                _SDK_REMEDY_A)
+    return (head + "over a root that is not jd.STATE: %s, jd.STATE %s%s"
+            % (_sdk_singleton_text(be1), ref, _SDK_GONE if after.isdir is False else ""), _SDK_REMEDY_A)
+
+
+# The start-to-end boundary verdict's link to the first window's refusal. No period at the end: _sdk_boundary frames the
+# verdict as "%s. Fix: %s", and a period inside made ".. Fix:" on the line, which the outer tests' boundary() reader
+# accepted (S10 pins the single period).
+_SDK_FOUND_REFUSED = ("The object this scope found is the object this worker's first test window refused to attribute: "
+                      "that refusal names its origin, this line the scope at whose end the slot no longer held it, and the "
+                      "value it held")
+
+
+def _sdk_found_refused(verdict, start, end):
+    """The start-to-end boundary verdict with its link clause when the object the scope found (`start.be`, the verdict's
+    rendered before value) is one the worker's first window refused to attribute (_sdk_refused: membership by identity
+    on _SDK_REFUSED, never a rendered path), else the verdict as given. The refusal named the object's origin and no
+    scope; the verdict names the scope at whose end the slot no longer held the object, and the value it held then; so
+    the two lines name one object and the clause links them AT THE OBJECT (S10, the swap never undone, the verdict
+    beside the refusal in One.a's one teardown; S10B, the object repointed by setUpModule between the module start read
+    and the class's reads, two paths for one object, the clause still there). The tail says only what this road always
+    knows: it is reached when the scope ends on a value that is not the one it found, whether the scope's own setup
+    swapped the object out (S10's One) or a test inside it did and the scope's end merely found the slot changed (S15's
+    module end, after Two.a reset the slot: a tail naming the scope as the one that swapped the object out was false
+    there). Keyed on the object THIS ROAD RENDERS: the start-to-end judgment renders the found object as its before
+    value, so the clause is true of the line it rides; a verdict on a found object no refusal named carries none
+    (S10C's Two, with a refusal standing in the worker; M, with none). Off the changed-marker road: the reload judgment
+    renders the after value alone and no before, so a clause there would name an object the line does not show (S16:
+    the scope that found the refused object ends on a re-execution and a build over a sandbox, and its reload verdict
+    carries no clause; with the term dropped it would, derive: boundary-link-marker-term-dropped)."""
+    if verdict is None or end.marker is not start.marker or not _sdk_refused(start.be):
+        return verdict
+    return ("%s. %s" % (verdict[0], _SDK_FOUND_REFUSED), verdict[1])
+
+
+def _sdk_judge_scope(start, last, end, windows):
+    """The class or module boundary's verdict from its start read, the last read before its end, its end read, and the
+    test windows inside the scope that changed the slot (oldest first). Five roads render a verdict. The last-object
+    roads (the teardown repointed, or removed the directory under, the object its last test left) render that object,
+    the last read's; the put-back roads (the scope ends on the object it found, repointed or over a gone directory)
+    render the found object on both sides; the start-to-end judgment (_sdk_judge from the start read to the end read,
+    one call site, reached when the scope ends on a value that is neither its last test's nor the one it found, or on
+    its last test's value that no window chain and no verdict accounts for) renders the found object as its before
+    value and the value left as its after. The link clause to the first window's refusal (_sdk_found_refused) rides
+    the start-to-end judgment ALONE, keyed on the object it renders as before, the one the scope found. The four other
+    roads carry no clause: the last-object roads render the object the last test left, the found one only when no test
+    changed the slot (S10C's One finds the refused object, swaps it out, its test builds and its teardown repoints the
+    build: the verdict renders the build alone, and a clause keyed on the found object would name one the line does not
+    show; a scope whose tests leave the found object and whose teardown repoints it renders the found object, and there
+    the tail would be false too, the teardown having repointed the object rather than left the slot without it), and
+    the put-back roads render the found object but end on it, so the clause's tail, the scope at whose end the slot no
+    longer held it, would be false there. A later case that needs a clause on one of them keys it on the object THAT
+    road renders, never on start.be (THE RULE in the design comment: identity on the rendered object, never a rendered
+    path). Never inside _sdk_judge, which is the function fixture's road too: a clause there would ride every
+    test-window verdict whose before value is the refused object (S15's Two.a, which starts under the refused object
+    and resets the slot: its own verdict carries no clause, and the module end's start-to-end verdict on the same
+    change does; the cell boundary-link-in-judge moves the clause there and S15 reds)."""
+    if end.be is last.be:
+        if last.sd != end.sd:                  # the teardown repointed the singleton its last test left: named before the quiet rules
+            return (_sdk_repointed_text("left the kernel's backend singleton (km._sdk_backend) changed after its teardown",
+                                        end.be, last, end), _SDK_REMEDY_C)
+        if last.isdir and end.isdir is False:
+            return ("left the kernel's backend singleton (km._sdk_backend) over a directory it removed: %s%s"
+                    % (_sdk_singleton_text(end.be), _SDK_GONE), _sdk_remedy(end, start.jd_state))
+        if end.be is start.be or _sdk_named(end.be):
+            return None
+        if windows and windows[0].before is start.be and windows[-1].after is end.be and windows[-1].ref == start.jd_state:
+            return None                    # the tests made the change, each judged at its own window: the boundary did nothing
+    elif end.be is start.be:
+        if start.sd != end.sd:
+            return (_sdk_repointed_text("put back the kernel's backend singleton (km._sdk_backend) it found with its state_dir "
+                                        "repointed", end.be, start, end), _SDK_REMEDY_C)
+        if start.isdir and end.isdir is False:
+            return ("put back the kernel's backend singleton (km._sdk_backend) it found, whose directory is gone: %s%s"
+                    % (_sdk_singleton_text(end.be), _SDK_GONE), _sdk_remedy(end, start.jd_state))
+        return None
+    # The one start-to-end call site, the link clause's road (the first block falls through to it).
+    return _sdk_found_refused(_sdk_judge(start, end, start.jd_state), start, end)
+
+
+@pytest.fixture(autouse=True)
+def _sdk_singleton_restored(request):
+    global _SDK_FIRST_WINDOW
+    before = _sdk_read()
+    # The kept-root report at the first window is taken only for the object the module's own start read found (identity)
+    # and against the jd.STATE that read recorded: a value installed after that read is the module's or a class's own
+    # setup, judged at that scope's boundary, and a jd.STATE moved after it is a scope setup's move for its tests.
+    first = _SDK_FIRST_WINDOW and _SDK_MODULE_START is not None and before.be is _SDK_MODULE_START.be
+    inherited = _sdk_inherited(before, _SDK_MODULE_START if first else None)
+    # The identity term failed at the worker's first window: the refusal, or None, from the start read's fields (the object
+    # the report would have named, if the slot still held it). The flag is spent with it, never kept for a later window:
+    # the report's premise sentence holds at this window alone.
+    swapped = None
+    if _SDK_FIRST_WINDOW and _SDK_MODULE_START is not None and not first:
+        swapped = _sdk_swapped(_SDK_MODULE_START, before)
+        if swapped is not None:
+            _sdk_refuse(_SDK_MODULE_START.be)   # the object the refusal names, recorded at the moment the refusal is
+                                                # taken, so the later gone report on the same object, or the
+                                                # start-to-end verdict of the scope that found it, can say it is that
+                                                # object (never _SDK_REPORTED, which would silence that report)
+    _SDK_FIRST_WINDOW = False
+    if inherited is not None:
+        _sdk_report(before.be)             # reported now, so the tests after this one that inherit the object are quiet
+    yield
+    after = _sdk_read()
+    verdict = _sdk_judge(before, after, before.jd_state)     # the root the test inherited: the one value it could not have made
+    if after.be is not before.be:
+        _SDK_WINDOWS.append(_SdkWindow(_SDK_READS, before.be, after.be,
+                                       after.jd_state if after.marker is not before.marker else before.jd_state))
+    if verdict is None and inherited is None and swapped is None:
+        return
+    lines = []
+    if inherited is not None:
+        lines.append("%s %s" % (request.node.nodeid, inherited))
+    if swapped is not None:
+        lines.append("%s %s" % (request.node.nodeid, swapped))
+    if verdict is not None:
+        _sdk_name(after.be)
+        lines.append("%s %s. Fix: %s" % (request.node.nodeid, verdict[0], verdict[1]))
+    pytest.fail("\n".join(lines), pytrace=False)
+
+
+def _sdk_boundary(request, start, reads_at_start):
+    last = _SDK_LAST
+    end = _sdk_read()
+    windows = [w for w in _SDK_WINDOWS if w.seq > reads_at_start]
+    verdict = _sdk_judge_scope(start, last, end, windows)
+    if verdict is None:
+        return
+    _sdk_name(end.be)
+    pytest.fail("%s's class or module boundary (tearDownClass, tearDownModule or a class- or module-scoped fixture) %s. "
+                "Fix: %s" % (request.node.nodeid, verdict[0], verdict[1]), pytrace=False)
+
+
+@pytest.fixture(autouse=True, scope="class")
+def _sdk_singleton_class_boundary(request):
+    start = _sdk_read()
+    reads_at_start = _SDK_READS
+    yield
+    _sdk_boundary(request, start, reads_at_start)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _sdk_singleton_module_boundary(request):
+    global _SDK_MODULE_START
+    start = _sdk_read()
+    _SDK_MODULE_START = start              # the first-window report's object and reference root (_sdk_singleton_restored)
+    reads_at_start = _SDK_READS
+    yield
+    try:
+        _sdk_boundary(request, start, reads_at_start)
+    finally:
+        del _SDK_WINDOWS[:]                # no later scope starts before this read, so no boundary selects these again
 
 
 # No test report may carry a process-environment VALUE, or a credential-shaped token (2026-09-05). A
@@ -692,6 +1429,19 @@ def redact_env_values(text: str, values) -> str:
     return _ENV_CUT_FRAG_RE.sub(cut_piece, text)
 
 
+def env_sparing_texts(env, texts) -> dict:
+    """`env` (a mapping) without every entry whose value the env-value net above would rewrite one of `texts` with in a
+    pytest started under it: an entry that qualifies (env_value_qualifies) and whose value alone makes redact_env_values
+    change the text. For a test that asserts a literal in a child pytest's report: an inherited value whose whole text,
+    or a whitespace-separated chunk of ENV_VALUE_MIN_LEN or more characters of it, appears in that literal made the
+    child's report show ENV_VALUE_REDACTED in its place and the test red on a correct verdict (round 6's ruling B on the
+    SDK switch cases, 2026-09-25: sudo's SUDO_COMMAND and GNU make's MAKEFLAGS carry a command line's assignment of
+    the switch, and SUDO_COMMAND carries an interpreter named by its path). Keyed on the net's own two functions, not a
+    copy of their rule. Returns a new dict; `env` is not changed."""
+    return {name: value for name, value in env.items()
+            if not (env_value_qualifies(name, value) and any(redact_env_values(t, (value,)) != t for t in texts))}
+
+
 def redact_credential_tokens(text):
     """The pattern net: credential-shaped tokens, whatever their provenance (tests/credential_patterns.py)."""
     return _credpat.scrub(text)
@@ -773,12 +1523,26 @@ def _redact_report(rep) -> None:
 def pytest_runtest_makereport(item, call):
     # ONE implementation per hook per module: a second `def` of this name would silently replace this one
     # (it did, for an afternoon on 2026-09-10, and every report printed its values again). Anything else
-    # that shapes a test report joins here: the served-tests switch first (its message quotes the skip's
-    # reason), the redaction last, so whatever any step wrote is read for values before it is printed.
+    # that shapes a test report joins here: the session-end thread guard's failure first (it marks a report
+    # failed, and the served-tests switch and the never-skips belt act on skips only), the served-tests switch
+    # next, then the never-skips belt (each message quotes the skip's reason), the redaction last, so whatever
+    # any step wrote is read for values before it is printed.
     outcome = yield
     rep = outcome.get_result()
+    _guard_failure_into_report(item, call, rep)
     _require_served_test_ran(item, rep)
+    _require_never_skip_ran(item, rep)
     _redact_report(rep)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    """The never-skips belt's collection half: a module-level skip (pytest.importorskip, or
+    pytest.skip(allow_module_level=True)) produces a skipped CollectReport and no items, so the item hook
+    above never sees it. The same flip here, on the report as it is made, turns it into a collection error,
+    and pytest stops the run red ("1 error during collection"). Redaction follows in pytest_collectreport."""
+    outcome = yield
+    _require_never_skip_collected(collector, outcome.get_result())
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -826,11 +1590,418 @@ def wait_for_census(before, timeout=5.0):
         time.sleep(0.02)
 
 
+# -- session-end thread guard (2026-09-26) -----------------------------------------------------------------------------
+# A NON-DAEMON thread still running when the interpreter exits keeps its process from exiting, because the interpreter
+# joins every non-daemon thread at shutdown. So does a concurrent.futures thread still running a task, WHATEVER ITS
+# DAEMON FLAG: before that join the interpreter calls concurrent.futures' exit hooks, which join every thread in their
+# tables (EXIT_JOIN_TABLES below), and a thread takes its daemon flag from the thread that creates it, so a pool started
+# from a daemon thread has daemon workers that the hooks join all the same. Run serially, the run then hangs until the
+# thread ends or CI's job cap cancels the cell, and a cancelled cell is red. Under pytest-xdist the run passes: the
+# controller kills a worker still alive when the run ends, and the run's status comes from the test reports alone, so
+# the fork's Linux cells lost the signal when they moved to two workers (2026-09-25). Two kinds of thread the guard
+# names do not keep the process from exiting, and the guard fails on them too: an idle concurrent.futures worker and a
+# thread stopped only after the check (both below). This guard restores the signal in every process that runs tests, the
+# one serial process or each worker. When the process's LAST test tears down (nextitem is None), after the runner has
+# finished tearing down every scope, session ones included (this implementation is a wrapper whose check follows its
+# yield, so it runs after the runner's own pytest_runtest_teardown; after one that raised, only when the runner left no
+# fixture for pytest to tear down later, as pytest_runtest_teardown's docstring says), each guarded thread still alive,
+# every non-daemon thread and every thread in those tables, is given until one shared deadline to end, and
+# the threads still alive at the deadline fail that teardown, each named with its target and its stack. Not waited for:
+# daemon threads outside those tables (the interpreter's shutdown joins none of them; an atexit handler may join one,
+# and the guard does not read atexit handlers), the main thread, the thread running this check, and any thread whose
+# name starts with pytest_timeout, or whose target's module, or a Timer's function's module, starts with pytest_timeout.
+# That exclusion exists for pytest-timeout's timer for the running test, a non-daemon threading.Timer that the plugin
+# cancels and joins only after the test's protocol returns, so under CI's --timeout-method=thread it is always alive
+# here.
+# HOW THE REPORT REACHES THE CONTROLLER: by two channels. The first is the teardown phase's test report. A worker sends
+# every test report to the controller over xdist's channel, this one included; the controller prints it as `ERROR at
+# teardown of <that test>` and counts it in the run's exit status. It is the channel that fails the run, since a
+# worker's exit status is not read, and a print to a worker's stdout would not be seen: that stdout goes to /dev/null.
+# Two of pytest's own plugins change that report after the guard has failed the teardown: its skipping plugin makes the
+# error of an xfail-marked test an xfail, which leaves the run green, and its unittest plugin puts a TestCase's second
+# stored error (a body and a cleanup that both fail) into the report in place of the guard's, which then names no
+# thread. So the guard records its failure in the item's stash, and this file's one pytest_runtest_makereport
+# hookwrapper, which runs outside both plugins' report hooks (the order, and why it holds, are in the docstring of
+# _guard_failure_into_report), marks that teardown report failed and, when it carries another outcome
+# (the TestCase's error or skip, or a fixture's teardown error or skip the runner raised before the guard ran, which
+# that teardown then raises), adds the guard's text after that outcome (_guard_failure_into_report); the wrapper then
+# redacts the report as it redacts every report. The second is stderr: the guard writes the same text there
+# (_guard_failure_to_stderr), through the same redaction, and no report hook can change it. A worker's stderr is the
+# controller's, so the text reaches the log serially and under xdist; a line from the terminal reporter at session
+# finish would not, since in a worker the reporter writes to that /dev/null stdout. Run serially, both print before the
+# interpreter exits (stderr at the check, the error in the run's summary), so a serial cell that then hangs at exit on a
+# thread still running (until the thread ends or the cap cancels the cell) names the thread in its log; an idle
+# concurrent.futures worker or a thread stopped only after the check lets the process exit after the error. The test the
+# error names is the process's last, where the check runs, not necessarily the one that started the thread; the thread's
+# target and stack say where it came from.
+# THE CAP, 10 s, from the census of 2026-09-26 on the fork's main (the full suite on 3.12 at -n 2, twice, and at -n 4;
+# every third test module, 314 of 940, serially, twice each on 3.12 and on 3.14t with the GIL off). No non-daemon thread
+# but pytest-timeout's timer was alive at any session end, so no exit latency could be measured there (that census read
+# non-daemon threads only). The tests' own joins measured it instead: the longest time from a stop to a thread's end was
+# 5.03 s, a daemon thread's end under the product's 5 s wait for a session host's hello. The longest join of a
+# non-daemon thread, 2.98 s, was not an exit: it was a concurrency test's hammer threads joined as they finished their
+# work, so it bounds no exit latency. The cap is about twice 5.03 s and exactly twice tests/test_thread_stop_census.py's
+# BOUND_S (5 s, the longest wait that census reads as bounded). A run that leaves no thread pays nothing, since a join
+# returns the moment its thread ends; a run that leaks one pays the cap once per process, then fails. A last test whose
+# own teardown fails or skips (a fixture's teardown raised, and the runner went on to tear down the rest) is checked
+# too, after the runner's teardown: the report carries that outcome with the guard's text after it, and under an xfail
+# mark, which would make that error an xfail, stays an error. A teardown the runner stopped partway with fixtures of a
+# wider scope still set up (a fixture whose node is not the session's raised, at teardown, a BaseException that is
+# neither an Exception nor one of pytest's outcomes: asyncio.CancelledError or SystemExit, say) is not checked: the
+# stopped node's remaining fixtures are never torn down, and those of wider scopes, and their threads, stay up until
+# pytest_sessionfinish. When that node is the session's, nothing is left on the runner's stack and the guard runs.
+# AFTER THE CHECK, which runs at the last test's teardown. A thread STARTED after it, in a pytest_sessionfinish or
+# pytest_unconfigure hook or an atexit handler, is not checked. A thread STOPPED only after it, by a config.add_cleanup
+# callback, pytest_sessionfinish or pytest_unconfigure, is checked and fails the guard, although the process would exit:
+# the guard cannot tell a thread a later hook will stop from one nothing stops. The witness is the leak pins in
+# tests/test_session_end_thread_guard.py: their leaked thread is released at pytest_unconfigure, the run fails, the stop
+# writes a release marker, and every process that ran tests then writes its atexit marker, which the interpreter runs
+# only after concurrent.futures' exit hooks and its join of the non-daemon threads have returned. Nothing in tests/
+# starts or stops a thread there today: its pytest_sessionfinish and pytest_unconfigure hooks and its atexit handlers
+# only remove directories, and it registers no config cleanup.
+# concurrent.futures THREADS fail the guard for either of two causes. A ThreadPoolExecutor's worker (of a pool, or of an
+# asyncio event loop's default executor) or a ProcessPoolExecutor's manager thread may be IDLE, in a pool left without
+# shutdown or a loop never closed: no join ends it, but the interpreter wakes it at exit (threading._register_atexit),
+# so it would not have hung a serial run or kept an xdist worker from exiting, and failing on it is the stricter
+# reading. Or it may be BUSY, with a task still running (in the worker, or in the manager thread's pool), which
+# shutdown(wait=False) and loop.close() (it shuts its default executor down with wait=False) do not end: at exit the
+# process waits for that task like any other thread still running. Either cause holds for a thread of either daemon
+# flag, since the exit hooks wake and join daemon ones too: the guard reads the hooks' tables (EXIT_JOIN_TABLES) and
+# waits for every thread in them, and a loaded concurrent.futures module without its table fails the guard, naming the
+# attribute, rather than leaving its daemon threads unread. A table whose every read raises until the deadline (another
+# thread adding to it without pause) fails the guard by the table's name, and that failure names the non-daemon threads
+# still alive, which need no table; the daemon threads the table would list go unnamed. The report's label names both
+# causes, idle and busy; a ThreadPoolExecutor worker's stack shows which, and a manager thread's stack reads the same
+# either way. A process that leaves one pays the cap once. No non-daemon one was left at a session end on main (the
+# census above, which read non-daemon threads only). CI, running this guard at an earlier head of the pull request that
+# made it read those tables, named one thread: an idle default-executor worker, a daemon thread, left by
+# tests/test_session_move.py's fixture loops, which the same pull request fixes (that module's loop cleanup, _end_loop,
+# now ends it). A run of the full suite on 2026-09-28 at that pull request's head after its merge of the fork's main
+# that day (3.12, two workers, the Run pytest step's flags, -p no:anyio among them; the served-page tests skipped, the
+# extension's node deps absent; the Claude Agent SDK, which CI's Python cells install since that merge, not installed)
+# left none of either flag: the guard named no thread there.
+THREAD_GUARD_CAP_S = 10.0
+_monotonic = time.monotonic   # bound at import: a test's leaked patch of time.monotonic cannot move the guard's deadline
+_enumerate = threading.enumerate    # bound at import too: a test's leaked patch of threading.enumerate cannot empty the
+                                    # guard's list, and a test that patches this name reaches the guard alone
+# The tables concurrent.futures' exit hooks join, as (module, attribute). The two hooks are the only functions the
+# standard library registers with threading._register_atexit (3.10 to 3.14), which threading._shutdown calls before it
+# joins the non-daemon threads; each joins every thread in its module's table, whatever the thread's daemon flag.
+EXIT_JOIN_TABLES = (("concurrent.futures.thread", "_threads_queues"),      # ThreadPoolExecutor workers
+                    ("concurrent.futures.process", "_threads_wakeups"))    # ProcessPoolExecutor manager threads
+# The guard's failure, in the stash of the item whose teardown it failed, for _guard_failure_into_report.
+_GUARD_FAILURE = pytest.StashKey()
+
+
+class _ExitJoinTableKeptChanging(pytest.fail.Exception):
+    """_exit_joined_threads' failure for a table whose every read raised RuntimeError until the deadline passed. It is a
+    pytest.fail failure, so any caller fails the same way; threads_left_at_session_end catches it to add the non-daemon
+    threads still alive, which are guarded whatever the table lists."""
+
+
+def _exit_joined_threads(deadline):
+    """The threads concurrent.futures' exit hooks will join, whatever their daemon flags: every thread in the table of
+    each EXIT_JOIN_TABLES module that is loaded. This file imports concurrent.futures.thread, so its table is always
+    read; a process that never loaded concurrent.futures.process has no ProcessPoolExecutor. A loaded module without its
+    table fails the guard, naming the attribute, rather than leaving unguarded the daemon threads that table would list.
+    A read that raises RuntimeError (another thread added to the table while it was read) is retried at once, until a
+    read succeeds or `deadline`, a time on the guard's clock (_monotonic), passes; a read that raises after that fails
+    the guard, naming the table (_ExitJoinTableKeptChanging), so no read is retried after the deadline. A read already
+    running at the deadline finishes, and a table read first after it is read once. A table keeps a thread that has
+    ended until the thread object is collected; the guard asks it only about listed threads, which are alive."""
+    joined = set()
+    for module, attr in EXIT_JOIN_TABLES:
+        mod = sys.modules.get(module)
+        if mod is None:
+            continue
+        table = getattr(mod, attr, None)
+        if table is None:
+            pytest.fail("tests/conftest.py's session-end thread guard cannot read %s.%s on this Python (%s): "
+                        "that table lists the threads concurrent.futures' exit hook joins at exit whatever their "
+                        "daemon flag, and without it the guard cannot tell which daemon threads hold the process at "
+                        "exit. Find where this Python keeps the table and point EXIT_JOIN_TABLES at it."
+                        % (module, attr, sys.version.split()[0]), pytrace=False)
+        while True:
+            try:
+                joined.update(table)    # a WeakKeyDictionary: iterating it yields its threads
+                break
+            except RuntimeError:        # another thread added to the table while it was read: read it again,
+                if _monotonic() >= deadline:    # up to the deadline
+                    raise _ExitJoinTableKeptChanging(
+                        "tests/conftest.py's session-end thread guard could not read %s.%s before its deadline: every "
+                        "read of it on the guard's last pass raised RuntimeError, as iterating the table does when "
+                        "another thread adds to it mid-read, until the deadline passed. Without the table the guard "
+                        "cannot tell which daemon threads hold the process at exit. Something in this process was "
+                        "still adding to the table, starting concurrent.futures threads, at the end of its session."
+                        % (module, attr), pytrace=False) from None
+    return joined
+
+
+def _pytest_timeout_timer(t):
+    """Whether the guard takes `t` for pytest-timeout's: a thread whose name starts with `pytest_timeout` (the plugin names
+    its timer `pytest_timeout <nodeid>`), or whose callable's module starts with it (a Timer keeps its callable as
+    `function`, a Thread as `_target`). Any such thread matches, not only the running test's timer, which is the thread
+    this exclusion exists for: it is alive through the check. A prefix and not an exact module, because CI installs the
+    plugin unpinned: a release that moved its function into a submodule would otherwise fail every cell on the timer."""
+    fn = getattr(t, "function", None) or getattr(t, "_target", None)
+    mod = (getattr(fn, "__module__", None) or "") if fn is not None else ""
+    return t.name.startswith("pytest_timeout") or mod.startswith("pytest_timeout")
+
+
+def _guarded_thread(t, joined_at_exit=None):
+    """Whether the session-end guard waits for `t`: a non-daemon thread, or a daemon thread in `joined_at_exit` (the
+    threads concurrent.futures' exit hooks join; when it is not given, _exit_joined_threads is read here, its deadline
+    THREAD_GUARD_CAP_S from the call), other than the main thread and the thread running the check, and not one
+    _pytest_timeout_timer matches (a `pytest_timeout` prefix of its name or of its callable's module)."""
+    if t is threading.main_thread() or t is threading.current_thread() or _pytest_timeout_timer(t):
+        return False
+    if not t.daemon:
+        return True
+    if joined_at_exit is None:
+        joined_at_exit = _exit_joined_threads(_monotonic() + THREAD_GUARD_CAP_S)
+    return t in joined_at_exit
+
+
+def threads_left_at_session_end(cap_s):
+    """The guarded threads (_guarded_thread: every non-daemon thread, and every thread concurrent.futures' exit hooks
+    join whatever its daemon flag) still alive once each has had until one deadline, cap_s from the call, to end. Each
+    is joined in turn for the time remaining, and the thread list and the exit-join tables are read again after every
+    pass, so a thread that starts another as it exits is waited for too. Starts no thread. Every wait is a join, which
+    returns when its thread ends, except for two busy loops, each of which stops at its first check after the deadline:
+    past the deadline the guard finishes a read or a join already running and reads the thread list and each exit-join
+    table once more at most, then returns or fails. For a thread caught mid-start, which join refuses, the list is read again
+    at once until that start() returns; that loop spins only while every listed guarded thread is mid-start, since a
+    live one's join blocks the pass instead. For a read of an exit-join table that raises RuntimeError (another thread
+    added to the table mid-read), the table is read again at once until a read succeeds; a read that raises after the
+    deadline fails the guard, naming the table (_exit_joined_threads) and each non-daemon thread of that pass's list
+    still alive, with its stack, since those are guarded whatever the table lists. Returns [] when none is left. A
+    loaded concurrent.futures module without its exit-join table fails the guard (_exit_joined_threads)."""
+    deadline = _monotonic() + cap_s
+    while True:
+        listed = _enumerate()
+        # after the list: a listed worker whose pool's submit returned is in the table
+        try:
+            joined, kept_changing = _exit_joined_threads(deadline), None
+        except _ExitJoinTableKeptChanging as failure:
+            joined, kept_changing = None, failure.msg
+        # failed outside the except block: inside it, the report would print the table's failure a second time, as this
+        # failure's context, under "During handling of the above exception"
+        if kept_changing is not None:
+            alive = [t for t in listed if t.is_alive() and _guarded_thread(t, frozenset())]    # the non-daemon ones
+            frames = sys._current_frames()
+            pytest.fail("%s\n\n%s" % (kept_changing, (
+                "The non-daemon threads still alive then, which hold the process at exit whatever the table lists:"
+                "\n\n" + "\n".join(_thread_report(t, frames) for t in alive)) if alive
+                else "No non-daemon thread was alive then."), pytrace=False)
+        left = [t for t in listed if _guarded_thread(t, joined)]
+        if not left or _monotonic() >= deadline:
+            return left
+        for t in left:
+            try:
+                t.join(max(0.0, deadline - _monotonic()))
+            except RuntimeError:   # listed while another thread's start() was still running: the next pass reads it again
+                pass
+
+
+def _thread_report(t, frames):
+    """One thread for the guard's failure: its name, ident, what it runs and its stack from `frames`
+    (sys._current_frames())."""
+    target = getattr(t, "_target", None) or getattr(t, "function", None)    # a Timer keeps its callable as `function`
+    if target is not None:
+        runs = "%s.%s" % (getattr(target, "__module__", None) or "?", getattr(target, "__qualname__", None) or repr(target))
+    else:
+        runs = "%s.%s.run" % (type(t).__module__, type(t).__qualname__)     # a Thread subclass's own run()
+    if runs.startswith("concurrent.futures.thread."):
+        runs += (" (a ThreadPoolExecutor worker, of a pool or an asyncio loop's default executor: idle in one left without"
+                 " shutdown, or running a task, which shutdown(wait=False) and loop.close() do not end; its stack shows which)")
+    elif runs.startswith("concurrent.futures.process."):
+        runs += (" (a ProcessPoolExecutor's manager thread: a pool left without shutdown, or one shut down with wait=False"
+                 " while a task still runs; its stack reads the same either way)")
+    frame = frames.get(t.ident)
+    stack = "".join(traceback.format_stack(frame)) if frame is not None else "  (no stack: the thread ended as it was read)\n"
+    return "thread %r (ident %s) runs %s\n%s" % (t.name, t.ident, runs, stack)
+
+
+def _guard_failure_into_report(item, call, rep):
+    """The guard's failure kept in its teardown report, for this file's one pytest_runtest_makereport hookwrapper. That
+    wrapper runs outside the report hooks of pytest's skipping and unittest plugins and reads the report as they leave
+    it (the unittest plugin's is not a wrapper, and every wrapper runs around the implementations that are not; the
+    skipping plugin's is a wrapper marked, as this one is, neither tryfirst nor trylast, pluggy calls the later
+    registered of two such wrappers first, and this file registers after that plugin). Pytest's tmpdir plugin's report
+    wrapper, marked tryfirst, runs outside this one; it reads the report, recording whether the phase passed, and
+    changes nothing in it. The skipping and unittest hooks change the report of a teardown the guard failed: pytest's
+    skipping plugin makes the error of an xfail-marked test an xfail, which leaves the run green, and its unittest
+    plugin puts a TestCase's second stored error (a body and a cleanup that both fail) into the report in place of the
+    guard's, which then names no thread. So a teardown report whose item's stash holds the guard's failure
+    (pytest_runtest_teardown records it there) is marked failed, and loses the skipping plugin's wasxfail (pytest's
+    session counts a failed report toward the run's exit status only without one), and when the outcome it carries is
+    not the guard's error, the guard's text is added after that outcome. That is the unittest case (a TestCase's second
+    error, or a skip, in the guard's place), and also a teardown whose runner raised first (a fixture's teardown failed
+    or skipped): pytest_runtest_teardown runs the guard after that, when the runner went on to tear down every fixture,
+    and raises it again, so it is the one the report carries. The wrapper redacts the report after this step, so the
+    added text goes through the same redaction as the rest of the report and the guard's stderr copy."""
+    if call.when != "teardown":
+        return
+    failure = item.stash.get(_GUARD_FAILURE, None)
+    if failure is None:
+        return
+    rep.outcome = "failed"
+    if hasattr(rep, "wasxfail"):
+        del rep.wasxfail
+    if call.excinfo is not None and call.excinfo.value is failure:
+        return                                          # the report's error is the guard's own
+    lr = rep.longrepr
+    parts = [] if lr is None else [lr[2] if isinstance(lr, tuple) and len(lr) == 3 else str(lr)]
+    parts += ["[tests/conftest.py, the session-end thread guard] this teardown also failed the guard. The outcome "
+              "above is the one this report carries (a fixture's teardown that failed or skipped, or an outcome "
+              "pytest's unittest plugin put in the guard's place); the guard's error follows.", str(failure)]
+    # _redacted_longrepr keeps the crash location of the error the report carries, which the short summary's line
+    # reads; the text it is handed is redacted by the wrapper's next step
+    rep.longrepr = _redacted_longrepr(lr, "\n\n".join(parts))
+
+
+def _redact_as_exconly(failure):
+    """The failure's text, str(failure), scrubbed as the report prints a failure raised with a traceback: pytest renders
+    that exception as its exconly does, the type name, a colon and the message (`Failed: <message>` for a pytest.fail
+    failure), on the first line of its error under the `E` marker, and in the report's crash message, which the short
+    test summary prints. The colon puts the message's first word in the pattern net's value position (after `: `), so a
+    token that leads such a failure's message is masked in the report, and the bare message leaves it at the start of a
+    line, where, with more text after it, no rule reads it as a value. So the rendering is scrubbed as the stderr copy
+    is (as it stands, then under the marker, _redact_crash_message), and the type name and colon are taken off again.
+    When the scrub changed them (an environment value or a token in the type name), the scrubbed rendering is returned
+    whole, type name included. A failure raised with pytrace=False is scrubbed the same way here, but the report prints
+    it differently: its error is the bare message, and _redact_report rebuilds the crash message only when the report's
+    text changed, so the report prints a leading token raw and only the stderr copy masks it. That gap is
+    _redact_report's."""
+    message = str(failure)
+    excinfo = pytest.ExceptionInfo.from_exc_info((type(failure), failure, failure.__traceback__))
+    rendered = excinfo.exconly(tryshort=True)
+    stype, sep, _rest = rendered.partition(": ")
+    if not message or not sep:      # an empty message renders as the type name alone, with no colon
+        return message
+    prefix = stype + sep
+    scrubbed = _redact_crash_message(redact_report_text(prefix + message))
+    return scrubbed[len(prefix):] if scrubbed.startswith(prefix) else scrubbed
+
+
+def _guard_failure_to_stderr(item, failure):
+    """The guard's second channel: its failure's text, written to stderr, which no report hook can change (the first,
+    the teardown's report, is kept failed and naming the threads by _guard_failure_into_report). The capture plugin
+    captures stderr during a teardown, so it is suspended for the write, which then reaches this process's own stderr.
+    Under pytest-xdist that is the controller's stderr: execnet, xdist's transport, points a worker's stdout at
+    /dev/null but, outside Windows, does not redirect its stderr (on Windows it moves sys.stderr to a copy of the
+    controller's). Everything written goes through the teardown report's redaction, in the order _redact_report applies
+    it (_note_env_values, then redact_report_text), three ways. The failure's text is scrubbed first as pytest's exconly
+    renders it, the type name, a colon and the message (_redact_as_exconly): for a failure raised with a traceback, the
+    report prints that rendering on the first line of its error and in its crash message, where the colon puts the
+    message's first word in the pattern net's value position and the report masks a token there, and stderr prints the
+    message without the type name. (For a failure raised with pytrace=False the report prints a leading token raw and
+    this copy masks it; _redact_as_exconly's docstring says why.) Then the whole write, the header with its node id and
+    worker name included, is scrubbed as it stands, and then again with each line under pytest's `E` marker
+    (_redact_crash_message): the report prints a failure raised with a traceback (a pytest.fail inside the guard's call,
+    from a Thread subclass's join, say) under that marker, where the pattern net's rules for a failed comparison's diff
+    lines apply, and stderr prints it bare. CI's logs are public, and a value the report masks (a thread named with an
+    environment value, say) must not reach them raw here. One window is left: this copy is scrubbed with the values
+    noted at the guard's check, and the report later, at report time, so a value that enters the environment between the
+    two (written by a thread still running then, say, which is a thread the guard names) is masked in the report and
+    printed raw here."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    _note_env_values()
+    text = ("\n[tests/conftest.py, the session-end thread guard] the teardown of %s, this process's last test%s, fails "
+            "with the error below. It is written to stderr as well as to that teardown's report, as a second channel "
+            "that no report hook can change.\n%s\n"
+            % (item.nodeid, " (pytest-xdist worker %s)" % worker if worker else "", _redact_as_exconly(failure)))
+    # the whole write, nothing below writes any other text: scrubbed as it stands and then marked, as the report's crash
+    # message is (_redact_crash_message), since the report prints a message with a traceback under pytest's `E` marker
+    text = _redact_crash_message(redact_report_text(text))
+    capman = item.config.pluginmanager.getplugin("capturemanager")
+    if capman is None:                          # -p no:capture: nothing captures stderr
+        sys.stderr.write(text)
+        sys.stderr.flush()
+        return
+    with capman.global_and_fixture_disabled():
+        sys.stderr.write(text)
+        sys.stderr.flush()
+
+
+@pytest.hookimpl(wrapper=True, trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """The session-end thread guard (above): at the process's last test only, once the runner has finished tearing
+    down every scope, the guarded threads still alive at THREAD_GUARD_CAP_S fail this teardown, each named with its
+    stack. Every failure of the guard takes two channels: this teardown's report, which this file's
+    pytest_runtest_makereport keeps failed and naming the threads from the failure recorded here in the item's stash
+    (_guard_failure_into_report), and the same text on stderr (_guard_failure_to_stderr). A wrapper, so the guard runs
+    after the runner's teardown (trylast: the innermost wrapper, around the runner's own implementation and inside the
+    capture plugin's). When that teardown raised, the guard runs only if the runner's stack of set-up nodes
+    (item.session._setupstate.stack) is empty, so that no fixture is left for pytest to tear down after this check. The
+    runner collects an Exception or one of pytest's outcomes (pytest.fail's, pytest.skip's) raised by a fixture's
+    teardown, goes on to tear down the rest, and raises it (several as one group) once the stack is empty: that error or
+    skip stays the one this teardown raises, and the report step adds the guard's text after it; under an xfail mark
+    the skipping plugin would otherwise make that error an xfail, and a guard that did not run there left the run green
+    with the threads unnamed. A BaseException that is neither (asyncio.CancelledError, SystemExit) stops the runner at
+    the node whose finalizer raised it: that node's remaining finalizers never run, and the nodes of wider scopes stay
+    on the stack, their fixtures set up and their threads running, until pytest_sessionfinish tears them down after
+    this check. Then the error is raised again without the check, as it is on KeyboardInterrupt or pytest.exit, which
+    end the session at once: a thread such a run leaks goes unnamed, and under an xfail mark, which makes that error an
+    xfail, the run passes. When that node is the session's, the last on the stack, the stack is empty and the guard
+    runs: nothing is left for pytest_sessionfinish, and a thread of a fixture whose finalizer never ran is still running
+    at exit."""
+    try:
+        result = yield
+    except (KeyboardInterrupt, pytest.exit.Exception):
+        raise
+    except BaseException:           # pytest.fail and pytest.skip raise BaseExceptions, not Exceptions
+        # checked only when the runner's teardown finished: a fixture of a wider scope still set up keeps its threads
+        if nextitem is None and not item.session._setupstate.stack:
+            _guard_into_both_channels(item)
+        raise
+    if nextitem is None:
+        failure = _guard_into_both_channels(item)
+        if failure is not None:
+            raise failure
+    return result
+
+
+def _guard_into_both_channels(item):
+    """Runs the guard for pytest_runtest_teardown. Its failure, when it fails, is recorded in the item's stash for the
+    report step (_guard_failure_into_report), written to stderr (_guard_failure_to_stderr), and returned; None when it
+    passes."""
+    try:
+        _session_end_thread_guard(item)
+    except pytest.fail.Exception as failure:
+        item.stash[_GUARD_FAILURE] = failure
+        _guard_failure_to_stderr(item, failure)
+        return failure
+    return None
+
+
+def _session_end_thread_guard(item):
+    """The check itself, for pytest_runtest_teardown: fails, through pytest.fail, naming each guarded thread still
+    alive at THREAD_GUARD_CAP_S with its stack; a table it cannot read fails it too (_exit_joined_threads)."""
+    left = threads_left_at_session_end(THREAD_GUARD_CAP_S)
+    if not left:
+        return
+    frames = sys._current_frames()
+    pytest.fail("threads still running at the end of this process's session, after up to %g s for each to end "
+                "(tests/conftest.py, the session-end thread guard): non-daemon threads, and concurrent.futures "
+                "threads of either daemon flag, which its exit hooks join. A thread a test starts must end before the "
+                "test does. A named thread still running when the interpreter exits keeps the process from exiting: "
+                "run serially, the run hangs until the thread ends or the job cap cancels it; under pytest-xdist the "
+                "controller kills a worker still alive when the run ends, and the run would pass without this report. "
+                "Two kinds of named thread let the process exit and fail this guard all the same: an idle "
+                "concurrent.futures worker, which the interpreter wakes at exit, and a thread stopped only after this "
+                "check (a config cleanup, pytest_sessionfinish or pytest_unconfigure). %s is this process's last test, "
+                "where the check runs, and not necessarily the one that started a thread; each thread's target and "
+                "stack say where it came from."
+                "\n\n%s" % (THREAD_GUARD_CAP_S, item.nodeid, "\n".join(_thread_report(t, frames) for t in left)),
+                pytrace=False)
+
+
 # Browser-backed served-page tests fail loudly where they must run (T308, 2026-09-10). tests/test_*_browser.py and
 # tests/test_*_served.py boot a hermetic kernel and drive the real dashboard pages in playwright's Chromium; on a machine
 # without the extension's node deps or a browser they skip, and say why. CI's Python matrix jobs are such machines, so a
 # served-page regression never turned them red (the deep-link landing pin, T307, red on main while CI stayed green). The
-# extension job installs that browser and runs these files with ROMP_SERVED_TESTS_REQUIRE=1: any skip in them (a class
+# served-pages job installs that browser and runs these files with ROMP_SERVED_TESTS_REQUIRE=1: any skip in them (a class
 # setUp that finds no deps, a driver that exits 3 for a missing browser, a kernel that never served) is reported as a
 # FAILURE carrying the skip's own reason, the stance the pane bench takes with ROMP_UI_BENCH_REQUIRE. One exception a
 # test can claim for itself: a skip whose reason begins with "optional:" stays a skip, for a leg the runner has declared
@@ -840,8 +2011,45 @@ def wait_for_census(before, timeout=5.0):
 _SERVED_TESTS_REQUIRE = os.environ.get("ROMP_SERVED_TESTS_REQUIRE") == "1"
 
 
+def _node_file(node) -> str:
+    """The basename of the file a collected node (an item, a module collector) came from."""
+    return os.path.basename(str(getattr(node, "path", None) or node.fspath))
+
+
+def _skip_reason(rep) -> str:
+    """The text of a skipped report: the reason of its (path, line, reason) longrepr; an xfail's declared
+    reason (its longrepr is the traceback of the failure the xfail absorbed); else the longrepr's text."""
+    lr = rep.longrepr
+    if isinstance(lr, tuple) and len(lr) == 3:
+        return lr[2]
+    if getattr(rep, "wasxfail", None):
+        return "xfail: %s" % rep.wasxfail
+    return str(lr)
+
+
+def _fail_skipped_report(rep, longrepr) -> None:
+    """The one flip every belt uses: a skipped report (a TestReport or a CollectReport) becomes a failed one
+    carrying `longrepr`. An xfail's `wasxfail` attribute is removed first, and by hasattr, not truthiness: a bare
+    @pytest.mark.xfail sets it to "". pytest's session counts a failed report toward the exit status only when the
+    report has no `wasxfail` (Session.pytest_runtest_logreport), so a flipped xfail that kept it printed FAILED and
+    exited 0. The served switch did exactly that until the flip was shared here (2026-09-21): its caller flipped
+    the outcome without the delete while the never-skips belt beside it deleted, so the two belts disagreed on
+    the one report shape the shared _skip_reason has a branch for. Callers compute the skip's reason BEFORE this
+    call: _skip_reason reads wasxfail. A caller's exemption (the served switch's `optional:` skips) returns before
+    reaching here, so an exempt skip keeps its report untouched. Pinned by execution, each on an xfail that is a
+    file's ONLY skip, so the exit status is the assertion and no sibling skip carries it: in
+    tests/test_served_tests_require.py the xfail-alone case and its bare twin, in tests/test_ci_sdk_pin.py NeverSkips'
+    xfail-only case and its bare twin (BARE_XFAIL_ONLY). The bare twins pin the hasattr: a bare xfail's wasxfail is
+    empty, so a delete by truthiness kept it and the run printed FAILED and exited 0, while both reasoned cases passed
+    (review round 4, 2026-09-23)."""
+    if hasattr(rep, "wasxfail"):
+        del rep.wasxfail
+    rep.outcome = "failed"
+    rep.longrepr = longrepr
+
+
 def _is_served_test_file(item) -> bool:
-    name = os.path.basename(str(getattr(item, "path", None) or item.fspath))
+    name = _node_file(item)
     return name.startswith("test_") and (name.endswith("_browser.py") or name.endswith("_served.py"))
 
 
@@ -852,10 +2060,94 @@ def _require_served_test_ran(item, rep) -> None:
     if not _SERVED_TESTS_REQUIRE:
         return
     if rep.skipped and _is_served_test_file(item):
-        lr = rep.longrepr
-        reason = lr[2] if isinstance(lr, tuple) and len(lr) == 3 else str(lr)
+        reason = _skip_reason(rep)
         if re.match(r"^(Skipped: )?optional:", reason):
             return
-        rep.outcome = "failed"
-        rep.longrepr = ("ROMP_SERVED_TESTS_REQUIRE=1: a browser-backed test skipped (at %s) where it must run: %s"
-                        % (rep.when, reason))
+        _fail_skipped_report(rep, "ROMP_SERVED_TESTS_REQUIRE=1: a browser-backed test skipped (at %s) where it must run: %s"
+                             % (rep.when, reason))
+
+
+# A file listed here declares that every one of its tests checks something on every road, so a skip outcome in it,
+# from any spelling (pytest.mark.skipif, unittest.skipIf, self.skipTest, SkipTest raised in setUpClass, a module-level
+# pytest.importorskip or pytest.skip(allow_module_level=True); an xfail too, which pytest records as a skipped
+# outcome), at collection, at setup or in the test body, is reported as a FAILURE carrying the skip's own reason.
+# Always on, no switch: no road of tests/test_ci_sdk_pin.py is a skip (on an interpreter without the SDK its
+# InstalledVersion test asserts the pin's form and warns; where the run requires the SDK it fails), so a skip there is
+# a pin reporting green having checked nothing. The property is read from the report, in the worker under xdist and in
+# the one process serially, so nothing depends on which test ran last or on which spelling an edit used.
+# 2026-09-20: the guard before this was a five-name list of unittest spellings inside the module, which
+# pytest.mark.skipif and a module-level pytest.importorskip passed, and which a module-level skip removed from the run
+# entirely (the guard never ran). Proved by execution in tests/test_ci_sdk_pin.py's NeverSkips. What a report cannot
+# show is a test that was never collected: a method renamed off the test_ prefix, deleted or fenced behind an if files
+# nothing to flip, so NeverSkips pins, in a child pytest --collect-only -q, that pytest's collector lists the ONE test
+# the belt exists for, InstalledVersion's, by node id; its in-process case pins only the method's name against
+# unittest's loader, which is not the collector (UnitTestCase.collect drops a class or method whose __test__ is False,
+# which the loader never reads); those census cases cover that one test, not the module. The literal below is checked
+# against the tree (2026-09-21; before this a copy renamed test_ci_sdk_pin_v2.py ran with the belt inert, a skip in it
+# a plain skip and every test green): NeverSkips asserts its own module's basename is in the tuple as written, and
+# tests/test_served_tests_require.py, outside the guarded module, asserts every entry names a file under tests/, so
+# a rename reds in both and a deletion reds there; both read it through never_skip_files_as_written below. The
+# residual, stated for what it is: the census lives in the module it guards, so a road that changes what a run
+# collects without touching the file files no report, takes the census with it or acts on the run where the
+# census's child may not see it, and the run stays green. The road is a class, and no list closes it: anything that changes what the run collects,
+# among them a collect_ignore or collect_ignore_glob, a collection hook in a conftest or plugin (pytest_ignore_collect,
+# pytest_collection_modifyitems), an ini file's test-file pattern, testpaths or addopts, PYTEST_ADDOPTS, --ignore or
+# --ignore-glob, -k, -m or --deselect, and a module-level __test__ = False. As read on 2026-09-24: none of these is on
+# ci.yml's Run pytest line (no path, no -k, no --ignore) or in its env (no PYTEST_ADDOPTS), and those two are held
+# since round 5's ruling C: tests/test_ci_sdk_pin.py's run_pytest_status refuses a word on that line outside its option
+# allowlist and a key of its merged env outside its env allowlist; no conftest in the tree sets collect_ignore or
+# collect_ignore_glob or defines a collection hook (this file, the only one, implements two reporting hooks,
+# pytest_make_collect_report and pytest_collectreport, which drop nothing); and the repo has no pytest.ini,
+# .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, setup.cfg or tox.ini. Of the rest of that read,
+# tests/test_thread_stop_census.py's test_the_population_is_what_pytest_collects_under_tests holds pytest.ini,
+# setup.cfg, tox.ini and pyproject.toml absent at the repository root and in tests/ itself; nothing pins the conftest
+# read, .pytest.ini, pytest.toml or .pytest.toml, or any of the seven in a directory below those two.
+_NEVER_SKIP_FILES = ("test_ci_sdk_pin.py",)
+
+
+def never_skip_files_as_written(path=None) -> tuple:
+    """The tuple assigned to _NEVER_SKIP_FILES above, read from THIS FILE'S TEXT with ast.literal_eval rather than
+    returned from the name: the two checks that consume it (NeverSkips' membership case in tests/test_ci_sdk_pin.py,
+    the existence case in tests/test_served_tests_require.py) are about the literal a reader sees and the belt keys
+    on, whichever conftest object their process loaded. A missing assignment, or one whose value is not a literal
+    tuple (a name, a call, a comprehension, a list), is an AssertionError that says so and names the line, never an
+    AttributeError from a walk over elts; `path` exists so those refusals can be run against a scratch file
+    (tests/test_served_tests_require.py), and defaults to this file."""
+    path = os.path.realpath(path or __file__)
+    where = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path))   # tests/conftest.py
+    with open(path) as f:
+        tree = ast.parse(f.read(), path)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "_NEVER_SKIP_FILES" for t in node.targets):
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, TypeError):
+                raise AssertionError("%s:%d: _NEVER_SKIP_FILES is not a literal tuple (a %s)"
+                                     % (where, node.lineno, type(node.value).__name__))
+            if not isinstance(value, tuple):
+                raise AssertionError("%s:%d: _NEVER_SKIP_FILES is a literal %s, not a tuple"
+                                     % (where, node.lineno, type(value).__name__))
+            return value
+    raise AssertionError("%s assigns no _NEVER_SKIP_FILES at module level" % where)
+
+
+def _never_skip_longrepr(name, where, reason) -> str:
+    return ("never-skips: %s skipped (at %s) where every test checks something on every road (tests/conftest.py, "
+            "_NEVER_SKIP_FILES): %s" % (name, where, reason))
+
+
+def _require_never_skip_ran(item, rep) -> None:
+    """A skipped report for a test in a _NEVER_SKIP_FILES file is a failure carrying the skip's reason. Called
+    from the one pytest_runtest_makereport above; always on. The flip is _fail_skipped_report's, which removes an
+    xfail's `wasxfail` so the failure counts toward the exit status."""
+    if rep.skipped and _node_file(item) in _NEVER_SKIP_FILES:
+        reason = _skip_reason(rep)
+        _fail_skipped_report(rep, _never_skip_longrepr(_node_file(item), rep.when, reason))
+
+
+def _require_never_skip_collected(collector, rep) -> None:
+    """The collection half (pytest_make_collect_report above): a skipped CollectReport for a _NEVER_SKIP_FILES
+    module, which a module-level skip produces in place of any items, becomes a failed one, a collection error."""
+    if rep.skipped and _node_file(collector) in _NEVER_SKIP_FILES:
+        reason = _skip_reason(rep)
+        _fail_skipped_report(rep, _never_skip_longrepr(_node_file(collector), "collection", reason))

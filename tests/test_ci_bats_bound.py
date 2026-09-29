@@ -44,37 +44,57 @@ class BatsStepBound(unittest.TestCase):
 
 
 class PythonJobCeiling(unittest.TestCase):
-    """The python job's ceiling is per cell (2026-09-16): the macOS cells run the same suite in 17 to 25 minutes on the
-    image's slower runners, and the 3.10 cell was cancelled at the job's 25-minute ceiling after 25 min 27 s on one
-    dispatch having completed in 24 min 43 s on the one before, so the release's combined proof could die on a minute's
-    margin. macOS gets 40 minutes; Linux keeps 25, where the suite finishes in 12 to 15."""
+    """The python job's ceiling is per cell (2026-09-16): the macOS cells run the same suite on the image's slower
+    runners, and the 3.10 cell was cancelled at the job's 25-minute ceiling after 25 min 27 s on one dispatch having
+    completed in 24 min 43 s on the one before, so the release's combined proof could die on a minute's margin. Forty
+    minutes then; sixty since 2026-09-24, when the release dispatch (run 35976250043) had the 3.13 macOS cell green in
+    38 min 52 s and the 3.10 macOS cell cancelled at 40 min 20 s with no failure in its log, the same cells having taken
+    33 to 35 minutes on the dispatch five hours before. The 3.10 cell reached 90 percent 36 min 40 s into its pytest
+    step and the 3.13 cell's pytest step ended about 5.5 minutes after its own 90 percent, so the 3.10 suite sits near
+    42 to 43 minutes; the rule (the suite plus the 600 s per-test timeout plus setup) gives 53 to 54, the floor is 54
+    and the ceiling 60, so a revert to 40 goes red. Linux 25 to 35 the same day by the same rule: the 3.10
+    Linux cell took 19 min 34 s on the dispatch of 2026-09-24 03:48 UTC (run 35952964334), under six minutes short of
+    the cap where about 20 plus 10 plus setup is about 31; its floor is 30 and its ceiling 45."""
     def setUp(self):
         src = open(WF).read()
         m = re.search(r"^  python:\n((?:    .*\n|\n)+?)    strategy:\n", src, re.M)
         self.assertTrue(m, "the python job's head moved: re-anchor this pin")
         self.head = m.group(1)
 
-    def test_macos_cells_get_forty_minutes_and_linux_keeps_twenty_five(self):
+    def test_macos_cells_get_sixty_minutes_and_linux_thirty_five_and_neither_reverts_below_its_floor(self):
         m = re.search(r"^    timeout-minutes: \$\{\{ matrix\.os == 'macos-latest' && (\d+) \|\| (\d+) \}\}$", self.head, re.M)
         self.assertTrue(m, "the python job's timeout-minutes is not the per-cell expression (macos-latest && N || M)")
         macos, linux = int(m.group(1)), int(m.group(2))
-        self.assertGreaterEqual(macos, 40, "the macOS cells need the margin: 25 min 27 s measured against a 25-minute ceiling")
+        self.assertGreaterEqual(macos, 54, "the macOS cells need the margin: on run 35976250043 (2026-09-24) the 3.13 cell was green at "
+                                "38 min 52 s and the 3.10 cell cancelled at 40 min 20 s by the 40-minute cap, at 90 percent 36 min 40 s "
+                                "into its pytest step, so its suite sits near 42 to 43 minutes; that plus the 600 s per-test timeout "
+                                "plus setup is 53 to 54, so a cap below 54 cuts a green run")
         self.assertLessEqual(macos, 60, "past an hour a hung macOS cell eats the dispatch")
-        self.assertEqual(linux, 25, "the Linux cells keep their measured ceiling (12 to 15 minutes of suite under it)")
+        self.assertGreaterEqual(linux, 30, "the Linux cells need the margin: the 3.10 Linux cell took 19 min 34 s on run 35952964334 "
+                                "(2026-09-24) under a 25-minute cap; about 20 minutes of suite plus the 600 s per-test timeout plus "
+                                "setup is about 31, so a cap below 30 cuts a green run")
+        self.assertLessEqual(linux, 45, "a hung Linux cell past 45 minutes holds every PR's required check for nothing")
 
 
 class ExtensionJobCeiling(unittest.TestCase):
-    """The vscode-extension job runs the served labs, which grow with every lab added: PR 1790's run was cancelled at the
-    job's 25-minute ceiling after 25 min 04 s mid lab on a slow runner, every step green up to the cut (2026-09-16). Forty
-    minutes: the served step's twenty-odd minutes on a slow runner plus the 600 s per-test timeout plus setup."""
-    def test_the_extension_job_gets_forty_minutes(self):
+    """The vscode-extension job ran the served labs until 2026-09-28, and they set its cap: PR 1790's run was cancelled at
+    the job's 25-minute ceiling after 25 min 04 s mid lab on a slow runner, every step green up to the cut (2026-09-16), so
+    forty minutes, the served step's twenty-odd minutes on a slow runner plus the 600 s per-test timeout plus setup. The
+    labs now run in the served-pages job (tests/test_ci_served_job.py holds both jobs equal to literals, caps included).
+    Without them the job took 4 min 45 s on main's run 36555049532 at 6dd80a6e7, and its cap is 17 minutes, sized in the
+    job's comment in ci.yml for a head that rosters the legs open PRs are known to add, with a Browser legs bound of about
+    that step's time and half again. The floor is that 17: a lower cap is sized again in the same change, and
+    tools/ci-browser-legs.test.mjs derives the Browser legs step's margin from that step's record and this cap."""
+    def test_the_extension_job_gets_seventeen_minutes(self):
         src = open(WF).read()
         m = re.search(r"^  vscode-extension:\n((?:    .*\n|\n)+?)    defaults:\n", src, re.M)
         self.assertTrue(m, "the extension job's head moved: re-anchor this pin")
         t = re.search(r"^    timeout-minutes: (\d+)$", m.group(1), re.M)
         self.assertTrue(t, "the extension job has no plain timeout-minutes line")
-        self.assertGreaterEqual(int(t.group(1)), 40, "the served labs took 25 min 04 s on a slow runner against a 25-minute ceiling")
-        self.assertLessEqual(int(t.group(1)), 60, "past an hour a hung lab eats the run")
+        self.assertGreaterEqual(int(t.group(1)), 17, "the cap is sized in the job's ci.yml comment from main's run "
+                                "36555049532 and the legs open PRs are known to add, with a Browser legs bound of about "
+                                "that step's time and half again: a lower cap is sized again in the same change")
+        self.assertLessEqual(int(t.group(1)), 60, "past an hour a hung job eats the run")
 
 
 if __name__ == "__main__":
