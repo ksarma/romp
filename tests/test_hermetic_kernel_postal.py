@@ -6498,12 +6498,17 @@ _ANYIO_HOLDERS = {"workerinput": "xdist's workerinput, whose item mainargv is th
 #   read by its name through getattr and its kin (getattr(config, "workerinput", {}) is refused, the fail-closed trade
 #   of the reviewer's ruling of 2026-09-28 22:30Z on round 2 of fork PR #894; hasattr(config, "workerinput") passes)
 _ANYIO_REBINDERS = frozenset(("setattr", "delattr", "__setattr__", "__delattr__", "exec", "eval", "globals", "vars",
-                              "locals", "__dict__", "__builtins__", "f_locals", "f_globals"))
+                              "locals", "__dict__", "__builtins__", "f_locals", "f_globals", "__globals__",
+                              "__closure__", "cell_contents", "__code__", "__defaults__", "__kwdefaults__"))
 #   the names of what can rebind a name of a module's scope or a class body's other than by a declaration: THE PROOF
 #   proves no name of those scopes in a text that reads one by an identifier or a str literal (or a dotted part of one)
 #   other than in the two forms _anyio_rebinders reads for what they write (a call of globals(), vars() or locals()
-#   whose result is only read, and a call of setattr or delattr naming an attribute by a literal), and f_locals, a
-#   frame's write-through view of its locals since Python 3.13, defeats the proof of a def's local as well
+#   whose result is only read, and a call of setattr or delattr naming an attribute by a literal). A function's
+#   __globals__ (and f_globals) is the module namespace, so a write through it rebinds a name of the module's scope
+#   (_t.__globals__["K"] = "plugins"); __closure__, cell_contents, __code__, __defaults__ and __kwdefaults__ reach a
+#   function's bindings the same way (the reviewer's fail-closed ruling of 2026-09-28 22:30Z on round 2 of fork PR #894,
+#   which _REFLECTIVE_ATTRS already lists as binding-reaching). f_locals, a frame's write-through view of its locals
+#   since Python 3.13, and cell_contents, which writes an enclosing def's cell, defeat the proof of a def's local as well
 
 
 def _anyio_module_file(dotted, dirs):
@@ -6560,13 +6565,15 @@ def _anyio_rebinders(tree, bindings):
     ast_bindings index is `bindings`: a function of (a name, the kind of the scope that binds it) giving why something in
     the text may rebind that name other than by a declaration, else None. Read over the whole text, so what stands in
     any def or class counts. For a name of any scope: a global or nonlocal statement naming it, a type statement binding
-    it, and any read of f_locals (a frame's write-through view of its locals since Python 3.13). For a name of the
+    it, any read of f_locals (a frame's write-through view of its locals since Python 3.13) and any read of cell_contents
+    (a write to an enclosing def's cell). For a name of the
     module's scope or a class body's, also: a star import; a read of globals(), vars() or locals() that no declaration
     binds and that may write the namespace it returns (any use but a call whose result is read by a subscript, a
     read-only method or `in`); an attribute store or del naming it; a call of setattr, delattr, __setattr__ or
     __delattr__ naming it, or naming its attribute by no str literal; and any other identifier or str literal (a dotted
     part of one included) naming one of _ANYIO_REBINDERS (exec, eval, __dict__, getattr(builtins, "setattr"), setattr
-    bound to a name). Plain values only: the function it returns holds no node of the tree."""
+    bound to a name, and a function's __globals__, which is the module namespace, or its __closure__, __code__,
+    __defaults__ or __kwdefaults__). Plain values only: the function it returns holds no node of the tree."""
     parent = {}
     for x in ast.walk(tree):
         for c in ast.iter_child_nodes(x):
@@ -6586,7 +6593,7 @@ def _anyio_rebinders(tree, bindings):
     def word(text, line, how):
         hit = next((w for w in re.split(r"[.:]", text) if w in _ANYIO_REBINDERS), None)
         if hit is not None:
-            anyname.append(("%s naming %s at line %d" % (how, hit, line), hit == "f_locals"))
+            anyname.append(("%s naming %s at line %d" % (how, hit, line), hit in ("f_locals", "cell_contents")))
 
     try:
         for x in ast.walk(tree):
@@ -6714,11 +6721,14 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     an assignment of a str literal to it alone (a plain or annotated one), with nothing else in the text that binds it:
     no second declaration of any kind (a rebinding, an augmented assignment, a loop, with, except or match target, a
     del, an import, a def, a class, a walrus, a tuple unpacking), no global or nonlocal statement naming it, no type
-    statement binding it, no read of f_locals (a frame's write-through view of a def's locals since Python 3.13), and,
+    statement binding it, no read of f_locals (a frame's write-through view of a def's locals since Python 3.13) or of
+    cell_contents (a write to an enclosing def's cell), and,
     for a name of the module's scope, nothing that can rebind it unread: a star import; globals(), vars() or locals()
     read other than as a call whose result is only read (by a subscript in a load, a read-only method or `in`); an
     attribute store or del, setattr or delattr naming it, or setattr or delattr naming the attribute it writes by no str
-    literal; and any other identifier or str literal (a dotted part of one) naming one of _ANYIO_REBINDERS
+    literal; a function's __globals__ (the module namespace) or f_globals, written through to rebind a name of it
+    (_t.__globals__["K"] = "plugins"), and its __closure__, __code__, __defaults__ or __kwdefaults__; and any other
+    identifier or str literal (a dotted part of one) naming one of _ANYIO_REBINDERS
     (getattr(builtins, "setattr"), setattr bound to a name, exec, the module's __dict__). A name of a class body is
     never proven, since a read there ahead of its binding takes the module's name. And, where the rule follows the
     text's imports, THE DIRECT-IMPORT KEY PROOF: a name bound once by a from import, or an attribute read on a name
@@ -13492,7 +13502,9 @@ class HermeticKernelPostal(unittest.TestCase):
         globals() or vars(), a star
         import, setattr or an attribute store on the module, setattr reached through getattr(builtins, "setattr"),
         bound to a name or handed a name built at run time, the module's __dict__ written, exec and builtins.exec, a
-        def's local written through its frame's f_locals, a class body's name, and a type statement where the
+        write through a def's __globals__ (the module namespace) by an item, an update or a nested def, a
+        def's local written through its frame's f_locals or through a nested def's cell (cell_contents), a class body's
+        name, and a type statement where the
         interpreter has one); and a key a module the text imports directly binds is not proven where that module binds
         it twice, writes it through globals(), binds it to a fold, star imports, rebinds it through global in a def or
         imports it from another module, where a submodule of the name exists, or where the text stores, setattrs or
@@ -13634,7 +13646,7 @@ class HermeticKernelPostal(unittest.TestCase):
             ("a def's __globals__ by getattr", hook("getattr(_h.quiet, '__globals__')", h), {"direct", "dunder"},
              "dunder", "__globals__"),
             ("a def's __globals__ by getattr with a name bound to it",
-             hook("getattr(_h.quiet, _G)", h + "_G = '__globals__'\n\n\n"), {"direct", "dunder"}, "dunder",
+             hook("getattr(_h.quiet, _G)", h + "_G = '__globals__'\n\n\n"), {"direct", "dunder", "reader"}, "dunder",
              "__globals__"),
             ("a def's __globals__ by object.__getattribute__", hook("object.__getattribute__(_h.quiet, '__globals__')", h),
              {"direct", "dunder"}, "dunder", "__globals__"),
@@ -13681,7 +13693,14 @@ class HermeticKernelPostal(unittest.TestCase):
                    ("the module's __dict__ written", "sys.modules[__name__].__dict__['_K'] = 'plugins'\n",
                     "naming __dict__"),
                    ("exec", "exec('_K = 1')\n", "naming exec"),
-                   ("builtins.exec", "builtins.exec('_K = 1')\n", "naming exec")]
+                   ("builtins.exec", "builtins.exec('_K = 1')\n", "naming exec"),
+                   ("a def's __globals__ written (the module namespace)",
+                    "\n\ndef _t():\n    pass\n_t.__globals__['_K'] = 'plugins'\n", "naming __globals__"),
+                   ("a def's __globals__ updated", "\n\ndef _t():\n    pass\n_t.__globals__.update(_K='plugins')\n",
+                    "naming __globals__"),
+                   ("a nested def's __globals__ written",
+                    "\n\ndef _t():\n    def _inner():\n        pass\n    _inner.__globals__['_K'] = 'plugins'\n",
+                    "naming __globals__")]
         if sys.version_info >= (3, 12):
             rebinds.append(("a type statement", "type _K = str\n", "a type statement binding it"))
         refused += [("the false proof: bound to a literal, then %s" % label, head + "_K = 'verbose'\n" + before + "\n\n" + use,
@@ -13697,6 +13716,10 @@ class HermeticKernelPostal(unittest.TestCase):
                      head + "def pytest_configure(config):\n    _K = 'verbose'\n"
                      "    sys._getframe().f_locals['_K'] = 'plugins'\n    config.getoption(_K)\n", {"keyed"}, "keyed",
                      "naming f_locals"),
+                    ("the false proof: a def's local, then a write through a nested def's cell",
+                     head + "def pytest_configure(config):\n    _K = 'verbose'\n\n    def _in():\n        return _K\n"
+                     "    _in.__closure__[0].cell_contents = 'plugins'\n    config.getoption(_K)\n", {"keyed"}, "keyed",
+                     "naming cell_contents"),
                     ("the false proof: a class body's name, which a read ahead of its binding takes from the module",
                      head + "class _C:\n    _K = 'verbose'\n    V = operator.attrgetter(_K)\n", {"reader"}, "reader",
                      "bound in a class body")]
