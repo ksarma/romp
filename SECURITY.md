@@ -207,6 +207,14 @@ version is back.
   Origin, the WS upgrade included. Federated (cross-machine) calls authorize
   with the remote machine's token, carried over ssh tunnels the local machine
   initiates.
+- **Window messages and the opener policy.** Every window message listener
+  romp serves checks a message's sender before acting on it, and the shell's
+  window listeners act only on messages from its own panes. Every page the
+  kernel serves carries `Cross-Origin-Opener-Policy: same-origin`, except a
+  reply in HTTP/0.9's shape, which carries no headers and answers only a
+  request line no browser sends. The opener policy applies only in secure
+  contexts (https, and localhost or 127.0.0.1 over http); on any other
+  plain-http address, the sender checks are the protection.
 - **Path-traversal guards** on every id/name/message-id that becomes a filesystem
   path component under the mail and outbox roots (`_safe_id`), so a crafted
   reference like `../../etc` is rejected before any path join.

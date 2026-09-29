@@ -2656,3 +2656,33 @@ test("the shell's bundle is loaded by the shell page alone: kernel.py's landing 
     assert.ok(!extSrc.includes(bundle), "no VS Code webview document the extension writes loads " + bundle);
   }
 });
+
+test("SECURITY.md's hardened list says what the sender checks and the opener policy guarantee, and where the policy applies", () => {
+  // SECURITY.md is the document the repo points security readers at (the precedents: security-pdf.test.ts and
+  // md-sanitize.test.ts hold their bullets the same way). This test holds the bullet's words; the claims are held by
+  // execution elsewhere: this file's census and legs for ui/ (every window message listener checks its sender, the
+  // palette's two hear only the shell's panes, and tests/test_palette_senders_browser.py runs those two in real browsers),
+  // tests/test_shell_source_check.py for the shell's inline listeners, and tests/test_kernel_auth_hardening.py
+  // OpenerIsolation for the opener policy (every page carries it once, a reply in HTTP/0.9's shape aside). The residual
+  // names where browsers enforce the policy: secure contexts, which include localhost and 127.0.0.1 over http, the
+  // kernel's default address, so a reader on the default setup is not told it lacks the policy.
+  const security = fs.readFileSync(path.resolve(EXT, "..", "SECURITY.md"), "utf8");
+  const start = security.indexOf("\n## What is already hardened\n");
+  assert.ok(start >= 0, "SECURITY.md has its What is already hardened section");
+  const rest = security.slice(start + 1);
+  const hardened = rest.slice(0, rest.indexOf("\n## ", 1) === -1 ? rest.length : rest.indexOf("\n## ", 1));
+  const lead = "- **Window messages and the opener policy.**";
+  const at = hardened.indexOf(lead);
+  assert.ok(at >= 0, "the hardened list has the bullet: " + lead);
+  const tail = hardened.slice(at);
+  const bullet = tail.slice(0, tail.indexOf("\n- ", 1) === -1 ? tail.length : tail.indexOf("\n- ", 1)).replace(/\s+/g, " ").trim();
+  const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const prose = (words: string) => new RegExp(words.trim().split(/\s+/).map(escapeRe).join("\\s+"));
+  for (const claim of [
+    "Every window message listener romp serves checks a message's sender before acting on it",
+    "the shell's window listeners act only on messages from its own panes",
+    "Every page the kernel serves carries `Cross-Origin-Opener-Policy: same-origin`, except a reply in HTTP/0.9's shape, which carries no headers and answers only a request line no browser sends",
+    "The opener policy applies only in secure contexts (https, and localhost or 127.0.0.1 over http); on any other plain-http address, the sender checks are the protection.",
+  ]) assert.match(bullet, prose(claim), "the bullet says: " + claim);
+  assert.doesNotMatch(bullet, /\u2014/, "no em dash");
+});
