@@ -49,7 +49,8 @@ kernel or a browser:
   matrix's backstop and says what it checks; that one refuses the rest of those spellings, but for the class its own docstring
   discloses, which neither census sees and no budget bounds.
 
-Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
+Further pins of the served module ride here, reading the lab classes' gates, _boot and readers over stubs and synthetic
+records (the served module's own kernel-free class, LinkProxyEnds, covers the splice): LinkDropBothNew gates on no
 knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
 (the maintainer's round 1's high, closed by a value; the maintainer's round 2 asked for the pin, pass 5 for the property over every site); a hub a knob
 asked for whose bundle cannot be made ready, or whose root holds no kernel, is an error through _boot, while this
@@ -125,7 +126,7 @@ AUTO_WAITING_ACTIONS = ("click", "dblclick", "fill", "press", "type", "check", "
 # the kill that keeps a RESULT the driver had printed: pass 11's fixer pass measured it); (2) a wait form, WAIT_FORMS, whose timeout the census above requires to be one
 # budget.capped(...) call; (3) an UNTIMED PROTOCOL READ, UNTIMED_READS (a page's evaluate: no timeout option, no default bound,
 # a wedged renderer holds it open), allowed ONLY as the first argument of budget.bounded(...), the budget's race of the read
-# against what is left of it (BUDGET_JS), which the arithmetic cell checks here by spelling (_bounded_reads) and the parsed
+# against what is left of it (BUDGET_JS), which the arithmetic cell checks here by spelling (BOUNDED_READ) and the parsed
 # census by node. The classification is per CALL SITE wherever the site sits: a helper's inner calls are judged at their own
 # lines (provText's evaluate, reached from visible, is judged where it is written), so no call is classified by the helper it
 # sits in and no transitive rule is needed. A new call is added here in its class, or added to WAIT_FORMS as a wait the budget caps.
@@ -760,8 +761,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         the Outline received after the earliest the bundle's LAST notice could have been posted (the change record's t0 plus
         the gaps between the notices) and before the window's padded end. Pass 5 found the key was the window: a frame at
         A0 + 5 ms or between notice 1 and notice 2 excused a stripped phase, though it could not have carried the notices
-        posted after it. The maintainer's round 3 found the frame alone was no key either: on the old bundle a routine redial produces a whole
-        frame after the notices were already delivered as patches, so the excuse was available in most recorded phase windows
+        posted after it. The maintainer's round 3 found the frame alone was no key either: in the old-hub records made under the
+        splice's former idle cut, a redial produced a whole frame after the notices were already delivered as patches, so the
+        excuse was available in most recorded phase windows
         (the census, its figures and its drive are in _outline_caught_up_whole's docstring, one derivation, not repeated here)
         and a planted miss stayed green, and the cells below could not tell the keys apart, since a synthetic socket
         with no openAt reads as never open and the gap held in every cell. Over a synthetic record, by cell: with the socket
