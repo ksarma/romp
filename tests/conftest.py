@@ -181,10 +181,18 @@ atexit.register(_remove_run_dirs)
 # the controller joins its live non-daemon threads other than the main one within the same bound, so a process such a
 # thread starts after its test returned is seen. A thread that ends costs the run only the time until it ends (the
 # interpreter would join it at exit anyway); one that ends only through threading's exit hooks, which run at
-# interpreter exit after this check, is waited the whole bound and reported as still running: the worker of an idle
-# concurrent.futures pool a test never shut down (an unclosed event loop's default executor is one), whose witness is
+# interpreter exit after this check, is waited the whole bound: the worker of an idle concurrent.futures pool a test
+# never shut down (an unclosed event loop's default executor is one), whose witness is
 # tests/test_run_end_leaked_processes.py's idle-pool case. The join never waits on a daemon thread (a server thread
-# left running would make every run pay the bound). The check never kills: the pid it names is the
+# left running would make every run pay the bound), and a thread whose own join raises is waited on no more
+# (_join_live_threads). The check names no thread (since fork PR #894's landing merge with
+# the fork's main, which brought fork PR #922's session-end thread guard, below): the guard names, at the teardown of
+# each process's last test, each thread it guards still alive at its cap (every non-daemon thread and every
+# concurrent.futures thread, pytest-timeout's timer aside), so a leaked thread is reported once, by the guard, and a
+# leaked process once, by this check. The idle worker above is
+# one: in a serial run the guard waits its cap for it and fails the run naming it, and this join then waits the bound
+# for it again before the scan. A daemon thread outside concurrent.futures' tables is named by neither (the guard's
+# comment says why). The check never kills: the pid it names is the
 # developer's to stop (a bus by its server.pid), and a kill from here would be a destructive action on a report the
 # developer has not read.
 # What the check does not read, each named with its reason (tests/README.md has the same list):
@@ -226,8 +234,9 @@ atexit.register(_remove_run_dirs)
 #     queued in a unix socket and not yet received, which is in no process's table once its sender has closed its own
 #     copy, keeps the tracker from exiting on its own while it is queued, unseen, and the tracker is passed over;
 #   * a process started after the scan: by a non-daemon thread still running when the join's bound ran out, by a
-#     daemon thread, or by any process outside this one. The threads of the first two kinds are reported by count and
-#     name, with the statement that a process they start after the scan is not seen.
+#     daemon thread, or by any process outside this one. The check names no thread (above): a thread of the first kind
+#     that was alive at the teardown of the process's last test is named by the session-end thread guard, which
+#     fails the run, and a daemon thread outside concurrent.futures' tables is named by neither.
 # The added reads' cost on a clean run, measured on the box (2026-09-24, the scan over one root, the median of 15 rounds
 # interleaved with 951479a14's scan): about 780 processes, 150 of them this user's and readable with 1,800 to 2,300
 # descriptors open; the scan took 67 ms on 3.12 and 71 ms on 3.10 against 39 ms, the descriptor and argv reads 20 to 23
@@ -594,18 +603,28 @@ def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S, pids=None, skip_pids
 def _join_live_threads(bound_s, among=None):
     """Join this process's live non-daemon threads, other than the main one and the caller, until `bound_s` has passed
     (a thread one of them starts meanwhile is joined too), never waiting on a daemon thread. Returns every such thread
-    still alive afterwards, daemon or not: a process one of them starts after the scan that follows is not seen.
-    `among` stands in for threading.enumerate() (tests/test_run_end_leaked_processes.py hands in stand-in threads)."""
+    still alive afterwards, daemon or not: a process one of them starts after the scan that follows is not seen. A join
+    that raises (a Thread subclass's own join; a live thread has started, so the stdlib's join refuses none of them) is
+    not waited on again and leaves its thread among those returned: the run-end check then goes on, where the exception
+    would have ended pytest_sessionfinish, and the session with it, before the run's report printed (the session-end
+    thread guard, which calls the same join at the process's last test, has already failed that test's teardown on it,
+    and fork PR #922's tests plant such a join). `among` stands in for threading.enumerate()
+    (tests/test_run_end_leaked_processes.py hands in stand-in threads)."""
     pool = threading.enumerate if among is None else (lambda: list(among))
-    skip = (threading.current_thread(), threading.main_thread())
+    skip = [threading.current_thread(), threading.main_thread()]
     deadline = time.monotonic() + bound_s
     while True:
         pending = [t for t in pool() if t not in skip and not t.daemon and t.is_alive()]
         left = deadline - time.monotonic()
         if not pending or left <= 0:
             break
-        pending[0].join(left)
-    return [t for t in pool() if t not in skip and t.is_alive()]
+        try:
+            pending[0].join(left)
+        except KeyboardInterrupt:
+            raise
+        except BaseException:       # pytest.fail's exception is a BaseException: waited on no more, still returned
+            skip.append(pending[0])
+    return [t for t in pool() if t not in skip[:2] and t.is_alive()]
 
 
 def _say_at_run_end(session, text):
@@ -629,10 +648,13 @@ def _report_leaked_run_processes(session):
     while its premise reads as holding and named with the reason when it does not (_run_end_holders), and make the
     run red; list this user's unreadable processes of the run (started after the controller, in its cgroup) as not
     judged, the tracker among them, with the reason, when its premise is unshown, its environment cannot be read and it
-    meets that condition; count the other unreadable ones, the tracker never among them; and name the threads still
-    running."""
+    meets that condition; and count the other unreadable ones, the tracker never among them. It names no thread: the
+    session-end thread guard (below) names, at the teardown of each process's last test, each thread it guards still
+    alive at its cap (every non-daemon thread and every concurrent.futures thread, pytest-timeout's timer aside), so a
+    leaked thread is reported once, by the guard, and a leaked process once, here (the hundredth round-2 commit of fork PR #894, at its landing merge with the fork's main,
+    which brought fork PR #922's guard; the comment above LEAK_EXIT_BOUND_S)."""
     bound = _leak_exit_bound()
-    left = _join_live_threads(bound)
+    _join_live_threads(bound)
     leaked, unjudged, ok = _run_end_holders(_run_roots(), bound)
     if not ok:
         _say_at_run_end(session, "[tests] the run-end process check reads /proc and did not run on this platform")
@@ -657,13 +679,6 @@ def _report_leaked_run_processes(session):
     if lines:
         lines.append("[tests] %d other process(es) could not be read and were not judged: another user's, or this user's "
                      "started before this run or in another cgroup." % unjudged["other"])
-    if left:
-        names = ["%s%s" % (t.name, " (daemon)" if t.daemon else "") for t in left]
-        lines.append("[tests] %d thread(s) of this process were still running when the run-end check read /proc: %s. A process "
-                     "one of them starts after that read is not seen (the check waited up to %g s for the non-daemon ones "
-                     "and never waits for a daemon thread)." % (len(left), ", ".join(names[:12]) + (
-                         ", and %d more" % (len(names) - 12) if len(names) > 12 else ""), bound))
-    if lines:
         _say_at_run_end(session, "\n".join(lines))
     if leaked:
         session.exitstatus = max(int(session.exitstatus or 0), 1)
@@ -2460,11 +2475,40 @@ _enumerate = threading.enumerate    # bound at import too: a test's leaked patch
                                     # guard's list, and a test that patches this name reaches the guard alone
 # The tables concurrent.futures' exit hooks join, as (module, attribute). The two hooks are the only functions the
 # standard library registers with threading._register_atexit (3.10 to 3.14), which threading._shutdown calls before it
-# joins the non-daemon threads; each joins every thread in its module's table, whatever the thread's daemon flag.
+# joins the non-daemon threads; each joins every thread in its module's table, whatever the thread's daemon flag. The
+# guard reads each table by its literal module and attribute names (_exit_join_table_reads), and an assertion there
+# ties the pairs those reads name to this tuple, so the two cannot drift apart.
 EXIT_JOIN_TABLES = (("concurrent.futures.thread", "_threads_queues"),      # ThreadPoolExecutor workers
                     ("concurrent.futures.process", "_threads_wakeups"))    # ProcessPoolExecutor manager threads
 # The guard's failure, in the stash of the item whose teardown it failed, for _guard_failure_into_report.
 _GUARD_FAILURE = pytest.StashKey()
+
+
+def _exit_join_table_reads():
+    """((module, attribute), the module or None, its table or None) for each exit-join table, in EXIT_JOIN_TABLES' order:
+    each module read from sys.modules by its literal name and each table read from that module by getattr with its
+    literal name, since the conftest reader of tests/test_hermetic_kernel_postal.py admits getattr only with a name it
+    proves to be one fixed string, and a name taken from a loop over EXIT_JOIN_TABLES is not one (the reviewer's ruling
+    of 2026-09-29 09:01Z on round 2 of fork PR #894). The assertion ties those reads to
+    EXIT_JOIN_TABLES, which tests/test_session_end_thread_guard.py pins: the pairs the reads are labelled with, each
+    written beside its read, must equal it, or an AssertionError names both (the check also runs once when this file is
+    imported, below). tests/test_session_end_thread_guard.py's ExitJoinTables ties each label to its read by execution:
+    a stand-in table put under each EXIT_JOIN_TABLES pair is the one the guard reads."""
+    thread_module = sys.modules.get("concurrent.futures.thread")
+    process_module = sys.modules.get("concurrent.futures.process")
+    reads = ((("concurrent.futures.thread", "_threads_queues"), thread_module,
+              getattr(thread_module, "_threads_queues", None)),
+             (("concurrent.futures.process", "_threads_wakeups"), process_module,
+              getattr(process_module, "_threads_wakeups", None)))
+    if tuple(names for names, _module, _table in reads) != EXIT_JOIN_TABLES:
+        raise AssertionError("tests/conftest.py's session-end thread guard reads the exit-join tables %r by their literal "
+                             "names, and EXIT_JOIN_TABLES is %r: the two name different tables. Point both at the same "
+                             "tables (tests/test_session_end_thread_guard.py pins EXIT_JOIN_TABLES)."
+                             % (tuple(names for names, _module, _table in reads), EXIT_JOIN_TABLES))
+    return reads
+
+
+_exit_join_table_reads()     # the tie, checked at import too: a drift fails the run before its first test
 
 
 class _ExitJoinTableKeptChanging(pytest.fail.Exception):
@@ -2475,20 +2519,20 @@ class _ExitJoinTableKeptChanging(pytest.fail.Exception):
 
 def _exit_joined_threads(deadline):
     """The threads concurrent.futures' exit hooks will join, whatever their daemon flags: every thread in the table of
-    each EXIT_JOIN_TABLES module that is loaded. This file imports concurrent.futures.thread, so its table is always
-    read; a process that never loaded concurrent.futures.process has no ProcessPoolExecutor. A loaded module without its
-    table fails the guard, naming the attribute, rather than leaving unguarded the daemon threads that table would list.
-    A read that raises RuntimeError (another thread added to the table while it was read) is retried at once, until a
-    read succeeds or `deadline`, a time on the guard's clock (_monotonic), passes; a read that raises after that fails
-    the guard, naming the table (_ExitJoinTableKeptChanging), so no read is retried after the deadline. A read already
-    running at the deadline finishes, and a table read first after it is read once. A table keeps a thread that has
-    ended until the thread object is collected; the guard asks it only about listed threads, which are alive."""
+    each EXIT_JOIN_TABLES module that is loaded, each module and table read by its literal names
+    (_exit_join_table_reads, whose assertion ties those reads to EXIT_JOIN_TABLES). This file imports
+    concurrent.futures.thread, so its table is always read; a process that never loaded concurrent.futures.process has
+    no ProcessPoolExecutor. A loaded module without its table fails the guard, naming the attribute, rather than leaving
+    unguarded the daemon threads that table would list. A read that raises RuntimeError (another thread added to the
+    table while it was read) is retried at once, until a read succeeds or `deadline`, a time on the guard's clock
+    (_monotonic), passes; a read that raises after that fails the guard, naming the table (_ExitJoinTableKeptChanging),
+    so no read is retried after the deadline. A read already running at the deadline finishes, and a table read first
+    after it is read once. A table keeps a thread that has ended until the thread object is collected; the guard asks it
+    only about listed threads, which are alive."""
     joined = set()
-    for module, attr in EXIT_JOIN_TABLES:
-        mod = sys.modules.get(module)
+    for (module, attr), mod, table in _exit_join_table_reads():
         if mod is None:
             continue
-        table = getattr(mod, attr, None)
         if table is None:
             pytest.fail("tests/conftest.py's session-end thread guard cannot read %s.%s on this Python (%s): "
                         "that table lists the threads concurrent.futures' exit hook joins at exit whatever their "

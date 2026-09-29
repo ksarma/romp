@@ -4,7 +4,9 @@
 # batch fork PR #921 added (fork PR #842's test_nudge_walk_one_load_per_pass.py and fork PR #913's
 # test_record_cache_agent_end.py), and the second the writers of six modules that batch fork PR #925 added, all
 # fork PR #919's (test_fetch_wrapper_census.py, test_file_cap_binding.py, test_login_cookie_not_token.py,
-# test_remote_ws_set_cookie_strip.py, test_session_cookie_auth.py and test_session_cookie_per_kernel.py).
+# test_remote_ws_set_cookie_strip.py, test_session_cookie_auth.py and test_session_cookie_per_kernel.py), and the
+# third the writers of two modules that batch fork PR #929 carried, both fork PR #897's (test_postal_isolation.py,
+# which gained the write, and test_postal_remote_sids_mirror.py, which it added).
 # The census pin compares it with the census by equality (_writer_set_faults): a module that writes the name and is
 # not here faults as a new writer, and a module here that no longer writes it faults until its line is removed.
 # Lines leave as writers migrate; a new writer is not added (omit the write or move it to the conftest floor),
@@ -415,7 +417,9 @@ test_post_push_coalescing.py
 test_postal_bus_lifetime.py
 test_postal_hydrate_scope.py
 test_postal_hydrate_unresolved.py
+test_postal_isolation.py
 test_postal_receipts.py
+test_postal_remote_sids_mirror.py
 test_postal_self_host.py
 test_postal_service_todo_file.py
 test_postal_service_todo_file_skew.py

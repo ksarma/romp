@@ -33,7 +33,7 @@ at the bound; one passed over is neither reported nor waited for; each timed ove
 may be listed); this user's unreadable process of the run listed as not judged, and one that started before the scanning
 process or sits in another cgroup counted instead, and one that exits during the wait not listed; the thread join (every
 non-daemon thread joined, one started during the join too, a daemon thread never waited on, one that outlives the bound
-returned); the bound the child runs name; the roots (the controller's and its recorded children's, the lineage a nested
+returned, and one whose join raises joined once and returned, the join going on); the bound the child runs name; the roots (the controller's and its recorded children's, the lineage a nested
 process records itself in, and a dead nested root that two lists name returned once when it resists removal). RunEnd, in
 child pytest processes (the procfs cases skip where there is no /proc): a test that leaves a detached child ends the run
 red with the process and the phase named and "1 passed" still in the summary, and a child in the root by its cwd alone
@@ -43,9 +43,12 @@ nested run a worker started (where pytest-xdist is installed), is the outermost 
 file, an argument and a cwd under a symlinked TMPDIR are named, and so is a child holding only values of a root spelled
 with a leading '//' through a symlink, met by the root's folded spelling alone; a process holding no path under a root
 is not (the residual's witness); a non-dumpable process of the run is listed as not judged and leaves the exit status; a
-process a non-daemon thread starts after its test returned is named, and a daemon thread still running is reported; an
-idle pool a test left is waited the whole bound and reported as still running (the join's named cost, timed up to the
-check's first read of /proc); without procfs the check says so once and leaves the exit status alone, and Scanner's
+process a non-daemon thread starts after its test returned is named, and no thread is: the check names none since the
+landing merge that brought fork PR #922's session-end thread guard, which reports threads; an idle pool a test left is
+named by that guard alone, which fails the run, and the check's join waits the whole bound for its worker (the join's
+named cost, timed up to the check's first read of /proc); a run whose test leaves a process beside that pool gets each
+reported once, by the right check (the worker by the guard, in the report and on stderr, and the process by the run-end
+check); without procfs the check says so once and leaves the exit status alone, and Scanner's
 roots test, which reads no /proc, runs there; a test that leaves nothing ends the run green with no holder line. The
 controller's own multiprocessing resource tracker is passed over while no /proc/<pid>/fd table the check can read,
 other than the controller's and the tracker's, holds its pipe (it held the root while the test ran; the run ends green
@@ -157,10 +160,12 @@ NON_DUMPABLE = ("import ctypes, sys, time; assert ctypes.CDLL(None, use_errno=Tr
 
 class _FakeThread:
     """A stand-in for a thread in the join's pool: `ends` is whether a join ends it; a join of a daemon is a failure.
-    `starts`, a (pool, thread) pair, is a thread this one starts while it is being joined: it joins `pool` then."""
+    `starts`, a (pool, thread) pair, is a thread this one starts while it is being joined: it joins `pool` then.
+    `raises`, an exception, is what every join of it raises, as a Thread subclass's own join can (it stays alive)."""
 
-    def __init__(self, name, daemon, ends, starts=None):
+    def __init__(self, name, daemon, ends, starts=None, raises=None):
         self.name, self.daemon, self.ends, self.starts, self.alive, self.joins = name, daemon, ends, starts, True, []
+        self.raises = raises
 
     def is_alive(self):
         return self.alive
@@ -169,6 +174,8 @@ class _FakeThread:
         self.joins.append(timeout)
         if self.daemon:
             raise AssertionError("the join waited on a daemon thread")
+        if self.raises is not None:
+            raise self.raises
         if self.starts:
             pool, started = self.starts
             pool.append(started)
@@ -533,7 +540,8 @@ class Scanner(unittest.TestCase):
         """extra5-3's join, over stand-in threads (the pool is handed in, so no thread of this process is waited on): a
         non-daemon thread a join ends is joined and gone; a daemon thread is never joined and is returned; every
         non-daemon thread is joined, not the first alone; a thread one of them starts while it is being joined is joined
-        too; a non-daemon thread that outlives the bound is joined for the bound and returned."""
+        too; a non-daemon thread that outlives the bound is joined for the bound and returned; and a thread whose join
+        raises is joined once and returned alive, the join raising nothing and going on to the next thread."""
         ends = _FakeThread("ends", daemon=False, ends=True)
         daemon = _FakeThread("server", daemon=True, ends=False)
         t0 = time.monotonic()
@@ -560,6 +568,17 @@ class Scanner(unittest.TestCase):
         self.assertEqual(left, [stays], "a non-daemon thread still alive when the bound ran out is returned")
         self.assertGreaterEqual(took, 0.25, "it was given the bound")
         self.assertLess(took, 3.0, "and no more")
+        # a join that raises (fork PR #922's tests plant a Thread subclass whose join calls pytest.fail): at the landing
+        # merge that brought that PR's session-end thread guard, the exception ended the run-end check's
+        # pytest_sessionfinish, and the session with it, before the child's report printed
+        import pytest
+        fails = _FakeThread("fails-in-join", daemon=False, ends=False, raises=pytest.fail.Exception("a join that fails"))
+        after = _FakeThread("joined-after-it", daemon=False, ends=True)
+        t0 = time.monotonic()
+        left = self.conftest._join_live_threads(10.0, among=[fails, after])
+        self.assertLess(time.monotonic() - t0, 3.0, "the raising join was not retried until the bound")
+        self.assertEqual(left, [fails], "the thread whose join raised is returned alive, and the join did not raise")
+        self.assertEqual((len(fails.joins), len(after.joins)), (1, 1), "joined once, and the next thread still joined")
 
     def test_the_run_roots_are_the_controllers_and_its_recorded_childrens_recursively(self):
         pkg = sys.modules["tests"]
@@ -644,7 +663,9 @@ def pytest_runtest_call(item):
 
 # An idle pool a test left, as a plugin of ONE child run (loaded the same way): in the test's call phase a one-worker
 # concurrent.futures pool runs one task and is kept, never shut down, so its worker is a live non-daemon thread that only
-# threading's exit hooks end. The plugin's sessionfinish, which runs before conftest's trylast one, notes the time and
+# threading's exit hooks end. Its configure sets the session-end thread guard's cap (THREAD_GUARD_CAP_S) to one second
+# for the child run, which the guard spends on the worker before it fails the run naming it, as fork PR #922's own tests
+# set the cap for theirs. The plugin's sessionfinish, which runs before conftest's trylast one, notes the time and
 # wraps conftest's _processes_holding to note the time of its first call, the check's first read of /proc; its
 # unconfigure writes the seconds between the two to the marker dir: the join's time, and nothing the check does after
 # that read (the wait after it covers every process listed as not judged, and another run's in the cgroup may be
@@ -653,6 +674,10 @@ IDLE_POOL_PLUGIN = '''\
 import concurrent.futures, os, sys, time
 
 _POOLS, _AT = [], {}
+
+
+def pytest_configure(config):
+    sys.modules["tests.conftest"].THREAD_GUARD_CAP_S = 1.0
 
 
 def pytest_runtest_call(item):
@@ -990,12 +1015,23 @@ class RunEnd(unittest.TestCase):
         self.assertRegex(out, r"\[tests\] \d+ other process\(es\) could not be read and were not judged: another user's, or this "
                               r"user's started before this run or in another cgroup\.")
 
+    @staticmethod
+    def _run_end_thread_lines(out):
+        """The lines holding a run-end check's line (each carries "[tests] ", and the first may follow the progress
+        line's "[100%]" on the same line of the output) that name a thread the child run's plugins start (every such
+        thread's name starts "leaker-"): none since the check names no thread. The guard's own lines carry
+        "[tests/conftest.py, ..." instead."""
+        return [line for line in out.splitlines() if "[tests] " in line and "leaker-" in line]
+
     @procfs
-    def test_a_process_a_non_daemon_thread_starts_after_its_test_returned_is_named_and_a_daemon_thread_is_reported(self):
+    def test_a_process_a_non_daemon_thread_starts_after_its_test_returned_is_named_and_no_thread_is(self):
         """extra5-3 at a real run end: a plugin of the child run (LATE_THREAD_PLUGIN) starts, in the test's call phase, a
         non-daemon thread that spawns a detached sleeper half a second later, when the test has returned, and a daemon thread
-        that never ends. The check joins the first before it reads /proc, so the sleeper is named (with its phase unknown:
-        no phase was set when it spawned); it does not wait for the daemon thread, and reports it."""
+        that never ends. The first is waited for before /proc is read (by the session-end thread guard at the test's
+        teardown, and by the check's join were it still running at the run end), so the sleeper is named, with its phase
+        unknown: no phase was set when it spawned. Neither thread is named: the check names no thread since the landing
+        merge that brought fork PR #922's guard, the non-daemon thread ended inside the guard's cap, and the guard names
+        no daemon thread outside concurrent.futures' tables."""
         plugdir = tempfile.mkdtemp()
         Path(plugdir, "romp_late_thread_plugin.py").write_text(LATE_THREAD_PLUGIN)
         pythonpath = os.pathsep.join([plugdir] + [p for p in [os.environ.get("PYTHONPATH")] if p])
@@ -1007,37 +1043,71 @@ class RunEnd(unittest.TestCase):
         line = self._line(out, pids["late"])
         self.assertIn("sleep 120", line)
         self.assertTrue(line.endswith("| " + PHASE_UNKNOWN), line)
-        threads = [t for t in out.splitlines() if "thread(s) of this process were still running" in t]
-        self.assertEqual(len(threads), 1, out)
-        self.assertIn("leaker-lingering-daemon (daemon)", threads[0])
-        self.assertNotIn("leaker-late-spawner", threads[0], "the non-daemon thread was joined")
-        self.assertIn("A process one of them starts after that read is not seen", threads[0])
+        self.assertEqual(self._run_end_thread_lines(out), [], "the run-end check names no thread: " + out)
+        self.assertNotIn("leaker-lingering-daemon", out, "the daemon thread is named by neither check")
+        self.assertNotIn("leaker-late-spawner", out, "the non-daemon thread ended inside the guard's cap: named by neither")
+        self.assertNotIn("session-end thread guard", out, "the guard passed: " + out)
 
     @procfs
-    def test_an_idle_pool_a_test_left_is_waited_the_whole_bound_and_reported_as_still_running(self):
+    def test_an_idle_pool_a_test_left_is_named_by_the_thread_guard_alone_and_the_join_waits_the_whole_bound(self):
         """The join's cost the comment above LEAK_EXIT_BOUND_S names, by execution: a plugin of the child run
         (IDLE_POOL_PLUGIN) leaves an idle concurrent.futures pool, whose worker is a non-daemon thread that only
-        threading's exit hooks end, and those run at interpreter exit, after the check. The run leaves no process and
-        ends green, but the check's join waits the whole bound for the worker and names it as still running. The time
-        is the join's alone: from the plugin's sessionfinish to the check's first read of /proc, so the wait after that
-        read, which another run's process listed as not judged would lengthen, is not in it."""
+        threading's exit hooks end, and those run at interpreter exit, after the check. The run leaves no process. The
+        session-end thread guard (fork PR #922's, its cap set to a second by the plugin) fails the run, naming the worker
+        once in the report and once on stderr, and the check names no thread; its join still waits the whole bound for
+        the worker before it reads /proc. The time is the join's alone: from the plugin's sessionfinish to the check's
+        first read of /proc, so the wait after that read, which another run's process listed as not judged would
+        lengthen, is not in it."""
         plugdir = tempfile.mkdtemp()
         Path(plugdir, "romp_idle_pool_plugin.py").write_text(IDLE_POOL_PLUGIN)
         pythonpath = os.pathsep.join([plugdir] + [p for p in [os.environ.get("PYTHONPATH")] if p])
         r, pids, scratch = self._child_run("test_leaves_nothing", env_over={"PYTHONPATH": pythonpath}, bound="0.5",
                                            args=("-p", "romp_idle_pool_plugin"))
         out = r.stdout + r.stderr
-        self.assertEqual((pids, r.returncode), ({}, 0), out)
+        self.assertEqual((pids, r.returncode), ({}, 1), "no process, and the guard's red: " + out)
         self.assertNotIn("hold its temp root", out)
-        threads = [t for t in out.splitlines() if "thread(s) of this process were still running" in t]
-        self.assertEqual(len(threads), 1, out)
-        self.assertIn("read /proc: leaker-idle-pool_0. A process", threads[0],
-                      "the idle worker, a non-daemon thread, alone")
+        self.assertEqual(r.stdout.count("ERROR at teardown of Leaker.test_leaves_nothing"), 1, out)
+        self.assertEqual(r.stdout.count("thread 'leaker-idle-pool_0' (ident "), 1, "the guard's report names the worker "
+                         "once: " + out)
+        self.assertEqual(r.stderr.count("thread 'leaker-idle-pool_0' (ident "), 1, "and stderr, the guard's second "
+                         "channel, once: " + out)
+        self.assertEqual(self._run_end_thread_lines(out), [], "the run-end check names no thread: " + out)
         noted = Path(scratch, "join-seconds").read_text()
         self.assertNotEqual(noted, "no read of /proc", out)
         took = float(noted)
         self.assertGreaterEqual(took, 0.45, "the join waited the whole 0.5 s bound for the idle worker before the "
                                             "check read /proc: %.2f s" % took)
+
+    @procfs
+    def test_a_leaked_thread_and_a_leaked_process_are_each_reported_once_by_the_right_check(self):
+        """The two checks at one real run end (the reviewer's ask at fork PR #894's landing merge with the fork's main,
+        which brought fork PR #922's session-end thread guard beside this PR's run-end process check): the child run's
+        test leaves a detached child holding the root (Leaker::test_leaves_a_detached_child) and a plugin of the run
+        (IDLE_POOL_PLUGIN) leaves an idle pool's worker. The worker is named by the guard alone, once in the report and
+        once on stderr, and never by the run-end check; the child is named by the run-end check alone, on one line, and
+        nothing the guard writes names it (its command line, or its pid as the check spells one)."""
+        plugdir = tempfile.mkdtemp()
+        Path(plugdir, "romp_idle_pool_plugin.py").write_text(IDLE_POOL_PLUGIN)
+        pythonpath = os.pathsep.join([plugdir] + [p for p in [os.environ.get("PYTHONPATH")] if p])
+        r, pids, _ = self._child_run("test_leaves_a_detached_child", env_over={"PYTHONPATH": pythonpath},
+                                     args=("-p", "romp_idle_pool_plugin"))
+        out = r.stdout + r.stderr
+        self.assertEqual(sorted(pids), ["child"], "the test left its sleeper's pid: " + out)
+        self.assertEqual(r.returncode, 1, out)
+        self.assertIn("1 passed", out, "the test itself passed: " + out)
+        line = self._line(out, pids["child"])
+        self.assertIn("sleep 120", line)
+        self.assertEqual(out.count("process(es) of this run still hold its temp root at run end"), 1, out)
+        self.assertEqual(r.stdout.count("ERROR at teardown of Leaker.test_leaves_a_detached_child"), 1, out)
+        self.assertEqual(r.stdout.count("thread 'leaker-idle-pool_0' (ident "), 1, "the guard's report names the worker "
+                         "once: " + out)
+        self.assertEqual(r.stderr.count("thread 'leaker-idle-pool_0' (ident "), 1, "and stderr, the guard's second "
+                         "channel, once: " + out)
+        self.assertEqual(self._run_end_thread_lines(out), [], "the run-end check names no thread: " + out)
+        guard = [block for block in out.split("\n\n") if "session-end thread guard" in block]
+        self.assertTrue(guard, "the guard's text is in the output: " + out)
+        self.assertEqual([block for block in guard if "sleep 120" in block or "pid %d " % pids["child"] in block], [],
+                         "nothing the guard writes names the process (pid %d)" % pids["child"])
 
     def test_without_procfs_the_check_says_so_once_and_leaves_the_exit_status_alone(self):
         """tests-3's branch, the only one a platform without procfs runs: under a sitecustomize that hides /proc

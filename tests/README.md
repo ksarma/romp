@@ -272,7 +272,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   or the module-level statement it stands under, such as an `if` over
   `sys.argv`), and of any decorated function or class there. A function that
   returns nothing, such as `write_owner_marker` in `tests/__init__.py`, is not
-  refused for what it reads, though any of the eighteen names listed below
+  refused for what it reads, though any of the twenty-eight names listed below
   anywhere in its module refuses the module. The rule refuses, wholesale, the
   runtime-introspection channels `gc`, `ctypes`, its C-extension half
   `_ctypes`, and `__code__` wherever the conftest names one, since each
@@ -281,15 +281,20 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `cell_contents`, `__closure__`, `f_globals`, `f_back` or `sys._getframe`
   defeat the proof of a fixed key and of a function's local as well as of a
   name of the module's scope. A module of the repository the conftest imports
-  directly is refused whole when any of eighteen names appears anywhere in its
-  text, whatever function, class or statement holds it (a plain function the
-  direct-import check does not otherwise match included): those four
-  channels, those eight names, and `f_builtins`, `inspect.currentframe`,
-  `tb_frame`, `gi_frame`, `cr_frame` and `ag_frame`. A function in such a
-  module can rewrite a name or a cell of the conftest through an object the
-  conftest hands it: a function, whose cells and globals are the conftest's,
-  or the frame that calls it. `tests/conftest.py` and `tests/__init__.py` name
-  none of these.
+  directly is refused whole when any of twenty-eight names appears anywhere in
+  its text, whatever function, class or statement holds it (a plain function
+  the direct-import check does not otherwise match included): those four
+  channels, those eight names, `f_builtins`, `inspect.currentframe`,
+  `tb_frame`, `gi_frame`, `cr_frame` and `ag_frame`, and ten names that write
+  a namespace or an attribute by a name, or build code: a function's
+  `__globals__`, an object's `__dict__`, `setattr`, `delattr`, `globals`,
+  `vars`, `locals`, `compile`, `types.FunctionType` and `types.CodeType`. A
+  function in such a module can rewrite a name or a cell of the conftest
+  through an object the conftest hands it: a function, whose cells and globals
+  are the conftest's, the frame that calls it, or the conftest's module.
+  `tests/__init__.py` names none of the twenty-eight, and `tests/conftest.py`
+  none of the first eighteen (it names `setattr`, `vars` and `compile`, which
+  this refusal reads only in a module the conftest imports).
   The rule also refuses an import of a module it finds neither among
   the directories it reads nor, through the import system, outside the
   repository (a module on a directory put on the import path, say), and the
@@ -309,10 +314,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   that names `PYTEST_ADDOPTS` is refused). It stops at the modules the
   conftest imports directly: a read reached only through an import of an
   import passes, and so does a road through such a module in neither shape
-  that names none of the eighteen names (what a function that returns nothing
-  leaves behind, an object the module fills at its import, or a function
-  there writing a function's `__globals__` the conftest hands it). The rule
-  claims no more than this. Its
+  that names none of the twenty-eight names (what a function that returns
+  nothing leaves behind, an object the module fills at its import, or a
+  function there storing an attribute on the conftest's module found in
+  `sys.modules`, or calling `setattr` reached by a name built at run time).
+  The rule claims no more than this. Its
   docstring, `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`,
   lists in WHAT IT DOES NOT READ what it leaves unrefused. A name
   is licensed only when a child pytest over a copy of the conftest writes the
@@ -527,12 +533,19 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   hold a path under the run's roots** (2026-09-22; its reads widened and its unread
   classes named 2026-09-24, round 2 of fork PR #894's review). At the controller's
   session end `tests/conftest.py` first joins its live non-daemon threads (within
-  the bound below; a daemon thread is never waited for). A thread that ends costs
+  the bound below; a daemon thread is never waited for, and a thread whose own
+  join raises is waited on no more). A thread that ends costs
   only the time until it ends; one that only threading's exit hooks end, which
-  run at interpreter exit after the check, is waited the whole bound and reported
-  as still running: the worker of an idle `concurrent.futures` pool a test never
-  shut down (an unclosed event loop's default executor is one; the module below
-  has its witness). It then reads `/proc` for
+  run at interpreter exit after the check, is waited the whole bound: the worker
+  of an idle `concurrent.futures` pool a test never shut down (an unclosed event
+  loop's default executor is one; the module below has its witness). The check
+  names no thread: the session-end thread guard of `tests/conftest.py` (fork PR
+  #922's) names, at the teardown of each process's last test, each thread it
+  guards still alive at its cap (every non-daemon thread and every
+  `concurrent.futures` thread, pytest-timeout's timer aside), so a leaked
+  thread is reported once, by the guard, and a leaked process once, by this
+  check (that idle worker among the threads: the guard names it and fails
+  the run, and the join still waits the bound for it). It then reads `/proc` for
   every live process whose environment carries one of the run's temp roots or a
   path under one (a `:`-joined value counted per component), whose cwd is under
   one, one of whose open file descriptors points under one, or one of whose
@@ -666,8 +679,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
     unseen, and the tracker is passed over;
   - a process started after the scan: by a non-daemon thread still running when
     the join's bound ran out, by a daemon thread, or by any process outside this
-    one. The threads of the first two kinds are reported by count and name, with
-    the statement that a process they start after the scan is not seen.
+    one. The check names no thread: a thread of the first kind that was alive at
+    the teardown of the process's last test is named by the session-end thread
+    guard, which fails the run, and a daemon thread outside `concurrent.futures`'
+    tables is named by neither.
   The added reads cost a clean run's single scan about 28 to 32 ms on the box,
   and the fold 6 to 10 ms more on a busier box; reading a relative value from the
   cwd made the scan 5 to 11 ms cheaper, since a relative component that carries
