@@ -103,7 +103,8 @@ on the floors under it). The population is counted as of that last drive, since 
 builder's cache then held 18 old-hub records of the unmutated module (the builder's earlier drives at three pre-PR
 vintages among them, two with a hand-built old hub), 15 at 3 / 0 / 3 / 3 and those 3 at 0 / 0 / 3 / 3, and the
 reviewers' further drives at the head the maintainer's round 1 ruled gave 3 / 0 / 3 / 3 (the per-window table over the report JSONs outside the
-repo, `python3 analyse.py <report.json>...`, with _rows_in's 1.5 s pad). ZERO while the link was down in every recorded
+repo, `python3 analyse.py <report.json>...`, with _rows_in's 1.5 s pad; analyse.py is a tool outside the repo that the PR body
+names, so these counts cannot be re-checked from the tree). ZERO while the link was down in every recorded
 drive. The storm
 is gated on remote patches arriving, which is gated on the link: with phase D due while the link was down, no row
 filed until the link returned, the return's whole frame carried D and filed no row for it, and the next patch (phase
@@ -120,9 +121,10 @@ Every relay-socket close those records hold outside the drop and the restart, th
 was the lab's own and not the old bundle's. LinkProxy, the splice, kept create_connection's 5 s timeout on its upstream
 socket until it cleared it after the connect, as kernel.py _remote_ws clears the relay's, so a pair whose remote side sent
 nothing for 5 s was shut, 5 to 10 s after the last frame other than a keepalive under the remote kernel's 10 s keepalive.
-A census shows this (`python3 oldhub_closes.py <report.json>...` outside the repo, run on 2026-09-28 over one copy
-of each distinct old-hub report that the caches of this PR's review drives held at 20:01Z: 55 LinkDropOldLocal.json
-files by content, 167 with the copies). The 41 made while the splice kept that timeout, at heads through 1fa8cfd4d, the earliest two PR 815's last commit and its
+A census shows this (`python3 oldhub_closes.py <report.json>...`, a tool outside the repo that the PR body names, run on
+2026-09-28 over one copy of each distinct old-hub report that the caches of this PR's review drives held at 20:01Z: 55
+LinkDropOldLocal.json files by content, 167 with the copies; neither the tool nor the reports are in the tree, so the
+census's figures below cannot be re-checked from it). The 41 made while the splice kept that timeout, at heads through 1fa8cfd4d, the earliest two PR 815's last commit and its
 merge with the lab not yet committed (four heads since rewritten, several with uncommitted edits: mutated and
 in-progress trees) and at f3094c4b7 with the timeout put back, hold 358 relay-socket closes outside the drop and the
 restart, every one 4.95 to 10.01 s after its socket's last recorded frame and 345 of them on all three pages at one
@@ -241,11 +243,13 @@ DOWN_READ_ROOM_MS = 2000     # the room down_dwell_ms holds past DOWN_WINDOW_MAR
 #                              showed. A phase whose wait ran to its cap is refused by the margin leg itself (seen.expired, pass 6), never
 #                              measured against the room, so the room is for the reads after a wait that RESOLVED. The reads alone take
 #                              6 to 22 ms where the wait had nothing left to wait for (D.seenAfterReturn.waitedMs over 34 recorded drives
-#                              as of 2026-09-20, `python3 reads_census.py <report.json>...` outside the repo); over every unmutated recorded
+#                              as of 2026-09-20, `python3 reads_census.py <report.json>...`, a tool outside the repo that the PR body
+#                              names); over every unmutated recorded
 #                              drive that carries the reading (the same command over the population as of 2026-09-20; the count is dated by
 #                              drive elsewhere, since a drive at any head moves it) it runs 6 to 125 ms, the 125 ms one new-bundle drive's
 #                              (`r6-margin/lab-head2.log`) where a wait still had a render to wait for, so the reading is an upper bound on
-#                              the reads. The room the reads get, this constant over DOWN_WINDOW_MARGIN (1 s: the relation pin divides
+#                              the reads. Neither figure can be re-checked from the tree, since the tool and the reports are outside it.
+#                              The room the reads get, this constant over DOWN_WINDOW_MARGIN (1 s: the relation pin divides
 #                              through by the margin), is a floor far above them, not a fit.
 #                              tests/test_federated_linkdrop_driver_bound.py pins down_dwell_ms >= DOWN_WINDOW_MARGIN x wait_ms + this
 QUIET_TRIES, QUIET_STEP_MS = 7, 2000   # quiet(): up to QUIET_TRIES windows of QUIET_STEP_MS with no new relay frame on any page
@@ -755,8 +759,9 @@ try {
   // designed guarantee (pass 5): every page holds exactly ONE open relay socket. In the old-hub drives the splice's former
   // 5 s idle cut closed a page's socket for its 2 s retry every few seconds, and before this wait the drop landed 0.58 to
   // 0.80 s after the pages' redials reopened in ten of the sixteen recorded old-hub drives
-  // (`python3 held_census.py <report.json>...` outside the repo): the feed page's redial-to-visible latency plus the settle
-  // against the retry, a coincidence and not a guarantee. `held` is the snapshot that
+  // (`python3 held_census.py <report.json>...`, a tool outside the repo that the PR body names, so the count cannot be
+  // re-checked from the tree): the feed page's redial-to-visible latency plus the settle against the retry, a coincidence
+  // and not a guarantee. `held` is the snapshot that
   // satisfied the wait (or the last poll's, when it expired and the wait is recorded), so the drop leg reads what the wait saw.
   const heldNow = async () => { const h = {}; for (const app of APPS) { const s = await snap(pages[app]); h[app] = s.socks.filter((k) => k.relay && k.openAt && !k.closeAt).map((k) => k.i); } return h; };
   let held = await heldNow();
@@ -837,7 +842,8 @@ class _LinkDrop(unittest.TestCase):
     # draws on it). The spans are ONE derivation with the excuse and attach figures (`population_drive.py`, the tool
     # _outline_caught_up_whole's docstring names, which reads every counted record's marks, prints the sentence below whole and
     # under --check reads this comment for it, the markers folded; pass 10, the maintainer's round 5 extra8-3, after this paragraph and the delivery sentence below
-    # were hand-kept copies of a population dated one drive apart). A census over a growing record is dated by construction:
+    # were hand-kept copies of a population dated one drive apart). The tool and the records are outside the repo, the tool
+    # named in the PR body, so the spans cannot be re-checked from the tree. A census over a growing record is dated by construction:
     # the table below states each span's bounds as of the drive it names and nothing before or after it; drives after an
     # earlier paste of this comment moved bounds that paste carried (the repo's history holds those pastes), so a later
     # drive may move one again and the caps are floors far above every bound, not fits.
@@ -880,7 +886,8 @@ class _LinkDrop(unittest.TestCase):
     # cut waited for the frame after that, so the slowest delivery recorded is the old bundle's, 19,013 ms over the 30 unmutated old-hub records as of the
     # drive at `r10/lab-ci9.log` (2026-09-21), the maximum of the phases' seen.waitedMs; the new bundle's is 1,367 ms
     # over the 50 new-bundle records as of that drive (one derivation with the waits paragraph above,
-    # `population_drive.py`, which prints this sentence whole and checks it here). With the cut gone the old page shows no change
+    # `population_drive.py`, which prints this sentence whole and checks it here; a tool outside the repo that the PR body
+    # names, so the figures cannot be re-checked from the tree). With the cut gone the old page shows no change
     # inside the cap at all, and the old-hub class times its gate by the Outline's patch (LinkDropOldLocal._link_up_delivery_ms),
     # well under a second in its drives, so the new bundle's cap is what sizes the dwell.
     # A dwell of 30 s, sized at twice the 12.9 s
@@ -1360,7 +1367,9 @@ class _LinkDrop(unittest.TestCase):
         patches and rows removed, every frame kept) reds the floor in 84 and stays excused in 6: a
         real gating miss during such a close is indistinguishable from the close in the record, the excuse's remaining hole
         and the price of excusing the close at all. Every figure in this paragraph, the population, its drive and the counts, is
-        ONE derivation (the maintainer's round 4: a hand-kept pair of a count and a drive drifted apart twice, one drive behind each time):
+        ONE derivation (the maintainer's round 4: a hand-kept pair of a count and a drive drifted apart twice, one drive behind each time),
+        made by tools outside the repo that the PR body names (population_drive.py, population6.py, excuse_census.py and
+        census_module.py) over records outside it, so no figure in this paragraph can be re-checked from the tree:
         `population_drive.py --check <tests_dir> <pass-7 head tests_dir>` in the builder's cache outside the repo lists the
         records by `population6.py` and names the drive whose reports directory holds the NEWEST counted record by the
         record's own end mark (the maximum by end mark then path: two records of one drive sharing an end mark take the
@@ -1646,7 +1655,8 @@ class _LinkDrop(unittest.TestCase):
         this docstring restated three of them and omitted the one that fired); over each record it runs these helpers
         (`attach_census.py`), prints the sentence before this one whole and reads this docstring for it under --check (the maintainer's round 4:
         the pair was retyped one drive behind, twice; pass 9's fixer pass found the tool printed fragments and the figures were
-        transcribed). Returns the rows' data, _outline_unapplied's shape."""
+        transcribed). Both tools and the records are outside the repo, the tools named in the PR body, so the count cannot be
+        re-checked from the tree. Returns the rows' data, _outline_unapplied's shape."""
         pool = list(self._attaches_since(since_ms))
         out = []
         for d, t in stamped:
