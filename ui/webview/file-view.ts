@@ -3293,7 +3293,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // press, of Firefox's and WebKit's tap and of the two costs are red at d61eb027d, which read no blur, and under M-OFF; its row
   // of an element's blur with no focus after it is now extra5-1's closure with the focus not back and a cost, and its rows of the
   // window's blur alone between a mouse click's pointerup and its click and in a finger's contact are refused, since the
-  // focus-leaving read-outs take only the engines' orders, each with an element's or the document's blur first (the admit guard
+  // focus-leaving read-outs take only the orders the engines send while an element of the viewer's document holds the focus,
+  // each with an element's or the document's blur first, and Chromium and WebKit send the window's blur alone when no element
+  // holds it, a measured cost below (the admit guard
   // carries those orders, and the rows of the same focus move before a press's pointerup and after a tap's are refused, costs
   // below); its row of a press begun with the control covered is read at the press, and its row of a record left standing
   // refuses as a standing record does.

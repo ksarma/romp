@@ -8803,7 +8803,9 @@ the mouseout Firefox sends 20 to 35 ms after the viewer's own tap's click fallin
 rows of a mouse's and a pen's held press and of Firefox's and WebKit's tap, red at d61eb027d, are red under M-OFF, its row of an
 element's blur with no focus after it now extra5-1's closure with the focus not back and a cost, and its rows of the window's
 blur alone between a mouse click's pointerup and its click and in a finger's contact refused, since the focus-leaving read-outs
-take only the engines' orders, each with an element's or the document's blur first (the admit guard carries those orders, and the
+take only the orders the engines send while an element of the viewer's document holds the focus, each with an element's or the
+document's blur first, and Chromium and WebKit send the window's blur alone when no element holds it, a measured cost below (the
+admit guard carries those orders, and the
 rows of the same focus move before a press's pointerup and after a tap's are refused, costs below);
 the own-chain allowlist (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions
 on them): the chain listener, one function on each type of CHAIN_TYPES, starts a chain at every primary pointerdown and
