@@ -70663,9 +70663,13 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // below 0 on every zoomed run, the max term bound at 0 and the road published 0px whatever the hold, the band under the
 // composer reopened for as long as the zoom held; clientHeight is the layout viewport in both models (standards mode is
 // pinned by EXECUTION, not by an assertion on the mode: in quirks mode the root's clientHeight is the body's height, not
-// the viewport's, and the served legs' pan and pinch figures, 83 and 336 px in tests/test_keyboard_gap_served.py in both
-// engines with a skip counted as a failure, flip to 0 the moment the document is served without its doctype (the author's pass 9,
-// 2026-09-20: the clause had said "pinned" and named no pin); the page is overflow:hidden, so no scrollbar parts
+// the viewport's, and the served legs' pan and pinch figures, 83 and 336 px in tests/test_keyboard_gap_served.py, flip to 0 in
+// the Chromium legs the moment the document is served without its doctype, legs CI runs with a skip counted as a failure; the
+// WebKit legs run wherever a WebKit is installed and ROMP_SERVED_TESTS_ENGINES does not exclude it, and a WebKit skip is never
+// a failure in any configuration (an absent WebKit is an optional skip even where the engine is declared), so no enforced run
+// measures the WebKit figures without the doctype (the author's pass 9, 2026-09-20: the clause had said "pinned" and named no pin;
+// the maintainer's round 6 ruling, 2026-09-29: it had said both engines with a skip counted as a failure); the page is
+// overflow:hidden, so no scrollbar parts
 // clientHeight from innerHeight where innerHeight was right), which
 // makes the read a no-op on every road where the old value was right and a fix on any road where it was not. The model
 // holds by WebKit's source and a Chromium run; the on-device read under a pinch is the only real-engine confirmation, and
