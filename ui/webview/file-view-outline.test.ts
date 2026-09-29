@@ -2260,7 +2260,8 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // with no wait for the pen's compatibility mousedown), MU-OFF (a mouseup other than a primary one of detail above 0 empties
 // nothing), MU-DETAIL (that clear keyed on the detail alone), MU-FLAG (that mouseup clears the tap's flag and leaves the slot)
 // MU-SLOT (it empties the slot and leaves the flag, defensive, so no guard reds under it), OWNREF-OFF (a click reads the record
-// still standing under its own pointerId as its press); and of the own-chain allowlist (the file review's round 20): M-OFF (the
+// still standing under its own pointerId as its press), D-KEY (a keydown leaves the slot), ONEF (the tap's flag stands after any
+// primary touch's pointerup, however many contacts came since its pointerdown); and of the own-chain allowlist (the file review's round 20): M-OFF (the
 // allowlist admits every chain), M-NOFOCUS (it refuses every chain with a focus in it), M-NOBMOVE (it refuses every chain with a
 // move of a button held), M-NOD2 (it refuses a press's mouseup of detail 2), M-NOPENMOUSE (it refuses a pen's chain with a
 // mouse-typed event), M-NOTAPPAIR (it refuses a tap's chain with a compatibility mouseout or mouseover), M-NOBLURPAIR (it refuses
@@ -2285,6 +2286,7 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // allowlist admits, the viewer's own tap's and the pen's own tap's: the slot's pointerId test closes Chromium's road 2, which the
 // allowlist admits (22 covered clicks of that round's recorded rows, replayed; the open leg's Chromium tap cells on the chat and the
 // Files pane red without it), and the pen's condition closes a click that names another pointer after a touch-order pen's tap.
+// D-KEY and ONEF red the guard of the slot's two rules the allowlist does not subsume alone, each row a chain the allowlist admits.
 /** Firefox's mouse click under pointerId 0 on `target`: its pointerdown, mousedown, pointerup, mouseup and click (typed mouse). */
 const ffMouseClick = (target: El): void => {
   const m: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
@@ -3295,4 +3297,42 @@ test("the read types the gate's comment names are the ones the code reads, a gua
   assert.ok(codeChain.length > 0 && codeOwn.length > 0, "the code's lists read (a precondition): " + JSON.stringify({ codeChain, codeOwn }));
   assert.deepEqual({ chain: said("the chain listener hears twenty-one types of the window's capture phase"), own: said("the gate's own listeners hear ten") }, { chain: codeChain, own: codeOwn },
     "the gate's comment's two lists, as the sentence names them, equal CHAIN_TYPES and gateListeners' own types (a property pin over file-view.ts's text)");
+});
+test("the slot's two rules the own-chain allowlist does not subsume, a guard CI runs (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them): each row drives a chain the allowlist admits, so only the rule its row names refuses it: the keydown's clear, the viewer's own tap on the picture with the control shown as Firefox sends it, whose compatibility events and click another document's element took, then a key pressed in the viewer, then a tap on that element over the control, which goes away during the press, whose compatibility events, mouseup and click land in this window, the residual's chain, which the allowlist admits since a keydown is admitted anywhere and the chain listener does not hear it: the keydown emptied the slot, so the click opens nothing and reveals the control; and the one-finger condition of the tap's flag, two fingers pressed and lifted together on the picture with the control shown, their two pointerdowns and their two pointerups each one after the other, which the chain records as one finger's tap since a token equal to the one before it is dropped, then another document's tap over the control whose compatibility events, mouseup and click land in this window: the primary touch's pointerup filled the slot with two contacts since its pointerdown, so the tap's flag stayed down and the compatibility mousedown emptied the slot, and the click opens nothing and reveals the control, an order read and not run, since no browser here drives two fingers; the next click opens once after each (a property pin over window.open's calls and the scrollIntoView record; the key's row red under D-KEY, a gate whose keydown leaves the slot, and the two fingers' row under ONEF, a gate whose tap's flag stands after any primary touch's pointerup, each open under that gate alone)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const f0: GatePtr = { pointerId: 0, pointerType: "touch", isPrimary: true, button: 0 };
+  got.key = await gateCell(t, "the viewer's tap as Firefox sends it, its compatibility events taken by another document's element, a key pressed in the viewer, | then a tap on that element over the control", (g, opens) => {
+    g.place(IN_BOX);
+    tapDown(g.img, f0);
+    tapUp(g.img, f0, "firefox");                                           // fills the slot with the tap's shown record
+    onWindow("keydown", g.body, { key: "a" });                              // a key pressed while the viewer holds the focus
+    g.cover(new El("div"));
+    tapCompat(g.ctl, "firefox");                                           // the other tap's compatibility mouseover, mousemove and mousedown
+    gateClick(g.ctl, 0, 1, true, "touch");
+    const first = opens();
+    g.cover(null);
+    engineTap(g.img, "firefox", 0);
+    return [first, opens()];
+  });
+  got.twoFingers = await gateCell(t, "two fingers pressed and lifted together on the picture, | then another document's tap over the control", (g, opens) => {
+    const f1: GatePtr = { pointerId: 1, pointerType: "touch", isPrimary: false, button: 0 };
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.img, { ...f0 });                             // the primary finger
+    onWindow("pointerdown", g.img, { ...f1 });                             // the second, right after it: the chain drops its equal token
+    onWindow("touchstart", g.img);
+    onWindow("pointerup", g.img, { ...f1 });                               // the second finger's pointerup, then the primary's, which fills the slot
+    onWindow("pointerup", g.img, { ...f0 });
+    onWindow("pointerout", g.img, { pointerId: 0, pointerType: "touch", buttons: 0, relatedTarget: null });
+    onWindow("touchend", g.img);
+    g.cover(new El("div"));
+    tapCompat(g.ctl, "firefox");
+    gateClick(g.ctl, 0, 1, true, "touch");
+    const first = opens();
+    g.cover(null);
+    engineTap(g.img, "firefox", 0);
+    return [first, opens()];
+  });
+  t.diagnostic("record " + JSON.stringify(got));
+  const refused = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
+  assert.deepEqual(got, { key: refused, twoFingers: refused }, "each row's click opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
 });

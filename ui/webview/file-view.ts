@@ -3155,7 +3155,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // pressed another document, and of a tap whose click never came after its compatibility mousedown, each then another
   // document's tap; no browser cell drives either order; the first row red under a gate whose flag skips that test only with M-OFF
   // since the file review's round 20, the allowlist refusing a chain no primary pointerdown started, and the second under a gate
-  // whose flag outlives the tap's own mousedown alone). The retired mouseout's rule's node guard stands as the allowlist
+  // whose flag outlives the tap's own mousedown alone), and so is its test of one contact, which the allowlist does not subsume:
+  // two fingers pressed and lifted together on the picture, their pointerdowns and their pointerups each one after the other,
+  // leave a chain the allowlist reads as one finger's tap, since the chain drops a token equal to the one before it, and another
+  // document's tap over the control then sends the tap's chain, which only that test refuses, the flag staying down so the
+  // compatibility mousedown empties the slot (the file review's round 20: the node guard of the slot's two rules the allowlist
+  // does not subsume, red under a gate whose flag stands after any primary touch's pointerup; no browser here drives two
+  // fingers). The retired mouseout's rule's node guard stands as the allowlist
   // refusing its orders: its rows of that mouseout with the button down and with none are refused here and open under M-OFF, the
   // allowlist admitting every chain (the chain rule's block of file-view-outline.test.ts names the mutants).
   // The chain rule's pins: browser cells in the dashboard's shape, the viewer's frame beside another pane's frame over a bar of
@@ -3392,14 +3398,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // its picture or a field of its own document, after the open's landing and, in Chromium and WebKit, after another tab comes to
   // the front and back; a press on the web control never gives it the focus, since the viewer cancels that press's
   // mousedown (the file review's round 14), and it loses the focus when the reader clicks another pane or the top page.
-  // The slot's four other clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot
-  // is refilled at every pointerup, the click of a press this window heard follows that press's own pointerup, the mousedown's
-  // clear, the mouseup's, the tail, the slot's pointerId test, the refusal of a record still standing at a click and the own-chain
-  // allowlist refuse a click whose press this window did not hear, what is left of the residual and the third order above aside,
-  // and a
-  // key's or a script's click never reads the slot, so dropping any one of the four alone changes no gesture a test drives; the press cells (a press with
-  // no click, then a key's click or a script's) are red under a gate that lets a key's or a script's click read the slot with the
-  // keydown's clear dropped. The tail's condition on the record under a click's own pointerId is defensive since a standing
+  // The slot's three other clears (a pointerdown's, a pointercancel's and the taking click's) are defensive: the slot is refilled
+  // at every pointerup, the click of a press this window heard follows that press's own pointerup, the mousedown's clear, the
+  // mouseup's, the tail, the slot's pointerId test, the refusal of a record still standing at a click and the own-chain allowlist
+  // refuse a click whose press this window did not hear, what is left of the residual and the third order above aside, and a key's
+  // or a script's click never reads the slot, so dropping any one of the three alone changes no gesture a test drives. The
+  // keydown's clear is not defensive since the file review's round 20: the viewer's own tap whose compatibility events and click
+  // another document's element took, then a key pressed in the viewer, then a tap on that element over the control that goes away
+  // during the press sends this window the residual's chain, which the allowlist admits, a keydown admitted anywhere, and only
+  // that clear refuses its click (the node guard of the slot's two rules the allowlist does not subsume, red under a gate whose
+  // keydown leaves the slot); and the press cells (a press with no click, then a key's click or a script's) are red under a gate
+  // that lets a key's or a script's click read the slot with the keydown's clear dropped. The tail's condition on the record under a click's own pointerId is defensive since a standing
   // record refuses: with no tail the slot hands the click nothing, so the click refuses whether that record is read or not, and a
   // gate that reads it with no tail reds no test. The tail's condition on the mouseup's detail is defensive under the mouseup's
   // clear in every event order: a primary mouseup of detail 0 empties the slot, so a click after it takes nothing whether the
