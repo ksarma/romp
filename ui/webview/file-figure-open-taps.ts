@@ -1715,7 +1715,8 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
  *  callback that asks for one more, so a rendering update runs while the frame is hidden and the focus fixup blurs the input, released
  *  at once on the top page, the frame shown again, then a still click at the press's point on an element over the control that cancels
  *  its mousedown and hides at it: the viewer hears the input's blur, no focus after it, since the body did not hold the keyboard and
- *  retakeAfterHide gives nothing back, and no blur of its window). Each cell asserts that shape as its precondition. */
+ *  retakeAfterHide gives nothing back, and no blur of its window; a hide that crosses no rendering update brings no blur, so that run
+ *  repeats its attempt, at most four times, until the blur is heard). Each cell asserts that shape as its precondition. */
 export async function allowlistCells(browser: any, engine: TapEngine, reps: number, note: (m: string) => void): Promise<TapCell[]> {
   const cells: TapCell[] = [];
   const at = (engine === "webkit" ? "WebKit (Playwright's, on Linux under touch emulation)" : engine) + ", a hybrid page in a frame beside another pane, pane: ";
@@ -1852,29 +1853,41 @@ export async function allowlistCells(browser: any, engine: TapEngine, reps: numb
       }
       if (engine === "chromium") {
         const what = "extra5-1 with the focus not back: a text input of the viewer focused, the mouse pressed on the control and held while the top page hides the viewer's frame across a rendering update, released at once on the top page, the frame shown again, then a still click on an element over the control that cancels its mousedown and hides at it";
-        await settle();
-        await s.fr.evaluate(() => { if (!document.getElementById("tvin")) { const i = document.createElement("input"); i.id = "tvin"; i.style.cssText = "position:fixed;right:20px;bottom:90px;width:160px;z-index:2147483647"; document.body.appendChild(i); } });
-        const g = await shown(what);
-        const vin = await s.fr.evaluate(() => { const r = (document.getElementById("tvin") as HTMLElement).getBoundingClientRect(); return { x: Math.round(r.left + 20), y: Math.round(r.top + r.height / 2) }; });
-        await s.page.mouse.click(vin.x, vin.y); await frames(s.fr, 2);
-        const focused = await s.fr.evaluate(() => document.activeElement && (document.activeElement as HTMLElement).id);
-        await s.opens();
-        await s.page.mouse.move(g.ctl.x, g.ctl.y); await frames(s.fr, 2);
-        await heard();                                                                     // the move's boundary events before the press are not the cell's
-        await s.page.mouse.down();
-        await frames(s.fr, 2);
-        await hideFrame();                                                                 // inside a requestAnimationFrame callback that asks for one more, so the focus fixup runs while hidden
-        await s.page.mouse.up();                                                           // at once, on the top page, before a redraw finds the frame hidden with the button down
-        await showFrame();
-        await element(g.box, "mousedown:hide+prevent");
-        await s.page.mouse.down(); await s.page.mouse.up();                                // at once, the still click where the press was
-        await new Promise((r) => setTimeout(r, 150)); await frames(s.fr, 4);
-        const evs = await heard();
+        // The focus fixup blurs the input only when a rendering update runs while the frame is hidden, which the hide asks for and
+        // does not always get: a run of a check of these fixes heard the press and the click with no blur (the file review's round
+        // 20). So the run repeats, at most four attempts, until the viewer hears an element's blur, each attempt from the settling
+        // click, and fails its precondition only when no attempt heard one; an attempt with no blur is the still pointer's own chain,
+        // whose covered click the residual admits, and the next attempt's settling reads its opens away.
+        let evs: Heard[] = [], focused: string | null = null, attempts = 0;
+        const misses: string[] = [];
+        while (attempts < 4) {
+          attempts++;
+          await settle();
+          await s.fr.evaluate(() => { if (!document.getElementById("tvin")) { const i = document.createElement("input"); i.id = "tvin"; i.style.cssText = "position:fixed;right:20px;bottom:90px;width:160px;z-index:2147483647"; document.body.appendChild(i); } });
+          const g = await shown(what);
+          const vin = await s.fr.evaluate(() => { const r = (document.getElementById("tvin") as HTMLElement).getBoundingClientRect(); return { x: Math.round(r.left + 20), y: Math.round(r.top + r.height / 2) }; });
+          await s.page.mouse.click(vin.x, vin.y); await frames(s.fr, 2);
+          focused = await s.fr.evaluate(() => document.activeElement && (document.activeElement as HTMLElement).id);
+          await s.opens();
+          await s.page.mouse.move(g.ctl.x, g.ctl.y); await frames(s.fr, 2);
+          await heard();                                                                   // the move's boundary events before the press are not the cell's
+          await s.page.mouse.down();
+          await frames(s.fr, 2);
+          await hideFrame();                                                               // inside a requestAnimationFrame callback that asks for one more, so the focus fixup runs while hidden
+          await s.page.mouse.up();                                                         // at once, on the top page, before a redraw finds the frame hidden with the button down
+          await showFrame();
+          await element(g.box, "mousedown:hide+prevent");
+          await s.page.mouse.down(); await s.page.mouse.up();                              // at once, the still click where the press was
+          await new Promise((r) => setTimeout(r, 150)); await frames(s.fr, 4);
+          evs = await heard();
+          if (idx(evs, (e) => e.type === "blur" && e.tgt === "element") >= 0) break;
+          misses.push(word(evs));
+        }
         const up = idx(evs, (e) => e.type === "pointerup");
         const blur = idx(evs, (e) => e.type === "blur" && e.tgt === "element");
         const focusAfter = evs.findIndex((e, i) => i > blur && e.type === "focus" && e.tgt === "element");
-        rec[what + " " + rep] = { focused, heard: word(evs), el: await drop() };
-        assert.ok(focused === "tvin" && evs[0] && evs[0].type === "pointerdown" && n1(evs, "pointerdown") && n1(evs, "mousedown") && n1(evs, "pointerup") && n1(evs, "click") && blur > 0 && blur < up && (focusAfter < 0 || focusAfter > up) && !evs.some((e) => e.type === "blur" && e.tgt === "window") && !evs.some((e, i) => i < up && e.ptype === "mouse" && /^pointer(move|out|over)$/.test(e.type)), at + what + ": the input focused, then the viewer hears the press's pointerdown and mousedown, an element's blur and no element's focus before the click's pointerup, no mouse pointer event with no button down before it, a mouseup and a click, and no blur of its window (a precondition): " + JSON.stringify({ focused }) + " " + word(evs));
+        rec[what + " " + rep] = { focused, attempts, misses, heard: word(evs), el: await drop() };
+        assert.ok(focused === "tvin" && evs[0] && evs[0].type === "pointerdown" && n1(evs, "pointerdown") && n1(evs, "mousedown") && n1(evs, "pointerup") && n1(evs, "click") && blur > 0 && blur < up && (focusAfter < 0 || focusAfter > up) && !evs.some((e) => e.type === "blur" && e.tgt === "window") && !evs.some((e, i) => i < up && e.ptype === "mouse" && /^pointer(move|out|over)$/.test(e.type)), at + what + ": the input focused, then the viewer hears the press's pointerdown and mousedown, an element's blur and no element's focus before the click's pointerup, no mouse pointer event with no button down before it, a mouseup and a click, and no blur of its window, in one of four attempts (a precondition): " + JSON.stringify({ focused, attempts, misses }) + " " + word(evs));
         const clickOpens = await s.opens();
         cells.push(["in Chromium, " + what + ", run " + rep + ": [that click's opens, the next click's]", [[0, 0], [1, 1]], [clickOpens, await next(what)]]);
       }
