@@ -149,6 +149,9 @@ which _response_reads gives "refused"). And so is a fetch through a helper whose
 place, or a Name bound to such a wrapper (`status, raw = _raw(path)` and then `return 200, raw.strip()`, `return 200, raw[3:]`, or
 `text = raw.strip(); return 200, text`; a response attribute, `r.status`, and a `.decode(...)` chain are no wrapper): _response_reads
 gives it "refused" (round 6, X1; x1 in test_d of test_a_returned_name_is_followed_to_its_binding_in_the_helper, a stated bound before).
+A served text inline whose value lands where the census does not read it is REFUSED as well (_fail_closed's check (5)): assigned to
+a subscript or through an annotated or augmented assignment or a walrus, yielded, the body of a lambda, or returned by a function
+that is no text helper, or by a text helper the module hands on uncalled or calls with arguments.
 
 Bound: a formatted url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
 membership asserted through a helper (`_has(self, lit, body)` in tests/test_files_pane.py and tests/test_settings_page.py, whose
@@ -1572,7 +1575,7 @@ def readers_of(path, getters, constants, routes=None):
                     rows.append((node.lineno, "unclassified", tuples[key], "fetched tuple %s: %s" % (spelled, lines[node.lineno - 1].strip()[:160])))
         return rows
 
-    out = _fail_closed(tree, lines, routes, reads) if routes else []   # the refusals of round 6
+    out = _fail_closed(tree, lines, routes, reads, getters, constants) if routes else []   # the refusals of round 6
     calls = {k: t for k, t in modnames.items() if k.endswith("()")}   # the module's text helpers (RETTEXT), read in a setUp too
     by_name, own_attrs = {c.name: c for c in classes}, _own_attrs_of(bindings, getters, constants, routes, reads, calls)
     for cls, fns in groups:
@@ -1640,7 +1643,7 @@ def _route_tables():
     return frozenset(n for n, v in vars(km).items() if isinstance(v, dict) and len({k for k in v if isinstance(k, str)} & routes) >= 2)
 
 
-def _fail_closed(tree, lines, routes, reads):
+def _fail_closed(tree, lines, routes, reads, getters, constants):
     """The refusals of round 6 (the coordinator's decisions on PR 858, B.1): reads the census cannot place, each an unclassified row
     naming its site, where each had left both censuses in silence. The checks, over every call of the module:
     (1) a page-route fetch the census recognizes (_fetched) whose value, through any `.read()`/`.decode()`/`.getvalue()` chain,
@@ -1664,7 +1667,12 @@ def _fail_closed(tree, lines, routes, reads):
     (4) a page-route call (a literal path, _fetch_path) of a helper of the module whose returns place no read and hold none it
         cannot place, so no fetch (_fetched), whose answer is nonetheless read as a response at the call: `.read()`, `.decode()`
         or `.getvalue()` chained on it, or on a Name or a with target the same function binds to it (the first bound's first half:
-        `return urlopen(path)` read as `self._open("/").read()`).
+        `return urlopen(path)` read as `self._open("/").read()`);
+    (5) a served text inline (_text: a getter's call, a constant) whose value lands where the census does not read it: the value of
+        an assignment with a target other than a Name, a self.<attr> or cls.<attr>, or a tuple or list of Names (`d["k"] =
+        km._landing()`), of an annotated or augmented assignment or a walrus, returned or yielded by a function, or the body of a
+        lambda. A return in a text helper of the module (_text_helpers) is read at each call of it, so it is not refused unless the
+        module also hands the helper on uncalled or calls it with arguments (`{"login": _render_login}`, then `render()` in a loop).
     A call to a Name the same function binds to an attribute (`seg = km._route_seg`, then `seg("/")`) calls that function, no fetch
     helper of the test's, and is not checked (tests/test_perf_stats.py's route-mark test asserts over `seg("/")` so)."""
     rows, seg = [], lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
@@ -1700,6 +1708,21 @@ def _fail_closed(tree, lines, routes, reads):
             return True
         return isinstance(t, (ast.Tuple, ast.List)) and bool(t.elts) and all(isinstance(e, ast.Name) for e in t.elts)
 
+    # (5) a served text inline landing where the census does not read it
+    helpers = {k[:-2] for k in _text_helpers(tree, getters, constants)}
+    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call) and not n.args and not n.keywords}
+    handed = {x.id if isinstance(x, ast.Name) else x.attr for x in ast.walk(tree) if isinstance(x, (ast.Name, ast.Attribute))
+              and isinstance(x.ctx, ast.Load) and (x.id if isinstance(x, ast.Name) else x.attr) in helpers and id(x) not in called}
+    for node in ast.walk(tree):
+        t = _text(node, getters, constants)
+        if not t:
+            continue
+        p = parents.get(id(node))
+        if isinstance(p, ast.Assign) and p.value is node and not all(bound(x) for x in p.targets) \
+                or isinstance(p, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)) and p.value is node \
+                or isinstance(p, (ast.Yield, ast.YieldFrom, ast.Lambda)) \
+                or isinstance(p, ast.Return) and not (scope(node) is not tree and scope(node).name in helpers and scope(node).name not in handed):
+            rows.append((node.lineno, "unclassified", t, "served text bound nowhere the census reads (%s): %s" % (type(p).__name__, seg(p if not isinstance(p, ast.Lambda) else node))))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or isinstance(node.func, ast.Attribute) and node.func.attr in _BODY_READS:
             continue
@@ -1958,6 +1981,10 @@ _LISTED_READERS = (
      "_Served.setUpClass fetches every page the route table names by the loop's Name url (_fail_closed's check (3)), so the census "
      "cannot tell which page each body is, and the module's reads of the pages (the wrapper's place, the fetch calls' order, the "
      "member scan) are in neither census"),
+    (("test_fetch_wrapper_census.py", "unclassified", "_TOKEN_LOGIN_HTML", "served text bound nowhere the census reads (Return): return km._TOKEN_LOGIN_HTML"),
+     "_render_login is handed on uncalled through NON_PAGE_HTML and called as `render()` in a loop over it (_fail_closed's check "
+     "(5)), so the census cannot tell which text each body is, and the module's reads of it (the fetch call and member scans, "
+     "the bundle regex) are in neither census"),
 )
 
 
@@ -3384,8 +3411,11 @@ class U(T):
         self.assertEqual(rows, [(9, "h1", "_landing", "in", False, False), (11, "h2", "_landing", "in", False, False), (12, "h3", "_landing", "in", False, False),
                                 (13, "h4", "_LANDING_MOBILE_JS", "in", False, False), (16, "h7", "_landing", "in", False, False), (25, "h8", "_landing", "in", False, False)])
         self.assertEqual(sites, [])
-        self.assertEqual([r[:3] for r in readers], [(9, "assert", "_landing"), (11, "assert", "_landing"), (12, "assert", "_landing"),
-                                                    (13, "assert", "_LANDING_MOBILE_JS"), (16, "assert", "_landing"), (25, "assert", "_landing")])
+        # since _fail_closed's check (5), the returns the census cannot follow to a read are refused: `_page`'s, since h5 calls it
+        # with an argument (3), and `_mixed`'s text (21)
+        self.assertEqual([r[:3] for r in readers], [(3, "unclassified", "_landing"), (9, "assert", "_landing"), (11, "assert", "_landing"),
+                                                    (12, "assert", "_landing"), (13, "assert", "_LANDING_MOBILE_JS"), (16, "assert", "_landing"),
+                                                    (21, "unclassified", "_landing"), (25, "assert", "_landing")])
 
 
     def test_a_fetched_page_bound_where_the_census_does_not_read_it_is_refused(self):
@@ -3673,6 +3703,59 @@ class T(unittest.TestCase):
                           (20, "assert", 'self.assertIn("y1", c2)'), (22, "assert", 'self.assertIn("y2", d2)')])
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
                          {"_strip": ["refused"], "_bound": ["refused"], "_attr": ["unknown"], "_dec": ["unknown"], "test_a": []})
+
+
+    def test_a_served_text_landing_where_the_census_does_not_read_it_is_refused(self):
+        # round 6 (B.1, _fail_closed's check (5)): a served text inline had been read only where its value lands in a binding the
+        # census reads; landing anywhere else it left both censuses in silence. Each is refused now, an unclassified row at the
+        # text: an assignment to a subscript (9), an annotated (10) and an augmented assignment (11), a walrus (12), a lambda (13),
+        # a yield (15), a return in a function whose returns differ (19), and a return in a text helper the module hands on
+        # uncalled (21, through a dict, as main's tests/test_fetch_wrapper_census.py hands `_render_login`; the visible listing
+        # holds that row) or calls with an argument (23). A Name, a self.<attr> and a tuple of Names are bindings the census reads
+        # (5, 6, 7), and a text helper called bare is read where it is called (25, 27; RETTEXT), so none is a row. Dropping the
+        # check reds every row here, and dropping the text helpers' exemption refuses 25 and 27 as well. The rows are named, never
+        # inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest
+class T(unittest.TestCase):
+    def test_a(self):
+        d = {}
+        page = km._landing()
+        self.html = km._landing()
+        a, b = km._landing(), km._chat_page()
+        self.assertIn("z1", page)
+        d["k"] = km._landing()
+        typed: str = km._landing()
+        page += km._LANDING_MOBILE_JS
+        if (w := km._landing()):
+            f = lambda: km._landing()
+    def gen(self):
+        yield km._landing()
+    def _mixed(self, ok):
+        if ok:
+            return ""
+        return km._landing()
+def _handed():
+    return km._landing()
+def _argued(x=1):
+    return km._chat_page()
+def _called():
+    return km._landing()
+D = {"k": _handed}
+TEXT = _called()
+V = _argued(2)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        where = "served text bound nowhere the census reads (%s)"
+        self.assertEqual([(r[0], r[2], r[3].split(":")[0]) for r in readers if r[1] == "unclassified"],
+                         [(9, "_landing", where % "Assign"), (10, "_landing", where % "AnnAssign"), (11, "_LANDING_MOBILE_JS", where % "AugAssign"),
+                          (12, "_landing", where % "NamedExpr"), (13, "_landing", where % "Lambda"), (15, "_landing", where % "Yield"),
+                          (19, "_landing", where % "Return"), (21, "_landing", where % "Return"), (23, "_chat_page", where % "Return")])
 
 
 if __name__ == "__main__":
