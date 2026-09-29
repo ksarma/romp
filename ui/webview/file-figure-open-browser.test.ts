@@ -3414,8 +3414,8 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // 0f998a3b9 after the right click, the middle click and the two-finger touch, whose gate left the slot alone at the tap's mousedown,
 // so its click took the slot that pointerup had filled, the reads a private witness kept out of the tree.
 // The chain rule's cells (the closing check at 142ade155 after the fixes for the file review's round 18), the gate's own
-// listeners hearing ten events of the window's capture phase (pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown,
-// dragstart, touchend, touchcancel and click) and its chain listener twenty-one, twenty-three types in all (file-figure-open-taps.ts
+// listeners hearing six events of the window's capture phase (pointerdown, mousedown, pointerup, pointercancel, keydown and
+// click) and its chain listener twenty-one, twenty-three types in all (file-figure-open-taps.ts
 // names them; the file review's round 20), on the hybrid page in the dashboard's shape with the viewer's
 // frame beside another pane's frame over a bar of the top page: Chromium gives each touch a pointerId of its own, and after the
 // viewer's own tap on the picture filled the slot and sent no click to the viewer, with a second finger resting on the top

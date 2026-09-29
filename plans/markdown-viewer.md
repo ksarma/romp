@@ -8695,58 +8695,59 @@ extra7-2), the outbound
 mark of a picture with no control excepted, which has no stacking level of its own, a stated boundary (its round 17, extra7-1); a same-origin parent's own
 chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
 and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click along that gesture's own chain
-of events as the viewer's window hears them, keyed on events of that window's capture phase, the gate's own listeners on ten
-(pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown, dragstart, touchend, touchcancel and click) and its chain
+of events as the viewer's window hears them, keyed on events of that window's capture phase, the gate's own listeners on six
+(pointerdown, mousedown, pointerup, pointercancel, keydown and click) and its chain
 listener on twenty-one (pointerdown, pointerup, pointercancel, pointerover, pointerout, pointerenter, pointerleave, pointermove,
 mousedown, mouseup, mouseover, mouseout, mousemove, touchstart, touchend, touchcancel, dragstart, contextmenu, auxclick, blur and
 focus), twenty-three types in all (the file review's round 20), and never on
 time: a click by
 a pointer refuses where
 a record still stands under its own pointerId, a press whose pointerup the viewer's window never heard and so with no heard chain to
-the click, whatever its verdict, and with none reads the press a one-click slot took at the last pointerup, only right after a
-mouseup of the primary button whose detail, the click count, is above 0 (the tail: in the three engines measured every pointer's
-click came right after such a mouseup, the lone click below alone excepted, and every mouseup with no click after it carried
-detail 0), the slot's press only when a click typed as the slot's pointerup was carries that pointerup's pointerId and only
+the click, whatever its verdict, and with none reads the press a one-click slot took at the last pointerup,
+the slot's press only when a click typed as the slot's pointerup was carries that pointerup's pointerId and only
 when the chain of events the viewer's window heard from the slot's press to the click is one the viewer's own gestures make
-(the own-chain allowlist, below), and a
+(the own-chain allowlist, below, each chain of which ends in a mouseup of the primary button whose detail, the click count, is
+1 or 2, with no pointerdown, mousedown, pointerup, pointercancel or other mouseup after it: in the three engines measured every
+pointer's click came right after a primary mouseup of detail above 0, the lone click below alone excepted, and every mouseup
+with no click after it carried detail 0), and a
 touch-order pen's slot (a primary pen whose own mousedown had not come by its pointerup: iPadOS's Pencil and Android's and
 ChromeOS's styluses, read and not run) only after that pen's compatibility mousedown and by a click typed pen under the pen's
 pointerId or by one with no pointerId, the wait for that mousedown defensive in every gesture a browser here drives, since none
-drives a pen in that order, and pinned by a row of the pen's node guard, red under a gate without the wait, the tail not refusing
-every such click, since a mouseup whose mousedown went to another element came to the viewer's window with detail 0 in the order
+drives a pen in that order, and pinned by a row of the pen's node guard, red under a gate without the wait together with M-OFF,
+the allowlist refusing that row's tap with no compatibility mousedown, a primary mouseup of detail 1 not coming only after a
+mousedown the viewer's window heard, since a mouseup whose mousedown went to another element came to that window with detail 0 in the order
 the closing check at 142ade155 measured, the viewer's own tap whose compatibility mousedown the top page took, and with detail 1
 and a click after it where that window had heard a mouse's press begin and not end (the first of the orders below, which the
 refusal of a standing record closes for the mouse's own pointerId); the slot
-is emptied by any pointerdown, pointercancel or keydown, by the mousedown below,
-by a mouseup other than a primary one of detail above 0, which clears the tap's flag too, since such a mouseup ends a press whose
-click the viewer's window will not hear, so no later click takes the slot's press from before it (the mouseup ends no record: a
-record standing through it ends by the record rule, its own pointerup handing it to the slot, and in WebKit's left press chorded
-into a held right press whose context menu default runs, which render.ts prevents only for a folder link or a selection, the right
-button's mouseup finds the left press's record standing, and that press's own pointerup and its mouseup of detail 0 leave no
-click; the file review's round 19, correctness-1), and by the click that takes it, and never by time (a mouseout to no element
-of the viewer's document and a blur of the viewer's window while a tap's compatibility mousedown was due emptied it too, the
-file review's round 19, extra8-2 and its extra5-1, extra8-1 and extra8-2, until its round 20 retired both rules, the allowlist
-refusing every chain that carries those events there); a
+is emptied by any pointerdown or keydown, by the mousedown below and by the click that takes it, and never by time (a mouseout
+to no element of the viewer's document and a blur of the viewer's window while a tap's compatibility mousedown was due emptied
+it too, the file review's round 19, extra8-2 and its extra5-1, extra8-1 and extra8-2, and so did a pointercancel and a mouseup
+other than a primary one of detail above 0, which cleared the tap's flag too, since such a mouseup ends a press whose click the
+viewer's window will not hear, the mouseup ending no record (the file review's round 19, correctness-1), until its round 20
+retired those four rules, the allowlist refusing every chain that carries those events there, the last two with no measured
+effect under it); a
 key's or a script's
 click reads neither and is read at the click; and a
 primary press ends every earlier record whatever its pointer type, a record ends at its own pointerup, which hands it to the slot,
-and at its own pointercancel, every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a pen before
-it, which takes no verdict, since WebKit's drag of a picture ends with no pointerup and no pointercancel, and in Firefox a tap on
-another document's element over the control with the mouse held on the picture starts a drag of it, whose dragstart ends the mouse's
-record before that tap's click reads it, a clear now defensive, since a record still standing at a click refuses it (its node guard
-red under a gate whose dragstart ends no record and whose click reads the record under its own pointerId, the gate at 09f58bec6 with
-that clear dropped, and green under this gate with it dropped; the closing check at 142ade155 after the fixes for the file review's
-round 18), and WebKit sends the
+and at its own pointercancel, and every record ends at a mousedown with no pointerdown of a mouse or a pen before
+it, which takes no verdict, since WebKit sends the
 mouse's next press after a press whose pointerup never came, a drag in another pane among them, as a mousedown with no
 pointerdown, and that mousedown empties the slot too unless it is the compatibility mousedown of the one-finger tap, or of the
-touch-order pen, whose pointerup filled the slot, and a touchend or a touchcancel marks every touch record refused, the record
-standing (three rules that marked every mouse and pen record refused the same way, a mouse's or a pen's pointerout with a button
+touch-order pen, whose pointerup filled the slot (a dragstart ended every record too, since WebKit's drag of a picture ends with
+no pointerup and no pointercancel, and in Firefox a tap on another document's element over the control with the mouse held on the
+picture starts a drag of it, whose dragstart ended the mouse's record before that tap's click read it, a clear defensive since a
+record still standing at a click refuses it, its node guard red under a gate whose dragstart ends no record and whose click reads
+the record under its own pointerId, the gate at 09f58bec6 with that clear dropped, the closing check at 142ade155 after the fixes
+for the file review's round 18, and a touchend or a touchcancel marked every touch record refused, the record standing; the file
+review's round 20 retired both with no measured effect under the allowlist, which admits no dragstart in a chain and no pointerup
+after a touchend or a touchcancel, a record either acted on reaching a click only at such a pointerup or under its own pointerId,
+where it stands and refuses; and three rules that marked every mouse and pen record refused the same way, a mouse's or a pen's pointerout with a button
 down and no relatedTarget, its pointer leaving the viewer's window with the press held, the closing check at 142ade155 after the
 fixes for the file review's round 18, and two of the file review's round 19, extra5-1, extra8-1 and extra8-2, the mouse's
 pointerout with no button down and no relatedTarget, a release the viewer's window did not hear, and a blur of the viewer's
 window itself, were retired in its round 20, with the coordinator's decision 3 on it, since each of those events lands in the
-chain of every press whose record it marked and a click can still take, and the allowlist admits none of them there), since a
-deleted record would send its pointer's click to the slot (a gate deleting the
+chain of every press whose record it marked and a click can still take, and the allowlist admits none of them there); no rule
+deletes a record at another event, since a deleted record would send its pointer's click to the slot (a gate deleting the
 mouse's and the pen's records at the leave opened 17,280 clicks the gate at 343ee2eb5 refuses by depth 6 of the search of the
 closed direction, a click under the deleted record's pointerId taking another pointer's shown slot, where marking them opens none;
 in the three engines measured a tap's click after its
@@ -8755,18 +8756,16 @@ press's, while in Playwright's headless WebKit on Linux (WPE's MiniBrowser) unde
 WebKitGTK browsers on a touchscreen, a tap's click
 carries pointerId 1 of type mouse where its press carried the touch's, a type other than the slot's; iOS WebKit's source gives an
 iPhone tap's click the touch's own pointerId, read and not run on a device; the slot's clears but that mousedown's and the
-mouseup's are defensive, the slot refilled at every pointerup, read by no key's or script's click, and a click whose press the
-viewer's window did not hear refused by that mousedown's clear, the mouseup's, the tail, the slot's pointerId test, the refusal
+keydown's (below) are defensive, the slot refilled at every pointerup, read by no key's or script's click, and a click whose press
+the viewer's window did not hear refused by that mousedown's clear, the slot's pointerId test, the refusal
 of a record still standing at the click or the own-chain allowlist, what is left of the residual and the third order below
-aside, the mouseup's clear of the tap's flag defensive too, since it empties the slot and only a pointerup fills it and sets the
-flag again (a gate without it reds no test), and the tail's condition on the mouseup's
-detail defensive under the mouseup's clear in every event order, a tail set by any primary mouseup with that clear kept reddening
-no test, and load-bearing once that clear is dropped (the file review's round 19, tests-1); that mousedown's clear of the
+aside; that mousedown's clear of the
 slot is pinned: before it, a tap on another document's element over the picture that went away during the press, whose
 compatibility mousedown, mouseup and click reach the viewer's window with no pointerdown or pointerup, took the slot a right click, a middle click or a two-finger
 touch had filled and opened the tab with the sign covered or out of view at the tap's start, measured in the three engines in the
-dashboard's shape, the viewer's page in a same-origin frame; the tail, the slot's pointerId test, the touch records' refusal and
-the mouseup's clear are pinned too, each by browser cells red at 142ade155 in the engine whose road it closes, in the dashboard's
+dashboard's shape, the viewer's page in a same-origin frame; the slot's pointerId test is pinned too, and so were the tail, the
+touch records' refusal and the mouseup's clear until the file review's round 20 retired them, each by browser cells red at
+142ade155 in the engine whose road it closes, in the dashboard's
 shape beside another pane: Firefox, after another document cancels a tap's pointerdown, sends the viewer that tap's click alone,
 with no mousedown and
 no mouseup, and that click took the slot a right or a middle click, the viewer's own tap whose compatibility events or click went
@@ -8783,10 +8782,11 @@ document's tap on an element over the control that hides at that tap's compatibi
 detail 1 and a click alone, which read the mouse's record; each opened the tab with the sign covered at the tap's start, and
 the retired blur's rule refused those cells too where the viewer's window held the focus, so WebKit's run again with an element
 that cancels that mousedown, where no blur comes, were red under a gate whose click reads its own standing record alone, as
-bef9ff8fc measured them; since the file review's round 20 the node guards of the tail, the touch records' refusal, the mouseup's
-clear and the touch-order pen's wait for its compatibility mousedown red their rows only together with M-OFF, the allowlist
-admitting every chain, since the allowlist refuses every order those guards drive, so those rules are defensive under it
-(file-view.ts's gate comment names which reds need it), while the slot's pointerId test and the touch-order pen's condition on a
+bef9ff8fc measured them; since the file review's round 20 the node guard of the touch-order pen's wait for its compatibility
+mousedown reds its row only together with M-OFF, the allowlist admitting every chain, the allowlist refusing that order, and the
+node guards of the tail, the touch records' refusal and the mouseup's clear, which that round retired with the dragstart's clear
+of every record and the pointercancel's clear of the slot, five rules with no measured effect under the allowlist, stand as the
+allowlist refusing their orders, red under M-OFF (file-view.ts's gate comment gives each rule's reason and the measurement), while the slot's pointerId test and the touch-order pen's condition on a
 click that names it close chains the allowlist admits, the viewer's own tap's and the pen's own tap's, the pointerId test
 Chromium's road 2 (22 covered clicks of that round's recorded rows, replayed), and their node guards, whose other tap sends its
 compatibility mousemove, are red under a gate without either rule alone, the keydown's clear and the tap's flag's test of one
@@ -8933,7 +8933,8 @@ under a pointerId other than its pointerup's every tap would be refused, the tab
 in the touch order whose click comes typed mouse, as WebKit types a touch's click (WPE as measured, and WebKitGTK by analogy),
 would have every tap
 refused, the tab still opening from a finger, the mouse or the keyboard, a tap during which another finger that touched the viewer
-lifts, in an engine that clicks after such a tap, is refused, since a touchend marks every touch record refused, and so is a
+lifts, in an engine that clicks after such a tap, is refused, since the allowlist admits no other contact's events inside a tap,
+and so is a
 pointer's click with no primary mouseup of detail above 0 before it, an assistive technology's with a pointerId and no mouseup or
 an eraser's whose mouseup does not carry the primary button, while Enter or Space still opens, and so is a pointer's click after
 whose pointerup a mouseup other than a primary one of detail above 0 came, an order none of the three engines measured sends before
@@ -8988,7 +8989,7 @@ another tab comes to the front and back, never from a press on the web control, 
 press's clear's cost on a device with a
 mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere in the
 viewer's window loses its record, so its click opens nothing and reveals, while one that lands on another document's element
-leaves the record standing unless a mousedown with no pointerdown or a dragstart ends it, and in WebKit that press's click finds it
+leaves the record standing unless a mousedown with no pointerdown ends it, and in WebKit that press's click finds it
 standing and is refused (the first of the orders above); the cost of ending the records, measured in WebKit: after a drag
 anywhere in the
 page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its sign, whatever covers or

@@ -4,22 +4,26 @@
 // link-navigation follow-on of plans/markdown-viewer.md: file-figure-open-browser.test.ts runs them in Chromium, and
 // file-figure-open-engines-browser.test.ts in WebKit and Firefox, a leg of its own that stays off the shared roster of browser
 // legs, since the job that runs the roster installs Chromium alone. The gate (file-view.ts webGestureShown and the recorder
-// above it: its own listeners hear ten events of the window's capture phase, pointerdown, mousedown, mouseup, pointerup,
-// pointercancel, keydown, dragstart, touchend, touchcancel and click, and its chain listener twenty-one, pointerdown, pointerup,
+// above it: its own listeners hear six events of the window's capture phase, pointerdown, mousedown, pointerup, pointercancel,
+// keydown and click, and its chain listener twenty-one, pointerdown, pointerup,
 // pointercancel, pointerover, pointerout, pointerenter, pointerleave, pointermove, mousedown, mouseup, mouseover, mouseout,
 // mousemove, touchstart, touchend, touchcancel, dragstart, contextmenu, auxclick, blur and focus, twenty-three types in all)
 // records a press's verdict at the window's pointerdown and fills a one-click slot at the pointerup, and a click by a pointer
 // refuses where a record still stands under its own pointerId, a press whose pointerup the viewer never heard, and with none
-// reads the press the slot handed it, only right after a primary mouseup whose detail is above 0, only under the slot's own
+// reads the press the slot handed it, only under the slot's own
 // pointerId when the click is typed as the slot's pointerup was, and only when the chain of events the viewer heard from the
 // slot's press to the click is one the viewer's own gestures make (the own-chain allowlist, file-view.ts ownChain: the file
 // review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them); a record ends at its
-// own pointerup, which hands it to the slot, at its own pointercancel and at the next primary press, every record ends at a
-// dragstart and at a mousedown with no pointerdown of a mouse or a pen before it, which empties the slot too unless it is the
-// compatibility mousedown of the one-finger tap, or of the touch-order pen, whose pointerup filled the slot, a mouseup other
-// than a primary one of detail above 0 empties the slot and clears the tap's flag, and a touchend or a touchcancel marks every
-// touch record refused, and the record stands. Four rules that read one heard event each are retired, since the allowlist
-// refuses every order they refused (the file review's round 20, with the coordinator's decision 3 on it): a mouse's or a pen's
+// own pointerup, which hands it to the slot, at its own pointercancel and at the next primary press, and every record ends at a
+// mousedown with no pointerdown of a mouse or a pen before it, which empties the slot too unless it is the compatibility
+// mousedown of the one-finger tap, or of the touch-order pen, whose pointerup filled the slot. Nine rules are retired, since the
+// allowlist refuses every order they refused (the file review's round 20, with the coordinator's decision 3 on it and the ruling
+// on the allowlist's build). Five had no measured effect under the allowlist: the tail (a press taken for a pointer's click only
+// right after a primary mouseup of detail above 0), a mouseup other than a primary one of detail above 0 emptying the slot and
+// clearing the tap's flag, a dragstart ending every record, a touchend or a touchcancel marking every touch record refused, and
+// a pointercancel emptying the slot; every chain the allowlist admits ends in a primary mouseup of detail 1 or 2 with no
+// pointerdown, mousedown, pointerup, pointercancel or other mouseup after it, and carries no dragstart, no pointercancel and no
+// pointerup after a touchend or a touchcancel. Four read one heard event each: a mouse's or a pen's
 // pointerout with a button down and no relatedTarget, its pointer leaving the viewer's window (the held arm, the closing check
 // at 142ade155 after the fixes for the file review's round 18), and three of the file review's round 19 (extra5-1, extra8-1 and
 // extra8-2), the mouse's pointerout with no button down and no relatedTarget, a release the viewer did not hear, those two
@@ -250,8 +254,9 @@
 // click or a two-finger touch are red at 0f998a3b9 in the engines that run them, whose gate left the slot alone at the tap's
 // mousedown, so the tap's click took the slot that pointerup with no click had filled, and the cell after nothing reads the same
 // there, by design; the chain rule's cells are red at 142ade155, where each covered click opened, and on the chat and the Files
-// pane under a gate without the rules that close each, as bef9ff8fc measured them, before the file review's round 20 retired four
-// of those rules (in Firefox the tail and the mouseup's clear,
+// pane under a gate without the rules that close each, as bef9ff8fc measured them, before the file review's round 20 retired
+// every one of those rules but the slot's pointerId test and the refusal of a record still standing at a click (in Firefox the
+// tail and the mouseup's clear,
 // for the lone click after the mouse held on the control the refusal of a record still standing at a click too, after the mouse
 // released on the top page's bar the refusal of a record whose pointer left the viewer's window with a button down too, and after
 // the mouse released in the other pane both refusals too, two cells a surface under a gate without the tail alone, those after the
@@ -618,8 +623,9 @@ const closeCovers = async (s: Scene): Promise<void> => {
 /** A mouse drag of a picture, then clicks of the mouse: on the hybrid page, and on a plain page (a mouse and no touchscreen). The
  *  drag ends in a dragstart and no click; in Chromium and Firefox it ends the press with a pointercancel and the next press sends its
  *  pointerdown, while WebKit sends neither, and sends the mouse's next press as a mousedown with no pointerdown before it, a
- *  precondition each cell asserts by engine. The gate (file-view.ts, the recorder above webGestureShown) ends every record at the
- *  drag's dragstart and at that mousedown, so in WebKit the mouse's first click after the drag finds no press and opens nothing,
+ *  precondition each cell asserts by engine. The gate (file-view.ts, the recorder above webGestureShown) ends every record at that
+ *  mousedown (its clear at the drag's dragstart was retired in the file review's round 20, the dragstart landing in the dragged
+ *  press's chain, which the allowlist refuses), so in WebKit the mouse's first click after the drag finds no press and opens nothing,
  *  whatever covers or shows the control, and the click after it opens: the covered cells guard the closed direction, and the cells
  *  with the control shown record the cost, WebKit's first click refused where Chromium's and Firefox's open. */
 async function dragThenClick(browser: any, engine: TapEngine, surface: TapSurface, mouseOnly: boolean, at: string, cell: CellFn, note: (m: string) => void): Promise<void> {
