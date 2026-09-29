@@ -2194,6 +2194,100 @@ class LegGroups(unittest.TestCase):
                          "a leg the run does not run needs no step")
 
 
+class WorkflowCommentLines(unittest.TestCase):
+    """Round 2, correctness-2: the runner's job readers (workflow_job, _job_defaults, and read_served_step through them)
+    skip a comment line at any indent, as YAML does, and refuse any other line under a job indented fewer than four
+    spaces that is neither the next job's line nor a top-level key. Before, a comment at column 0 or 2 ended the job, so
+    a step or a job key after it was neither read nor refused, and a comment inside an env: block ended the block, so
+    the entries after it were read by no one. Synthetic ci.yml text only."""
+
+    SERVED_ENV = '          ROMP_SERVED_TESTS_REQUIRE: "1"\n          ROMP_SERVED_TESTS_ENGINES: chromium\n'
+    PYTEST_STEP = "      - name: Run pytest\n"
+    EXTRA_STEP = "      - name: Install hypothesis\n        run: python -m pip install hypothesis\n"
+
+    def tree(self, ci):
+        d = tempfile.mkdtemp(prefix="wfcomments-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, ".github", "workflows"))
+        os.makedirs(os.path.join(d, "kernel"))
+        with open(os.path.join(d, ".github", "workflows", "ci.yml"), "w") as f:
+            f.write(ci)
+        with open(os.path.join(d, "kernel", "session_host.py"), "w") as f:
+            f.write(SEED_HOST)
+        return d
+
+    def test_the_anchors(self):
+        for anchor in (self.SERVED_ENV, self.PYTEST_STEP, "  shell:\n"):
+            self.assertEqual(SEED_CI.count(anchor), 1, anchor)
+        self.assertTrue(SEED_CI.endswith(SEED_SERVED_STEP), "the served step's job is the seed's last")
+        sweep.read_install_plan(self.tree(SEED_CI), "HEAD")
+        self.assertEqual(sweep.read_served_step(self.tree(SEED_CI), "HEAD")["env"],
+                         {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+
+    def test_a_python_job_step_after_a_shallow_comment_is_read_and_refused(self):
+        """A step the runner does not read, placed after a comment at column 0 or 2 inside the python job, is refused by
+        name: the comment no longer ends the job. At c60fb907e the step was read by no one and the plan built without it."""
+        for comment in ("# a comment at column 0\n", "  # a comment at column 2\n"):
+            with self.subTest(comment=comment):
+                ci = SEED_CI.replace(self.PYTEST_STEP, comment + self.EXTRA_STEP + self.PYTEST_STEP)
+                with self.assertRaises(sweep.Refused) as cm:
+                    sweep.read_install_plan(self.tree(ci), "HEAD")
+                self.assertIn("the python job has a step 'Install hypothesis', which the runner does not read", str(cm.exception))
+
+    def test_a_job_key_after_a_shallow_comment_in_the_served_steps_job_is_refused(self):
+        """The refuter's unguarded road: a job-level env: or container: after a comment at column 0 in the served step's
+        job (the seed's last job) reaches the served step in CI, and the runner refuses it by name. At c60fb907e the key
+        was read by no one and the served step was read as if the job had none."""
+        for key, block in (("env", '    env:\n      ROMP_SERVED_TESTS_REQUIRE: "0"\n'), ("container", "    container: node:20\n")):
+            with self.subTest(key=key):
+                ci = SEED_CI + "# a comment at column 0\n" + block
+                with self.assertRaises(sweep.Refused) as cm:
+                    sweep.read_served_step(self.tree(ci), "HEAD")
+                self.assertIn("the vscode-extension job has %s:, which reaches the step" % key, str(cm.exception))
+
+    def test_a_comment_inside_the_served_env_keeps_every_entry(self):
+        """A comment between the served env's two entries, at any indent, leaves both read. At c60fb907e one indented 4
+        to 9 spaces (and one at column 0 or 2, which ended the job) ended the block, and ENGINES was dropped from the leg."""
+        require, engines = self.SERVED_ENV.splitlines(True)
+        for indent in (0, 2, 4, 8, 10):
+            with self.subTest(indent=indent):
+                ci = SEED_CI.replace(self.SERVED_ENV, require + " " * indent + "# between the two\n" + engines)
+                self.assertEqual(sweep.read_served_step(self.tree(ci), "HEAD")["env"],
+                                 {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+
+    def test_any_other_shallow_line_in_a_job_is_refused_naming_it(self):
+        """A line under a job indented one to three spaces that is not a comment, the next job's line or a top-level key
+        (a stray key, a sequence item, a job line with a flow value) is refused naming the job and the line, by every
+        reader. At c60fb907e it ended the job there, silently."""
+        for line in ("   stray: 1", "  - item", "  second: {runs-on: x}", " x"):
+            with self.subTest(line=line):
+                ci = SEED_CI.replace("  shell:\n", line + "\n  shell:\n")
+                d = self.tree(ci)
+                for label, read in (("read_install_plan", lambda: sweep.read_install_plan(d, "HEAD")),
+                                    ("read_served_step", lambda: sweep.read_served_step(d, "HEAD")),
+                                    ("leg_groups", lambda: sweep.leg_groups(d, "HEAD", list(sweep.LEGS)))):
+                    with self.subTest(reader=label):
+                        with self.assertRaises(sweep.Refused) as cm:
+                            read()
+                        n = ci.split("\n").index(line) + 1
+                        self.assertIn("the python job holds line %d (%r), indented fewer than four spaces" % (n, line),
+                                      str(cm.exception))
+
+    def test_the_served_leg_carries_an_entry_after_a_comment_in_its_env(self):
+        """The composition, through the runner: with a comment at column 0 between the served env's entries, the served
+        leg carries both switches and records both as set."""
+        w = World()
+        self.addCleanup(w.close)
+        require, engines = self.SERVED_ENV.splitlines(True)
+        w.change({".github/workflows/ci.yml": SEED_CI.replace(self.SERVED_ENV, require + "# between the two\n" + engines)})
+        p = w.run(check=0)
+        served = [c for c in w.calls() if c["leg"] == "served"][-1]
+        self.assertEqual({k: v for k, v in served["values"].items() if k.startswith("ROMP_SERVED_TESTS_")},
+                         {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"}, p.stdout + p.stderr)
+        self.assertEqual(w.result()["runner"]["served"]["env"],
+                         {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+
+
 # Drives run_leg in a process of its own, which becomes a subreaper as the runner does: the leg's status is taken by
 # another reaper (the stand-in wraps wait_leg and reaps the leg first) before the runner reads it.
 LOST_STATUS_DRIVER = r"""

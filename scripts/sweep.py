@@ -1865,11 +1865,25 @@ def workflow_jobs(text):
     return out
 
 
-def workflow_job(text, job):
+def _comment_line(line):
+    """A line YAML reads as a comment alone, at any indent: a block mapping or sequence skips it wherever it stands."""
+    return line.lstrip().startswith("#")
+
+
+def _job_end(line):
+    """Whether a line under a job, indented fewer than four spaces, ends it: the next job's `  ID:` line or a top-level key.
+    Comment and blank lines never end a job (round 2, correctness-2); any other such line is one the readers refuse."""
+    return bool(re.fullmatch(r"  [A-Za-z_][A-Za-z0-9_-]*:\s*(?:#.*)?", line) or re.match(r"[A-Za-z_]", line))
+
+
+def workflow_job(text, job, where=CI_WORKFLOW):
     """One job of a workflow file's text, read by line shape as CiParity reads it (the runner imports nothing beyond
     the standard library, so no YAML parser): {"keys": [the job's own keys, each a `    KEY:` line, in order], "steps":
-    [step, ...]}, or None when the file has no `  <job>:` line. The job is that line and the lines under it indented
-    four spaces or more. A step is a `      - KEY:` line under the job's `steps:` key, whatever its first key, and the
+    [step, ...]}, or None when the file has no `  <job>:` line. The job is that line and the lines under it up to the next
+    job's `  ID:` line or a top-level key; a comment line, at any indent, is skipped wherever it stands, as YAML skips it
+    (round 2, correctness-2: a comment at column 0 or 2 used to end the job, so a step or key after it was neither read nor
+    refused), and any other line indented fewer than four spaces is refused, naming `where`, the job and the line. A
+    step is a `      - KEY:` line under the job's `steps:` key, whatever its first key, and the
     lines under it indented eight spaces or more: {"keys": [its keys in order: the dash line's, then each key line
     eight spaces in], "values": {key: the text after the colon, stripped}, "name": its name: value or None,
     "run": its run text, "env": its env: block, "with": its with: block}. The run text is None with no run key, the value
@@ -1877,15 +1891,20 @@ def workflow_job(text, job):
     `>`) or a run key given twice. The env: block is None with no env key, {NAME: the text after the colon, stripped} of
     the `NAME: VALUE` lines ten spaces in under an `env:` key with nothing after its colon, or False for any other shape
     (a value on the env: line, such as a flow mapping; a line in the block of another shape or depth; a name given twice;
-    env: given twice). The with: block is read the same way, its names allowed a dash (python-version). A comment line is
-    not a key."""
+    env: given twice). The with: block is read the same way, its names allowed a dash (python-version), and a comment
+    line inside either block, at any indent, is skipped. A comment line is not a key."""
     lines = text.split("\n")
     if "  %s:" % job not in lines:
         return None
     body = []
-    for line in lines[lines.index("  %s:" % job) + 1:]:
-        if line.strip() and not line.startswith("    "):
-            break
+    start = lines.index("  %s:" % job)
+    for n, line in enumerate(lines[start + 1:], start + 2):
+        if line.strip() and not _comment_line(line) and not line.startswith("    "):
+            if _job_end(line):
+                break
+            raise Refused("%s: the %s job holds line %d (%r), indented fewer than four spaces, which is neither a comment, the "
+                          "next job's line nor a top-level key; the runner reads a job whose lines under it are indented four "
+                          "spaces or more" % (where, job, n, line))
         body.append(line)
     keys, steps, cur, in_steps, i = [], [], None, False, 0
     key_re = r"([A-Za-z_][A-Za-z0-9_-]*):(.*)"
@@ -1915,10 +1934,12 @@ def workflow_job(text, job):
         if key in ("env", "with"):
             block = False if value or cur["keys"].count(key) > 1 else {}
             name_re = r"[A-Za-z_][A-Za-z0-9_]*" if key == "env" else r"[A-Za-z_][A-Za-z0-9_-]*"
-            while i < len(body) and (body[i].startswith(" " * 10) or not body[i].strip()):
+            # a comment line at any indent stays inside the block, as YAML reads it (round 2, correctness-2: one between
+            # the served env's two entries used to end the block, and the second entry was read by no one)
+            while i < len(body) and (body[i].startswith(" " * 10) or not body[i].strip() or _comment_line(body[i])):
                 entry = body[i]
                 i += 1
-                if not entry.strip() or entry.strip().startswith("#"):
+                if not entry.strip() or _comment_line(entry):
                     continue
                 em = re.fullmatch(" " * 10 + "(" + name_re + r"):(?: (.*))?", entry)
                 if block is False or not em or em.group(1) in block:
@@ -2098,7 +2119,8 @@ def read_install_plan(checkout, sha):
     WORKFLOW_KEYS_REFUSED, a job key outside PYTHON_JOB_KEYS, a step of the job other than the install steps, the pytest
     step and an unnamed use of one of SETUP_ACTIONS (an unnamed run step, or a named one the runner does not read), a
     step name given twice, and on an install step a key outside INSTALL_STEP_KEYS, a key given twice, or a shell other
-    than bash."""
+    than bash; and a line under the job indented fewer than four spaces that is neither a comment, the next job's line
+    nor a top-level key (workflow_job; a comment line, at any indent, is skipped)."""
     where = "%s at %s" % (CI_WORKFLOW, short(sha))
     try:
         with open(os.path.join(checkout, CI_WORKFLOW), encoding="utf-8") as f:
@@ -2111,7 +2133,7 @@ def read_install_plan(checkout, sha):
             raise Refused("%s has a workflow-level %s:, which reaches the install steps of its %s job; the runner builds the "
                           "pytest leg's environment from those steps' commands alone, so it does not read a ci.yml with one"
                           % (where, key, CI_PYTHON_JOB))
-    job = workflow_job(text, CI_PYTHON_JOB)
+    job = workflow_job(text, CI_PYTHON_JOB, where)
     if job is None:
         raise Refused("%s has no %s job; the pytest leg's environment is built from its install steps" % (where, CI_PYTHON_JOB))
     extra = [k for k in job["keys"] if k not in PYTHON_JOB_KEYS]
@@ -2201,11 +2223,15 @@ def _job_defaults(text, job):
     """The lines of `job`'s defaults: block (comment and blank lines dropped), or None when the job has no defaults:. A
     defaults: line with a value after its colon (a flow mapping such as `defaults: {run: {working-directory: x}}`) is
     returned as that one line, which no reader accepts, so a job whose defaults: the runner cannot read in block form
-    is never read as a job without one."""
+    is never read as a job without one. A comment line, at any indent, ends neither the job nor the block (round 2,
+    correctness-2); the job ends at its first other line indented fewer than four spaces, and read_served_step reads the
+    job with workflow_job first, which refuses such a line unless it is the next job's or a top-level key."""
     lines = text.split("\n")
     out = None
     for line in lines[lines.index("  %s:" % job) + 1:]:
-        if line.strip() and not line.startswith("    "):
+        if not line.strip() or _comment_line(line):
+            continue
+        if not line.startswith("    "):
             break
         if out is None:
             if re.fullmatch(r"    defaults:\s*(?:#.*)?", line):
@@ -2213,10 +2239,9 @@ def _job_defaults(text, job):
             elif re.match(r"    defaults\s*:", line):
                 return [line]
             continue
-        if line.strip() and not line.startswith("      "):
+        if not line.startswith("      "):
             break
-        if line.strip() and not line.strip().startswith("#"):
-            out.append(line)
+        out.append(line)
     return out
 
 
@@ -2239,7 +2264,8 @@ def read_served_step(checkout, sha):
     comment lines, `set -euo pipefail`, `python -m pip install` of plain requirements, and exactly one `python -m
     pytest` line whose words are pytest options and globs of .py files directly under tests/, each glob written without
     quotes (bash passes a quoted one to pytest unexpanded) and the line splitting into the same words quoted and
-    unquoted."""
+    unquoted. A comment line, at any indent, is skipped, and a line under any job indented fewer than four spaces that is
+    neither a comment, the next job's line nor a top-level key is refused (workflow_job)."""
     where = "%s at %s" % (CI_WORKFLOW, short(sha))
     try:
         with open(os.path.join(checkout, CI_WORKFLOW), encoding="utf-8") as f:
@@ -2253,7 +2279,7 @@ def read_served_step(checkout, sha):
                           "alone, so it does not read a ci.yml with one" % (where, key, SERVED_STEP))
     hits = []
     for job in workflow_jobs(text):
-        spec = workflow_job(text, job)
+        spec = workflow_job(text, job, where)
         hits += [(job, spec, st) for st in (spec or {}).get("steps", []) if st["name"] == SERVED_STEP]
     if not hits:
         raise Refused("%s has no step %r in any job; the served leg runs the files that step's globs select, with its env: "
@@ -2380,7 +2406,7 @@ def leg_groups(checkout, sha, legs, npm=True):
     except (OSError, UnicodeDecodeError) as e:
         raise Refused("%s cannot be read (%s); the legs are grouped by the job that holds each one's step" % (where, e))
     jobs = workflow_jobs(text)
-    steps = {job: [st["name"] for st in (workflow_job(text, job) or {"steps": []})["steps"]] for job in jobs}
+    steps = {job: [st["name"] for st in (workflow_job(text, job, where) or {"steps": []})["steps"]] for job in jobs}
     first = [job for job in jobs if LEG_STEPS["pytest"] in steps[job]][:1]
     order = first + [job for job in jobs if job not in first]
     owner = {}
