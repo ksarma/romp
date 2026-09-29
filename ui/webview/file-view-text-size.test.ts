@@ -642,7 +642,7 @@ test("a size step fires onRendered once, as a reflow (the panel re-places its ca
   // since the nodes are the same (2026-09-09: the whole paint pass ran here once per frame of a pane drag, unwrapping and
   // re-wrapping every mark, and stalled the dashboard on a big reviewed file; file-view-reflow-browser.test.ts); a paint
   // proper still runs the pass
-  assert.match(PANEL, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); [^\n]*if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else \{ this\.reloadOut = false; this\.paintedAt = ctx\.mtimeNs\(\); this\.landedAhead = false; this\.paintAll\(\); \} \}\);/, "file-comments.ts answers a reflow with trimBlanks (the marks' collapsed blanks re-measured at the new size) and scheduleLayout, and a paint with paintAll (after ending the record of a re-fetch the panel asked, reloadOut, the Slice 7 review's round 4, and recording the painted mtime, paintedAt and landedAhead, whose executed witness is file-comments-changes-review2.test.ts's case on the change cards between an svg picture's landing and its paint); a reflow records no paint");
+  assert.match(PANEL, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); [^\n]*if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else \{ this\.reloadOut = false; if \(ctx\.error\(\) === null\) this\.#latchCardState\("paint"\); else \{ this\.#replaced\+\+; this\.paintAll\(\); \} \} \}\);/, "file-comments.ts answers a reflow with trimBlanks (the marks' collapsed blanks re-measured at the new size) and scheduleLayout, and a paint with the pass (after ending the record of a re-fetch the panel asked, reloadOut, since the Slice 7 review), a content paint as the card-state rule's event 1 and a failure pane counted in #replaced (file-comments.ts, #cardState's doc); a source pin only, whose executed witness is file-comments-changes-review2.test.ts's roads of the card-state rule; a reflow is no paint");
   assert.match(VIEW, /onRendered\(cb: \(why\?: FileViewRenderWhy\) => void\): void;/);
   assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged \(`why` "reflow"\): a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:
@@ -1312,8 +1312,8 @@ const DOCS: Record<string, string> = { [REPORT]: README, [SNIPPET]: SNIPPET_MD, 
  *  files-pane.css under body.fileview-pane), the bundle, a fetch that serves the README with the kernel's headers, and two
  *  registered actions standing in for Comments and the GitHub unit (both mount once the kernel answers; the row is measured
  *  with them, its widest ordinary form). The probe action counts the seam's paints and selection hooks. Opened with ?hl=1,
- *  a third action paints a comment highlight over the first paragraph the panel's way (file-comments.ts paintAll: every
- *  onRendered unwraps the marks, normalizes the text and re-wraps them through the real painter). A test may install
+ *  a third action paints a comment highlight over the first paragraph the panel's way (file-comments.ts: a paint's
+ *  onRendered runs #latchCardState's pass, which unwraps the marks, normalizes the text and re-wraps them through the real painter). A test may install
  *  window.__disturb, which the probe runs from its onRendered with the body: a stand-in for a paint that moves a text node
  *  the selection stands in. */
 const REAL_PAGE = (mode: "chat" | "feed" | "pane") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("styles.css")}</style></head>

@@ -1861,7 +1861,7 @@ line for it, since this row says where the comment is; and the save moves nothin
 before it, the margin's scroll to a saved card, `scrollToSaved`, found no card for such a comment and moved nothing).
 The filter hides a card by leaving it out of the list (`renderCards`), never by
 styling it away, so the placement pass lays out the cards the chosen option shows and no other, and a pick
-repaints through `paintAll`, whose render ends in the pass (`afterRender`). The filter's row is a control row
+repaints through `#latchCardState`'s pass, whose render ends in the pass (`afterRender`). The filter's row is a control row
 of the head, like the toggles' above it, not growth: the margin layout's two-tier rule leaves the head in the
 collapsed tier while that row is all the head holds beyond its buttons (`:has(.fc-head > :nth-child(n+2):not(.fc-filter))`
 in both sheets), so the head gives only in the collapsed tier's turn while it holds its two control rows alone;
@@ -2061,10 +2061,11 @@ below the focus and the comment holds the start: the margin-layout record above)
 is laid at any point, that the comment names the change instead of a passage (the review's second round, 2026-09-10).
 For a spanned change, an insertion or a substitution, the card offers
 Comment on this change only while the view carries the change's text (`spanCarried`: the bytes the view shows are the
-status's, whose offsets place the span (`paintCurrent`: `textCurrent` compares the status's mtime with the mtime of the
-view's last paint while an svg picture's landing waits for its paint, else with the view's mtime); there is a text to
-cut it from (`indexedText`: the view's, or while the editor is up the file as the editor loaded it, never the buffer);
-and the view shows text at all, not the picture of a media file); in flux, a reject's reply landed and its reload not,
+status's, whose offsets place the span; there is a text to cut it from (`indexedText`: the view's, or while the editor is
+up the file as the editor loaded it, or as the last save through the panel from that editor wrote it, never the buffer);
+and the view shows text at all, not the picture of a media file;
+each as the Comments panel's card-state rule took it at its last event (`#cardState` in file-comments.ts, whose doc
+states the rule)); in flux, a reject's reply landed and its reload not,
 or the poll's reload landed and its status not, the
 card shows Accept and Reject alone, no Comment on this change, and a click that reaches `startChangeComment` anyway
 writes nothing, since the composer over the span would quote other bytes and a comment by id alone would lose the
@@ -3195,7 +3196,7 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs marked over a document with an unclosed `<kbd>`,
   `<pre>`, `<code>` or `<script>` and holds decision 52's scope sentence to the lexer (every later block unescaped
   until an end tag of any of the four names or the document's end, `inLink` the same); its lexer legs skip where
-  marked is not installed, which is every run of CI's shell job, so
+  marked is not installed, which is every run of CI's vendored-tooling job, so
   `ui/webview/file-review-plan-inlinetag-rawblock.test.ts` (the second round) holds the same scope through both
   callers' lexes (mdBlock's marked.lexer over a copy of the defaults, `placeTokens`' `Lexer.lex`) under the one
   configuration, built and run by the extension job's `npm test`, and the tools module holds that twin and its
@@ -5504,7 +5505,8 @@ document stands on its own, each with the reasoning it was given.
     to the module, both callers, the guide and the tree; `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs
     marked over a document with an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` and holds the scope sentence
     above to the lexer: every later block unescaped, an end tag of any of the four names clearing it, `inLink` the
-    same, where marked is installed (CI's shell job installs nothing, so those legs skipped there);
+    same, where marked is installed (CI's vendored-tooling job, the tools modules' runner, installs nothing, so those
+    legs skip there, as they did in the Shell job before it);
     `ui/webview/file-review-plan-inlinetag-rawblock.test.ts` (the second round) runs the same documents through both
     callers' lexes under the one configuration inside the extension job's `npm test`, so the scope sentence has an
     arbiter in CI, and the tools module holds that twin and its runner to the tree. The first round added three
@@ -5522,8 +5524,8 @@ document stands on its own, each with the reasoning it was given.
     guide's sentence on the tags that take the rest of the file when they stay HTML too, `<title>`, `<script>`,
     `<style>` and `<iframe>` first on their line (block `html` tokens) or written with the slash mid-sentence (inline
     `html` tokens the rule leaves), `<textarea>` beside them. Its lexer legs skip where marked is not installed, which
-    is every run of CI's shell job, so `ui/webview/guide-own-html-block-tag.test.ts` (the same round) runs them
-    through both callers' lexes under the viewer's configuration inside the extension job's `npm test`, and
+    is every run of CI's vendored-tooling job, so `ui/webview/guide-own-html-block-tag.test.ts` (the same round) runs
+    them through both callers' lexes under the viewer's configuration inside the extension job's `npm test`, and
     `tests/test_guide_files_own_html_foreign_tag.py` holds that sentence in its place in the paragraph and the rule's
     two exclusions at the source. `tools/file-review-plan-inlinetag-records.test.mjs` (the second
     round) holds this record's account of the first round to the code: the stacks per name, `IMG_ALIAS` outside the

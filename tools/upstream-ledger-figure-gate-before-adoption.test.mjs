@@ -163,7 +163,7 @@ test('the fork PR\'s round-2 push: the where: line and the body state the rule o
   assert.ok(leg.includes('await buttons.nth(k).click();'), 'the Copy case clicks through the engine');
   assert.ok(leg.includes('an svg anchor split across lines inside a raw fence, re-parsed by the fence pass into an HTML anchor with no href and a plain xlink:href attribute, is marked dead'), 'the img leg holds the split-anchor case');
   const view = read('ui', 'webview', 'file-view.ts');
-  assert.ok(view.includes('clean.querySelectorAll("pre code")'), 'the fence pass reads the sanitized body in file-view.ts (a presence pin; its place before the chain is file-view-seam.test.ts\'s to check, on comment-stripped code, which this module, run in CI\'s shell job with no node_modules, cannot reach)');
+  assert.ok(view.includes('clean.querySelectorAll("pre code")'), 'the fence pass reads the sanitized body in file-view.ts (a presence pin; its place before the chain is file-view-seam.test.ts\'s to check, on comment-stripped code, which this module, run in CI\'s vendored-tooling job with no node_modules, cannot reach)');
   const seam = read('ui', 'webview', 'file-view-seam.test.ts');
   assert.ok(seam.includes('test("no re-parse after the adoption:'), 'the seam test holds the re-parse population pin');  // the first-round ruling's answers, named in the line and standing in the files
   assert.ok(where.includes("reads the box's end state through figure-gate's own gateRefs and unlistedHosts (the CI-run guard, keyed on the outcome at the boundary) and asserts by the clock that the gate ran before any node of the body entered the live document"), 'where: names the property guard and the order leg');

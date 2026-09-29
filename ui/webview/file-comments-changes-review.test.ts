@@ -296,7 +296,8 @@ function rows(code: El, src: string): void {
   }));
 }
 const el = (tag: string, ...kids: Array<El | string>): El => { const e = new El(tag); for (const k of kids) e.appendChild(typeof k === "string" ? new Txt(k) : k); return e; };
-/** A file-authored inline element the sanitizer keeps: `<span data-act=… data-id=…>text</span>`. */
+/** A file-authored inline element carrying the panel's attribute names, `<span data-act=… data-id=…>text</span>`, handed to the
+ *  panel as written: the sanitizer strips an author's data-* (md-sanitize.ts), and the panel's own rule (owns) refuses it too. */
 const fileSpan = (act: string, id: string, text: string): El => { const s = el("span", text); s.dataset.act = act; s.dataset.id = id; return s; };
 /** marked's rendering of DOC, built by hand: one element per block, in order, holding the block's text. */
 function renderedDoc(box: El, intro?: El): void {
@@ -484,9 +485,10 @@ test("Rendered: an insertion is painted and its card links to the mark; a deleti
 });
 
 test("Rendered: the file's own data-act=fcchange markup is neither decorated nor owned, and a card's link scrolls to the panel's mark, not the file's element", async (t: TestContext) => {
-  // the sanitizer keeps data-* attributes, so prose a session wrote can carry `<span data-act="fcchange" data-id="h2">`;
-  // the panel's provenance rule (own / owns) says only what the panel MADE routes — here the marks are told from the
-  // file's markup by what the paint added, and goTo scrolls only to a mark of ours
+  // the sanitizer strips an author's data-* attributes (md-sanitize.ts: ALLOW_DATA_ATTR false), so a page never shows prose
+  // a session wrote carrying `<span data-act="fcchange" data-id="h2">`; the stand-in hands the panel that markup as written,
+  // for the panel's own second guard: its provenance rule (own / owns) says only what the panel MADE routes, so here the
+  // marks are told from the file's markup by what the paint added, and goTo scrolls only to a mark of ours
   const intro = "Intro <span data-act=\"fcchange\" data-id=\"h2\">spoof</span> <span data-act=\"fcchange\" data-id=\"zz\">zz</span> <span data-act=\"fcopen\" data-id=\"" + passage.id + "\">open</span> here.\n\n";
   const src = "# Report\n\n" + intro + DOC.slice("# Report\n\n".length);
   const n = intro.length;

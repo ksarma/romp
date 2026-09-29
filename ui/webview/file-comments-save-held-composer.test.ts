@@ -312,7 +312,7 @@ function status(over: Partial<Status> = {}): Status {
 
 // ── the harness: a mounted panel inside the viewer's body row ──────────────────────────────────────
 type Posted = Record<string, any>;
-const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];   // the panel's sections with the box in its slot
+const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"];   // the panel's sections with the box in its slot, and its live region
 /** `fig`: the rendered report with a figure (the figure world below), its source the view's text, for the openers a text-less
  *  view cannot reach: a selection's Comment, the figure's Comment, a drag on the figure, Re-place, a spanned change's Comment. */
 async function harness(over: Partial<FileViewActionCtx> = {}, fig: { html: string; src: string } | null = null) {

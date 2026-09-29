@@ -1200,7 +1200,7 @@ test("every module the page bundles load, read with the compiler: the only write
     "ui/webview/scroll-journal-audit.ts",        // the scroll journal's reader, executed by scroll-journal-audit.test.ts
     "ui/webview/shell-drag-leg.ts",              // the dashboard shell's pane-row drag mounted in a page of its own, for its browser leg and the bench
     "ui/webview/source-units.ts",                // a module's comments and strings read as the language reads them, imported by linknav-records-attribution.test.ts and file-view-figure-shapes.test.ts
-    "ui/webview/writer-census.ts",               // the scroll-write census over a source's tree, executed by writer-census.test.ts and landing-settle.test.ts
+    "ui/webview/writer-census.ts",               // two censuses: the scroll-write census over a source's tree, executed by writer-census.test.ts and landing-settle.test.ts; and the card-state census over file-comments.ts (cardStateCensus), executed by file-comments-changes-review2.test.ts
   ];
   const OUTSIDE = [   // loaded by a page bundle from outside ui/webview
     "ui/romp-timeline-view.js",                              // the timeline panel's prebuilt bundle, required by timeline-main.ts

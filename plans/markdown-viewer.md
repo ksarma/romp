@@ -1360,8 +1360,9 @@ as built departs from the text above, why, and which test holds each rule:
    the pass's pending, after Cancel and after the next pass); and what the repaint painted again it re-files as the
    pass does (a change whose every mark the trim removed as not shown, one whose mark stands again as shown, a
    highlight whose every mark went as not painted) and renders the cards in the same call when a filing moved, since
-   the callers after a passage's Comment and after Cancel render the composer alone and the cards read the filings at
-   render time (round 17: a session's insertion of one soft hyphen, a character the index records and the trim
+   the callers after a passage's Comment and after Cancel render the composer alone, and the change cards take the
+   filing at that refile, in the same call (the card-state rule's event 1: file-comments.ts, #cardState's doc) (round 17:
+   a session's insertion of one soft hyphen, a character the index records and the trim
    measures, rendered as a hyphen at a line break and as nothing elsewhere, so the target's padding moving the
    paragraph's wrap point across it moved the filing at every open and Cancel while the card said the opposite until
    the next render; a plain space never reaches the shape, since the index skips whitespace and never paints it;
@@ -8097,8 +8098,8 @@ pass against the two link passes over the adopted box and not against the adopti
 tools/file-review-viewer-recipe.test.mjs, tools/upstream-ledger-figure-gate-before-adoption.test.mjs and
 tools/markdown-viewer-plan-gate-adopt.test.mjs hold presence pins that name the seam test for it (the round-2 review
 found a raw-text compare in each of the last two, and a `//`-line filter standing in for a stripper in the plan pin),
-and the tools modules, which run in CI's shell job with no node_modules, cannot reach the compiler; the ledger entry's
-file count is derived by `git diff --name-only origin/main...HEAD`, the merge-base form, at the head.
+and the tools modules, which run in CI's vendored-tooling job with no node_modules, cannot reach the compiler; the
+ledger entry's file count is derived by `git diff --name-only origin/main...HEAD`, the merge-base form, at the head.
 
 **Scope.** Unreachable through the VS Code panes, whose CSP blocks remote figures (`img-src ${webview.cspSource} data:`,
 extension.ts). Reachable through the kernel-served dashboard and the iOS web app. What leaks is the IP address, the

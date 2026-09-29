@@ -5,9 +5,10 @@
 // pdf.js supports under Node: it runs its parser on the main thread from a worker file beside it, so
 // nothing is configured and no canvas library is needed for the page count and the viewport.
 //
-// Skips, by name, when the dependency is not installed: CI's shell job runs tools/*.test.mjs without an
-// npm ci, so the assertion runs in the vscode-extension job (which installs) and skips in the shell job,
-// and the skip line says which install would make it run. A developer without node_modules sees the same.
+// Skips, by name, when the dependency is not installed: CI's vendored-tooling job runs tools/*.test.mjs
+// without an npm ci, so the assertion runs in the vscode-extension job (which installs) and skips in the
+// vendored-tooling job, and the skip line says which install would make it run. A developer without
+// node_modules sees the same.
 //
 // Run: node --test tools/pdf-smoke.test.mjs
 import { test } from 'node:test';
