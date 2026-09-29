@@ -1519,6 +1519,7 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal.test_a_fixture_another_modules_code_registers_over_by_name_re_asserts_nothing",
     "HermeticKernelPostal.test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads",
     "HermeticKernelPostal.test_a_name_is_read_through_its_first_binding_alone_and_a_later_binding_or_a_parameter_makes_it_loud",
+    "HermeticKernelPostal.test_a_setter_or_a_mock_patch_naming_a_proven_key_by_a_string_or_by_none_defeats_its_proof",
     "HermeticKernelPostal.test_a_starred_value_is_a_licence_fault_naming_its_line_and_every_other_value_shape_round_trips",
     "HermeticKernelPostal.test_a_tracked_dict_is_read_only_through_the_allowed_reads_and_any_other_reference_is_loud",
     "HermeticKernelPostal.test_an_augmented_write_and_a_key_bound_as_a_target_are_read_with_no_value",
@@ -6519,7 +6520,8 @@ _ANYIO_REBINDERS = frozenset(("setattr", "delattr", "__setattr__", "__delattr__"
 #   the names of what can rebind a name of a module's scope or a class body's other than by a declaration: THE PROOF
 #   proves no name of those scopes in a text that reads one by an identifier or a str literal (or a dotted part of one)
 #   other than in the two forms _anyio_rebinders reads for what they write (a call of globals(), vars() or locals()
-#   whose result is only read, and a call of setattr or delattr naming an attribute by a literal). A function's
+#   whose result is only read, and a setter's call, setattr, delattr, __setattr__ or __delattr__, read for the names it
+#   may write, _anyio_attribute_writes). A function's
 #   __globals__ (and f_globals) is the module namespace, so a write through it rebinds a name of the module's scope
 #   (_t.__globals__["K"] = "plugins"); __closure__ and cell_contents reach a function's free variables, and __code__,
 #   __defaults__ and __kwdefaults__ the code it runs and its parameters' defaults (the reviewer's fail-closed ruling of
@@ -6744,6 +6746,66 @@ def _anyio_namespace_write(x, parent):
     return "%s() held whole (bound to a name, handed to a call, iterated or returned)" % x.id
 
 
+def _anyio_attribute_writes(call):
+    """(how, names, why) for a call `call` that writes an attribute by a name it is handed, else None: `how` names the
+    callee, `names` are the names the call may write, and `why` says how it names what it writes by no str literal, ""
+    where it does not (THE PROOF's reading of a setter and a patch helper, _anyio_rebinders; the verification of the
+    hundred and fourth round-2 commit of fork PR #894 found both admitting a false proof). A SETTER is a call named
+    setattr, delattr, __setattr__ or __delattr__, a bare name or an attribute of anything (monkeypatch.setattr and
+    object.__setattr__ among them). It may write the name each str literal among its first two arguments, and its
+    name= and target=, names by its last dotted part: the attribute's name in the object form, setattr(o, "K", v), and
+    the dotted target in pytest's string-target form, monkeypatch.setattr("conftest.K", "plugins"), whose other
+    argument, the value, is read as a name it may write too (the reading before the hundred and fifth round-2 commit
+    took one literal, the second argument's where that was one, so it took "plugins" for the name and left K proven).
+    It names what it writes by no str literal where the argument in the attribute's place is no str literal (a string
+    built at run time by an operation, a call or an f-string among them, monkeypatch.setattr(__name__ + ".K",
+    "plugins")) or is missing: the second in the object form, which a setter takes where it is handed as many
+    positional arguments as setattr(o, n, v) or delattr(o, n) take, or value= (a setattr) or name= (a delattr), with
+    name= standing in for a missing second; otherwise the first (pytest's string-target form, or a bound method's
+    o.__setattr__(n, v)), or target=. So does a setter handed a starred argument or ** keywords. A PATCH HELPER
+    is a call named patch (a bare name or an attribute of anything), or named object or multiple as an attribute of a
+    name or attribute spelled patch (patch.object, patch.multiple): it may write the name each str literal among its
+    arguments names by its last dotted part, and the name of each keyword (patch.multiple(o, K="plugins")). Spelled as
+    unittest.mock spells it (patch a bare name or an attribute of a name or attribute spelled mock, mock.patch and
+    unittest.mock.patch; patch.object; patch.multiple), it names what it writes by no str literal where patch's target
+    (its first argument, else target=) or patch.object's attribute (its second, else attribute=) is handed and is no
+    str literal, or where it is handed a starred argument or ** keywords (patch.multiple(o, **d)); a target or an
+    attribute missing writes nothing (unittest.mock raises), and a call named patch as an attribute of another name
+    (a def of a module the text imports, _i.patch(x)) is read for its literals and keywords alone."""
+    f = call.func
+    callee = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None
+    owner = f.value if isinstance(f, ast.Attribute) else None
+    owner = owner.attr if isinstance(owner, ast.Attribute) else owner.id if isinstance(owner, ast.Name) else None
+    pos, kw = call.args, {k.arg: k.value for k in call.keywords if k.arg is not None}
+    spread = any(isinstance(a, ast.Starred) for a in pos) or any(k.arg is None for k in call.keywords)
+
+    def literal(a):
+        return isinstance(a, ast.Constant) and isinstance(a.value, str)
+    if callee in ("setattr", "delattr", "__setattr__", "__delattr__"):
+        how, full = callee, 3 if "set" in callee else 2
+        if len(pos) >= full or ("value" if full == 3 else "name") in kw:
+            place = pos[1] if len(pos) >= 2 else kw.get("name")
+        else:
+            place = pos[0] if pos else kw.get("target")
+        names = [a.value.rsplit(".", 1)[-1] for a in (*pos[:2], kw.get("name"), kw.get("target")) if literal(a)]
+        why = ("a starred argument or ** keywords" if spread
+               else "" if literal(place)
+               else "the argument in the attribute's place %s" % ("missing" if place is None else "no str literal"))
+        return how, names, why
+    if not (callee == "patch" or (callee in ("object", "multiple") and owner == "patch")):
+        return None
+    how = "patch" if callee == "patch" else "patch." + callee
+    names = list(kw) + [a.value.rsplit(".", 1)[-1] for a in (*pos, *kw.values()) if literal(a)]
+    if callee == "patch" and not (isinstance(f, ast.Name) or owner == "mock"):
+        return how, names, ""
+    place = ((pos[0] if pos else kw.get("target")) if callee == "patch"
+             else (pos[1] if len(pos) >= 2 else kw.get("attribute")) if callee == "object" else None)
+    why = ("a starred argument or ** keywords" if spread
+           else "" if place is None or literal(place)
+           else "the %s it patches no str literal" % ("target" if callee == "patch" else "attribute"))
+    return how, names, why
+
+
 def _anyio_rebinders(tree, bindings):
     """THE PROOF's defeaters over `tree`, a conftest's text or a module of the repository it imports directly, whose
     ast_bindings index is `bindings`: a function of (a name, the kind of the scope that binds it) giving why something in
@@ -6755,8 +6817,9 @@ def _anyio_rebinders(tree, bindings):
     read of f_globals, f_back or sys._getframe, which reach a frame and the module namespace it runs in). For a name of
     the module's scope or a class body's, also: a star import; a read of globals(), vars() or locals() that no declaration
     binds and that may write the namespace it returns (any use but a call whose result is read by a subscript, a
-    read-only method or `in`); an attribute store or del naming it; a call of setattr, delattr, __setattr__ or
-    __delattr__ naming it, or naming its attribute by no str literal; and any other identifier or str literal (a dotted
+    read-only method or `in`); an attribute store or del naming it; a setter (setattr, delattr, __setattr__ or
+    __delattr__) or a patch helper (unittest.mock's patch, patch.object or patch.multiple) that may write it, or that
+    names what it writes by no str literal (_anyio_attribute_writes); and any other identifier or str literal (a dotted
     part of one included) naming one of _ANYIO_REBINDERS (exec, eval, __dict__, getattr(builtins, "setattr"), setattr
     bound to a name, and a function's __globals__, which is the module namespace, or its __code__, __defaults__ or
     __kwdefaults__). Plain values only: the function it returns holds no node of the tree."""
@@ -6795,17 +6858,14 @@ def _anyio_rebinders(tree, bindings):
             if isinstance(x, ast.Attribute) and isinstance(x.ctx, (ast.Store, ast.Del)):
                 outer.setdefault(x.attr, "an attribute store or del naming it at line %d" % line)
             if isinstance(x, ast.Call):
-                callee = (x.func.attr if isinstance(x.func, ast.Attribute)
-                          else x.func.id if isinstance(x.func, ast.Name) else None)
-                if callee in setters:
-                    named = (x.args[1] if len(x.args) >= 2 and literal(x.args[1])
-                             else x.args[0] if x.args and literal(x.args[0]) else None)
-                    if (named is None or any(isinstance(a, ast.Starred) for a in x.args)
-                            or any(k.arg is None for k in x.keywords)):
-                        anyname.append(("%s at line %d, which names the attribute it writes by no str literal" % (
-                            callee, line), False))
-                    else:
-                        outer.setdefault(named.value.rsplit(".", 1)[-1], "%s naming it at line %d" % (callee, line))
+                written = _anyio_attribute_writes(x)
+                if written is not None:
+                    how, names, unnamed = written
+                    for nm in names:
+                        outer.setdefault(nm, "%s naming it at line %d" % (how, line))
+                    if unnamed:
+                        anyname.append(("%s at line %d, which names the attribute it writes by no str literal (%s)" % (
+                            how, line, unnamed), False))
             if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and x.id in ("globals", "vars", "locals"):
                 why = _anyio_namespace_write(x, parent) if declared(x) is None else None
                 if why:
@@ -6970,8 +7030,31 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     not the key, and is no defeater); and,
     for a name of the module's scope, nothing that can rebind it unread: a star import; globals(), vars() or locals()
     read other than as a call whose result is only read (by a subscript in a load, a read-only method or `in`); an
-    attribute store or del, setattr or delattr naming it, or setattr or delattr naming the attribute it writes by no str
-    literal; a function's __globals__ (the module namespace) or f_globals, written through to rebind a name of it
+    attribute store or del naming it; a SETTER, a call of setattr, delattr, __setattr__ or __delattr__ (a bare name or
+    an attribute of anything: monkeypatch.setattr and object.__setattr__ among them), that may write it, a str literal
+    among its first two arguments, or its name= or target=, naming it by its last dotted part (the attribute's name in
+    the object form, setattr(o, "K", v); the dotted target in pytest's string-target form,
+    monkeypatch.setattr("conftest.K", "plugins"), whose other literal, the value, is read as a name it may write too),
+    or that names the attribute it writes by no str literal (the argument in the attribute's place, the second in the
+    object form and the first in the string-target form or a bound method's o.__setattr__(n, v), no str literal or
+    missing, a string built at run time among them, monkeypatch.setattr(__name__ + ".K", "plugins"); or a starred
+    argument or ** keywords); a PATCH HELPER, a call named patch, or named object or multiple on a name or attribute
+    spelled patch, a str literal among whose arguments names it by its last dotted part (mock.patch("conftest.K",
+    "plugins"), mock.patch.object(sys.modules[__name__], "K", "plugins")) or a keyword of which is it
+    (mock.patch.multiple(sys.modules[__name__], K="plugins")); or one spelled as unittest.mock spells it (patch a bare
+    name or an attribute of a name or attribute spelled mock, patch.object, patch.multiple) that names what it patches
+    by no str literal (patch's target or patch.object's attribute handed and no str literal, or a starred argument or **
+    keywords), while a call named patch on another name (a def of a direct import, _i.patch(x)) is read for its literals
+    and keywords alone, and a patch helper spelled otherwise is a line of WHAT IT DOES NOT READ. _anyio_attribute_writes
+    reads each by the callee's spelling (any call named setattr, delattr, __setattr__ or __delattr__ is a setter), so a
+    call of another's so named is read the same way, on the safe side. Before the hundred and fifth round-2 commit of
+    fork PR #894 a setter was read for one literal, its second argument's where that was one, so the string-target form
+    left K proven and took "plugins" for the name, and a patch helper was not read at all: the verifier's H1 to H4 (the
+    string-target form with a literal and with a target built by +, patch.object, patch and patch.multiple, each in an
+    autouse fixture of the conftest) and B2 and B4 (monkeypatch.setattr and mock.patch naming a direct import's key)
+    were admitted while a real run handed getoption the -p list where THE PROOF proved 'verbose';
+    test_a_setter_or_a_mock_patch_naming_a_proven_key_by_a_string_or_by_none_defeats_its_proof pins each refused; a
+    function's __globals__ (the module namespace) or f_globals, written through to rebind a name of it
     (_t.__globals__["K"] = "plugins"), and its __code__, __defaults__ or __kwdefaults__; and any other
     identifier or str literal (a dotted part of one) naming one of _ANYIO_REBINDERS
     (getattr(builtins, "setattr"), setattr bound to a name, exec, the module's __dict__). A name of a class body is
@@ -6979,8 +7062,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     text's imports, THE DIRECT-IMPORT KEY PROOF: a name bound once by a from import, or an attribute read on a name
     bound once by an import, of a module of the repository the text imports directly, is proven where that module's own
     text binds the name once to a str literal as above (_anyio_imported_module's literals), no submodule of the module
-    has the name, and nothing in the conftest's text can rebind the module's attribute of that name or the conftest's
-    own name; that module's literals are THE PROOF read over its own text, so a name of _ANYIO_DEFEATERS anywhere in
+    has the name, and nothing in the conftest's text can rebind the module's attribute of that name (a setter or a
+    patch helper naming it among what can, monkeypatch.setattr("_ih.KEY", "plugins") or mock.patch("_ih.KEY",
+    "plugins"), the verifier's B2 and B4) or the conftest's own name; that module's literals are THE PROOF read over
+    its own text, so a name of _ANYIO_DEFEATERS anywhere in
     it defeats the proof of each name it binds, as one in the conftest's text defeats the proof of a name of the
     conftest's module scope (and, since a defeater is a name tests/__init__.py does not hold, refuses the module whole,
     THE POSITIVE ALLOWLIST OF A DIRECT IMPORT, below). Anything
@@ -7160,8 +7245,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     holds no value naming mainargv, and names none of the runtime-introspection channels gc, ctypes, _ctypes and __code__
     nor any of the eight defeaters exec, eval, f_locals, cell_contents, __closure__, f_globals, f_back and
     sys._getframe, and no builtin defeater: its one setattr, monkeypatch.setattr in
-    the anyio-place fixture, is an attribute call of monkeypatch, not the builtin, and names the attribute by a literal,
-    and its one compile is re.compile, an attribute call of re, so neither is a builtin defeater (_anyio_builtin_defeaters)
+    the _stub_place_llm fixture, is an attribute call of monkeypatch, not the builtin, and names the attribute by a
+    literal, place_llm, the one name _anyio_attribute_writes reads it as able to write, which is no key the conftest
+    reads; it calls no patch helper; and its one compile is re.compile, an attribute call of re, so neither
+    is a builtin defeater (_anyio_builtin_defeaters)
     and neither is refused; a BARE setattr, delattr, object.__setattr__ or compile in the conftest's own text WOULD be
     refused since the reviewer's ruling of 2026-09-29 15:08Z, and setattr, delattr, vars and compile are names
     tests/__init__.py does not hold, so in a direct import's text THE POSITIVE ALLOWLIST refuses them, over that text and
@@ -7182,8 +7269,9 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     18:09Z on the kinds with no live site, and the stopping rule: an escape-only form is one line here with its
     witness): the kinds of road no honest author writes that the rule leaves unrefused. A kind with a LIVE SITE, a site
     of tests/conftest.py, or of tests/__init__.py read as its direct import, of the kind's own form, so that a refusal
-    of that form would refuse the live conftest, names the site and its one executed witness; for all but two such kinds
-    the witness is test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why
+    of that form would refuse the live conftest, names the site and its one executed witness; for all but one such kind
+    (re.compile's, below, whose witness is a control subtest) the witness is
+    test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why
     (THE LIVE WITNESS), which runs THE ANYIO RULE over tests/conftest.py, its reading of tests/__init__.py included, and
     asserts 0 reads, so a refusal that hit the site would turn it red. A kind with NO live site says so, is ESCAPE-ONLY,
     and names its witness by the subtest id in brackets after
@@ -7202,33 +7290,35 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     line here ((iv) below); a value naming anyio reached through such a module in the conftest's own text is still
     refused. A road found passing that is of none of these kinds is one more line here, with its witness; a road through
     a value the rule cannot prove is refused by construction.
-    WHERE THE DIRECT-IMPORT CHECK STOPS. A read reached only through a module the conftest imports transitively (an
-    import of an import: a name the imported module itself imports from another module, a package's name bound to
-    another of its submodules, from . import argvs as other say, or a def of it whose read is a call of another module's
-    def); live site: tests/__init__.py imports seven modules of the repository (from . import romp_load, lab_dist,
-    lab_dist_stub, fs_clock, git_fixture, sdk_blocker and env_ring_census), which the conftest reaches only through it,
-    so a refusal of an import of an import would refuse the live conftest (THE LIVE WITNESS). And, through a module the
-    conftest imports directly whose whole text names nothing outside THE POSITIVE ALLOWLIST, a road of neither shape the
-    ruling names that names only allowlisted identifiers: (i) what a def of it that returns nothing leaves where the
-    conftest reads it (an item or an attribute of an object, the module's, one the conftest hands it or one another def
-    of the module fills, or a file); live site: tests/__init__.py's write_owner_marker, which reads sys.argv, returns
-    nothing and leaves the basenames of sys.argv[:3] in its marker file (THE LIVE WITNESS); (ii) an object of it filled
-    at its import by a module-level statement other than the one its binding stands in (STATE.flags = sys.argv[1:],
-    lines.append(sys.argv)); no live site (the objects tests/__init__.py fills at its import, _tracked_mkdtemp's
-    romp_tracked, tempfile's tempdir and mkdtemp, os.environ and sys.modules, take no carrier's value), escape-only,
-    witness test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[filled-at-import]; (iii) a name it binds other
-    than by a declaration, through an attribute store on its own module found in sys.modules (sys.modules[__name__].out
-    = sys.argv); no live site (tests/__init__.py stores no attribute on its own module), escape-only, witness
-    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[bound-by-a-store]; and (iv) a road that would rewrite a
-    name or a cell of the conftest through an object the conftest hands it, reaching a builtin, a dunder or the import
-    system by a name built at run time or through sys.modules while spelling only allowlisted identifiers: getattr(root,
-    "__glo" + "bals__")[...] (F1), getattr(sys.modules["builtins"], "set" + "attr")(...) on the conftest's module (F2)
-    or on a def's cell (F4), sys.modules[getattr(root, "__module__")].K = ... (F3), object.__setattr__ reached through
-    builtins by built names (F5), and __import__ reached the same way (F6). The allowlist reads names and not roads, and
-    every identifier these spell (getattr, sys and modules among them) is on it, so it refuses none; no live site
-    (tests/__init__.py rewrites no name or cell of the conftest), escape-only, witness
-    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[allowlisted-rewrite], whose six plants F1 to F6 each
-    hand getoption 'plugins' where THE PROOF proved 'verbose'.
+    WHERE THE DIRECT-IMPORT CHECK STOPS. A read reached only through a module the conftest imports transitively, the
+    module it imports directly naming only what THE POSITIVE ALLOWLIST holds (an import of an import: a name the
+    imported module itself imports from another module, a package's name bound to another of its submodules, from .
+    import lab_dist as _lab_dist say, or a def of it whose read is a call of another module's def); live site:
+    tests/__init__.py imports seven modules of the repository (from . import romp_load, lab_dist, lab_dist_stub,
+    fs_clock, git_fixture, sdk_blocker and env_ring_census), which the conftest reaches only through it, so a refusal of
+    an import of an import would refuse the live conftest (THE LIVE WITNESS). And, through a module the conftest imports
+    directly whose whole text names nothing outside THE POSITIVE ALLOWLIST, a road of neither shape the ruling names
+    that names only allowlisted identifiers: (i) what a def of it that returns nothing leaves where the conftest reads
+    it (an item or an attribute of an object, the module's, one the conftest hands it or one another def of the module
+    fills, or a file); live site: tests/__init__.py's write_owner_marker, which reads sys.argv, returns nothing and
+    leaves the basenames of sys.argv[:3] in its marker file (THE LIVE WITNESS); (ii) an object of it filled at its
+    import by a module-level statement other than the one its binding stands in (lines.append(sys.argv)); no live site
+    (the objects tests/__init__.py fills at its import, _tracked_mkdtemp's romp_tracked, tempfile's tempdir and mkdtemp,
+    os.environ, sys.modules, atexit's registry and _MADE_DIRS, the last through tempfile.mkdtemp, take no carrier's
+    value), escape-only, witness test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[filled-at-import]; (iii) a
+    name it binds other than by a declaration, through an attribute store on its own module found in sys.modules
+    (sys.modules["_ih"].out = sys.argv in a module named _ih, its own name spelled as a literal, since __name__ is a
+    name tests/__init__.py does not hold); no live site (tests/__init__.py stores no attribute on its own module),
+    escape-only, witness test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[bound-by-a-store]; and (iv) a road
+    that would rewrite a name or a cell of the conftest through an object the conftest hands it, reaching a builtin, a
+    dunder or the import system by a name built at run time or through sys.modules while spelling only allowlisted
+    identifiers: getattr(root, "__glo" + "bals__")[...] (F1), getattr(sys.modules["builtins"], "set" + "attr")(...) on
+    the conftest's module (F2) or on a def's cell (F4), sys.modules[getattr(root, "__module__")].prefix = ... (F3),
+    object.__setattr__ reached through builtins by built names (F5), and __import__ reached the same way (F6). The
+    allowlist reads names and not roads, and every identifier these spell (getattr, sys and modules among them) is on
+    it, so it refuses none; no live site (tests/__init__.py rewrites no name or cell of the conftest), escape-only,
+    witness test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[allowlisted-rewrite], whose six plants F1 to F6
+    each hand getoption 'plugins' where THE PROOF proved 'verbose'.
     THE ENVIRONMENT (the fail-closed ruling's (e1)): an environment lookup by a key THE PROOF does not prove
     (os.environ.get, pop, setdefault or an item by a loop's target, a parameter or a name bound twice; os.getenv so),
     and the environment read whole (iterated, copied, held or passed), each of which can read PYTEST_ADDOPTS: the first
@@ -7263,10 +7353,12 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     literal key, so any keyed read beside one is refused, and named in a direct import's text refuses that module
     whole); no live site (tests/conftest.py names neither), escape-only, witness
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[code-from-a-string], whose plants define the hook in a
-    string run by exec and by eval. Code built from a string by re.compile or another ATTRIBUTE call of the same name (a
-    bare compile is refused, below); live site: tests/conftest.py names re.compile at line 2188 for a state-isolation
-    regex, an attribute call of a name other than builtins, so a refusal by the token compile that read attribute calls
-    too would refuse the live conftest; witness
+    string run by exec and by eval. A call named compile through an ATTRIBUTE of a name other than builtins: re.compile,
+    which builds a pattern, or the builtins module imported under another name, import builtins as _b and then
+    _b.compile, which builds code the rule does not parse (the plant of the setattr-through-an-attribute kind below runs
+    it; a bare compile is refused, below); live site: tests/conftest.py names re.compile at line 2188 for a
+    state-isolation regex, an attribute call of a name other than builtins, so a refusal by the token compile that read
+    attribute calls too would refuse the live conftest; witness
     test_the_conftests_builtin_setattr_delattr_and_compile_defeat_a_literal_key_and_a_def_local, its subtest
     control='re.compile, an attribute call, is no defeater'. A BARE compile call, or compile through builtins, IS
     refused since the reviewer's ruling of 2026-09-29 15:08Z (_anyio_builtin_defeaters, a builtin defeater of a literal
@@ -7275,19 +7367,19 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     an ATTRIBUTE of a name other than builtins or object, whose attribute name THE PROOF does not prove, which the rule
     refuses as a rebinder of a name of the module's scope (a name bound once to a literal at the module's level is
     unproven beside it) but leaves listed as a defeater of a def's local and of a literal key (import builtins as _b,
-    then _b.setattr, is one); live site: tests/conftest.py's one setattr, monkeypatch.setattr at line 1107, an attribute
-    of monkeypatch, names its attribute by a literal, so a plain refusal by the token setattr that read attribute calls
-    too would refuse the live conftest; witness
-    test_the_conftests_builtin_setattr_delattr_and_compile_defeat_a_literal_key_and_a_def_local, its subtest
-    control='monkeypatch.setattr, an attribute call of a name other than builtins or object, is no defeater'. A BARE
-    setattr, delattr or object.__setattr__ call whose target name THE PROOF does not prove IS refused since that ruling
-    (delattr among them, though tests/conftest.py names none, since it can unbind a name of the module's scope as
-    setattr rebinds one), and in the text of a module the conftest imports directly setattr and delattr are names
-    tests/__init__.py does not hold and refuse the module whole (THE POSITIVE ALLOWLIST). A builtin defeater of the
-    conftest's own text reached OTHER THAN as a bare name or through builtins, since _anyio_builtin_defeaters reads the
-    callee's spelling: setattr or compile bound to a name (_s = setattr; _s(...), _c = compile; _c(...)), imported from
-    builtins under another name (from builtins import setattr as _s), or read by getattr on builtins with a literal name
-    (getattr(builtins, "setattr")(...)); no live site (tests/conftest.py names none of these), escape-only, witness
+    then _b.setattr, is one); no live site (tests/conftest.py's one attribute setattr, monkeypatch.setattr at line 1107,
+    names its attribute by a literal, which THE PROOF proves), escape-only, witness
+    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[setattr-through-an-attribute], whose plant rewrites the
+    hook's code at import through _b.setattr, its attribute name built at run time, and _b.compile, beside a literal
+    key, so getoption is handed 'plugins' where THE PROOF proved 'verbose'. A BARE setattr, delattr or
+    object.__setattr__ call whose target name THE PROOF does not prove IS refused since that ruling (delattr among them,
+    though tests/conftest.py names none, since it can unbind a name of the module's scope as setattr rebinds one), and
+    in the text of a module the conftest imports directly setattr and delattr are names tests/__init__.py does not hold
+    and refuse the module whole (THE POSITIVE ALLOWLIST). A builtin defeater of the conftest's own text reached OTHER
+    THAN as a bare name or through builtins, since _anyio_builtin_defeaters reads the callee's spelling: setattr or
+    compile bound to a name (_s = setattr; _s(...), _c = compile; _c(...)), imported from builtins under another name
+    (from builtins import setattr as _s), or read by getattr on builtins with a literal name (getattr(builtins,
+    "setattr")(...)); no live site (tests/conftest.py names none of these), escape-only, witness
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[defeater-by-another-spelling], whose three plants, one
     per spelling with setattr and compile each reached that way, rewrite the hook's code at import, so getoption is
     handed 'plugins' where THE PROOF proved 'verbose'.
@@ -7324,7 +7416,14 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     built at run time through an attribute call this list leaves, pydoc.locate("builtins.set" + "attr"); no live site
     (tests/conftest.py names no pydoc and hands its module to no def of tests/__init__.py), escape-only, witness
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[proven-name-rebound], whose plant rebinds a name of the
-    module's scope through that call, so getoption is handed 'plugins' where THE PROOF proved 'verbose'. And the plugins
+    module's scope through that call, so getoption is handed 'plugins' where THE PROOF proved 'verbose'. A name THE
+    PROOF proves, rebound in the conftest's own text by a patch helper spelled other than as unittest.mock spells it
+    (_anyio_attribute_writes): patch imported under another name (from unittest.mock import patch as _p), which the
+    rule does not read, or unittest.mock under another name (from unittest import mock as _m) whose patch is handed a
+    target no str literal names, _m.patch(T, "plugins") (a str literal _m.patch is handed is read, by its callee's
+    name, patch); no live site (tests/conftest.py calls no patch helper), escape-only, witness
+    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[patch-helper-by-another-spelling], whose two plants
+    start such a patch at import, so getoption is handed 'plugins' where THE PROOF proved 'verbose'. And the plugins
     the run loaded read through what they change elsewhere (how many modules are imported, how many markers or fixtures
     are registered), the third tier's open-valued signal (_conftest_reasserted_names); live site: tests/conftest.py
     reads sys.modules whole (list(sys.modules.items()) in _reset_credential_state, _loaded_kernels and
@@ -8342,6 +8441,11 @@ _ESCAPE_ONLY_KINDS = (
         ("the hook a lambda eval builds",
          "pytest_configure = eval(\"lambda config: config.getoption('verbose') if 'no:planted' in "
          "__import__('sys').argv else None\")\n", {}, "read"))),
+    ("setattr-through-an-attribute", (
+        ("setattr and compile through the builtins module imported as _b, the attribute name built at run time",
+         "import builtins as _b" + _ESCAPE_ONLY_HOOK
+         + "_b.setattr(pytest_configure, '__co' + 'de__', _b.compile(%s).co_consts[0])\n" % _ESCAPE_ONLY_CODE, {},
+         "rewrite"),)),
     ("defeater-by-another-spelling", (
         ("setattr and compile bound to names", "_s = setattr\n_c = compile" + _ESCAPE_ONLY_HOOK
          + "_s(pytest_configure, '__co' + 'de__', _c(%s).co_consts[0])\n" % _ESCAPE_ONLY_CODE, {}, "rewrite"),
@@ -8380,6 +8484,13 @@ _ESCAPE_ONLY_KINDS = (
          "import pydoc\nimport sys\n\nKZ = 'verbose'\n\n\ndef pytest_configure(config):\n"
          "    pydoc.locate('builtins.set' + 'attr')(sys.modules[__name__], 'KZ', 'plugins')\n    config.getoption(KZ)\n",
          {}, "rewrite"),)),
+    ("patch-helper-by-another-spelling", (
+        ("patch imported from unittest.mock under another name, started at import",
+         "from unittest.mock import patch as _p\n\nKZ = 'verbose'\n_p('conftest.KZ', 'plugins').start()\n\n\n"
+         "def pytest_configure(config):\n    config.getoption(KZ)\n", {}, "rewrite"),
+        ("unittest.mock under another name, its patch handed a target no str literal names, started at import",
+         "from unittest import mock as _m\n\nKZ = 'verbose'\nTZ = 'conftest.KZ'\n_m.patch(TZ, 'plugins').start()\n\n\n"
+         "def pytest_configure(config):\n    config.getoption(KZ)\n", {}, "rewrite"))),
 )
 #   THE ESCAPE-ONLY KINDS (the reviewer's ruling of 2026-09-29 18:09Z on round 2 of fork PR #894): each kind of road
 #   _anyio_option_reads' WHAT IT DOES NOT READ lists with no live site, (id, plants), the id the one the listing names in
@@ -14931,6 +15042,113 @@ class HermeticKernelPostal(unittest.TestCase):
             with self.subTest(control=label):
                 self.assertEqual(_anyio_option_reads(ast.parse(text)), [], "%s: admitted at both heads" % label)
 
+    def test_a_setter_or_a_mock_patch_naming_a_proven_key_by_a_string_or_by_none_defeats_its_proof(self):
+        """THE SETTER AND PATCH-HELPER ROADS (the verification of the hundred and fourth round-2 commit of fork PR #894,
+        its first medium): a key THE PROOF proved, a name of the conftest's module scope bound once to 'verbose' or a
+        direct import's key, rebound by a setter or a patch helper in an autouse fixture of the conftest's own text, was
+        ADMITTED before the hundred and fifth round-2 commit while a real run handed getoption the -p list: a setter was
+        read for one literal, its second argument's where that was one, so pytest's string-target form,
+        monkeypatch.setattr('conftest.K', 'plugins'), took 'plugins' for the name and left K proven, and unittest.mock's
+        patch, patch.object and patch.multiple were not read at all. _anyio_attribute_writes now reads each for every
+        name it may write and for a name it writes by no str literal. THE PINS, each REFUSED at the fix, the refusal
+        naming the setter or patch helper that can rebind the key. ADMITTED at the hundred and fourth (shown by
+        execution in the artifacts, where each of these subtests is red on the hundred and fourth's reading): the
+        verifier's H1, H1b, H2, H3 and H4 (a module-scope key) and B2 and B4 (a direct import's key), and the class
+        around them: the string target held by a name, joined by a call or an f-string; a bound __setattr__ handed a
+        name or a literal; patch's target held by a name, patch.object's attribute held by a name, patch.multiple handed
+        ** keywords, and patch imported bare. Already REFUSED at the hundred and fourth, and held here as the class's
+        other forms: monkeypatch.delattr's string target, the object form with value=, and the keywords target= and
+        name= (the last now refused as a setter naming K, where the hundred and fourth refused it as one naming its
+        attribute by no str literal). THE CONTROLS, admitted: a proven key with no patch (a module's and a direct
+        import's), and a literal or proven key beside monkeypatch.setattr(o, 'a', 1), mock.patch.object(o, 'a', 1) or a
+        bare object() call."""
+        where = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, where, True)
+        hook = "\n\ndef pytest_runtest_call(item):\n    item.config.getoption(%s)\n"
+        fx = ("import sys\n\nimport pytest\n\nK = 'verbose'\n%s\n\n@pytest.fixture(autouse=True)\n"
+              "def _patch(monkeypatch):\n    %s\n")
+        mk = ("import sys\nfrom unittest import mock\n\nimport pytest\n\nK = 'verbose'\n%s\n\n"
+              "@pytest.fixture(autouse=True)\ndef _patch():\n    with %s:\n        yield\n")
+        ih = {"_ih": "TEST_ROOT_PREFIX = 'verbose'\n"}
+        key = "_ih.TEST_ROOT_PREFIX"
+        roads = [
+            ("H1 monkeypatch.setattr('conftest.K', 'plugins'), the string-target form",
+             fx % ("", "monkeypatch.setattr('conftest.K', 'plugins')") + hook % "K", {}, "setattr naming it"),
+            ("H1b monkeypatch.setattr(__name__ + '.K', 'plugins')",
+             fx % ("", "monkeypatch.setattr(__name__ + '.K', 'plugins')") + hook % "K", {},
+             "the argument in the attribute's place no str literal"),
+            ("H2 mock.patch.object(sys.modules[__name__], 'K', 'plugins')",
+             mk % ("", "mock.patch.object(sys.modules[__name__], 'K', 'plugins')") + hook % "K", {},
+             "patch.object naming it"),
+            ("H3 mock.patch('conftest.K', 'plugins')",
+             mk % ("", "mock.patch('conftest.K', 'plugins')") + hook % "K", {}, "patch naming it"),
+            ("H4 mock.patch.multiple(sys.modules[__name__], K='plugins')",
+             mk % ("", "mock.patch.multiple(sys.modules[__name__], K='plugins')") + hook % "K", {},
+             "patch.multiple naming it"),
+            ("B2 monkeypatch.setattr('_ih.TEST_ROOT_PREFIX', 'plugins'), a direct import's key",
+             "import _ih\nimport pytest\n\n\n@pytest.fixture(autouse=True)\ndef _patch(monkeypatch):\n"
+             "    monkeypatch.setattr('_ih.TEST_ROOT_PREFIX', 'plugins')\n" + hook % key, ih, "setattr naming it"),
+            ("B4 mock.patch('_ih.TEST_ROOT_PREFIX', 'plugins'), a direct import's key",
+             "from unittest import mock\n\nimport _ih\nimport pytest\n\n\n@pytest.fixture(autouse=True)\n"
+             "def _patch():\n    with mock.patch('_ih.TEST_ROOT_PREFIX', 'plugins'):\n        yield\n" + hook % key, ih,
+             "patch naming it"),
+            ("the string target held by a name", fx % ("T = 'conftest.K'\n", "monkeypatch.setattr(T, 'plugins')")
+             + hook % "K", {}, "the argument in the attribute's place no str literal"),
+            ("the string target joined by a call",
+             fx % ("", "monkeypatch.setattr('.'.join([__name__, 'K']), 'plugins')") + hook % "K", {},
+             "the argument in the attribute's place no str literal"),
+            ("the string target an f-string", fx % ("", "monkeypatch.setattr(f'{__name__}.K', 'plugins')") + hook % "K",
+             {}, "the argument in the attribute's place no str literal"),
+            ("a bound __setattr__ handed a name", fx % ("N = 'K'\n", "sys.modules[__name__].__setattr__(N, 'plugins')")
+             + hook % "K", {}, "__setattr__ at line"),
+            ("a bound __setattr__ handed a literal",
+             fx % ("", "sys.modules[__name__].__setattr__('K', 'plugins')") + hook % "K", {}, "__setattr__ naming it"),
+            ("patch's target held by a name", mk % ("T = 'conftest.K'\n", "mock.patch(T, 'plugins')") + hook % "K", {},
+             "patch at line"),
+            ("patch.object's attribute held by a name",
+             mk % ("N = 'K'\n", "mock.patch.object(sys.modules[__name__], N, 'plugins')") + hook % "K", {},
+             "patch.object at line"),
+            ("patch.multiple handed ** keywords",
+             mk % ("D = {'K': 'plugins'}\n", "mock.patch.multiple(sys.modules[__name__], **D)") + hook % "K", {},
+             "a starred argument or ** keywords"),
+            ("patch imported bare from unittest.mock",
+             mk.replace("from unittest import mock", "from unittest.mock import patch")
+             % ("", "patch('conftest.K', 'plugins')") + hook % "K", {}, "patch naming it"),
+            ("monkeypatch.delattr's string target", fx % ("", "monkeypatch.delattr('conftest.K')") + hook % "K", {},
+             "delattr naming it"),
+            ("the object form with value=",
+             fx % ("", "monkeypatch.setattr(sys.modules[__name__], 'K', value='plugins')") + hook % "K", {},
+             "setattr naming it"),
+            ("the keywords target= and name=", fx % ("", "monkeypatch.setattr(target='conftest.K', name='plugins')")
+             + hook % "K", {}, "setattr naming it")]
+        controls = [
+            ("a module's proven key, no patch", "K = 'verbose'\n" + hook % "K", {}),
+            ("a direct import's proven key, no patch", "import _ih\n" + hook % key, ih),
+            ("a literal key beside monkeypatch.setattr(o, 'a', 1)",
+             fx % ("", "monkeypatch.setattr(sys, 'a', 1)") + hook % "'verbose'", {}),
+            ("a proven key beside monkeypatch.setattr(o, 'a', 1)",
+             fx % ("", "monkeypatch.setattr(sys, 'a', 1)") + hook % "K", {}),
+            ("a proven key beside mock.patch.object(o, 'a', 1)",
+             mk % ("", "mock.patch.object(sys, 'a', 1)") + hook % "K", {}),
+            ("a proven key beside a bare object() call", "K = 'verbose'\n_S = object()\n" + hook % "K", {})]
+        self.assertTrue(roads and controls, "the roads and the controls")
+        for i, (label, conf, mods, why) in enumerate(roads + [(lb, c, m, None) for lb, c, m in controls]):
+            with self.subTest(road=label) if why else self.subTest(control=label):
+                d = os.path.join(where, "s%02d" % i)
+                os.mkdir(d)
+                for name, text in dict(mods, conftest=conf).items():
+                    with open(os.path.join(d, name + ".py"), "w", encoding="utf-8") as f:
+                        f.write(text)
+                reads = _anyio_option_reads(ast.parse(conf), where=d)
+                if why is None:
+                    self.assertEqual(reads, [], "%s: admitted, no read" % label)
+                    continue
+                self.assertTrue(reads, "%s: refused at the fix" % label)
+                self.assertTrue(all("the keyed read getoption" in w for _l, w in reads), "%s: %s" % (label, reads))
+                self.assertTrue(any(why in w for _l, w in reads),
+                                "%s: the refusal names the setter or patch helper that can rebind the key (%r): %s"
+                                % (label, why, reads))
+
     def test_every_escape_only_kind_the_anyio_rule_lists_is_admitted(self):
         """THE ESCAPE-ONLY WITNESS (the reviewer's ruling of 2026-09-29 18:09Z on round 2 of fork PR #894, on item 3 of
         its 15:08Z ruling): each kind of road _anyio_option_reads' WHAT IT DOES NOT READ lists with NO live site says so,
@@ -14999,7 +15217,8 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual([t for t in named if not callable(getattr(HermeticKernelPostal, t, None))], [],
                          "tests the listing names that HermeticKernelPostal does not have")
         controls = re.findall(r"(test_\w+), its subtest control='([^']+)'", listing)
-        self.assertEqual(len(controls), 2, "the two live-site kinds whose witness is a control subtest: %s" % controls)
+        self.assertEqual(len(controls), 1, "the one live-site kind whose witness is a control subtest, re.compile's: %s"
+                         % controls)
         for test, label in controls:
             self.assertIn('"%s"' % label, inspect.getsource(getattr(HermeticKernelPostal, test)),
                           "the subtest control=%r the listing names is a label of %s" % (label, test))

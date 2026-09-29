@@ -260,7 +260,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `config.workerinput`) is admitted only when its key is proved to be one
   fixed string other than the option's: a literal, or a name bound once to a
   literal with nothing in the conftest's text that can rebind it, in the
-  conftest or in a module of the repository it imports directly. A key taken
+  conftest or in a module of the repository it imports directly. A `setattr`
+  or `delattr` in the conftest (a bare name or a method such as
+  `monkeypatch.setattr`), or a `unittest.mock` patch spelled `patch`,
+  `mock.patch`, `patch.object` or `patch.multiple`, that names the key by a
+  string literal, or names what it writes other than by a string literal, can
+  rebind it (`monkeypatch.setattr("conftest.K", "plugins")`,
+  `mock.patch("conftest.K", "plugins")`). A key taken
   from a list, a loop, a parameter, a default, a class attribute or a fold is
   refused, so a helper that passes keys is refused visibly rather than
   admitted. The rule states the trade this makes:
@@ -319,8 +325,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   through `globals()`. Other roads that no honest author writes pass and are
   listed. A listed kind with a live site names the site, in `tests/conftest.py`
   or in the `tests/__init__.py` it imports, that a refusal of the kind would
-  hit, and its witness, for most kinds the test that runs the rule over the
-  live conftest and asserts it finds no read. A kind with no live site says so,
+  hit, and its witness: for all but one kind the test that runs the rule over
+  the live conftest and asserts it finds no read, and for `re.compile`, which
+  `tests/conftest.py` calls, a control subtest showing that an attribute call
+  named `compile` is no defeater. A kind with no live site says so,
   is escape-only, and names its witness by id: a subtest of
   `test_every_escape_only_kind_the_anyio_rule_lists_is_admitted`, which runs
   the rule over the kind's synthetic plants and asserts each is admitted, so a
