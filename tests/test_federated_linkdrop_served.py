@@ -1951,14 +1951,16 @@ class LinkDropOldLocal(_LinkDrop):
     changes = ("notice",)
     caps = False               # the old bundle dials no caps (read from the dial URL)
 
-    # What a skip of this class leaves unexecuted, and what still runs in the same CI job: the skip reasons carry it, so a
-    # runner reading "skipped" knows which claim went untested (the maintainer's round 1, tests-4).
+    # What a skip of this class leaves unexecuted, and what still runs in CI (in this class's job, served-pages, or in
+    # the vscode-extension job): the skip reasons carry it, so a runner reading "skipped" knows which claim went untested
+    # (the maintainer's round 1, tests-4).
     UNEXECUTED = ("the old bundle's freeze across the link's events (no change shown on a socket the page holds until a redial's "
                   "whole frame) and its storm evidence (one delta-unapplied row per feed slot patch the Outline received, none "
                   "with a change due while the link was down, restarted by each redial's whole frame) go unexecuted; the "
-                  "mechanisms PR 815 fixed are pinned in the same CI job by ui/webview/federation-remote-view-delta.test.ts, "
-                  "federation-remote-feed-delta.test.ts and federation-reconnect.test.ts (npm test), and LinkDropBothNew "
-                  "drives the link drop and the hub restart against this checkout")
+                  "mechanisms PR 815 fixed are pinned by ui/webview/federation-remote-view-delta.test.ts, "
+                  "federation-remote-feed-delta.test.ts and federation-reconnect.test.ts (npm test, which CI runs in the "
+                  "vscode-extension job), and LinkDropBothNew, which CI runs in this class's job (served-pages), drives the "
+                  "link drop and the hub restart against this checkout")
 
     @classmethod
     def _knobs(cls):

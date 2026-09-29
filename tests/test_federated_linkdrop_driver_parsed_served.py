@@ -1,10 +1,11 @@
 """The link-drop driver's receiver walk and wait census over the compiler's PARSE of the driver (2026-09-20, the author's pass 9 of PR 857).
 
 The `_served` suffix is a PLACEMENT, not a description: this module boots no kernel, drives no page and needs no browser; it
-parses source. The suffix reaches the one CI job whose vscode-extension/node_modules holds the typescript package (the
-browser-backed served-page step, which runs tests/test_*_served.py after `npm ci` under ROMP_SERVED_TESTS_REQUIRE=1); on the
-Python matrix, which installs no node deps, its census (TheDriverParsed) skips with a reason saying the same, and under
-REQUIRE that skip is a failure; TheParseTreesAreDropped needs no node and runs there too.
+parses source. The suffix reaches the served-pages job, the one CI job that runs this module with the typescript package in
+vscode-extension/node_modules (its browser-backed served-page step runs tests/test_*_served.py after the job's `npm ci`
+under ROMP_SERVED_TESTS_REQUIRE=1; the vscode-extension job's `npm ci` installs the package too, and that job runs no
+pytest); on the Python matrix, which installs no node deps, its census (TheDriverParsed) skips with a reason saying the
+same, and under REQUIRE that skip is a failure; TheParseTreesAreDropped needs no node and runs there too.
 
 tests/test_federated_linkdrop_driver_bound.py requires every wait the driver places to draw on its budget and every call
 on a playwright receiver to be one an allow-list names for that receiver's kind, because an auto-waiting read inherits
