@@ -177,7 +177,13 @@ Class A): a leg that failed in an invalid run counts as a failure, the leg whose
 so it blocks a plain full run and uses that leg's one flake, and a second failure inside an invalid run leaves the sha
 unable to pass (the reader reads it red, and the runner exits 1 for such a run, not 3); a pass in an invalid run counts
 for nothing, since its checkout or venv changed. An invalid run that failed no leg needs no flake. The pass line,
-verify's record and the reader's invalid line name each invalid run with the legs it failed.
+verify's record and the reader's invalid line name each invalid run with the legs it failed. A leg that did not pass
+is written to the result as soon as it exits, before the re-read after it, so a stop during that re-read keeps its
+failure; a pass is written after its re-read, which could void it. A stop in the moments between a leg's exit and the
+runner filling in its record (the reap of what the leg left running, up to about five seconds, then its log's summary
+and test count) still loses the rc: the run records that leg as never finished, and the next run needs no flake for
+it. Writing the rc before the record is whole would not close this, since a stop of the runner's whole scope kills the
+leg with the same signal, and its rc would then read as a failure.
 A --leg re-run refuses unless the newest run finished, is valid, and failed that leg, so the flake a failure in an
 invalid full run needs is spent on a full run. A --leg re-run of pytest
 runs with no setup, as the pytest leg runs before the deps; one naming pytest and a leg after deps is refused, since
@@ -3218,6 +3224,13 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             known = ignored_now(checkout, entries) if name == "deps" else None
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
             run_leg(checkout, name, rec, wraps, ctx, logdir)
+            if not passed(name, rec):
+                # Round 2, decision 14 (A6): a leg that did not pass is on disk as soon as run_leg returns, before
+                # deps_skipped, the re-read of the checkout and the venv's re-read below, so a stop during any of them
+                # keeps the failure and the next run needs --flake naming it; an invalid mark after the re-read rewrites
+                # the record. A pass is written only after its re-read, which could void it: read_history counts a
+                # stopped run's finished legs, so a pass written first and then stopped would stand unverified.
+                write_result(path, data)
             if name == "pytest":
                 unselected = []
                 ids, why = deps_skipped(rec.get("log"), served_files, unselected)

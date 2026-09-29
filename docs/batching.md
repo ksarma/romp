@@ -256,7 +256,11 @@ subject; `verify` refuses the branch otherwise.
    leaves the head unable to pass (the runner exits 1 for such a run, not 3). A pass inside an
    invalid run counts for nothing, since the checkout or a venv changed under it, and an invalid run
    that failed no leg needs no flake. A re-run of a leg (`--leg`) is refused while the newest full
-   run is invalid, so the flake for a failure in an invalid run is spent on a full run. The runner
+   run is invalid, so the flake for a failure in an invalid run is spent on a full run. A leg that
+   fails is written to the result as soon as it exits, so stopping the runner during the re-read
+   after it keeps the failure; a stop in the moments after the leg exits and before the runner has
+   finished its record (up to about five seconds when the leg left processes to reap) loses that
+   failure, and the next run needs no flake for it. The runner
    refuses a run that cannot count, and refuses a re-run of a leg that did not fail. A re-run of
    pytest runs alone, before any `npm ci`, as the pytest leg does; one that names pytest and a leg
    after `npm ci` is refused, so re-run pytest first, then the others. `verify` reads the whole

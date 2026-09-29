@@ -17,6 +17,7 @@ leg. The real suite never runs. Synthetic data only.
 """
 import ast
 import fcntl
+import glob
 import importlib.util
 import json
 import os
@@ -253,6 +254,12 @@ elif act == "edit":                              # a tracked file changed in the
         f.write("edited by a leg\n")
 elif act == "delete":                            # a tracked file removed from the leg's own checkout
     os.remove(os.path.join(root, "kernel", "other.py"))
+elif act == "fifo":                              # the clone's info/exclude made a FIFO, so the re-read that opens it waits
+    exclude = os.path.join(root, ".git", "info", "exclude")
+    os.makedirs(os.path.dirname(exclude), exist_ok=True)
+    if os.path.lexists(exclude):
+        os.remove(exclude)
+    os.mkfifo(exclude)
 elif act == "ignored":                           # an ignored build product left in the checkout
     os.makedirs(os.path.join(root, "vscode-extension", "node_modules"), exist_ok=True)
     with open(os.path.join(root, "vscode-extension", "node_modules", "left.txt"), "w") as f:
@@ -1546,6 +1553,104 @@ class Checkout(_Base):
                 self.assertEqual([pid for pid in pids if _alive(pid)], [], "both writers are gone")
                 self.assertTrue(os.path.exists(os.path.join(marks, "group.pid.term")), "the leg's process group got SIGTERM first")
                 self.assertEqual(w.result()["finished"], None, "the stopped run stays unfinished")
+
+    def stop_in_the_re_read(self, w, *extra, signum=15):
+        """Run the runner (with `extra`) while the pytest leg fails and leaves its checkout's .git/info/exclude a FIFO
+        (the fake's "fifo" action), so the re-read after the leg waits in its open of that file. A non-blocking open of
+        the FIFO for writing succeeds only once a reader is in its open: that event, not a timer, is when `signum` is
+        sent. The write end stays open until the runner has exited. Returns (rc, stdout, stderr)."""
+        proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2",
+                                 *extra], env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                stdin=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        pattern = os.path.join(w.xdg, "romp", "sweeps", "trees", "*", ".git", "info", "exclude")
+        fd, deadline = None, time.monotonic() + 60
+        while fd is None:
+            if proc.poll() is not None:
+                self.fail("the runner ended before its re-read opened the FIFO: %s" % (proc.communicate(),))
+            if time.monotonic() > deadline:
+                self.fail("the runner's re-read never opened the FIFO")
+            for path in glob.glob(pattern):
+                try:
+                    if stat.S_ISFIFO(os.lstat(path).st_mode):
+                        fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+                except OSError:          # not made yet, or ENXIO: no reader has it open yet
+                    pass
+            if fd is None:
+                time.sleep(0.02)
+        try:
+            proc.send_signal(signum)
+            out, err = proc.communicate(timeout=90)
+        finally:
+            os.close(fd)
+        return proc.returncode, out, err
+
+    def test_a_leg_that_failed_is_written_before_its_re_read_so_a_stop_there_keeps_the_failure(self):
+        """Round 2, decision 14 (A6, scenario SIGW): the pytest leg fails and the runner is stopped while the re-read
+        after it waits on the FIFO. The failure is already on disk, so the stopped run records pytest's rc 1 and
+        finish, and a plain run is then refused naming that run's failure. Once per stop signal (SIGTERM, SIGHUP,
+        SIGINT). At the head, and with the history rule alone, the leg was written only after its re-read, so the
+        stopped run showed pytest never finished and the next plain run passed."""
+        for signum in (15, 1, 2):
+            with self.subTest(signal=signum):
+                w = World()
+                self.addCleanup(w.close)
+                w.ctl({"rc": {PYTEST_LEG: 1}, "action": {PYTEST_LEG: "fifo"}})
+                rc, out, err = self.stop_in_the_re_read(w, signum=signum)
+                self.assertEqual(rc, 128 + signum, out + err)
+                self.assertIn("sweep %s: pytest rc 1" % w.head()[:10], out, "stopped after the leg's rc line")
+                w.ctl({})
+                p = w.run()
+                self.assertEqual(p.returncode, 2, "the next plain run must be refused:\n%s%s" % (p.stdout, p.stderr))
+                self.assertIn("the run at %s failed pytest in run 1 (rc 1); a later run counts over a failed leg only with "
+                              "--flake" % w.head()[:10], p.stderr)
+                run = w.data()["runs"][0]
+                self.assertEqual((run["finished"], run["verdict"]), (None, "running"), "the stopped run stays unfinished")
+                self.assertEqual(run["legs"]["pytest"]["rc"], 1)
+                self.assertTrue(run["legs"]["pytest"]["finished"], "the failed leg is recorded as finished")
+
+    def test_a_second_failure_stopped_in_its_re_read_leaves_the_sha_unable_to_pass(self):
+        """Round 2, decision 14 (A6, scenarios SIGW-2ND and LEGSIGW): a valid red, then a run with pytest's flake, a
+        full run or a --leg re-run, whose pytest fails again and which is stopped while the re-read after it waits.
+        The second failure is on disk, so pytest failed in runs 1 and 2 and the next run with the flake is refused; at
+        the head the stopped run's failure was lost and that run passed, two failures excused by one flake."""
+        flake = Runner.FLAKE
+        for label, extra in (("a full run", ("--flake", "pytest=" + flake)), ("a --leg re-run", ("--leg", PYTEST_LEG, "--flake", flake))):
+            with self.subTest(label):
+                w = World()
+                self.addCleanup(w.close)
+                w.ctl({"rc": {PYTEST_LEG: 1}})
+                w.run(check=1)
+                w.ctl({"rc": {PYTEST_LEG: 1}, "action": {PYTEST_LEG: "fifo"}})
+                rc, out, err = self.stop_in_the_re_read(w, *extra)
+                self.assertEqual(rc, 128 + 15, out + err)
+                w.ctl({})
+                p = w.run("--flake", "pytest=" + flake)
+                self.assertEqual(p.returncode, 2, "the next run with the flake must be refused:\n%s%s" % (p.stdout, p.stderr))
+                self.assertIn("no run at %s can pass: pytest failed in runs 1 and 2" % w.head()[:10], p.stderr)
+                self.assertEqual(len(w.data()["runs"]), 2)
+                self.assertEqual(w.data()["runs"][1]["legs"]["pytest"]["rc"], 1)
+
+    def test_a_pass_stopped_in_its_re_read_counts_for_nothing(self):
+        """Round 2, decision 14 (A6, as narrowed): only a leg that did not pass is written before its re-read. A valid
+        red, then a run with pytest's flake whose pytest passes and which is stopped while the re-read after it waits:
+        that pass was never verified, so it is not on disk, a plain run is still refused naming the valid red, and the
+        next run with the flake counts. Written before its re-read, the pass would stand, since a stopped run's finished
+        legs count, and the plain run would pass."""
+        flake = Runner.FLAKE
+        w = self.w
+        w.ctl({"rc": {PYTEST_LEG: 1}})
+        w.run(check=1)
+        w.ctl({"action": {PYTEST_LEG: "fifo"}})
+        rc, out, err = self.stop_in_the_re_read(w, "--flake", "pytest=" + flake)
+        self.assertEqual(rc, 128 + 15, out + err)
+        self.assertIn("sweep %s: pytest rc 0" % w.head()[:10], out, "stopped after the leg's rc line")
+        w.ctl({})
+        p = w.run()
+        self.assertEqual(p.returncode, 2, "the next plain run must be refused:\n%s%s" % (p.stdout, p.stderr))
+        self.assertIn("the run at %s failed pytest in run 1 (rc 1)" % w.head()[:10], p.stderr)
+        self.assertIsNone(w.data()["runs"][1]["legs"]["pytest"].get("finished"), "the unverified pass is not on disk")
+        w.run("--flake", "pytest=" + flake, check=0)
 
     def test_a_stale_checkout_of_a_run_that_is_gone_is_removed_and_named(self):
         """A5: every run removes the checkouts under <state dir>/sweeps/trees whose sha's lock no run holds, whatever
