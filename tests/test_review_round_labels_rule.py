@@ -11,10 +11,12 @@ pass, a default the rule states with its reason; what is refused is a round the 
 author, a pass credited to the reviewer or the maintainer, and every form the rule cannot resolve). Each branch's guard calls it
 with its own population, its own rounds and its own author form, so what this module pins is the RULE alone: every spelling the
 rule classifies (a red and a green probe per class of FORM_CLASSES, assembled at run time from a synthetic round set, so raising a
-caller's set moves nothing here, each class in digits and in words), the READ direction the reader keeps (the coordinator's ruling
-of 2026-09-29 on PR 857's review: a number after the word in digits or as a cardinal word, an ordinal before it in digits or as a
-word, credited or not, a list with or without a serial comma and the singular's comma followed by "and" all read into numbers, and
-every other numbered spelling refused as unclassified), the wrapped shapes (a comment marker or a block comment's continuation line
+caller's set moves nothing here, each class in digits and in words but the one with no separator, in digits alone), the READ
+direction the reader keeps (the coordinator's ruling of 2026-09-29 on PR 857's review: a number after the word in digits or as a
+cardinal word, an ordinal before it in digits or as a word, credited or not, a list with or without a serial comma and the
+singular's comma followed by "and" all read into numbers, and
+every other placement of a number the reader knows refused as unclassified, while a number spelled in a way it does not know, a
+Roman numeral among them, is named as passing unread), the wrapped shapes (a comment marker or a block comment's continuation line
 between the qualifier and the number), the plural's lists and ranges (every number judged, a range expanded so a caller's set need
 not be contiguous), the date form, the forms refused as unresolved, the unnumbered spellings not read, the credit's two names and
 the default with its stated reason, each misattribution refused with its reason and the caller's author form named in it, and the
@@ -168,9 +170,10 @@ class RoundLabelRule(unittest.TestCase):
         credit at the highest and the lowest ruled round, alone, possessive, parenthesised, capitalised; the reviewer's credit; the
         unqualified "review round N" and the bare round at a ruled round, the reviewer's by default; the author's head spelled as a
         round; a round followed by a count word; a dated round), assembled at run time from SET, each class in digits and in words
-        (a class of a number after the word with the number in digits and as a cardinal word; an ordinal class with the ordinal in
-        digits and as a word, a list for a plural, "review" on either side of the ordinal among the author's reds, and "in its"
-        before an unqualified one among the greens); then the wrapped shapes (a `#` comment line and a block comment's ` * ` line
+        (a class of a number after the word with the number in digits and as a cardinal word, the class with no separator in digits
+        alone, since the word glued to a letter is another word; an ordinal class with the ordinal in digits and as a word, a list
+        for a plural, "review" on either side of the ordinal among the author's reds, and "in its" before an unqualified one among
+        the greens); then the wrapped shapes (a `#` comment line and a block comment's ` * ` line
         between the qualifier and the number, an unqualified wrap past the set reported at the number's line), the plural list and
         the ranges (every number judged; a range EXPANDED, so over GAPPED a credited range across the hole is refused naming the
         hole), a range that does not ascend, the forms refused as unresolved (a continuation the list did not consume, a plural

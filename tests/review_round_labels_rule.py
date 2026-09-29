@@ -19,51 +19,53 @@ tests/test_review_round_labels_rule.py, by resolution over this source). A calle
 reason and never substitutes a population (the maintainer's rule of 2026-09-21, from PR 860's guard).
 
 THE FORM SPACE. The reader reads in one direction, READ (the coordinator's ruling of 2026-09-29 on PR 857's review): every number
-of a numbered round is read into its value, whatever its spelling, and a numbered spelling the reader does not read is refused as
-unclassified; nothing passes unread but the unnumbered forms named below. forms() reads the WHOLE text, so a mention wrapped across
-a line break (the qualifier ending one line and the number starting the next, a comment marker between) is one mention, reported at
-the line its first number sits on. A number is read in one of two places. AFTER the word: digits, or a CARDINAL word (CARDINALS,
-zero to nineteen; TENS, twenty to ninety; a tens word joined by a hyphen to a word of UNITS, one to nine; any letter case; each
-read whole, so a longer word it begins is no number word), the separator between the word and the number being nothing (before
-digits alone), spaces, hyphens, a newline, a comment marker (`#`, `//`, and after a newline the `*` of a block comment's
-continuation line) or a hash. BEFORE the word: an ORDINAL, digits with st, nd, rd or th or a word (ORDINALS, zeroth to nineteenth;
-ORDINAL_TENS, twentieth to ninetieth; a tens word joined by a hyphen to a word of ORDINAL_UNITS, first to ninth), the separator
-between the ordinal and the word being one of the same, but never nothing, and "review" allowed on either side of the ordinal. An
-ordinal is read whether or not a qualifier credits it ("the maintainer's Nth round", "the author's Nth round", "in its Nth round"),
-and it is not read before another word the word begins (glued to a letter, or to a hyphen and a letter, as in "a second
-round-trip"). Either place takes a list or a range, of numbers after the word or of ordinals before it ("rounds N and M", "rounds
-N, M", "rounds N, M, and K" with a serial comma, "rounds N to M", "rounds N-M", an en dash, a slash, "through", and "the Nth and
-Mth rounds" the same way): a list's every number judged, and a range EXPANDED, N through M each judged, so a caller's set need not
-be contiguous. The plural reads a bare comma, and a comma followed by a list word (the serial comma: ", and", ", or", ", &", ",
-/"). The singular takes the same continuations but the bare comma and the serial comma: a count after a singular ("round N, M
-findings") is a continuation the list did not consume and is refused as one, and the one comma the singular reads is a comma
-followed by "and", so "round N, and M" is read as the list of N and M, while "round N, or M" is refused. A DATE after the number,
-after the list, or after the word of an ordinal form, is part of the form (DATE: a run of punctuation and spaces, no letter, and
-then YYYY-MM-DD, so "Review round N, YYYY-MM-DD", "round N (YYYY-MM-DD", "round N), YYYY-MM-DD" and the date straight after the
-number with a space or a comma are correct prose, not a further number the list did not consume; the list never reads a date's year
-as a number of its own); a further number after the date is refused as one the form did not consume.
+of a numbered round that the reader knows (digits, digit ordinals and the words of its tables) is read into its value, and a
+numbered spelling of such a number that the reader cannot place is refused as unclassified; nothing passes unread but the
+unnumbered forms named below. forms() reads the WHOLE text, so a mention wrapped across a line break (the qualifier ending one line
+and the number starting the next, a comment marker between) is one mention, reported at the line its first number sits on. A number
+is read in one of two places. AFTER the word: digits, or a CARDINAL word (CARDINALS, zero to nineteen; TENS, twenty to ninety; a
+tens word joined by a hyphen to a word of UNITS, one to nine; any letter case; each read whole, so a longer word it begins is no
+number word), the separator between the word and the number being nothing (before digits alone), spaces, hyphens, a newline, a
+comment marker (`#`, `//`, and after a newline the `*` of a block comment's continuation line) or a hash. BEFORE the word: an
+ORDINAL, digits with st, nd, rd or th or a word (ORDINALS, zeroth to nineteenth; ORDINAL_TENS, twentieth to ninetieth; a tens word
+joined by a hyphen to a word of ORDINAL_UNITS, first to ninth), the separator between the ordinal and the word being one of the
+same, but never nothing, and "review" allowed on either side of the ordinal. An ordinal is read whether or not a qualifier credits
+it ("the maintainer's Nth round", "the author's Nth round", "in its Nth round"), and it is not read before another word the word
+begins (glued to a letter, or to a hyphen and a letter, as in "a second round-trip"). Either place takes a list or a range, of
+numbers after the word or of ordinals before it ("rounds N and M", "rounds N, M", "rounds N, M, and K" with a serial comma, "rounds
+N to M", "rounds N-M", an en dash, a slash, "through", and "the Nth and Mth rounds" the same way): a list's every number judged,
+and a range EXPANDED, N through M each judged, so a caller's set need not be contiguous. The plural reads a bare comma, and a comma
+followed by a list word (the serial comma: ", and", ", or", ", &", ", /"). The singular takes the same continuations but the bare
+comma and the serial comma: a count after a singular ("round N, M findings") is a continuation the list did not consume and is
+refused as one, and the one comma the singular reads is a comma followed by "and", so "round N, and M" is read as the list of N and
+M, while "round N, or M" is refused. A DATE after the number, after the list, or after the word of an ordinal form, is part of the
+form (DATE: a run of punctuation and spaces, no letter, and then YYYY-MM-DD, so "Review round N, YYYY-MM-DD", "round N
+(YYYY-MM-DD", "round N), YYYY-MM-DD" and the date straight after the number with a space or a comma are correct prose, not a
+further number the list did not consume; the list never reads a date's year as a number of its own); a further number after the
+date is refused as one the form did not consume.
 
 Every spelling of the word is CLASSIFIED, over the numbers the reader knows: digits, digit ordinals and the words of its tables. A
 numbered form is read, and classed by its plural and its separator (FORM_CLASSES, an ordinal form in classes of its own, one red
-and one green probe per class in the pin, in digits and in words). An UNNUMBERED form has no number the reader knows beside the
-word, and it is not read: after the word, no digit and no number word past the separator or past a short run of punctuation, and
-before it no ordinal. Those forms, and only those, pass unread: Python's round(), the keyword-argument spelling "rounds=40", "a
-typing round", "the round's own", "this round", "around", a COUNT before the word (a cardinal, in digits or a word: "in N rounds",
-"the two-round convergence bound", which count rounds and name none), a word between the word and a number as in "a round of 3
-drives", a word other than "review" between an ordinal and the word as in "the Nth test round", a longer word a number word begins
-or an ordinal ends ("round sevenfold", "a millisecond round"), the word glued to a letter, another word before which no ordinal is
-read and after which no number is ("rounded", "roundsman", "round-trip"), and a number spelled in a way the reader does not know, a
-Roman numeral among them, which no branch writes (the rule reads spellings of the word, not sentences, and a bare referential form
-carries no number and so no credit). A form the classifier cannot place is REFUSED, keyed on what it did not resolve: a number
-glued to a letter or an underscore ("round Nb", the lettered pass); a further number, digits or a number word, after a run the list
-did not consume that is not a date ("rounds N; M", "round N, M", "round N, or M") or before an ordinal run the list did not consume
-("the Nth, Mth round", a compound ordinal written with a space, an ordinal joined by a hyphen to a number other than a tens word,
-"one hundred and first"); a number both before the word and after it; a plural that names one number ("rounds N", "the Nth
-rounds"); a range that does not ascend ("rounds M-N" with M past N); a number word the reader does not read beside the word (LARGE:
-hundred, thousand, million and billion after the word or after a number it read, and their ordinals before it or after it; and any
-ordinal word after the word); and punctuation or markup between the word and a number, digits or a word ("round: N", "round (N)",
-"round **N**", "round `N`"), the one exemption being the keyword-argument spelling, the word glued to `=`. An unresolvable form
-refuses with its reason and never passes: widening the credit is not widening what passes unresolved.
+and one green probe per class in the pin, in digits and in words, the class with no separator in digits alone). An UNNUMBERED form
+has no number the reader knows beside the word, and it is not read: after the word, no digit and no number word past the separator
+or past a short run of punctuation, and before it no ordinal past the separator. Those forms, and only those, pass unread: Python's
+round(), the keyword-argument spelling "rounds=40", "a typing round", "the round's own", "this round", "around", a COUNT before the
+word (a cardinal, in digits or a word: "in N rounds", "the two-round convergence bound", which count rounds and name none), a word
+between the word and a number as in "a round of 3 drives", a word other than "review", or punctuation, between an ordinal and the
+word as in "the Nth test round", a longer word a number word begins or an ordinal ends ("round sevenfold", "a millisecond round"),
+the word glued to a letter, another word before which no ordinal is read and after which no number is ("rounded", "roundsman",
+"round-trip"), and a number spelled in a way the reader does not know, a Roman numeral among them, which no branch writes (the rule
+reads spellings of the word, not sentences, and a bare referential form carries no number and so no credit). A form the classifier
+cannot place is REFUSED, keyed on what it did not resolve: a number glued to a letter or an underscore ("round Nb", the lettered
+pass); a further number, digits or a number word, after a run the list did not consume that is not a date ("rounds N; M", "round N,
+M", "round N, or M") or before an ordinal run the list did not consume ("the Nth, Mth round", a compound ordinal written with a
+space, an ordinal joined by a hyphen to a number other than a tens word, "one hundred and first"); a number both before the word
+and after it; a plural that names one number ("rounds N", "the Nth rounds"); a range that does not ascend ("rounds M-N" with M past
+N); a number word the reader does not read beside the word (LARGE: hundred, thousand, million and billion after the word or after a
+number it read, and their ordinals before it or after it; and any ordinal word after the word); and punctuation or markup between
+the word and a number, digits or a word ("round: N", "round (N)", "round **N**", "round `N`"), the one exemption being the
+keyword-argument spelling, the word glued to `=`. An unresolvable form refuses with its reason and never passes: widening the
+credit is not widening what passes unresolved.
 
 THE CREDIT. A numbered round is credited to the reviewer when the qualifier before the word names that party, "the reviewer's round
 N", "the maintainer's round N" or "the maintainer's Nth round" (CREDIT: one party under two names; the apostrophe ASCII or
