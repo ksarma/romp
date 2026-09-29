@@ -80,7 +80,7 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     the newest run of ci.yml from a push to the batch branch at exactly the verified head (by createdAt,
     then databaseId; a matching row with either, or its attempt, missing or malformed, the zero time
     included, is refused by name, and so is a list as long as land's limit); a missing, pending or red
-    run, or a failed read, is refused by name, and a run at another sha, from another event or on another
+    run, a failed read, or an answer that is not a JSON list of run records (round 2, extra8-3), is refused by name, and a run at another sha, from another event or on another
     branch does not count. Every other attempt of a push run at that head, the newest run's earlier
     attempts and every attempt of an older push run of the same sha, that did not pass is refused unless
     land's --flake names it (a red is not erased by a GitHub re-run or a second push either; one attempt
@@ -2355,7 +2355,9 @@ def batch_ci_run(root, name, head, tail="; nothing merged"):
     sha, event, branch or workflow never stands in for it. The newest is the latest createdAt, then the highest
     databaseId, whatever order gh lists the rows in; a matching row with no valid databaseId, createdAt (the zero time
     included) or attempt raises Fail naming it (round 1, extra4-4), and so does a list as long as RUN_LIST_LIMIT, which
-    may have cut older runs. A read that fails raises Fail with gh's error: a failed read is not a missing run. `tail`
+    may have cut older runs. A read that fails raises Fail with gh's error: a failed read is not a missing run. So does
+    an answer that is not a JSON list of run records (round 2, extra8-3): nothing at all, JSON of another type (an error
+    object, a string, null), or a list holding a row that is not an object; only an empty list is no run. `tail`
     ends each Fail's text: land's says nothing merged, and finish, which reads the same run after the merge, passes its
     own."""
     br = branch_of(name)
@@ -2363,15 +2365,25 @@ def batch_ci_run(root, name, head, tail="; nothing merged"):
               str(RUN_LIST_LIMIT), "--json", CI_RUN_FIELDS, cwd=root, check=False)
     if proc.returncode != 0:
         raise Fail("could not read the batch head's CI run (gh run list): %s%s" % ((proc.stderr + proc.stdout).strip(), tail))
+    if not proc.stdout.strip():
+        raise Fail("gh run list returned nothing, not a JSON list of runs; a read that returns no run records is not a "
+                   "missing run%s" % tail)
     try:
-        rows = json.loads(proc.stdout or "[]")
+        rows = json.loads(proc.stdout)
     except json.JSONDecodeError as e:
         raise Fail("gh run list returned something that is not JSON (%s)%s" % (e, tail))
-    rows = rows if isinstance(rows, list) else []
+    if not isinstance(rows, list):
+        raise Fail("gh run list returned JSON that is not a list of runs (%s: %s); a read that returns no run records is "
+                   "not a missing run%s" % (type(rows).__name__, json.dumps(rows)[:120], tail))
+    stray = [r for r in rows if not isinstance(r, dict)]
+    if stray:
+        raise Fail("gh run list returned %d row%s that %s not a run record (%s); a read that returns no run records is "
+                   "not a missing run%s" % (len(stray), "" if len(stray) == 1 else "s", "is" if len(stray) == 1 else "are",
+                                           json.dumps(stray[0])[:120], tail))
     if len(rows) >= RUN_LIST_LIMIT:
         raise Fail("gh run list returned %d rows, its limit, so older runs at the batch head may be cut, and every run at "
                    "the head is read (a red is not erased by pushing the same sha again)%s" % (len(rows), tail))
-    runs = [r for r in rows if isinstance(r, dict) and r.get("headSha") == head
+    runs = [r for r in rows if r.get("headSha") == head
             and r.get("event") == "push" and r.get("headBranch") == br and r.get("workflowName") == CI_WORKFLOW_NAME]
     if not runs:
         return "missing", None, []

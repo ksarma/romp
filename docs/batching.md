@@ -346,7 +346,8 @@ subject; `verify` refuses the branch otherwise.
    the verified head, main contained), then asks GitHub for the batch head's CI run: the newest run
    of `ci.yml` from a push to `batch/<name>` at exactly the verified head, read at that moment. It
    refuses when that run is missing, pending or red (any conclusion but success, cancelled
-   included), or when the read fails; a run of another commit, a manual run and a run on another
+   included), or when the read fails or answers with anything but a list of run records (an error
+   object, null, nothing); a run of another commit, a manual run and a run on another
    branch do not count. The newest run is the latest `createdAt`, then the highest run id, and a
    matching row with either one, or its attempt number, missing or malformed (the zero time gh
    prints for a missing time included) is refused by name. A red is not erased by a re-run on

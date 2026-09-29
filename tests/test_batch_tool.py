@@ -2549,6 +2549,51 @@ class LandReadsTheCI(_Base):
         p = self.refused("gh run list returned something that is not JSON")
         self.assertNotIn("is missing", p.stderr)
 
+    def shape_gh(self, answer):
+        fx = self.fx
+        wrapper = os.path.join(fx.tmp, "gh-shape")
+        if not os.path.exists(wrapper):
+            with open(wrapper, "w") as f:
+                f.write(SHAPE_GH % {"python": sys.executable})
+            os.chmod(wrapper, 0o755)
+        fx.env.update(ROMP_GH=wrapper, SHAPE_FAKE_GH=os.path.join(fx.bin, "gh"), SHAPE_GH_ANSWER=answer)
+
+    SHAPES = (("an object", '{"message": "Bad credentials"}',
+               'gh run list returned JSON that is not a list of runs (dict: {"message": "Bad credentials"})'),
+              ("a string", '"a string"', 'gh run list returned JSON that is not a list of runs (str: "a string")'),
+              ("null", "null", "gh run list returned JSON that is not a list of runs (NoneType: null)"),
+              ("a list holding a non-object", '["not a run", {"databaseId": 1}]',
+               'gh run list returned 1 row that is not a run record ("not a run")'),
+              ("nothing", "", "gh run list returned nothing, not a JSON list of runs"))
+
+    def test_a_run_list_that_is_json_but_not_a_list_of_runs_is_refused_by_name(self):
+        """Round 2, extra8-3: a `gh run list` answer that is JSON but not a list (an error object, a string, null), a
+        list holding a row that is not an object, and an empty answer are each refused naming the shape, never read as a
+        missing run, and nothing is merged or retargeted. At c60fb907e each read as no run: land refused it as missing,
+        "push the batch and wait for its run"."""
+        fx = self.fx
+        self.ready()
+        fx.ci("b1")
+        for label, answer, named in self.SHAPES:
+            with self.subTest(shape=label):
+                self.shape_gh(answer)
+                p = self.refused(named, "a read that returns no run records is not a missing run")
+                self.assertNotIn("is missing", p.stderr)
+
+    def test_finish_reports_a_run_list_of_another_shape_as_unread(self):
+        """finish reads the same run after the merge: an answer of another shape is reported as unread, naming it, not as
+        a missing run, and the cleanup still runs."""
+        fx = self.fx
+        self.ready()
+        fx.ci("b1")
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        self.shape_gh('{"message": "Bad credentials"}')
+        p = fx.run("finish", "b1")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("the batch head's CI run: unread after the merge: gh run list returned JSON that is not a list of runs",
+                      p.stdout)
+        self.assertEqual(fx.state("b1")["finished"]["report"]["ci"]["case"], "unread")
+
     def test_the_newest_run_at_the_head_decides_and_an_older_red_one_is_not_erased(self):
         """The newest push run at the head is the one required green; an older push run at the same head (the same sha
         pushed again: the branch deleted and pushed back, or pushed elsewhere and back) is read as an earlier attempt is
@@ -2645,6 +2690,18 @@ if sys.argv[1:3] == ["run", "list"]:
                      "event": event, "workflowName": name, "url": "https://example.invalid/actions/runs/%%d" %% n,
                      "createdAt": "2026-02-01T00:00:%%02dZ" %% n})
     print(json.dumps(rows))
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, fake, *sys.argv[1:]])
+"""
+
+
+# A gh for one test: `run list` answers with SHAPE_GH_ANSWER as it stands (valid JSON of another shape, or nothing);
+# every other call goes to the fake gh.
+SHAPE_GH = r"""#!%(python)s
+import os, sys
+fake = os.environ["SHAPE_FAKE_GH"]
+if sys.argv[1:3] == ["run", "list"]:
+    sys.stdout.write(os.environ["SHAPE_GH_ANSWER"])
     sys.exit(0)
 os.execv(sys.executable, [sys.executable, fake, *sys.argv[1:]])
 """
