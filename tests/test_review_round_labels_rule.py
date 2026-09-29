@@ -2,27 +2,30 @@
 """The shared round-label rule's pin (tests/review_round_labels_rule.py; the author's pass 11 on PR 857, 2026-09-21): its form
 space, its crediting rule, that it keys on misattribution, and that it holds no population, no round set and reads nothing at all.
 
-The helper is the one text of the convention that a numbered round is a credit to the reviewer who held it (the maintainer's
-ruling of 2026-09-21 on the three per-branch guards of PRs 821, 857 and 860, which disagreed on the spellings they read and on
-what credited one) and that the rule refuses MISATTRIBUTION, not the absence of a qualifier (the reviewer's further ruling of
+The helper is the one text of the convention that a numbered round is a credit to the reviewer who held it (the maintainer's ruling
+of 2026-09-21 on the three per-branch guards of PRs 821, 857 and 860, which disagreed on the spellings they read and on what
+credited one) and that the rule refuses MISATTRIBUTION, not the absence of a qualifier (the reviewer's further ruling of
 2026-09-21: "the reviewer's round N" is a credit beside "the maintainer's round N"; a date after the round is correct prose; an
 unqualified round is the reviewer's by the convention that rounds belong to the reviewer and the author's work between them is a
 pass, a default the rule states with its reason; what is refused is a round the reviewer never held, a round credited to the
 author, a pass credited to the reviewer or the maintainer, and every form the rule cannot resolve). Each branch's guard calls it
 with its own population, its own rounds and its own author form, so what this module pins is the RULE alone: every spelling the
 rule classifies (a red and a green probe per class of FORM_CLASSES, assembled at run time from a synthetic round set, so raising a
-caller's set moves nothing here), the wrapped shapes (a comment marker or a block comment's continuation line between the
-qualifier and the number), the plural's lists and ranges (every number judged, a range expanded so a caller's set need not be
-contiguous), the date form, the forms refused as unresolved, the unnumbered spellings not read, the credit's two names and the
-default with its stated reason, each misattribution refused with its reason and the caller's author form named in it, and the
+caller's set moves nothing here, each class in digits and in words), the READ direction the reader keeps (the coordinator's ruling
+of 2026-09-29 on PR 857's review: a number after the word in digits or as a cardinal word, an ordinal before it in digits or as a
+word, credited or not, a list with or without a serial comma and the singular's comma followed by "and" all read into numbers, and
+every other numbered spelling refused as unclassified), the wrapped shapes (a comment marker or a block comment's continuation line
+between the qualifier and the number), the plural's lists and ranges (every number judged, a range expanded so a caller's set need
+not be contiguous), the date form, the forms refused as unresolved, the unnumbered spellings not read, the credit's two names and
+the default with its stated reason, each misattribution refused with its reason and the caller's author form named in it, and the
 tree-only pin carried over from the 857 guard and adapted: the helper imports re alone and reads no file, no environment and no
-path, pinned by resolution over its source and by the absence of any file or reflective primitive. A probe's set is synthetic
-(no PR's rounds live here or in the helper: a cell holds that no round set lives in the helper by any shape it could take, an
-integer constant bound at module level by any assignment, in any function's default, in any set, tuple, list or dict-key display
-or any range(), set() or frozenset() anywhere in the module, and by execution that offences() takes its rounds with no default;
-that the same text gets opposite verdicts under two caller sets; and that neither the helper's text nor this module's spells a
-numbered-round form or a misattributed pass, so a caller that censuses either reads it clean and no credit to any PR's round
-lives in the rule's text)."""
+path, pinned by resolution over its source and by the absence of any file or reflective primitive. A probe's set is synthetic (no
+PR's rounds live here or in the helper: a cell holds that no round set lives in the helper by any shape it could take, an integer
+constant bound at module level by any assignment, in any function's default, in any set, tuple, list or dict-key display or any
+range(), set() or frozenset() anywhere in the module, and by execution that offences() takes its rounds with no default; that the
+same text gets opposite verdicts under two caller sets; and that neither the helper's text nor this module's spells a
+numbered-round form or a misattributed pass, so a caller that censuses either reads it clean and no credit to any PR's round lives
+in the rule's text)."""
 import ast
 import inspect
 import os
@@ -41,6 +44,18 @@ R, M, V, A = "round", "the maintainer's", "the reviewer's", "the author's"
 D = "2026-09-15"                            # a date, the form the rule consumes after a round
 SET = frozenset({1, 2, 3, 4, 5, 6})        # a synthetic contiguous set, the class probes' (hi and lo below)
 GAPPED = frozenset({1, 3, 4, 5})           # a synthetic set with a hole, the range expansion's
+# the probes' number words, spelled here and never read from the helper's tables, so a wrong table there cannot agree with its probe
+WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
+NTH = ("zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth")
+
+
+def nth(x):
+    """x as a digit ordinal: 1st, 2nd, 3rd, 4th, ..., 11th, 12th, 13th, 21st."""
+    return "%d%s" % (x, "th" if 10 <= x % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(x % 10, "th"))
+
+
+# the two spellings each class is probed in: (the number after the word, the ordinal before it)
+SPELLINGS = {"digits": (str, nth), "words": (lambda x: WORDS[x], lambda x: NTH[x])}
 
 
 def _helper_tree():
@@ -147,34 +162,62 @@ class RoundLabelRule(unittest.TestCase):
         self.assertIn("the rulings the caller holds are numbered 5", rule.offences(text, frozenset({5}))[0][3])
 
     def test_the_form_space(self):
-        """Every class the rule reads has red probes (an unqualified round one past the set, which the default reads as the
-        reviewer's and no ruling covers; the maintainer's and the reviewer's credit one past the set; the author's round and the
+        """Every class the rule reads has red probes (an unqualified round past the set by one, which the default reads as the
+        reviewer's and no ruling covers; the maintainer's and the reviewer's credit past the set; the author's round and the
         author's review round, a round credited to the author; a credited list with one number past the set) and green probes (a
-        credit at the highest and the lowest ruled round, alone, possessive, parenthesised, capitalised; the reviewer's credit;
-        the unqualified "review round N" and the bare round at a ruled round, the reviewer's by default; the author's head spelled
-        as a round; a round followed by a count word; a dated round), assembled at run time from SET; then the wrapped shapes (a
-        `#` comment line and a block comment's ` * ` line between the qualifier and the number, an unqualified wrap past the set
-        reported at the number's line), the plural list and the ranges (every number judged; a range EXPANDED, so over GAPPED a
-        credited range across the hole is refused naming the hole), a range that does not ascend, the forms refused as
-        unresolved (a continuation the list did not consume, a plural naming one number, punctuation or markup before the
-        number), the comma the plural's alone, the unnumbered spellings (the keyword-argument spelling, a bare referential form,
-        the path stems rN), the typographic apostrophe in the qualifier, the caller's author form and the filename carried in
-        the offence, and the refusals told apart by their reasons."""
+        credit at the highest and the lowest ruled round, alone, possessive, parenthesised, capitalised; the reviewer's credit; the
+        unqualified "review round N" and the bare round at a ruled round, the reviewer's by default; the author's head spelled as a
+        round; a round followed by a count word; a dated round), assembled at run time from SET, each class in digits and in words
+        (a class of a number after the word with the number in digits and as a cardinal word; an ordinal class with the ordinal in
+        digits and as a word, a list for a plural, "review" on either side of the ordinal among the author's reds, and "in its"
+        before an unqualified one among the greens); then the wrapped shapes (a `#` comment line and a block comment's ` * ` line
+        between the qualifier and the number, an unqualified wrap past the set reported at the number's line), the plural list and
+        the ranges (every number judged; a range EXPANDED, so over GAPPED a credited range across the hole is refused naming the
+        hole), a range that does not ascend, the forms refused as unresolved (a continuation the list did not consume, a plural
+        naming one number, punctuation or markup before the number), the comma the plural's alone, the unnumbered spellings (the
+        keyword-argument spelling, a bare referential form, a count before the word, a word between an ordinal and the word, an
+        ordinal before another word the word begins, the word glued to a letter, a longer word a number word begins or an ordinal
+        ends, a Roman numeral, the path stems rN), the typographic apostrophe in the qualifier, the caller's author form and the
+        filename carried in the offence, and the refusals told apart by their reasons. Then the READ direction's own probes (the
+        coordinator's ruling of 2026-09-29 on PR 857's review), each a red the reader would miss without the part it pins: the
+        serial comma in the plural, a range before it among them, and the singular's comma followed by "and" read as lists, and the
+        singular's other commas refused; a number word after the word read into its value (a qualified, an author's and a plural
+        word form refused, a range and a list in words, a tens word joined to a unit, a digit form beside a word elsewhere clean),
+        and a number word the reader does not read, or does not place, refused; and an ordinal before the word read whether
+        credited or not (the author's credit in words and in digits, the maintainer's and the reviewer's past the set, an
+        unqualified one by the default), as a list and a range, a tens ordinal joined to a unit, and each ordinal shape the reader
+        cannot place refused (a plural naming one ordinal, a number before the run it did not consume, a number both before the
+        word and after it, a large ordinal, a number after the word of an ordinal form)."""
         hi, lo = max(SET), min(SET)
         for (plural, kind), sep in rule.FORM_CLASSES.items():
             word = R + ("s" if plural else "")
-            with self.subTest(form="%s%s<N>" % (word, sep.replace("\n", "<newline>"))):
-                tail, tail_lo = ((" and %d" % lo), (" and %d" % hi)) if plural else ("", "")
-                red = ["%s%s%d%s" % (word, sep, hi + 1, tail), "%s %s%s%d%s" % (M, word, sep, hi + 1, tail), "%s %s%s%d%s" % (V, word, sep, hi + 1, tail),
-                       "%s %s%s%d%s" % (A, word, sep, hi, tail), "%s review %s%s%d%s" % (A, word, sep, lo, tail_lo), "%s %s%s%d and %d" % (M, word, sep, lo, hi + 1)]
-                green = ["%s %s%s%d%s" % (M, word, sep, hi, tail), "%s %s%s%d%s" % (M, word, sep, lo, tail_lo), "%s %s%s%d%s's tests-3" % (M, word, sep, lo, tail_lo),
-                         "(%s %s%s%d%s)" % (M, word, sep, hi, tail), "The %s %s%s%d%s ruled" % (M[4:], word, sep, hi, tail), "%s %s%s%d%s" % (V, word, sep, hi, tail),
-                         "review %s%s%d%s" % (word, sep, hi, tail), "%s%s%d%s" % (word, sep, lo, tail_lo), "the %s%s%d%s head" % (word, sep, hi, tail),
-                         "(%s%s%d%s, tests-1)" % (word, sep, lo, tail_lo), "Review %s%s%d%s, %s" % (word, sep, hi, tail, D)]
-                self.assertEqual([s for s in red if not rule.offences(s, SET)], [], "a refused form read as clean")
-                self.assertEqual([s for s in green if rule.offences(s, SET)], [], "an allowed form read as an offence")
-                self.assertEqual(rule.form_class(rule.mentions(green[0])[0]), (plural, kind), "the probe's spelling is classified as its own class")
-                self.assertEqual([len(rule.mentions(s)) for s in green], [1] * len(green), "every green probe is one numbered mention, the dated one included")
+            for spell, (num, o) in SPELLINGS.items():
+                if (kind, spell) == ("none", "words"):
+                    continue   # the word glued to a letter is another word ("rounded"), so a number word needs a separator; the unnumbered probes hold it
+                if not kind.startswith("ordinal "):
+                    label = "%s%s<N>" % (word, sep.replace("\n", "<newline>"))
+                    tail, tail_lo = ((" and %s" % num(lo)), (" and %s" % num(hi))) if plural else ("", "")
+                    red = ["%s%s%s%s" % (word, sep, num(hi + 1), tail), "%s %s%s%s%s" % (M, word, sep, num(hi + 1), tail), "%s %s%s%s%s" % (V, word, sep, num(hi + 1), tail),
+                           "%s %s%s%s%s" % (A, word, sep, num(hi), tail), "%s review %s%s%s%s" % (A, word, sep, num(lo), tail_lo), "%s %s%s%s and %s" % (M, word, sep, num(lo), num(hi + 1))]
+                    green = ["%s %s%s%s%s" % (M, word, sep, num(hi), tail), "%s %s%s%s%s" % (M, word, sep, num(lo), tail_lo), "%s %s%s%s%s's tests-3" % (M, word, sep, num(lo), tail_lo),
+                             "(%s %s%s%s%s)" % (M, word, sep, num(hi), tail), "The %s %s%s%s%s ruled" % (M[4:], word, sep, num(hi), tail), "%s %s%s%s%s" % (V, word, sep, num(hi), tail),
+                             "review %s%s%s%s" % (word, sep, num(hi), tail), "%s%s%s%s" % (word, sep, num(lo), tail_lo), "the %s%s%s%s head" % (word, sep, num(hi), tail),
+                             "(%s%s%s%s, tests-1)" % (word, sep, num(lo), tail_lo), "Review %s%s%s%s, %s" % (word, sep, num(hi), tail, D)]
+                else:
+                    label = "<N>%s%s" % (sep.replace("\n", "<newline>"), word)
+                    run, run_lo = ((lambda x: "%s and %s" % (o(x), o(lo))), (lambda x: "%s and %s" % (o(x), o(hi)))) if plural else (o, o)
+                    red = ["%s%s%s" % (run(hi + 1), sep, word), "%s %s%s%s" % (M, run(hi + 1), sep, word), "%s %s%s%s" % (V, run(hi + 1), sep, word),
+                           "%s %s%s%s" % (A, run(hi), sep, word), "%s review %s%s%s" % (A, run_lo(lo), sep, word), "%s %s%s review %s" % (A, run_lo(lo), sep, word),
+                           "%s %s and %s%s%s" % (M, o(lo), o(hi + 1), sep, word)]
+                    green = ["%s %s%s%s" % (M, run(hi), sep, word), "%s %s%s%s" % (M, run_lo(lo), sep, word), "%s %s%s%s's tests-3" % (M, run_lo(lo), sep, word),
+                             "(%s %s%s%s)" % (M, run(hi), sep, word), "The %s %s%s%s ruled" % (M[4:], run(hi), sep, word), "%s %s%s%s" % (V, run(hi), sep, word),
+                             "%s %s%s review %s" % (M, run(hi), sep, word), "in its %s%s%s" % (run(hi), sep, word), "the %s%s%s head" % (run_lo(lo), sep, word),
+                             "(%s%s%s, tests-1)" % (run_lo(lo), sep, word), "The %s%s%s, %s" % (run(hi), sep, word, D)]
+                with self.subTest(form=label, spelling=spell):
+                    self.assertEqual([s for s in red if not rule.offences(s, SET)], [], "a refused form read as clean")
+                    self.assertEqual([s for s in green if rule.offences(s, SET)], [], "an allowed form read as an offence")
+                    self.assertEqual(rule.form_class(rule.mentions(green[0])[0]), (plural, kind), "the probe's spelling is classified as its own class")
+                    self.assertEqual([len(rule.mentions(s)) for s in green], [1] * len(green), "every green probe is one numbered mention, the dated one included")
         # the wrapped shapes: the qualifier and the number split by a line break, a comment marker or a block comment's line between
         self.assertEqual(rule.offences("... (%s %s\n    %d, correctness-1: the bound deleted" % (M, R, lo), SET), [], "a credit wrapped at the number is one credit")
         self.assertEqual(rule.offences("# ... (the\n    # maintainer's %s %d found it" % (R, hi), SET), [], "a credit wrapped at the qualifier, a comment marker between, is one credit")
@@ -215,10 +258,12 @@ class RoundLabelRule(unittest.TestCase):
         self.assertIn("a further number after a run the list did not consume", rule.offences("%s %s %d, %d findings" % (M, R, hi, hi + 1), SET)[0][3])
         self.assertEqual(rule.forms("%s %ss %d, %d" % (M, R, lo, hi))[0][3], [lo, hi], "the plural's comma list is read whole")
         # the unnumbered spellings are not read
-        for s in ("%ss=40" % R, "%ss=1" % R, "in 1 %ss" % R, "a typing %s" % R, "the two-%s convergence bound" % R, "in its second %s" % R, "_commands_a%s_the_recorder" % R,
-                  "%s(t_dead - t0, 2)" % R, "spaces-a%s-dots" % R, "rulings-r1.md", "the boot a%s it" % R, "each %s of planting" % R, "a typing %s\n# visits" % R,
-                  "%s_labels" % R, "the %s-trip" % R, "the %s's own" % R, "this %s" % R, "a %s of 3 drives" % R, "r6-margin/lab-head2.log", "Math.%s(x)" % R, "%s_labels.py:66" % R,
-                  "%s pass over the tree" % M, "%s pass N" % V):
+        for s in ("%ss=40" % R, "%ss=1" % R, "in 1 %ss" % R, "a typing %s" % R, "the two-%s convergence bound" % R, "_commands_a%s_the_recorder" % R,
+                  "%s %ss" % (WORDS[hi], R), "the %s test %s" % (NTH[hi], R), "a %s %s-trip" % (NTH[hi], R), "the Nth %s" % R, "%s %s pass" % (M, NTH[hi]),
+                  "%s%s" % (R, WORDS[hi + 2]), "%s%s" % (R, NTH[hi + 2]), "the %s %sed corner" % (NTH[hi + 1], R), "%s %sfold" % (R, WORDS[hi + 1]),
+                  "a milli%s %s trip" % (NTH[2], R), "%s VII" % R, "%s(t_dead - t0, 2)" % R, "spaces-a%s-dots" % R, "rulings-r1.md", "the boot a%s it" % R,
+                  "each %s of planting" % R, "a typing %s\n# visits" % R, "%s_labels" % R, "the %s-trip" % R, "the %s's own" % R, "this %s" % R, "a %s of 3 drives" % R,
+                  "r6-margin/lab-head2.log", "Math.%s(x)" % R, "%s_labels.py:66" % R, "%s pass over the tree" % M, "%s pass N" % V):
             self.assertEqual(rule.offences(s, SET), [], "an unnumbered use read as an offence: %r" % (s,))
             self.assertEqual(rule.mentions(s), [], "an unnumbered use read as a mention: %r" % (s,))
         # the typographic apostrophe reads as the ASCII one; the filename and the caller's author form are carried
@@ -236,23 +281,94 @@ class RoundLabelRule(unittest.TestCase):
         self.assertIn("cannot classify", rule.offences("%s: %d" % (R, hi), SET)[0][3])
         self.assertEqual(rule.mentions("%s %s %d and %s-%d and R%s %d's and %ss %d and %d" % (M, R, hi, R, lo, R[1:], lo, R, lo, hi)),
                          ["%s %d" % (R, hi), "%s-%d" % (R, lo), "R%s %d" % (R[1:], lo), "%ss %d and %d" % (R, lo, hi)])
-        self.assertEqual(sorted(rule.FORM_CLASSES), sorted({(p, k) for p in (False, True) for k in ("none", "space", "hyphen", "hash", "wrap", "star")} - {(True, "none"), (True, "hyphen"), (True, "hash")}),
-                         "the classes with probes are every (plural, separator kind) pair but the three plural spellings no branch writes (roundsN, rounds-N, rounds #N), which the classifier still reads and a caller's population check names")
+        after = {(p, k) for p in (False, True) for k in ("none", "space", "hyphen", "hash", "wrap", "star")} - {(True, "none"), (True, "hyphen"), (True, "hash")}
+        ordinal = {(p, "ordinal " + k) for p in (False, True) for k in ("space", "hyphen", "wrap", "star")} - {(True, "ordinal hyphen")}
+        self.assertEqual(sorted(rule.FORM_CLASSES), sorted(after | ordinal),
+                         "the classes with probes are every (plural, separator kind) pair of a number after the word but the three plural spellings no branch writes "
+                         "(roundsN, rounds-N, rounds #N), and every (plural, ordinal separator kind) pair of space, hyphen, wrap and star but the plural's hyphen: the "
+                         "classifier still reads the rest, and a caller's population check names any it meets")
+        # the READ direction, lists: the plural's serial comma (a range before it too) and the singular's comma followed by "and" are read
+        for s in ("%s %ss %d, %d, and %d" % (M, R, lo, hi, hi + 1), "%ss %d, %d, or %d" % (R, lo, hi, hi + 1), "%s %ss %d-%d, and %d" % (M, R, lo, hi, hi + 1),
+                  "%ss %d, %d, & %d" % (R, lo, hi, hi + 1), "%ss %d, %d, / %d" % (R, lo, hi, hi + 1), "%s %s %d, and %d" % (M, R, lo, hi + 1), "%s %d, and %d" % (R, hi, hi + 1)):
+            with self.subTest(read_list=s):
+                self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["numbered"], "a serial-comma list, or the singular's comma and \"and\", is read: %r" % (s,))
+                self.assertIn("no ruling exists for a round numbered %d" % (hi + 1), rule.offences(s, SET)[0][3], "every number of it is judged: %r" % (s,))
+        self.assertEqual(rule.forms("%s %ss %d, %d, and %d" % (M, R, lo, lo + 1, hi))[0][3], [lo, lo + 1, hi], "a serial-comma list names its numbers alone")
+        self.assertEqual(rule.offences("%s %ss %d, %d, and %d" % (M, R, lo, lo + 1, hi), SET), [], "a serial-comma list over ruled rounds is clean")
+        self.assertEqual(rule.forms("%s %s %d, and %d" % (M, R, lo, hi))[0][3], [lo, hi], "the singular's comma and \"and\" is the list of both numbers")
+        self.assertEqual(rule.offences("%s %s %d, and %d" % (M, R, lo, hi), SET), [], "and over ruled rounds it is clean")
+        self.assertEqual(rule.offences("%s %s %d, and the next" % (M, R, hi), SET), [], "a comma and \"and\" with no number after it is prose, not a list")
+        for s in ("%s %s %d, or %d" % (M, R, lo, hi), "%s %d, & %d" % (R, lo, hi), "%s %d, / %d" % (R, lo, hi), "%s %d; and %d" % (R, lo, hi)):
+            with self.subTest(singular_comma=s):
+                self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "a singular's comma followed by a list word but \"and\" is refused: %r" % (s,))
+                self.assertIn("a further number after a run the list did not consume", rule.offences(s, SET)[0][3])
+        # the READ direction, number words after the word: read into their values, or refused when the reader cannot place them
+        for s, nums in (("%s %s %s" % (M, R, WORDS[hi + 1]), [hi + 1]), ("%s %s %s" % (V, R, WORDS[hi + 1]), [hi + 1]), ("%ss %s and %s" % (R, WORDS[lo], WORDS[hi + 1]), [lo, hi + 1]),
+                        ("%s %ss %s to %s" % (M, R, WORDS[hi - 1], WORDS[hi + 1]), [hi - 1, hi, hi + 1]), ("%ss %s and %d" % (R, WORDS[lo], hi + 1), [lo, hi + 1]),
+                        ("%s %s" % (R.capitalize(), WORDS[hi + 1].upper()), [hi + 1]), ("%s %s-%s" % (R, "twenty", WORDS[1]), [21]), ("%s %s" % (R, "ninety"), [90]),
+                        ("%s %s, and %s" % (R, WORDS[lo], WORDS[hi + 1]), [lo, hi + 1])):
+            with self.subTest(read_word=s):
+                self.assertEqual([(k, n) for _, _, k, n in rule.forms(s)], [("numbered", nums)], "a number word after the word is read into its value: %r" % (s,))
+                self.assertIn("no ruling exists for a round numbered %d" % max(nums), rule.offences(s, SET)[0][3], "and judged: %r" % (s,))
+        self.assertIn("a round credited to the author", rule.offences("%s %s %s" % (A, R, WORDS[lo]), SET)[0][3], "the author's round in words is the author's")
+        self.assertEqual([c[2] for c in rule.credits("%s %s %s" % (A, R, WORDS[lo]))], ["author"])
+        self.assertEqual(rule.offences("%s %ss %s and %s" % (M, R, WORDS[lo], WORDS[hi]), SET), [], "a list in words over ruled rounds is clean")
+        self.assertEqual(rule.offences("%s %s %d found %s defects" % (M, R, hi, WORDS[hi + 1]), SET), [], "a digit form beside a number word elsewhere is clean")
+        self.assertEqual(rule.offences("the %s pass %s" % (M[4:], WORDS[hi]), SET)[0][3].split(":")[0], "a pass credited to the maintainer", "a pass numbered in words is read")
+        for s, why in (("%s %s %s" % (R, WORDS[lo], "hundred"), "a further number after a run"), ("%s %s" % (R, "thousand"), "a number word the rule does not read, after the word"),
+                       ("%s %s" % (R, NTH[hi]), "a number word the rule does not read, after the word"), ("%s\n    # %s" % (R, NTH[hi]), "a number word the rule does not read, after the word"),
+                       ("%s: %s" % (R, WORDS[hi]), "punctuation or markup between the word and a number"), ("%s (%s)" % (R, NTH[hi]), "punctuation or markup between the word and a number"),
+                       ("%s %d, %s" % (R, hi, WORDS[lo]), "a further number after a run"), ("%s %s, %s" % (R, WORDS[lo], WORDS[hi]), "a further number after a run"),
+                       ("%s %s %s" % (R, "twenty", WORDS[1]), "a further number after a run"), ("%s %s, or %s" % (R, WORDS[lo], WORDS[hi]), "a further number after a run"),
+                       ("%s %s_x" % (R, WORDS[hi]), "a number glued to a letter or an underscore"), ("%ss %s" % (R, WORDS[hi]), "a plural that names one number"),
+                       ("%ss %s-%s" % (R, WORDS[hi], WORDS[lo]), "a range that does not ascend")):
+            with self.subTest(unplaced_word=s):
+                self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "a number word the reader cannot place is refused: %r" % (s,))
+                self.assertIn(why, rule.offences(s, SET)[0][3], s)
+        # the READ direction, ordinals before the word: read whether credited or not, into lists and ranges, or refused when unplaced
+        for s, party, nums in (("%s %s %s fixed it" % (A, NTH[3], R), "author", [3]), ("%s %s %s" % (A, nth(3), R), "author", [3]),
+                               ("%s %s %s found it" % (M, NTH[hi + 1], R), "reviewer", [hi + 1]), ("%s %s %s" % (V, nth(9), R), "reviewer", [9]),
+                               ("in its %s %s" % (NTH[hi + 1], R), "reviewer", [hi + 1]), ("the %s and %s %ss" % (NTH[lo], NTH[hi + 1], R), "reviewer", [lo, hi + 1]),
+                               ("%s %s, %s, and %s %ss" % (M, NTH[lo], NTH[hi], NTH[hi + 1], R), "reviewer", [lo, hi, hi + 1]),
+                               ("the %s to %s %ss" % (nth(hi - 1), nth(hi + 1), R), "reviewer", [hi - 1, hi, hi + 1]), ("the %s-%s %s" % ("twenty", NTH[1], R), "reviewer", [21]),
+                               ("the %s %s" % ("twentieth", R), "reviewer", [20]), ("%s %s" % (NTH[hi + 1].capitalize(), R.capitalize()), "reviewer", [hi + 1]), ("the %s and %s-%s %ss" % (NTH[lo], "twenty", NTH[1], R), "reviewer", [lo, 21]), ("%s review %s %s" % (A, NTH[lo], R), "author", [lo]), ("%s %s review %s" % (A, NTH[lo], R), "author", [lo])):
+            with self.subTest(read_ordinal=s):
+                self.assertEqual([(k, n) for _, _, k, n in rule.forms(s)], [("numbered", nums)], "an ordinal before the word is read into its value: %r" % (s,))
+                self.assertEqual([c[2] for c in rule.credits(s)], [party], "and credited to the party its qualifier names, or the reviewer by default: %r" % (s,))
+                self.assertIn("a round credited to the author" if party == "author" else "no ruling exists for a round numbered %d" % max(nums), rule.offences(s, SET)[0][3], s)
+        self.assertIn(rule.DEFAULT, rule.offences("in its %s %s" % (NTH[hi + 1], R), SET)[0][3], "an unqualified ordinal past the set is refused under the default, which the reason states")
+        for s in ("%s %s %s" % (M, NTH[hi], R), "%s %s %s" % (V, nth(lo), R), "in its %s %s" % (NTH[hi], R), "%s %s and %s %ss" % (M, NTH[lo], NTH[hi], R),
+                  "%s review %s %s" % (M, NTH[hi], R), "%s %s %s, %s" % (M, NTH[hi], R, D), "%s %s %s %s" % (M, NTH[hi], R, D), "a %s %s of 3 drives" % (NTH[lo], R),
+                  "often %s %s" % (NTH[hi], R)):
+            with self.subTest(ruled_ordinal=s):
+                self.assertEqual(rule.offences(s, SET), [], "an ordinal at a ruled round is clean: %r" % (s,))
+                self.assertEqual(len(rule.mentions(s)), 1, s)
+        for s, why in (("the %s %ss" % (NTH[hi], R), "a plural that names one number"), ("the %s, %s %s" % (NTH[lo], NTH[hi], R), "a further number before the ordinals"),
+                       ("the %s %s %s" % ("twenty", NTH[1], R), "a further number before the ordinals"), ("one %s and %s %s" % ("hundred", NTH[1], R), "a further number before the ordinals"),
+                       ("pass %d, %s %s" % (hi, NTH[hi], R), "a further number before the ordinals"),
+                       ("one %s-%s %s" % ("hundred", NTH[hi], R), "a further number before the ordinals"), ("the %s %s %d" % (NTH[hi], R, hi), "a number both before the word and after it"),
+                       ("the %s %s" % ("hundredth", R), "a number word the rule does not read, before the word"),
+                       ("the %s %s, %d findings" % (NTH[hi], R, hi), "a further number after a run"), ("the %s to %s %ss" % (NTH[hi], NTH[lo], R), "a range that does not ascend")):
+            with self.subTest(unplaced_ordinal=s):
+                self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "an ordinal the reader cannot place is refused: %r" % (s,))
+                self.assertIn(why, rule.offences(s, SET)[0][3], s)
 
     def test_the_credit_keys_on_misattribution(self):
         """The reviewer's ruling of 2026-09-21, each clause by execution under a synthetic set: (a) "the reviewer's round N" is a
-        credit beside "the maintainer's round N", the apostrophe either; (b) a date after the round (", YYYY-MM-DD", " (YYYY-MM-DD",
-        "), YYYY-MM-DD", the date straight after the number) is part of the form, after a list too, a malformed date is not one,
-        and a further number after the date is still refused; (c) the unqualified "review round N", "Review round N" and the
-        bare round are the reviewer's by DEFAULT, credits() saying so with the stated reason, which names the convention and calls
-        itself a default with a stated reason, and which the refusal of an unqualified round past the set carries while an
-        explicit credit's does not; (d) a round outside the caller's set is refused naming the number, the two things it can be
-        and the caller's set, qualified or not; (e) a pass credited to the reviewer or the maintainer is refused naming the
-        wrong party and the caller's author form, a list too, the apostrophe either, at its own line among the round offences,
-        while an unnumbered pass and the author's pass are not read; (f) a round credited to the author is refused, "review"
-        between the qualifier and the word too, a list too, while the author's pass beside the maintainer's round is clean;
-        (g) a number the form did not consume that is not a date is still refused; (h) every unresolvable form is still refused
-        with its reason, never passed."""
+        credit beside "the maintainer's round N", the apostrophe either; (b) a date after the round (", YYYY-MM-DD", "
+        (YYYY-MM-DD", "), YYYY-MM-DD", the date straight after the number) is part of the form, after a list too, a malformed date
+        is not one, and a further number after the date is still refused; (c) the unqualified "review round N", "Review round N"
+        and the bare round, an unqualified ordinal before the word and a round numbered in words are the reviewer's by DEFAULT,
+        credits() saying so with the stated reason, which names the convention and calls itself a default with a stated reason, and
+        which the refusal of an unqualified round past the set carries while an explicit credit's does not; (d) a round outside the
+        caller's set is refused naming the number, the two things it can be and the caller's set, qualified or not; (e) a pass
+        credited to the reviewer or the maintainer is refused naming the wrong party and the caller's author form, a list too, the
+        apostrophe either, at its own line among the round offences, while an unnumbered pass and the author's pass are not read;
+        (f) a round credited to the author is refused, "review" between the qualifier and the word too, a list too, an ordinal
+        between the qualifier and the word and a number in words too, while the author's pass beside the maintainer's round is
+        clean; (g) a number the form did not consume that is not a date is still refused; (h) every unresolvable form is still
+        refused with its reason, never passed, the READ direction's among them (punctuation before a number word, an ordinal after
+        the word, the singular's comma followed by "or", a number before an ordinal run, a plural naming one ordinal)."""
         hi, lo = max(SET), min(SET)
         with self.subTest(clause="a: the reviewer's round is a credit"):
             self.assertEqual(rule.offences("%s %s %d" % (V, R, hi), SET), [], "the reviewer's round at a ruled round is clean")
@@ -270,7 +386,8 @@ class RoundLabelRule(unittest.TestCase):
             self.assertIn("not a date", o[0][3], "a further number after the date is refused as one the form did not consume")
             self.assertIn("cannot classify", rule.offences("Review %s %d, 2026-9-15" % (R, hi), SET)[0][3], "a malformed date is a further number, not a date")
         with self.subTest(clause="c: an unqualified round is the reviewer's by default, with the stated reason"):
-            for text in ("review %s %d" % (R, hi), "Review %s %d" % (R, hi), "%s %d" % (R, lo), "%ss %d and %d" % (R, lo, hi), "the %s-%d head" % (R, hi), "Review %s %d fixes: a subject" % (R, hi)):
+            for text in ("review %s %d" % (R, hi), "Review %s %d" % (R, hi), "%s %d" % (R, lo), "%ss %d and %d" % (R, lo, hi), "the %s-%d head" % (R, hi), "Review %s %d fixes: a subject" % (R, hi),
+                         "in its %s %s" % (NTH[hi], R), "%s %s" % (R, WORDS[lo])):
                 self.assertEqual(rule.offences(text, SET), [], "an unqualified round at a ruled round read as an offence: %r" % (text,))
                 self.assertEqual([c[2:] for c in rule.credits(text)], [("reviewer", rule.DEFAULT)], "the default and its reason are returned: %r" % (text,))
             self.assertIn("default", rule.DEFAULT)
@@ -305,7 +422,8 @@ class RoundLabelRule(unittest.TestCase):
                              "a wrong-party pass before a round offence in the text comes before it in the offences: text order, not the order the passes are read in")
             self.assertEqual([x[1] for x in rule.offences("a\nreview %s %d\nthe maintainer's pass %d\n" % (R, hi + 1, hi), SET)], [2, 3], "and after it in the text, after it in the offences")
         with self.subTest(clause="f: a round credited to the author is refused"):
-            for text in ("%s %s %d" % (A, R, lo), "%s review %s %d" % (A, R, lo), "%s %ss %d and %d" % (A, R, lo, hi), "the author’s %s %d" % (R, hi), "%s %s %d" % (A, R, hi + 1)):
+            for text in ("%s %s %d" % (A, R, lo), "%s review %s %d" % (A, R, lo), "%s %ss %d and %d" % (A, R, lo, hi), "the author’s %s %d" % (R, hi), "%s %s %d" % (A, R, hi + 1),
+                         "%s %s %s" % (A, NTH[lo], R), "%s review %s %s" % (A, nth(hi), R), "the author’s %s %s" % (NTH[hi], R), "%s %s %s" % (A, R, WORDS[hi])):
                 o = rule.offences(text, SET)
                 self.assertEqual(len(o), 1, text)
                 self.assertIn("a round credited to the author", o[0][3], text)
@@ -319,7 +437,8 @@ class RoundLabelRule(unittest.TestCase):
             self.assertIn("not a date", o[0][3])
         with self.subTest(clause="h: the unresolvable forms still refuse"):
             for s in ("%s: %d" % (R, hi), "%s (%d)" % (R, hi), "%s **%d**" % (R, hi), "%s `%d`" % (R, hi), "%s %db" % (R, hi), "%ss %d" % (R, hi), "%ss %d-%d" % (R, hi, lo),
-                      "%s %d, %d" % (R, lo, hi), "%s %s: %d" % (V, R, hi), "%s %s %d, %d findings" % (V, R, hi, hi + 1)):
+                      "%s %d, %d" % (R, lo, hi), "%s %s: %d" % (V, R, hi), "%s %s %d, %d findings" % (V, R, hi, hi + 1),
+                      "%s: %s" % (R, WORDS[hi]), "%s %s" % (R, NTH[hi]), "%s %d, or %d" % (R, lo, hi), "the %s, %s %s" % (NTH[lo], NTH[hi], R), "the %s %ss" % (NTH[hi], R)):
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "an unresolvable form passed or went unread: %r" % (s,))
                 self.assertIn("cannot classify", rule.offences(s, SET)[0][3], s)
 

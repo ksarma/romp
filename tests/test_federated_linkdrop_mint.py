@@ -121,8 +121,8 @@ fixer pass planted a timer-deferred spawn after the checkout: the census and the
 cell pins the shape as not refused, the disclosed class's witness).
 (5) A program a RECORDED program starts: the record is the argv of the lab module's own call, and a static census over
 Python source reads nothing of what git, node or a kernel then runs, so a program started by one of them is in no derived
-list by construction, and road (5) is stated as this rule, with no list (the maintainer's round 7: five findings asked for a
-list derived by tracing, and its ruling keeps the rule, since no list derived from the tree can be complete and a list
+list by construction, and road (5) is stated as this rule, with no list (the maintainer's round 7, whose five findings asked
+for a list derived by tracing, and whose ruling keeps the rule, since no list derived from the tree can be complete and a list
 measured by tracing describes one machine's configuration). The lab module starts more than git through the attribute the
 recorder covers: its node probe, its node driver (which starts Chromium) and bin/romp-kernel are recorded programs too, and
 what any of them starts is read by no census here. One live instance, the one the mint cell pins, is the mint's: its clone

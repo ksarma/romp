@@ -91,8 +91,9 @@ which is how the skip road is driven), the standard library's own reads, and a m
 itself. This module is imported as a member of the tests package (`python -m pytest` or `python -m unittest` from the
 repository root), which is how `import tests.review_round_labels_rule` resolves.
 
-No probe is spelled with a digit after the word in this docstring, since the module is in its own population and reads itself;
-the helper's form space is pinned in its own test module.
+No probe is spelled with a number after the word, or an ordinal before it, in this docstring (the shared rule reads both, in digits
+and in words), since the module is in its own population and reads itself; the helper's form space is pinned in its own test
+module.
 """
 import ast
 import fnmatch
