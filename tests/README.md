@@ -332,10 +332,14 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   reached only through an import of an import passes, and so does a road through
   such a module in a shape the direct-import check does not match that names
   only identifiers `tests/__init__.py` holds (what a function that returns
-  nothing leaves behind, an object the module fills at its import); a road that
-  would rewrite the conftest (an attribute store on its module in `sys.modules`,
-  `setattr` reached by a name built at run time, `__import__`) names a name
-  outside the allowlist and is refused. The rule claims no more than this. Its
+  nothing leaves behind, an object the module fills at its import, a name bound
+  by an attribute store on its own module in `sys.modules`). The allowlist
+  refuses a name, not a road, so a road that would rewrite the conftest -- an
+  attribute store on its module in `sys.modules`, `setattr` or `__import__`
+  reached through `getattr(builtins, ...)` or `sys.modules`, spelling only
+  identifiers `tests/__init__.py` holds -- is NOT refused and passes too
+  (it is refused only where it spells a name outside the allowlist). The rule
+  claims no more than this. Its
   docstring, `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`,
   lists in WHAT IT DOES NOT READ what it leaves unrefused. A name
   is licensed only when a child pytest over a copy of the conftest writes the

@@ -6618,8 +6618,9 @@ _ANYIO_DIRECT_ALLOWED = frozenset({'AttributeError', 'Exception', 'IndexError', 
 #   rule's own reading over that module's whole text; any OTHER identifier or attribute name of a direct import refuses
 #   the module wholesale, naming the name and its line, whatever def, class or statement holds it. 0 live by
 #   construction: tests/__init__.py is the conftest's one in-repo direct import, and its own names ARE the allowlist, so
-#   it names nothing outside it. _anyio_direct_allowed_names re-derives the set from tests/__init__.py and the pin
-#   test_the_direct_import_allowlist_equals_what_tests_init_names asserts it equals this constant, so a new name in
+#   it names nothing outside it. _anyio_direct_allowed_names re-derives the set from tests/__init__.py, and
+#   test_the_direct_import_positive_allowlist_refuses_a_false_proof_no_list_holds asserts, DERIVED == COMMITTED, that it
+#   equals this constant, so a new name in
 #   tests/__init__.py is a loud red that names it (the set must then be reviewed and re-committed)
 
 
@@ -6934,10 +6935,12 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     clause; the RUNTIME-INTROSPECTION channels gc, ctypes, _ctypes and __code__, refused wherever the text names one;
     exec, eval, f_locals, cell_contents, __closure__, f_globals, f_back and sys._getframe, which defeat THE PROOF of a
     def's local and of a literal key as well as of a name of the module's scope wherever the text names one; and, since
-    the reviewer's ruling of 2026-09-29 15:08Z, a builtin setattr, delattr or object.__setattr__ call whose target name
-    THE PROOF does not prove, and a bare-name compile call, which defeat a literal key and a def's local too,
-    _anyio_builtin_defeaters -- an attribute call of a name other than builtins or object, monkeypatch.setattr and
-    re.compile, is not one, so the live conftest's own are not refused); and, through a module of the repository the text
+    the reviewer's ruling of 2026-09-29 15:08Z, a builtin setattr, delattr or object.__setattr__ call -- a bare name, or
+    through builtins -- whose target name THE PROOF does not prove, and a bare-name compile call, which defeat a literal
+    key and a def's local too, _anyio_builtin_defeaters (which reads the callee's spelling, so a defeater reached another
+    way -- setattr or compile bound to a name, from builtins import setattr as _s, getattr(builtins, "setattr") -- passes,
+    a line of WHAT IT DOES NOT READ below; an attribute call of a name other than builtins or object, monkeypatch.setattr
+    and re.compile, is not one either, so the live conftest's own are not refused)); and, through a module of the repository the text
     imports directly, THE POSITIVE ALLOWLIST (_ANYIO_DIRECT_ALLOWED), which refuses the module whole for any identifier or
     attribute name of its whole text that tests/__init__.py does not name -- the twenty-eight names of
     _ANYIO_DIRECT_WHOLESALE among them, given a category, and any other (object, __setattr__, operator, methodcaller,
@@ -7174,25 +7177,39 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     each of its other imports is of the standard library or of pytest, which the import system finds outside the
     repository, and it reads no sys.path. The refusal test pins the count at 0, and the module road proves every fixture
     of the conftest.
-    WHAT IT DOES NOT READ: the kinds of road no honest author writes that the rule leaves unrefused, each stating EITHER
-    the live site of tests/conftest.py a refusal by its name would hit, with its executed witness (a test id), OR that a
-    0-live check on its name was not built because a list of such names does not converge -- the roads through a module
-    the conftest imports directly are refused by THE POSITIVE ALLOWLIST (a name tests/__init__.py does not hold), and a
-    value naming anyio reached through one in the conftest's own text is still refused. Plus the environment lookups the
+    WHAT IT DOES NOT READ (the reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894, item 3, and its
+    stopping rule): the kinds of road no honest author writes that the rule leaves unrefused, each stating EITHER the
+    live site of tests/conftest.py a refusal by its name would hit, with its executed witness (a test id), OR, where a
+    0-live check on its name was not built because a list of such names does not converge, the kind with a witness that
+    it is admitted (the stopping rule: an escape-only form is one line here with its witness). THE POSITIVE ALLOWLIST
+    refuses a NAME, not a road: through a module the conftest imports directly it refuses the module whole for any
+    identifier or attribute name of its text that tests/__init__.py does not hold, so a road that spells object,
+    __setattr__, setattr, operator, methodcaller, builtins or __import__ is refused by the name it spells (the verifier's
+    V1 to V4, R2, R3 and ADV5 and the body check's roads among them) -- but a road that reaches the same builtin, dunder
+    or the import system by a name built at run time or through sys.modules, spelling only allowlisted identifiers, is NOT
+    refused and is a line here (the F roads below); a value naming anyio reached through such a module in the conftest's
+    own text is still refused. Plus the environment lookups the
     fail-closed ruling leaves listed, and the one line where the direct-import check stops. A road found passing that is
     of none of these kinds is one more line here; a road through a value the rule cannot prove is refused by
     construction. A read reached only through a
     module the conftest imports transitively (an import of an import: a name the imported module itself imports from
     another module, a package's name bound to another of its submodules, from . import argvs as other say, or a def of
-    it whose read is a call of another module's def), where the check stops, and, through a module the conftest imports
-    directly whose whole text names nothing outside THE POSITIVE ALLOWLIST (one name it names that tests/__init__.py does
-    not refuses the module whole, so a road that would rewrite the conftest -- an attribute store on the conftest's module
-    found in sys.modules, setattr or object.__setattr__ reached through builtins or a name built at run time, or
-    __import__ -- names object, __setattr__, setattr, builtins, __import__ or another name outside the allowlist and is
-    refused, the verifier's V1 to V4, R2, R3 and ADV5 and the body check's roads among them), a road of neither shape the
-    ruling names that names only allowlisted identifiers: what a def of it that returns nothing leaves where the conftest
-    reads it (an item or an attribute of an object, the module's, one the conftest hands it or one another def of the
-    module fills, or a file, as write_owner_marker's marker is).
+    it whose read is a call of another module's def), where the check stops; and, through a module the conftest imports
+    directly whose whole text names nothing outside THE POSITIVE ALLOWLIST, a road of neither shape the ruling names that
+    names only allowlisted identifiers: (i) what a def of it that returns nothing leaves where the conftest reads it (an
+    item or an attribute of an object, the module's, one the conftest hands it or one another def of the module fills, or
+    a file, as write_owner_marker's marker is); (ii) an object of it filled at its import by a module-level statement
+    other than the one its binding stands in (STATE.flags = sys.argv[1:], lines.append(sys.argv); witness G1b, admitted
+    at both 1cf3448b9 and 71d139706); (iii) a name it binds other than by a declaration, through an attribute store on
+    its own module found in sys.modules (sys.modules[__name__].out = sys.argv; witness G2, admitted at both); and (iv) a
+    road that would rewrite a name or a cell of the conftest through an object the conftest hands it, reaching a builtin,
+    a dunder or the import system by a name built at run time or through sys.modules while spelling only allowlisted
+    identifiers -- getattr(root, "__glo" + "bals__")[...] (F1), getattr(sys.modules["builtins"], "set" + "attr")(...)
+    (F2, F4), sys.modules[getattr(root, "__module__")].K (F3), object.__setattr__ reached through builtins by built
+    names (F5), and __import__ reached through getattr(builtins, ...) (F6) -- each admitted at both 1cf3448b9 and
+    71d139706, its getoption handed "plugins" at run time (the allowlist names them all, so it refuses none). These are
+    the escape-only roads the allowlist cannot see, since it reads names and not roads and holds getattr, sys and
+    modules; no honest author writes one.
     THE ENVIRONMENT (the
     fail-closed ruling's (e1)): an environment lookup by a key THE PROOF does not prove (os.environ.get, pop, setdefault
     or an item by a loop's target, a parameter or a name bound twice; os.getenv so), and the environment read whole
@@ -7200,18 +7217,28 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     PYTEST_ADDOPTS, a literal or a fold to it, so an honest read of that carrier, which writes its name, is refused, and
     only a name assembled to hide it (built by a call, say) escapes, which no honest author writes; tests/conftest.py
     makes 12 such reads, 10 lookups by a key the proof does not prove and 2 reads of the whole environment, each a part
-    of its state isolation, so refusing them would refuse the live conftest. A carrier reached through a function or
+    of its state isolation, so refusing them would refuse the live conftest (the executed witness, for this kind and for
+    each other below that names a live site, is
+    test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why, which runs THE
+    ANYIO RULE over tests/conftest.py and asserts 0 reads, so a refusal by any of these tokens would turn it red). A
+    carrier reached through a function or
     method that reads an attribute by a name handed it and that _ANYIO_BY_NAME does not list (pydoc.locate("sys.argv"),
     pkgutil.resolve_name("sys:argv"), a field of a format string, "{0.argv}".format(sys), and a pickled global each
-    pass); through a namespace held whole (vars() or __dict__ of the config, of sys, of a class or of a module,
-    iterated, bound to a name, or read through a method of it bound to another name, _get = vars(sys).get say;
-    tests/conftest.py holds vars(km) whole, so the rule does not refuse vars() handed an object and held whole); or by a
-    private attribute of pytest's that _ANYIO_CARRIERS does not name; the command line read by a function of a library
-    other than the parses of the seventh clause that reads sys.argv itself (fileinput.input, say); the command line read
+    pass; no live site, and a list of such by-name resolvers does not converge, so no 0-live check on their names was
+    built, escape-only); through a namespace held whole (vars() or __dict__ of the config, of sys, of a class or of a
+    module, iterated, bound to a name, or read through a method of it bound to another name, _get = vars(sys).get say;
+    tests/conftest.py holds vars(km) whole in _sdk_read at line 1626, so the rule does not refuse vars() handed an object
+    and held whole, and a refusal by that spelling would hit the live conftest, the witness above); or by a
+    private attribute of pytest's that _ANYIO_CARRIERS does not name (tests/conftest.py reads pytest's private attributes,
+    item.session._setupstate in pytest_runtest_teardown among them, so a refusal by that spelling would hit the live
+    conftest, the witness above); the command line read by a function of a library
+    other than the parses of the seventh clause that reads sys.argv itself (fileinput.input, say; no live site, and a
+    list of such library functions does not converge, escape-only); the command line read
     from outside the interpreter's objects: from a file (/proc/self/cmdline, say; tests/conftest.py's _proc_argv reads
     /proc/<pid>/cmdline for the processes a test leaves, and the run's own command line read by its pid is spelled the
-    same way, so a refusal by spelling would refuse the live conftest), or through another process or a library that
-    reads it there (ps run on the process, psutil's Process.cmdline); code the module runs from a string (exec, eval),
+    same way, so a refusal by spelling would refuse the live conftest, the witness above), or through another process or
+    a library that reads it there (ps run on the process, psutil's Process.cmdline; no live site of its own, the live
+    conftest reading /proc directly above, and a list of such tools does not converge, escape-only); code the module runs from a string (exec, eval),
     whose reads the rule does not parse as code (a string naming anyio there is still refused as a value, and exec or
     eval named in the text defeats THE PROOF of every name of the module's scope, of a def's local and of a literal key,
     so any keyed read beside one is refused, and named in a direct import's text refuses that module whole); code built
@@ -7232,21 +7259,30 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     target name THE PROOF does not prove IS refused since that ruling (delattr among them, though tests/conftest.py names
     none, since it can unbind a name of the module's scope as setattr rebinds one), and in the text of a module the
     conftest imports directly setattr and delattr are names tests/__init__.py does not hold and refuse the module whole
-    (THE POSITIVE ALLOWLIST); a module loaded other than by an
+    (THE POSITIVE ALLOWLIST); a builtin defeater of the conftest's own text reached OTHER THAN as a bare name or through
+    builtins -- setattr or compile bound to a name (_s = setattr; _s(...), _c = compile; _c(...)), from builtins import
+    setattr as _s, or getattr(builtins, "setattr")(...) -- since _anyio_builtin_defeaters reads the callee's spelling: no
+    live site (tests/conftest.py names none of these), and a list of the ways to reach a builtin does not converge, so it
+    is escape-only, admitted at both 1cf3448b9 and 71d139706 (import builtins as _b then _b.setattr is the
+    setattr-through-an-attribute-of-a-name-other-than-builtins case above); a module loaded other than by an
     import
     statement (importlib, __import__, sys.modules; tests/conftest.py loads tests/credential_patterns.py through
-    importlib); a module of the repository taken, from a directory put on the import path other than by a read of
+    importlib, so a refusal by the token importlib would hit the live conftest, the witness above); a module of the
+    repository taken, from a directory put on the import path other than by a read of
     sys.path the last clause sees (a module the conftest imports that puts it there, getattr(sys, "path"),
     __import__("sys").path, a star import of sys, pytest's pythonpath setting), ahead of the file of the check's
     directories it reads by that name, or of the module outside the repository the import system of the process reading
     the text finds by it (a helper named like a module of the standard library), and a submodule a package's extended
-    __path__ finds elsewhere; a double-underscore attribute of an object of a module the conftest imports directly
+    __path__ finds elsewhere (tests/conftest.py reads no sys.path, so no live site; a list of the ways a directory
+    reaches the import path does not converge, escape-only); a double-underscore attribute of an object of a module the
+    conftest imports directly
     reached other than in the forms the last clause refuses (the object handed to a def of the text that reads the
-    attribute there, def _g(o): return o.__globals__); a key naming anyio that the rule cannot fold (built by a call or
+    attribute there, def _g(o): return o.__globals__; no live site of such an object, escape-only); a key naming anyio
+    that the rule cannot fold (built by a call or
     a subscript, or brought from outside the module's text and the modules of the repository it imports directly: a
     module outside the repository or imported only transitively, the environment, a file), or one that matches anyio or
     the flag without naming anyio (a prefix, "any" or "no:a", say), handed to a read that is no carrier and no keyed
-    read (sys.modules, a fixture's name); a name THE PROOF proves, rebound by what the proof does not read (code outside
+    read (sys.modules, a fixture's name; no live site, and a list of such keys does not converge, escape-only); a name THE PROOF proves, rebound by what the proof does not read (code outside
     the text; a def of a module it imports directly handed the conftest's module, or a def whose __globals__ is its
     namespace, through a road THE POSITIVE ALLOWLIST does not refuse -- one naming only identifiers tests/__init__.py
     holds, since a road naming setattr, object.__setattr__, builtins or __import__ is refused, as above; or, in the

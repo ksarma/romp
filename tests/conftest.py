@@ -2522,7 +2522,8 @@ class _ExitJoinTableKeptChanging(pytest.fail.Exception):
 def _exit_joined_threads(deadline):
     """The threads concurrent.futures' exit hooks will join, whatever their daemon flags: every thread in the table of
     each EXIT_JOIN_TABLES module that is loaded, each module and table read by its literal names
-    (_exit_join_table_reads, whose assertion ties those reads to EXIT_JOIN_TABLES). This file imports
+    (_exit_join_table_reads, whose assertion ties the LABELS beside each read to EXIT_JOIN_TABLES, while
+    tests/test_session_end_thread_guard.py's ExitJoinTables ties each read to its label by execution). This file imports
     concurrent.futures.thread, so its table is always read; a process that never loaded concurrent.futures.process has
     no ProcessPoolExecutor. A loaded module without its table fails the guard, naming the attribute, rather than leaving
     unguarded the daemon threads that table would list. A read that raises RuntimeError (another thread added to the
