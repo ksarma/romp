@@ -49,7 +49,11 @@
 // WebKit dispatch that click to the overlay, the common ancestor of the press and the release, which before the guard
 // closed the sheet with the answer (Firefox retargets it to the textarea); now a backdrop tap is press and release both on
 // the backdrop, the sheet stands with its text after either gesture in every engine, and a plain tap on the backdrop
-// still dismisses. A dragged height is the person's
+// still dismisses. The reverse road is its own test per engine (the maintainer's round 2, ui-1): a press on the backdrop
+// released on the answer box or the title reached the overlay as its click in all three engines and closed the sheet with
+// the answer, and in Chromium so did a finger pressed just outside the box's edge and lifted inside it (a touch pointer is
+// captured to the node it pressed, driven here through the DevTools protocol's touch input; touch in Firefox, WebKit and iOS
+// is a stated residual); the sheet now stands through each, and a plain tap on the backdrop still dismisses. A dragged height is the person's
 // PREFERENCE on the resize path (composition-3): pulled to 215px at 900, the keyboard opening clamps the box to the room,
 // not to its content, and the keyboard closing returns it to 215px; before, the dragged height stood through the resize
 // and Send lay below the frame.
@@ -385,7 +389,41 @@ async function boot(browser: any) {
     const overlayUp: boolean = await page.evaluate(() => !!document.getElementById("ut-reply-prompt"));
     return { at, overlayUp };
   };
-  return { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors };
+  // THE REVERSE ROADS (the maintainer's round 2, ui-1): a press on the backdrop released inside the sheet. The points the
+  // gestures use, read from the open sheet: the backdrop above the box, the answer box's and the title's centres, the box's
+  // left edge and top
+  const points = () => page.evaluate(() => {
+    const o = document.getElementById("ut-reply-prompt")!;
+    const b = o.querySelector(".confirm-box")!.getBoundingClientRect();
+    const c = (sel: string) => { const r = o.querySelector(sel)!.getBoundingClientRect(); return { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 }; };
+    return { back: { x: (b.left + b.right) / 2, y: Math.max(4, b.top / 2) }, input: c(".ut-reply-input"), title: c(".confirm-title"), boxLeft: b.left, boxTop: b.top };
+  });
+  // what the sheet did: is it still up, what its answer box holds, and how many answers it posted since it opened
+  const sheetState = () => page.evaluate(() => {
+    const i = document.querySelector("#ut-reply-prompt .ut-reply-input") as HTMLTextAreaElement | null;
+    return { up: !!document.getElementById("ut-reply-prompt"), value: i ? i.value : null, posted: ((window as any).__posted || []).filter((p: any) => p && p.type === "userTodoAnswer").length as number };
+  });
+  // a mouse press at one point, moved to another and released there
+  const mouseDrag = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
+    await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 8 }); await page.mouse.up();
+    await settle(); await page.waitForTimeout(300);
+  };
+  // a finger, through the DevTools protocol's touch input (Chromium only; Playwright drives no touch moves in Firefox or WebKit):
+  // touched down at the first point, moved in six steps to the last, lifted there. Real touch events, so the engine applies its
+  // own tap slop, gesture detection and implicit pointer capture
+  let cdp: any = null;
+  const touch = async (path: Array<{ x: number; y: number }>) => {
+    if (!cdp) cdp = await page.context().newCDPSession(page);
+    const at = (p: { x: number; y: number }) => [{ x: p.x, y: p.y, id: 1, radiusX: 1, radiusY: 1, force: 1 }];
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(path[0]) });
+    for (let k = 1; k < path.length; k++) for (let s = 1; s <= 6; s++) {
+      const a = path[k - 1], b = path[k];
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at({ x: a.x + (b.x - a.x) * s / 6, y: a.y + (b.y - a.y) * s / 6 }) });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await settle(); await page.waitForTimeout(300);
+  };
+  return { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, points, sheetState, mouseDrag, touch, errors };
 }
 // a short window with the chip todo open: the box scrolls; the detail keeps its floor and scrolls within itself; its
 // first line's address and Send are each under a finger once the box is scrolled to them
@@ -771,6 +809,76 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.deepEqual(open.kinds, ["confirm-title", "confirm-detail", "ut-detail", "ut-reply-input", "confirm-actions"], "the chat's sheet: the chips are inside the quoted line, not children of the box (render.ts showUserTodoReply; the pane's builder appends them as flex children)");
       assert.deepEqual(open.quoteChips, ["ut-file", "ut-link"], "both chips trail the quoted line, the file's first");
       assert.equal(open.tight, false, "508px: no fold, so this is the room cap and the every-height scroll on their own");
+      assert.deepEqual(errors, [], "no script error on the page");
+    } finally { await browser.close(); }
+  });
+
+  // THE REVERSE ROADS, as their own test (the maintainer's round 2, ui-1): a press on the backdrop released inside the sheet is
+  // not a backdrop tap. The sheet's click line read only where the press began, and a click whose press and release targets
+  // differ is dispatched to their common ancestor, which for a press on the overlay is the overlay itself in all three engines,
+  // so a mouse pressed on the backdrop and released on the answer box or the title closed the sheet with the answer. A finger
+  // is worse: a touch pointer is implicitly captured to the node it pressed, so its pointerup's target is the overlay wherever it
+  // lifts, and reading the release's target alone still closed the sheet for a finger pressed just outside the box's edge and
+  // lifted inside it; the builders give that capture back on a backdrop press (the ruling's form R2). Driven at 900 (at rest)
+  // and 508 (the keyboard up), on the short ask with the forty-line detail and an answer typed: the mouse's reverse drags in
+  // every engine; in Chromium a finger through the DevTools protocol's touch input, pressed 6px left of the box's edge and lifted
+  // 6px inside it, and pressed at the window's edge and lifted 5px inside it (the ruling's second press was 10px out, but at the
+  // phone's width the box's left edge is under 8px from the window's, so the press is taken at the window's edge), at the answer
+  // box's height (touch in Firefox and WebKit, and on iOS, is a stated residual: Playwright drives no touch moves there); after each the sheet stands with the answer and nothing is
+  // posted. At the head before this fix every one of these closed the sheet with the answer. Then a plain tap on the backdrop
+  // still dismisses: the mouse's in every engine, a finger's in Chromium
+  test(`in ${name}: a press on the backdrop released inside the sheet is not a backdrop tap (the mouse's reverse drags${name === "chromium" ? ", and a finger pressed just outside the box's edge and lifted inside it" : ""}), at 900 and 508; a plain tap on the backdrop still dismisses`, async (t) => {
+    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py drives the touch road in CI's Browser-backed served-page tests (pytest) step"); return; }
+    let browser: any;
+    try { browser = await pw[name].launch(); }
+    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's Browser-backed served-page tests (pytest) step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      const { setHeight, openReply, cancelReply, fill, points, sheetState, mouseDrag, touch, errors } = await boot(browser);
+      const TYPED = "my typed answer";
+      // a sheet up with the answer typed: the one the last step left standing, or a fresh one where the last step closed it
+      const ready = async () => {
+        const st = await sheetState();
+        if (!st.up) await openReply(TODOS[0]);
+        if (!st.up || st.value !== TYPED) await fill(TYPED);
+      };
+      if (name !== "chromium") t.diagnostic(`${name}: the touch road is a stated residual here: Playwright drives no touch moves in this engine (and iOS is unmeasured)`);
+      for (const [h, kb] of [[TALL, false], [KEYBOARD_UP, true]] as Array<[number, boolean]>) {
+        if ((await sheetState()).up) await cancelReply();
+        await setHeight(h, kb);
+        const roads: Array<[string, (p: Awaited<ReturnType<typeof points>>) => Promise<void>]> = [
+          ["the mouse pressed on the backdrop and released on the answer box", (p) => mouseDrag(p.back, p.input)],
+          ["the mouse pressed on the backdrop and released on the title", (p) => mouseDrag(p.back, p.title)],
+        ];
+        // the finger's press lies on the backdrop left of the box, never off the window: at the phone's width the box's left edge
+        // is under 8px from the window's, so the ruling's 10px press is taken at the window's edge (the ruled 6px press fits)
+        if (name === "chromium") roads.push(
+          ["a finger pressed 6px left of the box's edge and lifted 6px inside it", (p) => touch([{ x: Math.max(1, p.boxLeft - 6), y: p.input.y }, { x: p.boxLeft + 6, y: p.input.y }])],
+          ["a finger pressed at the window's edge (10px left of the box's edge where the window allows it) and lifted 5px inside the box", (p) => touch([{ x: Math.max(1, p.boxLeft - 10), y: p.input.y }, { x: p.boxLeft + 5, y: p.input.y }])],
+        );
+        for (const [what, road] of roads) {
+          await t.test(`at ${h}: ${what}`, async () => {
+            await ready();
+            const p = await points();
+            await road(p);
+            const st = await sheetState();
+            assert.equal(st.up, true, `at ${h}, ${what}: the sheet stands (${JSON.stringify(p)}); at the head before this fix it closed with the answer`);
+            assert.equal(st.value, TYPED, `at ${h}, ${what}: the answer is intact`);
+            assert.equal(st.posted, 0, `at ${h}, ${what}: nothing was posted`);
+          });
+        }
+        const taps: Array<[string, (p: Awaited<ReturnType<typeof points>>) => Promise<void>]> = [["a mouse tap on the backdrop", (p) => mouseDrag(p.back, p.back)]];
+        if (name === "chromium") taps.push(["a finger's tap on the backdrop", (p) => touch([p.back])]);
+        for (const [what, tap] of taps) {
+          await t.test(`at ${h}: ${what} still dismisses`, async () => {
+            await ready();
+            const p = await points();
+            await tap(p);
+            const st = await sheetState();
+            assert.equal(st.up, false, `at ${h}, ${what}: pressed and released on the backdrop, it dismisses (${JSON.stringify(p)}); what a dismiss does with the text is the filed discard item's`);
+            assert.equal(st.posted, 0, `at ${h}, ${what}: a dismiss posts nothing`);
+          });
+        }
+      }
       assert.deepEqual(errors, [], "no script error on the page");
     } finally { await browser.close(); }
   });

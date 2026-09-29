@@ -10962,21 +10962,29 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
     sizedTo = input.style.height;
   };
   input.addEventListener("input", () => grow());
-  // NOT a tap on the backdrop: a click whose press began inside the sheet. Chromium and WebKit dispatch a click whose press
-  // and release targets differ to their common ancestor, here the overlay, so a grip pull released past the box's bottom
-  // edge (the box at its cap cannot grow with the answer box, so the pointer leaves it) and a text selection dragged out of
-  // the box arrived as backdrop clicks and closed the sheet with the answer (the author's pass after the maintainer's round
-  // 1, composition-2, and the reviewer's ruling on the pass's selection-drag observation). A backdrop tap is the whole
-  // gesture on the backdrop, press and release both: the overlay's pointerdown records whether the last press began inside
-  // the sheet (any target but the overlay itself), and the click line closes only when the click's target is the overlay
-  // and that press did not, which closes both roads and any future drag out of the sheet with one condition. Every click an
-  // engine dispatches follows a press, so the click line only reads the record. Firefox retargets such a click to the
-  // pressed node, so there these roads never reached this handler. What a dismiss DOES (close with no save) is the filed
-  // discard item's, untouched here. reply-sheet-keyboard.test.ts executes these three lines out of each builder and pins
-  // the two builders' equal
+  // NOT a tap on the backdrop: a click whose press began inside the sheet, or whose release landed inside it. Chromium and
+  // WebKit dispatch a click whose press and release targets differ to their common ancestor, here the overlay, so a grip
+  // pull released past the box's bottom edge (the box at its cap cannot grow with the answer box, so the pointer leaves it)
+  // and a text selection dragged out of the box arrived as backdrop clicks and closed the sheet with the answer (the
+  // author's pass after the maintainer's round 1, composition-2, and the reviewer's ruling on the pass's selection-drag
+  // observation). The reverse road, a press on the backdrop released inside the sheet, reached this handler in all three
+  // engines (the overlay is both the pressed node and the common ancestor) and closed the sheet with the answer too (the
+  // maintainer's round 2, ui-1). A backdrop tap is the whole gesture on the backdrop, press and release both: the overlay's
+  // pointerdown records whether the press began inside the sheet (any target but the overlay itself), its pointerup
+  // whether the release landed inside it, and the click line closes only when the click's target is the overlay and
+  // neither record says inside; a press that wanders into the sheet and back out, released on the backdrop, is still a
+  // backdrop tap. The release is read where the pointer lifted: a touch pointer is implicitly captured to the node it
+  // pressed (Pointer Events), so a finger pressed on the backdrop delivers its pointerup to the overlay wherever it lifts,
+  // and a finger pressed just outside the box's edge and lifted inside it closed the sheet (measured in Chromium through CDP
+  // touch); a press on the backdrop therefore gives that capture back, and its pointerup's target is the node under the
+  // lift (the maintainer's round 2 ruling). A press inside the sheet keeps its capture on the node it pressed. What a
+  // dismiss DOES (close with no save) is the filed discard item's, untouched here. These lines are plain JavaScript, no
+  // cast: reply-sheet-keyboard.test.ts executes them out of each builder and pins the two builders' equal
   let pressedInside = false;   // the last press began inside the sheet (on the box or anything in it), not on the backdrop
-  overlay.addEventListener("pointerdown", (e) => { pressedInside = e.target !== overlay; });
-  overlay.addEventListener("click", (e) => { if (e.target === overlay && !pressedInside) close(); });
+  let releasedInside = false;   // the last release landed inside the sheet: a press on the backdrop released inside it is not a backdrop tap
+  overlay.addEventListener("pointerdown", (e) => { pressedInside = e.target !== overlay; if (!pressedInside && overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId); });
+  overlay.addEventListener("pointerup", (e) => { releasedInside = e.target !== overlay; });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay && !pressedInside && !releasedInside) close(); });
   box.append(h, d); if (dd) box.appendChild(dd); box.append(input, actions);
   actions.append(cancel, send);
   overlay.appendChild(box);

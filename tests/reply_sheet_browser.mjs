@@ -36,9 +36,12 @@
 // 12em and 34.8% of the window's height, with the keyboard up 12em, as before. Read at rest at 900 and 1080 and at the
 // pane heights a phone gives (the maintainer's rulings on the cap pass and on the share: the installed app's 732, and
 // Safari's 709, 633 and 620) on the composition's todo with its answer box cleared (the viewport term), and under the
-// keyboard at 508 on the other todo's sheet at open (12em). Last, on a third todo whose detail is the recorded 8-line
+// keyboard at 508 on the other todo's sheet at open (12em). Then, on a third todo whose detail is the recorded 8-line
 // one, the stated boundary (styles.css: in full from a 720px pane): at the app's 732 and at 720, then one pixel under
-// this engine's own boundary (cfg.belowBoundary) and at Safari's common 633. The detail's cap reads the keyboard where
+// this engine's own boundary (cfg.belowBoundary) and at Safari's common 633. Last, in Chromium, on the same sheet, a finger
+// through the DevTools protocol's touch input pressed just outside the box's left edge and lifted just inside it, at 900 and
+// 508 (the sheet stands with its answer: a backdrop press gives back the implicit capture a touch pointer takes), and a
+// finger's tap on the backdrop (it dismisses). The detail's cap reads the keyboard where
 // the shell does (restCap; kernel.py kbOpen): the visual viewport of the window that owns the screen shorter than its
 // layout viewport. These pages are top-level, so that window is the page itself: with the keyboard up the driver stubs
 // its visualViewport.height to its innerHeight less a phone keyboard's 336px, and removes the stub at rest; every window
@@ -404,6 +407,52 @@ try {
       eight.safari = await measure();
       out.eight = eight;
     } catch (e) { out.eight = { error: String(e).slice(0, 400) }; }
+  }
+  // THE TOUCH ROAD (the maintainer's round 2, ui-1), in Chromium through the DevTools protocol's touch input (Playwright drives no
+  // touch moves in Firefox or WebKit, where touch is a stated residual): a finger pressed just outside the box's left edge and
+  // lifted just inside it, at the answer box's height, 6px out and 6px in, then from the window's edge (10px out where the
+  // window allows it) and 5px in, at rest at 900 and with the keyboard up at 508; then a finger's tap on the backdrop. A touch pointer is implicitly captured to the node it pressed, so
+  // until the builders gave a backdrop press's capture back, the pointerup's target was the overlay wherever the finger lifted and
+  // the straddle closed the sheet with the answer. On the third todo's sheet (the one the boundary step left up), the answer typed
+  // before each gesture; a gesture that closed the sheet is recorded and the sheet reopened for the next. Its own failure is
+  // recorded, never fatal
+  if (cfg.tid3 && engine === "chromium") {
+    try {
+      const cdp = await context.newCDPSession(page);
+      const at = (p) => [{ x: p.x, y: p.y, id: 1, radiusX: 1, radiusY: 1, force: 1 }];
+      const touch = async (path) => {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(path[0]) });
+        for (let k = 1; k < path.length; k++) for (let s = 1; s <= 6; s++) {
+          const a = path[k - 1], b = path[k];
+          await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at({ x: a.x + (b.x - a.x) * s / 6, y: a.y + (b.y - a.y) * s / 6 }) });
+        }
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await settle(); await page.waitForTimeout(300);
+      };
+      const TYPED = "my typed answer";
+      const state = () => page.evaluate((tid) => { const i = document.querySelector("#ut-reply-prompt .ut-reply-input");
+        return { up: !!document.getElementById("ut-reply-prompt"), value: i ? i.value : null, sent: window.__wsSent.filter((f) => f.includes('"userTodoAnswer"') && f.includes(tid)).length }; }, cfg.tid3);
+      const ready = async () => { if (!(await state()).up) await openReply(cfg.tid3); await fill(TYPED); };
+      const points = () => page.evaluate(() => { const o = document.getElementById("ut-reply-prompt"), b = o.querySelector(".confirm-box").getBoundingClientRect(), i = o.querySelector(".ut-reply-input").getBoundingClientRect();
+        return { boxLeft: b.left, inputY: (i.top + i.bottom) / 2, back: { x: (b.left + b.right) / 2, y: Math.max(4, b.top / 2) } }; });
+      const touched = [];
+      for (const [h, kb] of [[TALL, false], [KEYBOARD_UP, true]]) {
+        await setHeight(h, kb);
+        // the press on the backdrop left of the box, never off the window: at the phone's width the box's left edge is under 8px
+        // from the window's, so the ruling's 10px press is taken at the window's edge; the distance used is recorded
+        for (const [out1, in1] of [[6, 6], [10, 5]]) {
+          await ready();
+          const p = await points();
+          const x = Math.max(1, p.boxLeft - out1);
+          await touch([{ x, y: p.inputY }, { x: p.boxLeft + in1, y: p.inputY }]);
+          touched.push({ h, out: +(p.boxLeft - x).toFixed(1), in: in1, at: p, ...(await state()) });
+        }
+      }
+      await ready();
+      const p = await points();
+      await touch([p.back]);
+      out.touch = { straddles: touched, tap: { h: KEYBOARD_UP, at: p.back, ...(await state()) } };
+    } catch (e) { out.touch = { error: String(e).slice(0, 400) }; }
   }
   await result({ ready: true });
 } catch (e) {

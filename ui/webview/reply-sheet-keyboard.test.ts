@@ -33,8 +33,10 @@
 // content (the author's pass after the maintainer's round 1, composition-3). The backdrop's click dismisses only when the
 // whole gesture was on the backdrop, press and release both: a click whose press began inside the sheet (a grip pull or a
 // text selection released past the box's edge) is not a backdrop tap (the author's pass after the maintainer's round 1,
-// composition-2, and the reviewer's ruling on the selection; the record and the click line are executed below out of each
-// builder).
+// composition-2, and the reviewer's ruling on the selection), and neither is a click whose release landed inside it (a
+// press on the backdrop released inside the sheet, the maintainer's round 2); the release is read where the pointer
+// lifted, since a backdrop press gives back the implicit capture a touch pointer takes (the two records, the capture's
+// release and the click line are executed below out of each builder).
 //
 // Two kinds of leg, no browser (the browser legs are waiting-reply-sheet-browser.test.ts and
 // render-reply-sheet-browser.test.ts). The executed legs slice the fold's lines and the grow handler out of EACH
@@ -71,10 +73,13 @@ const RESTCAP = /^\s*const restCap = .*$/m;   // the detail's cap at rest: the w
 const CLOSE = /^\s*const close = .*$/m;
 const KB_ARM = /window\.addEventListener\("resize", kbFit\);\n\s*kbFit\(\);/;
 const GROW_ARM = /input\.addEventListener\("input", \(\) => grow\(\)\);/;   // the keystroke path: grow with no argument (kbFit's resize path is grow(true))
-// the backdrop's click and the record it reads: whether the last press began inside the sheet, the press listener that
-// writes the record, and the click line
+// the backdrop's click and the two records it reads: whether the last press began inside the sheet and whether the last
+// release landed inside it, the press listener that writes the first (and gives back a backdrop press's pointer capture),
+// the release listener that writes the second, and the click line
 const PRESS_RECORD = /^\s*let pressedInside = false;.*$/m;
+const RELEASE_RECORD = /^\s*let releasedInside = false;.*$/m;
 const PRESS_ARM = /^\s*overlay\.addEventListener\("pointerdown", .*$/m;
+const RELEASE_ARM = /^\s*overlay\.addEventListener\("pointerup", .*$/m;
 const DISMISS = /^\s*overlay\.addEventListener\("click", .*$/m;
 // the grow handler is a BLOCK (its records, its head, its statements, the `};` that closes it), sliced whole; a builder
 // whose head or close moved is a loud failure here
@@ -434,49 +439,95 @@ for (const [name, src] of BUILDERS) {
 // ancestor, the overlay, so a grip pull released past the box's bottom edge (at 508 the box is at its cap and cannot grow
 // with the answer box, so the pointer leaves it) and a text selection dragged out of the box arrived as backdrop clicks and
 // closed the sheet with the answer (the author's pass after the maintainer's round 1, composition-2, then the reviewer's
-// ruling on the selection: widen the predicate rather than add a case; the browser legs and tests/test_reply_sheet_served.py
-// drive both gestures in each engine). The record is whether the LAST press began inside the sheet (any target but the
-// overlay itself); every press rewrites it, and every click an engine dispatches follows a press, so the click line only
-// reads it. What a dismiss DOES (close with no save) is untouched: the filed discard item's. Run here against shim nodes
-// with the three lines sliced out of each builder
+// ruling on the selection: widen the predicate rather than add a case). Nor does a click whose release landed inside the
+// sheet: a press on the backdrop released on the answer box or the title reached the overlay as its click in all three
+// engines and closed the sheet with the answer (the maintainer's round 2, ui-1), and for a touch the release is read where
+// the finger lifted only because a backdrop press gives back the implicit capture a touch pointer takes, without which the
+// pointerup's target is the overlay wherever the finger lifts (measured in Chromium through CDP touch). Two records: whether
+// the LAST press began inside the sheet and whether the LAST release landed inside it (any target but the overlay itself);
+// every press and every release rewrites its own, and every click an engine dispatches from a pointer follows its press and
+// its release, so the click line only reads them. The browser legs and tests/test_reply_sheet_served.py drive the gestures in
+// each engine (the touch in Chromium: this shim cannot model an engine's capture, so it pins the call, not the routing). What
+// a dismiss DOES (close with no save) is untouched: the filed discard item's. Run here against shim nodes with the five lines
+// sliced out of each builder
 for (const [name, src] of BUILDERS) {
-  test(`${name}: the backdrop's click dismisses only when the press began on the backdrop too; a click whose press began inside the sheet is not a backdrop tap`, () => {
-    const overlay = makeNode("div"), input = makeNode("textarea"), detail = makeNode("div");
-    overlay.appendChild(input); overlay.appendChild(detail);
+  test(`${name}: the backdrop's click dismisses only when the press and the release were both on the backdrop; a backdrop press gives back its pointer capture so its release is read where it lifted`, () => {
+    const overlay = makeNode("div"), input = makeNode("textarea"), detail = makeNode("div"), title = makeNode("div");
+    overlay.appendChild(title); overlay.appendChild(input); overlay.appendChild(detail);
+    // the overlay's pointer capture, as the test sets it: the pointers it holds, and every release the listener asks for
+    const held = new Set<number>(); const released: number[] = [];
+    overlay.hasPointerCapture = (id: number) => held.has(id);
+    overlay.releasePointerCapture = (id: number) => { released.push(id); held.delete(id); };
     let closed = 0;
     const close = () => { closed++; };
-    const body = [line(src, PRESS_RECORD, "the press record", name), line(src, PRESS_ARM, "the press listener", name), line(src, DISMISS, "the backdrop's click", name)].join("\n");
+    const body = [line(src, PRESS_RECORD, "the press record", name), line(src, RELEASE_RECORD, "the release record", name), line(src, PRESS_ARM, "the press listener", name), line(src, RELEASE_ARM, "the release listener", name), line(src, DISMISS, "the backdrop's click", name)].join("\n");
     new Function("overlay", "input", "close", body)(overlay, input, close);
-    const press = (target: unknown) => overlay._listeners.pointerdown({ type: "pointerdown", target });
+    const press = (target: unknown, pointerId = 1) => overlay._listeners.pointerdown({ type: "pointerdown", target, pointerId });
+    const release = (target: unknown, pointerId = 1) => overlay._listeners.pointerup({ type: "pointerup", target, pointerId });
     const click = (target: unknown) => overlay._listeners.click({ type: "click", target });
     input.style.height = "78px";
-    // a tap on the backdrop: the press and its click both on the overlay
-    press(overlay); click(overlay);
+    // a tap on the backdrop: the press, the release and the click all on the overlay
+    press(overlay); release(overlay); click(overlay);
     assert.equal(closed, 1, "a tap on the backdrop dismisses: press and release both on it (the sheet's dismiss road, as before)");
-    // a drag of the grip released past the box's bottom edge: the press on the answer box, the inline height changed under it,
-    // the click at the overlay (Chromium and WebKit: the common ancestor of the press and the release)
-    press(input); input.style.height = "148px"; click(overlay);
-    assert.equal(closed, 1, "the click that ends a grip drag is not a backdrop tap: the sheet stands (before the guard it closed with the answer in Chromium and WebKit)");
+    // THE REVERSE DRAG (the maintainer's round 2, ui-1): the press on the backdrop, the release on the answer box, the click at the
+    // overlay (the pressed node and the common ancestor both, in all three engines)
+    press(overlay); release(input); click(overlay);
+    assert.equal(closed, 1, "a press on the backdrop released on the answer box is not a backdrop tap: the sheet stands (with the press record alone it closed with the answer in Chromium, Firefox and WebKit)");
+    press(overlay); release(title); click(overlay);
+    assert.equal(closed, 1, "and released on the title: the sheet stands");
+    // THE GUARDED DRAG: a drag of the grip released past the box's bottom edge, the press on the answer box, the inline height
+    // changed under it, the release and the click at the overlay (Chromium and WebKit: the common ancestor of the press and the release)
+    press(input); input.style.height = "148px"; release(overlay); click(overlay);
+    assert.equal(closed, 1, "the click that ends a grip drag is not a backdrop tap: the sheet stands (before the press record it closed with the answer in Chromium and WebKit; with the release record alone it would again)");
     // a text selection dragged out of the box and released over the backdrop: the press inside the sheet, the height unchanged,
     // the same common-ancestor click
-    press(input); click(overlay);
+    press(input); release(overlay); click(overlay);
     assert.equal(closed, 1, "the click that ends a selection dragged out of the box is not a backdrop tap either: the press began inside the sheet, whether or not the height changed (the predicate the reviewer ruled; a height clause here left this road open in Chromium and WebKit)");
     // a press anywhere inside the sheet (the detail, say) released on the backdrop: the same
-    press(detail); click(overlay);
+    press(detail); release(overlay); click(overlay);
     assert.equal(closed, 1, "any press that began inside the sheet: its click at the overlay is not a dismissal");
-    // the next press rewrites the record: a tap on the backdrop after any of them dismisses
-    press(overlay); click(overlay);
-    assert.equal(closed, 2, "the record is the last press: a tap on the backdrop after a drag dismisses");
-    // Firefox retargets a drag's click to the pressed node: not the overlay, so nothing to dismiss
-    press(input); input.style.height = "200px"; click(input);
+    // the next press and release rewrite the records: a tap on the backdrop after any of them dismisses
+    press(overlay); release(overlay); click(overlay);
+    assert.equal(closed, 2, "the records are the last press and the last release: a tap on the backdrop after a drag dismisses");
+    // Firefox retargets a guarded drag's click to the pressed node: not the overlay, so nothing to dismiss
+    press(input); input.style.height = "200px"; release(overlay); click(input);
     assert.equal(closed, 2, "a click on the textarea is never a dismissal");
-    press(overlay); click(overlay);
-    assert.equal(closed, 3, "and the drag's record does not reach the next tap on the backdrop");
-    // a press inside the sheet whose click never came (released over another frame, no click in this document): the next press
-    // rewrites it
+    press(overlay); release(overlay); click(overlay);
+    assert.equal(closed, 3, "and the drag's records do not reach the next tap on the backdrop");
+    // a press inside the sheet whose release and click never came here (released over another frame): the next press and release
+    // rewrite the records
     press(input);
-    press(overlay); click(overlay);
-    assert.equal(closed, 4, "a new press rewrites the record: a press inside the sheet without a click leaves nothing behind for the next tap");
+    press(overlay); release(overlay); click(overlay);
+    assert.equal(closed, 4, "a new press rewrites the record: a press inside the sheet without a release leaves nothing behind for the next tap");
+    // a reverse drag's release record does not outlive the next tap either
+    press(overlay); release(input); click(overlay);
+    press(overlay); release(overlay); click(overlay);
+    assert.equal(closed, 5, "a release inside the sheet, then a tap on the backdrop: the tap dismisses");
+    // THE CAPTURE (form R2 of the maintainer's round 2 ruling): a touch pointer is implicitly captured to the node it pressed, so a
+    // finger pressed on the backdrop has the overlay holding its capture at the pointerdown; the listener gives it back, so the
+    // engine sends the pointerup to the node under the lift (here fed as the answer box, as Chromium does once the capture is back)
+    assert.deepEqual(released, [], "no press so far held a capture on the overlay: nothing was released (a mouse takes no implicit capture)");
+    held.add(7);
+    press(overlay, 7);
+    assert.deepEqual(released, [7], "a press on the backdrop with the overlay holding its capture gives that capture back, once, by the pointer's id");
+    assert.equal(held.has(7), false, "the overlay no longer holds it");
+    release(input, 7); click(overlay);
+    assert.equal(closed, 5, "the finger lifted inside the sheet: its pointerup's target is the answer box, so the click at the overlay is not a backdrop tap and the sheet stands with its text");
+    held.add(8);
+    press(overlay, 8); release(overlay, 8); click(overlay);
+    assert.deepEqual(released, [7, 8], "each backdrop press gives its capture back");
+    assert.equal(closed, 6, "a touch tap on the backdrop, pressed and lifted there, still dismisses");
+    // a press inside the sheet keeps whatever capture the overlay holds for it: a drag that starts inside is left to the node it pressed
+    held.add(9);
+    press(input, 9);
+    assert.deepEqual(released, [7, 8], "a press inside the sheet gives back no capture");
+    assert.equal(held.has(9), true, "the capture a press inside the sheet had stays where it was");
+    release(overlay, 9); click(overlay);
+    assert.equal(closed, 6, "and its drag, released over the backdrop, is not a dismissal");
+    // a backdrop press whose capture the overlay does not hold (a mouse, a pen) asks for no release: releasePointerCapture on a
+    // pointer the element does not hold is never called
+    press(overlay, 10);
+    assert.deepEqual(released, [7, 8], "no capture held, nothing released");
   });
 }
 
@@ -486,7 +537,7 @@ test("the two builders stay twins for this fix: the same kbFit line, the same gr
   assert.equal(line(w, KBFIT, "kbFit", "waiting.ts").trim(), line(r, KBFIT, "kbFit", "render.ts").trim(), "one kbFit line in both builders");
   assert.equal(line(w, RESTCAP, "restCap", "waiting.ts").trim(), line(r, RESTCAP, "restCap", "render.ts").trim(), "one restCap line in both builders (executed above)");
   assert.equal(growBlock(w, "waiting.ts"), growBlock(r, "render.ts"), "one grow block in both builders, byte for byte");
-  for (const [what, re] of [["the press record", PRESS_RECORD], ["the press listener", PRESS_ARM], ["the backdrop's click", DISMISS]] as Array<[string, RegExp]>) {
+  for (const [what, re] of [["the press record", PRESS_RECORD], ["the release record", RELEASE_RECORD], ["the press listener", PRESS_ARM], ["the release listener", RELEASE_ARM], ["the backdrop's click", DISMISS]] as Array<[string, RegExp]>) {
     assert.equal(line(w, re, what, "waiting.ts").trim(), line(r, re, what, "render.ts").trim(), `one ${what} line in both builders (executed above)`);
   }
   for (const [name, src] of BUILDERS) {
