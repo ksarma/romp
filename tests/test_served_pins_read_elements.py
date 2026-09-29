@@ -141,18 +141,18 @@ A fetch by a url spelled otherwise than the census reads it, where the url's sta
 f-string url or a `Request` object handed to urlopen, and (FC2X, narrowed) a url whose path is not whole but whose static part is a
 page route other than the landing's `/` (`"/chat" + rest`, `"/chat%s" % q`). So is a fetch whose url is a Name a loop over one of
 the kernel's route tables binds (`for route in sorted(km._PAGE_RENDERERS): self._get(route)`: every page the table names, none of
-which the census can tell apart; _fail_closed's check (3)).
+which the census can tell apart; _fail_closed's check (3)). So is the first bound the census had stated, in both halves: a page-route
+call of a helper of the module whose returns place no read, answered and read as a response at the call (`self._open("/").read()`,
+where `_open` returns `urlopen(path)`, or a with target or a Name bound to the call and read so; check (4)), and a fetch through a
+helper whose returned element is itself a call to another read-placing helper of the module (`return r.status, self._body(r)`,
+which _response_reads gives "refused").
 
 Bound: a formatted url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
 membership asserted through a helper (`_has(self, lit, body)` in tests/test_files_pane.py and tests/test_settings_page.py, whose
 formatted fetches bind a name no form here reads), a fetch of a path the dispatch does not map to a getter
 call (a JSON or text/plain API body, a `/dist/` bundle, a `/media/` file: outside the derivation, and not comment-satisfiable
 only where the body carries no comment syntax), a page from a dynamically resolved getter (`getattr(km, "_%s_page" % name)()`,
-tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a comment spells), a helper the module defines
-that returns an unread response for its caller to read (`return urlopen(path)`, read as `self._open("/").read()`) or reads the
-response through another call in its return (`return r.status, self._body(r)`), no fetch here (a literal pin over a name such a
-call is assigned to reds the floor through the textual census; any other read of that name, a regex or a split, is in neither
-census), a helper whose returns differ in length (the union of their positions: `return r.status, r.read(), r.headers` and
+tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a comment spells), a helper whose returns differ in length (the union of their positions: `return r.status, r.read(), r.headers` and
 `return r.status, r.read()` give {1, -1, -2}, so `resp[-1]` binds as the page though it is the headers on the first road;
 over-bound, so its reads are rows over the page, never silent), a name bound to a fetched tuple and later rebound to a whole text
 (it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it: over-bound, never
@@ -571,7 +571,9 @@ def _response_reads(tree):
     gives no position, so its call is no fetch and a read of the body behind it is in neither census unless a literal pin reds the
     floor through the textual census (a stated bound: x1 in test_d of
     test_a_returned_name_is_followed_to_its_binding_in_the_helper).
-    A returned element that HOLDS a read the follow does not place gives "refused" (the rulings on the census bounds, 2026-09-28): a
+    A returned element that IS a call, under any `.decode(...)` chain, to another function of the module whose returns place a read
+    (`return r.status, self._body(r)`) gives "refused" too (round 6, the first bound's second half, one level deep). A returned
+    element that HOLDS a read the follow does not place gives "refused" (the rulings on the census bounds, 2026-09-28): a
     read call inside it under anything but a `.decode(...)` chain (`r.read().strip()`, `str(r.read(), "utf-8")`, `r.read() or b""`,
     `r.read() if ok else ""`), a Name bound to a read inside it (`raw[3:]`), or a Name or an attribute chain the function binds to
     an expression holding one (`body = r.read().strip()`, `self.body = r.read()`); a fetch of a page route through such a helper is
@@ -635,6 +637,16 @@ def _response_reads(tree):
                 at.add("whole")
             elif placed(v):
                 at.add(placed(v))
+    # a returned element that IS a call, under any `.decode(...)` chain, to another function of the module whose returns place a
+    # read hands the read to that function (`return r.status, self._body(r)`): "refused", read after every function's own
+    # positions (round 6, the first bound's second half; one level: a helper delegating through two calls is not followed)
+    for fn, values in rets.items():
+        for v in values:
+            for e in (v.elts if isinstance(v, ast.Tuple) else [v]):
+                while isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "decode":
+                    e = e.func.value
+                if isinstance(e, ast.Call) and _callee(e) in out and _callee(e) != fn.name and out[_callee(e)] - {"refused"}:
+                    out[fn.name].add("refused")
     return {name: frozenset(at) for name, at in out.items()}
 
 
@@ -663,13 +675,15 @@ def _fetched(node, names, routes, reads=None):
     the module does not define keeps the reading before the ruling (a fetch). A helper whose returned Name _response_reads cannot
     place ("unknown") is a fetch (the rulings on the census pass, 2026-09-28); one whose return holds a read the follow cannot place
     ("refused") is a fetch only where another of its returns places one, and readers_of refuses its fetches of a page route (the
-    rulings on the census bounds, 2026-09-28). Bound: a helper the module defines that returns an
-    unread response for its caller to read (`return urlopen(path)`) or reads it through another call in its return (`return
-    r.status, self._body(r)`) is not a fetch here (none is in the suite), nor is one that returns a wrapper over a Name its follow
-    cannot place (`status, raw = _raw(path); return 200, raw.strip()`; _response_reads), nor a subscript of a fetch call by a
-    constant index (`self._req("/?token=x")[1]`, which is no call; readers_of refuses the fetch inside it, _fail_closed's check (1)). Where such a call is assigned to names (`body =
-    self._open("/").read()`) the textual census binds them (_FETCH_DEF), so a literal pin over one reds the floor; any other read
-    of such a name (a regex, a split, a slice) is in neither census, in silence."""
+    rulings on the census bounds, 2026-09-28). A helper the module defines that returns an unread response for its caller to read
+    (`return urlopen(path)`) is not a fetch here, and readers_of refuses a page-route call of one answered and read as a response
+    (`self._open("/").read()`; _fail_closed's check (4)); one whose returned element is a call to another read-placing helper
+    (`return r.status, self._body(r)`) gives "refused" (_response_reads), so it is no fetch and readers_of refuses its fetches of a
+    page route. Nor is a fetch here a subscript of a fetch call by a constant index (`self._req("/?token=x")[1]`, which is no call;
+    readers_of refuses the fetch inside it, check (1)), nor a helper that returns a wrapper over a Name its follow cannot place
+    (`status, raw = _raw(path); return 200, raw.strip()`; _response_reads), a stated bound: where such a call is assigned to names
+    the textual census binds them (_FETCH_DEF), so a literal pin over one reds the floor, and any other read of such a name (a regex,
+    a split, a slice) is in neither census, in silence."""
     if not isinstance(node, ast.Call):
         return None
     f = node.func
@@ -1632,7 +1646,11 @@ def _fail_closed(tree, lines, routes, reads):
     (3) a fetch through such a helper whose url is a Name the same function's for loop or comprehension binds, as its target or a
         Name inside it, over an expression naming one of the kernel's route tables (_route_tables: `for route in
         sorted(km._PAGE_RENDERERS): self._get(route)`), which fetches every page the table names by a url the census cannot
-        read; a Name bound any other way (`for path in ("/", "/chat")`, an assignment, a parameter) is not read and not refused.
+        read; a Name bound any other way (`for path in ("/", "/chat")`, an assignment, a parameter) is not read and not refused;
+    (4) a page-route call (a literal path, _fetch_path) of a helper of the module whose returns place no read and hold none it
+        cannot place, so no fetch (_fetched), whose answer is nonetheless read as a response at the call: `.read()`, `.decode()`
+        or `.getvalue()` chained on it, or on a Name or a with target the same function binds to it (the first bound's first half:
+        `return urlopen(path)` read as `self._open("/").read()`).
     A call to a Name the same function binds to an attribute (`seg = km._route_seg`, then `seg("/")`) calls that function, no fetch
     helper of the test's, and is not checked (tests/test_perf_stats.py's route-mark test asserts over `seg("/")` so)."""
     rows, seg = [], lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
@@ -1701,9 +1719,25 @@ def _fail_closed(tree, lines, routes, reads):
                 rows.append((node.lineno, "unclassified", str(routes[sp[1]]), "fetch by a url the census does not read (%s%s): %s" % ("Request " if req else "", sp[0], seg(node))))
             continue
         callee = _callee(node)
-        if callee is None or _fetch_path(a0) is not None:
+        if callee is None:
             continue
         helper = reads().get(callee)
+        path = _fetch_path(a0)
+        if path is not None:
+            # (4) a page-route call of a no-fetch helper, answered and read as a response here
+            route = path.split("?")[0]
+            if helper is not None and not helper and route in routes:
+                hit = chain_top(node) is not node
+                if not hit:
+                    p = parents.get(id(node))
+                    target = p.targets[0] if isinstance(p, ast.Assign) and len(p.targets) == 1 and p.value is node else \
+                        p.optional_vars if isinstance(p, ast.withitem) and p.context_expr is node else None
+                    hit = isinstance(target, ast.Name) and any(
+                        isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr in _BODY_READS
+                        and isinstance(x.func.value, ast.Name) and x.func.value.id == target.id for x in ast.walk(scope(node)))
+                if hit:
+                    rows.append((node.lineno, "unclassified", str(routes[route]), "no-fetch helper %s answered and read as a response here: %s" % (callee, seg(node))))
+            continue
         if helper is not None and not helper - {"refused"}:
             continue   # a helper of the module whose returns place no read: no fetch helper (_fetched)
         # (3) a url a loop over a route table binds
@@ -3523,6 +3557,60 @@ class T(unittest.TestCase):
         where = "fetch through _req of every route of the kernel's route table, which the census does not read"
         self.assertEqual([(r[0], r[2], r[3].split(":")[0]) for r in readers if r[1] == "unclassified"],
                          [(9, "_PAGE_RENDERERS", where), (10, "_PAGE_RENDERERS", where), (12, "_PAGE_RENDERERS", where)])
+
+
+    def test_a_helper_handing_the_read_elsewhere_is_refused(self):
+        # round 6 (B.1, the first stated bound's two halves, tests-2, regression-3, extra8-2): a helper the module defines that
+        # returns an unread response for its caller to read, or reads it through another call of the module in its return, was
+        # no fetch, so a read of its answer was in neither census. The first half, _fail_closed's check (4): a page-route call of
+        # a helper whose returns place no read, answered and read as a response at the call, is refused: `.read()` chained on it
+        # (18), a with target read so (19) and a Name bound to it read so (21). The second half: a returned element that IS a call
+        # to another read-placing helper, under any `.decode(...)` chain, gives "refused" (_response_reads), so its fetches are
+        # refused (23, 24). A no-fetch helper whose answer is not read as a response (25, 26), a path that is no route (28) and a
+        # helper delegating through two calls (27, `_two` returning `_x(path)`: one level only, stated) are no row. Dropping
+        # either half reds its rows here. The rows are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import re, unittest, urllib.request
+def _open(path):
+    return urllib.request.urlopen(path)
+def _body(r):
+    return r.read()
+def _x(path):
+    r = urllib.request.urlopen(path)
+    return r.status, _body(r)
+def _xd(path):
+    r = urllib.request.urlopen(path)
+    return r.status, _body(r).decode()
+def _pathconf(path, name):
+    return os.pathconf(path, name)
+def _two(path):
+    return 200, _x(path)
+class T(unittest.TestCase):
+    def test_a(self):
+        body = _open("/chat?token=x").read()
+        with _open("/chat?token=x") as r:
+            got = r.read()
+        s = _open("/chat?token=x")
+        text = s.read().decode()
+        st, page = _x("/chat?token=x")
+        st, page = _xd("/chat?token=x")
+        limit = _pathconf("/", "PC_NAME_MAX")
+        _open("/chat?token=x")
+        st2, pg2 = _two("/chat?token=x")
+        other = _open("/nope").read()
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        first, second = "no-fetch helper _open answered and read as a response here", "refused fetch, %s returns a read the follow cannot place"
+        self.assertEqual([(r[0], r[2], r[3].split(":")[0]) for r in readers if r[1] == "unclassified"],
+                         [(18, "_chat_page", first), (19, "_chat_page", first), (21, "_chat_page", first), (23, "_chat_page", second % "_x"),
+                          (24, "_chat_page", second % "_xd")])
+        self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
+                         {"_open": [], "_body": ["whole"], "_x": ["refused"], "_xd": ["refused"], "_pathconf": [], "_two": [], "test_a": []})
 
 
 if __name__ == "__main__":
