@@ -34,7 +34,8 @@
 // and WebKit (the three-engine readings in the review record came from a scratch matrix, not this file), and every engine
 // generation that lacks :has(), which the degradation leg below MODELS rather than installs. And the STATES the legs do not
 // enter (the author's fixer pass after the maintainer's round 5, exclusions-1, -4 and -5; the ruler's lesson: name what a surface excludes):
-// task tracking OFF (gear.js dressTracking greys seven judge rows and two Debug rows with rs-off, disables their controls, which
+// task tracking OFF (gear.js dressTracking greys eleven rows with rs-off (the seven judge rows, General's Outline and Feed pane
+// rows, which show when the panel is its own page, and the two Debug rows), disables their controls, which
 // the census skips, and puts the "Enable task tracking" title on the row, so a hover there shows a native title AND the row's
 // description); a greyed Fast mode box (disabled, so no focus reaches it: its "why greyed" text is the pointer's alone); the
 // panel as its own page (the four pane-toggle rows are hidden under the shell and the census skips them, so their descriptions
@@ -42,7 +43,8 @@
 // behind the modal and shows that row's description under the dim, upstream's modal from before this branch); and the widget
 // rows' titled elements (grips, option wraps, demo spans: a native title beside the widget's description on hover). The house
 // dropdowns (gear.js housePick, twelve pickers) WERE outside the legs too, since their rows never wear rs-picking; the
-// house-dropdown leg below enters that state and records its reading. The legs read the PANEL, not the
+// house-dropdown leg below enters that state at 9 of the 12 (in Task tracking the three effort pickers and Judge concurrency,
+// in Chat Text scheme, Comment effort and the three widget options) and records its reading. The legs read the PANEL, not the
 // row: every `.rs-sub` under `#rsettings` that is shown,
 // with the host that owns it, over every host in EVERY pane that has a description and a control of any kind (a checkbox, a
 // button, a text field; the census form: a two-pane leg was a sample, and the two text controls and the Account row's two
@@ -914,7 +916,7 @@ test("the picker-open state, the one the panel leg did not enter (the maintainer
   });
 });
 
-test("a HOUSE dropdown open under the pointer (gear.js housePick: the judge rows' model and effort pickers and the widget options' pickers), the state the picker-open leg does not enter: those rows never wear rs-picking, so the pointer-wins rule alone governs it; exactly one description is shown with a keyboard focus in another row (never zero, never two), the open menu is counted by its computed position, and which host shows is recorded", { timeout: 180000 }, async (t) => {
+test("a HOUSE dropdown open under the pointer (gear.js housePick, entered at 9 of its 12: in Task tracking the three effort pickers and Judge concurrency, in Chat Text scheme, Comment effort and the three widget options), the state the picker-open leg does not enter: those rows never wear rs-picking, so the pointer-wins rule alone governs it; exactly one description is shown with a keyboard focus in another row (never zero, never two), the open menu is counted by its computed position, and which host shows is recorded", { timeout: 180000 }, async (t) => {
   // the exclusion the sheet states beside its one-tooltip rule (the author's fixer pass after the maintainer's round 5, exclusions-1): housePick
   // writes its menu's hidden itself and never calls setListOpen, so the class the two list pickers wear never reaches these rows
   // and the hovered row's own description shows beside its open menu; whether that row should join the class is the
