@@ -597,12 +597,104 @@ def _call_args(src, open_paren):
     raise AssertionError("an unbalanced call at %d" % open_paren)
 
 
+def _close(src, i):
+    """The index of the bracket closing the one opened at `i` (parentheses, brackets and braces balanced, strings skipped), or
+    None when it never closes."""
+    depth, quote, j = 0, "", i
+    while j < len(src):
+        c = src[j]
+        if quote:
+            if c == "\\":
+                j += 1
+            elif c == quote:
+                quote = ""
+        elif c in "\"'`":
+            quote = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return None
+
+
+def _arms(expr):
+    """The object literals an expression evaluates to, as their texts, or None when it is no expression this reader can open:
+    an object literal, or a conditional whose two branches each are one (read inside any parentheses around it; a nested
+    conditional in a branch is opened the same way). A `?` or `:` inside brackets or strings is not the conditional's, and
+    neither is the `?` of `?.` or `??`."""
+    e = expr.strip()
+    while e.startswith("(") and _close(e, 0) == len(e) - 1:
+        e = e[1:-1].strip()
+    if e.startswith("{"):
+        return [e] if _close(e, 0) == len(e) - 1 else None
+    depth, quote, q, nest, j = 0, "", None, 0, 0
+    while j < len(e):
+        c = e[j]
+        if quote:
+            if c == "\\":
+                j += 1
+            elif c == quote:
+                quote = ""
+        elif c in "\"'`":
+            quote = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif depth == 0 and c == "?" and e[j + 1:j + 2] not in (".", "?") and e[j - 1:j] != "?":
+            if q is None:
+                q = j
+            else:
+                nest += 1
+        elif depth == 0 and c == ":" and q is not None:
+            if nest:
+                nest -= 1
+            else:
+                a, b = _arms(e[q + 1:j]), _arms(e[j + 1:])
+                return None if a is None or b is None else a + b
+        j += 1
+    return None
+
+
+def _road_props(kind, literal, out):
+    """Classify one object literal's top-level properties for the road census: `road: "<w>"` (the key bare, the value a
+    double-quoted string literal) adds (kind, w); every other property whose text holds the token road adds (kind, its form
+    named), and so does a spread this reader cannot open; a spread of a conditional whose branches are object literals is
+    opened and its properties read the same way."""
+    for prop in _call_args(literal, 0):
+        if prop.startswith("..."):
+            arms = _arms(prop[3:])
+            if arms is None:
+                out.add((kind, "a spread this reader cannot open: %s" % prop[:40]))
+            else:
+                for arm in arms:
+                    _road_props(kind, arm, out)
+        elif prop == "road":
+            out.add((kind, "a shorthand road property, a variable"))
+        elif re.match(r"road\s*:", prop):
+            val = prop.split(":", 1)[1].strip()
+            lit = re.fullmatch(r'"([^"\\]*)"', val)
+            out.add((kind, lit.group(1) if lit else "a road that is not a double-quoted string literal: %s" % val[:40]))
+        elif re.search(r"\broad\b", prop):
+            out.add((kind, "the token road outside the recognised forms: %s" % prop[:40]))
+
+
 def diag_road_sites():
-    """Every `this.diag(` call in federation.ts's CODE whose data carries a `road` key, as (the row kind, the road's value): the kind
-    a string literal's text, the value a string literal's text, and any other form named for what it is (a kind or a road that is
-    not a literal, a shorthand `road`, a data expression that is not an object literal and mentions a road), so it reds the census
-    until classified (the maintainer's round 6, extra8-1: the census had keyed on the spelling `this.diag("feedDelta-apply", {...
-    road: "<w>"` and could not see a road under another spelling or on another row kind)."""
+    """Every `this.diag(` call in federation.ts's CODE whose data can carry a `road` key, as (the row kind, the road's value):
+    the kind a string literal's text, the value a string literal's text, and any other form named for what it is, so it reds
+    the census until classified (the maintainer's round 6, extra8-1: the census had keyed on the spelling
+    `this.diag("feedDelta-apply", {... road: "<w>"`). The reader FAILS CLOSED over the comment-stripped data: the recognised
+    forms are a top-level property `road: "<w>"` (the key bare, the value a double-quoted string literal) and the shorthand
+    `road` (named, a variable), and every other occurrence of the token road in the data is named, so a quoted, single-quoted,
+    computed or template-computed key, a template-literal or single-quoted value, a road in a nested object and the word in a
+    string value all red, as does any spelling nobody has listed. The data is opened when it is an object literal or a
+    conditional of object literals; a top-level spread in it is opened when its operand is such a conditional (the sendqueue
+    row's `...(prev ? { superseded: ... } : {})`, the one top-level spread of any data at this head) and is named, and reds,
+    otherwise, since a road could arrive through it unseen. A data expression this reader cannot open (a variable, a call)
+    is named when its text holds the token and is otherwise not read: no data of that form exists at this head."""
     src = _ts_code(fed_src())
     out = set()
     for m in re.finditer(r"this\.diag\(", src):
@@ -611,21 +703,13 @@ def diag_road_sites():
             continue
         kind_lit = re.fullmatch(r'"([\w-]+)"', args[0])
         kind = kind_lit.group(1) if kind_lit else "a row kind that is not a string literal: %s" % args[0][:40]
-        data = args[1]
-        if not data.startswith("{"):
-            if re.search(r"\broad\b", data):
-                out.add((kind, "a data expression this reader cannot open: %s" % data[:40]))
+        arms = _arms(args[1])
+        if arms is None:
+            if re.search(r"\broad\b", args[1]):
+                out.add((kind, "a data expression this reader cannot open: %s" % args[1][:40]))
             continue
-        body = data[1:-1]
-        if re.search(r"(^|[,{\s])road\s*(?=[,}]|$)", body):
-            out.add((kind, "a shorthand road property, a variable"))
-            continue
-        rm = re.search(r"\broad\s*:\s*([^,}]+)", body)
-        if not rm:
-            continue
-        val = rm.group(1).strip()
-        lit = re.fullmatch(r'"([^"]*)"', val)
-        out.add((kind, lit.group(1) if lit else "a road that is not a string literal: %s" % val))
+        for literal in arms:
+            _road_props(kind, literal, out)
     return out
 
 
@@ -1597,7 +1681,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # the maintainer's round 6, extra8-1) and named by the reason
         road_sites = diag_road_sites()
         self.assertEqual(road_sites, {("feedDelta-apply", "wire"), ("feedDelta-apply", "local")},
-                         "the road key rides feedDelta-apply alone, a fixed word at each of its two writers; a road on another row kind, or one that is not a literal, is classified here or the reason is wrong: %r" % (sorted(road_sites),))
+                         "the road key rides feedDelta-apply alone, a fixed word at each of its two writers; a road on another row kind, a value that is not a double-quoted literal, the token road in any other form or a spread the reader cannot open is classified here or the reason is wrong: %r" % (sorted(road_sites),))
         roads = sorted(v for _, v in road_sites)
         road_reason = CENSUS["federation"]["road"][1]
         for lit in roads:
