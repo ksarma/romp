@@ -303,9 +303,11 @@ elif act == "plant":                             # config a later leg would read
         f.write("node-options=--require=/nonexistent/hook.js\n")
     with open(os.path.join(home, ".gitconfig"), "w") as f:
         f.write("[core]\n\thooksPath = /nonexistent/hooks\n")
-    os.makedirs(state_root, exist_ok=True)
-    with open(os.path.join(state_root, "session-hosts"), "w") as f:
-        f.write("on\n")
+    # every file the runner put in the leg's state root (its session hosts toggle alone) flipped on, the file named by
+    # the listing: FAKE is a template, which tests/test_tempdir_hygiene.py's toggle census cannot read as a source
+    for n in (os.listdir(state_root) if os.path.isdir(state_root) else ()):
+        with open(os.path.join(state_root, n), "w") as f:
+            f.write("on\n")
     with open(os.path.join(os.environ["TMPDIR"], "planted-by-a-leg"), "w") as f:
         f.write("planted\n")
 elif act == "leftovers":                         # what git and python read in a checkout, left in the leg's own
