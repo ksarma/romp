@@ -3406,11 +3406,12 @@ class PytestEnvironment(_Base):
 
 
 class ServedLeg(_Base):
-    """The served rulings (2026-09-28): the runner mirrors CI's two jobs. The pytest leg runs first, over all of tests/,
-    before npm ci and with an empty browser directory, in the venv where the SDK imports, as CI's Python cells run it:
-    the browser-backed tests skip there and the rest of the served globs' files run with the SDK. The files CI's served
-    step selects (the globs on its pytest line, read from ci.yml by the step's name, in whichever job holds it) run last,
-    in a leg of their own, in one process, in a venv the runner builds from the served step's own pip line on the Python
+    """The served rulings (2026-09-28): the runner mirrors CI's jobs. The pytest leg runs first, over all of tests/, in
+    its job's checkout of its own, where npm ci never runs (round 2, decision 13), with an empty browser directory, in the
+    venv where the SDK imports, as CI's Python cells run it: the browser-backed tests skip there and the rest of the served
+    globs' files run with the SDK. The files CI's served step selects (the globs on its pytest line, read from ci.yml by
+    the step's name, in whichever job holds it) run in a leg of their own, in that job's checkout after its steps before
+    the served step, in one process, in a venv the runner builds from the served step's own pip line on the Python
     version the step's job sets up, without the SDK, with the step's own env: block (ROMP_SERVED_TESTS_REQUIRE and the
     engines, read from ci.yml, never restated). The served leg also runs the tests outside those files that the pytest
     leg skipped for want of the deps, read from its log. The seed's served step selects tests/test_b_browser.py and
@@ -4501,7 +4502,9 @@ class CiParity(unittest.TestCase):
         self.assertEqual([a for a in self.legs[PYTEST_LEG]["cmd"] if a.startswith("--ignore=")],
                          ["--ignore=%s" % p for p in sorted(sweep.PYTEST_IGNORED)], "the served files are collected")
         self.assertNotIn("left_out", self.legs[PYTEST_LEG])
-        self.assertLess(sweep.LEGS.index(PYTEST_LEG), sweep.LEGS.index("deps"), "the pytest leg runs before npm ci")
+        group = [g for g in sweep.leg_groups(self.ci_tree, "HEAD", list(sweep.LEGS)) if PYTEST_LEG in g["legs"]][0]
+        self.assertEqual((group["legs"], group["setup_before"]), ([PYTEST_LEG], None), "the pytest leg runs alone")
+        self.assertNotIn(sweep.DEPS_STEP, self.jobs[group["job"]], "in a job that runs no npm ci (round 2, decision 13)")
         tmp = os.path.join(os.sep + "nonexistent", "sweep-000000")
         ctx = sweep.leg_context(tmp, "python", env={"PATH": ""})
         self.assertEqual(sweep.leg_sets(PYTEST_LEG, ctx)["PLAYWRIGHT_BROWSERS_PATH"], os.path.join(tmp, sweep.NO_BROWSERS),
