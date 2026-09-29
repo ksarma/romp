@@ -95,7 +95,9 @@ and version and the install commands, so a pin change builds a new venv beside t
 removed by hand), and a finished build is reused; unlike CI, which resolves the unpinned packages fresh on every run,
 a reused venv keeps the versions it resolved when it was built. The build runs with a private HOME and pip's
 configuration files off, so no index, PYTHONPATH or SDK of the batcher's reaches it; an interpreter without ensurepip
-gets pip from PyPA's get-pip.py (ROMP_GET_PIP_URL overrides where from). A build that fails refuses the run (exit 2,
+gets pip from PyPA's get-pip.py (ROMP_GET_PIP_URL overrides where from; the URL used is part of the key, so a venv an
+override built is never reused by a run without it, and the fetched file's sha256 is in the build's marker and the
+record, runner.sdk.get_pip and runner.served.get_pip; round 2, extra6-3). A build that fails refuses the run (exit 2,
 nothing recorded, the venv removed), naming the step and its log, <key>.log beside the venv. The build's marker
 records the venv's tree (every path's mode, and each file's size and sha256), and a run uses a finished venv only when
 its tree still matches that record (bytecode python adds under __pycache__ aside) and the venv's interpreter reports
@@ -351,7 +353,11 @@ SETUP_ACTIONS = ("actions/checkout", "actions/setup-python")
 INSTALL_STEP_KEYS = ("name", "run", "shell", "timeout-minutes", "continue-on-error")
 WORKFLOW_KEYS_REFUSED = ("env", "defaults")
 # Where pip comes from for an interpreter without ensurepip (Debian's and Ubuntu's system python split it into a
-# package of its own), as bin/romp-sdk-setup does; ROMP_GET_PIP_URL overrides it, as it does there.
+# package of its own), as bin/romp-sdk-setup does; ROMP_GET_PIP_URL overrides it, as it does there. The URL a build uses
+# is part of both venvs' keys (sdk_key, served_key), so a venv an override built is never reused by a run without it,
+# and the fetched file's sha256 is in the venv's marker and the result's record, not in the key (round 2, extra6-3: a
+# hash in the key would fetch get-pip.py on every sweep to find the cached venv, and rebuild both venvs whenever PyPA
+# publishes a new file).
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 # The file a finished build writes last in the venv; a venv without it is a build that did not finish. It records the
 # venv's tree as the build left it (venv_tree), which every later use compares with the venv's tree then. One name for
@@ -2542,21 +2548,48 @@ def served_dir(env=None):
     return os.path.join(sweeps_dir(env), "served")
 
 
+def get_pip_url():
+    """Where a build fetches get-pip.py for an interpreter without ensurepip: ROMP_GET_PIP_URL, else GET_PIP_URL."""
+    return os.environ.get("ROMP_GET_PIP_URL") or GET_PIP_URL
+
+
+def url_shown(url):
+    """A URL as a result or a log shows it: its scheme, host, port and path, without any user, password, query or
+    fragment, which could carry a credential (a result names no secret)."""
+    import urllib.parse
+    try:
+        u = urllib.parse.urlsplit(url)
+        host = (u.hostname or "") + (":%d" % u.port if u.port else "")
+    except ValueError:
+        return "(a URL that does not parse)"
+    return urllib.parse.urlunsplit((u.scheme, host, u.path, "", ""))
+
+
+def _with_get_pip(doc, base):
+    """A key's document with the URL a build would fetch get-pip.py from (get_pip_url) when the interpreter has no
+    ensurepip (round 2, extra6-3); an interpreter with ensurepip fetches nothing, and its key is unchanged."""
+    if not base.get("ensurepip"):
+        doc["get_pip"] = get_pip_url()
+    return doc
+
+
 def sdk_key(python, base, plan):
     """The pytest leg's environment's cache key: sha256 over the SDK's pin, --python's absolute path and whole
-    sys.version, and every command the install steps give (so a ci.yml that adds or changes a package builds anew), in
-    20 hex digits."""
+    sys.version, every command the install steps give (so a ci.yml that adds or changes a package builds anew), and,
+    for an interpreter without ensurepip, the URL get-pip.py is fetched from (so a venv ROMP_GET_PIP_URL's file built is
+    never reused by a run without it, round 2, extra6-3; the fetched file's sha256 is in the marker, not here), in 20
+    hex digits."""
     doc = {"pin": "%s==%s" % (plan["dist"], plan["pin"]), "python": os.path.abspath(python), "version": base.get("full"),
            "commands": [[s["step"], [cmd for _kind, cmd in s["commands"]]] for s in plan["steps"]]}
-    return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+    return hashlib.sha256(json.dumps(_with_get_pip(doc, base), sort_keys=True).encode("utf-8")).hexdigest()[:20]
 
 
 def served_key(python, base, served):
-    """The served leg's environment's cache key: sha256 over --served-python's absolute path and whole sys.version and
-    the served step's pip lines as ci.yml writes them (so a line that adds or changes a package builds anew), in 20 hex
-    digits."""
+    """The served leg's environment's cache key: sha256 over --served-python's absolute path and whole sys.version, the
+    served step's pip lines as ci.yml writes them (so a line that adds or changes a package builds anew), and, for an
+    interpreter without ensurepip, the URL get-pip.py is fetched from (as sdk_key), in 20 hex digits."""
     doc = {"python": os.path.abspath(python), "version": base.get("full"), "install": [list(cmd) for cmd in served["install"]]}
-    return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+    return hashlib.sha256(json.dumps(_with_get_pip(doc, base), sort_keys=True).encode("utf-8")).hexdigest()[:20]
 
 
 def build_env(python, tmpdir):
@@ -2576,7 +2609,8 @@ def build_env(python, tmpdir):
 def _build_venv(venv, python, base, steps, env, log, tmpdir, where):
     """Create the venv from `python` (with --without-pip and PyPA's get-pip.py when it has no ensurepip) and run every
     (label, argv) of `steps` with the venv's python in place of the argv's `python`, each logged to `log`; Refused,
-    naming the step, the command and the log, on the first that fails or times out."""
+    naming the step, the command and the log, on the first that fails or times out. Returns {"url", "sha256"} of the
+    get-pip.py it fetched and ran (the URL as url_shown shows it), or None when the interpreter has ensurepip."""
     vpy = os.path.join(venv, "bin", "python")
     with open(log, "a") as out:
         out.write("# build: %s\n# key: %s\n# python: %s (%s)\n" % (now(), os.path.basename(venv), python, base.get("version")))
@@ -2601,9 +2635,9 @@ def _build_venv(venv, python, base, steps, env, log, tmpdir, where):
             step("venv", [python, "-m", "venv", venv])
         else:
             step("venv", [python, "-m", "venv", "--without-pip", venv])
-            url = os.environ.get("ROMP_GET_PIP_URL") or GET_PIP_URL
+            url = get_pip_url()
             dest = os.path.join(tmpdir, "get-pip.py")
-            out.write("# get-pip.py from %s (%s has no ensurepip)\n" % (url, python))
+            out.write("# get-pip.py from %s (%s has no ensurepip)\n" % (url_shown(url), python))
             out.flush()
             try:
                 import urllib.request
@@ -2611,10 +2645,15 @@ def _build_venv(venv, python, base, steps, env, log, tmpdir, where):
                     shutil.copyfileobj(r, f)
             except (OSError, ValueError) as e:
                 raise Refused("%s: %s has no ensurepip, and get-pip.py could not be fetched from %s (%s); log %s"
-                              % (where, python, url, e, log))
+                              % (where, python, url_shown(url), e, log))
+            with open(dest, "rb") as f:
+                fetched = {"url": url_shown(url), "sha256": hashlib.sha256(f.read()).hexdigest()}
+            out.write("# get-pip.py sha256 %s\n" % fetched["sha256"])
+            out.flush()
             step("get-pip", [vpy, dest, "-q"])
         for label, cmd in steps:
             step(label, [vpy] + cmd[1:])
+    return fetched if not base.get("ensurepip") else None
 
 
 def venv_tree(venv):
@@ -2914,7 +2953,7 @@ def _venv_environment(spec, sha, python, tmpdir):
     vpy = os.path.join(venv, "bin", "python")
     log = venv + ".log"
     where = spec["where"](key)
-    rec = {"key": key, "path": venv, "python": vpy}
+    rec = {"key": key, "path": venv, "python": vpy, "get_pip": None}
     rec.update(spec["record"])
     rec.update({"python_version": None, "tree": None, "files": None, "built": False, "build_s": 0.0, "log": log,
                 "base_python": os.path.abspath(python), "base_version": base.get("version")})
@@ -2926,7 +2965,8 @@ def _venv_environment(spec, sha, python, tmpdir):
             stale, got, tree = _venv_check(spec, venv, vpy, key, base, env)
             if stale is None:
                 spec["fill"](rec, got)
-                rec.update(python_version=got.get("full"), tree=_tree_digest(tree), files=len(tree))
+                rec.update(python_version=got.get("full"), tree=_tree_digest(tree), files=len(tree),
+                           get_pip=_marker_get_pip(venv, spec["marker"]))
                 print("sweep %s: %s, %s" % (short(sha), spec["ready"](rec), "built in %.0f s" % rec["build_s"] if rec["built"]
                                              else "built earlier"), flush=True)
                 return rec, VenvHold(lock, venv, tree, spec["marker"])
@@ -2944,6 +2984,17 @@ def _venv_environment(spec, sha, python, tmpdir):
         raise
 
 
+def _marker_get_pip(venv, marker):
+    """The get-pip.py a finished build fetched ({"url", "sha256"}), as its marker records it, or None (the interpreter had
+    ensurepip); read after _venv_check found the marker naming the key."""
+    try:
+        with open(os.path.join(venv, marker)) as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return doc.get("get_pip") if isinstance(doc, dict) else None
+
+
 def _venv_build(spec, venv, vpy, python, base, env, log, tmpdir, where, sha, key, stale, rec):
     """Remove whatever is at the venv's path and build it, under the exclusive lock; the marker, written last, records
     the tree the build left."""
@@ -2955,7 +3006,7 @@ def _venv_build(spec, venv, vpy, python, base, env, log, tmpdir, where, sha, key
     print("sweep %s: building %s %s: %s; log %s" % (short(sha), spec["what"], key, spec["building"], log), flush=True)
     t0 = time.monotonic()
     try:
-        _build_venv(venv, python, base, spec["steps"], env, log, tmpdir, where)
+        get_pip = _build_venv(venv, python, base, spec["steps"], env, log, tmpdir, where)
         got = probe(vpy, env, spec["dists"], what=spec["what"] + "'s interpreter", modules=spec["modules"], whole=spec["whole"])
         why = spec["refuse"](got, vpy)
         if why:
@@ -2966,7 +3017,7 @@ def _venv_build(spec, venv, vpy, python, base, env, log, tmpdir, where, sha, key
         tree = venv_tree(venv)
         doc = {"key": key}
         doc.update(spec["marker_doc"](got))
-        doc.update(python=os.path.abspath(python), python_version=base.get("full"), built=now(), tree=tree)
+        doc.update(python=os.path.abspath(python), python_version=base.get("full"), built=now(), tree=tree, get_pip=get_pip)
         write_result(os.path.join(venv, spec["marker"]), doc)
     except BaseException:
         shutil.rmtree(venv, ignore_errors=True)

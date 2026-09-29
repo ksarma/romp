@@ -3334,6 +3334,73 @@ class PytestEnvironment(_Base):
         self.assertEqual([s["kind"] for s in self.sdk_setups() if s["kind"] in ("get-pip", "pip")], ["get-pip", "pip", "pip", "pip"])
         self.assertEqual(self.sdk()["version"], SEED_PIN)
 
+    def test_a_venv_an_override_get_pip_built_is_never_reused_without_it(self):
+        """Round 2, extra6-3: the URL a build fetches get-pip.py from (ROMP_GET_PIP_URL, else PyPA's) is part of both
+        venvs' keys, so a venv another file built is never reused by a run that names another; the fetched file's sha256
+        is in the marker and the records (runner.sdk.get_pip, runner.served.get_pip), not in the key. Through the runner:
+        a build from file A, then a run naming file B builds both venvs anew under other keys, then a run naming A again,
+        with the file gone, reuses A's without a fetch, its records read from the markers. In process: a key without the variable differs from one with it,
+        and an interpreter with ensurepip, which fetches nothing, keeps one key either way. At c60fb907e the run naming B
+        reused A's venvs, and no field named the file."""
+        w = self.w
+        w.ctl({"ensurepip": False})
+        files = {}
+        for tag in ("A", "B"):
+            path = os.path.join(w.tmp, "get-pip-%s" % tag, "get-pip.py")
+            _append(path, "# a stand-in for get-pip.py, file %s\n" % tag)
+            with open(path, "rb") as f:
+                files[tag] = ("file://" + path, hashlib.sha256(f.read()).hexdigest())
+
+        def run(tag, head):
+            w.change({"notes.txt": head})
+            w.run(env=dict(w.env, ROMP_GET_PIP_URL=files[tag][0]), check=0)
+            runner = w.result()["runner"]
+            return runner["sdk"], runner["served"]
+        a_sdk, a_served = run("A", "first\n")
+        self.assertEqual((a_sdk["built"], a_served["built"]), (True, True))
+        b_sdk, b_served = run("B", "second\n")
+        # the key clause first, so a runner that leaves the URL out of the key reds on it
+        self.assertNotEqual(b_sdk["key"], a_sdk["key"], "another file is another key")
+        self.assertNotEqual(b_served["key"], a_served["key"], "for the served venv too")
+        self.assertEqual((b_sdk["built"], b_served["built"]), (True, True), "built anew, never reused")
+        want_a = {"url": files["A"][0], "sha256": files["A"][1]}
+        self.assertEqual((a_sdk["get_pip"], a_served["get_pip"]), (want_a, want_a))
+        for rec, marker in ((a_sdk, sweep.SDK_MARKER), (a_served, sweep.SERVED_MARKER)):
+            with open(os.path.join(rec["path"], marker)) as f:
+                self.assertEqual(json.load(f)["get_pip"], want_a, "the marker records the file the build ran")
+        self.assertEqual(b_sdk["get_pip"], {"url": files["B"][0], "sha256": files["B"][1]})
+        # the reuse fetches nothing (a hash of the file in the key would need a fetch on every sweep to find the venv),
+        # so it passes with file A gone
+        os.rename(files["A"][0][len("file://"):], files["A"][0][len("file://"):] + ".gone")
+        again_sdk, again_served = run("A", "third\n")
+        self.assertEqual((again_sdk["key"], again_sdk["built"], again_sdk["get_pip"]), (a_sdk["key"], False, want_a))
+        self.assertEqual((again_served["key"], again_served["built"], again_served["get_pip"]), (a_served["key"], False, want_a))
+        plan = sweep.read_install_plan(w.tree, "HEAD")
+        served = sweep.read_served_step(w.tree, "HEAD")
+        base = {"full": "3.99.0 (fake)", "ensurepip": False}
+        saved = os.environ.get("ROMP_GET_PIP_URL")
+        self.addCleanup(lambda: os.environ.pop("ROMP_GET_PIP_URL", None) if saved is None
+                        else os.environ.__setitem__("ROMP_GET_PIP_URL", saved))
+        keys = {}
+        for label, value in (("unset", None), ("A", files["A"][0])):
+            os.environ.pop("ROMP_GET_PIP_URL", None)
+            if value is not None:
+                os.environ["ROMP_GET_PIP_URL"] = value
+            keys[label] = (sweep.sdk_key(w.python, base, plan), sweep.served_key(w.python, base, served),
+                           sweep.sdk_key(w.python, dict(base, ensurepip=True), plan),
+                           sweep.served_key(w.python, dict(base, ensurepip=True), served))
+        self.assertNotEqual(keys["unset"][0], keys["A"][0], "a run without the variable does not find the override's venv")
+        self.assertNotEqual(keys["unset"][1], keys["A"][1])
+        self.assertEqual(keys["unset"][2:], keys["A"][2:], "an interpreter with ensurepip fetches nothing and keeps its key")
+
+    def test_a_recorded_get_pip_url_names_no_user_password_or_query(self):
+        """A result names no secret: the get-pip.py URL a record or build log shows keeps its scheme, host, port and path
+        only."""
+        self.assertEqual(sweep.url_shown("https://user:tok@example.invalid:8443/p/get-pip.py?t=x#f"),
+                         "https://example.invalid:8443/p/get-pip.py")
+        self.assertEqual(sweep.url_shown("file:///tmp/a/get-pip.py"), "file:///tmp/a/get-pip.py")
+        self.assertEqual(sweep.url_shown(sweep.GET_PIP_URL), sweep.GET_PIP_URL)
+
     def test_a_ci_yml_the_runner_cannot_read_is_refused_by_name(self):
         w = self.w
         CRYPTO, PYTEST = "      - name: Install cryptography\n", "      - name: Run pytest\n"

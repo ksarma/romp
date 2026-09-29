@@ -180,7 +180,10 @@ subject; `verify` refuses the branch otherwise.
    (pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads),
    so the SDK-gated tests run as they do in CI. The runner builds the venv from `--python`
    (default: the interpreter running `sweep.py`) under `<state dir>/sweeps/sdk/`: the first sweep at
-   a new pin or interpreter builds it (a download of about 110 MB), and later sweeps reuse it. The
+   a new pin or interpreter builds it (a download of about 110 MB), and later sweeps reuse it. An
+   interpreter without `ensurepip` gets pip from PyPA's `get-pip.py`; `ROMP_GET_PIP_URL` names
+   another file, and the URL is part of both venvs' keys, so a venv built from another file is never
+   reused by a sweep without it. The file's sha256 is recorded with the venv. The
    legs outside the two venvs (bats, the node tests, the ledger check and the npm legs) have
    `--python`'s directory first on their PATH, so they run its `python3`: it should hold nothing
    installed, as the `python3` of CI's jobs other than the Python cells holds none of the test
