@@ -12,8 +12,8 @@ push already tested; a move after that read is finish's loud report (LandAndFini
 `if:`: `pull_request`'s branch filter selects the base branch, so singling out batch PRs there would
 need an `if:` on every job, and a skipped job reports success (a required check reads it as passing).
 CiTriggers reads the `on:` block and holds it to exactly those three triggers, so an added one (a merge queue, a
-review, another workflow's run) fails by name; NoJobLevelGate refuses an `if:` or `continue-on-error:` on any of the
-four jobs.
+review, another workflow's run) fails by name; NoJobLevelGate refuses an `if:` or `continue-on-error:` on any job
+ci.yml defines, read from the file.
 
 Concurrency (2026-09-08, extended 2026-09-27): the group was `ci-<event>-<ref>` with cancel-in-progress
 for every event, so two merges to main in quick succession cancelled the first merge's run, and a red
@@ -41,7 +41,7 @@ import unittest
 HERE = os.path.dirname(os.path.realpath(__file__))
 WF = os.path.join(os.path.dirname(HERE), ".github", "workflows", "ci.yml")
 
-JOBS = ("python", "shell", "secrets", "vscode-extension")
+JOBS = ("python", "shell", "secrets", "vendored-tooling", "vscode-extension", "served-pages")
 
 
 def _source():
@@ -197,24 +197,45 @@ class CiTriggers(unittest.TestCase):
             glob_matches("batch/[0-9]*", "batch/2")
 
 
+def job_level_gates(src=None):
+    """[(job, key)] for each job-level `if:` or `continue-on-error:` in the workflow, over every job it defines (job_keys),
+    not over a list of known jobs."""
+    return [(job, key) for job, keys in job_keys(src).items() for key in ("if", "continue-on-error") if key in keys]
+
+
 class NoJobLevelGate(unittest.TestCase):
     """No job carries an `if:` or a `continue-on-error:` of its own: a skipped job reports success, and
     continue-on-error passes over a failure, so a batch head could read green with a suite that never ran.
     The triggers are the gate (CiTriggers). PR 872's check holds the python job to an allowlist of keys;
-    this extends the two refusals to the other three jobs. A guard: it passes on the base too."""
+    this extends the two refusals to every other job ci.yml defines, read from the file (job_level_gates), so a
+    job added later is covered without a change here. A guard: it passes on the base too."""
 
-    def test_the_four_jobs_exist(self):
+    def test_the_six_jobs_exist(self):
         found = job_keys()
         for job in JOBS:
             self.assertIn(job, found, "no job %r in ci.yml; re-anchor this pin" % job)
 
     def test_no_job_level_if_or_continue_on_error(self):
-        found = job_keys()
-        for job in JOBS:
-            for key in ("if", "continue-on-error"):
-                self.assertNotIn(key, found.get(job, []),
-                                 "the %s job carries a job-level %s:; a skipped job reports success and continue-on-error "
-                                 "passes over a failure, so CI could read green without running it" % (job, key))
+        for job, key in job_level_gates():
+            self.fail("the %s job carries a job-level %s:; a skipped job reports success and continue-on-error passes over "
+                      "a failure, so CI could read green without running it" % (job, key))
+
+    def test_a_gate_on_any_job_is_read(self):
+        """A job-level if: or continue-on-error: planted on each job ci.yml defines, and on a job added at the end, is
+        read. Until this branch's merge of PR 928 the check read a fixed list of four jobs, so on that merge a gate on
+        vendored-tooling or served-pages, the two jobs 928 added, passed it."""
+        src = _source()
+        jobs = list(job_keys(src))
+        self.assertEqual(sorted(jobs), sorted(JOBS), "re-anchor: the jobs are %r" % sorted(jobs))
+        for job in jobs:
+            m = re.search(r"^  %s:[ \t]*(?:#.*)?\n" % re.escape(job), src, re.M)
+            self.assertIsNotNone(m, "the %s job's key line; re-anchor this pin" % job)
+            for key, value in (("if", "false"), ("continue-on-error", "true")):
+                with self.subTest(job=job, key=key):
+                    planted = src[:m.end()] + "    %s: %s\n" % (key, value) + src[m.end():]
+                    self.assertIn((job, key), job_level_gates(planted))
+        added = src.rstrip("\n") + "\n\n  late:\n    if: false\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n"
+        self.assertEqual(job_level_gates(added), [("late", "if")])
 
 
 # ── a small evaluator for the concurrency stanza's ${{ }} expressions ────────────────────────────────────────────────
