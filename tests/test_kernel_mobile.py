@@ -935,12 +935,16 @@ out.webkitBack = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: gl
 // under a zoom, in families that each start from rest (the measured road stores 0 there and clears the flag). The keyboard's band
 // is 508 unzoomed, so a report at scale s with the keyboard up is 508/s tall and one with it down 844/s. Every step records the
 // report it drove and what the shell published, so the test derives the reading's interval from the geometry it drove (the
-// reading less the zoom's share, both in pixels, up to the reading) and never from the kernel's own arithmetic.
+// reading less the zoom's share, both in pixels, up to the reading) and never from the kernel's own arithmetic. Each step then
+// fires the same report once more, a refit with nothing new (fit() runs again on ordinary events), and records what that second
+// run published beside the first (refit), so every cell also reads whether a refit moved --app-top.
 const r6 = {};
 const r6step = (fam, tag, height, offsetTop, scale) => {
   visualViewport.scale = scale; visualViewport.height = height; visualViewport.offsetTop = offsetTop;
   fire(VV, 'resize'); fire(VV, 'scroll'); flush();
-  (r6[fam] = r6[fam] || []).push({ tag, height, offsetTop, scale, appTop: appTop(), appH: appH() });
+  const first = appTop();
+  fire(VV, 'resize'); flush();
+  (r6[fam] = r6[fam] || []).push({ tag, height, offsetTop, scale, appTop: first, refit: appTop(), appH: appH() });
 };
 const r6share = (s) => 844 * (1 - 1 / s);
 const r6rest = (fam) => r6step(fam, 'rest', 844, 0, 1);
@@ -1022,22 +1026,33 @@ for (const [p, s, tag] of [[30, 1.05, 'p30-s1.05'], [83, 1.2, 'p83-s1.2'], [83, 
 // a hold of 83 raised at scale 1, then ONE report that pinches to 2 as a taller keyboard comes in (the band 508 to 460: no zoom
 // alone, since h changed, and no raise, since no keyboard-down run came between), then that keyboard's pan up to 40
 { const f = 'swapZoom'; r6rest(f); r6step(f, 'kbUp', 508, 83, 1); r6step(f, 'swapPinch2', 230, 200, 2); r6step(f, 'up40', 230, 40, 2); }
-// a pan after a re-raise bound above the hold (disclosed in the fit() comment): a hold of 83 at scale 1, the keyboard down under a
-// zoom, raised again with the visual viewport deep (the re-raise bound, the reading less the share, above the hold), then that
-// keyboard panned back up. The pan rule re-bounds from the hold, not from the re-raise bound
+// a pan after a re-raise bound above the hold (the maintainer's round 6 ruling, 2026-09-29): a hold of 83 at scale 1, the keyboard
+// down under a zoom, raised again with the visual viewport deep (the re-raise bound, the reading less the share, above the hold),
+// then that keyboard panned back up. The pan rule re-bounds from the larger of the hold and the value in force, here the re-raise
+// bound; from the hold alone it had published 83 and opened a band under the composer
 for (const [s, deep, pan] of [[2, 590, 422], [1.5, 495.2, 281.33], [1.1, 250, 150]]) {
   const f = 'reraiseDeep' + s; r6rest(f); r6step(f, 'E1-kbUp', 508, 83, 1); r6step(f, 'E2-kbDownZ', 844 / s, 0, s);
   r6step(f, 'E3-reRaiseDeep', 508 / s, deep, s); r6step(f, 'P-panUp', 508 / s, pan, s);
 }
-// a keyboard of another height swapped in at the zoom of the raise that wrote the value in force, then the same report again
-// (disclosed in the fit() comment): the swap's run takes the stance (the band's height changed, so no pan), and a refit at the
-// same geometry is a pan by the test (the scale and the band's height unchanged since the previous run), so it publishes the pan
-// rule's value. At 2, a 471 px keyboard (band 373) raised at the layout viewport's bottom, then the 508 px keyboard (band 336) at
-// 40; at 1.5, the 508 px keyboard at 555.74, then the 471 px keyboard at 83
+// a keyboard of another height swapped in at the zoom of the raise that wrote the value in force, then the same report again (the
+// maintainer's round 6 ruling, 2026-09-29): the pan test does not ask for the band's height to be unchanged, so the swap's own run
+// is a pan and takes the pan rule, and a refit at the same geometry publishes the same value (with the height in the test the
+// swap's run took the stance and the refit the rule, so a refit with nothing new moved --app-top). At 2, a 471 px keyboard (band
+// 373) raised at the layout viewport's bottom, then the 508 px keyboard (band 336) at 40; at 1.5, the 508 px keyboard at 555.74,
+// then the 471 px keyboard at 83
 { const f = 'swapRefit2'; r6rest(f); r6step(f, 'kb471up', 373 / 2, 657.5, 2);
   for (const t of ['swap508', 'refit', 'refit2']) r6step(f, t, 336 / 2, 40, 2); }
 { const f = 'swapRefit1.5'; r6rest(f); r6step(f, 'kb508up', 336 / 1.5, 555.74, 1.5);
   for (const t of ['swap471', 'refit']) r6step(f, t, 373 / 1.5, 83, 1.5); }
+// the corner where a refit can still move --app-top (disclosed in the fit() comment): the 508 px keyboard raised under a zoom of s0
+// with no hold (the measured road writes the reading less the share, and kz is s0), then ONE report that zooms to s1 as the 471 px
+// keyboard comes in, then ONE report back to s0 with the 508 px keyboard. Neither is a zoom alone (the band's height changed in each),
+// so kz stays s0; the report back is no pan on its own run (the scale changed since the previous run) and takes the stance, and
+// its refit is a pan at kz's zoom and takes the pan rule
+for (const [s0, s1, o0, o2] of [[2, 1.5, 500, 40], [1.5, 1.2, 400, 100]]) {
+  const f = 'swapZoomBack' + s0; r6rest(f); r6step(f, 'raiseZ', 336 / s0, o0, s0);
+  r6step(f, 'zoomSwap', 373 / s1, 100, s1); r6step(f, 'zoomSwapBack', 336 / s0, o2, s0);
+}
 // the stance's third cost (disclosed in the fit() comment): a keyboard re-raised with no pan under a light zoom s0 (the value in
 // force its re-raise bound, 0), a zoom alone to s1 about the band's top, then that keyboard panned down to s1's share. With no
 // hold (the keyboard's first raise at s0 stores the reading less the share) and with a hold of 83 from scale 1
@@ -1104,6 +1119,49 @@ visualViewport.scale = 1.0008; visualViewport.height = 459.6; visualViewport.off
 const cutBetween = { appTop: appTop(), appH: appH() };
 visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.cutBetween = { hold: cutHold, between: cutBetween, pinchAfter: { appTop: appTop(), appH: appH() } };
+// the property the maintainer's round 6 ruling (2026-09-29) pins: fit() is idempotent at an unchanged report, so a refit with nothing
+// new never moves --app-top. The round's doubled-step fuzz, carried into the tree: 4000 seeded report sequences (mulberry32, seed
+// 21) of 12 steps. Each sequence starts at rest (the pointer fine with the visual viewport at rest clears the hold, then coarse
+// again); each step is a pan only, a zoom with the keyboard kept, a keyboard event at the zoom (a raise, a drop, or a swap between
+// the 508 and 471 px keyboards), a zoom and a keyboard event in one report, a stale report outside the layout viewport, or now and
+// then a pointer flip; then the same report fires again. A step whose second run publishes another --app-top than its first is
+// counted, and the first ten are listed with their sequence up to that step, as (coarse, scale, keyboard, offsetTop, first run, refit)
+{ let seed = 21, coarse = true, steps = 0, swapsAtZoom = 0, movedSteps = 0;
+  const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const SC = [1, 1, 1.0003, 844 / 843.5, 1.0007, 1.003, 1.008, 1.01, 1.05, 1.1, 1.2, 1.5, 2, 3], KBS = [0, 508, 508, 508, 471], Lh = 844;
+  const kinds = { pan: 0, zoom: 0, keyboard: 0, both: 0, outside: 0, flip: 0 }, moved = [];
+  global.matchMedia = () => ({ matches: coarse });
+  for (let q = 0; q < 4000; q++) {
+    coarse = false; visualViewport.scale = 1; visualViewport.height = Lh; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+    coarse = true; fire(VV, 'resize'); flush();
+    let s = 1, kb = 0, o = 0; const seq = [];
+    for (let i = 0; i < 12; i++) {
+      const r = rnd(), kb0 = kb;
+      if (r < 0.06) { coarse = !coarse; kinds.flip++; }
+      else if (r < 0.40) {
+        const hgt = (Lh - kb) / s; o = Math.max(0, Math.min(Lh - hgt, o + (rnd() - 0.5) * 300));
+        if (rnd() < 0.3) o = pick([0, Math.max(0, Lh * (1 - 1 / s)) / 2, Math.max(0, Lh * (1 - 1 / s)), 83, 40, 2, Lh - hgt]);
+        o = Math.max(0, Math.min(Lh - hgt, o)); kinds.pan++;
+      } else if (r < 0.65) {
+        s = pick(SC); const hgt = (Lh - kb) / s; o = Math.max(0, Math.min(Lh - hgt, o + (rnd() - 0.5) * 100)); kinds.zoom++;
+      } else if (r < 0.92) {
+        kb = pick(KBS); const hgt = (Lh - kb) / s; o = pick([0, 83, 40, 2, Math.max(0, Lh * (1 - 1 / s)), o]); o = Math.max(0, Math.min(Lh - hgt, o));
+        kinds.keyboard++; if (kb0 && kb && kb !== kb0 && s >= Lh / (Lh - 0.5)) swapsAtZoom++;
+      } else if (r < 0.97) {
+        s = pick(SC); kb = pick(KBS); const hgt = (Lh - kb) / s; o = Math.max(0, Math.min(Lh - hgt, rnd() * (Lh - hgt))); kinds.both++;
+      } else { o = Lh - (Lh - kb) / s + 50; kinds.outside++; }
+      visualViewport.scale = s; visualViewport.height = (Lh - kb) / s; visualViewport.offsetTop = o;
+      fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+      const first = appTop();
+      fire(VV, 'resize'); flush(); steps++;
+      seq.push([coarse ? 1 : 0, s, kb, +o.toFixed(3), first, appTop()]);
+      if (appTop() !== first) { movedSteps++; if (moved.length < 10) moved.push(seq.slice()); }
+    }
+  }
+  global.matchMedia = savedMatchMedia;
+  out.idem = { steps, kinds, swapsAtZoom, movedSteps, moved };
+}
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 console.log(JSON.stringify(out));
 """
@@ -1648,13 +1706,15 @@ class MobileFitExecutes(unittest.TestCase):
 
     def test_a_pan_of_a_keyboard_raised_at_this_zoom_follows_the_reading(self):
         # the maintainer's round 6 ruling (2026-09-29): the reading governs a pan of a keyboard raised at this zoom. A report with the
-        # scale and the band's height unchanged since the previous run and the keyboard up is a pan; where a raise or a re-raise wrote
-        # the value in force under the current zoom, with no zoom alone since, the hold road re-bounds it from the hold into the
-        # reading's interval. Keeping the value there had left the composer 44 px below the visible band's bottom for a light-zoom
-        # hold of 20 dragged to the top (lzhold20), and a pan to the share after a no-pan re-raise under a light zoom had opened a
-        # band under the composer (the A4 cells: 2.67 px at 1.008, 3.33 px at 1.01, 16 px at 1.05). The rule's value is derived here
-        # from the geometry each step drove: the hold bounded into the reading's interval (the reading less the share, up to the
-        # reading). Each keyboard event that arms the rule has a cell a mutant turns red: the raise (lzhold20's dragTo0 stays at 20
+        # scale unchanged since the previous run and a keyboard up is a pan (a keyboard swapped in at the same zoom included); where a
+        # raise or a re-raise wrote the value in force under the current zoom, with no zoom alone since, the hold road re-bounds the
+        # larger of the hold and the value in force into the reading's interval. Keeping the value there had left the composer 44 px
+        # below the visible band's bottom for a light-zoom hold of 20 dragged to the top (lzhold20), and a pan to the share after a
+        # no-pan re-raise under a light zoom had opened a band under the composer (the A4 cells: 2.67 px at 1.008, 3.33 px at 1.01, 16
+        # px at 1.05). The rule's value is derived here from the geometry each step drove: the hold (in these cells the larger of the
+        # two, the value in force being the hold itself or a re-raise bound of 0) bounded into the reading's interval (the reading
+        # less the share, up to the reading); re-bounded from the value in force alone, the A4 and E4 cells publish the re-raise
+        # bound's 0. Each keyboard event that arms the rule has a cell a mutant turns red: the raise (lzhold20's dragTo0 stays at 20
         # when a raise's write is no keyboard event) and the re-raise (the E4 cells, a hold from scale 1 re-raised under the zoom:
         # they keep the re-raise bound, 0, when the re-raise is no keyboard event). Every cell is checked before the test fails.
         px, bad = self._r6_px, []
@@ -1747,52 +1807,95 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual([band(t[k]) for k in ("A4-kbUpPanInShare", "zoomAlone1.1", "zoomBack1.05")], [-24.0, 5.0, 16.0],
                          "the band under the composer: none after the rule's pan, 5 px after the zoom alone, 16 px after the zoom back")
 
-    def test_a_pan_after_a_re_raise_bound_above_the_hold_re_bounds_from_the_hold(self):
-        # DISCLOSED, and these cells are its witness (the fit() comment names them): the pan rule re-bounds from the hold, not from a
-        # re-raise bound above it. A hold of 83 at scale 1, the keyboard down under the zoom and raised again with the visual viewport
+    def test_a_pan_after_a_re_raise_bound_above_the_hold_re_bounds_from_the_re_raise_bound(self):
+        # the maintainer's round 6 ruling (2026-09-29): the pan rule re-bounds from the larger of the hold and the value in force,
+        # capped at the reading. A hold of 83 at scale 1, the keyboard down under the zoom and raised again with the visual viewport
         # deep, so the re-raise bound (the reading less the share) is above the hold: 168 at scale 2, 214 at 1.5, 173 at 1.1. Then
-        # that keyboard panned back up: a pan by the test (the scale and the band's height unchanged), the rule re-bounds from the
-        # hold and publishes 83, and a band opens under the composer (85, 29 and 20.82 px) where the re-raise bound would leave none.
-        # Re-bounding from the larger of the hold and the value in force closes it; the re-bound source is the maintainer's call, and
-        # these cells pin the built behaviour so a change to it is made on purpose.
+        # that keyboard panned back up, a pan by the test: the rule re-bounds from the re-raise bound and publishes 168, 214 and 150
+        # (the reading caps it at 1.1), and no band opens under the composer. Re-bounded from the hold alone it published 83 there,
+        # and a band opened (85, 29 and 20.82 px). The rule's value is derived from the geometry each step drove.
         px = self._r6_px
 
-        def band(st, top):   # how far the composer's bottom sits above the visible band's bottom at a published top
-            return round((st["offsetTop"] + st["height"]) - (top + px(st["appH"])), 2)
+        def band(st):   # how far the composer's bottom sits above the visible band's bottom: the band under the composer
+            return round((st["offsetTop"] + st["height"]) - (px(st["appTop"]) + px(st["appH"])), 2)
 
-        for s, rp, gap in (("2", 168, 85.0), ("1.5", 214, 29.0), ("1.1", 173, 20.82)):
+        for s, rp in (("2", 168), ("1.5", 214), ("1.1", 173)):
             t = self._r6("reraiseDeep" + s)
             self.assertEqual({round(t[k]["height"] * t[k]["scale"]) for k in ("E3-reRaiseDeep", "P-panUp")}, {508},
                              "the cell's premise: the same keyboard raised again and panned, so the pan is a pan: %r" % (t,))
             self.assertEqual(t["E3-reRaiseDeep"]["scale"], t["P-panUp"]["scale"], "the cell's premise: no zoom between the re-raise and the pan")
-            self.assertEqual([px(t[k]["appTop"]) for k in ("E1-kbUp", "E2-kbDownZ", "E3-reRaiseDeep", "P-panUp")], [83, 0, rp, 83],
-                             "the hold, the keyboard down, the re-raise bound above the hold, then the pan re-bounded from the hold: %r" % (t,))
-            self.assertEqual(band(t["P-panUp"], 83), gap, "the band under the composer after the pan: %r" % (t["P-panUp"],))
-            self.assertLessEqual(band(t["P-panUp"], rp), 0, "the cell's premise: the re-raise bound would leave no band there: %r" % (t["P-panUp"],))
+            self.assertEqual([px(t[k]["appTop"]) for k in ("E1-kbUp", "E2-kbDownZ", "E3-reRaiseDeep")], [83, 0, rp],
+                             "the hold, the keyboard down, then the re-raise bound above the hold: %r" % (t,))
+            p = t["P-panUp"]
+            lo, hi = self._r6_interval(p)
+            want = max(lo + 1, min(max(83, rp), hi - 1))
+            self.assertGreater(want, 83, "the cell's premise: the re-raise bound, capped at the reading, is above the hold: %r" % (p,))
+            self.assertEqual(px(p["appTop"]), want, "the pan re-bounded from the larger of the hold (83) and the re-raise bound (%d): %r" % (rp, t))
+            self.assertLessEqual(band(p), 1, "no band under the composer after the pan: %r" % (p,))
 
-    def test_a_refit_at_the_swaps_own_report_publishes_the_pan_rules_value(self):
-        # DISCLOSED, and these cells are its witness (the fit() comment's swap paragraph names them): after a keyboard swap at the
-        # zoom of the raise that wrote the value in force, a second fit() at an unchanged report moves --app-top. The swap's run is
-        # no pan (the band's height changed), so the stance keeps the raise's value under the new keyboard; the next run at the same
-        # report is a pan by the test (the scale and the band's height unchanged since the previous run), and the raise was at this
-        # zoom, so it publishes the pan rule's value. fit() runs again on ordinary events, so the second run is ordinary on a device.
-        # Whether a report identical to the previous one is a pan is the maintainer's call; these cells pin the built behaviour so a
-        # change to it is made on purpose (a pan test without the band's-height conjunct takes the rule on the swap's own run).
-        px = self._r6_px
+    def test_a_refit_at_an_unchanged_report_never_moves_app_top(self):
+        # the maintainer's round 6 ruling (2026-09-29): fit() is idempotent at an unchanged report, so a refit with nothing new never
+        # moves --app-top (the shell may not move without new information, and fit() runs again on ordinary events: a visual
+        # viewport resize or scroll, a window resize, focus and focusout among them). Three reads. The seeded doubled-step fuzz (4000 report
+        # sequences of 12 steps, each step fired twice) moves it at no step; while the pan test asked for the band's height to be
+        # unchanged too, it moved at 29 steps of these 48000, all keyboard swaps. Every designed cell above fires its report twice as
+        # well, and the second run publishes what the first did, the corner the fit() comment discloses excepted (the swapZoomBack
+        # cells, their own test below). And the swap cells: a keyboard of another height swapped in at the zoom of the raise that
+        # wrote the value in force is a pan on its own run, so the swap publishes the pan rule's value and the refits the same (the
+        # swap's run had taken the stance, 236 at scale 2 and 275 at 1.5, and the refit the rule, 40 and 83).
+        px, idem = self._r6_px, self.out["idem"]
+        self.assertEqual(idem["steps"], 48000, "the fuzz drove every step: %r" % ({k: v for k, v in idem.items() if k != "moved"},))
+        for kind, floor in (("pan", 10000), ("zoom", 8000), ("keyboard", 8000), ("both", 1500), ("outside", 1000), ("flip", 2000)):
+            self.assertGreater(idem["kinds"][kind], floor, "the fuzz's premise: it drove each kind of report: %r" % (idem["kinds"],))
+        self.assertGreater(idem["swapsAtZoom"], 1000, "the fuzz's premise: keyboard swaps under a zoom, the reports that had moved: %r" % (idem["swapsAtZoom"],))
+        self.assertEqual((idem["movedSteps"], idem["moved"]), (0, []), "a refit at an unchanged report moved --app-top at this many "
+                         "steps; the first sequences up to that step, as (coarse, scale, keyboard, offsetTop, first run, refit)")
+        cells = [(fam, st) for fam, steps in self.out["r6"].items() if not fam.startswith("swapZoomBack") for st in steps]
+        self.assertGreater(len(cells), 800, "the designed cells were driven")
+        moved = ["%s %s: %s, then %s" % (fam, st["tag"], st["appTop"], st["refit"]) for fam, st in cells if st["refit"] != st["appTop"]]
+        self.assertEqual(moved, [], "a designed cell's refit moved --app-top, %d of %d cells" % (len(moved), len(cells)))
 
         def below(st):   # how far the composer's bottom sits below the visible band's bottom
             return round((px(st["appTop"]) + px(st["appH"])) - (st["offsetTop"] + st["height"]), 2)
 
-        for fam, raise_, repeats, want, gaps in (("swapRefit2", "kb471up", ("swap508", "refit", "refit2"), [236, 236, 40, 40], [364.0, 168.0, 168.0]),
-                                                 ("swapRefit1.5", "kb508up", ("swap471", "refit"), [275, 275, 83], [316.33, 124.33])):
+        for fam, raise_, repeats, want, gaps in (("swapRefit2", "kb471up", ("swap508", "refit", "refit2"), [236, 40, 40, 40], [168.0, 168.0, 168.0]),
+                                                 ("swapRefit1.5", "kb508up", ("swap471", "refit"), [275, 83, 83], [124.33, 124.33])):
             t = self._r6(fam)
             self.assertEqual(len({(t[k]["height"], t[k]["offsetTop"], t[k]["scale"]) for k in repeats}), 1,
                              "the cell's premise: the refits repeat the swap's own report: %r" % (t,))
             self.assertEqual(t[raise_]["scale"], t[repeats[0]]["scale"], "the cell's premise: the swap at the raise's own zoom")
             self.assertNotEqual(px(t[raise_]["appH"]), px(t[repeats[0]]["appH"]), "the cell's premise: a keyboard of another height")
+            lo, hi = self._r6_interval(t[repeats[0]])
+            self.assertEqual(max(lo + 1, min(px(t[raise_]["appTop"]), hi - 1)), want[1],
+                             "the cell's premise: the raise's value bounded into the swapped keyboard's reading is the value asserted: %r" % (t,))
             self.assertEqual([px(t[k]["appTop"]) for k in (raise_,) + repeats], want,
-                             "the raise, the swap's run by the stance, then the refit at the same report by the pan rule: %r" % (t,))
+                             "the raise, then the swap's own run and the refits at the same report by the pan rule: %r" % (t,))
+            self.assertEqual([px(t[k]["refit"]) for k in (raise_,) + repeats], want, "each report's refit publishes what its run did: %r" % (t,))
             self.assertEqual([below(t[k]) for k in repeats], gaps, "the composer below the visible band's bottom: %r" % (t,))
+
+    def test_a_refit_after_a_report_that_changed_the_zoom_and_the_keyboard_together_can_move_app_top(self):
+        # DISCLOSED, the corner the idempotence above does not reach, and these cells are its witness (the fit() comment names them):
+        # a report that zooms as a keyboard of another height comes in is no zoom alone (the band's height changed), so kz, the zoom
+        # of the raise that wrote the value in force, stands through it; a second such report back to kz's zoom is no pan on its own
+        # run (the scale changed since the previous run) and takes the stance, and its refit is a pan at kz's zoom and takes the pan
+        # rule. The 508 px keyboard raised at 2 with the visual viewport at 500 (78), zoomed to 1.5 as the 471 px keyboard comes in,
+        # then back to 2 with the 508 px keyboard at 40: 78 on that report's run and 40 on its refit; at 1.5 by way of 1.2, 119 and
+        # then 100. The doubled-step fuzz above does not reach it. Whether the pan rule governs a report at kz's zoom whatever else
+        # changed with it (the pan test without its scale conjunct), or a scale change with the keyboard's clears kz, is the
+        # maintainer's call; either makes the refit publish what the report's run did, and these cells pin the built behaviour so a
+        # change to it is made on purpose.
+        px = self._r6_px
+        for s0, raised, refit in (("2", 78, 40), ("1.5", 119, 100)):
+            t = self._r6("swapZoomBack" + s0)
+            self.assertEqual([round(t[k]["height"] * t[k]["scale"]) for k in ("raiseZ", "zoomSwap", "zoomSwapBack")], [336, 373, 336],
+                             "the cell's premise: the band's height changes in both zooms, so neither is a zoom alone: %r" % (t,))
+            self.assertEqual(t["raiseZ"]["scale"], t["zoomSwapBack"]["scale"], "the cell's premise: the second report comes back to the raise's zoom")
+            self.assertNotEqual(t["raiseZ"]["scale"], t["zoomSwap"]["scale"], "the cell's premise: the first report zooms away")
+            self.assertEqual([px(t[k]["appTop"]) for k in ("raiseZ", "zoomSwap", "zoomSwapBack")], [raised, raised, raised],
+                             "the raise, then the two reports by the stance: %r" % (t,))
+            lo, hi = self._r6_interval(t["zoomSwapBack"])
+            self.assertEqual(max(lo + 1, min(raised, hi - 1)), refit, "the cell's premise: the pan rule's value differs from the stance's: %r" % (t,))
+            self.assertEqual(px(t["zoomSwapBack"]["refit"]), refit, "the refit at the report back, by the pan rule: %r" % (t,))
 
     def test_a_pan_down_after_a_zoom_alone_keeps_the_value_and_opens_a_band(self):
         # DISCLOSED, the stance's third cost, and these cells are its witness (the fit() comment names them): the pan rule governs a
@@ -1800,10 +1903,11 @@ class MobileFitExecutes(unittest.TestCase):
         # zoom's share takes the stance and keeps the value, and at the share a band opens under the composer. The keyboard
         # re-raised with no pan under a light zoom (the value in force its re-raise bound, 0), a zoom alone about the band's top,
         # then the pan down to the new zoom's share: 30.55 px from 1.05 to 1.1, 19.02 from 1.05 to 1.06, 6.59 from 1.01 to 1.02 and
-        # 3.33 from 1.003 to 1.01, the same with no hold and with a hold of 83 from scale 1. Whether the rule governs a pan after a
-        # zoom alone over a re-raise bound is the maintainer's call; these cells pin the built behaviour so a change to it is made
-        # on purpose (the pan rule without its current-zoom and zoom-alone gates publishes the hold bounded into the reading's
-        # interval there, no band).
+        # 3.33 from 1.003 to 1.01, the same with no hold and with a hold of 83 from scale 1. The rule governing a pan after a zoom
+        # alone over a re-raise bound was measured and not built (the maintainer's round 6 ruling, 2026-09-29, built it only if no
+        # refit moved --app-top): it closes these bands, but the zoom alone's own run takes the stance and its refit is a pan, so the
+        # refit publishes the rule's value, and a refit with nothing new moved --app-top in the doubled-step fuzz. These cells pin the
+        # built behaviour so a change to it is made on purpose.
         px = self._r6_px
 
         def band(st):   # how far the composer's bottom sits above the visible band's bottom: the band under the composer
