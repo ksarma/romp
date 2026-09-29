@@ -44,11 +44,16 @@ the asks and their destination (zero), the dial-deferred rows (one per page at t
 local return (one per page), and whether every phase's changes show on every page at the end. The remote's own wsopen
 rows (kind relay, reconnect false then true) are the second record of each dial's terms, as the remote read them.
 
-What this lab cannot make red, said plainly: the per-dial receiver reset in connect(). Every kernel in this repo
-serves a fresh socket a whole frame first (dstate is per connection), so a stale receiver is re-seeded before any
-patch reaches it and the reset is latent here; the node test that removes it and sends a patch first
-(ui/webview/federation-remote-view-delta.test.ts, the redial tests) is where that guard is proven. The mutations that
-DO make this lab red are recorded in its report: the redial term stripped from remoteDialUrl, the whole-frame base
+What this lab cannot make red, said plainly: three of PR 815's per-connection guards. The per-dial receiver re-mint
+and the per-dial clear of the raw feed base, both in connect(), are latent here for one reason: every kernel in this
+repo serves a fresh socket a whole frame first (dstate is per connection), so a stale receiver or a stale base is
+re-seeded before any patch reaches it. The per-connection delta latch (sayDeltaOnce over Conn.saidDelta) is never
+consulted, because the drive files no delta-unknown-slot or delta-unkeyed-base breadcrumb. With the feed-base clear
+removed, or the latch made one set for the whole manager, LinkDropBothNew stays green (the maintainer's round 7,
+extra6-1). The node tests are where the three are proven, each red with its guard removed (measured on 2026-09-29):
+the receiver re-mint by the redial tests of ui/webview/federation-remote-view-delta.test.ts, the feed-base clear by
+the same-conn redial test of ui/webview/federation-remote-feed-delta.test.ts, and the latch by the per-host and
+per-event breadcrumb tests of federation-remote-view-delta.test.ts. The mutations that DO make this lab red are recorded in its report: the redial term stripped from remoteDialUrl, the whole-frame base
 write dropped from the feed arm, the local-down gate dropped from connect(), and the old hub bundle in place of this
 one (ROMP_LINKDROP_HUB_ROOT, the base-hub lever).
 
@@ -115,7 +120,8 @@ stays in this lab: a lab that only proves the fixed behaviour loses the evidence
 three months must be able to learn that a redial used to restart the storm, and that without one the old page showed no
 change. The new bundle files zero such rows across the same drive, and the three mutations recorded in the report (the
 redial term stripped, the whole-frame base write dropped, the local-down gate dropped) each turn one of its assertions
-red, so a zero here is a zero the drive can see through.
+red, so a zero here is a zero the drive can see through for those three mechanisms; it says nothing of the three latent
+guards named above, which the drive cannot make red.
 
 Every relay-socket close those records hold outside the drop and the restart, the closes in the shapes above included,
 was the lab's own and not the old bundle's. LinkProxy, the splice, kept create_connection's 5 s timeout on its upstream
