@@ -6505,10 +6505,12 @@ _ANYIO_REBINDERS = frozenset(("setattr", "delattr", "__setattr__", "__delattr__"
 #   other than in the two forms _anyio_rebinders reads for what they write (a call of globals(), vars() or locals()
 #   whose result is only read, and a call of setattr or delattr naming an attribute by a literal). A function's
 #   __globals__ (and f_globals) is the module namespace, so a write through it rebinds a name of the module's scope
-#   (_t.__globals__["K"] = "plugins"); __closure__, cell_contents, __code__, __defaults__ and __kwdefaults__ reach a
-#   function's bindings the same way (the reviewer's fail-closed ruling of 2026-09-28 22:30Z on round 2 of fork PR #894,
-#   which _REFLECTIVE_ATTRS already lists as binding-reaching). f_locals, a frame's write-through view of its locals
-#   since Python 3.13, and cell_contents, which writes an enclosing def's cell, defeat the proof of a def's local as well
+#   (_t.__globals__["K"] = "plugins"); __closure__ and cell_contents reach a function's free variables, and __code__,
+#   __defaults__ and __kwdefaults__ the code it runs and its parameters' defaults (the reviewer's fail-closed ruling of
+#   2026-09-28 22:30Z on round 2 of fork PR #894; _REFLECTIVE_ATTRS already lists each as binding-reaching). Three of
+#   them defeat the proof of a def's local as well: f_locals, a frame's write-through view of its locals since Python
+#   3.13; cell_contents, which writes an enclosing def's cell; and __closure__, which hands that cell to a writer that
+#   names neither (ctypes' PyCell_Set)
 
 
 def _anyio_module_file(dotted, dirs):
@@ -6565,15 +6567,16 @@ def _anyio_rebinders(tree, bindings):
     ast_bindings index is `bindings`: a function of (a name, the kind of the scope that binds it) giving why something in
     the text may rebind that name other than by a declaration, else None. Read over the whole text, so what stands in
     any def or class counts. For a name of any scope: a global or nonlocal statement naming it, a type statement binding
-    it, any read of f_locals (a frame's write-through view of its locals since Python 3.13) and any read of cell_contents
-    (a write to an enclosing def's cell). For a name of the
+    it, any read of f_locals (a frame's write-through view of its locals since Python 3.13), any read of cell_contents
+    (a write to an enclosing def's cell) and any read of __closure__ (which hands that cell to a writer that names
+    neither, ctypes' PyCell_Set). For a name of the
     module's scope or a class body's, also: a star import; a read of globals(), vars() or locals() that no declaration
     binds and that may write the namespace it returns (any use but a call whose result is read by a subscript, a
     read-only method or `in`); an attribute store or del naming it; a call of setattr, delattr, __setattr__ or
     __delattr__ naming it, or naming its attribute by no str literal; and any other identifier or str literal (a dotted
     part of one included) naming one of _ANYIO_REBINDERS (exec, eval, __dict__, getattr(builtins, "setattr"), setattr
-    bound to a name, and a function's __globals__, which is the module namespace, or its __closure__, __code__,
-    __defaults__ or __kwdefaults__). Plain values only: the function it returns holds no node of the tree."""
+    bound to a name, and a function's __globals__, which is the module namespace, or its __code__, __defaults__ or
+    __kwdefaults__). Plain values only: the function it returns holds no node of the tree."""
     parent = {}
     for x in ast.walk(tree):
         for c in ast.iter_child_nodes(x):
@@ -6593,7 +6596,8 @@ def _anyio_rebinders(tree, bindings):
     def word(text, line, how):
         hit = next((w for w in re.split(r"[.:]", text) if w in _ANYIO_REBINDERS), None)
         if hit is not None:
-            anyname.append(("%s naming %s at line %d" % (how, hit, line), hit in ("f_locals", "cell_contents")))
+            anyname.append(("%s naming %s at line %d" % (how, hit, line),
+                            hit in ("f_locals", "cell_contents", "__closure__")))
 
     try:
         for x in ast.walk(tree):
@@ -6721,13 +6725,14 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     an assignment of a str literal to it alone (a plain or annotated one), with nothing else in the text that binds it:
     no second declaration of any kind (a rebinding, an augmented assignment, a loop, with, except or match target, a
     del, an import, a def, a class, a walrus, a tuple unpacking), no global or nonlocal statement naming it, no type
-    statement binding it, no read of f_locals (a frame's write-through view of a def's locals since Python 3.13) or of
-    cell_contents (a write to an enclosing def's cell), and,
+    statement binding it, no read of f_locals (a frame's write-through view of a def's locals since Python 3.13), of
+    cell_contents (a write to an enclosing def's cell) or of __closure__ (which hands that cell to a writer that names
+    neither, ctypes.pythonapi.PyCell_Set), and,
     for a name of the module's scope, nothing that can rebind it unread: a star import; globals(), vars() or locals()
     read other than as a call whose result is only read (by a subscript in a load, a read-only method or `in`); an
     attribute store or del, setattr or delattr naming it, or setattr or delattr naming the attribute it writes by no str
     literal; a function's __globals__ (the module namespace) or f_globals, written through to rebind a name of it
-    (_t.__globals__["K"] = "plugins"), and its __closure__, __code__, __defaults__ or __kwdefaults__; and any other
+    (_t.__globals__["K"] = "plugins"), and its __code__, __defaults__ or __kwdefaults__; and any other
     identifier or str literal (a dotted part of one) naming one of _ANYIO_REBINDERS
     (getattr(builtins, "setattr"), setattr bound to a name, exec, the module's __dict__). A name of a class body is
     never proven, since a read there ahead of its binding takes the module's name. And, where the rule follows the
@@ -13503,7 +13508,9 @@ class HermeticKernelPostal(unittest.TestCase):
         import, setattr or an attribute store on the module, setattr reached through getattr(builtins, "setattr"),
         bound to a name or handed a name built at run time, the module's __dict__ written, exec and builtins.exec, a
         write through a def's __globals__ (the module namespace) by an item, an update or a nested def, a
-        def's local written through its frame's f_locals or through a nested def's cell (cell_contents), a class body's
+        def's local written through its frame's f_locals or through a nested def's cell (by cell_contents, on the cell
+        its __closure__ hands over or on one found among what gc.get_referents returns for it, or by ctypes'
+        PyCell_Set on the cell its __closure__ hands over, inline or bound to a name first), a class body's
         name, and a type statement where the
         interpreter has one); and a key a module the text imports directly binds is not proven where that module binds
         it twice, writes it through globals(), binds it to a fold, star imports, rebinds it through global in a def or
@@ -13720,6 +13727,23 @@ class HermeticKernelPostal(unittest.TestCase):
                      head + "def pytest_configure(config):\n    _K = 'verbose'\n\n    def _in():\n        return _K\n"
                      "    _in.__closure__[0].cell_contents = 'plugins'\n    config.getoption(_K)\n", {"keyed"}, "keyed",
                      "naming cell_contents"),
+                    ("the false proof: a def's local, then a write through the cell_contents of a cell found among"
+                     " what gc.get_referents returns for a nested def, the text naming no __closure__",
+                     head + "import gc\n\n\ndef pytest_configure(config):\n    _K = 'verbose'\n\n    def _in():\n"
+                     "        return _K\n    [t for t in gc.get_referents(_in) if type(t) is tuple][0][0].cell_contents"
+                     " = 'plugins'\n    config.getoption(_K)\n", {"keyed"}, "keyed", "naming cell_contents"),
+                    ("the false proof: a def's local, then ctypes' PyCell_Set on the cell a nested def's __closure__"
+                     " hands over, the text naming no cell_contents",
+                     head + "import ctypes\n\n\ndef pytest_configure(config):\n    _K = 'verbose'\n\n    def _in():\n"
+                     "        return _K\n    ctypes.pythonapi.PyCell_Set(ctypes.py_object(_in.__closure__[0]),"
+                     " ctypes.py_object('plugins'))\n    config.getoption(_K)\n", {"keyed"}, "keyed",
+                     "naming __closure__"),
+                    ("the false proof: a def's local, then ctypes' PyCell_Set on a cell of a nested def's __closure__"
+                     " bound to a name first",
+                     head + "import ctypes\n\n\ndef pytest_configure(config):\n    _K = 'verbose'\n\n    def _in():\n"
+                     "        return _K\n    _c = _in.__closure__[0]\n"
+                     "    ctypes.pythonapi.PyCell_Set(ctypes.py_object(_c), ctypes.py_object('plugins'))\n"
+                     "    config.getoption(_K)\n", {"keyed"}, "keyed", "naming __closure__"),
                     ("the false proof: a class body's name, which a read ahead of its binding takes from the module",
                      head + "class _C:\n    _K = 'verbose'\n    V = operator.attrgetter(_K)\n", {"reader"}, "reader",
                      "bound in a class body")]
