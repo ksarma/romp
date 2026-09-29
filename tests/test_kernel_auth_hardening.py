@@ -696,6 +696,25 @@ class OpenerIsolation(unittest.TestCase):
                 self.assertEqual(status, code, what)
                 self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], what + ": one header, same-origin")
 
+    def test_a_refusal_whose_request_clears_the_legacy_cookie_carries_the_clear_and_the_policy_once(self):
+        # Handler.end_headers writes two headers of its own: the legacy cookie's clear, on every response whose request
+        # carries romp_token beside a valid session cookie, and the opener policy, while send_error runs. The one refusal
+        # http.server writes after reading a request's cookies is the 501 (the 414, the 431s and the 400s are refused
+        # before its headers are parsed), and a navigation never sends PUT or DELETE, so this is a request a script
+        # sends. Such a response carries both, the clear and then the policy, each exactly once, read off the wire.
+        cookie = "%s; romp_token=%s" % (_session_cookie(self.sess), TOK)
+        for method in ("PUT", "DELETE"):
+            with self.subTest(method=method):
+                status, msg, _body = _wire_get(self.port, "/", method=method, headers={"Cookie": cookie})
+                self.assertEqual(status, 501, method + ": http.server's refusal of a method no route takes")
+                self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
+                                 method + ": a refusal that also clears the legacy cookie still carries the policy, once")
+                clears = [v for v in (msg.get_all("Set-Cookie") or []) if v.startswith("romp_token=") and "Max-Age=0" in v]
+                self.assertEqual(len(clears), 1, method + ": and the legacy cookie's clear, once")
+                names = [k.lower() for k, _v in msg.items()]
+                at_clear = [i for i, (k, v) in enumerate(msg.items()) if k.lower() == "set-cookie" and v.startswith("romp_token=")]
+                self.assertLess(at_clear[0], names.index("cross-origin-opener-policy"), method + ": the clear, then the policy")
+
     def test_a_request_line_no_browser_sends_gets_no_headers_at_all_or_the_policy_once(self):
         # The one reply without the policy (Handler.send_error's comment names it) is a reply in HTTP/0.9's shape, the body
         # alone, with no status line and no headers, so no header can ride it. Which of these request lines, none of which a
