@@ -5,8 +5,8 @@ sweep of its exact head (docs/batching.md).
 
   run    [--tree DIR] [--python PATH] [--served-python PATH] [--workers N] [--wrap LEG=PREFIX]... [--leg NAME...]
          [--flake [LEG=]TEXT]...
-         sweep the commit the tree's HEAD names, in a private checkout of it; exit 0 pass, 1 red, 2 refused
-         to start, 3 invalid
+         sweep the commit the tree's HEAD names, in a private checkout of it; exit 0 pass, 1 red (a run that
+         is itself invalid but leaves the sha unable to pass included), 2 refused to start, 3 invalid
   check  [SHA|HEAD] [--tree DIR] [--branch BR]
          read the result for a commit as batch.py verify does; exit 0 on a pass, 1 otherwise
 
@@ -171,8 +171,14 @@ laid over it, and the whole history is read too: a run that failed a leg counts 
 run of that leg carries --flake naming it and its known-flake entry, once per leg, whether that run is a --leg
 re-run or a full run (`--flake LEG=TEXT`). A leg that failed twice, or that a later run passed without --flake
 naming it, leaves no run at that sha able to pass; the runner refuses such a run up front, and the reader reads
-the result red, naming the failed run and its logs. An invalid run needs no flake, but the pass line names it.
-A --leg re-run refuses unless the newest run finished, is valid, and failed that leg. A --leg re-run of pytest
+the result red, naming the failed run and its logs. Invalidity voids a run's passes, never its failures (round 2,
+Class A): a leg that failed in an invalid run counts as a failure, the leg whose re-read made the run invalid included,
+so it blocks a plain full run and uses that leg's one flake, and a second failure inside an invalid run leaves the sha
+unable to pass (the reader reads it red, and the runner exits 1 for such a run, not 3); a pass in an invalid run counts
+for nothing, since its checkout or venv changed. An invalid run that failed no leg needs no flake. The pass line,
+verify's record and the reader's invalid line name each invalid run with the legs it failed.
+A --leg re-run refuses unless the newest run finished, is valid, and failed that leg, so the flake a failure in an
+invalid full run needs is spent on a full run. A --leg re-run of pytest
 runs with no setup, as the pytest leg runs before the deps; one naming pytest and a leg after deps is refused, since
 one run cannot give the two legs both checkouts. A --leg re-run of served also runs the tests the newest pytest leg at
 the sha skipped for want of the deps.
@@ -559,8 +565,13 @@ def effective(data):
 
 
 def read_history(runs):
-    """What the whole history at one sha says, read over every finished leg attempt of every run that is not invalid
-    (an invalid run is not a test failure and needs no flake, round 1 decision 18; it is only named):
+    """What the whole history at one sha says, read over every finished leg attempt of every run. Invalidity voids a
+    run's passes, never its failures (round 2, Class A): in an invalid run each finished, owed leg that did not pass is
+    an attempt, a failure, whatever else happened in the run, the leg whose re-read made the run invalid included, and
+    the run's passes are dropped, since its checkout or a venv changed and a pass there proves nothing. An invalid run
+    that failed no leg needs no flake and is only named (round 1 decision 18 stands for it). The never-checks stay off
+    for an invalid run: a flake it names for a leg after the invalidating one, which never ran, is a record the runner
+    does write. A leg is read by its own finished stamp, not its run's, so a stopped run's finished legs count too.
       never    the records no runner writes: a --leg re-run with no known flake named for a leg it ran, a flake
                named for a leg the run did not run or that had no failed run before it at this sha;
       dead     why no run at this sha can pass any more: a leg that failed in two runs (a known flake is excused once),
@@ -568,20 +579,24 @@ def read_history(runs):
       need     {leg: (run number, record)} for each leg whose newest attempt failed: the next run that runs it counts
                only with --flake naming it and its known-flake entry;
       flaked   [(leg, failed run number, failed record, flake)] for each failure a later run's flake excused;
-      invalid  [(run number, started, reason)] for each invalid run."""
+      invalid  [(run number, started, reason, [(leg, record)])] for each invalid run, with the legs it failed."""
     out = {"never": [], "dead": None, "need": {}, "flaked": [], "invalid": []}
     attempts = {n: [] for n in LEGS}
     for i, run in enumerate(runs):
         num = i + 1
-        if run.get("invalid"):
-            out["invalid"].append((num, run.get("started"), run.get("invalid")))
-            continue
         legs = run.get("legs") or {}
         flakes = run.get("flakes") or {}
         if not isinstance(flakes, dict):
             out["never"].append("run %d's flakes are not a mapping of leg to known flake" % num)
             flakes = {}
         ran = [n for n in LEGS if n in legs and is_owed(n, legs[n]) and legs[n].get("finished")]
+        if run.get("invalid"):
+            failed = [n for n in ran if not passed(n, legs[n])]
+            out["invalid"].append((num, run.get("started"), run.get("invalid"), [(n, legs[n]) for n in failed]))
+            for n in failed:
+                flake = flakes.get(n)
+                attempts[n].append((num, False, flake if isinstance(flake, str) and flake.strip() else None, legs[n]))
+            continue
         for n in flakes if run.get("finished") else ():
             if n not in ran:
                 out["never"].append("run %d names a known flake for %s, which it did not run" % (num, n))
@@ -621,9 +636,17 @@ def flake_notes(history):
             for n, _num, rec, flake in history["flaked"]]
 
 
+def failures_text(failed):
+    """[(leg, record)] of the legs an invalid run failed, in words: each leg with its rc and its log."""
+    return ", ".join("%s (%s; log %s)" % (n, _rc_text(n, rec), rec.get("log")) for n, rec in failed)
+
+
 def invalid_notes(history):
-    """The pass line's words for each invalid run in the history (it needs no flake, but it is named)."""
-    return ["run %d (started %s) was invalid: %s" % (num, started, reason) for num, started, reason in history["invalid"]]
+    """The pass line's words for each invalid run in the history, naming each leg it failed, whose failure counts (an
+    invalid run that failed no leg needs no flake, but it is named)."""
+    return ["run %d (started %s) was invalid: %s%s" % (num, started, reason,
+                                                       ("; its failures count: " + failures_text(failed)) if failed else "")
+            for num, started, reason, failed in history["invalid"]]
 
 
 def red_legs(result):
@@ -818,15 +841,22 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
         return done("unfinished", "sweep unfinished: the sweep at %s started %s and has not finished (running, or its runner "
                                   "died; done: %s); wait for it or sweep again" % (short(sha), runs[-1].get("started"),
                                                                                     ", ".join(ran) or "none"), rec)
-    if recomputed == "invalid":
-        return done("invalid", "sweep invalid at %s: %s" % (short(sha), rec.get("invalid")), rec)
     for i, r in enumerate(runs):
         if r.get("finished") and r.get("verdict") != run_verdict(r):
             return done("invalid", "sweep invalid at %s: the recorded verdict %s disagrees with its legs (%s) in run %d"
                         % (short(sha), r.get("verdict"), run_verdict(r), i + 1), rec)
     logs = os.path.join(sweeps_dir(env), "logs", sha)
+    # Round 2, Class A: a history that leaves the sha unable to pass reads red before the newest run's invalid, so a
+    # second failure inside an invalid run reads red naming both runs, and the runner exits 1 for such a run.
     if history["dead"]:
         return done("red", "sweep red at %s: %s; fix it and sweep the new head; logs under %s" % (short(sha), history["dead"], logs), rec)
+    if recomputed == "invalid":
+        # the run the record's invalid reason came from (effective(): the first invalid run from the newest full run
+        # on), with every leg it failed, since those failures count
+        num = next(i + 1 for i in range(rec["full_run"] - 1, len(runs)) if runs[i].get("invalid"))
+        failed = next(f for n, _s, _r, f in history["invalid"] if n == num)
+        counted = "; run %d's failures count: %s" % (num, failures_text(failed)) if failed else ""
+        return done("invalid", "sweep invalid at %s: %s%s" % (short(sha), rec.get("invalid"), counted), rec)
     if recomputed == "red":
         return done("red", "sweep red at %s: %s; logs under %s" % (
             short(sha), ", ".join("%s (%s)" % (n, _rc_text(n, legs[n])) for n in red_legs(rec)), logs), rec)
@@ -3275,8 +3305,9 @@ def main(argv=None):
                                    "process, as CI's served step runs it, with the tests outside the served globs that the "
                                    "pytest leg skipped for want of the deps (%s); append the run to the sha's result after "
                                    "every leg, and record it invalid if a leg changed the checkout or its venv. The tree need "
-                                   "not be clean; its uncommitted edits are not swept. Exit 0 pass, 1 red, 2 refused to "
-                                   "start, 3 invalid." % (", ".join(LEGS), MEASURED_TEXT))
+                                   "not be clean; its uncommitted edits are not swept. Exit 0 pass, 1 red (a run that is "
+                                   "itself invalid but leaves the sha unable to pass included), 2 refused to start, 3 "
+                                   "invalid." % (", ".join(LEGS), MEASURED_TEXT))
     p.add_argument("--tree", metavar="DIR", help="the repository whose HEAD is swept (default: the one holding the current "
                                                  "directory); read for its HEAD sha and branch only")
     p.add_argument("--python", metavar="PATH", help="the interpreter the pytest leg's venv is built from (default: the one running "

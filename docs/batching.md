@@ -250,12 +250,18 @@ subject; `verify` refuses the branch otherwise.
    flake. A full run at a head whose last run failed a leg also needs it, as
    `--flake <leg>=<the flake>` for each failed leg: a later green counts over a red run only then. A
    flake is excused once per leg: a leg that fails again, or that a later run passes without
-   `--flake`, leaves that head unable to pass, and the fix goes on a new head. The runner refuses a
-   run that cannot count, and refuses a re-run of a leg that did not fail. A re-run of pytest runs
-   alone, before any `npm ci`, as the pytest leg does; one that names pytest and a leg after `npm ci`
-   is refused, so re-run pytest first, then the others. `verify` reads the whole
+   `--flake`, leaves that head unable to pass, and the fix goes on a new head. An invalid run's
+   failures count too: a leg that failed in a run that went invalid, the leg that made it invalid
+   included, needs `--flake` like any other failure, and a second failure inside an invalid run
+   leaves the head unable to pass (the runner exits 1 for such a run, not 3). A pass inside an
+   invalid run counts for nothing, since the checkout or a venv changed under it, and an invalid run
+   that failed no leg needs no flake. A re-run of a leg (`--leg`) is refused while the newest full
+   run is invalid, so the flake for a failure in an invalid run is spent on a full run. The runner
+   refuses a run that cannot count, and refuses a re-run of a leg that did not fail. A re-run of
+   pytest runs alone, before any `npm ci`, as the pytest leg does; one that names pytest and a leg
+   after `npm ci` is refused, so re-run pytest first, then the others. `verify` reads the whole
    history, and the body's first block names each excused failure and its flake, and each invalid
-   run (an invalid run needs no flake). `scripts/sweep.py check --tree ../romp-batch-<name>` prints
+   run with the legs it failed. `scripts/sweep.py check --tree ../romp-batch-<name>` prints
    what `verify` will read.
 4. `scripts/batch.py verify <name>`. It reads the sweep result for the batch head's full sha and
    fails by name when it is missing, stale (recorded at another commit), unfinished, red (a red run

@@ -1127,21 +1127,105 @@ class Runner(_Base):
                 self.assertIn("no run at %s can pass: pytest failed in runs 1 and 2" % w.head()[:10], p.stderr)
         self.assertEqual(len(w.data()["runs"]), 2)
 
-    def test_an_invalid_run_needs_no_flake_before_a_green_and_the_line_names_it(self):
-        """Round 1, decision 18: an invalid run is not a test failure, so the next full run needs no --flake, even for a
-        leg the invalid run failed, but the pass line names the invalid run."""
+    def test_a_failure_in_an_invalid_run_counts_and_every_line_names_it(self):
+        """Round 2, Class A: invalidity voids a run's passes, never its failures. pytest fails in a run a later leg
+        makes invalid (scenario L1), or in the run it makes invalid itself (SAME): the reader's invalid line names the
+        run's failure (Coordinator decision 1); a plain full run is refused up front naming the run and the leg with its
+        rc, nothing appended and no leg run; a --leg re-run stays refused over the invalid full run (L3); a full run with
+        --flake naming pytest counts (EXCUSED), and the pass line names the flake, the invalid run and its failed leg."""
+        for invalidating in ("manager", PYTEST_LEG):
+            with self.subTest(invalidating=invalidating):
+                w = World()
+                self.addCleanup(w.close)
+                w.ctl({"action": {invalidating: "leak"}, "rc": {PYTEST_LEG: 1}})
+                p = w.run(check=3)
+                m = re.search(r"^FAIL sweep invalid at %s: (.*); run 1's failures count: pytest \(rc 1; log (\S+)\)$" % w.head()[:10],
+                              p.stdout, re.M)
+                self.assertTrue(m, p.stdout)
+                reason, log = m.groups()
+                self.assertIn("after the %s leg the checkout is not the sha's tree: untracked 1 (leaked.txt)" % invalidating, reason)
+                self.assertEqual(log, w.result()["legs"]["pytest"]["log"])
+                w.ctl({})
+                with open(w.result_path(), "rb") as f:
+                    before = f.read()
+                calls = len(w.calls())
+                for extra, named in (((), "the run at %s failed pytest in run 1 (rc 1); a later run counts over a failed leg "
+                                          "only with --flake" % w.head()[:10]),
+                                     (("--leg", PYTEST_LEG, "--flake", self.FLAKE), "the result at %s is invalid (%s)"
+                                      % (w.head()[:10], reason))):
+                    p = w.run(*extra, check=2)
+                    self.assertIn(named, p.stderr)
+                    self.assertEqual(len(w.calls()), calls, "a refused run runs no leg")
+                    with open(w.result_path(), "rb") as f:
+                        self.assertEqual(f.read(), before, "a refused run appends nothing")
+                p = w.run("--flake", "pytest=" + self.FLAKE, check=0)
+                self.assertIn("pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE, p.stdout)
+                self.assertIn(") was invalid: %s; its failures count: pytest (rc 1; log %s)" % (reason, log), p.stdout)
+                self.assertEqual([r["verdict"] for r in w.data()["runs"]], ["invalid", "pass"])
+
+    def test_a_second_failure_inside_an_invalid_run_leaves_the_sha_unable_to_pass(self):
+        """Round 2, Class A (scenario L2): a valid red, then pytest fails again with its flake in a run a later leg
+        makes invalid. pytest failed twice on the verified checkout, so that run reads red naming both runs and exits 1,
+        not 3 (Coordinator decision 2: the reader's case decides the exit), and the runner refuses every further run."""
         w = self.w
-        w.ctl({"action": {"manager": "leak"}, "rc": {"pytest": 1}})
+        w.ctl({"rc": {PYTEST_LEG: 1}})
+        w.run(check=1)
+        w.ctl({"rc": {PYTEST_LEG: 1}, "action": {"manager": "leak"}})
+        p = w.run("--flake", "pytest=" + self.FLAKE, check=1)
+        self.assertEqual(w.data()["runs"][1]["verdict"], "invalid", "the run itself is invalid")
+        self.assertIn("FAIL sweep red at %s: pytest failed in runs 1 and 2; a known flake is excused once" % w.head()[:10], p.stdout)
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "red", a["line"])
+        w.ctl({})
+        for extra in (("--flake", "pytest=" + self.FLAKE), ("--leg", PYTEST_LEG, "--flake", self.FLAKE)):
+            with self.subTest(extra=extra):
+                p = w.run(*extra, check=2)
+                self.assertIn("no run at %s can pass: pytest failed in runs 1 and 2" % w.head()[:10], p.stderr)
+        self.assertEqual(len(w.data()["runs"]), 2)
+
+    def test_an_invalid_run_that_failed_no_leg_needs_no_flake(self):
+        """Round 1 decision 18 still holds for an invalid run's passes (scenario CONTROL): an invalid run that failed no
+        leg needs no flake before a later green, and the pass line names it with no failure."""
+        w = self.w
+        w.ctl({"action": {"manager": "leak"}})
         p = w.run(check=3)
-        m = re.search(r"sweep invalid at %s: (.*)$" % w.head()[:10], p.stdout, re.M)
-        self.assertTrue(m, p.stdout)
-        reason = m.group(1)
-        self.assertIn("leaked.txt", reason)
+        self.assertNotIn("failures count", p.stdout)
         w.ctl({})
         p = w.run(check=0)
         self.assertIn("an earlier run 1 (started ", p.stdout)
-        self.assertIn(") was invalid: %s" % reason, p.stdout)
-        self.assertEqual([r["verdict"] for r in w.data()["runs"]], ["invalid", "pass"])
+        self.assertNotIn("failures count", p.stdout)
+
+    def test_a_flake_named_for_a_leg_an_invalid_run_never_reached_is_no_record_the_runner_never_writes(self):
+        """Round 2, Class A (scenario AFTER): tools fails; the next run names its flake and goes invalid at the manager
+        leg, before tools runs. The flake named for a leg that run never reached is a record the runner writes, so the
+        never-checks stay off for an invalid run, and the next run with the flake counts over the failure."""
+        w = self.w
+        w.ctl({"rc": {"tools": 1}})
+        w.run(check=1)
+        w.ctl({"action": {"manager": "leak"}})
+        w.run("--flake", "tools=" + self.FLAKE, check=3)
+        self.assertIsNone(w.data()["runs"][1]["legs"]["tools"].get("finished"), "tools never ran in run 2")
+        w.ctl({})
+        p = w.run("--flake", "tools=" + self.FLAKE, check=0)
+        self.assertIn("tools re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE, p.stdout)
+        self.assertIn("an earlier run 2 (started ", p.stdout)
+
+    def test_a_pass_inside_an_invalid_run_excuses_nothing(self):
+        """Round 2, Class A (scenario VOIDED): a valid red, then pytest passes with its flake in a run a later leg makes
+        invalid. That pass proves nothing, so a plain run is still refused naming the valid red, and the next run with
+        the flake counts over it."""
+        w = self.w
+        w.ctl({"rc": {PYTEST_LEG: 1}})
+        w.run(check=1)
+        w.ctl({"action": {"manager": "leak"}})
+        w.run("--flake", "pytest=" + self.FLAKE, check=3)
+        self.assertEqual(w.data()["runs"][1]["legs"]["pytest"]["rc"], 0, "pytest passed in the invalid run")
+        w.ctl({})
+        p = w.run(check=2)
+        self.assertIn("the run at %s failed pytest in run 1 (rc 1)" % w.head()[:10], p.stderr)
+        p = w.run("--flake", "pytest=" + self.FLAKE, check=0)
+        self.assertIn("pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE, p.stdout)
+        self.assertEqual([r["verdict"] for r in w.data()["runs"]], ["red", "invalid", "pass"])
 
     def test_a_schema_1_result_is_moved_aside_and_a_leg_rerun_over_one_refused(self):
         """A result of the runner before round 1 (schema 1) swept the batcher's own tree; no reader counts it. A full run
@@ -4370,19 +4454,48 @@ class Reader(unittest.TestCase):
         self.assertEqual(case, "red", line)
         self.assertIn("npm-test failed in run 1 (rc 1) and no later run ran it", line)
 
-    def test_an_invalid_run_needs_no_flake_and_the_line_names_it(self):
-        """Round 1, decision 18: an invalid run is not a test failure, so a later green counts over it with no flake,
-        but the pass line names it. A red before an invalid run still needs the flake."""
+    def test_a_failure_in_an_invalid_run_counts_and_the_line_names_it(self):
+        """Round 2, Class A: a leg that failed in an invalid run counts as a failure (the invalidating leg's own failure
+        included), so a later green needs --flake naming it, a second failure leaves the sha red naming both runs (read
+        before the newest run's invalid), the reader's invalid line and the pass line name the invalid run's failed leg,
+        and a pass inside an invalid run excuses nothing; an invalid run that failed no leg still needs no flake. An
+        invalid run's flakes are read, so they must be a mapping."""
         reason = "after the pytest leg the checkout is not the sha's tree: changed kernel/kernel.py"
-        # the invalid run failed pytest too: a failure in an invalid run needs no flake either
-        self.write(self.result(runs=[self.run_rec(invalid=reason, legs=self.legs(pytest=1)), self.run_rec(started="2026-01-01T00:02:00Z")]))
-        case, line = self.case()
-        self.assertEqual(case, "pass", line)
-        self.assertIn("an earlier run 1 (started 2026-01-01T00:00:00Z) was invalid: %s" % reason, line)
-        self.write(self.red_then(self.run_rec(invalid=reason), self.run_rec(started="2026-01-01T00:04:00Z")))
-        case, line = self.case()
-        self.assertEqual(case, "red", line)
-        self.assertIn("run 1 failed pytest (rc 1; log logs/pytest.log), and run 3 passed it with no --flake naming it", line)
+        invalid_red = self.run_rec(invalid=reason, legs=self.legs(pytest=1))
+        cases = (
+            ("the invalidating leg failed, then a plain green", [invalid_red, self.run_rec(started="2026-01-01T00:02:00Z")],
+             "red", "run 1 failed pytest (rc 1; log logs/pytest.log), and run 2 passed it with no --flake naming it"),
+            ("the invalidating leg failed, then a green with its flake",
+             [invalid_red, self.run_rec(flakes={PYTEST_LEG: self.FLAKE}, started="2026-01-01T00:02:00Z")], "pass",
+             "an earlier run 1 (started 2026-01-01T00:00:00Z) was invalid: %s; its failures count: pytest (rc 1; log "
+             "logs/pytest.log)" % reason),
+            ("the invalidating leg failed, the newest run", [invalid_red], "invalid",
+             "sweep invalid at 1234567890: %s; run 1's failures count: pytest (rc 1; log logs/pytest.log)" % reason),
+            ("a red, then a second failure inside an invalid run, the newest",
+             self.red_then(self.run_rec(invalid=reason, legs=self.legs(pytest=1), flakes={PYTEST_LEG: self.FLAKE},
+                                        started="2026-01-01T00:02:00Z"))["runs"],
+             "red", "pytest failed in runs 1 and 2; a known flake is excused once"),
+            ("a red, then a pass with its flake inside an invalid run, then a plain green",
+             self.red_then(self.run_rec(invalid=reason, flakes={PYTEST_LEG: self.FLAKE}, started="2026-01-01T00:02:00Z"),
+                           self.run_rec(started="2026-01-01T00:04:00Z"))["runs"],
+             "red", "run 1 failed pytest (rc 1; log logs/pytest.log), and run 3 passed it with no --flake naming it"),
+            ("an invalid run that failed no leg, then a green", [self.run_rec(invalid=reason),
+                                                                 self.run_rec(started="2026-01-01T00:02:00Z")],
+             "pass", "was invalid: %s);" % reason),
+            ("a red before an invalid run still needs the flake",
+             self.red_then(self.run_rec(invalid=reason, started="2026-01-01T00:02:00Z"),
+                           self.run_rec(started="2026-01-01T00:04:00Z"))["runs"],
+             "red", "run 1 failed pytest (rc 1; log logs/pytest.log), and run 3 passed it with no --flake naming it"),
+            ("an invalid run whose flakes are not a mapping", [self.run_rec(invalid=reason, flakes=[PYTEST_LEG]),
+                                                               self.run_rec(started="2026-01-01T00:02:00Z")],
+             "invalid", "run 1's flakes are not a mapping of leg to known flake"),
+        )
+        for label, runs, want, named in cases:
+            with self.subTest(label):
+                self.write(self.result(runs=runs))
+                case, line = self.case()
+                self.assertEqual(case, want, line)
+                self.assertIn(named, line)
 
     def test_a_history_the_runner_never_writes_is_invalid(self):
         """The records no runner writes, each refused by name: a --leg re-run that names no flake (or a blank one), a
