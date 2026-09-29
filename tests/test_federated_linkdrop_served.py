@@ -306,10 +306,10 @@ def _pair(sid, cwd, prompt, reply, parent, now=None):
 class LinkProxy:
     """A TCP splice on one fixed port to the remote kernel's port, in the test process: the lab's stand-in for the hub's
     ssh -L forward, so the link can be dropped and restored while both kernels stay up. listen() listens and splices each
-    accepted connection to the target; drop() closes the listener (a dial is refused, as at a dead -L listener) and
-    shuts every spliced pair (both ends read EOF: the hub's upstream, the remote's client); resume() listens again on
-    the same port; stop() drops the link, joins every thread the splice started, fails naming any still alive at its
-    bound and releases the port. Every transition is stamped for the record.
+    accepted connection to the target; drop() closes the listener (a dial is refused, as at a dead -L listener), shuts
+    every spliced pair (both ends read EOF: the hub's upstream, the remote's client) and returns once the listener's
+    accept loop has ended; resume() listens again on the same port; stop() drops the link, joins every thread the splice
+    started, fails naming any still alive at its bound and releases the port. Every transition is stamped for the record.
 
     The port is the splice's from construction until stop(): a socket bound to it that never listens holds it, so no socket
     that binds without SO_REUSEPORT can take it before listen() or between a drop() and its resume() (a socket of the same
@@ -317,9 +317,13 @@ class LinkProxy:
     was then free for anyone to take until listen() bound it, and again across every drop. On Linux, where the served job
     runs this lab, a dial to a port that is bound and not listening is refused, so a dial while the link is dropped is
     refused as before, as at a dead -L listener, which is the refusal the hub's relay starts its redial road from (the
-    module docstring). None of this was measured on another system: LinkProxyEnds, which a scheduled Python cell also runs
-    on macOS, requires there only that such a dial does not connect. LinkProxyEnds holds the port bound from construction
-    until stop().
+    module docstring). That holds from the moment drop() returns, because drop() waits for the accept loop of the listener
+    it closed: on Linux a closed listener that a select is waiting on keeps listening until that select returns (within
+    the loop's 0.2 s), so without the wait a dial straight after drop() connected to it and was reset, and a resume()
+    straight after drop() bound a second listener beside it through SO_REUSEPORT, and the system could hand a dial to the
+    closed one, which reset it the same way (the maintainer's round 7, correctness-2). None of this was measured on
+    another system: LinkProxyEnds, which a scheduled Python cell also runs on macOS, requires there only that such a dial
+    does not connect. LinkProxyEnds holds the port bound from construction until stop().
 
     The upstream socket's timeout is cleared once it connects, as the kernel's own relay clears it (kernel.py _remote_ws:
     create_connection's timeout would otherwise cut the long-lived splice), so a pair stays up however long its remote side
@@ -340,7 +344,7 @@ class LinkProxy:
     fails naming any thread its joins did not end. The opener is named listen() and not start() because that census
     reads every `.start()` call as a thread start and cannot resolve an instance of this class, which is not a Thread."""
 
-    STOP_BOUND_S = 10.0   # stop()'s one bound over every join; LinkProxyEnds shortens it on an instance to reach the failure
+    STOP_BOUND_S = 10.0   # the bound on drop()'s wait for the accept loop and stop()'s one bound over every join; LinkProxyEnds shortens it on an instance to reach the failure
 
     def __init__(self, target_port):
         self.target = int(target_port)
@@ -350,6 +354,7 @@ class LinkProxy:
         self._hold.bind(("127.0.0.1", 0))
         self.port = self._hold.getsockname()[1]
         self._lsock = None
+        self._acceptor = None   # the accept loop of the live listener, which drop() waits for once it closes that listener
         self._down = True
         self._pairs = set()
         self._lock = threading.Lock()
@@ -359,7 +364,9 @@ class LinkProxy:
     def listen(self):
         if self._lsock is not None:
             # SO_REUSEPORT would let a second listener bind beside the first, and a dial the system handed to the listener
-            # no accept loop reads would sit in its backlog, never spliced: refused here, as the bind did before SO_REUSEPORT
+            # no accept loop reads would sit in its backlog, never spliced. Before SO_REUSEPORT the bind refused a second
+            # listener both while one was up and while a dropped one was still listening (the class docstring says when):
+            # the first is refused here, and drop() outlasts the second by waiting for that listener's accept loop
             raise RuntimeError("the splice is already listening on port %d (resume() follows a drop())" % self.port)
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -370,6 +377,7 @@ class LinkProxy:
         self._lsock = s
         self._down = False
         t = threading.Thread(target=self._accept, args=(s,), daemon=True, name="linkproxy-accept")
+        self._acceptor = t
         with self._lock:
             self._threads.append(t)
         t.start()
@@ -383,8 +391,10 @@ class LinkProxy:
         # owns the one socket it was started with and exits the instant that socket is no longer the live listener or
         # _down is set, re-checks _down after every accept, and checks again, under the lock where it registers the pair,
         # that its socket is still the live listener: the connect to the target sits between the first check and the
-        # registration, and a drop there (stop()'s own included) clears _lsock and sweeps the pairs without this one, a
-        # resume after it binds a new listener; so no connection is ever spliced past a drop.
+        # registration, and a drop there (stop()'s own included) clears _lsock and sweeps the pairs without this one; so
+        # no connection is ever spliced past a drop. drop() then waits for this loop to return, and on Linux that is also
+        # when the closed listener stops listening (a select waiting on it holds it open until the select returns), so no
+        # dial reaches the closed listener after drop() returns, and a resume() after it listens alone.
         import select
         while s is self._lsock and not self._down:
             try:
@@ -472,6 +482,13 @@ class LinkProxy:
                 except OSError:
                     pass
         self.events.append({"ev": "down", "t": t, "spliced": len(pairs)})
+        loop, self._acceptor = self._acceptor, None
+        if loop is not None:
+            # the closed listener keeps listening while the loop's select waits on it (the class docstring), so drop()
+            # returns only once the loop has, within STOP_BOUND_S, and past that fails naming it, as stop() does
+            loop.join(self.STOP_BOUND_S)
+            if loop.is_alive():
+                raise AssertionError("the dropped listener's accept loop outlived drop()'s %.1f s bound: %s" % (self.STOP_BOUND_S, loop.name))
         return {"port": self.port, "spliced": len(pairs)}
 
     def resume(self):
@@ -483,10 +500,11 @@ class LinkProxy:
         closed listener raises and the loop takes that as its end, or a select already waiting returns within its 0.2 s
         and the check follows (a connection accepted just before the drop is closed at the check after the accept, or
         where its pair would have been registered). And it shuts every spliced pair, so both pumps of each read EOF and
-        return. Every thread the splice started is then joined, all of them within one bound (STOP_BOUND_S), the list
-        re-read after each round of joins so that a thread recorded while this was joining (a pump of a pair the drop
-        had just swept, which ends at once, or the accept thread of a listen() that raced the teardown, which does not)
-        is joined too or named. A thread still alive at the bound fails the teardown with an AssertionError naming it,
+        return. drop() waits for that accept loop itself, within STOP_BOUND_S, and raises naming it past that bound. Every
+        thread the splice started is then joined, all of them within one bound (STOP_BOUND_S) counted from drop()'s
+        return, the list re-read after each round of joins so that a thread recorded while this was joining (a pump of a
+        pair the drop had just swept, which ends at once, or the accept thread of a listen() that raced the teardown,
+        which does not) is joined too or named. A thread still alive at the bound fails the teardown with an AssertionError naming it,
         where a timed join that returned in silence would let a splice that never ended pass (tearDownClass still kills
         the kernels and removes the lab when this raises). The held port is closed last, whether or not this raises."""
         try:
@@ -2073,9 +2091,13 @@ class LinkProxyEnds(unittest.TestCase):
     stop() is held to end every thread the splice started, drop() being the call that releases them (main's thread-stop
     census reads the joins in stop() and would read them the same with the drop() call gone), and to fail naming any
     thread still alive at its bound; a pair is held to stay up through a quiet spell longer than the 5 s timeout its
-    upstream connect is handed; and the port the splice reports is held to be bound from its construction until stop()."""
+    upstream connect is handed; the port the splice reports is held to be bound from its construction until stop(); and
+    drop() is held to return only once the closed listener has stopped listening, so a dial straight after it is refused
+    and a resume() straight after it listens alone and splices every dial."""
 
     QUIET_S = 6.0   # a quiet spell longer than the 5 s timeout the splice's upstream connect is handed
+    CYCLES = 5   # drop cycles per window pin: a drop that lands just before the accept loop enters its select misses the window
+    DIALS = 10   # dials after each resume in the co-listen pin
 
     def _target(self):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2123,6 +2145,67 @@ class LinkProxyEnds(unittest.TestCase):
             return repr(e)
         finally:
             c.close()
+
+    def _select_watch(self):
+        """An Event set each time the splice's accept loop calls select, so a test drops the link while the loop waits in its
+        select by that event and not by a sleep. select.select is replaced for the test's length and restored by its
+        cleanup; a call from any other thread passes through unchanged."""
+        import select
+        real = select.select
+        entered = threading.Event()
+
+        def watched(*args):
+            if threading.current_thread().name == "linkproxy-accept":
+                entered.set()
+            return real(*args)
+
+        def restore():
+            select.select = real
+        select.select = watched
+        self.addCleanup(restore)
+        return entered
+
+    @staticmethod
+    def _listeners(port):
+        """How many sockets listen on 127.0.0.1:port, read from /proc/net/tcp (Linux only: the state 0A rows)."""
+        n = 0
+        with open("/proc/net/tcp") as f:
+            for line in f.readlines()[1:]:
+                fields = line.split()
+                if fields[3] == "0A" and int(fields[1].rsplit(":", 1)[1], 16) == port:
+                    n += 1
+        return n
+
+    def _carries(self, p, srv):
+        """One dial through the splice carrying a byte each way, as _spliced makes it, reporting how the dial ended instead
+        of failing on it: "spliced", or what the client saw ("refused", "reset", "closed", or "neither end moved" within
+        5 s). It waits on the event that decides it, the target's accept or the client's socket becoming readable."""
+        import select
+        c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(c.close)
+        c.settimeout(5)
+        try:
+            c.connect(("127.0.0.1", p.port))
+            c.sendall(b"x")
+        except ConnectionRefusedError:
+            return "refused"
+        except OSError as e:
+            return repr(e)
+        ready, _, _ = select.select([srv, c], [], [], 5)
+        if srv in ready:
+            u, _ = srv.accept()
+            self.addCleanup(u.close)
+            u.settimeout(5)
+            if u.recv(1) != b"x":
+                return "spliced, but the client's byte did not cross"
+            u.sendall(b"y")
+            return "spliced" if c.recv(1) == b"y" else "spliced, but the target's byte did not cross"
+        if c in ready:
+            try:
+                return "closed" if c.recv(1) == b"" else "a byte nobody sent"
+            except ConnectionResetError:
+                return "reset"
+        return "neither end moved"
 
     def _spliced(self, p, srv):
         """Dial the splice and carry one byte each way, so the pair is registered and both of its pumps run."""
@@ -2199,11 +2282,7 @@ class LinkProxyEnds(unittest.TestCase):
         with p._lock:
             accept = [t for t in p._threads if t.name == "linkproxy-accept"]
         p.drop()
-        # on Linux a listener closed while the accept loop's select waits on it stays open until that select returns (within
-        # its 0.2 s): a dial in that window connects to it, and it still occupies the port; so both reads wait for the loop to end
-        for t in accept:
-            t.join(5)
-        self.assertEqual([t.name for t in accept if t.is_alive()], [], "the accept loop ended after the drop")
+        self.assertEqual([t.name for t in accept if t.is_alive()], [], "drop() returned with the accept loop alive (the class docstring says why it waits)")
         self.assertEqual(self._bind_errno(p.port), errno.EADDRINUSE, "the link dropped: the reported port is still bound")
         if sys.platform.startswith("linux"):   # where the lab runs, and the hub's relay starts its redial road from the refusal
             self.assertEqual(self._dial(p.port), "refused", "the link dropped: a dial is refused")
@@ -2232,6 +2311,50 @@ class LinkProxyEnds(unittest.TestCase):
         self.assertEqual(accepts, ["linkproxy-accept"], "one accept loop was started")
         self._spliced(p, srv)
 
+    def test_a_dial_straight_after_a_drop_is_refused(self):
+        """A dial made the moment drop() returns, the drop landing while the accept loop waits in its select (the watch's
+        event, not a sleep): refused on Linux, as at a dead -L listener, and elsewhere it does not connect. Before drop()
+        waited for the loop, the closed listener was still listening at that moment, so the dial connected and was reset
+        when the loop's select returned, where the hub's relay starts its redial road from a refusal (the class docstring).
+        The cycle runs CYCLES times, a resume() between cycles."""
+        srv = self._target()
+        p = self._proxy(srv)
+        self.addCleanup(p.stop)
+        in_select = self._select_watch()
+        p.listen()
+        for cycle in range(self.CYCLES):
+            self.assertTrue(in_select.wait(5), "cycle %d: the accept loop reached its select" % cycle)
+            p.drop()
+            end = self._dial(p.port)
+            if sys.platform.startswith("linux"):   # where the lab runs, as the port pin gates it
+                self.assertEqual(end, "refused", "cycle %d: a dial straight after drop() is refused" % cycle)
+            else:
+                self.assertNotEqual(end, "connected", "cycle %d: a dial straight after drop() does not connect" % cycle)
+            in_select.clear()
+            p.resume()
+
+    def test_a_resume_straight_after_a_drop_listens_alone_and_splices_every_dial(self):
+        """drop() and then resume() at once, the drop landing while the accept loop waits in its select (the watch's
+        event): when resume() returns one socket listens on the port (read on Linux alone, from /proc/net/tcp), and each
+        of DIALS dials after it is spliced and carries a byte each way, on every system. Before drop() waited for the
+        loop, the closed listener was still listening when resume() bound the new one beside it through SO_REUSEPORT, and
+        the system handed a dial to the closed one, which connected and was reset when its select returned. The cycle runs
+        CYCLES times."""
+        srv = self._target()
+        p = self._proxy(srv)
+        self.addCleanup(p.stop)
+        in_select = self._select_watch()
+        p.listen()
+        for cycle in range(self.CYCLES):
+            self.assertTrue(in_select.wait(5), "cycle %d: the accept loop reached its select" % cycle)
+            p.drop()
+            in_select.clear()
+            p.resume()
+            if sys.platform.startswith("linux"):
+                self.assertEqual(self._listeners(p.port), 1, "cycle %d: one socket listens on the port when resume() returns" % cycle)
+            ends = [self._carries(p, srv) for _ in range(self.DIALS)]
+            self.assertEqual(ends, ["spliced"] * self.DIALS, "cycle %d: every dial after the resume is spliced" % cycle)
+
     def test_stop_fails_naming_every_thread_alive_at_its_bound(self):
         """With the release skipped (drop() made a no-op on this instance), the accept loop never sees a drop and outlives
         the joins: stop() raises at its bound naming the thread, where a timed join that returned in silence would let the
@@ -2248,22 +2371,18 @@ class LinkProxyEnds(unittest.TestCase):
 
     def test_a_pair_accepted_across_the_drop_is_closed_by_the_accept_loop(self):
         """The accept loop has passed its drop check with a connection in hand when stop()'s drop() sweeps the pairs, and
-        only then registers the pair (the gate holds the loop at the lock where it registers until the sweep is done):
-        the loop must see the drop there and close the pair itself, since no sweep will. Registered anyway, the pair's
-        two pumps run on sockets nobody shuts, and stop() fails at its bound naming them."""
+        only then registers the pair: the gate holds the loop at the lock where it registers until drop()'s hold of that
+        lock for the sweep ends, the event the window needs. (The gate opened on drop()'s return until drop() began to wait
+        for the loop; with that wait, drop() and the loop would each wait on the other until drop()'s bound.) The loop must
+        see the drop there and close the pair itself, since no sweep will. Registered anyway, the pair's two pumps run on
+        sockets nobody shuts, and stop() fails at its bound naming them."""
         srv = self._target()
         p = self._proxy(srv)
         self.addCleanup(LinkProxy.drop, p)
         p.STOP_BOUND_S = 2.0   # the failure this test exists to catch comes at the bound: a late pair's pumps block on sockets nobody shuts
         at_lock, swept = threading.Event(), threading.Event()
-        p._lock = _GatedLock(at_lock, swept)
-        release = p.drop
-
-        def drop():
-            ans = release()
-            swept.set()
-            return ans
-        p.drop = drop
+        after = []   # whether drop() had cleared the listener when the loop registered the pair: the window this test holds open
+        p._lock = _GatedLock(at_lock, swept, released=swept, registering=lambda: after.append(p._lsock is None))
         p.listen()
         c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.addCleanup(c.close)
@@ -2271,20 +2390,34 @@ class LinkProxyEnds(unittest.TestCase):
         c.connect(("127.0.0.1", p.port))
         self.assertTrue(at_lock.wait(5), "the accept loop reached the lock where it registers the pair")
         p.stop()
+        self.assertEqual(after, [True], "the loop registered the pair after drop() had cleared the listener, the window this test holds open")
         self.assertEqual(c.recv(1), b"", "the client's end of the pair accepted across the drop reads EOF")
 
-    def test_a_pair_accepted_before_a_drop_and_registered_after_the_resume_is_closed(self):
-        """The same window across drop() and resume(): the loop took the connection on the listener the drop closed, and
-        when it registers the pair a new listener is live and _down is clear again. The pair belongs to the dead
-        listener and is closed, not spliced across the drop (the stray frame the accept loop's comment names). The
-        client's read is bounded at 2 s: spliced, the pair would carry nothing and the read would time out rather than
-        read EOF."""
+    def test_a_pair_accepted_before_a_drop_is_closed_before_the_resume_listens(self):
+        """The same window across drop() and resume(): the loop took the connection on the listener a drop then closes, and
+        is held at the lock where it registers the pair until someone waits for the loop (the gate opens when the loop's
+        thread is joined, which drop() does once it has swept the pairs). drop() returns only once the loop has closed the
+        pair, so no listener is live when the loop decides the pair's fate, and a resume() after the drop cannot have it
+        spliced across (the stray frame the accept loop's comment names). Before drop() waited for the loop, a resume()
+        straight after the drop bound a new listener while the loop still held the pair, and only the registration's
+        identity check closed it: without that wait this test's own wait for the loop, after its resume(), opens the gate,
+        and a listener is live at the registration. The client's read is bounded at 2 s: spliced, the pair would carry
+        nothing and the read would time out rather than read EOF."""
         srv = self._target()
         p = self._proxy(srv)
         self.addCleanup(p.stop)
         at_lock, go = threading.Event(), threading.Event()
-        p._lock = _GatedLock(at_lock, go)
+        live = []   # whether a listener was live when the loop registered the pair
+        p._lock = _GatedLock(at_lock, go, registering=lambda: live.append(p._lsock is not None))
         p.listen()
+        with p._lock:
+            loop = [t for t in p._threads if t.name == "linkproxy-accept"][0]
+        join = loop.join
+
+        def joined(timeout=None):   # the gate opens when anyone waits for the loop: drop(), or failing that the wait below
+            go.set()
+            return join(timeout)
+        loop.join = joined
         c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.addCleanup(c.close)
         c.settimeout(5)
@@ -2292,7 +2425,9 @@ class LinkProxyEnds(unittest.TestCase):
         self.assertTrue(at_lock.wait(5), "the accept loop reached the lock where it registers the pair")
         p.drop()
         p.resume()
-        go.set()
+        loop.join(10)
+        self.assertFalse(loop.is_alive(), "the dropped listener's accept loop ended")
+        self.assertEqual(live, [False], "no listener was live when the loop registered the pair it took on the dropped listener (drop() returned before the loop did)")
         c.settimeout(2)
         self.assertEqual(c.recv(1), b"", "the client's end of the pair accepted before the drop reads EOF")
 
@@ -2312,23 +2447,32 @@ class LinkProxyEnds(unittest.TestCase):
 class _GatedLock:
     """A stand-in for LinkProxy._lock: the accept thread's first entry signals `arrived` and waits for `go` before it takes
     the lock, so a test can run drop() between the accept loop's drop check and the registration of the pair it
-    accepted."""
+    accepted. `released`, when given, is set when a hold of the lock ends after that arrival: the accept thread holds none
+    while it waits at the gate, and in these tests the first such hold is drop()'s sweep of the pairs, so a gate whose
+    `go` is `released` opens once the sweep is done. `registering`, when given, is called by the accept thread as soon as it holds the lock on that entry, where the
+    loop reads whether its listener is still the live one."""
 
-    def __init__(self, arrived, go):
+    def __init__(self, arrived, go, released=None, registering=None):
         self._lock = threading.Lock()
         self._arrived, self._go = arrived, go
+        self._released, self._registering = released, registering
         self._gated = False
 
     def __enter__(self):
-        if not self._gated and threading.current_thread().name == "linkproxy-accept":
+        gate = not self._gated and threading.current_thread().name == "linkproxy-accept"
+        if gate:
             self._gated = True
             self._arrived.set()
             self._go.wait(5)
         self._lock.acquire()
+        if gate and self._registering is not None:
+            self._registering()
         return self
 
     def __exit__(self, *exc):
         self._lock.release()
+        if self._released is not None and self._gated:
+            self._released.set()
         return False
 
 
