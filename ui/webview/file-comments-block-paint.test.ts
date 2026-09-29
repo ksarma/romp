@@ -358,7 +358,7 @@ test("a paint pass over a body whose display formula wears the highlight's block
   const tops = () => shapeOf(w.md).filter((s) => !s.startsWith("T("));
   assert.deepEqual(tops(), ["H1", "P", "SPAN.katex-display.fc-hl-block.fc-hl-context", "P"], "stamped as the paint and the pass leave it");
   normalized.clear();
-  for (const cb of w.hooks.rendered) cb();   // the seam's onRendered for the same text: paintAll unpaints what stands, then repaints (nothing: no comment)
+  for (const cb of w.hooks.rendered) cb();   // the seam's onRendered for the same text: #latchCardState's pass (paintPass) unpaints what stands, then repaints (nothing: no comment)
   assert.deepEqual(stripped(d), CLEAN, "the box stripped of everything the paint and the pass put on it");
   assert.equal(d.parentNode, w.md, "still a top-level node of the rendered root");
   assert.deepEqual(shapeOf(d), ["SPAN.katex"], "KaTeX's root still its child, nothing between them");
@@ -439,8 +439,8 @@ test("the sheets: the block rules stand once in the panel block of BOTH sheets b
 });
 
 test("the panel's readers select the block class beside the mark's: paintAll's unpaint and the pending target's three, the repaint's box read and lineBoxOf's own-box answer, goTo's fallback, the pass's context cue on a stamped box, and unwrapMarks' strip", () => {
-  const paint = SRC.split("  paintAll(): void {")[1].split("\n  }\n")[0];
-  assert.ok(paint.includes('this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");'), "paintAll unpaints both block classes with the marks");
+  const paint = SRC.split("  private paintPass(current: boolean): void {")[1].split("\n  }\n")[0];
+  assert.ok(paint.includes('this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");'), "the pass unpaints both block classes with the marks; a source pin only, whose executed witness is this file's case on a paint pass over a body whose display formula wears the highlight's block class");
   assert.match(paint, /if \(loc\.state === "context"\) for \(const m of out \|\| \[\]\) if \(!isMarkEl\(m\)\) m\.classList\.add\("fc-hl-context"\);/, "the context state's cue goes on a stamped box by hand (the paint stamps the first class token alone)");
   assert.ok(paint.includes('if (unsure) m.classList.add("fc-hl-context");'), "the guessed copy's cue on every element, the line the plan's states test pins");
   const repaint = SRC.split("  private repaintPreselPass(): void {")[1].split("\n  }\n")[0];

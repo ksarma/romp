@@ -21,7 +21,7 @@
 // and the person's event offered nothing; the fourth and fifth tests below drive those roads. The pass is forced into the gap
 // deterministically through a road the product exposes to its host: a settings pick from
 // another pane (settings.ts onExternalSettingsChange: the window's storage event for the settings key, which file-comments.ts answers
-// with paintAll at once), fired from a one-shot keyup listener the leg installs, since the ArrowRight keyup is a separate input task
+// with #latchCardState's pass at once), fired from a one-shot keyup listener the leg installs, since the ArrowRight keyup is a separate input task
 // Chromium runs ahead of the posted selectionchange; each scene asserts that premise (at the hook the selection already holds the
 // change and the event count is at its baseline) and fails loudly where a browser orders them otherwise. The first test's scenes are
 // the paint-offer file's control (a peer's mark AFTER the selection on its line, so the pass moves nothing on the line and the float's
@@ -119,7 +119,7 @@ async function openWith(browser: any, c: { id: string }): Promise<{ page: any; e
     w.__selChanges = 0; document.addEventListener("selectionchange", () => { w.__selChanges++; });
     // the settings pick from another pane, as the browser delivers it to this document: the shared store written with Show changes
     // inline flipped, then the window's storage event for the settings key (settings.ts onExternalSettingsChange re-reads the store on
-    // it; file-comments.ts answers a changed flag with paintAll at once)
+    // it; file-comments.ts answers a changed flag with #latchCardState's pass at once)
     w.__pick = () => {
       const KEY = "romp:settings"; const raw = localStorage.getItem(KEY); const cur = raw ? JSON.parse(raw) : {};
       const next = { ...cur, changesInline: cur.changesInline === false };

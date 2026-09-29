@@ -1861,7 +1861,7 @@ line for it, since this row says where the comment is; and the save moves nothin
 before it, the margin's scroll to a saved card, `scrollToSaved`, found no card for such a comment and moved nothing).
 The filter hides a card by leaving it out of the list (`renderCards`), never by
 styling it away, so the placement pass lays out the cards the chosen option shows and no other, and a pick
-repaints through `paintAll`, whose render ends in the pass (`afterRender`). The filter's row is a control row
+repaints through `#latchCardState`'s pass, whose render ends in the pass (`afterRender`). The filter's row is a control row
 of the head, like the toggles' above it, not growth: the margin layout's two-tier rule leaves the head in the
 collapsed tier while that row is all the head holds beyond its buttons (`:has(.fc-head > :nth-child(n+2):not(.fc-filter))`
 in both sheets), so the head gives only in the collapsed tier's turn while it holds its two control rows alone;
@@ -2061,10 +2061,11 @@ below the focus and the comment holds the start: the margin-layout record above)
 is laid at any point, that the comment names the change instead of a passage (the review's second round, 2026-09-10).
 For a spanned change, an insertion or a substitution, the card offers
 Comment on this change only while the view carries the change's text (`spanCarried`: the bytes the view shows are the
-status's, whose offsets place the span (`paintCurrent`: `textCurrent` compares the status's mtime with the mtime of the
-view's last paint while an svg picture's landing waits for its paint, else with the view's mtime); there is a text to
-cut it from (`indexedText`: the view's, or while the editor is up the file as the editor loaded it, never the buffer);
-and the view shows text at all, not the picture of a media file); in flux, a reject's reply landed and its reload not,
+status's, whose offsets place the span; there is a text to cut it from (`indexedText`: the view's, or while the editor is
+up the file as the editor loaded it, or as the last save through the panel from that editor wrote it, never the buffer);
+and the view shows text at all, not the picture of a media file;
+each as the Comments panel's card-state rule took it at its last event (`#cardState` in file-comments.ts, whose doc
+states the rule)); in flux, a reject's reply landed and its reload not,
 or the poll's reload landed and its status not, the
 card shows Accept and Reject alone, no Comment on this change, and a click that reaches `startChangeComment` anyway
 writes nothing, since the composer over the span would quote other bytes and a comment by id alone would lose the
