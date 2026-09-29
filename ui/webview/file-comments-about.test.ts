@@ -601,7 +601,7 @@ test("a selection reaching a deletion's point: across it, the passage comment of
   assert.equal(c.quote, "recommend"); assert.equal(c.opt, null, "the point is at the selection's edge, not inside it");
 });
 
-// ── a landing reported ahead of its paint: the marks and a selection's changes read the text the body shows ────────
+// ── the change marks and a selection's changes between a landing and its paint (file-comments.ts, #cardState's doc) ──
 
 /** The Raw rows that carry a change mark, each as its text with the marks written in: [DEL:id:] for a deletion's point, [INS:id:text]. */
 const markedRows = (w: World): string[] => {
@@ -620,7 +620,7 @@ function pointIn(w: World, needle: string, k: number): [Txt, number] {
   throw new Error("past the row's end");
 }
 
-test("from a landing the seam reports ahead of its paint until that paint, the change marks and a selection's changes read the text the body shows, as the change cards do (paintCurrent): with the status's bytes landed and the older text still showing, a selection there names no change and a repaint marks nothing over the older text; with newer bytes landed and the panel's status still the older text's, a selection names the changes it overlaps or crosses and a repaint keeps the marks; the marks move at the paint", async (t: TestContext) => {
+test("the change marks and a selection's changes between a landing the seam's onLanded tells and that landing's paint (file-comments.ts, #cardState's doc): with the status's bytes landed and the older text still showing, a selection there names no change and a repaint marks nothing over the older text; with newer bytes landed and the panel's status still the older text's, a selection names the changes it overlaps or crosses and a repaint keeps the marks; the marks move at the paint", async (t: TestContext) => {
   t.after(() => { win.getSelection = () => null; });
   const F11 = "1757145600000000011";
   const REJECTED = DOC.replace("cut", "reduced");         // h1 rejected: its old text back, four characters longer than "cut"

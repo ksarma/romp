@@ -2111,6 +2111,8 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-warn { color: var(--warn); font-size: 0.86em; }
 .fc-err { padding: 6px 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .fc-err .fileview-btn { display: inline-flex; margin: 0; }
+/* the panel's live region (file-comments.ts, notInView), visually hidden because the row under the card already shows the same words; the settings sheet's .rs-live rule (gear.css) */
+.fc-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .fc-x { padding: 0 6px; }
 .fc-load { padding: 6px 0; justify-content: flex-start; }
 .fc-composer { display: flex; flex-direction: column; gap: 6px; }

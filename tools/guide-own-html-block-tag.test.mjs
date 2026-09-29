@@ -14,7 +14,7 @@
 // mid-sentence). This module holds each clause of the account to the
 // installed marked (vscode-extension/node_modules, the copy the viewer bundles), by lexing synthetic documents, and to the two
 // code paths the account rests on. The lexer legs skip where marked is not installed, which is every CI run of tools/*.test.mjs
-// (the shell job runs no npm ci); ui/webview/guide-own-html-block-tag.test.ts runs the same legs through the viewer's own
+// (the vendored-tooling job runs no npm ci); ui/webview/guide-own-html-block-tag.test.ts runs the same legs through the viewer's own
 // configuration under the extension job's npm test, so CI holds them there. The sentences are pinned flattened, so a rewrap
 // survives. Synthetic text only. Run: node --test tools/guide-own-html-block-tag.test.mjs
 import { test } from 'node:test';

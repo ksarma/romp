@@ -16,6 +16,16 @@
  *  changes before the family call is NOT followed: the census counts the caller's literal, and the string written may differ.
  *  Neither shape occurs in render.ts; the pin holds the first, the second is the stated limit.
  *
+ *  The module's second census, cardStateCensus, reads file-comments.ts for every assignment to the Panel's private #cardState,
+ *  every call of its private writer and every call of the names it is given. It lists every other mention of those names in the
+ *  file's code (a decorator on a declaration by the name or on its parameters among them), their own declarations aside; every
+ *  decorator on the declaration of #cardState, #latchCardState or #replaced or on its parameters; and these doors to code in a
+ *  string: eval and Function by name; the identifier constructor; a string literal spelled eval, Function, constructor,
+ *  setTimeout or setInterval; and a timer given anything but a function written in place. It reads no name computed at run
+ *  time, no code in another module, and none of the other ways a page runs code from a string, such as a module imported from a
+ *  data address, handler attributes or markup, and an element whose text runs as code. The card-state rule is stated in
+ *  #cardState's doc there; this census's own doc says what it counts and what it lists for the test to hold empty.
+ *
  *  Node-only: the tests import it; the webview bundle never does. */
 import * as ts from "typescript";
 
@@ -121,4 +131,154 @@ export function writerCensus(src: string, table: Readonly<Record<string, number>
 
   failures.sort((a, b) => a.line - b.line || a.call.localeCompare(b.call));
   return { literals: [...literals].sort(), wrappers, failures };
+}
+
+/** A place the card-state census found: the function it sits in (for a decorator in `decorators`, the declaration it decorates),
+ *  its line, its text, and for a call of the writer the event it names. */
+export type CardSite = { fn: string; line: number; text: string; at?: string };
+/** The card-state census (file-comments.ts: the Panel's private #cardState, whose doc states the rule it keeps). Each site it
+ *  finds is named by the function it sits in: a method's or a function's own name, "constructor", or for a callback its host's
+ *  name ("onRendered's callback", "fcinline's callback"); a decorator in `decorators` is named by the declaration it decorates.
+ *  It COUNTS: the declarations of #cardState (decls); every assignment to #cardState (writes) and to #replaced, the count of the
+ *  body's changes the rule reads (counts), an assignment being any assignment operator's, a destructuring target's, a for-in or
+ *  for-of head's, or an increment's or a decrement's whose target is the private field; every call of #latchCardState, with the
+ *  event its first argument names (calls); and every call of `callees` (callers), a call whose callee is the name itself or a
+ *  property access ending in it (`name(...)`, `this.name(...)`, `x?.name(...)`).
+ *  It LISTS, for the test to hold empty (fail closed): a mention of #latchCardState that is not a call of it (refs), and these
+ *  doors to code in a string, whose code no census reads (evals): every identifier spelled eval or Function, however it is
+ *  written (a unicode escape reads as the name) and wherever it stands, a call's callee or not; every identifier spelled
+ *  constructor (a function's constructor property is the Function constructor, `(function () {}).constructor`, or for an async,
+ *  a generator or an async generator function that constructor's async, generator or async generator kin, each of which makes a
+ *  function of a string); every string literal, quoted or a template with no substitution, whose text is eval, Function,
+ *  constructor, setTimeout or setInterval (an element access's key, `globalThis["eval"]`, `` globalThis[`eval`] ``); and every
+ *  identifier spelled setTimeout or setInterval but the callee of a call whose first argument, through parentheses, is a function
+ *  written in place (an arrow function or a function expression) and a name in a type (`ReturnType<typeof setTimeout>`; an
+ *  instantiation expression, `setTimeout<[string]>`, is a value and is listed), since a timer given anything else may be given a
+ *  string, which it runs as code, and one handed on or given another name may be called so. A
+ *  direct eval inside the class runs its string as the class's own code, so it can write a private field where no syntax shows
+ *  it, as a decorator on the field's declaration can through the access it is handed (decorators, below); no other road
+ *  reaches one: a private name is written in no other syntax (no computed key, no Object.assign, Reflect or
+ *  defineProperty, and `delete` of it does not parse), code outside its class cannot name it, and an indirect eval, a Function
+ *  body or a timer's string runs as global code, where the name does not parse. A write through the state meets an object frozen
+ *  at its one assignment, which throws. A private name's element-access spelling (a string key "#cardState") reaches a
+ *  different, public property and is none of these. Global code can still call a public method, such as a name in `callees`, on
+ *  a panel handed to it (a Function's parameters) or reachable from it, with no mention of that name in this file.
+ *  It LISTS as well, for the test to hold empty, every decorator on a declaration of #cardState, #latchCardState or #replaced or
+ *  on one of its parameters (decorators): one on a private field is handed access that reads and writes the field, and one on a
+ *  private method is handed the method and, through addInitializer, the instance, so its body, which may sit outside the class,
+ *  can write the field or call the method where no syntax in this file shows it.
+ *  It also LISTS every other mention of a name in `callees` (calleeRefs, by name), for a test that needs that name's callers exact
+ *  to hold empty: the name as an identifier anywhere but a counted call's callee and the name a class member, a function or a
+ *  signature is declared by (a reference bound or handed on, `this.name.bind(this)`; an alias, `const f = this.name`; a
+ *  destructured name; a call through parentheses or `.call`); every string literal whose text is the name (an element access's
+ *  key, `this["name"]()`, or Reflect's argument); and every decorator on a declaration by the name or on one of its parameters,
+ *  which is handed the method it decorates (and, through addInitializer, the instance) and may call it with no mention of the
+ *  name. So the census reads this file's syntax alone: a name computed at run time (`this[k]`, a concatenation) is in neither
+ *  callers nor calleeRefs; code in another module is not read (a decorator on a member whose decorators are not listed is handed
+ *  that member and the instance, and its body may sit in another module); and none of the other ways a page runs code from a
+ *  string is read or listed, such as a module imported from a data address (`import("data:...")`), handler attributes or markup
+ *  (`setAttribute("onclick", ...)`, markup given to innerHTML), and an element whose text runs as code. */
+export function cardStateCensus(src: string, callees: string[] = [], file = "file-comments.ts"): { decls: number; writes: CardSite[]; calls: CardSite[]; refs: CardSite[]; counts: CardSite[]; evals: CardSite[]; decorators: CardSite[]; callers: Record<string, string[]>; calleeRefs: Record<string, CardSite[]> } {
+  const sf = ts.createSourceFile(file, src, 99, true);   // 99: the compiler's newest language level (its enum's Latest), so every construct of the file parses; the kind follows the name's .ts
+  const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+  const shown = (n: ts.Node): string => n.getText(sf).replace(/\s+/g, " ").slice(0, 120);
+  const fnName = (n: ts.Node): string => {
+    for (let x: ts.Node | undefined = n.parent; x; x = x.parent) {
+      if (ts.isConstructorDeclaration(x)) return "constructor";
+      if ((ts.isMethodDeclaration(x) || ts.isFunctionDeclaration(x) || ts.isGetAccessor(x) || ts.isSetAccessor(x)) && x.name) return x.name.getText(sf);
+      if (ts.isArrowFunction(x) || ts.isFunctionExpression(x)) {
+        const p = x.parent;
+        if (ts.isCallExpression(p)) return (ts.isPropertyAccessExpression(p.expression) ? p.expression.name.text : p.expression.getText(sf)) + "'s callback";
+        if (ts.isPropertyAssignment(p)) return p.name.getText(sf) + "'s callback";
+        if (ts.isVariableDeclaration(p) || ts.isPropertyDeclaration(p)) return p.name.getText(sf);
+        return "a callback at line " + lineOf(x);
+      }
+    }
+    return "the module";
+  };
+  /** Whether `e`, through parentheses and type assertions, is `<object>.#name`. */
+  const isPrivate = (e: ts.Node, name: string): boolean => {
+    let x: ts.Node = e;
+    while (ts.isParenthesizedExpression(x) || ts.isAsExpression(x) || ts.isNonNullExpression(x) || ts.isTypeAssertionExpression(x) || ts.isSatisfiesExpression(x)) x = x.expression;
+    return ts.isPropertyAccessExpression(x) && ts.isPrivateIdentifier(x.name) && x.name.text === name;
+  };
+  /** Whether an assignment's target writes #name: the field itself, or a destructuring pattern holding it anywhere. */
+  const targets = (e: ts.Node, name: string): boolean => {
+    if (isPrivate(e, name)) return true;
+    if (!ts.isObjectLiteralExpression(e) && !ts.isArrayLiteralExpression(e)) return false;
+    let hit = false;
+    const walk = (n: ts.Node): void => { if (isPrivate(n, name)) hit = true; ts.forEachChild(n, walk); };
+    walk(e);
+    return hit;
+  };
+  const out = { decls: 0, writes: [] as CardSite[], calls: [] as CardSite[], refs: [] as CardSite[], counts: [] as CardSite[], evals: [] as CardSite[], decorators: [] as CardSite[], callers: Object.fromEntries(callees.map((c) => [c, [] as string[]])) as Record<string, string[]>,
+    calleeRefs: Object.fromEntries(callees.map((c) => [c, [] as CardSite[]])) as Record<string, CardSite[]> };
+  const named = (name: string): boolean => Object.prototype.hasOwnProperty.call(out.callers, name);
+  /** Whether the identifier is the callee a call of `callees` is counted by: the call's expression, or the name of the property
+   *  access that is. */
+  const countedCallee = (n: ts.Identifier): boolean =>
+    (ts.isCallExpression(n.parent) && n.parent.expression === n)
+    || (ts.isPropertyAccessExpression(n.parent) && n.parent.name === n && ts.isCallExpression(n.parent.parent) && n.parent.parent.expression === n.parent);
+  /** Whether the identifier is the name a class member, a function or a signature is declared by. */
+  const declaredName = (n: ts.Identifier): boolean => {
+    const p = n.parent;
+    return (ts.isMethodDeclaration(p) || ts.isFunctionDeclaration(p) || ts.isPropertyDeclaration(p) || ts.isGetAccessor(p) || ts.isSetAccessor(p) || ts.isMethodSignature(p) || ts.isPropertySignature(p)) && p.name === n;
+  };
+  /** A callee's mention, shown with what holds it (for a property's name, what holds the property access). */
+  const mention = (n: ts.Node): CardSite => { const at = ts.isPropertyAccessExpression(n.parent) && n.parent.name === n ? n.parent : n; return { fn: fnName(n), line: lineOf(n), text: shown(at.parent) }; };
+  /** The names of the doors to code in a string (evals), and the timers among them. */
+  const DOORS = new Set(["eval", "Function", "constructor", "setTimeout", "setInterval"]);
+  const TIMERS = new Set(["setTimeout", "setInterval"]);
+  /** The private names whose declarations' decorators are listed (decorators): the state, its writer and the count the rule reads. */
+  const STATE_NAMES = new Set(["#cardState", "#latchCardState", "#replaced"]);
+  /** Whether the identifier stands in a type (`typeof setTimeout` in an annotation), where no code runs; an instantiation
+   *  expression (`setTimeout<T>`) is a value, not a type. */
+  const inType = (n: ts.Node): boolean => { for (let x = n.parent; x; x = x.parent) if (ts.isTypeNode(x) && !ts.isExpressionWithTypeArguments(x)) return true; return false; };
+  /** Whether the identifier is a counted callee (as a call of `callees` is counted) of a call whose first argument, through
+   *  parentheses, is a function written in place. */
+  const givenFunction = (n: ts.Identifier): boolean => {
+    if (!countedCallee(n)) return false;
+    const call = (ts.isCallExpression(n.parent) ? n.parent : n.parent.parent) as ts.CallExpression;
+    let a: ts.Node | undefined = call.arguments[0];
+    while (a && ts.isParenthesizedExpression(a)) a = a.expression;
+    return !!a && (ts.isArrowFunction(a) || ts.isFunctionExpression(a));
+  };
+  const door = (n: ts.Node): CardSite => ({ fn: fnName(n), line: lineOf(n), text: shown(n.parent) });
+  /** An assignment: the binary expression's operator, its middle child, is one of the assignment operators. */
+  const assigns = (n: ts.BinaryExpression): boolean => { const k = n.getChildAt(1, sf).kind; return k >= ts.SyntaxKind.FirstAssignment && k <= ts.SyntaxKind.LastAssignment; };
+  /** An increment or a decrement: ++ or -- before the operand or after it. */
+  const steps = (n: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression): boolean => { const t = n.getText(sf).replace(/\s+/g, ""); return ts.isPrefixUnaryExpression(n) ? /^(\+\+|--)/.test(t) : /(\+\+|--)$/.test(t); };
+  /** Whether `n` is an assignment whose target is the private field `name`. */
+  const assignmentTo = (n: ts.Node, name: string): boolean =>
+    (ts.isBinaryExpression(n) && assigns(n) && targets(n.left, name))
+    || ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && steps(n) && isPrivate(n.operand, name))
+    || ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && targets(n.initializer, name));
+  const site = (n: ts.Node): CardSite => ({ fn: fnName(n), line: lineOf(n), text: shown(ts.isForOfStatement(n) || ts.isForInStatement(n) ? n.initializer : n) });
+  const visit = (n: ts.Node): void => {
+    if ((ts.isPropertyDeclaration(n) || ts.isGetAccessor(n) || ts.isSetAccessor(n) || ts.isMethodDeclaration(n)) && ts.isPrivateIdentifier(n.name) && n.name.text === "#cardState") out.decls++;
+    if (assignmentTo(n, "#cardState")) out.writes.push(site(n));
+    if (assignmentTo(n, "#replaced")) out.counts.push(site(n));
+    if (ts.isIdentifier(n) && DOORS.has(n.text) && !(TIMERS.has(n.text) && (inType(n) || givenFunction(n)))) out.evals.push(door(n));
+    if (ts.isStringLiteralLike(n) && DOORS.has(n.text)) out.evals.push(door(n));
+    if (ts.isCallExpression(n)) {
+      const c = n.expression;
+      const name = ts.isPropertyAccessExpression(c) ? c.name.text : ts.isIdentifier(c) ? c.text : null;
+      if (name !== null && named(name)) out.callers[name].push(fnName(n));
+    }
+    if (ts.isIdentifier(n) && named(n.text) && !countedCallee(n) && !declaredName(n)) out.calleeRefs[n.text].push(mention(n));
+    if (ts.isStringLiteralLike(n) && named(n.text)) out.calleeRefs[n.text].push(mention(n));
+    if (ts.isDecorator(n)) {
+      const nm = ts.getNameOfDeclaration((ts.isParameter(n.parent) ? n.parent.parent : n.parent) as ts.Declaration);
+      if (nm && (ts.isIdentifier(nm) || ts.isStringLiteralLike(nm)) && named(nm.text)) out.calleeRefs[nm.text].push({ fn: fnName(n), line: lineOf(n), text: shown(n) });
+      if (nm && ts.isPrivateIdentifier(nm) && STATE_NAMES.has(nm.text)) out.decorators.push({ fn: nm.text, line: lineOf(n), text: shown(n) });
+    }
+    if (ts.isPropertyAccessExpression(n) && ts.isPrivateIdentifier(n.name) && n.name.text === "#latchCardState") {
+      const call = ts.isCallExpression(n.parent) && n.parent.expression === n ? n.parent : null;
+      if (call) { const a = call.arguments[0]; out.calls.push({ fn: fnName(n), line: lineOf(n), text: shown(call), at: a && ts.isStringLiteralLike(a) ? a.text : "(not a literal)" }); }
+      else out.refs.push({ fn: fnName(n), line: lineOf(n), text: shown(n.parent) });
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
 }

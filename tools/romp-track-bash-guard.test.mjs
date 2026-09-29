@@ -136,7 +136,7 @@ const presenceOf = (program, { absent = OVERRIDE_ABSENT, real = null, PATH, cwd 
 // bash legs ran outside it too, and a bash that starts but is too old declined with a value-mismatch red, since the probe asked
 // only whether the shell starts: 48 lines of this file spell a bash 4.x construct, `declare -n` the newest at 4.3, counted by
 // grep -c -E "declare -[a-zA-Z]*[nlugA]|typeset -[a-zA-Z]*[nlug]|mapfile|readarray|\|&" over its non-comment lines, and the
-// CI Shell job's macOS cell ships bash 3.2.57). Every spawn of a shell in this file goes through the `spawnSync` wrapper below,
+// CI vendored-tooling job's macOS cell ships bash 3.2.57). Every spawn of a shell in this file goes through the `spawnSync` wrapper below,
 // which throws by name when the probe declined that shell, so a leg that reaches a shell without asking shellsFor is a loud red
 // naming the shell, whatever its list is called or how it loops, never a silent run and never a red naming nothing.
 // The refusable case is run by hand with a `zsh` stub that exits 1 first on PATH: the file passes and prints the NOT RUN lines.
