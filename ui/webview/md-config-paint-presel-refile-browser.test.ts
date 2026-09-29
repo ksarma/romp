@@ -3,10 +3,11 @@
 // files-pane.css, the kernel's status answered from the page, the poll answered quietly). The repaint is a paint pass over the line
 // boxes the target enters and leaves (round 15): the change marks standing there are painted again, whole-document, and trimmed with
 // the rest, and the repaint files them as the pass does (paintAll): a change whose every mark the trim removed as not shown, one
-// whose mark stands again as shown. The cards read the filing at render time (renderChangeCard: the "not shown" tag, Reveal and the
-// reference's link), and the callers of the repaint after a passage's Comment and after Cancel render the composer alone
-// (renderFrom), so a card whose filing the repaint moved kept saying the opposite of the body until the next render (a status, a
-// toggle). Now the repaint renders the cards when a filing moved, in the same call, and nothing when none did.
+// whose mark stands again as shown. The change cards read the filing as the card-state rule takes it (file-comments.ts, #cardState's
+// doc, event 1's refile) at render time (renderChangeCard: the "not shown" tag, Reveal and the reference's link), and the callers of
+// the repaint after a passage's Comment and after Cancel render the composer alone (renderFrom), so a card whose filing the repaint
+// moved kept saying the opposite of the body until the next render (a status, a toggle). Now the repaint renders the cards when a
+// filing moved, in the same call, and nothing when none did.
 // The shape that moves a filing: a session's insertion of ONE SOFT HYPHEN (U+00AD), a character the index records (not \s) and the
 // trim measures (anchor-map.ts TRIM_CANDIDATE: no letter, digit, punctuation or symbol), which renders a hyphen at a line break and
 // nothing elsewhere, so whether its mark stands after the trim is where the wrap point falls, and the target's 2 px side padding on

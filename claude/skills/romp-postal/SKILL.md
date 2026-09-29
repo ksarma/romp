@@ -18,7 +18,7 @@ Addressing is live-only: you can message only currently-live sessions (see `list
 
 Role-named recipients go stale: a role handed to a new session keeps the OLD name in your memory of it, and the retired name just bounces. Before sending to a role-style name (a router, a watcher, a manager), confirm it against `list_agents` and address whoever holds the role now.
 
-Names are not guaranteed unique. If more than one live session answers to the one you used, the send is refused and the candidates are listed as `host:name`: pick one and resend. Your own name is refused outright, since a message there arrives in your own inbox looking exactly like a reply from someone else. Your row in `list_agents` is the one marked `(you)`.
+Names are not guaranteed unique. If more than one live session answers to the one you used, the send is refused and the candidates are listed as `host:name`, each with the start of its session id where two share one `host:name`: pick one and resend to that address. Your own name is refused outright, since a message there arrives in your own inbox looking exactly like a reply from someone else. Your row in `list_agents` is the one marked `(you)`.
 
 From the shell (also how the human drives it): `romp mail send --kind delegate|coordinate|question <name> "<text>"`, `romp mail inbox|agents|sent`, `romp mail working "<note>"`, `romp mail recall <name> [id]`.
 

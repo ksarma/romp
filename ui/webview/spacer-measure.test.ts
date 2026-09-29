@@ -1136,10 +1136,10 @@ test("every module the page bundles load, read with the compiler: the only write
   // PARTITIONED (never filtered) into modules, every suffix the compiler parses (`.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs`,
   // `.jsx`; a .tsx or .jsx parsed under its own ScriptKind), and styles (the `.css` inputs), the remainder asserted empty naming any other
   // suffix (the maintainer's round 7 ruling, extra7-1), so it reaches the two `.js` modules in ui/webview and the five modules outside it named
-  // below, which tsconfig's file list (no allowJs; the test helpers under ui/ included) misses, and it leaves out the seven modules in the
+  // below, which tsconfig's file list (no allowJs; the test helpers under ui/ included) misses, and it leaves out the eight modules in the
   // directory no page loads, which a listing counts. The directory is read too, recursively and through the same partition (the anchor map's
   // fixture directory first, then tests and types, modules and styles, the remainder asserted empty), and the two are tied by EQUALITY both ways,
-  // never a floor: the directory's modules no page bundle loads are exactly the seven named below (reached from tests, from one another and
+  // never a floor: the directory's modules no page bundle loads are exactly the eight named below (reached from tests, from one another and
   // from the viewer bench under tools/, never from a page entry), and the loaded modules outside the directory are exactly the five named
   // below (the timeline panel's prebuilt bundle and four vendored track-changents modules, display.js reached from track-logic.js through
   // the vendored package's own exports map), so a module that starts or stops being loaded, appears outside the directory or leaves it, is
@@ -1147,7 +1147,7 @@ test("every module the page bundles load, read with the compiler: the only write
   // fixtures or under tests and types (a module-suffix file under the fixture directory, a test of any module suffix, a `.d.ts`) reds too.
   // The listing skips a symlink, to a file or to a directory (filesUnder), and esbuild under the shipped config (no preserveSymlinks key, so
   // off) keys a module a bundle loads through a symlink by the TARGET's real path, never the link's: a target inside the directory is a listed
-  // module, so a symlinked import of one of the seven unloaded modules is named by the unloaded equality (it stops being unloaded) and one of
+  // module, so a symlinked import of one of the eight unloaded modules is named by the unloaded equality (it stops being unloaded) and one of
   // a module already loaded changes nothing; a target outside the directory is named by the outside equality as a sixth module; a symlink no
   // bundle loads is neither listed nor loaded and is silent, the case the old docstring's "every file" hid (the maintainer's round 8 ruling,
   // tests-4 and extra7-3).
@@ -1192,10 +1192,11 @@ test("every module the page bundles load, read with the compiler: the only write
     "ui/webview/feed-flip.ts",                   // the feed's FLIP-pass predicate, executed by feed-flip.test.ts
     "ui/webview/file-view-outline-fixture.ts",   // the Outline's synthetic fixture, shared by file-view-outline.test.ts and its browser leg
     "ui/webview/md-wiki.ts",                     // wikilink and callout extensions to the markdown grammar, executed by md-wiki.test.ts
+    "ui/webview/pane-tree.ts",                   // the pane-docking layout tree (phase one, pure), executed by pane-tree.test.ts
     "ui/webview/real-viewer-leg.ts",             // the real viewer mounted in a served page for the browser legs (*-browser.test.ts), shell-drag-leg and the bench
     "ui/webview/scroll-journal-audit.ts",        // the scroll journal's reader, executed by scroll-journal-audit.test.ts
     "ui/webview/shell-drag-leg.ts",              // the dashboard shell's pane-row drag mounted in a page of its own, for its browser leg and the bench
-    "ui/webview/writer-census.ts",               // the scroll-write census over a source's tree, executed by writer-census.test.ts and landing-settle.test.ts
+    "ui/webview/writer-census.ts",               // two censuses: the scroll-write census over a source's tree, executed by writer-census.test.ts and landing-settle.test.ts; and the card-state census over file-comments.ts (cardStateCensus), executed by file-comments-changes-review2.test.ts
   ];
   const OUTSIDE = [   // loaded by a page bundle from outside ui/webview
     "ui/romp-timeline-view.js",                              // the timeline panel's prebuilt bundle, required by timeline-main.ts
@@ -1204,7 +1205,7 @@ test("every module the page bundles load, read with the compiler: the only write
     "vendor/track-changents/obsidian/src/track-cm.js",       // imported by editor-chunk.ts and track-decorations.ts
     "vendor/track-changents/obsidian/src/track-logic.js",    // imported by track-decorations.ts
   ];
-  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive; the listing's module class, every suffix the compiler parses, the anchor map's fixture directory and tests and types apart) that no page bundle loads are exactly the seven named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
+  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive; the listing's module class, every suffix the compiler parses, the anchor map's fixture directory and tests and types apart) that no page bundle loads are exactly the eight named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
   assert.deepEqual(loaded.filter((m) => !m.startsWith("ui/webview/")), OUTSIDE, "the modules a page bundle loads from outside ui/webview are exactly the five named: a sixth, or one gone from the bundles, reds here");
   const listedSet = new Set(listed);
   assert.deepEqual(loaded.filter((m) => m.startsWith("ui/webview/") && !listedSet.has(m)), [], "a module under ui/webview that a page bundle loads and the listing's partition files under the anchor map's fixtures or under tests and types (a module-suffix file under the fixture directory, a `.test.ts`, a `.test.tsx`, a `.test.js`, a `.d.ts`): the two equalities above compare the listed modules with the loaded ones, so a production import of a test module or of a fixture is named here or reds (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a))");

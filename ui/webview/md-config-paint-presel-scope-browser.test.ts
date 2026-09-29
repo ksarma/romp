@@ -24,7 +24,7 @@
 //    after Cancel, round 14's symptom in a new shape. Now the box is the block whose width does not follow its content: the paragraph's
 //    highlight is painted again (every mark of it fresh) and after Cancel its blank marks and the paragraph's bare blanks are the
 //    pass's before the click; while the composer stands they are a pass's under the same target.
-// The pass the comparisons read is paintAll through the shared settings signal (settings.ts onExternalSettingsChange: Show changes
+// The pass the comparisons read is #latchCardState's through the shared settings signal (settings.ts onExternalSettingsChange: Show changes
 // inline flipped off and on; the notes here carry a change only in leg 3, whose marks that pass paints again like the panel's own).
 // Legs await the DOM's own states and frames, never a timer. Skips LOUDLY without a playwright browser (CI installs none). Synthetic
 // values only: an invented report, /repo/notes-api paths, the placeholder sid, placeholder comment ids.

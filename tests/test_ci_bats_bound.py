@@ -77,17 +77,24 @@ class PythonJobCeiling(unittest.TestCase):
 
 
 class ExtensionJobCeiling(unittest.TestCase):
-    """The vscode-extension job runs the served labs, which grow with every lab added: PR 1790's run was cancelled at the
-    job's 25-minute ceiling after 25 min 04 s mid lab on a slow runner, every step green up to the cut (2026-09-16). Forty
-    minutes: the served step's twenty-odd minutes on a slow runner plus the 600 s per-test timeout plus setup."""
-    def test_the_extension_job_gets_forty_minutes(self):
+    """The vscode-extension job ran the served labs until 2026-09-28, and they set its cap: PR 1790's run was cancelled at
+    the job's 25-minute ceiling after 25 min 04 s mid lab on a slow runner, every step green up to the cut (2026-09-16), so
+    forty minutes, the served step's twenty-odd minutes on a slow runner plus the 600 s per-test timeout plus setup. The
+    labs now run in the served-pages job (tests/test_ci_served_job.py holds both jobs equal to literals, caps included).
+    Without them the job took 4 min 45 s on main's run 36555049532 at 6dd80a6e7, and its cap is 17 minutes, sized in the
+    job's comment in ci.yml for a head that rosters the legs open PRs are known to add, with a Browser legs bound of about
+    that step's time and half again. The floor is that 17: a lower cap is sized again in the same change, and
+    tools/ci-browser-legs.test.mjs derives the Browser legs step's margin from that step's record and this cap."""
+    def test_the_extension_job_gets_seventeen_minutes(self):
         src = open(WF).read()
         m = re.search(r"^  vscode-extension:\n((?:    .*\n|\n)+?)    defaults:\n", src, re.M)
         self.assertTrue(m, "the extension job's head moved: re-anchor this pin")
         t = re.search(r"^    timeout-minutes: (\d+)$", m.group(1), re.M)
         self.assertTrue(t, "the extension job has no plain timeout-minutes line")
-        self.assertGreaterEqual(int(t.group(1)), 40, "the served labs took 25 min 04 s on a slow runner against a 25-minute ceiling")
-        self.assertLessEqual(int(t.group(1)), 60, "past an hour a hung lab eats the run")
+        self.assertGreaterEqual(int(t.group(1)), 17, "the cap is sized in the job's ci.yml comment from main's run "
+                                "36555049532 and the legs open PRs are known to add, with a Browser legs bound of about "
+                                "that step's time and half again: a lower cap is sized again in the same change")
+        self.assertLessEqual(int(t.group(1)), 60, "past an hour a hung job eats the run")
 
 
 if __name__ == "__main__":
