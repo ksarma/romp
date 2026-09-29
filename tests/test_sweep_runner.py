@@ -1625,20 +1625,20 @@ def _alive(pid):
         return False
 
 
-# Starts a program with SIGHUP and SIGINT at their default action, or ignored for the numbers in its first argument (a
-# comma-separated list), then execs the rest of its arguments in its own process, so the pid is the program's.
+# Starts a program with SIGHUP, SIGINT and SIGTERM at their default action, or ignored for the numbers in its first
+# argument (a comma-separated list), then execs the rest of its arguments in its own process, so the pid is the program's.
 SIGNAL_SHIM = ("import os, signal, sys\n"
                "ignored = set(int(n) for n in sys.argv[1].split(',') if n)\n"
-               "for s in (signal.SIGHUP, signal.SIGINT):\n"
+               "for s in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):\n"
                "    signal.signal(s, signal.SIG_IGN if int(s) in ignored else signal.SIG_DFL)\n"
                "os.execv(sys.argv[2], sys.argv[2:])\n")
 
 
 def runner_argv(w, *extra, ignore=()):
-    """The argv that runs the runner over `w` (with `extra`), started through SIGNAL_SHIM with SIGHUP and SIGINT at their
-    default action, or ignored for those in `ignore`. The runner leaves either one ignored when it starts with it ignored
-    (round 2, the owner's build question 5), so a case that sends one of them starts the runner this way, and does not
-    depend on what the test process was started with (a test run under nohup, say)."""
+    """The argv that runs the runner over `w` (with `extra`), started through SIGNAL_SHIM with SIGHUP, SIGINT and SIGTERM
+    at their default action, or ignored for those in `ignore`. The runner leaves SIGHUP or SIGINT ignored when it starts
+    with it ignored (round 2, the owner's build question 5), so a case that sends one of them starts the runner this way,
+    and does not depend on what the test process was started with (a test run under nohup, say)."""
     return [sys.executable, "-c", SIGNAL_SHIM, ",".join(str(int(s)) for s in ignore), sys.executable, str(SWEEP), "run",
             "--tree", w.tree, "--python", w.python, "--workers", "2", *extra]
 
@@ -1890,11 +1890,11 @@ class Checkout(_Base):
                 self.assertEqual(w.legs_called(), SEED_ORDER)
 
     def test_sigterm_stops_a_runner_started_with_sighup_and_sigint_ignored_and_cleans_up(self):
-        """The other way (the owner's build question 5): a runner started with SIGHUP and SIGINT both ignored still stops
-        on SIGTERM, sent while the bats leg waits: it exits 143 saying so, the stopped run stays unfinished, and the leg's
-        TMPDIR and checkout are gone."""
+        """The other way (the owner's build question 5): a runner started with SIGHUP and SIGINT ignored, and SIGTERM too,
+        still stops on SIGTERM, sent while the bats leg waits (SIGTERM always stops a run): it exits 143 saying so, the
+        stopped run stays unfinished, and the leg's TMPDIR and checkout are gone."""
         w = self.w
-        rc, out, err, _ignored = self.gated_run(w, (signal.SIGHUP, signal.SIGINT), signal.SIGTERM)
+        rc, out, err, _ignored = self.gated_run(w, (signal.SIGHUP, signal.SIGINT, signal.SIGTERM), signal.SIGTERM)
         self.assertEqual(rc, 128 + 15, out + err)
         self.assertIn("stopped by signal 15; the legs were stopped and TMPDIR and the checkout removed", err)
         call = [c for c in w.calls() if c["leg"] == "bats"][0]
