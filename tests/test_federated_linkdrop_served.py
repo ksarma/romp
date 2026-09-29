@@ -847,22 +847,26 @@ class _LinkDrop(unittest.TestCase):
     local_drop = True
     wait_ms = 20000           # each point's visibles after a change (the card, the todo, the provisional row), waited for concurrently
     # The driver's waitFor caps by the mark each wait ends at: each a floor set well above the slowest wait recorded, not a
-    # ratio of it (the ratios run from 2.8x to over 600x), with driver_budget_ms as the binding bound (BUDGET_JS: every wait
-    # draws on it). The spans are ONE derivation with the excuse and attach figures (`population_drive.py`, the tool
-    # _outline_caught_up_whole's docstring names, which reads every counted record's marks, prints the sentence below whole and
-    # under --check reads this comment for it, the markers folded; pass 10, the maintainer's round 5 extra8-3, after this paragraph and the delivery sentence below
-    # were hand-kept copies of a population dated one drive apart). The tool and the records are outside the repo, the tool
-    # named in the PR body, so the spans cannot be re-checked from the tree. A census over a growing record is dated by construction:
-    # the table below states each span's bounds as of the drive it names and nothing before or after it; drives after an
-    # earlier paste of this comment moved bounds that paste carried (the repo's history holds those pastes), so a later
-    # drive may move one again and the caps are floors far above every bound, not fits.
-    # The spans by mark pair over every unmutated recorded drive as of the drive at `r10/lab-ci9.log` (2026-09-21; 80
-    # drives, 50 new-bundle and 30 old-hub): closed, drop -> closed, 0.008 to 0.267 s; rowDown, closed -> rowDown,
-    # 4.31 to 14.5 s; rowUp, resume -> rowUp, 0.762 to 13.2 s; redialed, rowUp -> redialed, 0.786 to 4.6 s; localUp,
-    # restarted -> localUp, 0.013 to 0.302 s; redialed2, localUp -> redialed2, 0.011 to 1.04 s; held, A1 -> drop, 9 to
-    # 36 ms over the 80 drives that carry the held wait.
-    # rowDown is the supervisor's silent-poll window, longest under the old-hub drives' relay churn (the splice's former idle
-    # cut); rowUp a quarter-second pass inside the supervisor's fast window and its steady 15 s pass outside it; localUp the
+    # ratio of it (against the upper bounds in the table below the ratios run from 5.8x for rowDown to 870x for held, worked
+    # from this comment's own figures), with driver_budget_ms as the binding bound (BUDGET_JS: every wait draws on it). The
+    # spans are ONE derivation with the excuse and attach figures (`population_drive.py`, the tool
+    # _outline_caught_up_whole's docstring names, which reads every counted record's marks, prints the sentence below whole
+    # and under --check reads this comment for it, the markers folded; pass 10, the maintainer's round 5 extra8-3, after
+    # this paragraph and the delivery sentence below were hand-kept copies of a population dated one drive apart). The tool
+    # and the records are outside the repo, the tool named in the PR body, so the spans cannot be re-checked from the tree.
+    # The table below counts ONE drive, made at the landing head with both knobs set, and its records alone (the
+    # coordinator's ruling G on the maintainer's round 7: no record made under the splice's former idle cut is mixed in), so
+    # each span's bounds are that drive's and nothing before or after it. The pastes before it counted every unmutated drive
+    # in the builder's cache as of a named drive, the old-hub ones made under the cut (the repo's history holds those
+    # pastes), and any drive may move a bound, so the caps are floors far above every bound, not fits.
+    # The spans by mark pair over the 2 unmutated records of the drive at `landing/lab-final.log` (2026-09-29; 1 new-bundle
+    # and 1 old-hub, the only drive counted): closed, drop -> closed, 0.017 to 0.148 s; rowDown, closed -> rowDown, 0.515 to
+    # 6.84 s; rowUp, resume -> rowUp, 1.02 to 1.02 s; redialed, rowUp -> redialed, 1.54 to 3.31 s; localUp, restarted ->
+    # localUp, 0.014 to 0.276 s; redialed2, localUp -> redialed2, 0.271 to 0.791 s; held, A1 -> drop, 18 to 23 ms over the 2
+    # records that carry the held wait.
+    # rowDown is the supervisor's silent-poll window (longest, in the pastes before this one, under the old-hub drives'
+    # relay churn, the splice's former idle cut); rowUp a quarter-second pass inside the supervisor's fast window and its
+    # steady 15 s pass outside it; localUp the
     # reopen alone (the restart itself, SIGTERM and the 3 s held down, is the control door's and not this wait's). held,
     # A1 -> drop (every page holding one open relay socket
     # before the drop), is new in pass 5 and has no recorded span before it: every drive since carries it (`out.phases.drop.held`
@@ -890,15 +894,19 @@ class _LinkDrop(unittest.TestCase):
     # (pass 6), beside the visibility legs, and every delivery it measures is a wait that RESOLVED, before its cap; the dwell is
     # DOWN_WINDOW_MARGIN x wait_ms plus DOWN_READ_ROOM_MS of room for the reads that follow the wait, so the pin holds for every
     # drive whose link-up waits all resolved and showed, the reads inside the room, and reds only for a window shorter than that
-    # (tests/test_federated_linkdrop_driver_bound.py pins the relation). In the old-hub records the splice's former idle cut was
-    # a redial every few seconds whose whole frame caught the frozen old page up, and a change whose three notices straddled a
-    # cut waited for the frame after that, so the slowest delivery recorded is the old bundle's, 19,013 ms over the 30 unmutated old-hub records as of the
-    # drive at `r10/lab-ci9.log` (2026-09-21), the maximum of the phases' seen.waitedMs; the new bundle's is 1,367 ms
-    # over the 50 new-bundle records as of that drive (one derivation with the waits paragraph above,
-    # `population_drive.py`, which prints this sentence whole and checks it here; a tool outside the repo that the PR body
-    # names, so the figures cannot be re-checked from the tree). With the cut gone the old page shows no change
-    # inside the cap at all, and the old-hub class times its gate by the Outline's patch (LinkDropOldLocal._link_up_delivery_ms),
-    # well under a second in its drives, so the new bundle's cap is what sizes the dwell.
+    # (tests/test_federated_linkdrop_driver_bound.py pins the relation). In the old-hub records made under the splice's
+    # former idle cut, a redial every few seconds caught the frozen old page up with its whole frame, and a change whose
+    # three notices straddled a cut waited for the frame after that, so the slowest delivery those records held was the old
+    # bundle's (the pastes before the landing head carried it; the repo's history holds them). With the cut gone the old
+    # page shows no change inside the cap at all: over the 2 unmutated records of both classes of the drive at
+    # `landing/lab-final.log` (2026-09-29), the only drive counted, the slowest delivery recorded is the new bundle's, 1,296
+    # ms over its 3 link-up phases whose waits resolved, the maximum of their seen.waitedMs; on the old bundle the card wait
+    # of each of its 3 link-up phases ran to its cap (seen.expired), the longest 20,007 ms, so it showed no card inside the
+    # cap (one derivation with the waits paragraph above, `population_drive.py`, which prints this sentence whole and checks
+    # it here, reading seen.expired so that a wait that ran to its cap is not counted as a delivery; a tool outside the repo
+    # that the PR body names, so the figures cannot be re-checked from the tree). The old-hub class times its gate by the
+    # Outline's patch instead (LinkDropOldLocal._link_up_delivery_ms), well under a second in its drives, so the new
+    # bundle's cap is what sizes the dwell.
     # A dwell of 30 s, sized at twice the 12.9 s
     # then recorded, redded on the very next drive (19.0 s): a threshold fitted to the data at hand is no threshold, which is
     # why the cap sizes it. driver_worst_case_s stays under DRIVER_TIMEOUT_S with the budget at driver_budget_ms (472.5 s for
@@ -1366,16 +1374,20 @@ class _LinkDrop(unittest.TestCase):
         this returns; only the phase-A drops test (test_the_old_bundle_drops_every_remote_patch_and_asks_the_local_kernel)
         can still pass on it. The
         distinguishing datum an empty window needs (the maintainer's round 2's ruling on correctness-1: the allowance is keyed on this EVENT,
-        read from the hook's frames, never a dropped requirement). Pass 8 added the gap (the maintainer's round 3, extra6-1) because the frame alone was no key:
-        in the records made under the splice's idle cut, a redial produced a whole frame after the phase's notices were
-        already delivered as patches, so the frame-only excuse was available in 55 of the 90 phase windows (A, B, C) over the 30 unmutated
-        old-hub records in the builder's cache as of the drive at `r10/lab-ci9.log` (2026-09-21), load-bearing (a
-        window with no patch) in 6 of the 55, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
-        at both floors; keyed on the gap it is available in 6 of those 90 and load-bearing in 6, the phase-A windows
-        of 6 of those records, and the planted miss reds. Over all 90 windows the planted miss (the phase's feed
-        patches and rows removed, every frame kept) reds the floor in 84 and stays excused in 6: a
-        real gating miss during such a close is indistinguishable from the close in the record, the excuse's remaining hole
-        and the price of excusing the close at all. Every figure in this paragraph, the population, its drive and the counts, is
+        read from the hook's frames, never a dropped requirement). Pass 8 added the gap (the maintainer's round 3, extra6-1)
+        because the frame alone was no key: in the records made under the splice's idle cut, a redial produced a whole frame
+        after the phase's notices were already delivered as patches, so the frame-only excuse was available in windows that
+        held patches and a planted gating miss (a phase's patches and rows removed from the record) stayed green at both
+        floors, while keyed on the gap it was available only in windows with no patch and the planted miss reds (the pastes
+        before the landing head counted this over those records; the repo's history holds them). A real gating miss during
+        such a close is indistinguishable from the close in the record, the excuse's remaining hole and the price of
+        excusing the close at all. The figures here count ONE drive, made at the landing head with the cut gone, and its
+        records alone (the coordinator's ruling G on the maintainer's round 7): the frame-only excuse was available in 0 of
+        the 3 phase windows (A, B, C) over the 1 unmutated old-hub record of the drive at `landing/lab-final.log`
+        (2026-09-29), the only drive counted, so load-bearing (a window with no patch) in none; keyed on the gap it is
+        available in 0 of those 3 and load-bearing in none. Over all 3 windows the planted miss (the phase's feed patches
+        and rows removed, every frame kept) reds the floor in 3 and stays excused in 0. Every figure in this paragraph, the
+        population, its drive and the counts, is
         ONE derivation (the maintainer's round 4: a hand-kept pair of a count and a drive drifted apart twice, one drive behind each time),
         made by tools outside the repo that the PR body names (population_drive.py, population6.py, excuse_census.py and
         census_module.py) over records outside it, so no figure in this paragraph can be re-checked from the tree:
@@ -1405,7 +1417,12 @@ class _LinkDrop(unittest.TestCase):
         them, whitespace and comment markers folded, so a retyped figure is its exit 3, not a paste; a bare --check after a
         later drive has landed exits 3 too, since the newest record moved the date, and that is staleness, re-derived by
         `--as-of <log>` (a paste dated to an earlier drive stays derivable after later drives) and repaired by a re-paste as of
-        the newest drive (the maintainer's round 6, correctness-4: the paste is re-derived at the final head). The post times
+        the newest drive (the maintainer's round 6, correctness-4: the paste is re-derived at the final head). At the
+        landing head the cache it read held that one drive alone and its listing read the same cache; where every counted
+        record is the dating drive's, its sentences name that drive and not the cache as of it, it counts a phase wait that
+        ran to its cap (seen.expired) apart from the deliveries, and on a population of more than one drive it refuses such
+        a wait rather than print it as a delivery (the PR body names these changes, made outside the repo, and they cannot
+        be re-checked from the tree). The post times
         are DERIVED from the change record (its t0 plus i x NOTICE_GAP_S, _change's own sleeps between the posts, on the
         poster's clock at millisecond resolution); each notice's answer in the record carries the remote kernel's own stamp
         for the notice too (`at`, `t`), but in whole seconds and on the other clock, too coarse for a millisecond gap check,
@@ -1654,11 +1671,12 @@ class _LinkDrop(unittest.TestCase):
         open above it, to the window's end; the pin's return-late cell states the choice. A multiset difference matched to
         the ATTACH, not a set of revs (pass 8): the Outline's feed patch revs
         restart at 1 on every relay socket, so a rev is no identity over a drive, and a set of revs let every row of a
-        colliding rev through where the assertions' messages promise one row per attach. The exemption fires on no recorded
-        drive: over the 80 unmutated records of both classes in the builder's cache as of the drive at
-        `r10/lab-ci9.log` (2026-09-21) the down windows hold 0 rows and 0 attaches and the return window holds 0 rows,
-        so 0 rows are exempted at the storm site, 0 at the gate leg's read and 0 in the return window, by the set before pass 8 and by this match
-        after it; the pin over a synthetic record in tests/test_federated_linkdrop_driver_bound.py is where the match is
+        colliding rev through where the assertions' messages promise one row per attach. The exemption fires nowhere in the
+        one drive counted, made at the landing head (the coordinator's ruling G on the maintainer's round 7: its records
+        alone): over the 2 unmutated records of both classes of the drive at `landing/lab-final.log` (2026-09-29), the only
+        drive counted, the down windows hold 0 rows and 0 attaches and the return window holds 0 rows, so 0 rows are
+        exempted at the storm site, 0 at the gate leg's read and 0 in the return window, by this match; the pin over a
+        synthetic record in tests/test_federated_linkdrop_driver_bound.py is where the match is
         exercised. The count and its drive are one derivation, `population_drive.py --check` in the builder's cache outside
         the repo, whose population, dating rule and refusals are stated once in _outline_caught_up_whole's docstring (the maintainer's round 5, extra7-4:
         this docstring restated three of them and omitted the one that fired); over each record it runs these helpers
