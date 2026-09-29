@@ -17,7 +17,8 @@ import { hotkeyCommandId, loadTabKeys, rememberTabKey, forgetTabKey, tabChord, u
 // [fork] The two window listeners below take the project's gate at f4a572008 (pane-source.ts says what it adopts). The
 // openKeys line is the project's line byte for byte, so a fold resolves it as identical. This import carries a
 // trailing comment of the fork's own and the hotkeyConfigure gate none, where the project's two lines carry their own
-// (the import's names a plan the fork does not have), so a fold resolves those two lines by hand.
+// (the import's names a plan the fork does not have), so a fold resolves those two lines by hand, and by hand too the
+// fork's two comment lines above the openKeys gate, which the project's side does not have.
 import { paneSourceOk } from "./pane-source";   // the shell's source check, fail-closed: only a pane of this shell is heard below
 
 type SessionRow = { id: string; name: string; dir: string; bg: string };
