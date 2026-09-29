@@ -50,7 +50,11 @@ REVIEWER_ROUNDS + 1 in EACH spelling found, and in the five canonical spellings 
 and asserts every plant is refused, so a spelling the census cannot read is a red and not a gap (the pass-7 module
 refused the retired spelling "review round N" alone, and the spelling that same pass introduced, "the reviewer's
 round-N", passed its numeric rule). The probes derive their number from REVIEWER_ROUNDS, so raising the constant when
-a ruling lands keeps the module green (the rebind case executes that at two other values).
+a ruling lands keeps the module green: _form_space_checks builds the red and green probe tables and runs the plants of every
+spelling under the constant's current value, and test_the_form_space calls it at the held value and again with the constant
+rebound to two other values, the tables rebuilt after each rebind, so a probe that spells a round as a literal where it
+should derive it from the constant (the reviewer's round-6 finding extra9-1) reds at one of the three values (the reviewer's
+round-7 finding tests-1: before, the rebind case replayed one plant pair and never the tables).
 
 THE POPULATION is derived, not listed: the branch's ADDED lines, `git diff -U0 <merge base with origin/main> HEAD`, the
 COMMITTED head, every changed file's added lines, kernel/kernel.py's like any other file's, tagged or not (the `[fork]`
@@ -60,7 +64,12 @@ edit in progress in the checkout moves nothing, and the plant that reds this mod
 deletes has no added lines and is outside the population (`--diff-filter=d`). The diff is read config-independently:
 fixed prefixes (`--src-prefix=a/ --dst-prefix=b/`; a caller's diff.mnemonicPrefix or diff.noprefix would otherwise
 rename or drop the `+++ b/` header the reader keys on), no external diff, rename detection on (`--find-renames`, so a
-renamed file contributes its edited lines alone whatever diff.renames says). The read is per added line: a label wrapped
+renamed file contributes its edited lines alone whatever diff.renames says), and non-ASCII paths unquoted
+(`-c core.quotePath=false`). The reader takes a `+++ ` line as a file header only where git writes one, after the file's
+`diff --git ` line and before its first `@@`, so an added line whose own text starts with `++ ` is read as the added line it
+is; a header other than `+++ b/<path>` or `+++ /dev/null` (git still quotes a path holding a double quote, a backslash or
+a control character) raises, never drops the file's lines (the reviewer's round-7 finding correctness-1: both shapes
+dropped lines silently before). The read is per added line: a label wrapped
 across two lines, a `round #N`, an ordinal (`Nth round`) or a spelled-out number is outside the token shape and unread; a
 possessive written with a typographic apostrophe is read as its ASCII form. This module reads itself, so every refused
 form it needs as a probe is assembled at run time and the prose above spells numbers as N.
@@ -101,7 +110,7 @@ import unittest
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 
-REVIEWER_ROUNDS = 6   # the highest-numbered ruling the reviewer has filed on the lazy-panes PR when this was written: the reviewer's round 6, 2026-09-21
+REVIEWER_ROUNDS = 7   # the highest-numbered ruling the reviewer has filed on the lazy-panes PR when this was written: the reviewer's round 7, the landing round, 2026-09-29
 BRANCH_COMMIT = "9874612e59955d4bd1678b7fe1407d768383bfa6"   # the commit that added this module: the scope test of the derived road
 RULES = ("credit", "bare", "lettered", "verify", "unclassifiable")
 CREDIT_WORDS = {"review", "reviewer's", "reviewers'", "maintainer's", "maintainers'"}
@@ -209,26 +218,43 @@ def _git(*args, root=ROOT, env=None):
 def _name_args(base):
     """The files changed from the merge base to the committed head and present at the head: a deleted file has no added
     lines and is outside the population."""
-    return ("diff", "--name-only", "--diff-filter=d", "--find-renames", base, "HEAD", "--", ".")
+    return ("-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=d", "--find-renames", base, "HEAD", "--", ".")
 
 
 def _diff_args(base):
     """The -U0 diff of the merge base against the committed head, whose added lines are the population, independent of the
     caller's git configuration: fixed prefixes (diff.mnemonicPrefix prints `+++ w/`, diff.noprefix `+++ path`, and
-    _added_lines keys on `+++ b/`), no external diff, rename detection on (diff.renames may be false or `copies`)."""
-    return ("diff", "-U0", "--no-color", "--no-ext-diff", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", base, "HEAD", "--", ".")
+    _added_lines keys on `+++ b/`), no external diff, rename detection on (diff.renames may be false or `copies`), non-ASCII
+    paths unquoted (core.quotePath; a path git still quotes is _added_lines' loud refusal)."""
+    return ("-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/",
+            base, "HEAD", "--", ".")
 
 
 def _added_lines(diff):
-    """(path, line number at the head, text) for every added line of a -U0 diff."""
-    out, path, ln = [], None, 0
+    """(path, line number at the head, text) for every added line of a -U0 diff. A `+++ ` line is the file's header only in
+    the file's header block, from its `diff --git ` line to its first `@@`, which is the one place git writes it; past the
+    first `@@` a line starting `+++ ` is an added line whose text starts `++ ` (the reviewer's round-7 finding correctness-1:
+    read as a header, it set the path to None and every later added line of the file was dropped). A header that is neither
+    `+++ b/<path>` nor `+++ /dev/null` (a quoted path, `+++ "b/..."`, which git writes for a name holding a double quote, a
+    backslash or a control character even under core.quotePath=false) raises ValueError naming the line: a file whose lines
+    the reader cannot place is a loud refusal, never a silent drop."""
+    out, path, ln, header = [], None, 0, False
     for line in diff.split("\n"):
-        if line.startswith("+++ "):
-            path = line[6:] if line.startswith("+++ b/") else None
+        if line.startswith("diff --git "):
+            header, path = True, None
+        elif header and line.startswith("+++ "):
+            if line.startswith("+++ b/"):
+                path = line[6:]
+            elif line == "+++ /dev/null":
+                path = None
+            else:
+                raise ValueError("review-round-labels: a diff header the reader cannot place, %r: the file's added lines would be dropped; "
+                                 "read the path another way before this census can vet it" % line)
         elif line.startswith("@@"):
+            header = False
             m = re.search(r"\+(\d+)", line)
             ln = int(m.group(1)) if m else 0
-        elif line.startswith("+") and path is not None:
+        elif not header and line.startswith("+") and path is not None:
             out.append((path, ln, line[1:]))
             ln += 1
     return out
@@ -408,48 +434,74 @@ class ReviewRoundLabels(unittest.TestCase):
 
     def test_the_form_space(self):
         """The classifier over every spelling the branch uses, so the census is known to read them; the probes are assembled
-        at run time (this module is in the population and reads itself)."""
-        R, V = "round", "verify"
+        at run time (this module is in the population and reads itself). _form_space_checks runs at the held REVIEWER_ROUNDS
+        and again with the constant rebound to two other values, each call rebuilding the probe tables from the value it runs
+        under (the reviewer's round-7 finding tests-1), so a probe that spells a round as a literal reds at one of them."""
         unclassified = [(p, t.label) for p, _, text in LINES for t in tokens(text) if t.rule not in RULES]
         self.assertEqual(unclassified, [], "a token outside the five rules (%s)" % self._where())
-        canonical = [("review", ""), ("reviewer's", ""), ("maintainer's", ""), ("", "verdict"), ("", "ruling")]
-        for prev, suffix in sorted(set(FORM_SPACE) | set(canonical)):
-            for sep in (" ", "-"):
-                with self.subTest(spelling=(prev, suffix, sep)):
-                    over = plant(prev, suffix, REVIEWER_ROUNDS + 1, sep)
-                    self.assertTrue(offences(over), "a credit above the reviewer's rounds read as clean in the spelling %r" % over)
-                    held = plant(prev, suffix, REVIEWER_ROUNDS, sep)
-                    self.assertEqual(offences(held), [], "a credit to the reviewer's last round read as an offence in the spelling %r" % held)
-        red = ["since %s 3" % R, "%s 3's head" % R, "%s-3 armed them" % R, "%s 3 showed every" % R.title(),
-               "review %s 4b" % R, "%s-4b" % R, "the reviewer's %s-4b" % R,
-               "review %s 4 %s" % (R, V), "%s 4's %s" % (R, V), "the %s-5 %s" % (R, V), "the reviewer's %s 6 %s" % (R, V),
-               "the author's %s 3" % R, "the fixer's %s-2" % R, "the reviewer's %ss 1 to %d" % (R, REVIEWER_ROUNDS + 1), "review %s 0" % R,
-               "the reviewer’s %s %d" % (R, REVIEWER_ROUNDS + 1)]
-        green = [plant("review", "", REVIEWER_ROUNDS), "the reviewer's %s-%d finding kernel-1" % (R, REVIEWER_ROUNDS), plant("maintainer's", "", REVIEWER_ROUNDS),
-                 "the %s-3 fixlist's extra9-1" % R, "%s 2's ruling" % R, "the %s-1 refuter's screenshot" % R, "the %s-4 verdict-1 case" % R,
-                 "review %s 2 closeout" % R, "Review %s %d fixes:" % (R, REVIEWER_ROUNDS), "the reviewer's %ss 1 to %d" % (R, REVIEWER_ROUNDS),
-                 "review %ss 5 and %d" % (R, REVIEWER_ROUNDS), "pass 5, the author's label", "the author's pass-5 %s" % V, "pass 4b",
-                 "a%s 6" % R, "backg%s 6" % R, "%s-trip" % R, "REVIEWER_ROUNDS = %d" % REVIEWER_ROUNDS,
-                 "the reviewer’s %s %d" % (R, REVIEWER_ROUNDS), "the maintainer’s %s-1 finding" % R]
-        self.assertEqual([s for s in red if not offences(s)], [], "a refused form read as clean")
-        self.assertEqual([s for s in green if offences(s)], [], "an allowed form read as an offence")
-        self.assertEqual([t.rule for t in tokens("review %s 5 %s and %s 4b and since %s 2 and the %s-3 fixlist" % (R, V, R, R, R))],
-                         ["verify", "lettered", "bare", "credit"])
-        self.assertEqual([t.rule for t in tokens("the reviewer’s %s 3 and the author’s %s 2" % (R, R))], ["credit", "unclassifiable"],
-                         "a possessive with a typographic apostrophe is classified as its ASCII spelling, so a refusal states the right reason")
-        # the rebind case (the reviewer's round-6 finding extra9-1): raising REVIEWER_ROUNDS as the docstring directs keeps the
-        # probes coherent, since they derive their number from the constant
+        self._form_space_checks()
         g = globals()
         held = g["REVIEWER_ROUNDS"]
         try:
             for k in (held + 1, held + 3):
                 g["REVIEWER_ROUNDS"] = k
                 with self.subTest(rebound=k):
-                    self.assertTrue(offences(plant("reviewer's", "", k + 1, "-")), "a credit above the rebound count read as clean")
-                    self.assertEqual(offences(plant("reviewer's", "", k, "-")), [], "a credit to the rebound count read as an offence")
+                    self._form_space_checks()
         finally:
             g["REVIEWER_ROUNDS"] = held
 
+    def _form_space_checks(self):
+        """The red and green probe tables and the plant of every spelling, built HERE from the current REVIEWER_ROUNDS (read at
+        call time, so a rebind in the caller reaches every probe), and asserted: the rebind case's body since the reviewer's
+        round-7 finding tests-1, which found the tables built once at the held value and never rerun under a rebound one."""
+        R, V = "round", "verify"
+        n = REVIEWER_ROUNDS
+        canonical = [("review", ""), ("reviewer's", ""), ("maintainer's", ""), ("", "verdict"), ("", "ruling")]
+        for prev, suffix in sorted(set(FORM_SPACE) | set(canonical)):
+            for sep in (" ", "-"):
+                with self.subTest(spelling=(prev, suffix, sep), rounds=n):
+                    over = plant(prev, suffix, n + 1, sep)
+                    self.assertTrue(offences(over), "a credit above the reviewer's rounds (%d) read as clean in the spelling %r" % (n, over))
+                    held = plant(prev, suffix, n, sep)
+                    self.assertEqual(offences(held), [], "a credit to the reviewer's last round (%d) read as an offence in the spelling %r" % (n, held))
+        red = ["since %s 3" % R, "%s 3's head" % R, "%s-3 armed them" % R, "%s 3 showed every" % R.title(),
+               "review %s 4b" % R, "%s-4b" % R, "the reviewer's %s-4b" % R,
+               "review %s 4 %s" % (R, V), "%s 4's %s" % (R, V), "the %s-5 %s" % (R, V), "the reviewer's %s 6 %s" % (R, V),
+               "the author's %s 3" % R, "the fixer's %s-2" % R, "the reviewer's %ss 1 to %d" % (R, n + 1), "review %s 0" % R,
+               "the reviewer’s %s %d" % (R, n + 1)]
+        green = [plant("review", "", n), "the reviewer's %s-%d finding kernel-1" % (R, n), plant("maintainer's", "", n),
+                 "the %s-3 fixlist's extra9-1" % R, "%s 2's ruling" % R, "the %s-1 refuter's screenshot" % R, "the %s-4 verdict-1 case" % R,
+                 "review %s 2 closeout" % R, "Review %s %d fixes:" % (R, n), "the reviewer's %ss 1 to %d" % (R, n),
+                 "review %ss 5 and %d" % (R, n), "pass 5, the author's label", "the author's pass-5 %s" % V, "pass 4b",
+                 "a%s 6" % R, "backg%s 6" % R, "%s-trip" % R, "REVIEWER_ROUNDS = %d" % n,
+                 "the reviewer’s %s %d" % (R, n), "the maintainer’s %s-1 finding" % R]
+        with self.subTest(tables=n):
+            self.assertEqual([s for s in red if not offences(s)], [], "a refused form read as clean at REVIEWER_ROUNDS %d" % n)
+            self.assertEqual([s for s in green if offences(s)], [], "an allowed form read as an offence at REVIEWER_ROUNDS %d" % n)
+        self.assertEqual([t.rule for t in tokens("review %s 5 %s and %s 4b and since %s 2 and the %s-3 fixlist" % (R, V, R, R, R))],
+                         ["verify", "lettered", "bare", "credit"])
+        self.assertEqual([t.rule for t in tokens("the reviewer’s %s 3 and the author’s %s 2" % (R, R))], ["credit", "unclassifiable"],
+                         "a possessive with a typographic apostrophe is classified as its ASCII spelling, so a refusal states the right reason")
+
+    def test_the_diff_reader_places_a_header_only_where_git_writes_one(self):
+        """_added_lines on synthetic diffs (the reviewer's round-7 finding correctness-1): an added line whose own text starts
+        `++ ` is read as an added line and the label after it is read too (before, the first was taken for a header, the path
+        went to None and the label was dropped); a quoted `+++ "b/..."` header raises, naming the line (before, the whole file
+        was dropped with no word); and `+++ /dev/null`, a deleted file's header, still places nothing. The labels are
+        assembled at run time: this module reads itself."""
+        over = "the reviewer's %s %d finding" % ("round", REVIEWER_ROUNDS + 1)
+        plus = "+" + "+" * 2 + " a line that begins with two plus signs"
+        diff = "\n".join(["diff --git a/x.md b/x.md", "--- a/x.md", "+" * 3 + " b/x.md", "@@ -0,0 +1,2 @@", plus, "+" + over,
+                          "diff --git a/y.md b/y.md", "deleted file mode 100644", "--- a/y.md", "+" * 3 + " /dev/null", "@@ -1 +0,0 @@", "-gone", ""])
+        self.assertEqual(_added_lines(diff), [("x.md", 1, plus[1:]), ("x.md", 2, over)],
+                         "the `++ ` line is an added line of x.md and the label after it is read; the deleted y.md adds nothing")
+        self.assertTrue(offences(_added_lines(diff)[1][2]), "the label the old reader dropped is one the census refuses")
+        header = "+" * 3 + " \"b/\\303\\251.md\""   # git's quoting of a non-ASCII name under the default core.quotePath
+        quoted = "\n".join(["diff --git \"a/\\303\\251.md\" \"b/\\303\\251.md\"", "new file mode 100644", "--- /dev/null",
+                            header, "@@ -0,0 +1 @@", "+" + over, ""])
+        with self.assertRaises(ValueError) as cm:
+            _added_lines(quoted)
+        self.assertIn(repr(header), str(cm.exception), "the refusal names the header it cannot place")
 
 if __name__ == "__main__":
     unittest.main()
