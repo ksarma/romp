@@ -135,16 +135,25 @@ want of the extension's node_modules or a browser (DEPS_SKIP). Neither of CI's j
 neither; the served step runs only the globs), and the sweep before the served rulings ran them in its pytest leg,
 after npm ci, so every test the rule selects still runs with the deps. They are derived at run time, not listed: the
 pytest leg prints every skip with its node id and reason (-rfEs --no-fold-skipped), and deps_skipped reads, from its
-log's short summary, each skip outside the served globs whose reason DEPS_SKIP matches; the node ids join the served
-leg's command after the globs' files, and both legs' records name them. A pytest leg whose log has no closing summary
-line leaves the set unknown, and the served leg is then red naming why, never run without it. The count when the
-served rulings' condition was measured: 1 test in 1 file when measured on 2026-09-28
-(tests/test_landing_bundles_built.py, whose build guard needs the extension's deps). The claim covers what the rule
-selects, and three cases fall outside it. A skip for want of the deps whose reason DEPS_SKIP does not match runs in
-no leg; the pytest leg's record lists every other skip outside the served globs with its reason
-(deps_skipped.unselected), so such a miss can be seen. A test that does not skip without node_modules but takes
-another road runs there on that road only: two real-tree pins, in tests/test_lab_dist.py and
-tests/test_kernel_bundle_staleness.py, read esbuild.js under tests/lab_dist_stub.py's stand-in for a missing package,
+log's short summary, each SKIPPED line and each SUBSKIPPED line (pytest 9's subtests; the line names the test the
+subtest belongs to, which the served leg runs whole) outside the served globs whose reason DEPS_SKIP matches; the node
+ids join the served leg's command after the globs' files, and both legs' records name them. The reader is closed
+(round 2, Class C): a pytest leg whose log has no closing summary line, or whose short summary holds a line the reader
+does not read (a line shaped like a kind that is none of pytest's kinds, a skip line that does not name exactly one
+test, a non-blank line before any kind line), leaves the set unknown, and the served leg is then red naming why and the
+lines, never run without it. The count when the served rulings' condition was measured: 1 test in 1 file when
+measured on 2026-09-28 (tests/test_landing_bundles_built.py, whose build guard needs the extension's deps). The claim
+covers what the rule selects in a summary the reader reads. Two summaries pytest writes correctly leave the set
+unknown, so the served leg is red, never a skip dropped: a subtest message holding a newline splits its SUBSKIPPED
+line; and a node id is read up to its first " - ", so a parametrize id holding one is read short, refused when that
+leaves a bracket open (a node id's brackets must balance), while one read short that closes its brackets (a parametrize
+id holding "] - ") is handed to the served leg's pytest, which exits 4 unless a test has exactly that id. A SUBSKIPPED
+line whose node id could start at more than one place (a subtest's description holding "] tests/" or ") tests/") is
+refused too. Under pytest 8 a subtest's skip prints as a SKIPPED line of its whole test, the same node id. And three
+cases fall outside the claim. A skip for want of the deps whose reason DEPS_SKIP does not match runs in no leg; the
+pytest leg's record lists every other skip outside the served globs with its reason (deps_skipped.unselected), so such
+a miss can be seen. A test that does not skip without node_modules but takes another road runs there on that road
+only: two real-tree pins, in tests/test_lab_dist.py and tests/test_kernel_bundle_staleness.py, read esbuild.js under tests/lab_dist_stub.py's stand-in for a missing package,
 where the sweep before ran them after npm ci with the real one (the build leg still loads the real one). And the
 tests the served leg adds run in the served venv, with no SDK, where before they ran in the pytest leg's venv, so a
 test outside the globs that needs both the deps and the SDK would skip there, and no switch makes that skip a
@@ -298,10 +307,11 @@ EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
 # the root, where test modules live only under tests/) the differences are: -n at this machine's idle cores; -p
 # no:cacheprovider, so nothing is written to a .pytest_cache in the checkout; -rfEs --no-fold-skipped, which print
 # every skip with its node id and reason in the short summary beside pytest's default failures and errors (a bare -rs
-# would replace those), where the runner reads the tests the leg skipped for want of the deps (deps_skipped); PYTEST_ISOLATION; and the PYTEST_IGNORED list. The served globs' files are collected, as CI's
-# Python cells collect them: the leg runs with no node_modules and no browser, so the browser-backed tests skip there as
-# in CI and the others in those files run with the SDK. tests/test_sweep_runner.py (CiParity) holds the two sides to
-# exactly these differences.
+# would replace those), a subtest's skip as a SUBSKIPPED line naming its test, where the runner reads, closed, the tests
+# the leg skipped for want of the deps (deps_skipped); PYTEST_ISOLATION; and the PYTEST_IGNORED list. The served globs'
+# files are collected, as CI's Python cells collect them: the leg runs with no node_modules and no browser, so the
+# browser-backed tests skip there as in CI and the others in those files run with the SDK. tests/test_sweep_runner.py
+# (CiParity) holds the two sides to exactly these differences.
 PYTEST_FLAGS = ("-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--durations=10", "--timeout=600", "--timeout-method=thread",
                 "-rfEs", "--no-fold-skipped")
 # No pytest.ini or conftest.py above the checkout configures the leg: an empty inifile, the rootdir pinned to the
@@ -393,8 +403,10 @@ _SERVED_GLOB = re.compile(r"tests/[A-Za-z0-9_.*?\[\]-]+\.py")
 # jobs: CI's Python cells have neither, and CI's served step runs only the globs. The sweep before the served ruling ran
 # them, in its pytest leg after npm ci, so the served leg runs them now, with the deps present (the served ruling's
 # condition, 2026-09-28; the module docstring names what falls outside it). They are derived at run time from the
-# pytest leg's own log: every skip its short summary prints (`SKIPPED <node id> - <reason>`, PYTEST_FLAGS' -rfEs
-# --no-fold-skipped) whose node id is outside the served globs and whose reason matches DEPS_SKIP (deps_skipped).
+# pytest leg's own log: every skip its short summary prints (`SKIPPED <node id> - <reason>`, or for a subtest
+# `SUBSKIPPED<description> <node id> - <reason>`, naming the test it belongs to; PYTEST_FLAGS' -rfEs --no-fold-skipped)
+# whose node id is outside the served globs and whose reason matches DEPS_SKIP, read by a closed reader that leaves
+# the set unknown on any line it does not read (deps_skipped).
 # DEPS_SKIP is read off the reasons the tree's tests give when they skip without the deps: every one of the 578 skips in
 # the served globs' files and the one outside them, measured on 2026-09-28, names one of these words, and none of the
 # other 20 skips outside them does (tests/test_sweep_runner.py, DepsSkipRule, holds it to those reasons). A reason it
@@ -2871,22 +2883,83 @@ def served_cmd(python, files, also=()):
     return [python, "-m", "pytest", *files, *also, *SERVED_FLAGS, *PYTEST_ISOLATION]
 
 
-# The pytest leg's short summary (PYTEST_FLAGS' -rfEs --no-fold-skipped): the section's header, one `SKIPPED <node id> -
-# <reason>` line per skip (a collection-time skip names its module; a reason can run on over more lines), and the words
-# that begin its other lines.
+# The pytest leg's short summary (PYTEST_FLAGS' -rfEs --no-fold-skipped), read closed (round 2, Class C): the section's
+# header, then one line per report, each starting with its kind. The kinds are derived from pytest's own source (8.4.2
+# and 9.1.1: _pytest/terminal.py's short_test_summary and pytest_report_teststatus, _pytest/runner.py,
+# _pytest/skipping.py, and 9.1.1's _pytest/subtests.py; pytest-xdist and pytest-timeout add none): PASSED FAILED SKIPPED
+# ERROR XFAIL XPASS, then a space and the node id; and pytest 9's subtest kinds SUBPASSED SUBFAILED SUBSKIPPED SUBXFAIL,
+# then with no space the subtest's description ([msg], (k=v, ...), both joined by a space, or (<subtest>)), a space and
+# the node id of the test the subtest belongs to. Under -rfEs only SKIPPED, SUBSKIPPED, FAILED, SUBFAILED and ERROR
+# appear. A skip is `SKIPPED <node id> - <reason>` (a collection-time skip names its module) or `SUBSKIPPED<description>
+# <node id> - <reason>`, whose node id the served leg runs whole; a node id runs to the first ` - `, and a reason or a
+# message can run on over more lines.
 _SUMMARY_HEAD = re.compile(r"=+ short test summary info =+")
-_SKIPPED_LINE = re.compile(r"SKIPPED (tests/\S(?:.*?\S)?)(?: - (.*))?")
-_SUMMARY_WORD = re.compile(r"(?:PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS|DESELECTED) ")
+_SUMMARY_WORD = re.compile(r"(?:PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) |(?:SUBPASSED|SUBFAILED|SUBSKIPPED|SUBXFAIL)[\[(]")
+_SKIP_KIND = re.compile(r"SKIPPED |SUBSKIPPED[\[(]")
+_NODE_ID_REASON = re.compile(r"(tests/\S(?:.*?\S)?)(?: - (.*))?")
+_SKIPPED_LINE = re.compile(r"SKIPPED " + _NODE_ID_REASON.pattern)
+# What comes before a SUBSKIPPED line's node id: the word and a description, which ends in "] " or ") " right before the
+# node id. A description can hold anything, "] tests/" and ") tests/" included, so a line whose node id could start at
+# more than one such place is not read (round 2, decision 5), never anchored at the first.
+_SUBSKIPPED_HEAD = re.compile(r"SUBSKIPPED(?:\[.*\](?: \(.*\))?|\(.*\)) ")
+_SUBSKIPPED_ANCHOR = re.compile(r"(?<=[\])] )tests/")
+# A line shaped like a kind: an upper-case word, a description as a subtest word has, and a node id (every node id the
+# pytest leg collects starts with tests). One that is none of the kinds above is a kind this reader does not read, never
+# a reason running on. (A bare upper-case first word is no test: a message running on over lines can start with one.)
+_KIND_SHAPED = re.compile(r"[A-Z][A-Z_]+(?:\[.*?\])?(?: ?\(.*?\))? tests(?:/|\s|$)")
+
+
+def _brackets_balance(nodeid):
+    """Whether every [ in `nodeid` is closed by a later ] and no ] closes one it did not open. A node id read short, cut
+    at a ` - ` inside its parametrize id (`tests/x.py::test_p[a - b]` read as `tests/x.py::test_p[a`), leaves one open."""
+    depth = 0
+    for ch in nodeid:
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _skip_line(line):
+    """(node id, reason, None) of a line of a skip kind (_SKIP_KIND), or (None, None, why) when this reader cannot tell
+    which one test it names: no node id where one belongs (the folded form `SKIPPED [2] tests/x.py:3: ...`, which
+    --no-fold-skipped rules out, or a SUBSKIPPED line that a description holding a newline split), a SUBSKIPPED node id
+    that could start at more than one place or that holds " tests/", or a node id whose brackets do not balance."""
+    if line.startswith("SKIPPED "):
+        m = _SKIPPED_LINE.fullmatch(line)
+        if not m:
+            return None, None, "a skip whose node id this reader cannot find"
+    else:
+        found = [m for m in (_NODE_ID_REASON.fullmatch(line, a.start()) for a in _SUBSKIPPED_ANCHOR.finditer(line)
+                             if _SUBSKIPPED_HEAD.fullmatch(line, 0, a.start()))
+                 if m]
+        if not found:
+            return None, None, "a skip whose node id this reader cannot find"
+        if len(found) > 1:
+            return None, None, "a subtest skip whose node id could start at %d places" % len(found)
+        m = found[0]
+        if " tests/" in m.group(1):
+            return None, None, "a subtest skip whose node id holds ' tests/', so it could start there"
+    if not _brackets_balance(m.group(1)):
+        return None, None, "a skip whose node id's brackets do not balance"
+    return m.group(1), m.group(2) or "", None
 
 
 def deps_skipped(path, served_files, others=None):
     """([node id, ...], None) of the tests outside `served_files` (the served globs' expansion) that the pytest leg's log
-    at `path` shows skipped for want of the extension's node_modules or a browser: each skip its short summary prints
-    whose reason DEPS_SKIP matches, in the log's order, each once. `others`, a list when given, gets [node id, reason] of
-    every other skip outside `served_files`, the ones DEPS_SKIP did not select, so a deps reason it misses can be seen in
-    the record rather than run in no leg unnoticed. (None, why) when the log cannot be read or holds no
-    closing summary line (pytest did not finish, so its summary of skips is not whole): the set is then not known, and
-    the served leg, which would run it, is red naming why rather than run without it."""
+    at `path` shows skipped for want of the extension's node_modules or a browser: each SKIPPED and SUBSKIPPED line of
+    its short summary whose reason DEPS_SKIP matches, in the log's order, each once (a subtest skip names the test it
+    belongs to). `others`, a list when given, gets [node id, reason] of every other skip outside `served_files`, the ones
+    DEPS_SKIP did not select, so a deps reason it misses can be seen in the record rather than run in no leg unnoticed.
+    (None, why) when the set is not known, and the served leg, which would run it, is then red naming why rather than
+    run without it: the log cannot be read; it holds no closing summary line (pytest did not finish, so its summary of
+    skips is not whole); or its short summary holds a line this reader does not read, each named in why. The reader is
+    closed: a line shaped like a kind that is none of the kinds, a skip line that does not name exactly one test
+    (_skip_line), and a non-blank line before any kind line are not read. A line of no kind's shape after a kind line
+    runs its reason or message on."""
     data = _read_log(path) if path else None
     if data is None:
         return None, "the pytest leg's log cannot be read"
@@ -2895,16 +2968,32 @@ def deps_skipped(path, served_files, others=None):
                       "of the extension's node_modules or a browser are not known")
     lines = data.split("\n")
     heads = [i for i, line in enumerate(lines) if _SUMMARY_HEAD.fullmatch(line.strip())]
-    skips, cur = [], None
+    skips, cur, seen, unread = [], None, False, []
     for line in lines[heads[-1] + 1:] if heads else ():
-        m = _SKIPPED_LINE.fullmatch(line)
-        if m:
-            cur = [m.group(1), m.group(2) or ""]
-            skips.append(cur)
-        elif _SUMMARY_WORD.match(line) or line.startswith("=") or PYTEST_SUMMARY.fullmatch(line):
+        if _SKIP_KIND.match(line):
+            nodeid, reason, why = _skip_line(line)
+            if why is None:
+                cur = [nodeid, reason]
+                skips.append(cur)
+                seen = True
+            else:
+                unread.append((why, line))
+                cur = None
+        elif _SUMMARY_WORD.match(line):
+            cur, seen = None, True
+        elif line.startswith("=") or PYTEST_SUMMARY.fullmatch(line):
+            cur = None
+        elif line.strip() and (_KIND_SHAPED.match(line) or not seen):
+            unread.append(("a kind this reader does not read" if _KIND_SHAPED.match(line) else "a line before any kind line",
+                           line))
             cur = None
         elif cur is not None:
             cur[1] += "\n" + line
+    if unread:
+        return None, ("the pytest leg's short summary holds %d line%s this reader does not read (%s), so the tests it skipped "
+                      "for want of the extension's node_modules or a browser are not known"
+                      % (len(unread), "" if len(unread) == 1 else "s",
+                         "; ".join("%s: %r" % (why, line[:200]) for why, line in unread[:3])))
     served = set(served_files)
     out = [nodeid for nodeid, reason in skips if nodeid.split("::")[0] not in served and DEPS_SKIP.search(reason)]
     if others is not None:

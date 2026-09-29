@@ -224,10 +224,19 @@ subject; `verify` refuses the branch otherwise.
    `node_modules` or a browser (1 test in 1 file when measured on 2026-09-28, the build guard in
    `tests/test_landing_bundles_built.py`). Neither of CI's jobs runs those tests, and the sweep
    ran them before its pytest leg moved ahead of `npm ci`, so the runner reads them from the pytest
-   leg's own log, by the reasons their skips give, and runs them with the deps present. That covers
-   the skips whose reasons the runner's rule reads, and three cases fall outside it: a skip for want
-   of the deps in other words runs in no leg (the pytest leg's record lists every other skip outside
-   the served files with its reason, so it can be seen); two real-tree pins in
+   leg's own log, by the reasons their skips give, and runs them with the deps present. It reads
+   the `SKIPPED` and `SUBSKIPPED` lines of that log's short summary (a subtest's skip, under
+   pytest 9, names the test it belongs to, and the served leg runs that test whole; under pytest 8
+   the same skip prints as a `SKIPPED` line of that test). The read is closed: a summary line of a
+   kind pytest does not write, a skip line that does not name exactly one test, or a line before
+   any kind line leaves the set unknown, and the served leg is then red naming the lines. Two
+   summaries pytest writes correctly end that way too, loudly and never with a skip dropped: a
+   subtest message holding a newline, which splits its line, and a parametrize id holding ` - `,
+   read short at the first one (refused when that leaves a bracket open; an id holding `] - ` is
+   read short and handed to the served leg's pytest, which exits 4 unless a test has exactly that
+   id). That covers the skips whose reasons the runner's rule reads, and three cases fall outside
+   it: a skip for want of the deps in other words runs in no leg (the pytest leg's record lists
+   every other skip outside the served files with its reason, so it can be seen); two real-tree pins in
    `tests/test_lab_dist.py` and `tests/test_kernel_bundle_staleness.py` do not skip without
    `node_modules` but read `esbuild.js` under a stand-in for the missing package, where they used
    to run after `npm ci` with the real one; and the tests the served leg adds run in its venv,

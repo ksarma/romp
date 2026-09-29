@@ -3645,8 +3645,9 @@ class ServedLeg(_Base):
         r = w.result()
         self.assertEqual(r["legs"][PYTEST_LEG]["deps_skipped"]["tests"], also)
         self.assertEqual(r["legs"][PYTEST_LEG]["deps_skipped"]["unselected"], [["tests/test_d_mac.py::test_mac", "macOS only"]],
-                         "every other skip outside the served globs is recorded with its reason, so a deps reason the rule "
-                         "misses can be seen; a served file's skip for another reason is not among them")
+                         "every other skip line (SKIPPED or SUBSKIPPED) outside the served globs is recorded with its node "
+                         "id and reason, so a deps reason the rule misses can be seen; a served file's skip for another "
+                         "reason is not among them")
         self.assertEqual(r["legs"]["served"]["also"], {"tests": also, "count": 3, "why": sweep.DEPS_SKIP_WHY})
         self.assertEqual(r["legs"]["served"]["cmd"][3:3 + len(SEED_SERVED_FILES) + len(also)], SEED_SERVED_FILES + also)
         # a --leg re-run of served runs the recorded set again
@@ -3662,6 +3663,24 @@ class ServedLeg(_Base):
         served = [c for c in w2.calls() if c["leg"] == "served"][0]
         self.assertEqual([a for a in served["argv"] if a.startswith("tests/")], SEED_SERVED_FILES)
         self.assertEqual(w2.result()["legs"]["served"]["also"]["tests"], [])
+
+    def test_a_short_summary_the_reader_does_not_read_blocks_the_served_leg_naming_the_line(self):
+        """Round 2, Class C, through the runner: a pytest leg whose short summary holds a line the closed reader does not
+        read (here a SUBSKIPPED line whose node id could start at two places, decision 5) leaves the set unknown: the
+        pytest leg's record names the line, and the served leg is red naming it, never run with a set read wrong. At
+        c60fb907e the line was glued onto the reason of the skip before it, which then read as a deps skip, and the served
+        leg ran that unrelated test and passed."""
+        w = self.w
+        line = "SUBSKIPPED(case='a) tests/test_other.py::C - x') tests/test_real.py::T::test_z - Skipped: node_modules missing"
+        w.ctl({"out": {PYTEST_LEG: "=========================== short test summary info ============================\n"
+                                   "SKIPPED tests/test_d_mac.py::test_mac - macOS only\n%s\n3 passed, 2 skipped in 0.01s\n" % line}})
+        p = w.run(check=1)
+        r = w.result()
+        self.assertIn(repr(line[:200]), r["legs"][PYTEST_LEG]["deps_skipped"]["error"], p.stdout)
+        self.assertEqual(r["red"], ["served"], p.stdout)
+        self.assertIsNone(r["legs"]["served"]["rc"])
+        self.assertIn(repr(line[:200]), r["legs"]["served"]["error"])
+        self.assertNotIn("served", w.legs_called(), "the served leg did not run")
 
     def test_the_served_leg_carries_the_served_steps_env_as_ci_yml_writes_it(self):
         """The served leg's switches are the served step's env: block at the swept sha, read and never restated: another
@@ -4003,6 +4022,166 @@ class ServedPartition(unittest.TestCase):
         self.assertEqual(sweep.served_also({"deps_skipped": {"error": why}})[0], None)
         self.assertEqual(sweep.served_also({"deps_skipped": {"tests": ["tests/test_a.py::test_a"], "count": 1}}),
                          (["tests/test_a.py::test_a"], None))
+
+
+# A checkout whose subtests skip for want of the deps, each right after a skip for another reason whose reason it must
+# not join: a unittest subTest whose kwargs hold spaces and parentheses, and one with a message and kwargs, whose kwargs
+# hold " - ". pytest 9 prints them as SUBSKIPPED lines naming the test each belongs to, pytest 8 as SKIPPED lines of that
+# test: the same node ids either way.
+SUBTEST_SKIP_TREE = {
+    "test_a_other.py": "import pytest\n\n\ndef test_it():\n    pytest.skip('macOS only')\n",
+    "test_b_sub.py": (
+        "import unittest\n\n\n"
+        "class Engines(unittest.TestCase):\n"
+        "    def test_engines(self):\n"
+        "        for engine in ('chromium (headless) x', 'webkit'):\n"
+        "            with self.subTest(engine=engine, pair=(1, 2)):\n"
+        "                if engine == 'webkit':\n"
+        "                    self.skipTest('no playwright: npm ci not run here')\n\n\n"
+        "class Other(unittest.TestCase):\n"
+        "    def test_a_first(self):\n"
+        "        self.skipTest('the fixture root is not under $HOME')\n\n"
+        "    def test_b_msg(self):\n"
+        "        with self.subTest('the bundle (built)', target='dist - x'):\n"
+        "            self.skipTest('extension deps absent (npm ci not run here)')\n"),
+}
+
+
+class ShortSummaryReader(unittest.TestCase):
+    """Round 2, Class C: deps_skipped reads the pytest leg's short summary closed. A SUBSKIPPED line (pytest 9's subtests)
+    is a skip under the same rule, naming the test the subtest belongs to, which the served leg runs whole; a line it does
+    not read makes the set not known, naming the line, and the served leg is then red rather than run with a set read
+    wrong: a line shaped like a kind that is none of pytest's kinds, a skip line whose node id it cannot find, a
+    SUBSKIPPED line whose node id could start at more than one place (decision 5), a node id whose brackets do not
+    balance, and a non-blank line before any kind line. The SUBSKIPPED forms are copied from real pytest 9.1.1 output;
+    every other summary here is written as pytest writes one. Synthetic data only."""
+
+    def log(self, *lines, close="3 passed, 2 skipped in 0.01s"):
+        """A pytest log holding a short summary of `lines` and a closing summary line."""
+        tmp = tempfile.mkdtemp(prefix="sweepsr-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, "pytest.log")
+        with open(path, "w") as f:
+            f.write("\n".join(["=========================== short test summary info ============================", *lines,
+                               "=================== %s ===================" % close, ""]))
+        return path
+
+    def assertNotKnown(self, path, *named):
+        ids, why = sweep.deps_skipped(path, [])
+        self.assertIsNone(ids, "the set is not known")
+        self.assertIn("this reader does not read", why)
+        for text in named:
+            self.assertIn(text, why)
+        return why
+
+    def test_a_subtest_skipped_for_want_of_the_deps_selects_its_test_and_no_other(self):
+        """Real pytest, the pytest leg's own command, in process and under xdist: each subtest skipped for want of the
+        deps selects the test it belongs to, and the skips for other reasons right before them stay unselected, their
+        reasons whole. At c60fb907e, under pytest 9, the SUBSKIPPED lines were glued onto the reasons of the skips before
+        them, which then read as deps skips: the unrelated tests were selected and the subtests' tests ran in no leg."""
+        tmp = tempfile.mkdtemp(prefix="sweepsr-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        checkout = os.path.join(tmp, "checkout")
+        os.makedirs(os.path.join(checkout, "tests"))
+        for name, text in SUBTEST_SKIP_TREE.items():
+            with open(os.path.join(checkout, "tests", name), "w") as f:
+                f.write(text)
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": tmp, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8", "CI": "true"}
+        for workers in (0, 2):
+            with self.subTest(workers=workers):
+                p = subprocess.run(sweep.pytest_cmd(sys.executable, workers), cwd=checkout, env=env, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=300)
+                log = os.path.join(tmp, "pytest-%d.log" % workers)
+                with open(log, "w") as f:
+                    f.write(p.stdout)
+                self.assertEqual(p.returncode, 0, p.stdout[-3000:])
+                others = []
+                ids, why = sweep.deps_skipped(log, [], others)
+                self.assertIsNone(why, p.stdout[-3000:])
+                self.assertEqual(sorted(ids), ["tests/test_b_sub.py::Engines::test_engines",
+                                               "tests/test_b_sub.py::Other::test_b_msg"], p.stdout[-3000:])
+                self.assertEqual(sorted(others), [["tests/test_a_other.py::test_it", "Skipped: macOS only"],
+                                                  ["tests/test_b_sub.py::Other::test_a_first",
+                                                   "Skipped: the fixture root is not under $HOME"]], p.stdout[-3000:])
+
+    def test_the_subtests_fixture_form_selects_its_test(self):
+        """pytest 9's subtests fixture prints `SUBSKIPPED[msg] (k=v) <node id> - <reason>`, and a message and kwargs can
+        hold spaces, parentheses and " - " (both copied from real 9.1.1 output), each here right after a skip for another
+        reason whose reason it must not join."""
+        path = self.log(
+            "SKIPPED tests/test_c_fixture.py::test_a_unrelated - Skipped: set ROMP_CLI_PROBE_LIVE=1 to run against the installed CLI",
+            "SUBSKIPPED[served page] (k=1) tests/test_c_fixture.py::test_fixture - Skipped: extension deps absent (npm ci not run here)",
+            "SKIPPED tests/test_b_sub.py::Other::test_a_first - Skipped: the fixture root is not under $HOME",
+            "SUBSKIPPED[the bundle (built)] (target=\"'dist - x'\") tests/test_b_sub.py::Other::test_b_msg - Skipped: extension "
+            "deps absent (npm ci not run here)",
+            "SUBSKIPPED(<subtest>) tests/test_e.py::test_e - Skipped: no playwright: npm ci not run here")
+        others = []
+        self.assertEqual(sweep.deps_skipped(path, [], others), (["tests/test_c_fixture.py::test_fixture",
+                                                               "tests/test_b_sub.py::Other::test_b_msg", "tests/test_e.py::test_e"], None))
+        self.assertEqual([o[0] for o in others], ["tests/test_c_fixture.py::test_a_unrelated",
+                                                  "tests/test_b_sub.py::Other::test_a_first"])
+
+    def test_a_summary_line_of_a_kind_the_reader_does_not_read_makes_the_set_not_known(self):
+        """A line shaped like a kind (an upper-case word, a description as a subtest word has, a node id) that is none of
+        pytest's kinds is never glued onto the reason before it: the set is not known, naming the line."""
+        line = "SUBNEWKIND(k=1) tests/test_x.py::T::test_t - Skipped: npm ci not run here"
+        path = self.log("SKIPPED tests/test_a.py::test_a - Skipped: macOS only", line)
+        self.assertNotKnown(path, "a kind this reader does not read", line[:60])
+
+    def test_a_skip_line_whose_node_id_the_reader_cannot_find_makes_the_set_not_known(self):
+        """A skip line whose node id the reader cannot find (the folded form, which --no-fold-skipped rules out) is not
+        dropped: the set is not known, naming the line."""
+        line = "SKIPPED [2] tests/test_x.py:3: npm ci not run here"
+        self.assertNotKnown(self.log(line), "a skip whose node id this reader cannot find", line)
+
+    def test_a_message_running_on_with_an_upper_case_word_is_no_kind(self):
+        """A failure message running on over lines can start a line with an upper-case word (a unittest message's second
+        line, as real pytest 8 and 9 print it): that is no kind, and the skip after it is read."""
+        path = self.log("FAILED tests/test_b.py::Other::test_c - AssertionError: 1 != 2 : first line",
+                        "SECOND line of the message",
+                        "SKIPPED tests/test_d.py::test_it - Skipped: extension deps absent (npm ci not run here)")
+        self.assertEqual(sweep.deps_skipped(path, []), (["tests/test_d.py::test_it"], None))
+
+    def test_a_line_before_any_kind_line_makes_the_set_not_known(self):
+        """C2: a non-blank line of no kind right after the section's header, before any kind line, is no reason running
+        on (there is none yet): the set is not known, naming it. A blank line there is read past."""
+        line = "the bundle cannot be built here (npm ci not run)"
+        path = self.log(line, "SKIPPED tests/test_d.py::test_it - Skipped: extension deps absent (npm ci not run here)")
+        self.assertNotKnown(path, "a line before any kind line", line)
+        path = self.log("", "SKIPPED tests/test_d.py::test_it - Skipped: extension deps absent (npm ci not run here)")
+        self.assertEqual(sweep.deps_skipped(path, []), (["tests/test_d.py::test_it"], None))
+
+    def test_a_subtest_skip_whose_node_id_could_start_at_two_places_makes_the_set_not_known(self):
+        """Decision 5: a subtest's description can hold "] tests/" or ") tests/", so a SUBSKIPPED line whose node id could
+        start at more than one place names no one test: the set is not known, naming the line, never the first place
+        taken (which would select tests/q.py::A or tests/test_other.py::C here, and run the real test in no leg). So is a
+        node id holding " tests/", which could start there. The real form, one place, is read (the fixture-form case)."""
+        for line in ("SUBSKIPPED[msg] (k='(z) tests/q.py::A - b') tests/test_real.py::T::test_x - Skipped: no playwright here",
+                     "SUBSKIPPED(case='a) tests/test_other.py::C - x') tests/test_real.py::T::test_z - Skipped: node_modules missing"):
+            with self.subTest(line=line):
+                self.assertNotKnown(self.log("SKIPPED tests/test_a.py::test_a - Skipped: macOS only", line),
+                                    "could start at 2 places", line[:60])
+        line = "SUBSKIPPED[m] tests/test_real.py::test_p[a tests/q] - Skipped: npm ci not run here"
+        self.assertNotKnown(self.log(line), "holds ' tests/'", line[:60])
+
+    def test_a_node_id_whose_brackets_do_not_balance_makes_the_set_not_known(self):
+        """A node id runs to the first " - ", so a parametrize id holding " - " is read short (tests/test_d_param.py::
+        test_p[a here), which the served leg's pytest would be handed and could not find: the brackets do not balance,
+        and the set is not known, naming the line. The same for a SUBSKIPPED line, and for a ] with no [ before it."""
+        for line in ("SKIPPED tests/test_d_param.py::test_p[a - b] - Skipped: no browser for a - b",
+                     "SUBSKIPPED(k=1) tests/test_d_param.py::test_q[a - b] - Skipped: npm ci not run here",
+                     "SKIPPED tests/test_d_param.py::test_r]a[ - Skipped: npm ci not run here"):
+            with self.subTest(line=line):
+                self.assertNotKnown(self.log(line), "brackets do not balance", line[:60])
+
+    def test_a_subtest_message_holding_a_newline_makes_the_set_not_known(self):
+        """Disclosed, loud: a subtest message holding a newline splits its SUBSKIPPED line, so the first part names no node
+        id and the set is not known, for a summary pytest wrote correctly; never a skip dropped. Right after the header,
+        its second part is named too, as a line before any kind line."""
+        first, second = "SUBSKIPPED[first line", "second line] (k=1) tests/test_x.py::T::test_t - Skipped: npm ci not run here"
+        self.assertNotKnown(self.log("SKIPPED tests/test_a.py::test_a - Skipped: macOS only", first, second),
+                            "a skip whose node id this reader cannot find", repr(first))
+        self.assertNotKnown(self.log(first, second), repr(first), "a line before any kind line", second[:60])
 
 
 class DepsSkipRule(unittest.TestCase):
@@ -4481,8 +4660,9 @@ class CiParity(unittest.TestCase):
                  ("-p", "no:cacheprovider")]              # nothing written to a .pytest_cache in the checkout
         named += _units(sweep.PYTEST_ISOLATION)           # B4: no ini or conftest above the checkout
         named += [("--ignore=%s" % p,) for p in sorted(sweep.PYTEST_IGNORED)]   # Q6
-        # every skip printed with its node id and reason beside pytest's default failures and errors, where the runner
-        # reads the tests the leg skipped for want of the deps, which the served leg then runs (deps_skipped); output only
+        # every skip printed with its node id and reason beside pytest's default failures and errors (a subtest's as a
+        # SUBSKIPPED line naming its test), where the runner reads, closed, the tests the leg skipped for want of the
+        # deps, which the served leg then runs (deps_skipped); output only
         named += [("-rfEs",), ("--no-fold-skipped",)]
         for u in named:
             self.assertIn(u, our_units, "a named difference the runner no longer has: %r" % (u,))
