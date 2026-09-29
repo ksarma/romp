@@ -180,8 +180,11 @@ subject; `verify` refuses the branch otherwise.
    (pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads),
    so the SDK-gated tests run as they do in CI. The runner builds the venv from `--python`
    (default: the interpreter running `sweep.py`) under `<state dir>/sweeps/sdk/`: the first sweep at
-   a new pin or interpreter builds it (a download of about 110 MB), and later sweeps reuse it. A
-   reused venv keeps the dependency versions pip resolved when it was built, while CI resolves them
+   a new pin or interpreter builds it (a download of about 110 MB), and later sweeps reuse it. The
+   legs outside the two venvs (bats, the node tests, the ledger check and the npm legs) have
+   `--python`'s directory first on their PATH, so they run its `python3`: it should hold nothing
+   installed, as the `python3` of CI's jobs other than the Python cells holds none of the test
+   dependencies. A reused venv keeps the dependency versions pip resolved when it was built, while CI resolves them
    fresh on every run. A sweep reuses the venv only while its files match what its build wrote (new
    bytecode aside), so a file a test left in it is not carried into later sweeps: the next sweep
    builds it again, and a sweep that finds the venv changed after its pytest leg is invalid. A
@@ -244,7 +247,7 @@ subject; `verify` refuses the branch otherwise.
    leg gets an allowlisted environment: a TMPDIR of its own, made when the leg starts and removed
    when it ends, with a private HOME and state dir under it, so nothing a leg leaves in any of the
    three reaches a later leg (the `npm ci` setup of a `--leg` re-run gets its own too); a PATH built
-   from the tool directories; npm's global config and git's system config off; CI's switches; and
+   from the tool directories, `--python`'s first; npm's global config and git's system config off; CI's switches; and
    nothing of your shell's (no key, token or session variable, no
    PYTEST_ADDOPTS or NODE_OPTIONS); `npm test` also gets this machine's 8 GB heap cap
    (`NODE_OPTIONS=--max-old-space-size=8192`), which CI does not set. The allowlist governs

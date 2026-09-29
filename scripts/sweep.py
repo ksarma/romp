@@ -3610,7 +3610,10 @@ def main(argv=None):
                                                     "dir>/sweeps/sdk/<key>, which holds what the install steps of the sha's "
                                                     "ci.yml install (pytest and its plugins, cryptography, the Claude Agent SDK "
                                                     "at its pin); a build that fails refuses the run. Nothing need be "
-                                                    "installed in it")
+                                                    "installed in it, and nothing should be: the legs outside the two venvs "
+                                                    "(bats, manager, tools, ledger and the npm legs) have its directory first "
+                                                    "on their PATH and run its python3, as CI's jobs other than the Python "
+                                                    "cells run a python3 that holds none of the test dependencies")
     p.add_argument("--served-python", metavar="PATH",
                    help="the interpreter the served leg's venv is built from (default: --python); it must be the Python "
                         "version the sha's ci.yml sets up for its served step (3.12 today), or the run is refused naming "

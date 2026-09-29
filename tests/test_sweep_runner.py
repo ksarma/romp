@@ -2811,6 +2811,28 @@ class LegEnvironment(_Base):
             self.assertNotIn("XDG_RUNTIME_DIR", c["names"])
 
 
+class LegPath(unittest.TestCase):
+    def test_every_leg_outside_the_venvs_has_pythons_directory_first_on_its_path(self):
+        """Round 2, extra6-5: the bats, manager, tools, ledger and npm legs run --python's python3, since its directory
+        leads their PATH (the texts say so, and that it should hold nothing installed); the pytest and served legs lead
+        with their venvs' directories. Held on leg_env itself."""
+        d = tempfile.mkdtemp(prefix="legpath-")
+        self.addCleanup(shutil.rmtree, d, True)
+        dirs = {k: os.path.join(d, k) for k in ("python", "sdk", "served", "tools")}
+        for k, v in dirs.items():
+            os.makedirs(v)
+        for name in ("node", "npm", "bats", "git", "gitleaks"):
+            with open(os.path.join(dirs["tools"], name), "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(os.path.join(dirs["tools"], name), 0o755)
+        ctx = sweep.leg_context(os.path.join(d, "tmp"), os.path.join(dirs["python"], "python3"),
+                                env={"PATH": dirs["tools"] + os.pathsep + "/usr/bin", "HOME": d},
+                                pytest_python=os.path.join(dirs["sdk"], "python"),
+                                served_python=os.path.join(dirs["served"], "python"))
+        lead = {leg: sweep.leg_env(leg, ctx, base={})[0]["PATH"].split(os.pathsep)[0] for leg in sweep.LEGS}
+        self.assertEqual(lead, dict({leg: dirs["python"] for leg in sweep.LEGS}, pytest=dirs["sdk"], served=dirs["served"]))
+
+
 class LegEnvironmentReader(unittest.TestCase):
     def test_the_floor_names_every_port_variable_the_tree_reads(self):
         """A census over the tree: every ROMP_*_PORT name it reads is in PORT_FLOOR, or in PORT_DEFAULTS with a default
