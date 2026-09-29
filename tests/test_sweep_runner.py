@@ -2043,33 +2043,43 @@ class Checkout(_Base):
         self.assertIsNone(w.data()["runs"][1]["legs"]["pytest"].get("finished"), "the unverified pass is not on disk")
         w.run("--flake", "pytest=" + flake, check=0)
 
-    def stop_in_the_write(self, w):
-        """Run the runner while its first run's record carries a padding field no reader reads (about 12 MB of JSON), so
-        each write of the result takes a while, and send SIGTERM once the pytest leg has been called and a temp file of
-        write_result's (.sweep-*.json) stands in the result's directory: the first write after the pytest leg. That temp
-        file must still stand once the signal is sent, or the case fails saying so: a stop that missed the write would
-        pass whether or not the write is finished under a stop. Returns (rc, stdout, stderr)."""
+    def stop_in_the_write(self, w, *extra, nth=1):
+        """Run the runner (with `extra` after its arguments) while its first run's record carries a padding field no
+        reader reads (about 12 MB of JSON), so each write of the result takes a while, and send SIGTERM once the pytest
+        leg has been called and the `nth` temp file of write_result's (.sweep-*.json) seen after that stands in the
+        result's directory: the nth write after the pytest leg. Each write makes a temp file of its own name, so the
+        names seen count the writes. That temp file must still stand once the signal is sent, or the case fails saying
+        so: a stop that missed the write would pass whether or not the write is finished under a stop. A write missed
+        by the count leaves the runner waiting for one that never comes, and the case fails when the runner ends.
+        Returns (rc, stdout, stderr)."""
         data = w.data()
         data["runs"][0]["legs"]["ledger"]["pad"] = ["x" * 20] * 400000
         sweep.write_result(w.result_path(), data)
         d = os.path.dirname(w.result_path())
         called = len([c for c in w.calls() if c["leg"] == PYTEST_LEG])
-        proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2"],
+        proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2",
+                                 *extra],
                                 env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
-        deadline, tmp = time.monotonic() + 120, None
+        deadline, tmp, seen = time.monotonic() + 120, None, []
         while tmp is None:
             if proc.poll() is not None:
-                self.fail("the runner ended before its write after the pytest leg: %s" % (proc.communicate(),))
+                self.fail("the runner ended before write %d after the pytest leg (writes seen: %d): %s"
+                          % (nth, len(seen), proc.communicate()))
             if time.monotonic() > deadline:
-                self.fail("the runner never wrote after the pytest leg")
+                self.fail("the runner never made write %d after the pytest leg (writes seen: %d)" % (nth, len(seen)))
             if len([c for c in w.calls() if c["leg"] == PYTEST_LEG]) > called:
-                tmp = next((os.path.join(d, n) for n in os.listdir(d) if n.startswith(".sweep-")), None)
+                for n in sorted(os.listdir(d)):
+                    if n.startswith(".sweep-") and n not in seen:
+                        seen.append(n)
+                if len(seen) >= nth and os.path.exists(os.path.join(d, seen[nth - 1])):
+                    tmp = os.path.join(d, seen[nth - 1])
             if tmp is None:
                 time.sleep(0.001)
         proc.send_signal(15)
         inside = os.path.exists(tmp)
         out, err = proc.communicate(timeout=120)
+        self.assertEqual(len(seen), nth, "the signal went to write %d after the pytest leg, not to write %d" % (len(seen), nth))
         self.assertTrue(inside, "the write had ended before the signal was sent, so this case read nothing; raise the padding")
         return proc.returncode, out, err
 
@@ -2103,6 +2113,46 @@ class Checkout(_Base):
         self.assertEqual(rc, 128 + 15, out + err)
         run = w.data()["runs"][1]
         self.assertIn("after the pytest leg the checkout is not the sha's tree", run.get("invalid") or "", "the mark is on disk")
+        self.assertEqual(run["legs"][PYTEST_LEG].get("rc"), 0)
+
+    def test_a_stop_inside_the_write_of_a_fresh_checkouts_invalid_mark_keeps_the_mark(self):
+        """The same for the invalid mark of a later job's fresh checkout that is not the sha's tree: the pytest leg passes
+        and rewrites kernel/other.py's blob in the batcher's object store (as in
+        test_a_later_jobs_fresh_checkout_that_is_not_the_shas_tree_makes_the_run_invalid), its pass is written, and the
+        runner is stopped inside the next write, the mark that the shell job's fresh checkout cannot be used. The stopped
+        run records the mark."""
+        w = self.w
+        w.run(check=0)
+        w.ctl({"action": {PYTEST_LEG: "corrupt"}})
+        rc, out, err = self.stop_in_the_write(w, nth=2)
+        self.assertEqual(rc, 128 + 15, out + err)
+        run = w.data()["runs"][1]
+        self.assertEqual((run["finished"], run["verdict"]), (None, "running"), "the stopped run stays unfinished")
+        self.assertIn("the fresh checkout for the shell job's legs cannot be used (it is not the sha's tree: content 1 "
+                      "(kernel/other.py))", run.get("invalid") or "", "the mark is on disk")
+        self.assertEqual(run["legs"][PYTEST_LEG].get("rc"), 0)
+
+    def test_a_stop_inside_the_write_of_a_setups_invalid_mark_keeps_the_mark(self):
+        """The same for the invalid mark of a later job's setup that changes its checkout: a --leg re-run of pytest and
+        served, whose served job runs npm ci before the served leg, and the npm ci of that re-run leaves bytecode outside
+        vscode-extension/node_modules. The pytest leg's pass is written, and the runner is stopped inside the next write,
+        the mark that the checkout is not the sha's tree after the setup. The stopped run records the mark."""
+        flake = Runner.FLAKE
+        w = self.deps_plants('[ -e "$R/../../plant-now" ] && mkdir -p "$R/kernel/__pycache__" && '
+                             'printf x > "$R/kernel/__pycache__/other.cpython-399.pyc"; true')
+        w.ctl({"rc": {PYTEST_LEG: 1, "served": 1}})
+        w.run(check=1)
+        w.ctl({})
+        with open(os.path.join(w.xdg, "romp", "sweeps", "plant-now"), "w") as f:
+            f.write("1\n")
+        rc, out, err = self.stop_in_the_write(w, "--leg", PYTEST_LEG, "--leg", "served", "--flake", "pytest=" + flake,
+                                              "--flake", "served=" + flake, nth=2)
+        self.assertEqual(rc, 128 + 15, out + err)
+        run = w.data()["runs"][1]
+        self.assertEqual((run["finished"], run["verdict"]), (None, "running"), "the stopped run stays unfinished")
+        self.assertIn("after the setup (npm ci) of ", run.get("invalid") or "", "the mark is on disk")
+        self.assertIn("the checkout is not the sha's tree: ignored outside vscode-extension/node_modules 1 "
+                      "(kernel/__pycache__/other.cpython-399.pyc)", run.get("invalid") or "")
         self.assertEqual(run["legs"][PYTEST_LEG].get("rc"), 0)
 
     def test_a_stale_checkout_of_a_run_that_is_gone_is_removed_and_named(self):
