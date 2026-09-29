@@ -72,8 +72,9 @@ Once, already done on this fork: delete branches on merge, squash and rebase mer
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
 on, admin bypass) is optional and comes after the first batch has shown the check names. The checks
 to require are the job checks a batch push reports: `Python <version> (ubuntu-latest)` for each
-Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t), `Shell (bats, ubuntu-latest)`, `Secret scan
-(gitleaks)` and `vscode-extension (typecheck + test + build)`. Do not require `Exactly one tier
+Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t), `Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
+`Vendored tooling (node --test, ubuntu-latest)`, `vscode-extension (typecheck + test + build)` and
+`Served pages (pytest, ubuntu-latest)`. Do not require `Exactly one tier
 label` on the fork: its copy runs only when a PR opens or reopens or its labels change, never on a
 push, so a batch head pushed after the last label event has no run of it, and a ruleset requiring
 it would hold that batch. On a batch PR a required CI check is expected to be met by the run of the

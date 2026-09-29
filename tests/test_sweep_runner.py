@@ -395,6 +395,15 @@ elif act in ("venv-forge", "venv-forge-gate"):   # as venv-write, then the build
         end = time.monotonic() + 60
         while not os.path.exists(os.path.join(ctl["marks"], "go")) and time.monotonic() < end:
             time.sleep(0.02)
+elif act == "gitfill":                           # a large tree in the checkout's .git, which the re-read does not read
+    fill = os.path.join(root, ".git", "fill")
+    for i in range(int(ctl.get("fill_dirs", 100))):
+        d = os.path.join(fill, "d%%03d" %% i)
+        os.makedirs(d)
+        for j in range(int(ctl.get("fill_files", 400))):
+            open(os.path.join(d, "f%%d" %% j), "w").close()
+    with open(os.path.join(ctl["marks"], "gitfilled"), "w") as f:
+        f.write(fill)
 elif act == "fill":                              # a large tree in the leg's TMPDIR, whose removal takes a while
     fill = os.path.join(os.environ["TMPDIR"], "fill")
     for i in range(int(ctl.get("fill_dirs", 100))):
@@ -1984,6 +1993,37 @@ class Checkout(_Base):
             if time.monotonic() > deadline:
                 self.fail("%s never happened" % what)
             time.sleep(0.002)
+
+    def test_a_stop_during_a_jobs_checkout_removal_still_removes_it(self):
+        """Round 2, correctness-3, the group-end removal (the focused re-check's ruling 5, with the critic's driver): the
+        pytest leg, the python job's last, fills its checkout's .git with 40000 files, which the re-read does not read, so
+        the run stays valid, and the runner is stopped once the job's end-of-group removal has begun (the fill's directory
+        count drops). The checkout and its marker are gone afterwards and the runner exits 143: the group end keeps the
+        checkout named until remove_checkout returns, so the way out removes what the stop left. A group end that
+        cleared the name first left the partial checkout and its marker under trees (the critic's clear-first mutant),
+        and so the vscode-extension job's checkout, which holds node_modules, the one slow removal left."""
+        w = self.w
+        marks = os.path.join(w.tmp, "marks")
+        os.makedirs(marks)
+        w.ctl({"action": {PYTEST_LEG: "gitfill"}, "marks": marks})
+        proc = self.start_runner(w)
+        fill = self.wait_for(proc, "the fill", lambda: os.path.exists(os.path.join(marks, "gitfilled"))
+                             and open(os.path.join(marks, "gitfilled")).read())
+        co = os.path.dirname(os.path.dirname(fill))
+        self.addCleanup(shutil.rmtree, co, True)        # only if the runner under test left it
+
+        def removing():
+            try:
+                return len(os.listdir(fill)) < 90
+            except FileNotFoundError:
+                return True
+        self.wait_for(proc, "the removal of the python job's checkout", removing)
+        proc.send_signal(15)
+        out, err = proc.communicate(timeout=90)
+        self.assertEqual(proc.returncode, 128 + 15, out + err)
+        self.assertIn("stopped by signal 15", err)
+        self.assertFalse(os.path.exists(co), "the job's checkout is gone")
+        self.assertEqual(os.listdir(self.trees()), [], "no checkout or marker left under trees")
 
     def test_a_stop_during_a_slow_removal_of_a_legs_tmpdir_still_removes_it_the_run_tmpdir_and_the_checkout(self):
         """Round 2, correctness-3, keyed on an event: the last leg (the ledger) fills its TMPDIR with 40000 files, and the
@@ -3660,20 +3700,27 @@ class LegEnvironment(_Base):
             self.assertIsNotNone(got, "the result records the leg environment's allowlist and hash")
             self.assertEqual(got, {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()})
 
+    # The leg environment hash the runner before round 2 recorded: every result the owner's runner wrote at the round-1
+    # fix head carries it, read from those records (the focused re-check at the round-2 fix head read them).
+    PRE_ROUND_2_HASH = "f8abf6c9a0cf6bf7b3912014b3803f57752e2ac142597554cbe81e60e58d6515"
+
     def test_a_result_recorded_under_the_leg_environment_before_round_2_reads_as_another(self):
-        """Round 2, decision 15: the leg environment hash names each leg's own TMPDIR, HOME and state root and the one
-        fresh checkout per ci.yml job (policy_doc's scratch and checkout), so a result recorded under the hash of the same
-        document without those two entries (what the runner before round 2 hashed and recorded as its policy hash, the
-        same value, checked by execution when this was built) reads as recorded under another leg environment: the
-        reader reads it invalid, and a --leg re-run over it is refused. A runner that leaves the two entries out of the
-        hash reds this."""
+        """Round 2, decision 15: no result written by the runner before round 2 reads as this runner's leg environment. A
+        result recorded under that runner's hash, the literal PRE_ROUND_2_HASH, reads as recorded under another leg
+        environment: the reader reads it invalid, and a --leg re-run over it is refused. The hash names each leg's own
+        TMPDIR, HOME and state root and the one fresh checkout per ci.yml job (policy_doc's scratch and checkout), so the
+        document without those two entries hashes to another value than this runner's; that value is no longer the one
+        the runner before round 2 recorded, since the pdf-smoke leg has entries of its own (the focused re-check's ruling
+        5, which found the computed value standing in for the recorded one)."""
         import hashlib
         doc = sweep.policy_doc()
         self.assertEqual((doc["scratch"], doc["checkout"]["steps"], doc["checkout"]["own"]),
                          (sweep.LEG_SCRATCH, sweep.LEG_STEPS, list(sweep.OWN_CHECKOUT_LEGS)))
         before = {k: v for k, v in doc.items() if k not in ("scratch", "checkout")}
-        old = hashlib.sha256(json.dumps(before, sort_keys=True).encode("utf-8")).hexdigest()
-        self.assertNotEqual(old, sweep.policy_hash(), "the two entries are hashed")
+        self.assertNotEqual(hashlib.sha256(json.dumps(before, sort_keys=True).encode("utf-8")).hexdigest(), sweep.policy_hash(),
+                            "the two entries are hashed")
+        old = self.PRE_ROUND_2_HASH
+        self.assertNotEqual(old, sweep.policy_hash(), "this runner's hash is not the one the runner before round 2 recorded")
         w = self.w
         w.ctl({"rc": {"bats": 1}})
         w.run(check=1)

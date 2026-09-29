@@ -207,8 +207,9 @@ class NoJobLevelGate(unittest.TestCase):
     """No job carries an `if:` or a `continue-on-error:` of its own: a skipped job reports success, and
     continue-on-error passes over a failure, so a batch head could read green with a suite that never ran.
     The triggers are the gate (CiTriggers). PR 872's check holds the python job to an allowlist of keys;
-    this extends the two refusals to every other job ci.yml defines, read from the file (job_level_gates), so a
-    job added later is covered without a change here. A guard: it passes on the base too."""
+    this holds every job ci.yml defines, the python job included, to the two refusals, read from the file
+    (job_level_gates): six jobs since this branch's merge of PR 928, and a job added later is covered without a
+    change here. A guard: it passes on the base too."""
 
     def test_the_six_jobs_exist(self):
         found = job_keys()

@@ -2127,19 +2127,75 @@ class CiJobs(unittest.TestCase):
                           "quoted": ["Secret scan (gitleaks)"], "commented": ["vscode-extension (typecheck + test + build)"],
                           "plain": ["plain"]})
 
+    # The expressions a job name in ci.yml may hold, and what each renders to on a batch push: the Linux cells alone run
+    # there (the matrices' os: evaluates to ubuntu-latest for a push; CiMatrixRunners in
+    # tests/test_ci_workflow_concurrency.py), and a python-version runs once per version the job's matrix lists.
+    RENDERED = {"matrix.os": ["ubuntu-latest"]}
+
+    def batch_push_checks(self, text):
+        """{job id: [the name GitHub renders for each of its job runs on a batch push]}, derived from ci.yml's job ids, so
+        a job added later is read with no change here (the focused re-check at the round-2 fix head, ruling 5: the list
+        this replaced named four of the six jobs). Each job's name is the one ci_jobs reads; ${{ matrix.os }} renders as
+        RENDERED gives it, and ${{ matrix.python-version }} as each version the job's matrix lists, its include entries'
+        among them. A name holding any other expression, or a job with a matrix and no name, is refused here, so a job
+        written another way is read rather than passed over."""
+        out = {}
+        for job, name, _rx in self.jobs(text):
+            block = re.search(r"^  %s:[ \t]*(?:#.*)?\n(.*?)(?=^  [A-Za-z_][\w-]*:[ \t]*(?:#.*)?$|^[A-Za-z_]|\Z)" % re.escape(job),
+                              text, re.M | re.S).group(1)
+            exprs = set(re.findall(r"\$\{\{\s*(.*?)\s*\}\}", name))
+            self.assertFalse(exprs - set(self.RENDERED) - {"matrix.python-version"},
+                             "the %s job's name %r holds an expression this does not render: render it here" % (job, name))
+            self.assertFalse(name == job and re.search(r"^    strategy:", block, re.M),
+                             "the %s job has a matrix and no name: render GitHub's (<values>) here" % job)
+            names = [name]
+            if "matrix.python-version" in exprs:
+                versions = [v.strip().strip("'\"") for group in re.findall(r"python-version:[ \t]*\[([^\]]*)\]", block)
+                            for v in group.split(",")]
+                versions += re.findall(r"python-version:[ \t]*['\"]([^'\"]+)['\"]", block)
+                self.assertTrue(versions, "the %s job's matrix lists no python-version" % job)
+                names = [re.sub(r"\$\{\{\s*matrix\.python-version\s*\}\}", v, name) for v in versions]
+            for expr, (value,) in self.RENDERED.items():
+                names = [re.sub(r"\$\{\{\s*%s\s*\}\}" % re.escape(expr), value, n) for n in names]
+            out[job] = names
+        return out
+
     def test_the_real_ci_yml_names_every_job_a_batch_push_runs(self):
         """ci.yml as this checkout holds it (committed in a repository of its own, so the tree needs no git): each job
-        is read, and the job runs a batch push lists (docs/batching.md names the checks a batch push reports) each match
-        their job, and the tier-label check matches none."""
+        is read, the name each of its job runs renders on a batch push (batch_push_checks, derived from the file's job
+        ids) matches that job and no other, and the tier-label check matches none."""
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         expected = {job: rx for job, _name, rx in self.jobs(text)}
+        checks = self.batch_push_checks(text)
         self.assertEqual(sorted(expected), sorted(sweep.workflow_jobs(text)))
-        for job, name in (("python", "Python 3.12 (ubuntu-latest)"), ("python", "Python 3.14t (ubuntu-latest)"),
-                          ("shell", "Shell (bats, ubuntu-latest)"), ("secrets", "Secret scan (gitleaks)"),
-                          ("vscode-extension", "vscode-extension (typecheck + test + build)")):
-            with self.subTest(job=job, name=name):
-                self.assertTrue(expected[job].fullmatch(name))
-                self.assertFalse(any(rx.fullmatch("Exactly one tier label") for rx in expected.values()))
+        self.assertEqual(sorted(checks), sorted(expected), "every job is rendered")
+        for job, names in checks.items():
+            for name in names:
+                with self.subTest(job=job, name=name):
+                    self.assertNotIn("${{", name, "rendered whole")
+                    self.assertEqual([j for j, rx in expected.items() if rx.fullmatch(name)], [job])
+        self.assertFalse(any(rx.fullmatch("Exactly one tier label") for rx in expected.values()))
+
+    def test_the_maintainer_steps_name_every_check_a_batch_push_reports(self):
+        """docs/batching.md's maintainer section lists the checks to require; it names every one a batch push reports, as
+        batch_push_checks derives them from ci.yml: each job's rendered name in backticks, and for the python job its
+        name with <version> for the version and the Linux cells' versions listed after it. At the round-2 fix head it
+        named four of the six jobs, not the vendored-tooling and served-pages jobs PR 928 added."""
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        doc = (ROOT / "docs" / "batching.md").read_text(encoding="utf-8")
+        start = doc.index("## If you are the maintainer")
+        section = doc[start:doc.index("\n## ", start + 1)]
+        para = re.sub(r"\s+", " ", section)
+        m = re.search(r"`Python <version> \(ubuntu-latest\)` for each Linux cell \(([^)]*)\)", para)
+        self.assertIsNotNone(m, "the python job's checks are named as `Python <version> (ubuntu-latest)` with the cells' versions")
+        listed = sorted(v.strip() for v in re.split(r",|\band\b", m.group(1)) if v.strip())
+        for job, names in self.batch_push_checks(text).items():
+            with self.subTest(job=job):
+                if job == "python":
+                    self.assertEqual(listed, sorted(n[len("Python "):-len(" (ubuntu-latest)")] for n in names))
+                else:
+                    for name in names:
+                        self.assertIn("`%s`" % name, para, "docs/batching.md's maintainer section names %s" % name)
 
     def test_a_ci_yml_it_cannot_read_that_way_is_refused(self):
         for label, ci, text in (("no ci.yml", None, "could not read .github/workflows/ci.yml at"),
