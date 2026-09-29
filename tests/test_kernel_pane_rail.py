@@ -89,7 +89,7 @@ class PaneRailTest(unittest.TestCase):
         for k in ("fleet", "feed", "timeline"):
             self.assertIn("<iframe id=f-%s data-src=/%s>" % (k, k), self.html)
         self.assertIn("<iframe id=f-chat class=m-on src=/chat>", self.html)
-        self.assertIn("<iframe id=f-files data-src=/files>", self.html)   # data-src since stage 0 (2026-09-18): the mobile script promotes it at boot on the desktop, on its first tap on the phone (tests/test_pane_state_broadcast.py LazyPanes)
+        self.assertIn("<iframe id=f-files data-src=/files>", self.html)   # data-src since stage 0 (2026-09-18): _LANDING_DESKTOP_PANES_JS promotes it at boot on the desktop, the mobile script on its first tap on the phone (tests/test_pane_state_broadcast.py LazyPanes)
         self.assertIn(".rail-btn[hidden]{display:none}", self.html, "the controller's hidden must beat .rail-btn's display:flex")
         self.assertIn("var ALL=KEYS.slice(),OPT=['timeline','fleet','feed'],SK='romp:settings';", self.html)
         # reconcile(live): the boot call keeps a shown pane's stored rail flag; the storage listener's call brings a

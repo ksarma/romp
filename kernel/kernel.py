@@ -56038,7 +56038,8 @@ def _resolve_reconnect(c, chat_list):
                 _hint = str(act)   # the page's own hint, for the record below (pass 5, the reviewer's round-4 kernel-2)
                 act = _ps
                 # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): the session served whole is RECORDED on the client, under this slot lock, where _push's readers
-                # look (_watched_tab: the active-first set, build_order, _all_active and the cold-tab gate). Before this the preference reassigned
+                # look (_watched_set: the active-first set, build_order, _all_active and the cold-tab gate; _watched_flag: the targeted push's
+                # perf label). Before this the preference reassigned
                 # the local `act` alone, so those readers still named the page's stale hint: on the boot road the hint, a skeleton on every
                 # connected page, was ranked first and handed a cold full build the gate would otherwise have skipped, and the notified session's
                 # full was built after it. `active` is left as the page's own declaration (the client-diag skeleton row, _watched_sids and the
@@ -56070,22 +56071,29 @@ def _resolve_reconnect(c, chat_list):
             # [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding kernel-2): the preference is the one place the kernel overrides the page's own active
             # hint, and every other _PENDING_REVEAL transition prints a [reveal] line; this one filed nothing, and the `skeleton` client-diag
             # row carries the page's activeId, so no record named the session the kernel served whole. Printed after the set is built, so the
-            # hint's fate is read off the resolved set (a hint with no transcript stays whole: _skeleton_for), and named by the EVENT, this
-            # client's set resolving, not by a road: the branch runs on the redial and on the ready arm's boot resolve alike.
+            # hint's fate is one of three, read off the list and the resolved set: "not listed" (an ended session, or another host's id: the
+            # kernel sent it nothing; the reviewer's round-7 finding kernel-1, where it read "whole"), "a skeleton", or "whole" (a listed hint
+            # with no transcript stays whole: _skeleton_for); and named by the EVENT, this client's set resolving, not by a road: the branch
+            # runs on the redial and on the ready arm's boot resolve alike.
             print("[reveal] sid=%s wid=%s: preferred at the set's resolve, the one full in place of the page's hint %s (%s)"
-                  % (str(act)[:8], _pk[:8], _hint[:8], "a skeleton" if _hint in c["skeleton"] else "whole"), file=sys.stderr)
+                  % (str(act)[:8], _pk[:8], _hint[:8], "not listed" if _hint not in {s.get("sid") for s in chat_list}
+                     else ("a skeleton" if _hint in c["skeleton"] else "whole")), file=sys.stderr)
     return not fresh
 
 
 def _watched_tab(c):
-    """The chat tab a client will show once its set resolves, for _push's active-first order and the cold-tab gate: the
+    """The per-client definition of the chat tab a client will show once its set resolves: the
     session the parked-reveal preference served whole in place of the page's hint (`preferred`, written by
     _resolve_reconnect under the slot lock when the preference applies and dropped by the page's next activeTab, which is
     the page's own word, and by the ready arm's reset, with the set it belongs to), else the page's own declaration (`active`). `active` itself is never overwritten: the client-diag
     skeleton row, _watched_sids and the live-wake exemption read it as the page's declaration. [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): before this the
     preference reassigned only the local `act`, so on the boot road the stale hint stayed in _push's active set, was ranked first
     and handed a cold full build the gate would have skipped (every connected page holds it as a skeleton, and its live row
-    states its status), and the notified session's full was built after it (tests/test_chat_skeleton_reconnect.py test_12f)."""
+    states its status), and the notified session's full was built after it (tests/test_chat_skeleton_reconnect.py test_12f). No
+    kernel code calls it since pass 8 (the reviewer's round-7 finding correctness-2): _push's active-first set, build_order, _all_active
+    and the cold-tab gate read _watched_set, and the targeted push's perf label reads _watched_flag, both computed from the project's
+    declared set (_watched_records); this function is the definition they compute, which the tests read and test_12i holds equal to
+    _watched_set over every configuration of three clients."""
     return c.get("preferred") or c.get("active")
 
 
@@ -62748,7 +62756,7 @@ def _watched_sids():
     differs from this set in two ways, its population and its field: _push filters its targets by _client_ready alone and
     reaps a socket a handler thread marked dead (`alive` False) at the cycle's end, so such a socket's declaration counts
     there for that cycle and never here; and while a parked-reveal preference's record stands on a client, _push reads the
-    record in the declaration's place (_watched_tab, _watched_set). Over live clients with no record standing the two sets
+    record in the declaration's place (_watched_set; _watched_flag for the perf label). Over live clients with no record standing the two sets
     are equal. The exemption stays on the page's word (the reviewer's round-5 ruling), so the two sets are named apart here
     (pass 8, the author's label, taking the reviewer's round-6 finding kernel-1; the population difference stated at the
     pass-8 verify's finding kernel-3)."""
@@ -73856,14 +73864,14 @@ def _landing():
             # column, OFF by default like the Outline (the feature itself is off by default)
             "<div class=gv id=gv-c></div>"
             # data-src since stage 0 (2026-09-18): on the phone the pane loads on its first tap (_LANDING_MOBILE_JS, the lazy
-            # panes); on the desktop the mobile script promotes it at boot, so the column loads as it always did. The chat keeps
+            # panes); on the desktop _LANDING_DESKTOP_PANES_JS promotes it at boot, so the column loads as it always did. The chat keeps
             # its src (the shell's reveal landing reads its document); the Files pane below is data-src too.
             "<div class=pane id=waiting-pane><iframe id=f-waiting data-src=/waiting></iframe></div>"
             # "Files" (2026-09-03): the file viewer as its own column, far right, OFF by default — the
             # shell's viewFile relay brings it forward when a chat file-link click routes here
             "<div class=gv id=gv-d></div>"
             # data-src since stage 0 (2026-09-18): the one upstream markup token this fork changes (src -> data-src). On the phone
-            # the pane loads on its first tap; on the desktop the mobile script promotes it at boot, so the column loads as it
+            # the pane loads on its first tap; on the desktop _LANDING_DESKTOP_PANES_JS promotes it at boot, so the column loads as it
             # always did (its rail toggle is off by default and it has no gear row, so the controller's list does not carry it).
             "<div class=pane id=files-pane><iframe id=f-files data-src=/files></iframe></div>"
             "</div>"
@@ -77629,7 +77637,7 @@ class Handler(BaseHTTPRequestHandler):
             #                                       the active tabs; see _pusher), else at the interval's deadline
             # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): the pop of `preferred`
             #   above releases the parked-reveal preference's record before this wake, so the push the wake starts reads the
-            #   page's own word (_watched_tab) and never builds the parked preference once more. Its comment is one tag so the
+            #   page's own word (_watched_set) and never builds the parked preference once more. Its comment is one tag so the
             #   wake stays inside the tab-switch pin's 400-character window (tests/test_chat_fold.py, Wiring.test_a_tab_switch_wakes_the_pusher).
             #   THE MARGIN (pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding extra8-2): at this head the wake ENDS
             #   20 characters inside the window (the anchor `msg.get("type") == "activeTab"` to the end of `_pusher_wake.set()` is 380 of the
@@ -78966,7 +78974,7 @@ class Handler(BaseHTTPRequestHandler):
         iid = (q.get("iid") or [""])[0]         # which page INSTANCE: a reconnect carrying it retires its old socket
         active = (q.get("active") or [""])[0]   # the tab this client is looking at → _push builds it FIRST
         # [fork] pass 8 (kernel-1): first unless a reveal parked for this window names another session at the set's resolve, when the
-        #   parked-reveal preference records that session on the client and _push builds it first in the hint's place (_watched_tab)
+        #   parked-reveal preference records that session on the client and _push builds it first in the hint's place (_watched_set)
         # Capabilities the client ANNOUNCES (comma-separated). FEED_DELTA_CAP: a page whose bundle can apply
         # {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served feed, Outline and
         # Waiting on you pages — see _shim's `caps`); READY_GATE_CAP is the hold below. Announced on the URL

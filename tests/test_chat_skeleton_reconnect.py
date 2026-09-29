@@ -999,6 +999,19 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(sorted(self._names(self._sessions(c3))), ["docs", "web"])
             self.assertEqual(self._names(self._tab_orders(c3)[0]["skeleton"]), ["tests", "api"])
             self.assertEqual([(f["id"], f["live"]) for f in self._frames(c3, "focus")], [("gpu1:" + S2, True)])
+            # the hint's third fate (the reviewer's round-7 finding kernel-1): a stored tab this kernel does not list, an ended session or
+            # another host's id, with a park for a listed session. The preference applies and its record says the hint was not listed:
+            # the kernel sent it nothing (before: "(whole)", from a two-way test of the resolved set that a hint outside it cannot fail)
+            for hint in (GONE, "gpu1:" + S1):
+                with self.subTest(hint=hint):
+                    km._PENDING_REVEAL.clear()
+                    t = io.StringIO()
+                    with contextlib.redirect_stderr(t):
+                        self.assertFalse(km._reveal_request(S2, "W1", via="ack"), "parked")
+                        cx = self._client(active=hint, reconnect=True, wid="W1")
+                        km._push([cx])
+                    self.assertEqual(sorted(self._names(self._sessions(cx))), ["api", "docs"], "the parked session's full, as with a listed hint")
+                    self.assertRegex(t.getvalue(), PREFERRED_LINE % (S2[:8], hint[:8], "not listed"), "the record names the hint's fate as not listed")
             # THE SPLIT (pass 5, the author's label, taking the reviewer's round-4 finding correctness-1: the regression pass 4b introduced by taking the reviewer's round-3 addendum). Two chat columns under one wid, each
             # with its own active hint, and a park for api. The kernel cannot name the column that will SHOW the tapped session
             # (the consume focuses the first chat client of the wid and the page hands a session another column holds to that
@@ -1119,8 +1132,9 @@ class SkeletonReconnect(unittest.TestCase):
         # local `act`: _push's active set, build_order, _all_active and the cold-tab gate still named the page's stale hint, so on
         # the boot road the hint was ranked first and handed a cold full build the gate would otherwise have skipped (every connected
         # page holds it as a skeleton and its live row can state a status), and the notified session's full was built after it. The
-        # served session is recorded on the client (`preferred`, under the slot lock the resolve holds) and _watched_tab reads it in
-        # the hint's place for those four readers; `active` stays the page's own declaration (the client-diag skeleton row,
+        # served session is recorded on the client (`preferred`, under the slot lock the resolve holds) and _push's readers take it in
+        # the hint's place (since pass 8 through _watched_set, which test_12i holds equal to _watched_tab, the per-client definition
+        # this case reads); `active` stays the page's own declaration (the client-diag skeleton row,
         # _watched_sids and the live-wake exemption read it), and the page's next activeTab, its own word, drops the record.
         km._PENDING_REVEAL.clear()
         row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}

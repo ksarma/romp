@@ -490,8 +490,8 @@ class OptionalPanes(unittest.TestCase):
             self.assertIn("<iframe id=f-%s data-src=/%s>" % (k, k), html, "the optional pane is served without a src")
             self.assertNotIn("<iframe id=f-%s src=" % k, html)
         self.assertIn("<iframe id=f-chat class=m-on src=/chat>", html, "the chat is required and loads at once")
-        self.assertIn("<iframe id=f-files data-src=/files>", html, "the Files pane keeps its rail toggle, not this switch; served without a src since stage 0 (2026-09-18), the mobile script promotes it (LazyPanes below)")
-        self.assertIn("<iframe id=f-waiting data-src=/waiting>", html, "the Waiting pane is served without a src too (stage 0, 2026-09-18): the mobile script promotes it, at boot on the desktop and on its first tap on the phone (LazyPanes below)")
+        self.assertIn("<iframe id=f-files data-src=/files>", html, "the Files pane keeps its rail toggle, not this switch; served without a src since stage 0 (2026-09-18), _LANDING_DESKTOP_PANES_JS promotes it at boot on the desktop, the mobile script on its first tap on the phone (LazyPanes below)")
+        self.assertIn("<iframe id=f-waiting data-src=/waiting>", html, "the Waiting pane is served without a src too (stage 0, 2026-09-18): _LANDING_DESKTOP_PANES_JS promotes it at boot on the desktop, the mobile script on its first tap on the phone (LazyPanes below)")
         js = km._LANDING_COLLAPSE_JS
         self.assertIn("OPT=['timeline','fleet','feed']", js)
         self.assertIn("SK='romp:settings'", js)

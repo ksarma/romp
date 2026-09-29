@@ -185,8 +185,8 @@ class LandingShell(unittest.TestCase):
         self.assertIn("data-tab", km._LANDING_MOBILE_JS)       # show() marks the active pane on <body>
 
     def test_lazy_panes_markup_loader_and_the_promotions_place_in_show(self):
-        # stage 0 (2026-09-18): the Waiting and Files panes are served with data-src (the mobile script promotes them: at boot on
-        # the desktop, on their first tap on the phone; the Files line is the one upstream markup token this fork changes); the
+        # stage 0 (2026-09-18): the Waiting and Files panes are served with data-src (_LANDING_DESKTOP_PANES_JS promotes them at boot on
+        # the desktop, the mobile script on their first tap on the phone; the Files line is the one upstream markup token this fork changes); the
         # chat keeps its src (the reveal landing reads its document). The shell's loader for a loading pane is one
         # element, painted for the shown tab by body.pane-loading inside the phone media block, in _pane_spin's dress.
         html = km._landing()
