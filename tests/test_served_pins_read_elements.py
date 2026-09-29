@@ -22,7 +22,8 @@ Population, derived by an AST walk over tests/test_*.py, every method of every c
 inside assertTrue or assert is one row per conjunct), and the position forms `X.index(<lit>)`, `X.find(<lit>)`,
 `X.rindex(<lit>)`, `X.rfind(<lit>)` and `X.count(<lit>)`, where <lit> is a string literal or the variable of a
 `for <name> in (<str>, ...)` loop or comprehension in the same function (one row per literal; the author's pass 5, 2026-09-20: a loop
-variable had been outside the derivation, and the one such pin in the suite was satisfiable by two comments), and X is one
+variable had been outside the derivation, and the one such pin in the suite was satisfiable by two comments), or a Name of a tuple
+target over tuples of literals of its length, `for a, b in (("x", "y"), ...)`, read by position (round 6, TUPLOOP), and X is one
 of the kernel's served TEXTS: a call to one of its page getters, or one of its served constants (`<alias>.<_NAME>`), or a
 Name bound to either in the same function (a tuple assignment counts by position; a Name bound to a SLICE of one counts
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
@@ -894,21 +895,38 @@ def _position(node):
     return None
 
 
+def _tuple_loop(target, it):
+    """[(Name, Tuple of the literals at its position)] for a loop target that is a tuple of Names, none starred, over a tuple or list
+    whose every element is a tuple or list of string literals of the target's length (`for dark, light in (("a", "b"), ("c",
+    "d")):` gives dark over ("a", "c") and light over ("b", "d")); [] for any other target or iterable (round 6, TUPLOOP, extra8-5)."""
+    if not (isinstance(target, ast.Tuple) and target.elts and all(isinstance(e, ast.Name) for e in target.elts)
+            and isinstance(it, (ast.Tuple, ast.List)) and it.elts):
+        return []
+    n = len(target.elts)
+    if not all(isinstance(r, (ast.Tuple, ast.List)) and len(r.elts) == n and all(isinstance(c, ast.Constant) and isinstance(c.value, str) for c in r.elts)
+               for r in it.elts):
+        return []
+    return [(e.id, ast.Tuple(elts=[r.elts[i] for r in it.elts], ctx=ast.Load())) for i, e in enumerate(target.elts)]
+
+
 def _loops(fn):
     """[(variable, iterable node, body nodes)] for every `for` statement and comprehension generator in a function whose
-    target is one Name: the body is the loop's statements, or the comprehension's element and conditions."""
+    target is one Name: the body is the loop's statements, or the comprehension's element and conditions. A target that is a
+    tuple of Names over tuples of literals gives each Name with the literals at its position as its iterable (_tuple_loop; round
+    6, TUPLOOP: such a loop had bound nothing, and 14 memberships in tests/test_api_health_hover.py were read unjudged)."""
     out = []
     for node in ast.walk(fn):
         if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
             out.append((node.target.id, node.iter, [n for b in node.body for n in ast.walk(b)]))
-        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        elif isinstance(node, ast.For):
+            out += [(var, lits, [n for b in node.body for n in ast.walk(b)]) for var, lits in _tuple_loop(node.target, node.iter)]
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            body = [node.elt] if not isinstance(node, ast.DictComp) else [node.key, node.value]
             for gen in node.generators:
                 if isinstance(gen.target, ast.Name):
-                    out.append((gen.target.id, gen.iter, [n for e in [node.elt] + gen.ifs for n in ast.walk(e)]))
-        elif isinstance(node, ast.DictComp):
-            for gen in node.generators:
-                if isinstance(gen.target, ast.Name):
-                    out.append((gen.target.id, gen.iter, [n for e in [node.key, node.value] + gen.ifs for n in ast.walk(e)]))
+                    out.append((gen.target.id, gen.iter, [n for e in body + gen.ifs for n in ast.walk(e)]))
+                else:
+                    out += [(var, lits, [n for e in body + gen.ifs for n in ast.walk(e)]) for var, lits in _tuple_loop(gen.target, gen.iter)]
     return out
 
 
@@ -3020,6 +3038,48 @@ class T(unittest.TestCase):
         self.assertEqual([r[:3] for r in readers], [(7, "conversion", "_chat_page"), (8, "assert", "_chat_page"), (9, "regex", "_chat_page"),
                                                     (11, "conversion", "_landing"), (11, "conversion", "_landing"), (11, "regex", "_landing"),
                                                     (12, "assert", "_chat_page"), (12, "conversion", "_chat_page")])
+
+
+    def test_a_tuple_target_loop_over_literal_tuples_is_read_by_position(self):
+        # round 6 (B.1, TUPLOOP, extra8-5): a loop or comprehension whose target is a tuple of Names, none starred, over a tuple or
+        # list of tuples of string literals of the target's length binds each Name to the literals at its position, one row per
+        # literal, as a one-Name loop over literals binds its literals. Such a loop had bound nothing: its memberships passed the
+        # reader census as `assert` rows with no pins row (14 in tests/test_api_health_hover.py), read and never judged. A
+        # starred target, a row of another length and a row holding anything but literals bind nothing (a starred loop target
+        # and a mixed tuple stay `assert` rows over a non-literal needle, the stated extra8-8 shape). A dict comprehension reads its
+        # key and value by the same rule (u5). The textual census reads no
+        # loop literal, so the rows are declined forms. Dropping TUPLOOP reds the rows here, and the reader rows at 7 and 8 fall
+        # to position-unpinned. The rows of both derivations are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest
+class T(unittest.TestCase):
+    def test_a(self):
+        page = km._landing()
+        for dark, light in (("t1", "t2"), ("t3", "t4")):
+            self.assertIn(dark, page)
+            self.assertLess(page.index(light), 9)
+        found = [page.count(x) for x, y in [("t5", "t6")]]
+        for a, b in (("t7", "t8"), ("t9",)):
+            self.assertIn(a, page)
+        for a, *b in (("u1", "u2"),):
+            self.assertIn(a, page)
+        for a, b in (("u3", other),):
+            self.assertIn(a, page)
+        at = {k: page.find(v) for k, v in (("u4", "u5"),)}
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            sites, _ = textual_census(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(rows, [(6, "t1", "_landing", "in", False, False), (6, "t3", "_landing", "in", False, False), (7, "t2", "_landing", "index", False, False),
+                                (7, "t4", "_landing", "index", False, False), (8, "t5", "_landing", "count", False, False), (15, "u5", "_landing", "find", False, False)])
+        self.assertEqual(sites, [])
+        self.assertEqual([r[:3] for r in readers], [(6, "assert", "_landing"), (7, "position", "_landing"), (8, "position", "_landing"), (10, "assert", "_landing"),
+                                                    (12, "assert", "_landing"), (14, "assert", "_landing"), (15, "position", "_landing")])
 
 
 if __name__ == "__main__":
