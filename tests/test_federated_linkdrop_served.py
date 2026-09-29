@@ -342,8 +342,10 @@ class LinkProxy:
     5 s is kept.
 
     The splice owns its threads and ends them in stop(), which tearDownClass calls on every exit path. The thread-stop
-    census on main (tests/test_thread_stop_census.py) reads each start here as object-owned through stop() by the joins
-    there, and would read it the same with the drop() call gone, though drop() is what makes the threads return; so
+    census on main (tests/test_thread_stop_census.py) reads each start here as object-owned through stop() by any call in
+    stop() whose name is on its list of stop verbs, and stop() makes three: the thread joins, the message's str.join, and
+    the holder's close in its finally (since 327b2c39a), any one of which is enough. So the census would read the starts the
+    same with the drop() call gone, though drop() is what makes the threads return, and with every join gone as well; so
     LinkProxyEnds runs stop() over a live pair and holds that every thread has ended when it returns, and stop() itself
     fails naming any thread its joins did not end. The opener is named listen() and not start() because that census
     reads every `.start()` call as a thread start and cannot resolve an instance of this class, which is not a Thread."""
@@ -2099,7 +2101,9 @@ class LinkProxyEnds(unittest.TestCase):
     """The splice's own ends, driven with no kernel and no browser: the target is a listening socket whose backlog completes
     the splice's connect with nobody accepting, so these run wherever the module is collected, CI's Python cells included.
     stop() is held to end every thread the splice started, drop() being the call that releases them (main's thread-stop
-    census reads the joins in stop() and would read them the same with the drop() call gone), and to fail naming any
+    census reads any call in stop() named as one of its stop verbs, the thread joins, the message's str.join or the
+    holder's close, and would read the starts the same with the drop() call gone, or with the joins gone too, so it does
+    not hold this), and to fail naming any
     thread still alive at its bound; a pair is held to stay up through a quiet spell longer than the 5 s timeout its
     upstream connect is handed; the port the splice reports is held to be bound from its construction until stop();
     drop() is held to return only once the accept loop of the listener it closed has ended, and to fail naming that loop
