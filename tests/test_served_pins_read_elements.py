@@ -3532,7 +3532,11 @@ class T(unittest.TestCase):
         # attribute pass reds h3 and from the base classes' pass h8, and dropping the declined marker reds the rows' form. A name
         # two classes define with different texts (`_pg`, h9 and h10) is no helper: its calls read as nothing, and check (5)
         # refuses both returns (28, 33). Keyed by the bare name, the last definition had won, and h9 was judged against the chat
-        # page; dropping the disagreement clause reds this. The rows of both derivations are named, never inferred.
+        # page; dropping the disagreement clause reds this. So is a name one class defines returning a served text and another
+        # returning anything else (`_px`, h11 and h12, the second returning a stub literal): no row at either call, and check (5)
+        # refuses the text return (38); splitting a name only on two disagreeing texts reads both calls as the landing and leaves
+        # 38 unrefused, which reds this (the face round 6's follow-up found unpinned). The rows of both derivations are named,
+        # never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 def _page():
@@ -3569,6 +3573,16 @@ class W(unittest.TestCase):
         return km._chat_page()
     def test_w(self):
         self.assertIn("h10", self._pg())
+class X(unittest.TestCase):
+    def _px(self):
+        return km._landing()
+    def test_x(self):
+        self.assertIn("h11", self._px())
+class Y(unittest.TestCase):
+    def _px(self):
+        return "<p>stub</p>"
+    def test_y(self):
+        self.assertIn("h12", self._px())
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3586,7 +3600,7 @@ class W(unittest.TestCase):
         self.assertEqual([r[:3] for r in readers], [(3, "unclassified", "_landing"), (9, "assert", "_landing"), (11, "assert", "_landing"),
                                                     (12, "assert", "_landing"), (13, "assert", "_LANDING_MOBILE_JS"), (16, "assert", "_landing"),
                                                     (21, "unclassified", "_landing"), (25, "assert", "_landing"), (28, "unclassified", "_landing"),
-                                                    (33, "unclassified", "_chat_page")])
+                                                    (33, "unclassified", "_chat_page"), (38, "unclassified", "_landing")])
 
 
     def test_a_fetched_page_bound_where_the_census_does_not_read_it_is_refused(self):
