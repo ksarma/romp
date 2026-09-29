@@ -346,7 +346,10 @@ subject; `verify` refuses the branch otherwise.
    the verified head, main contained), then asks GitHub for the batch head's CI run: the newest run
    of `ci.yml` from a push to `batch/<name>` at exactly the verified head, read at that moment. It
    refuses when that run is missing, pending or red (any conclusion but success, cancelled
-   included), or when the read fails or answers with anything but a list of run records (an error
+   included), when its success is not over `ci.yml`'s own jobs (every job of the head's `ci.yml`
+   needs a job run in the run's latest attempt that passed, told by the name GitHub gives it, so a
+   success over the tier-label checks alone, over no job run, or with a job skipped is refused as
+   incomplete), or when the read fails or answers with anything but a list of run records (an error
    object, null, nothing); a run of another commit, a manual run and a run on another
    branch do not count. The newest run is the latest `createdAt`, then the highest run id, and a
    matching row with either one, or its attempt number, missing or malformed (the zero time gh
@@ -378,7 +381,8 @@ subject; `verify` refuses the branch otherwise.
    any head), and tell the maintainer what it finds. `finish` also names the batch head's CI run,
    read as land read it (the push run at the landed head, the merge commit's second parent, never a
    manual run at the same commit),
-   with its case: green, red, pending, missing, or unread when the read fails after the merge.
+   with its case: green, red, pending, missing, incomplete (a success not over `ci.yml`'s own jobs), or
+   unread when the read fails after the merge.
 
 ## Checked on the first batch
 

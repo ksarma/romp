@@ -77,7 +77,9 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
   - finish names the batch head's CI run with land's own filtered read (the push run at the landed head, the
     merge commit's second parent), and reports a read that fails after the merge as unread;
   - land requires the batch head's CI run green, read from GitHub at land time before anything changes:
-    the newest run of ci.yml from a push to the batch branch at exactly the verified head (by createdAt,
+    the newest run of ci.yml from a push to the batch branch at exactly the verified head, whose success counts only
+    when every job of ci.yml at the head has a job run in its latest attempt that passed (the coordinator's decision
+    18: a success over the label checks alone, or over no job run, is not a green run) (by createdAt,
     then databaseId; a matching row with either, or its attempt, missing or malformed, the zero time
     included, is refused by name, and so is a list as long as land's limit); a missing, pending or red
     run, a failed read, or an answer that is not a JSON list of run records (round 2, extra8-3), is refused by name, and a run at another sha, from another event or on another
@@ -2344,18 +2346,98 @@ def ci_attempt_gate(root, run, older, flakes):
 # The rows land asks gh for. A read that returns this many may have cut the older runs at the head, which the attempt
 # gate must read, so it is refused rather than read short.
 RUN_LIST_LIMIT = 20
+# Round 2, the coordinator's decision 18: a run is read green only when its jobs are ci.yml's. Its conclusion alone reads
+# success from a run whose jobs never ran (a skipped job reports success), and a read of the checks on a head (the
+# per-PR read this landing gate replaced) reads success from the label checks alone. So the jobs of the run's latest
+# attempt are read, and every job of ci.yml at the head must have a job run there that concluded success, told by the
+# name GitHub renders for it (ci_jobs).
+CI_WORKFLOW_PATH = ".github/workflows/" + CI_WORKFLOW
+JOBS_PER_PAGE = 100
+_EXPRESSION = re.compile(r"\$\{\{.*?\}\}")
+
+
+def ci_jobs(root, head, tail):
+    """[(job id, the name GitHub renders for it as ci.yml writes it, a regex that matches that rendering)] for every job
+    of ci.yml at `head`, read from git with scripts/sweep.py's line reader (workflow_jobs, workflow_job). A job's name
+    is its `name:` value, quotes and a trailing comment off, or its id when it has none; each `${{ ... }}` in it matches
+    any text, and a job with a strategy: whose name holds none matches with or without the ` (<matrix values>)` GitHub
+    appends. Raises Fail (a read that cannot be made is not a green run) when the file cannot be read at the head, holds
+    no job, or a name is written in a form this reads no further (a block scalar, an empty value)."""
+    sweep = sweep_reader()
+    proc = _run(["git", "show", "%s:%s" % (head, CI_WORKFLOW_PATH)], cwd=root, check=False)
+    if proc.returncode != 0:
+        raise Fail("could not read %s at %s to read which jobs the batch head's CI run must hold (%s)%s"
+                   % (CI_WORKFLOW_PATH, short(head), (proc.stderr or proc.stdout).strip(), tail))
+    text, where = proc.stdout, "%s at %s" % (CI_WORKFLOW_PATH, short(head))
+    out = []
+    try:
+        for job in sweep.workflow_jobs(text):
+            spec = sweep.workflow_job(text, job, where)
+            raw = spec["values"].get("name")
+            name = job if raw is None else raw
+            if raw is not None:
+                if name[:1] in "\"'" and name[-1:] == name[:1] and len(name) > 1:
+                    name = name[1:-1]
+                elif " #" in name:
+                    name = name.split(" #", 1)[0].rstrip()
+            if not name or name[:1] in "|>":
+                raise Fail("%s names its %s job %r, a form this read does not take (a quoted or plain one-line name); the CI "
+                           "read tells the run's job runs by name%s" % (where, job, raw, tail))
+            parts = _EXPRESSION.split(name)
+            pattern = ".*".join(re.escape(x) for x in parts)
+            if len(parts) == 1 and "strategy" in spec["keys"]:
+                pattern += r"(?: \(.*\))?"
+            out.append((job, name, re.compile(pattern)))
+    except sweep.Refused as e:
+        raise Fail("%s%s" % (e, tail))
+    if not out:
+        raise Fail("%s holds no job, so no CI run of it tested the batch head%s" % (where, tail))
+    return out
+
+
+def run_jobs(root, run, tail):
+    """[{"name", "status", "conclusion"}] of every job of `run`'s latest attempt, read from GitHub now with `gh api
+    repos/{owner}/{repo}/actions/runs/<id>/attempts/<attempt>/jobs`. A read that fails, an answer that is not a jobs
+    listing, a job that is not a record, or a listing shorter than its total_count (cut) raises Fail: a job not read is
+    not one that passed."""
+    what = "the jobs of the batch head's CI run %s (attempt %d)" % (run.get("url"), run["attempt"])
+    proc = gh("api", "repos/{owner}/{repo}/actions/runs/%d/attempts/%d/jobs?per_page=%d"
+              % (run["databaseId"], run["attempt"], JOBS_PER_PAGE), cwd=root, check=False)
+    if proc.returncode != 0:
+        raise Fail("could not read %s (gh api): %s%s" % (what, (proc.stderr + proc.stdout).strip(), tail))
+    try:
+        doc = json.loads(proc.stdout or "")
+    except json.JSONDecodeError as e:
+        raise Fail("%s read as something that is not JSON (%s)%s" % (what, e, tail))
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    total = doc.get("total_count") if isinstance(doc, dict) else None
+    if not isinstance(jobs, list) or type(total) is not int or any(not isinstance(j, dict) for j in jobs):
+        raise Fail("%s read as something that is not a jobs listing (%s)%s" % (what, json.dumps(doc)[:120], tail))
+    if total > len(jobs):
+        raise Fail("%s listed %d of %d jobs, so the rest may be cut%s" % (what, len(jobs), total, tail))
+    return [{"name": j.get("name"), "status": j.get("status"), "conclusion": j.get("conclusion")} for j in jobs]
+
+
+def unmet_ci_jobs(expected, jobs):
+    """The (job id, name) of each job of ci.yml (ci_jobs) that no job run of `jobs` (run_jobs) matches by name with the
+    conclusion success."""
+    return [(job, name) for job, name, rx in expected
+            if not any(isinstance(j["name"], str) and rx.fullmatch(j["name"]) and j["conclusion"] == "success" for j in jobs)]
 
 
 def batch_ci_run(root, name, head, tail="; nothing merged"):
     """The batch head's one GitHub run, read from GitHub now: the newest run of ci.yml that a push to
-    batch/<name> started at exactly `head`. Returns (case, run, older): case is green (completed, success), pending
-    (not completed), red (completed with any other conclusion) or missing (no such run; run None); older is every other
+    batch/<name> started at exactly `head`. Returns (case, run, older): case is green (completed, success, and ci.yml's jobs
+    passed in it), incomplete (completed, success, but a job of ci.yml has no passing job run there), pending (not
+    completed), red (completed with any other conclusion) or missing (no such run; run None); older is every other
     matching run, newest first, which land's attempt gate reads (a red is not erased by pushing the same sha again). gh's
     filters are asked for and then checked on every row (the workflow by its name), so a run of another
     sha, event, branch or workflow never stands in for it. The newest is the latest createdAt, then the highest
     databaseId, whatever order gh lists the rows in; a matching row with no valid databaseId, createdAt (the zero time
     included) or attempt raises Fail naming it (round 1, extra4-4), and so does a list as long as RUN_LIST_LIMIT, which
-    may have cut older runs. A read that fails raises Fail with gh's error: a failed read is not a missing run. So does
+    may have cut older runs. A run that concluded success is green only when every job of ci.yml at `head` has a job run
+    in its latest attempt that concluded success (the coordinator's decision 18: ci_jobs, run_jobs); otherwise the case is
+    incomplete, with the run's `jobs` and `jobs_unmet` (the jobs of ci.yml with none) in the run it returns. A read that fails raises Fail with gh's error: a failed read is not a missing run. So does
     an answer that is not a JSON list of run records (round 2, extra8-3): nothing at all, JSON of another type (an error
     object, a string, null), or a list holding a row that is not an object; only an empty list is no run. `tail`
     ends each Fail's text: land's says nothing merged, and finish, which reads the same run after the merge, passes its
@@ -2399,7 +2481,24 @@ def batch_ci_run(root, name, head, tail="; nothing merged"):
         return "pending", run, older
     if run.get("conclusion") != "success":
         return "red", run, older
+    # decision 18: a success is read only over ci.yml's jobs, each with a passing job run in the run's latest attempt
+    jobs = run_jobs(root, run, tail)
+    unmet = unmet_ci_jobs(ci_jobs(root, head, tail), jobs)
+    run = dict(run, jobs=jobs, jobs_unmet=unmet)
+    if unmet:
+        return "incomplete", run, older
     return "green", run, older
+
+
+def jobs_text(unmet):
+    """ci.yml's jobs a run lacks, for a message: `the python job (Python ${{ ... }})` for each."""
+    return ", ".join("the %s job (%s)" % (job, name) if name != job else "the %s job" % job for job, name in unmet)
+
+
+def run_jobs_text(jobs):
+    """A run's job runs, for a message: each name and conclusion, or that it lists none."""
+    return ("its job runs: " + "; ".join("%s: %s" % (j["name"], j["conclusion"] or j["status"]) for j in jobs)
+            if jobs else "it lists no job run")
 
 
 def retarget_stacked_members(root, state):
@@ -2458,6 +2557,11 @@ def cmd_land(args):
     if case == "red":
         raise Fail("the batch head's CI run is red (conclusion %s): %s; `scripts/batch.py bisect %s -- <failing test>` names "
                    "the member to pull; nothing merged" % (run.get("conclusion"), run.get("url"), args.name))
+    if case == "incomplete":
+        raise Fail("the batch head's CI run %s concluded success, but %s at the head has %s with no job run that passed "
+                   "in it (%s); a success is read only over ci.yml's own jobs, so this run did not test the head: push the "
+                   "batch again and wait for its run, then land again; nothing merged"
+                   % (run.get("url"), CI_WORKFLOW_PATH, jobs_text(run["jobs_unmet"]), run_jobs_text(run["jobs"])))
     excused = ci_attempt_gate(root, run, older, flakes)
     state["ci"] = {"run": run.get("url"), "id": run["databaseId"], "attempt": run["attempt"], "head": head, "excused": excused}
     save_state(root, state)
@@ -2688,6 +2792,9 @@ def cmd_finish(args):
     ci_text = {"green": "green, %s" % ci_found.get("url"),
                "red": "red (conclusion %s), %s" % (ci_found.get("conclusion"), ci_found.get("url")),
                "pending": "pending (status %s), %s" % (ci_found.get("status"), ci_found.get("url")),
+               "incomplete": "incomplete: it concluded success, but %s at the head has %s with no job run that passed in it "
+                             "(%s), %s" % (CI_WORKFLOW_PATH, jobs_text(ci_found.get("jobs_unmet") or []),
+                                           run_jobs_text(ci_found.get("jobs") or []), ci_found.get("url")),
                "missing": "missing: GitHub lists no run of %s from a push to %s at %s" % (CI_WORKFLOW, branch_of(args.name), landed_head),
                "unread": "unread after the merge: %s" % ci_error}[ci_case]
     # land's excused attempts are reported only when they belong to the run finish read (a run's id names its sha too):
@@ -2900,7 +3007,8 @@ def main(argv=None):
                        description="On the maintainer's word for this batch: run verify again (pinned heads, main contained, "
                                    "the sweep result at the verified head), read the batch head's CI run from GitHub (the "
                                    "newest run of ci.yml from a push to the batch branch at the verified head; missing, "
-                                   "pending or red is refused, --auto or not, and so is any other attempt of a push run at "
+                                   "pending or red is refused, --auto or not, and so is a success in which a job of the "
+                                   "head's ci.yml has no job run that passed, and any other attempt of a push run at "
                                    "that head that did not pass, the newest run's earlier attempts and every attempt of an "
                                    "older run of the same sha, unless --flake names it), read %s on %s and refuse if it moved since verify, "
                                    "retarget stacked members to %s, read %s once more and refuse if it moved (naming each "

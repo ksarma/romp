@@ -1982,8 +1982,9 @@ def _job_end(line):
 
 def workflow_job(text, job, where=CI_WORKFLOW):
     """One job of a workflow file's text, read by line shape as CiParity reads it (the runner imports nothing beyond
-    the standard library, so no YAML parser): {"keys": [the job's own keys, each a `    KEY:` line, in order], "steps":
-    [step, ...]}, or None when the file has no `  <job>:` line. The job is that line and the lines under it up to the next
+    the standard library, so no YAML parser): {"keys": [the job's own keys, each a `    KEY:` line, in order], "values":
+    {key: the text after its first line's colon, stripped}, "steps": [step, ...]}, or None when the file has no `  <job>:`
+    line. The job is that line and the lines under it up to the next
     job's `  ID:` line or a top-level key; a comment line, at any indent, is skipped wherever it stands, as YAML skips it
     (round 2, correctness-2: a comment at column 0 or 2 used to end the job, so a step or key after it was neither read nor
     refused), and any other line indented fewer than four spaces is refused, naming `where`, the job and the line. A
@@ -2010,7 +2011,7 @@ def workflow_job(text, job, where=CI_WORKFLOW):
                           "next job's line nor a top-level key; the runner reads a job whose lines under it are indented four "
                           "spaces or more" % (where, job, n, line))
         body.append(line)
-    keys, steps, cur, in_steps, i = [], [], None, False, 0
+    keys, values, steps, cur, in_steps, i = [], {}, [], None, False, 0
     key_re = r"([A-Za-z_][A-Za-z0-9_-]*):(.*)"
     while i < len(body):
         line = body[i]
@@ -2018,6 +2019,7 @@ def workflow_job(text, job, where=CI_WORKFLOW):
         m = re.fullmatch("    " + key_re, line)
         if m:
             keys.append(m.group(1))
+            values.setdefault(m.group(1), m.group(2).strip())
             in_steps, cur = m.group(1) == "steps", None
             continue
         if not in_steps:
@@ -2065,7 +2067,7 @@ def workflow_job(text, job, where=CI_WORKFLOW):
         else:
             run = value
         cur["run"] = False if cur["keys"].count("run") > 1 else run
-    return {"keys": keys, "steps": steps}
+    return {"keys": keys, "values": values, "steps": steps}
 
 
 # The line shapes read_run reads in an install step's run text, and no others.

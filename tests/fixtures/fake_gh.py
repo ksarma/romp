@@ -35,6 +35,10 @@ named so the fake does not pass as evidence):
   - `api repos/{owner}/{repo}/actions/runs/<id>/attempts/<n>` serves attempt n of the recorded run <id> from the
     run's `attempts` list (entry n - 1, its keys laid over {id, run_attempt, status, conclusion, html_url}), or
     GitHub's 404 when the run has no such earlier attempt.
+  - `api repos/{owner}/{repo}/actions/runs/<id>/attempts/<n>/jobs[?per_page=N]` serves the jobs of the recorded run
+    <id>'s attempt n as GitHub's listing, {total_count, jobs}: the run's `jobs` (each {name, status, conclusion}; a
+    test records them, Fixture.ci), or `jobs_doc` as it stands when a test gives the whole answer; the run's own attempt
+    only (an earlier attempt's jobs are not modelled), else GitHub's 404.
   - FAKE_GH_FAIL (`|`-separated argv prefixes) makes the matching calls fail with an HTTP 502, so
     a test can see what the tool does when a call does not land. `fail` in the state maps an
     endpoint (`rules`, `protection`) to a gh error line the fake prints and exits 1 with, the way a
@@ -374,6 +378,20 @@ def api(state, argv):
             print(apply_jq(rows, o["--jq"][0]))
         else:
             print(json.dumps(rows))
+        return
+    m = re.fullmatch(r"repos/\{owner\}/\{repo\}/actions/runs/(\d+)/attempts/(\d+)/jobs(?:\?per_page=\d+)?", path)
+    if m:
+        rid, n = int(m.group(1)), int(m.group(2))
+        run = next((r for r in state.get("runs", []) if r.get("databaseId") == rid), None)
+        if run is None or n != run.get("attempt", 1):
+            print(json.dumps({"message": "Not Found", "status": "404"}))
+            sys.stderr.write("gh: Not Found (HTTP 404)\n")
+            sys.exit(1)
+        if "jobs_doc" in run:
+            print(json.dumps(run["jobs_doc"]))
+            return
+        jobs = run.get("jobs") or []
+        print(json.dumps({"total_count": len(jobs), "jobs": jobs}))
         return
     m = re.fullmatch(r"repos/\{owner\}/\{repo\}/actions/runs/(\d+)/attempts/(\d+)", path)
     if m:

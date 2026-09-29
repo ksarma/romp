@@ -50,7 +50,34 @@ FAKE_GH = ROOT / "tests" / "fixtures" / "fake_gh.py"
 TRAILER = ('<!-- romp-pr: {"tier":"fix","rounds":3,"sweep":{"pytest":"12 passed","bats":4,"npm":2,'
            '"typecheck":"clean"},"sweep_head":"0123456789abcdef","flakes":[]} -->')
 
+# The seed's ci.yml, the workflow whose run land reads: the coordinator's decision 18 reads a run green only when every
+# job of ci.yml at the head has a job run in it that passed, told by the name GitHub renders (a matrix job's name with its
+# expression filled in, a job with no name: by its id). SEED_CI_JOBS are the job runs a green run of it lists, which
+# Fixture.ci records unless a test gives others.
+SEED_CI = """name: CI
+on:
+  push:
+    branches: ['batch/**']
+jobs:
+  python:
+    name: Python ${{ matrix.python-version }} (ubuntu-latest)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+      - run: python -m pytest -q
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gitleaks detect
+"""
+SEED_CI_JOBS = [{"name": "Python 3.12 (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "Python 3.13 (ubuntu-latest)", "status": "completed", "conclusion": "success"},
+                {"name": "secrets", "status": "completed", "conclusion": "success"}]
+
 SEED = {
+    ".github/workflows/ci.yml": SEED_CI,
     "README.md": "# notes-api\n",
     "kernel/kernel.py": "VERSION = 1\n",
     "postal/postal_service.py": "def send():\n    return 1\n",
@@ -285,16 +312,18 @@ class Fixture:
     def ci(self, name, conclusion="success", status="completed", sha=None, event="push", branch=None, workflow="ci.yml",
            **fields):
         """A GitHub Actions run the fake gh lists: by default the batch head's run, ci.yml from a push to batch/<name>
-        at its current head, completed green, on its first attempt. Each new run is newer than the last (databaseId and
-        createdAt). `fields` replaces row fields (databaseId, createdAt, attempt, ...; `attempts`, the earlier attempts'
-        records the fake's attempts endpoint serves); one given as MISSING is left out of the row."""
+        at its current head, completed green, on its first attempt, its latest attempt's job runs SEED_CI_JOBS (the seed's
+        ci.yml's jobs, each passed). Each new run is newer than the last (databaseId and createdAt). `fields` replaces row
+        fields (databaseId, createdAt, attempt, ...; `attempts`, the earlier attempts' records the fake's attempts endpoint
+        serves; `jobs`, the latest attempt's job runs, or `jobs_doc`, the whole jobs answer); one given as MISSING is left
+        out of the row."""
         self.gh_state = self.gh()
         runs = self.gh_state.setdefault("runs", [])
         n = len(runs) + 1
         row = {"databaseId": n, "workflow": workflow, "workflowName": {"ci.yml": "CI"}.get(workflow, "PR tier"), "event": event,
                "headBranch": branch or "batch/" + name, "headSha": sha or self.dev_git("rev-parse", "batch/" + name),
                "status": status, "conclusion": conclusion, "createdAt": "2026-01-01T00:%02d:00Z" % n,
-               "url": "https://example.invalid/actions/runs/%d" % n, "attempt": 1}
+               "url": "https://example.invalid/actions/runs/%d" % n, "attempt": 1, "jobs": [dict(j) for j in SEED_CI_JOBS]}
         for key, value in fields.items():
             if value is MISSING:
                 row.pop(key, None)
@@ -2059,6 +2088,72 @@ class VerifyReadsTheSweep(_Base):
         return out
 
 
+class CiJobs(unittest.TestCase):
+    """The coordinator's decision 18, the half that reads ci.yml: batch.ci_jobs reads, at a head, each job of ci.yml and
+    the name GitHub renders for its job runs (its name: with each expression matching any text, or its id), and refuses a
+    ci.yml it cannot read that way. Synthetic workflow text in a repository of its own."""
+
+    def jobs(self, ci):
+        d = os.path.realpath(tempfile.mkdtemp(prefix="cijobs-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        subprocess.run(["git", "init", "-q", d], check=True, env=env)
+        if ci is not None:
+            os.makedirs(os.path.join(d, ".github", "workflows"))
+            with open(os.path.join(d, ".github", "workflows", "ci.yml"), "w") as f:
+                f.write(ci)
+        with open(os.path.join(d, "README.md"), "w") as f:
+            f.write("x\n")
+        subprocess.run(["git", "-C", d, "add", "-A"], check=True, env=env)
+        subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "x"],
+                       check=True, env=env)
+        return batch.ci_jobs(d, "HEAD", "")
+
+    def matches(self, ci, rendered):
+        return {job: [n for n in rendered if rx.fullmatch(n)] for job, _name, rx in self.jobs(ci)}
+
+    def test_each_job_is_told_by_the_name_github_renders(self):
+        ci = ("name: CI\njobs:\n"
+              "  python:\n    name: Python ${{ matrix.python-version }} (${{ matrix.os }})\n    strategy:\n      matrix:\n"
+              "        os: [ubuntu-latest]\n    steps:\n      - run: x\n"
+              "  build:\n    strategy:\n      matrix:\n        os: [a, b]\n    steps:\n      - run: x\n"
+              "  quoted:\n    name: \"Secret scan (gitleaks)\"\n    steps:\n      - run: x\n"
+              "  commented:\n    name: vscode-extension (typecheck + test + build)  # the extension\n    steps:\n      - run: x\n"
+              "  plain:\n    runs-on: ubuntu-latest\n    steps:\n      - run: x\n")
+        rendered = ["Python 3.12 (ubuntu-latest)", "build (a)", "build", "Secret scan (gitleaks)",
+                    "vscode-extension (typecheck + test + build)", "plain", "plain (x)", "Exactly one tier label"]
+        self.assertEqual(self.matches(ci, rendered),
+                         {"python": ["Python 3.12 (ubuntu-latest)"], "build": ["build (a)", "build"],
+                          "quoted": ["Secret scan (gitleaks)"], "commented": ["vscode-extension (typecheck + test + build)"],
+                          "plain": ["plain"]})
+
+    def test_the_real_ci_yml_names_every_job_a_batch_push_runs(self):
+        """ci.yml as this checkout holds it (committed in a repository of its own, so the tree needs no git): each job
+        is read, and the job runs a batch push lists (docs/batching.md names the checks a batch push reports) each match
+        their job, and the tier-label check matches none."""
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        expected = {job: rx for job, _name, rx in self.jobs(text)}
+        self.assertEqual(sorted(expected), sorted(sweep.workflow_jobs(text)))
+        for job, name in (("python", "Python 3.12 (ubuntu-latest)"), ("python", "Python 3.14t (ubuntu-latest)"),
+                          ("shell", "Shell (bats, ubuntu-latest)"), ("secrets", "Secret scan (gitleaks)"),
+                          ("vscode-extension", "vscode-extension (typecheck + test + build)")):
+            with self.subTest(job=job, name=name):
+                self.assertTrue(expected[job].fullmatch(name))
+                self.assertFalse(any(rx.fullmatch("Exactly one tier label") for rx in expected.values()))
+
+    def test_a_ci_yml_it_cannot_read_that_way_is_refused(self):
+        for label, ci, text in (("no ci.yml", None, "could not read .github/workflows/ci.yml at"),
+                                ("no job", "name: CI\njobs:\n", "holds no job, so no CI run of it tested the batch head"),
+                                ("a block scalar name", "name: CI\njobs:\n  a:\n    name: >\n      A\n    steps:\n      - run: x\n",
+                                 "names its a job '>', a form this read does not take"),
+                                ("a shallow line in a job", "name: CI\njobs:\n  a:\n    steps:\n      - run: x\n   stray: 1\n",
+                                 "the a job holds line 6 ('   stray: 1'), indented fewer than four spaces")):
+            with self.subTest(case=label):
+                with self.assertRaises(batch.Fail) as cm:
+                    self.jobs(ci)
+                self.assertIn(text, str(cm.exception))
+
+
 class PythonRemedy(unittest.TestCase):
     """Round 2, extra9-8: the reader's missing line (sweep.py) and finish's merge-commit remedies (batch.py) name
     `--python <python>` with one explanation, kept as one text in both scripts."""
@@ -2387,8 +2482,9 @@ class LandReadsTheCI(_Base):
         self.refused("the batch head's CI run %s is green on attempt 2, but attempt 1 concluded failure (%s/attempts/1), and a "
                      "red is not erased by a re-run: if that attempt failed on a known flake, land again with --flake 1/1="
                      % (url, url))
-        self.assertEqual([c[1] for c in fx.calls("api")[before:]], ["repos/{owner}/{repo}/actions/runs/1/attempts/1"],
-                         "land read the earlier attempt from GitHub")
+        self.assertEqual([c[1] for c in fx.calls("api")[before:]], ["repos/{owner}/{repo}/actions/runs/1/attempts/2/jobs?per_page=100",
+                                                                    "repos/{owner}/{repo}/actions/runs/1/attempts/1"],
+                         "land read the latest attempt's jobs (decision 18) and the earlier attempt from GitHub")
         p = fx.ok("land", "b1", "--flake", "1/1=" + self.FLAKE)
         self.assertIn("ok   CI: the run of the push to batch/b1 at %s is green: %s; attempt 1 concluded failure and is excused "
                       "as a known flake (%s/attempts/1): %s" % (self.head[:10], url, url, self.FLAKE), p.stdout)
@@ -2593,6 +2689,83 @@ class LandReadsTheCI(_Base):
         self.assertIn("the batch head's CI run: unread after the merge: gh run list returned JSON that is not a list of runs",
                       p.stdout)
         self.assertEqual(fx.state("b1")["finished"]["report"]["ci"]["case"], "unread")
+
+    LABEL_CHECKS = [{"name": "Exactly one tier label", "status": "completed", "conclusion": "success"},
+                    {"name": "Tier policy", "status": "completed", "conclusion": "skipped"}]
+
+    PYTHON_UNMET = "the python job (Python ${{ matrix.python-version }} (ubuntu-latest))"
+
+    def incomplete(self, jobs, unmet, listed):
+        """The coordinator's decision 18: land refuses a run of ci.yml that concluded success unless every job of the
+        head's ci.yml has a job run in its latest attempt that passed, naming each job with none and the job runs the
+        attempt lists; nothing is merged."""
+        fx = self.fx
+        self.ready()
+        url = fx.ci("b1", jobs=jobs)
+        self.refused("the batch head's CI run %s concluded success, but .github/workflows/ci.yml at the head has %s with no "
+                     "job run that passed in it (%s)" % (url, unmet, listed), "a success is read only over ci.yml's own jobs")
+
+    def test_a_success_over_label_checks_alone_is_not_a_green_run(self):
+        """Decision 18's ruled pin: a success whose latest attempt lists only the label checks (the tier-label check and
+        Tier policy's skipped row, what a read of the checks on a fork head holds) is refused as incomplete. At
+        c60fb907e it merged on the run's conclusion alone."""
+        self.incomplete(self.LABEL_CHECKS, "%s, the secrets job" % self.PYTHON_UNMET,
+                        "its job runs: Exactly one tier label: success; Tier policy: skipped")
+
+    def test_a_success_over_no_job_run_is_not_a_green_run(self):
+        """A success whose latest attempt lists no job run at all is refused as incomplete. At c60fb907e it merged."""
+        self.incomplete([], "%s, the secrets job" % self.PYTHON_UNMET, "it lists no job run")
+
+    def test_a_success_with_one_of_cis_jobs_skipped_is_not_a_green_run(self):
+        """A skipped job reports success, so a success in which one of ci.yml's jobs was skipped is refused as
+        incomplete, naming that job. At c60fb907e it merged."""
+        skipped = [dict(j) for j in SEED_CI_JOBS]
+        skipped[2]["conclusion"] = "skipped"
+        self.incomplete(skipped, "the secrets job", "its job runs: Python 3.12 (ubuntu-latest): success; "
+                                                    "Python 3.13 (ubuntu-latest): success; secrets: skipped")
+
+    def test_a_success_over_cis_jobs_lands_one_passing_run_per_job(self):
+        """Each job of ci.yml needs one job run that passed: a matrix job whose other cell failed (a cell that may fail,
+        such as a continue-on-error one, leaves the run's conclusion success) still has one, and the run lands; the
+        label checks listed beside ci.yml's jobs change nothing."""
+        fx = self.fx
+        self.ready()
+        jobs = [dict(j) for j in SEED_CI_JOBS] + self.LABEL_CHECKS
+        jobs[1]["conclusion"] = "failure"
+        fx.ci("b1", jobs=jobs)
+        p = fx.ok("land", "b1")
+        self.assertIn("ok   CI: the run of the push to batch/b1", p.stdout)
+        self.assertEqual(len(fx.calls("pr", "merge")), 1)
+
+    def test_a_jobs_read_that_fails_or_is_cut_is_refused_by_name(self):
+        """The jobs listing is read as the attempts are: a read that fails, an answer that is not a listing, and a listing
+        shorter than its total_count are each refused by name, never read as a green run."""
+        fx = self.fx
+        self.ready()
+        url = fx.ci("b1")
+        self.refused("could not read the jobs of the batch head's CI run %s (attempt 1) (gh api)" % url,
+                     gh_fail="api repos/{owner}/{repo}/actions/runs/1/attempts/1/jobs?per_page=100")
+        fx.set_gh(runs=[])
+        url = fx.ci("b1", jobs_doc=[])
+        self.refused("the jobs of the batch head's CI run %s (attempt 1) read as something that is not a jobs listing" % url)
+        fx.set_gh(runs=[])
+        url = fx.ci("b1", jobs_doc={"total_count": 5, "jobs": SEED_CI_JOBS})
+        self.refused("the jobs of the batch head's CI run %s (attempt 1) listed 3 of 5 jobs, so the rest may be cut" % url)
+
+    def test_finish_reports_a_success_over_label_checks_alone_as_incomplete(self):
+        """finish reads the same run after the merge: a success over the label checks alone is reported as incomplete,
+        naming what it lacks, and the cleanup still runs."""
+        fx = self.fx
+        self.ready()
+        url = fx.ci("b1", jobs=self.LABEL_CHECKS)
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        p = fx.run("finish", "b1")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("the batch head's CI run: incomplete: it concluded success, but .github/workflows/ci.yml at the head "
+                      "has the python job (Python ${{ matrix.python-version }} (ubuntu-latest)), the secrets job with no job "
+                      "run that passed in it (its job runs: Exactly one tier label: success; Tier policy: skipped), %s" % url,
+                      p.stdout)
+        self.assertEqual(fx.state("b1")["finished"]["report"]["ci"]["case"], "incomplete")
 
     def test_the_newest_run_at_the_head_decides_and_an_older_red_one_is_not_erased(self):
         """The newest push run at the head is the one required green; an older push run at the same head (the same sha
