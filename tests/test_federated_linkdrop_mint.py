@@ -366,7 +366,10 @@ def _commands_around_the_recorder(src, siblings=(), stdlib=None):
     attribute's value or a call's function (`_m9 = mock`, `g(mock)`, `setattr(h, "m", mock)`, `[mock][0]`, `(lambda: mock)()`,
     `match mock:`, `return mock`, `_m9 = unittest.mock`, `_s = sys`: the maintainer's round 7, extra4-1, where `_m9 = mock`
     then `_m9.builtins.__import__` passed); a member (`Path`, which an import binds, or `mock.patch`, reached through one) is
-    no module and is not refused.
+    no module and is not refused. The exemption for a call's function is inert: a module is not callable, so the one read it
+    passes is a call whose function is a module, which raises TypeError and starts nothing itself (its arguments are nodes the
+    census reads on their own), and no live line and no plant a check has found is such a call. A mutant that drops the
+    exemption therefore reds no row, and the exemption is argued here, not pinned.
     What stays unread, the rule over the two resolvers (_reach and _module_of): each starts from a name an import statement of
     the source binds and follows the source's own imports and the foreign modules' top-level imports, and nothing else, so a
     chain rooted at a SIBLING's binding (`_lab.mock.builtins`, the sibling being censused itself), a module no table records (a
