@@ -241,7 +241,9 @@ unable to pass (the reader reads it red, and the runner exits 1 for such a run, 
 for nothing, since its checkout or venv changed. An invalid run that failed no leg needs no flake. The pass line,
 verify's record and the reader's invalid line name each invalid run with the legs it failed. A leg that did not pass
 is written to the result as soon as it exits, before the re-read after it, so a stop during that re-read keeps its
-failure; a pass is written after its re-read, which could void it. A stop in the moments between a leg's exit and the
+failure; a pass is written after its re-read, which could void it. A stop that arrives inside the write of a failure,
+or of the run's invalid mark, lets that write finish before the runner stops (_write_under_stop), where write_result
+alone would remove its temp file and the record with it. A stop in the moments between a leg's exit and the
 runner filling in its record (the reap of what the leg left running, up to about five seconds, then its log's summary
 and test count) still loses the rc: the run records that leg as never finished, and the next run needs no flake for
 it. Writing the rc before the record is whole would not close this, since a stop of the runner's whole scope kills the
@@ -3491,6 +3493,17 @@ def _finish(step, stopped):
         step()
 
 
+def _write_under_stop(path, data):
+    """write_result for a record that must not be lost to a stop: a leg that did not pass, or the run's invalid mark.
+    write_result removes its temp file and re-raises when a stop arrives during it, so a stop inside the write would
+    leave the result without the failure. Run through _finish, the write runs again from its start with the stop
+    signals ignored, and the stop is raised once the record is on disk."""
+    stopped = []
+    _finish(lambda: write_result(path, data), stopped)
+    if stopped:
+        raise stopped[0]
+
+
 def _retire_if_changed(hold, sha):
     """Retire a venv whose tree is not the one its build wrote (VenvHold.retire), naming what differs."""
     late = hold.changes()
@@ -3715,7 +3728,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                 except Refused as e:
                     run["invalid"] = "the fresh checkout for %s cannot be used (%s); the legs after it did not run" % (
                         group_label(grec), e)
-                    write_result(path, data)
+                    _write_under_stop(path, data)
                     break
                 before = git_state(checkout)
                 grec.update(path=checkout, create_s=create_s, verify_s=round(time.monotonic() - t0, 2))
@@ -3731,7 +3744,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                     if after:
                         run["invalid"] = ("after the setup (npm ci) of %s the checkout is not the sha's tree: %s; the legs "
                                           "after it did not run" % (group_label(grec), describe_faults(after)))
-                        write_result(path, data)
+                        _write_under_stop(path, data)
                         break
                     if not passed("deps", setup):
                         blocked_by_setup = ("its checkout's setup, npm ci as %s runs it, %s (log %s), so the leg did not run"
@@ -3766,7 +3779,9 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                     # keeps the failure and the next run needs --flake naming it; an invalid mark after the re-read
                     # rewrites the record. A pass is written only after its re-read, which could void it: read_history
                     # counts a stopped run's finished legs, so a pass written first and then stopped would stand unverified.
-                    write_result(path, data)
+                    # A stop inside this write finishes it before the stop is raised (_write_under_stop), so the failure
+                    # is on disk even then.
+                    _write_under_stop(path, data)
                 left = scratch_end(lctx)
                 if left:
                     home_left_by_leg[name] = left
@@ -3796,7 +3811,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                                                                                      else "s", ", ".join(moved[:3]),
                                                                                      ", ..." if len(moved) > 3 else ""))
                     run["invalid"] = "; ".join(parts) + "; the legs after it did not run"
-                    write_result(path, data)
+                    _write_under_stop(path, data)
                     break
                 write_result(path, data)
             if run["invalid"]:

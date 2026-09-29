@@ -2043,6 +2043,68 @@ class Checkout(_Base):
         self.assertIsNone(w.data()["runs"][1]["legs"]["pytest"].get("finished"), "the unverified pass is not on disk")
         w.run("--flake", "pytest=" + flake, check=0)
 
+    def stop_in_the_write(self, w):
+        """Run the runner while its first run's record carries a padding field no reader reads (about 12 MB of JSON), so
+        each write of the result takes a while, and send SIGTERM once the pytest leg has been called and a temp file of
+        write_result's (.sweep-*.json) stands in the result's directory: the first write after the pytest leg. That temp
+        file must still stand once the signal is sent, or the case fails saying so: a stop that missed the write would
+        pass whether or not the write is finished under a stop. Returns (rc, stdout, stderr)."""
+        data = w.data()
+        data["runs"][0]["legs"]["ledger"]["pad"] = ["x" * 20] * 400000
+        sweep.write_result(w.result_path(), data)
+        d = os.path.dirname(w.result_path())
+        called = len([c for c in w.calls() if c["leg"] == PYTEST_LEG])
+        proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2"],
+                                env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        deadline, tmp = time.monotonic() + 120, None
+        while tmp is None:
+            if proc.poll() is not None:
+                self.fail("the runner ended before its write after the pytest leg: %s" % (proc.communicate(),))
+            if time.monotonic() > deadline:
+                self.fail("the runner never wrote after the pytest leg")
+            if len([c for c in w.calls() if c["leg"] == PYTEST_LEG]) > called:
+                tmp = next((os.path.join(d, n) for n in os.listdir(d) if n.startswith(".sweep-")), None)
+            if tmp is None:
+                time.sleep(0.001)
+        proc.send_signal(15)
+        inside = os.path.exists(tmp)
+        out, err = proc.communicate(timeout=120)
+        self.assertTrue(inside, "the write had ended before the signal was sent, so this case read nothing; raise the padding")
+        return proc.returncode, out, err
+
+    def test_a_stop_inside_the_write_of_a_failed_leg_keeps_the_failure(self):
+        """A low of round 2's re-check (the adversary's WRITE-WINDOW probe): write_result removes its temp file and
+        re-raises when a stop arrives during it, so a stop inside the write of the failed pytest leg left the result
+        without the failure, and the next plain run passed. The write is now finished before the stop is raised
+        (_write_under_stop): the stopped run records pytest's rc 1, and the next plain run is refused naming it."""
+        w = self.w
+        w.run(check=0)
+        w.ctl({"rc": {PYTEST_LEG: 1}})
+        rc, out, err = self.stop_in_the_write(w)
+        self.assertEqual(rc, 128 + 15, out + err)
+        run = w.data()["runs"][1]
+        self.assertEqual((run["finished"], run["verdict"]), (None, "running"), "the stopped run stays unfinished")
+        self.assertEqual(run["legs"][PYTEST_LEG].get("rc"), 1, "the failure is on disk")
+        self.assertTrue(run["legs"][PYTEST_LEG].get("finished"), "the failed leg is recorded as finished")
+        w.ctl({})
+        p = w.run()
+        self.assertEqual(p.returncode, 2, "the next plain run must be refused:\n%s%s" % (p.stdout, p.stderr))
+        self.assertIn("the run at %s failed pytest in run 2 (rc 1)" % w.head()[:10], p.stderr)
+
+    def test_a_stop_inside_the_write_of_an_invalid_mark_keeps_the_mark(self):
+        """The same for the invalid mark: the pytest leg passes and leaves an untracked file in its checkout, the re-read
+        after it makes the run invalid, and the runner is stopped inside that write. The stopped run records the mark
+        and the pass it voids."""
+        w = self.w
+        w.run(check=0)
+        w.ctl({"action": {PYTEST_LEG: "leak"}})
+        rc, out, err = self.stop_in_the_write(w)
+        self.assertEqual(rc, 128 + 15, out + err)
+        run = w.data()["runs"][1]
+        self.assertIn("after the pytest leg the checkout is not the sha's tree", run.get("invalid") or "", "the mark is on disk")
+        self.assertEqual(run["legs"][PYTEST_LEG].get("rc"), 0)
+
     def test_a_stale_checkout_of_a_run_that_is_gone_is_removed_and_named(self):
         """A5: every run removes the checkouts under <state dir>/sweeps/trees whose sha's lock no run holds, whatever
         the sha, and names each; one whose run still holds its lock is kept."""
