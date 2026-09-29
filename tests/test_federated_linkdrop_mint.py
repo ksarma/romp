@@ -366,10 +366,17 @@ def _commands_around_the_recorder(src, siblings=(), stdlib=None):
     attribute's value or a call's function (`_m9 = mock`, `g(mock)`, `setattr(h, "m", mock)`, `[mock][0]`, `(lambda: mock)()`,
     `match mock:`, `return mock`, `_m9 = unittest.mock`, `_s = sys`: the maintainer's round 7, extra4-1, where `_m9 = mock`
     then `_m9.builtins.__import__` passed); a member (`Path`, which an import binds, or `mock.patch`, reached through one) is
-    no module and is not refused. The exemption for a call's function is inert: a module is not callable, so the one read it
-    passes is a call whose function is a module, which raises TypeError and starts nothing itself (its arguments are nodes the
-    census reads on their own), and no live line and no plant a check has found is such a call. A mutant that drops the
-    exemption therefore reds no row, and the exemption is argued here, not pinned.
+    no module and is not refused. The arm reads a NAME, not a scope: the import table is keyed on the names import statements
+    bind at any depth (_import_bindings), so a name that shadows one of them (a parameter, an assignment inside a function) is
+    read as the module. Read as a value, such a name is refused, the safe side. Called, it passes the exemption for a call's
+    function, though at run time the value called is the local's and no module (`from unittest import mock`, then
+    `def f(mock): return mock(["true"])`, or `mock = print` inside f). The census reads that call as it reads a call of a
+    local of any other name (`def f(cb): return cb(["true"])` passes alike): the call is not refused, and what the local
+    holds is read only where the source binds it (an argument a call in the source hands, a default, an assignment's value),
+    by this census's arms and with their reach, so `f(subprocess.run)` is refused at the argument (bound, not called) and
+    `f(os.system)` at `.system`. A call whose function IS the module raises TypeError and starts nothing itself (its
+    arguments are nodes the census reads on their own). No live line is either call, and a mutant that drops the exemption
+    refuses both kinds of plant and reds no row: the shadowing pass is a measured residual, argued here, not pinned.
     What stays unread, the rule over the two resolvers (_reach and _module_of): each starts from a name an import statement of
     the source binds and follows the source's own imports and the foreign modules' top-level imports, and nothing else, so a
     chain rooted at a SIBLING's binding (`_lab.mock.builtins`, the sibling being censused itself), a module no table records (a
