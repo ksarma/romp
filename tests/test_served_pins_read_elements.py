@@ -39,7 +39,8 @@ class, reads nothing, and check (5) refuses their text returns), or a
 Name bound to either in the same function (a tuple assignment counts by position; a Name bound to a SLICE of one counts
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
-the author's pass 7), or a `self.<attr>` bound to one in any method of the same class (a setUp, or a setUpClass's `cls.<attr>`;
+the author's pass 7), or a `self.<attr>` bound to one in any method of the same class (a setUp, or a setUpClass's `cls.<attr>`,
+read as the `self.<attr>` wherever the census reads one, since the focused re-check of round 6 in its reads of a fetched tuple too;
 round 6, CLS: a class attribute had been outside the derivation, 83 rows in four suite modules) or of an in-module base class, nearest
 first and breadth-first, every base a class lists before any base's own bases (round 6, INHERIT; the textual census does not read
 inheritance, so such a row is a declined form; the order is not Python's, the Reach paragraph below), or a body FETCHED by a literal path
@@ -138,8 +139,8 @@ the follow cannot place (bound only by an unpack of a call's answer, a for or as
 call a fetch that binds every name, so a read behind a Name returned bare is read as a read of the fetched page (the rulings on
 the census pass, 2026-09-28; _response_reads). A returned element that holds a read the follow does not place (a read under any
 wrapper but a `.decode` chain, `r.read().strip()`, `str(r.read(), "utf-8")`, `r.read() or b""`, a conditional, `raw[3:]`; a Name
-bound to one; an attribute the helper assigns one, `self.body = r.read()`) is REFUSED: every fetch of a page route through that
-helper is an unclassified row the reader census fails on (the rulings on the census bounds, 2026-09-28; _response_reads,
+bound to one; an attribute the helper assigns one, `self.body = r.read()`) is REFUSED: every fetch of a page route by a literal path
+(a path literal, or a concatenation led by the whole path) through that helper is an unclassified row the reader census fails on (the rulings on the census bounds, 2026-09-28; _response_reads,
 readers_of). A page-route fetch whose value lands anywhere but a binding the census reads is REFUSED the same way, an unclassified
 row at the call (round 6, _fail_closed's check (1)), its value followed through a `.read()`/`.decode()` chain, the chain the census
 binds: a subscript of the call (`page = self._req("/?token=x")[1]`, x2 and x3 in test_d
@@ -149,15 +150,18 @@ an operand, a returned or yielded fetch, an annotated assignment, an await, and 
 that is no body (`.status`, `.getheader(...)`), a `.getvalue()` too (`buf = self._get("/chat").getvalue()` binds nothing).
 
 A fetch by a url spelled otherwise than the census reads it, where the url's static path is a page route and whole, is REFUSED too
-(round 6, _fail_closed's check (2), extra8-3): a `%`-format, an f-string or a `.format` url handed to a fetch helper, and an
+(round 6, _fail_closed's check (2), extra8-3): a `%`-format, an f-string or a `.format` url handed to a fetch helper the module
+does not define or whose returns place a read, and an
 f-string or a `.format` url, or a `Request` object wrapping a url so spelled or `%`-formatted, handed to urlopen; and (FC2X,
 narrowed) any of those, or a concatenation led by a path literal, handed to either, whose path is not whole but whose static part
 is a page route other than the landing's `/` (`"/chat" + rest`, `"/chat%s" % q`). A `%`-formatted url handed to urlopen itself is
 not checked: it is read in the tokened 127.0.0.1 form whose path is whole (the population paragraph above), and any other one (a
 hole after the route, another host, a query with no token) is unread (the Reach paragraph below).
-So is a fetch whose url is a Name a loop over one of
-the kernel's route tables binds (`for route in sorted(km._PAGE_RENDERERS): self._get(route)`: every page the table names, none of
-which the census can tell apart; _fail_closed's check (3)). So is the first bound the census had stated, in both halves: a page-route
+So is a fetch through a helper the module does not
+define or whose returns place a read, whose url is a Name a loop over one of the kernel's route tables binds (`for route in
+sorted(km._PAGE_RENDERERS): self._get(route)`: every page the table names, none of which the census can tell apart; _fail_closed's
+check (3)). Through a helper whose returns place no read and hold one the follow cannot place (the refused helper above), a spelled
+url and such a loop Name are unread (the Reach paragraph below). So is the first bound the census had stated, in both halves: a page-route
 call of a helper of the module whose returns place no read, answered and read as a response at the call (`self._open("/").read()`,
 where `_open` returns `urlopen(path)`, or a with target or a Name bound to the call and read so; check (4)), and a fetch through a
 helper whose returned element is itself a call to another read-placing helper of the module (`return r.status, self._body(r)`,
@@ -211,7 +215,10 @@ to urlopen, a hole after the route (`"http://127.0.0.1:%d/chat%s" % (port, q)`) 
 (`"http://localhost:%d/chat?token=x" % port`); of the 110 `%`-formatted urlopen urls the census does not read, 109 name an API route
 and the one left is the token-less landing above. A membership asserted through a helper (`_has(self, lit, body)` in
 tests/test_files_pane.py and tests/test_settings_page.py) is read by the reader census, which follows the helper one level (a
-membership over a non-literal needle), and not by the pins census. Among the unread forms the round's checks planted and found silent,
+membership over a non-literal needle), and not by the pins census. Unread at 0 live sites (the focused re-check of round 6, at
+b01cd7a7e, over the population modules that define such a helper): a page-route fetch through a helper whose returns place no read
+and hold one the follow cannot place (`return 200, r.read().strip()`), by a spelled url (`self._strip(f"/chat?token={tok}")`) or by a
+Name a loop over a route table binds; the same helper handed a literal path is refused. Among the unread forms the round's checks planted and found silent,
 with no live count: a keyword url; a url Name bound to a literal; a url from a helper call or from urljoin; a fetch through getattr,
 functools.partial or another object's method; urlopen of a Name url, or of a concatenation unless it is led by a path literal cut
 before its query at a page route other than `/` (`"/chat" + rest`, which check (2) refuses); an
@@ -792,7 +799,9 @@ def _fetch_path(node):
 
 def _position_key(node):
     """(store, key) for a subscript of a Name or a self.<attr> by a constant index, the key _bind binds a fetched tuple's body
-    position under (`resp[1]` gives ("names", "resp[1]"), `self.resp[-2]` gives ("attrs", "resp[-2]")); None for any other node."""
+    position under (`resp[1]` gives ("names", "resp[1]"), `self.resp[-2]` gives ("attrs", "resp[-2]")); a cls.<attr> is read as the
+    self.<attr> (`cls.resp[1]` in a setUpClass gives ("attrs", "resp[1]"): round 6, CLS, since the focused re-check); None for any
+    other node."""
     if not isinstance(node, ast.Subscript):
         return None
     sl = node.slice
@@ -805,7 +814,7 @@ def _position_key(node):
     base = node.value
     if isinstance(base, ast.Name):
         return "names", "%s[%d]" % (base.id, i)
-    if isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name) and base.value.id == "self":
+    if isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name) and base.value.id in ("self", "cls"):
         return "attrs", "%s[%d]" % (base.attr, i)
     return None
 
@@ -838,7 +847,7 @@ def _placed_tuple_uses(fn):
 
 def _resolve(node, names, attrs, getters, constants):
     """The served text a node stands for: a getter call or constant inline, a Name bound in the function, a self.<attr> bound in
-    the class, a call with no arguments of a text helper of the module to a Name, a self.<method> or a cls.<method> (_callee; the
+    the class (a cls.<attr> read as the self.<attr>: round 6, CLS, since the focused re-check), a call with no arguments of a text helper of the module to a Name, a self.<method> or a cls.<method> (_callee; the
     `"<name>()"` keys of `names`, _text_helpers; a call through any other callee, `T._js()`, is none), a
     fetched tuple's body position by a constant index (`resp[1]`, _position_key), or a `.decode(...)` or `.read(...)`
     chain over any of those (`body.decode()`, `resp[1].decode("utf-8")`: a conversion of a served text is that text; round 6,
@@ -848,7 +857,7 @@ def _resolve(node, names, attrs, getters, constants):
         t = names.get(_callee(node) + "()")   # a text helper of the module called (RETTEXT)
     if not t and isinstance(node, ast.Name):
         t = names.get(node.id)
-    if not t and isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
+    if not t and isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in ("self", "cls"):
         t = attrs.get(node.attr)
     if not t and isinstance(node, ast.Subscript):
         key = _position_key(node)
@@ -873,7 +882,9 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
     positions, a target holding a starred name none (the rulings on the census pass, 2026-09-28). Any other read of the name (an
     alias, a subscript by anything but a constant index, `resp[i]` or `resp[1:]`, a `for` over it, the starred unpack, the name
     handed whole to a call, a membership over the tuple) binds nothing, and readers_of refuses it, an unclassified row (the rulings
-    on the census bounds, 2026-09-28). The binding is flow-insensitive: a name bound whole and then rebound to such a tuple loses
+    on the census bounds, 2026-09-28). A cls.<attr> in a setUpClass is read as the self.<attr> in each of these reads, the alias
+    and the unpack by the positions included, and refused where the self.<attr> is (round 6, CLS, since the focused re-check: a
+    fetched tuple bound to `cls.resp` had bound nothing through `cls.resp[1]` and was refused nowhere). The binding is flow-insensitive: a name bound whole and then rebound to such a tuple loses
     the whole binding (its reads are refused the same way), and a name bound to such a tuple and then rebound whole reads as the
     whole text throughout (over-bound). A helper whose returns differ in length binds the union of their positions (`resp[-1]` is
     the body on a 2-tuple road and the headers on a 3-tuple one: over-bound). Before the merge's ruling every unpacked name
@@ -910,18 +921,20 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
             # over the whole text; the textual census reads neither
             g = _resolve(v, names, attrs, getters, constants) or _resolve(v.value, names, attrs, getters, constants)
             via_slice = True
-        if not g and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "self"):
+        if not g and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id in ("self", "cls")):
             # `js = html` or `js = self.html`, an ALIAS of a bound name (the fixer pass of the author's pass 9: two suite modules alias the page so
-            # and neither census had followed it, so their position pins and a regex over the alias were outside both populations)
+            # and neither census had followed it, so their position pins and a regex over the alias were outside both populations);
+            # `cls.js = cls.html` in a setUpClass the same (CLS, since the focused re-check: the cls. spelling had bound nothing)
             g = _resolve(v, names, attrs, getters, constants)
             via_slice = isinstance(v, ast.Name) and sliced is not None and v.id in sliced
         if not g and routes:
             g = _fetched(v, names, routes, reads)
             fetched = bool(g)
         if not g and isinstance(t, ast.Tuple) and not any(isinstance(e, ast.Starred) for e in t.elts) \
-                and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "self"):
+                and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id in ("self", "cls")):
             # `status, body, headers = resp`, a fetched tuple bound to one name (below) and unpacked after: by the positions bound; a
-            # target holding a starred name binds none (readers_of refuses it); the textual census reads neither
+            # target holding a starred name binds none (readers_of refuses it); the textual census reads neither; `= cls.resp` in a
+            # setUpClass the same (CLS, since the focused re-check)
             store, base, n = (names, v.id, len(t.elts)) if isinstance(v, ast.Name) else (attrs, v.attr, len(t.elts))
             for i, e in enumerate(t.elts):
                 got = store.get("%s[%d]" % (base, i)) or store.get("%s[%d]" % (base, i - n))
@@ -1656,15 +1669,16 @@ def readers_of(path, getters, constants, routes=None):
         # the positions (_bind), and ANY other read of the name is refused, an unclassified row over the text its body position holds:
         # an alias, a subscript by a Name or a slice, a for over it, a starred unpack, the name handed whole to a helper or any call, a
         # membership over the tuple, and the reads of a name bound whole and later rebound to such a tuple (the walk is
-        # flow-insensitive, so the rebinding hides the whole binding). Each had left both censuses in silence.
+        # flow-insensitive, so the rebinding hides the whole binding). Each had left both censuses in silence. A cls.<attr> load is
+        # read as the self.<attr> (CLS, since the focused re-check: `cls.alias = cls.resp` in a setUpClass had been refused nowhere).
         tuples = _tuple_names(names, attrs)
         if tuples:
             placed = _placed_tuple_uses(fn)
             for node in ast.walk(fn):
                 if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
                     key, spelled = ("names", node.id), node.id
-                elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name) and node.value.id == "self":
-                    key, spelled = ("attrs", node.attr), "self." + node.attr
+                elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name) and node.value.id in ("self", "cls"):
+                    key, spelled = ("attrs", node.attr), node.value.id + "." + node.attr
                 else:
                     continue
                 if key in tuples and id(node) not in placed:
@@ -3337,7 +3351,14 @@ def call_only(self):
         # (98 pins rows across four suite modules at the round's head). The textual census reads the one-line `cls.<attr> =
         # <alias>.<text>` binding as it reads `self.<attr> = ...` (TXTCLS), so the floor holds the rows CLS adds (k1 is a site); it
         # reads no fetch bound to an attribute (k2 and k3 are declined rows, a subscript and an unpack of one). Dropping CLS reds
-        # the rows here, dropping TXTCLS the site. The rows of both derivations are named, never inferred.
+        # the rows here, dropping TXTCLS the site. Since round 6's focused re-check the setUpClass's own reads with the cls.
+        # spelling are read as the self. spelling's (class U): `cls.body = cls.resp[1]`, the constant-index read (k4), and
+        # `status, page, heads = cls.resp`, the unpack by the positions (k5), bind the body, and `cls.js = cls.html`, a whole
+        # text's alias, binds the text (k6); `cls.alias = cls.resp`, the tuple handed whole to `cls._check`, and the slice
+        # `cls.resp[1:]` are refused (22 to 24). At the re-check's head the constant-index read bound nothing and the other
+        # reads were refused nowhere, no row at all. Reading only the self. spelling in _position_key drops k4 and refuses 21, in
+        # _resolve or _bind's alias branch drops k6, in _bind's unpack branch drops k5, and in readers_of's refusal loop drops
+        # 22 to 24. The rows of both derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 class T(unittest.TestCase):
@@ -3354,6 +3375,28 @@ class T(unittest.TestCase):
         status, page, heads = self.resp
         self.assertIn("k3", page)
         self.assertEqual(status, 200)
+class U(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.resp = cls._req("/chat?token=x")
+        cls.html = km._landing()
+        cls.body = cls.resp[1]
+        cls.alias = cls.resp
+        cls._check(cls.resp)
+        cls.tail = cls.resp[1:]
+        status, page, heads = cls.resp
+        cls.page = page
+        cls.js = cls.html
+    @classmethod
+    def _req(cls, path):
+        return r.status, r.read(), r.headers
+    @classmethod
+    def _check(cls, got):
+        return got
+    def test_b(self):
+        self.assertIn("k4", self.body)
+        self.assertIn("k5", self.page)
+        self.assertIn("k6", self.js)
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3363,10 +3406,17 @@ class T(unittest.TestCase):
             readers = readers_of(f.name, getters, constants, routes)
         finally:
             os.unlink(f.name)
-        self.assertEqual(rows, [(11, "k1", "_landing", "in", True, False), (12, "k2", "_chat_page", "in", False, True), (14, "k3", "_chat_page", "in", False, True)])
+        self.assertEqual(rows[:3], [(11, "k1", "_landing", "in", True, False), (12, "k2", "_chat_page", "in", False, True), (14, "k3", "_chat_page", "in", False, True)])
         self.assertEqual(sites, [(11, "k1", "_landing", "in")])
-        self.assertEqual([r[:3] for r in readers], [(11, "assert", "_landing"), (12, "assert", "_chat_page"), (14, "assert", "_chat_page")],
+        self.assertEqual([r[:3] for r in readers if r[0] <= 16], [(11, "assert", "_landing"), (12, "assert", "_chat_page"), (14, "assert", "_chat_page")],
                          "the class attribute read as the page, the body position as the fetched page, and no read of the status a read of it")
+        # class U, the cls. spelling: the body position bound by a constant index (k4) and by the unpack (k5), the whole text's
+        # alias (k6), each a row; the tuple's alias, the tuple handed whole and its slice refused
+        self.assertEqual([r[:4] for r in rows[3:]], [(35, "k4", "_chat_page", "in"), (36, "k5", "_chat_page", "in"), (37, "k6", "_landing", "in")])
+        self.assertEqual([r[:3] for r in readers if r[0] > 16],
+                         [(22, "unclassified", "_chat_page"), (23, "unclassified", "_chat_page"), (24, "unclassified", "_chat_page"),
+                          (35, "assert", "_chat_page"), (36, "assert", "_chat_page"), (37, "assert", "_landing")],
+                         "the cls. spelling read as the self. spelling's: three rows, and the three other reads of the tuple refused")
 
 
     def test_an_attribute_a_base_class_binds_is_read_in_its_subclasses(self):
@@ -3733,8 +3783,11 @@ class T(unittest.TestCase):
         # part is a page route (8, 9, and 10 through a helper the module does not define), since the url may be that page with a
         # query appended. The landing's `/` alone is no such part: a hole right after the leading slash can make any path (11, 12;
         # the live case is tests/test_session_host.py's
-        # `OSError("/%s/the-path" % marker, "text")`, the one false refusal the unnarrowed check measured). Dropping the check reds
-        # 8 to 10, and dropping the narrowing reds 11 and 12. The rows are named, never inferred.
+        # `OSError("/%s/the-path" % marker, "text")`, the one false refusal the unnarrowed check measured). urlopen takes the same
+        # check on its own road: an f-string url with a hole right after /chat is refused (13), and a Request url with a hole right
+        # after the leading slash is no row (14). Dropping the check reds 8 to 10 on the helper road and 13 on urlopen's, and
+        # dropping the narrowing reds 11 and 12 on the helper road and 14 on urlopen's (round 6's focused re-check: urlopen's road had
+        # no plant). The rows are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest, urllib.request
 class T(unittest.TestCase):
@@ -3748,6 +3801,8 @@ class T(unittest.TestCase):
         fetch("/sw.js" + rest)
         self._get_text("/%s/the-path" % marker)
         OSError("/%s/the-path" % marker, "text")
+        urllib.request.urlopen(f"http://127.0.0.1:{self.port}/chat{rest}")
+        urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%d/%s/x" % (self.port, name)))
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3757,7 +3812,8 @@ class T(unittest.TestCase):
             os.unlink(f.name)
         where = "fetch by a url the census does not read (%s)"
         self.assertEqual([(r[0], r[2], r[3].split(":")[0]) for r in readers if r[1] == "unclassified"],
-                         [(8, "_chat_page", where % "concat"), (9, "_chat_page", where % "percent"), (10, "_sw_js", where % "concat")])
+                         [(8, "_chat_page", where % "concat"), (9, "_chat_page", where % "percent"), (10, "_sw_js", where % "concat"),
+                          (13, "_chat_page", where % "fstring")])
 
 
     def test_a_fetch_through_every_route_of_the_route_table_is_refused(self):
@@ -3905,7 +3961,7 @@ class T(unittest.TestCase):
         # round 6 (B.1, _fail_closed's check (5)): a served text inline had been read only where its value lands in a binding the
         # census reads; landing anywhere else it left both censuses in silence. Each is refused now, an unclassified row at the
         # text: an assignment to a subscript (9), an annotated (10) and an augmented assignment (11), a walrus (12), a lambda (13),
-        # a yield (15), a return in a function whose returns differ (19), and a return in a text helper the module hands on
+        # a yield (15) and a yield from (71; its plant since round 6's focused re-check), a return in a function whose returns differ (19), and a return in a text helper the module hands on
         # uncalled (21, through a dict, as main's tests/test_fetch_wrapper_census.py hands `_render_login`; the visible listing
         # holds that row), calls with an argument (23) or calls through its class (32, `C._js()` at 34 and 35, a callee the census
         # does not read). A Name, a self.<attr> and a tuple of Names are bindings the census reads (5, 6, 7), and a text helper
@@ -3992,6 +4048,8 @@ def _kw(x=0):
 class K(unittest.TestCase):
     def test_k(self):
         self.assertIn("z9", _kw(x=1))
+    def gen(self):
+        yield from km._landing()
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -4006,7 +4064,7 @@ class K(unittest.TestCase):
                           (19, "_landing", where % "Return"), (21, "_landing", where % "Return"), (23, "_chat_page", where % "Return"),
                           (32, "_LANDING_MOBILE_JS", where % "Return"), (40, "_landing", where % "Return"), (44, "_landing", where % "Assign"),
                           (45, "_landing", where % "AnnAssign"), (53, "_landing", where % "Return"), (57, "_chat_page", where % "Return"),
-                          (66, "_landing", where % "Return")])
+                          (66, "_landing", where % "Return"), (71, "_landing", where % "YieldFrom")])
         # and the call through the class reads nothing: no row over its text at 34 to 36
         self.assertEqual([r for r in readers if 33 <= r[0] <= 36], [])
         # the helper's calls: refused at 40, 44 and 45, read at 47, and no row at the awaits (49, 50), the stated outside
@@ -4016,7 +4074,9 @@ class K(unittest.TestCase):
         # built at run time (62, 64)
         self.assertEqual([r[:3] for r in readers if 51 <= r[0] <= 64], [(53, "unclassified", "_landing"), (57, "unclassified", "_chat_page")])
         # the helper called with a keyword argument: its return refused (66), no row at the call (69)
-        self.assertEqual([r[:3] for r in readers if r[0] >= 65], [(66, "unclassified", "_landing")])
+        self.assertEqual([r[:3] for r in readers if 65 <= r[0] <= 69], [(66, "unclassified", "_landing")])
+        # a yield from of a served text: refused (71)
+        self.assertEqual([r[:3] for r in readers if r[0] >= 70], [(71, "unclassified", "_landing")])
 
 
     def test_a_literal_membership_no_pins_row_judges_is_unclassified(self):

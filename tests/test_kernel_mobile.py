@@ -1037,8 +1037,12 @@ for (const [s, deep, pan] of [[2, 590, 422], [1.5, 495.2, 281.33], [1.1, 250, 15
   const f = 'reraiseDeep' + s; r6rest(f); r6step(f, 'E1-kbUp', 508, 83, 1); r6step(f, 'E2-kbDownZ', 844 / s, 0, s);
   r6step(f, 'E3-reRaiseDeep', 508 / s, deep, s); r6step(f, 'P-panUp', 508 / s, pan, s);
 }
+// the pan rule's scope (the maintainer's round 6 ruling, 2026-09-29, on its focused re-check): the 508 px keyboard raised at 2 with
+// the visual viewport at 500 (the reading less the share, 78, written with kz the scale), then a stale report at the same scale
+// whose visual viewport does not fit inside the layout viewport (at 700, its bottom at 868 over 844)
+{ const f = 'staleOutside2'; r6rest(f); r6step(f, 'raiseZ', 336 / 2, 500, 2); r6step(f, 'staleOutside', 336 / 2, 700, 2); }
 // a keyboard of another height swapped in at the zoom of the raise that wrote the value in force, then the same report again (the
-// maintainer's round 6 ruling, 2026-09-29): the pan test does not ask for the band's height to be unchanged, so the swap's own run
+// maintainer's round 6 ruling, 2026-09-29): the rule does not ask for the band's height to be unchanged, so the swap's own run
 // is a pan and takes the pan rule, and a refit at the same geometry publishes the same value (with the height in the test the
 // swap's run took the stance and the refit the rule, so a refit with nothing new moved --app-top). At 2, a 471 px keyboard (band
 // 373) raised at the layout viewport's bottom, then the 508 px keyboard (band 336) at 40; at 1.5, the 508 px keyboard at 555.74,
@@ -1737,11 +1741,12 @@ class MobileFitExecutes(unittest.TestCase):
             self.fail("a keyboard raised again under a zoom: inside the reading's interval, and the first field finds its hold; %d cells:\n%s" % (len(bad), "\n".join(bad)))
 
     def test_a_pan_of_a_keyboard_raised_at_this_zoom_follows_the_reading(self):
-        # the maintainer's round 6 ruling (2026-09-29): the reading governs a pan of a keyboard raised at this zoom. A report with a
-        # keyboard up and the scale unchanged since the previous run on the measured or hold road is a pan (a keyboard swapped in at the
-        # same zoom included); where a raise or a re-raise wrote the value in force under the current zoom, with no change of scale
-        # between runs on those roads since (a fine pointer's runs record no scale, so a change only they saw does not count), the hold
-        # road re-bounds the larger of the hold and the value in force into the reading's interval. Keeping the value there had left the composer 44 px
+        # the maintainer's round 6 ruling (2026-09-29): the reading governs a pan of a keyboard raised at this zoom. Where a raise or
+        # a re-raise wrote the value in force under the current zoom, with no change of scale between runs on the measured or hold road
+        # since (a fine pointer's runs record no scale, so a change only they saw does not count), the hold road re-bounds the larger of
+        # the hold and the value in force into the reading's interval; a pan of that keyboard (a keyboard up and the scale unchanged since
+        # the previous run on those roads, a keyboard swapped in at the same zoom included) is such a report, and the rule makes no test
+        # of a pan of its own (the same ruling, on its focused re-check: that test did no work). Keeping the value there had left the composer 44 px
         # below the visible band's bottom for a light-zoom hold of 20 dragged to the top (lzhold20), and a pan to the share after a
         # no-pan re-raise under a light zoom had opened a band under the composer (the A4 cells: 2.67 px at 1.008, 3.33 px at 1.01, 16
         # px at 1.05). The rule's value is derived here from the geometry each step drove: the hold (in these cells the larger of the
@@ -1793,8 +1798,8 @@ class MobileFitExecutes(unittest.TestCase):
         # (the value a drag wrote, no keyboard event: a drag's write counted as one publishes 10 at Z4); zoomBack (a zoom alone away and
         # back to the scale the raise wrote at: without the clearing at a change of scale the drag publishes 0); swapZoom (the scale
         # changed in the same report as the band's height, so no zoom alone: the clearing at a change of scale between those runs refuses it, since the
-        # maintainer's round 6 ruling, 2026-09-29, and so does the current-zoom check, redundant with that clearing; with both dropped
-        # the pan publishes 40). The stance's cost, stated in the fit() comment: the composer below the band's
+        # maintainer's round 6 ruling, 2026-09-29, and so does the rule's test that kz is the current scale, redundant with that clearing
+        # here (kz 1, the scale 2); with the clearing dropped and the test read as kz standing, the pan publishes 40). The stance's cost, stated in the fit() comment: the composer below the band's
         # bottom by the drag, 83 px where the reading allows 0.
         px = self._r6_px
 
@@ -1869,6 +1874,26 @@ class MobileFitExecutes(unittest.TestCase):
             self.assertEqual(px(p["appTop"]), want, "the pan re-bounded from the larger of the hold (83) and the re-raise bound (%d): %r" % (rp, t))
             self.assertLessEqual(band(p), 1, "no band under the composer after the pan: %r" % (p,))
 
+    def test_the_pan_rule_leaves_a_stale_report_outside_the_layout_viewport_to_the_value_in_force(self):
+        # the pan rule's scope (the maintainer's round 6 ruling, 2026-09-29, on its focused re-check, which found no executed cell for
+        # it): the rule reads only a report whose visual viewport lies inside the layout viewport, the premise the zoom's share rests on
+        # (kernel.py, beside kbPx), so a stale report outside it (the one a rotation leaves until the visual viewport re-reports)
+        # publishes the value in force, clamped at use, even where kz is the current scale. The 508 px keyboard raised at scale 2 with
+        # the visual viewport at 500 writes the reading less the share, 78, and sets kz to 2; the stale report at the same scale, at 700
+        # (its bottom at 868 over a layout viewport of 844), publishes 78. With the rule's arm read ahead of the inside test the stale
+        # report publishes the rule's value, the reading less the share, 278.
+        px = self._r6_px
+        t = self._r6("staleOutside2")
+        st = t["staleOutside"]
+        self.assertEqual(t["raiseZ"]["scale"], st["scale"], "the cell's premise: no zoom between the raise and the stale report")
+        self.assertEqual({round(t[k]["height"] * t[k]["scale"]) for k in ("raiseZ", "staleOutside")}, {336},
+                         "the cell's premise: the same keyboard throughout: %r" % (t,))
+        self.assertGreater(round(st["offsetTop"] + st["height"]), 844, "the cell's premise: the visual viewport ends below the layout viewport: %r" % (st,))
+        lo, hi = self._r6_interval(st)
+        self.assertEqual(max(lo + 1, min(78, hi - 1)), 278, "the cell's premise: the rule's value differs there, the reading less the share: %r" % (st,))
+        self.assertEqual([px(t[k]["appTop"]) for k in ("raiseZ", "staleOutside")], [78, 78],
+                         "the raise writes the reading less the share, and the stale report outside the layout viewport publishes it: %r" % (t,))
+
     def test_a_refit_at_an_unchanged_report_never_moves_app_top(self):
         # the maintainer's round 6 ruling (2026-09-29): fit() is idempotent at an unchanged report, so a refit with nothing new never
         # moves --app-top (the shell may not move without new information, and fit() runs again on ordinary events: a visual
@@ -1880,7 +1905,7 @@ class MobileFitExecutes(unittest.TestCase):
         # downOutside cells and the clamp's clampFace cells among them, closed by the same ruling (any change of scale between runs on
         # the measured or hold road clears kz, and under a pinch the measured road clamps what it publishes at use), each with its own
         # test below. And the seeded doubled-step
-        # fuzz (4000 report sequences of 12 steps, each step fired twice) moves it at no step; while the pan test asked for the band's
+        # fuzz (4000 report sequences of 12 steps, each step fired twice) moves it at no step; while the pan rule asked for the band's
         # height to be unchanged too, it moved at 29 steps of these 48000, all keyboard swaps. That generator reaches neither the
         # corner's reports nor the clamp's; the designed cells above do.
         px, idem, bad = self._r6_px, self.out["idem"], []
@@ -1933,7 +1958,10 @@ class MobileFitExecutes(unittest.TestCase):
         # keyboard-down run does not read, so the return is no re-raise (downOutside). The 508 px keyboard raised at 2 with the visual
         # viewport at 500 (78), one report at 1.5 by each road, then back at 2 with the 508 px keyboard at 40: 78 on that report's run
         # and on its refit, where the pan rule's 40 had been published; at 1.5 by way of 1.2, 119 on both, where the refit had given
-        # 100. The refit pin above reads these families' doubled pass too. Every road is checked before the test fails.
+        # 100. The refit pin above reads these families' doubled pass too. Since the pan test was dropped (the same ruling, on its
+        # focused re-check), a clearing only at a zoom alone no longer moves a refit here: the report back takes the pan rule on its
+        # own run too, 40 on both runs at 2 and 100 at 1.5, a zoom that did not disarm the rule, so these cells red it on the value.
+        # Every road is checked before the test fails.
         px = self._r6_px
         roads = (("swapZoomBack", "zoomSwap", "zoomSwapBack", 373), ("roundFlip", "zoomRound", "zoomRoundBack", 337),
                  ("downOutside", "zoomDown", "zoomUpBack", 844))

@@ -217,11 +217,11 @@ try {
     await r6(f, "kbDown", 844 / s, 0, s); await r6(f, "kbUpNoPan", 508 / s, 0, s); await r6(f, "panInShare", 508 / s, r6share(s), s); }
   { const f = "stance"; await r6(f, "rest", 844, 0, 1); await r6(f, "kbUp", 508, 83, 1); await r6(f, "at200", 254, 200, 2);
     await r6(f, "up40", 254, 40, 2); await r6(f, "at0", 254, 0, 2); }
-  // the pan rule's source and its pan test (the maintainer's round 6 ruling, 2026-09-29): a hold of 83 raised at scale 1, the
+  // the pan rule's source and a keyboard swap at its zoom (the maintainer's round 6 ruling, 2026-09-29): a hold of 83 raised at scale 1, the
   // keyboard down under a zoom of 2 and raised again with the visual viewport deep (the re-raise bound 168, above the hold), then
   // that keyboard panned back up to 422, where the rule re-bounds from the larger of the two (168) and leaves no band; and a 471 px
-  // keyboard raised at 2 at the layout viewport's bottom (236), then the 508 px keyboard swapped in at 40 (a pan: the scale is
-  // unchanged) and the same report again, where the refit publishes what the swap's run did
+  // keyboard raised at 2 at the layout viewport's bottom (236), then the 508 px keyboard swapped in at 40 (the scale unchanged, so
+  // the raise's zoom still stands and the rule governs) and the same report again, where the refit publishes what the swap's run did
   { const f = "reraiseDeep2"; await r6(f, "rest", 844, 0, 1); await r6(f, "kbUp", 508, 83, 1); await r6(f, "kbDownZ", 422, 0, 2);
     await r6(f, "reRaiseDeep", 254, 590, 2); await r6(f, "panUp", 254, 422, 2); }
   { const f = "swapRefit2"; await r6(f, "rest", 844, 0, 1); await r6(f, "kb471up", 186.5, 657.5, 2);

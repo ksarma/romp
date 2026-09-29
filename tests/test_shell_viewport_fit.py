@@ -815,10 +815,11 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # held (held, a flag kept apart from the hold's value, so a hold of 0 counts; the maintainer's round 6 ruling, 2026-09-29: the
         # write had keyed on any reading past the share, so a drag or a continuous pinch overwrote a standing hold), and otherwise
         # the hold road publishes from the hold, or from the re-raise bound rp that the first keyboard-up run after the held
-        # keyboard's down run keeps apart from the hold (gone marks that down run): a pan inside the layout viewport of a keyboard raised at this zoom (a keyboard
-        # up and the scale unchanged since the previous run on the measured or hold road, a keyboard swapped in at that zoom included, the value
-        # in force written at a raise or a re-raise under the current zoom with no change of scale between runs on those roads since: ps, ph
-        # and kz; the maintainer's round 6 ruling, 2026-09-29) re-bounded from the larger of the hold and the value in force into the reading's interval [kbPx, panPx], and
+        # keyboard's down run keeps apart from the hold (gone marks that down run): a report inside the layout viewport where kz is the current
+        # scale (the value in force written at a raise or a re-raise under this zoom with no change of scale between runs on the measured or
+        # hold road since, a pan of a keyboard raised at this zoom and a keyboard swapped in at that zoom among such reports: kz and ps; the
+        # maintainer's round 6 ruling, 2026-09-29, which on its focused re-check dropped a pan test that did no work) re-bounded from the
+        # larger of the hold and the value in force into the reading's interval [kbPx, panPx], and
         # any other report inside the layout viewport by the stance: bounded into that
         # interval where the zoom's share is below the value, the larger of it and kbPx where the share reaches it (a zoom alone pans
         # too and never re-lays the shell there; a drag past the value plus the share publishes the excess, which nothing stores),
@@ -866,21 +867,22 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         self.assertNotIn("vv.offsetTop>0", self.js, "the 0px road reads the shared rounding, never the raw offsetTop")
         self.assertIn("else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;kz=held&&h!==ph?(vv.scale||1):0;ps=vv.scale||1;ph=h;"
                       "document.documentElement.style.setProperty('--app-top',(pinched(vv,L)?Math.min(Math.max(0,L-h),lastPan):lastPan)+'px');}\n"
-                      "else if(h){var S=vv.scale||1,pan=S===ps&&L-h>0;if(S!==ps)kz=0;ps=S;ph=h;"
+                      "else if(h){var S=vv.scale||1;if(S!==ps)kz=0;ps=S;ph=h;"
                       "if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;kz=S;}}var H=rp===null?lastPan:rp;"
-                      "document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:pan&&kz===S?Math.max(kbPx(vv,L),Math.min(Math.max(lastPan,H),panPx(vv))):"
+                      "document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:kz===S?Math.max(kbPx(vv,L),Math.min(Math.max(lastPan,H),panPx(vv))):"
                       "zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}", self.js,
                       "the measured road (under a pinch only where no hold is held, its value clamped at use there and kbPx written whole; kz set at "
                       "a raise, 0 at any other write) and the hold road (kz cleared at any change of scale since the previous run on the measured or "
-                      "hold road; a pan of a keyboard raised at this zoom, a keyboard up and the scale unchanged since that run, re-bounded from the "
-                      "larger of the hold and the value in force; otherwise the re-raise bound kept apart from the hold, the reading's interval where "
-                      "the share is below the value, the excess unstored). This pin reads the SPELLING only; the pan rule's three conditions (a raise "
-                      "or a re-raise wrote the value, the current zoom, no change of scale between runs on those roads since) are executed in "
+                      "hold road; inside the layout viewport, where kz is the current scale, the pan rule re-bounds from the larger of the hold and "
+                      "the value in force, with no test of a pan; otherwise the re-raise bound kept apart from the hold, the reading's interval where "
+                      "the share is below the value, the excess unstored). This pin reads the SPELLING only; the pan rule's two conditions, which "
+                      "kz===S reads together (a raise or a re-raise wrote kz, and no change of scale between runs on those roads has cleared it), are executed in "
                       "test_kernel_mobile.MobileFitExecutes."
                       "test_a_pan_of_a_keyboard_raised_at_this_zoom_follows_the_reading and "
                       "test_a_pan_after_a_zoom_alone_or_over_a_drags_write_keeps_the_value_where_the_share_reaches_it, the re-bound source in "
-                      "test_a_pan_after_a_re_raise_bound_above_the_hold_re_bounds_from_the_re_raise_bound, the pan test without the band's height "
-                      "in test_a_refit_at_an_unchanged_report_never_moves_app_top, kz cleared at a change of scale between those runs in "
+                      "test_a_pan_after_a_re_raise_bound_above_the_hold_re_bounds_from_the_re_raise_bound, a keyboard swapped in at kz's zoom taking "
+                      "the rule on its own run in test_a_refit_at_an_unchanged_report_never_moves_app_top, the rule's scope inside the layout viewport in "
+                      "test_the_pan_rule_leaves_a_stale_report_outside_the_layout_viewport_to_the_value_in_force, kz cleared at a change of scale between those runs in "
                       "test_a_refit_after_reports_that_changed_the_zoom_and_the_bands_height_together_publishes_what_the_report_did, the "
                       "measured road's clamp under a pinch, and none under the cut, in "
                       "test_under_a_pinch_the_measured_road_clamps_at_use_so_its_refit_publishes_the_same, and kbPx written whole under that clamp in "
