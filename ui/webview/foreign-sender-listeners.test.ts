@@ -251,7 +251,7 @@ const parsed = new Map<string, Site[]>();
  *  refKind (at the road census below) starts this page's own window; a receiver it resolves to a window other than
  *  this page's own, or cannot resolve, is no census site. The road census refuses a handler assigned on another window
  *  whatever its value, and one assigned on a receiver refKind cannot resolve unless the value sets no handler (null, an
- *  unshadowed undefined) or the receiver is a binding that only ever holds a WebSocket (socketBinding). */
+ *  unshadowed undefined) or the receiver is a name socketRefusal proves a WebSocket. */
 const WINDOW_NAMES = new Set(["window", "self", "globalThis", "frames"]);
 /** The events a window listener hears a sender's post as: a message, and a messageerror, which carries the sender's origin
  *  and source too and which a sender causes by posting what the page cannot deserialize. */
@@ -632,9 +632,9 @@ function headCheck(site: Site): string | null {
 // A listed site is left out of the per-file count and the head check only: the spelling assertion in the census test and
 // the leg census still read every site, so such a listener also needs those two to leave it out before the census
 // passes. An onmessage handler on something other than this page's window is no census site: the road census accepts a
-// WebSocket's own handler (federation.ts's sockets, a binding that only ever holds `new WebSocket(...)`) and refuses every
-// other receiver it cannot resolve, so a MessagePort's, a worker's, a BroadcastChannel's or an EventSource's handler is
-// refused, fail-closed.
+// WebSocket's own handler (federation.ts's socket, a name socketRefusal proves bound to `new WebSocket(...)` and to nothing
+// else) and refuses every other receiver it cannot resolve, so a MessagePort's, a worker's, a BroadcastChannel's or an
+// EventSource's handler is refused, fail-closed.
 const GATED: Array<[string, number]> = [
   ["webview/file-browse.ts", 1], ["webview/file-comments.ts", 1], ["webview/file-view.ts", 2], ["webview/frame-listener.ts", 1],
   ["webview/gear.js", 6], ["webview/palette-main.ts", 2], ["webview/settings.ts", 1], ["webview/strip.ts", 1], ["webview/waiting.ts", 1],
@@ -1323,13 +1323,23 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     { onmessage: f }), Reflect.set(window, "onmessage", f), window.onmessage ??= f are refused). The assignment is
 //     accepted in three cases only: on this page's own window or the bare global, where it is a census site above; on
 //     any other receiver but another window, when the value sets no handler (null, or an unshadowed undefined, at the
-//     end of an assignment chain: dead.onopen = dead.onmessage = null); and on a WebSocket, a const, let or var (never a
-//     parameter, a catch clause's name or a for...in or for...of head's) whose initialiser, every plain assignment to it
-//     and every other `var` of its name in its var scope is `new WebSocket(...)`, the constructor unshadowed, with no
-//     other write to it (a compound assignment, ++ or --, destructuring, a for...in or for...of head). A window other than
-//     this page's own is refused whatever the value. On every other receiver the census resolves to neither this page's
-//     window nor a socket (the body element, a parameter, a call's result, an object's property, a MessagePort, a
-//     worker, a channel), a value that sets a handler is refused;
+//     end of an assignment chain: dead.onopen = dead.onmessage = null); and on a name socketRefusal proves a WebSocket.
+//     The proof: the name's declaration is a let, const or var statement's own (not a loop head, a for head or a catch
+//     clause), neither ambient (`declare`, on it or on a declaration around it) nor a namespace's export, and its
+//     initialiser, when it has one, is `new WebSocket(...)`, the constructor unshadowed; no other binding of the name has
+//     as its scope, taken at its widest, the declaration's or one inside it that holds the receiver or the declaration (a
+//     second declaration, one bound to new WebSocket(...) too, a destructuring target, a for...in, for...of or for head, a
+//     parameter, a catch parameter, an import, a function, class, enum or namespace of the name), and no namespace's
+//     export of the name sits anywhere in the file; the one write accepted is a plain assignment of `new WebSocket(...)`
+//     that is a statement of its own, and every other write refuses (another assignment, one inside another expression, a
+//     compound assignment, ++ or --, a destructuring target, a loop head, a write whose name resolves to nothing, as
+//     inside a with statement); and a socket is bound at least once. The refusal names the site. The proof trusts
+//     `new WebSocket(...)` because the name WebSocket is refused below; a global WebSocket replaced through an object
+//     built elsewhere with a computed key and copied onto the window is on the list of what the rules cannot see, and
+//     through it a socket the census accepts can be the window. A window other than this page's own is refused whatever
+//     the value. On every other receiver the census resolves to neither this page's window nor a socket (the body
+//     element, a parameter, a call's result, an object's property, a MessagePort, a worker, a channel), a value that sets
+//     a handler is refused;
 //   - a message or messageerror listener added to a window other than this page's own (parent.addEventListener(...)),
 //     where a check at its head could not be about this page's senders;
 //   - code run from a string: eval, the Function constructor (by name, or reached through a function's .constructor),
@@ -1343,7 +1353,9 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     binding, the WebSocket constructor, undefined);
 //   - the name WebSocket, as a name or a string, anywhere but as the constructor a `new` calls (bare or as a member) and
 //     in a type: a replaced global WebSocket (window.WebSocket = f, Object.defineProperty(window, "WebSocket", ...), a
-//     class of that name) would make the socket the census accepts any object.
+//     class of that name) would make the socket the census accepts any object. The socket proof above rests on this
+//     refusal, and on the copied-object road listed below, which the rules cannot see and which can still replace the
+//     constructor.
 // ui/ has none of these today, so the rules cost nothing. What they cannot see, disclosed:
 //   - a window held where no initialiser shows it: in a parameter, in a let or var assigned later, behind a comma,
 //     conditional, || or ?? expression, in a Proxy, in an object or array it was put in, or returned by a function
@@ -1360,7 +1372,7 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //   - a reflective function under another name (const R = Reflect; R.get(window, k)), and a Function.prototype.call
 //     reached any way but by name;
 //   - an object built elsewhere with a computed key and copied onto the window (Object.assign(window, make()) is read as
-//     its call only), and a key computed in another module and passed to a reflective read or write through a helper;
+//     its call only), which can also replace the global WebSocket, so a socket the census accepts is the window; and a key computed in another module and passed to a reflective read or write through a helper;
 //   - a top-level var of a classic script rebound through the global object (this.ws = window, window.ws = window): the
 //     census reads a var's writes by its name. No ui/ source runs as a classic script today: esbuild bundles each, and
 //     the kernel inlines romp-timeline-view.js inside a function;
@@ -1516,50 +1528,159 @@ function isSocketNew(v: any): boolean {
 }
 /** The var scope a declaration's name is hoisted to. */
 const hoistedScope = (n: any): any => { let s = n.parent; while (s && !isVarScope(s)) s = s.parent; return s; };
-/** Whether `recv` is a name whose binding only ever holds a WebSocket: a const, let or var (never a parameter, a catch
- *  clause's name, or a for...in or for...of head's, whose value comes from elsewhere) whose initialiser, every value a
- *  plain assignment writes to it, and the initialiser of every other `var` of its name in its var scope are
- *  new WebSocket(...) (isSocketNew). Any other write refuses: a compound assignment, ++ or --, destructuring, a for...in
- *  or for...of head, a `var` of its name in such a head. */
-function socketBinding(recv: any, sf: any): boolean {
+/** The block a let, const or class declaration binds in: the nearest block, file, namespace body or switch's case block
+ *  around `n`. */
+const blockScope = (n: any): any => {
+  let s = n.parent;
+  while (s && !(ts.isBlock(s) || ts.isSourceFile(s) || ts.isModuleBlock(s) || ts.isCaseBlock(s))) s = s.parent;
+  return s;
+};
+/** Whether `a` is `n` or one of its ancestors. */
+const holds = (a: any, n: any): boolean => { for (let s = n; s; s = s.parent) if (s === a) return true; return false; };
+const hasModifier = (n: any, k: number): boolean => !!n.modifiers && n.modifiers.some((m: any) => m.kind === k);
+/** Whether the statement `st` is ambient: it, or a declaration around it, carries `declare`. esbuild drops an ambient
+ *  declaration, so its name binds nothing at run time (an ambient var's name is a property of the global object). */
+const isAmbient = (st: any): boolean => { for (let s = st; s; s = s.parent) if (hasModifier(s, ts.SyntaxKind.DeclareKeyword)) return true; return false; };
+/** Whether the statement `st` is an export of a namespace body. esbuild reads such a name as a property of the namespace
+ *  object, which any code can set, and TypeScript puts it in scope in every block of that namespace, which merge. */
+const isNamespaceExport = (st: any): boolean => !!st && ts.isModuleBlock(st.parent) && hasModifier(st, ts.SyntaxKind.ExportKeyword);
+/** Whether the identifier `n` is no binding and no reference: a member or key name, a label, a type's name or a name in a
+ *  type. */
+function namesNoBinding(n: any): boolean {
+  const p = n.parent;
+  if (ts.isPropertyAccessExpression(p) && p.name === n) return true;
+  if ((ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p) || ts.isPropertySignature(p) || ts.isMethodDeclaration(p) || ts.isMethodSignature(p)
+       || ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p) || ts.isEnumMember(p)) && p.name === n) return true;
+  if (ts.isBindingElement(p) && p.propertyName === n) return true;
+  if (ts.isImportSpecifier(p) && p.propertyName === n) return true;
+  if (ts.isExportSpecifier(p) && p.propertyName && p.name === n) return true;
+  if (ts.isQualifiedName(p) && p.right === n) return true;
+  if ((ts.isLabeledStatement(p) || ts.isBreakStatement(p) || ts.isContinueStatement(p)) && p.label === n) return true;
+  if ((ts.isTypeAliasDeclaration(p) || ts.isInterfaceDeclaration(p) || ts.isTypeParameterDeclaration(p)) && p.name === n) return true;
+  for (let s = p; s; s = s.parent) {
+    if (ts.isTypeNode(s) && !ts.isExpressionWithTypeArguments(s)) return true;
+    if (ts.isStatement(s) || ts.isBlock(s)) break;
+  }
+  return false;
+}
+/** When the identifier `n` declares a binding: what kind, and the widest scope it can bind in (null: the whole file). */
+function bindingOf(n: any): { kind: string; scope: any } | null {
+  const p = n.parent;
+  // a namespace's export is in scope in every block of that namespace, which the scope walk here does not model, so it
+  // counts wherever it sits in the file
+  let st: any = null;
+  if ((ts.isVariableDeclaration(p) || ts.isBindingElement(p)) && p.name === n) {
+    let r: any = p;
+    while (ts.isBindingElement(r) || ts.isObjectBindingPattern(r) || ts.isArrayBindingPattern(r)) r = r.parent;
+    if (ts.isVariableDeclaration(r) && ts.isVariableDeclarationList(r.parent) && ts.isVariableStatement(r.parent.parent)) st = r.parent.parent;
+  } else if ((ts.isFunctionDeclaration(p) || ts.isClassDeclaration(p) || ts.isEnumDeclaration(p) || ts.isModuleDeclaration(p)
+              || ts.isImportEqualsDeclaration(p)) && p.name === n) st = p;
+  if (isNamespaceExport(st)) return { kind: "a namespace's export", scope: null };
+  if ((ts.isVariableDeclaration(p) || ts.isBindingElement(p) || ts.isParameter(p)) && p.name === n) {
+    let r: any = p, pattern = false;
+    while (ts.isBindingElement(r) || ts.isObjectBindingPattern(r) || ts.isArrayBindingPattern(r)) { if (ts.isBindingElement(r)) pattern = true; r = r.parent; }
+    if (ts.isParameter(r)) return { kind: "a parameter", scope: r.parent };
+    if (!ts.isVariableDeclaration(r)) return { kind: "a binding the census cannot place", scope: null };
+    if (ts.isCatchClause(r.parent)) return { kind: "a catch parameter", scope: r.parent };
+    const list = r.parent, blk = (list.flags & ts.NodeFlags.BlockScoped) !== 0, h = list.parent;
+    if (ts.isForInStatement(h) || ts.isForOfStatement(h)) return { kind: "a for...in or for...of head", scope: blk ? h : hoistedScope(list) };
+    if (ts.isForStatement(h)) return { kind: "a for head", scope: blk ? h : hoistedScope(list) };
+    return { kind: pattern ? "a destructuring target" : "a second declaration", scope: blk ? blockScope(list) : hoistedScope(list) };
+  }
+  if (ts.isFunctionDeclaration(p) && p.name === n) return { kind: "a function or class of that name", scope: hoistedScope(p) };
+  if (ts.isClassDeclaration(p) && p.name === n) return { kind: "a function or class of that name", scope: blockScope(p) };
+  if ((ts.isFunctionExpression(p) || ts.isClassExpression(p)) && p.name === n) return { kind: "a function or class of that name", scope: p };
+  if ((ts.isEnumDeclaration(p) || ts.isModuleDeclaration(p)) && p.name === n) return { kind: "an enum or namespace of that name", scope: hoistedScope(p) };
+  if ((ts.isImportClause(p) || ts.isNamespaceImport(p) || ts.isImportEqualsDeclaration(p) || ts.isImportSpecifier(p)) && p.name === n) {
+    return { kind: "an import", scope: hoistedScope(p) };
+  }
+  return null;
+}
+/** From `x` up through parentheses, casts and the elements of array and object literals: the assignment whose left, or
+ *  the for...in or for...of whose head, it reaches, and whether a literal lay on the way (a destructuring target). */
+function writeSiteOf(x: any): { at: any; loop: boolean; viaLiteral: boolean } | null {
+  let c = x, viaLiteral = false;
+  for (let q = x.parent; q; c = q, q = q.parent) {
+    if (ts.isParenthesizedExpression(q) || ts.isAsExpression(q) || ts.isNonNullExpression(q) || ts.isTypeAssertionExpression(q)
+        || (ts.isSatisfiesExpression && ts.isSatisfiesExpression(q))) continue;
+    if (ts.isArrayLiteralExpression(q) || ts.isObjectLiteralExpression(q) || ts.isSpreadElement(q) || ts.isSpreadAssignment(q)
+        || (ts.isPropertyAssignment(q) && q.initializer === c) || (ts.isShorthandPropertyAssignment(q) && q.name === c)) { viaLiteral = true; continue; }
+    if (ts.isBinaryExpression(q) && q.left === c && isAssignOp(q.operatorToken.kind)) return { at: q, loop: false, viaLiteral };
+    if ((ts.isForInStatement(q) || ts.isForOfStatement(q)) && q.initializer === c) return { at: q, loop: true, viaLiteral };
+    return null;
+  }
+  return null;
+}
+/** When the identifier `n` is written: how, and the assignment when it is a plain `=` one. */
+function writeOf(n: any): { kind: string; assign?: any } | null {
+  const p = outer(n).parent;
+  if ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) && (p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken)) {
+    return { kind: "++ or --" };
+  }
+  const r = writeSiteOf(n);
+  if (!r) return null;
+  if (r.loop) return { kind: "a for...in or for...of head" };
+  if (r.viaLiteral) return { kind: "a destructuring target" };
+  const up = writeSiteOf(r.at);   // `ws = x` inside a pattern is the pattern's default, not an assignment
+  if (up && up.viaLiteral) return { kind: up.loop ? "a for...in or for...of head" : "a destructuring target" };
+  return r.at.operatorToken.kind === ts.SyntaxKind.EqualsToken ? { kind: "an assignment", assign: r.at } : { kind: "a compound assignment" };
+}
+/** Why the road census cannot prove `recv` a WebSocket, whose own onmessage handler only its server posts to, naming the
+ *  site; null when it can. The proof fails closed:
+ *  1. `recv` is a name, and the declaration declOf finds for it is a let, const or var statement's own, with a plain name
+ *     (not a loop head's, a for head's or a catch clause's), whose initialiser, when it has one, is new WebSocket(...)
+ *     (isSocketNew: the constructor unshadowed). The statement is not ambient (isAmbient) and is no namespace's export
+ *     (isNamespaceExport): the name of either is no run-time binding the scope walk below reads.
+ *  2. No other binding of the name (bindingOf) has as its scope the declaration's scope, or a scope inside it that holds
+ *     the receiver or the declaration, each scope taken at its widest (a var's is its var scope, a function declared in a
+ *     block binds in its function): a second declaration (one bound to new WebSocket(...) too), a destructuring target (in
+ *     a declaration, or in an assignment, a default included), a for...in or for...of head, a for head, a parameter (plain
+ *     or destructured), a catch parameter, an import, a function or class, an enum or namespace. A namespace's export of
+ *     the name counts wherever it sits in the file.
+ *  3. The one write accepted is a plain `=` that assigns new WebSocket(...), a statement of its own, to a name declOf
+ *     resolves to the declaration. Every other write refuses (writeOf): an assignment of anything else or inside another
+ *     expression, a compound assignment, ++ or --, a destructuring target, a loop head; so does a write inside the
+ *     declaration's scope whose name declOf resolves to nothing (one inside a with statement).
+ *  4. A socket is bound at least once: the initialiser, or an accepted assignment.
+ *  A member or key name, a label, a type's name and a name in a type are no binding and no reference (namesNoBinding).
+ *  The proof trusts new WebSocket(...) because the road census refuses the name WebSocket other than as the constructor a
+ *  new calls; a global WebSocket replaced through an object built elsewhere with a computed key and copied onto the window
+ *  is on the road census's list of what it cannot see, and through it an accepted socket can be the window. */
+function socketRefusal(recv: any, sf: any): string | null {
   recv = unwrap(recv);
-  if (!ts.isIdentifier(recv)) return false;
-  const d = declOf(recv);
-  if (!d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name)) return false;
-  const loop = d.parent && d.parent.parent;
-  if (ts.isCatchClause(d.parent) || (loop && (ts.isForOfStatement(loop) || ts.isForInStatement(loop)))) return false;   // what was thrown, or the loop's value
-  const name = d.name.text;
-  const vals: any[] = d.initializer ? [d.initializer] : [];
-  let other = false;
+  if (!ts.isIdentifier(recv)) return "the receiver is not a name";
+  const name = recv.text, d = declOf(recv);
+  const at = (n: any): string => ":" + (sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1);
+  if (!d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name) || !ts.isVariableDeclarationList(d.parent) || !ts.isVariableStatement(d.parent.parent)) {
+    return name + " is not declared by a let, const or var statement of its own" + (d ? " (" + at(d) + ")" : "");
+  }
+  if (isAmbient(d.parent.parent)) return name + " is declared at " + at(d) + " by an ambient declaration (declare), which binds nothing at run time";
+  if (isNamespaceExport(d.parent.parent)) return name + " is declared at " + at(d) + " as a namespace's export, which is a property of the namespace object";
+  if (d.initializer && !isSocketNew(d.initializer)) return name + " is declared at " + at(d) + " bound to something other than new WebSocket(...)";
+  const scopeD = (d.parent.flags & ts.NodeFlags.BlockScoped) !== 0 ? blockScope(d.parent) : hoistedScope(d.parent);
+  const sockets: any[] = d.initializer ? [d.initializer] : [];
+  let why = null as string | null;
+  const refuseAt = (n: any, how: string, kind: string): void => { why = name + " is " + how + " at " + at(n) + " by " + kind; };
   const visit = (n: any): void => {
-    if (other) return;
-    if (ts.isIdentifier(n) && n.text === name && n !== d.name && ts.isVariableDeclaration(n.parent) && n.parent.name === n
-        && (n.parent.parent.flags & ts.NodeFlags.BlockScoped) === 0 && hoistedScope(n) === hoistedScope(d.name)) {
-      // another `var` of the name in the same var scope, matched by name (declOf resolves a for...in or for...of head's
-      // to the loop's own declaration): its initialiser is a write, and a loop head's value is no socket
-      if (n.parent.initializer) vals.push(n.parent.initializer);
-      const h = n.parent.parent.parent;
-      if (h && (ts.isForOfStatement(h) || ts.isForInStatement(h))) other = true;
-    } else if (ts.isIdentifier(n) && n.text === name && n !== d.name && declOf(n) === d) {
-      const m = outer(n), p = m.parent;
-      if (ts.isBinaryExpression(p) && p.left === m && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) vals.push(p.right);
-      else if (ts.isBinaryExpression(p) && p.left === m && isAssignOp(p.operatorToken.kind)) other = true;
-      else if ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p))
-               && (p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken)) other = true;
-      else {
-        for (let c: any = m, q: any = p; q; c = q, q = q.parent) {   // a destructuring target, or a loop head's
-          if (ts.isArrayLiteralExpression(q) || ts.isObjectLiteralExpression(q) || ts.isPropertyAssignment(q) || ts.isShorthandPropertyAssignment(q)
-              || ts.isSpreadElement(q) || ts.isSpreadAssignment(q) || ts.isParenthesizedExpression(q)) continue;
-          if (ts.isBinaryExpression(q) && q.left === c && isAssignOp(q.operatorToken.kind)) other = true;
-          if ((ts.isForOfStatement(q) || ts.isForInStatement(q)) && q.initializer === c) other = true;
-          break;
+    if (why !== null) return;
+    if (ts.isIdentifier(n) && n.text === name && n !== d.name && !namesNoBinding(n)) {
+      const b = bindingOf(n);
+      if (b) {
+        if (!b.scope || (holds(scopeD, b.scope) && (holds(b.scope, recv) || holds(b.scope, d.name)))) refuseAt(n, "bound again", b.kind);
+      } else {
+        const w = writeOf(n), t = w ? declOf(n) : undefined;
+        if (w && (t === d || (t === null && holds(scopeD, n)))) {
+          if (w.assign && t === d && isSocketNew(w.assign.right) && ts.isExpressionStatement(outer(w.assign).parent)) sockets.push(w.assign.right);
+          else refuseAt(n, "written", w.assign ? "an assignment other than a statement of its own assigning new WebSocket(...)" : w.kind);
         }
       }
     }
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  return !other && vals.length > 0 && vals.every(isSocketNew);
+  if (why !== null) return why;
+  if (sockets.length === 0) return name + " is never bound to new WebSocket(...)";
+  return null;
 }
 /** Whether `n` is the constructor a `new` calls, bare (new WebSocket(u)) or as a member (new window.WebSocket(u)). */
 const isNewCallee = (n: any): boolean => {
@@ -1601,8 +1722,9 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
         if (acc === tok || ownWindowRef(acc.expression)) return;   // the bare global, or this page's own window: a census site
         if (otherWindowRef(acc.expression)) return refuse(tok, "an " + tok.text + " handler on a window other than this page's own, which no check at its head can be about");
         if (setsNoHandler(q.right)) return;                         // null or undefined: it sets no handler
-        if (socketBinding(acc.expression, sf)) return;              // a WebSocket's own handler
-        return refuse(tok, "an " + tok.text + " handler on a receiver the census cannot resolve to this page's window or to a socket");
+        const why = socketRefusal(acc.expression, sf);
+        if (why === null) return;                                   // a WebSocket's own handler
+        return refuse(tok, "an " + tok.text + " handler on a receiver the census cannot resolve to this page's window or to a socket: " + why);
       }
       if (onlyTested(acc)) return;
     }
@@ -1826,16 +1948,26 @@ test("the road census reads what it claims: every road around the spelled regist
   ];
   for (const [src, file] of accepted) assert.deepEqual(roads(src, file), [], "accepted: " + src);
   // an onmessage or onmessageerror handler is accepted on this page's own window (a census site the census above holds),
-  // with a value that sets no handler, or on a binding that only ever holds a WebSocket; a message listener on this page's
-  // own window is a census site, no road. Each row's last column is how many onmessage census sites it holds: a handler
-  // on this page's own window is one, and every other accepted handler (a socket, a detach, a tested read) is none
+  // with a value that sets no handler, or on a name socketRefusal proves a WebSocket (one let, const or var statement's
+  // own declaration, bound to new WebSocket(...) by its initialiser or by an assignment that is a statement of its own,
+  // with no other binding of the name in its scope or a scope inside it that holds the receiver or the declaration, and
+  // no other write; a binding of the name in an unrelated function, or in an outer scope the declaration shadows, is no
+  // other binding, and neither is a namespace's name that is no export); a message listener on this page's own window is
+  // a census site, no road. Each row's last column is how many onmessage census sites it holds: a handler on this page's
+  // own window is one, and every other accepted handler (a socket, a detach, a tested read) is none
   const handlerOk: Array<[string, string | undefined, number]> = [
     ["const ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };", undefined, 0],
     ["let ws: WebSocket; ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };", undefined, 0],
     ["let ws = new WebSocket(u); ws = new WebSocket(u2); ws.onmessage = f;", undefined, 0],
     ["const ws = new window.WebSocket(u); ws.onmessage = f;", undefined, 0],
     ["const ws = new WebSocket(u); ws.onmessage = f; function g() { var ws = window; return ws; }", undefined, 0],
-    ["var ws = new WebSocket(u); var ws = new WebSocket(u2); ws.onmessage = f;", "webview/probe.js", 0],
+    ["let ws; ws = new WebSocket(u); ws.onmessage = f;", "webview/probe.js", 0],
+    ["let ws; try { ws = new WebSocket(u); } catch (e) { } ws.onmessage = f;", "webview/probe.js", 0],
+    ["const ws = new WebSocket(u); function g(ws) { return ws; } ws.onmessage = f;", "webview/probe.js", 0],
+    ["const ws = new WebSocket(u); const o = { ws: 1 }; o.ws = 2; ws.onmessage = f;", "webview/probe.js", 0],
+    ["var ws = window; function g() { const ws = new WebSocket(u); ws.onmessage = f; } g();", "webview/probe.js", 0],
+    ["namespace N { var ws: any = new WebSocket(u); export function arm() { ws.onmessage = f; } } (N as any).ws = window; N.arm();", undefined, 0],
+    ["const ws = new WebSocket(u); namespace N { var ws: any = window; } namespace N { ws.onmessage = f; }", undefined, 0],
     ["const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;", undefined, 0],
     ["document.body.onmessage = null; x.onmessage = undefined; y.onmessageerror = z.onmessage = null;", undefined, 0],
     ["window.onmessageerror = f; document.defaultView.onmessage = g; const w = window; w.onmessage = h;", undefined, 3],
@@ -1907,6 +2039,65 @@ test("the road census reads what it claims: every road around the spelled regist
       ["var ws = new WebSocket(u); for (var ws in o) {} ws.onmessage = f;", "webview/probe.js"],
       ["var ws = new WebSocket(u); { var ws = window; } ws.onmessage = f;", "webview/probe.js"],
       ["function g() { var ws = new WebSocket(u); if (c) { var ws = window; } ws.onmessage = f; }", "webview/probe.js"],
+      // one declaration proves a socket: a second one bound to new WebSocket(...) refuses too, and so does any other
+      // binding of the name in the declaration's scope or in a scope inside it that holds the receiver or the declaration
+      ["var ws = new WebSocket(u); var ws = new WebSocket(u2); ws.onmessage = f;", "webview/probe.js"],
+      ["var ws = new WebSocket(u); try { throw window; } catch (ws) { var ws; ws.onmessage = f; }", "webview/probe.js"],
+      // a destructuring target, in a declaration or in an assignment, a default included
+      ["var ws = new WebSocket(u); var { x: ws = window } = {}; ws.onmessage = f;", "webview/probe.js"],
+      ["var ws = new WebSocket(u); var [ws] = [window]; ws.onmessage = f;", "webview/probe.js"],
+      ["let ws = new WebSocket(u); [ws = new WebSocket(u)] = [window]; ws.onmessage = f;", "webview/probe.js"],
+      ["let ws = new WebSocket(u); ({ a: ws = new WebSocket(u) } = { a: window }); ws.onmessage = f;", "webview/probe.js"],
+      ["let ws = new WebSocket(u); ({ ws = new WebSocket(u) } = { ws: window }); ws.onmessage = f;", "webview/probe.js"],
+      // a for...in or for...of head, declared or not, destructured or not, and a for head
+      ["var ws = new WebSocket(u); for (var [ws] of [[window]]) {} ws.onmessage = f;", "webview/probe.js"],
+      ["var ws = new WebSocket(u); for (var { length: ws } in { ab: 1 }) {} ws.onmessage = f;", "webview/probe.js"],
+      ["let ws = new WebSocket(u); for (ws of [window]) {} ws.onmessage = f;", "webview/probe.js"],
+      ["var ws = new WebSocket(u); for (var ws = window; false; ) {} ws.onmessage = f;", "webview/probe.js"],
+      // a parameter, plain or destructured, and a catch parameter, whether the receiver is read before or after the var
+      // (declOf picks the var, whose initialiser may never run)
+      ["function g(ws) { if (0) { var ws = new WebSocket(u); } ws.onmessage = f; } g(window);", "webview/probe.js"],
+      ["function g(ws) { ws.onmessage = f; var ws = new WebSocket(u); } g(window);", "webview/probe.js"],
+      ["function g({ w: ws }) { if (0) { var ws = new WebSocket(u); } ws.onmessage = f; } g({ w: window });", "webview/probe.js"],
+      ["try { throw window; } catch (ws) { var ws = new WebSocket(u); ws.onmessage = f; }", "webview/probe.js"],
+      ["try { throw window; } catch (ws) { ws.onmessage = f; var ws = new WebSocket(u); }", "webview/probe.js"],
+      // an import, a function or class, an enum of the name
+      ["import { ws } from \"./m\"; var ws = new WebSocket(u); ws.onmessage = f;"],
+      ["var ws = new WebSocket(u); function ws() {} ws.onmessage = f;", "webview/probe.js"],
+      ["function ws() {} if (0) { var ws = new WebSocket(u); } ws.onmessage = f;", "webview/probe.js"],
+      ["var ws = new WebSocket(u); enum ws { A } ws.onmessage = f;"],
+      // a write other than a statement of its own assigning new WebSocket(...), a declaration that is no let, const or var
+      // statement's own, and a name never bound to a socket
+      ["let ws; ws = new WebSocket(u), ws = window; ws.onmessage = f;", "webview/probe.js"],
+      ["let ws, w2; ws = w2 = new WebSocket(u); w2 = window; ws.onmessage = f;", "webview/probe.js"],
+      ["let ws = new WebSocket(u); ws++; ws.onmessage = f;", "webview/probe.js"],
+      ["let ws = new WebSocket(u); function h() { ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
+      ["let ws; go(ws = new WebSocket(u)); ws.onmessage = f;", "webview/probe.js"],
+      ["for (let ws = new WebSocket(u); ; ) { ws.onmessage = f; break; }", "webview/probe.js"],
+      ["let ws = pick(); ws.onmessage = f;", "webview/probe.js"],
+      ["let ws; ws.onmessage = f;", "webview/probe.js"],
+      // an ambient declaration, which binds nothing at run time (an ambient var's name is a property of the global object)
+      ["declare var ws: any = new WebSocket(u); (window as any).ws = window; ws.onmessage = f;"],
+      ["declare let ws: any = new WebSocket(u); (window as any).ws = window; ws.onmessage = f;"],
+      ["export declare var ws: any = new WebSocket(u); (window as any).ws = window; ws.onmessage = f;"],
+      ["declare var ws: any; (window as any).ws = window; if (0) ws = new WebSocket(u); ws.onmessage = f;"],
+      ["declare var ws: any; if (0) ws = new WebSocket(u); ws.onmessage = f;"],
+      // a namespace's export as the declaration, a property of the namespace object any code can set
+      ["namespace N { export var ws: any = new WebSocket(u); export function arm() { ws.onmessage = f; } } (N as any).ws = window; N.arm();"],
+      ["namespace N { export let ws: any = new WebSocket(u); (N as any).ws = window; ws.onmessage = f; }"],
+      ["namespace N { export const ws: any = new WebSocket(u); export function arm() { ws.onmessage = f; } } Object.defineProperty(N, \"ws\", { value: window }); N.arm();"],
+      ["namespace N { export let ws: any; ws = new WebSocket(u); export function arm() { ws.onmessage = f; } } (N as any).ws = window; N.arm();"],
+      ["export namespace N { export var ws: any = new WebSocket(u); export function arm() { ws.onmessage = f; } } (N as any).ws = window; N.arm();"],
+      // a namespace's export of the name anywhere in the file: TypeScript puts it in scope in every block of that
+      // namespace, merged with a function or an enum too, and in a dotted namespace's blocks
+      ["let ws = new WebSocket(u); namespace N { export var ws: any = window; } namespace N { ws.onmessage = f; }"],
+      ["const ws = new WebSocket(u); namespace N { export let ws: any = window; } namespace N { export function arm() { ws.onmessage = f; } } N.arm();"],
+      ["namespace N { export var ws: any = window; } namespace N { var q = 1; } namespace N { let ws2 = 0; ws.onmessage = f; } var ws = new WebSocket(u);"],
+      ["const ws = new WebSocket(u); function N() {} namespace N { export var ws: any = window; } namespace N { ws.onmessage = f; }"],
+      ["const ws = new WebSocket(u); enum N { A } namespace N { export var ws: any = window; } namespace N { ws.onmessage = f; }"],
+      ["const ws = new WebSocket(u); namespace N { export var { ws } = { ws: window as any }; } namespace N { ws.onmessage = f; }"],
+      ["const ws = new WebSocket(u); namespace A.B { export var ws: any = window; } namespace A.B { ws.onmessage = f; }"],
+      ["const ws = new WebSocket(u); namespace W { export var w: any = window; } namespace N { export import ws = W.w; } namespace N { ws.onmessage = f; }"],
     ]],
     // a with statement answers the names inside it from its object
     [/a with statement/, false, [
@@ -1968,7 +2159,38 @@ test("the road census reads what it claims: every road around the spelled regist
       if (noSite && sitesIn(file || "webview/probe.ts", src).some((x) => x.kind === "onmessage")) missed.push("an onmessage site: " + src);
     }
   }
-  assert.deepEqual(missed, [], "a handler the census accepts refused, a road not refused for its reason, or a refused handler that is a census site:\n" + missed.join("\n"));
+  // a refusal on a receiver the census cannot prove a socket names the site: where the name is bound again or written, by
+  // what, or why its declaration proves nothing (socketRefusal), one row per kind
+  const UNPROVED = "an onmessage handler on a receiver the census cannot resolve to this page's window or to a socket: ";
+  const named: Array<[string, string, string?]> = [
+    ["var ws = new WebSocket(u);\nvar ws = new WebSocket(u2);\nws.onmessage = f;", "ws is bound again at :2 by a second declaration", "webview/probe.js"],
+    ["var ws = new WebSocket(u);\nvar [ws] = [window];\nws.onmessage = f;", "ws is bound again at :2 by a destructuring target", "webview/probe.js"],
+    ["var ws = new WebSocket(u);\nfor (var [ws] of [[window]]) {}\nws.onmessage = f;", "ws is bound again at :2 by a for...in or for...of head", "webview/probe.js"],
+    ["var ws = new WebSocket(u);\nfor (var ws = window; false; ) {}\nws.onmessage = f;", "ws is bound again at :2 by a for head", "webview/probe.js"],
+    ["function g(ws) {\n  ws.onmessage = f;\n  var ws = new WebSocket(u);\n}", "ws is bound again at :1 by a parameter", "webview/probe.js"],
+    ["try { throw window; }\ncatch (ws) { ws.onmessage = f; var ws = new WebSocket(u); }", "ws is bound again at :2 by a catch parameter", "webview/probe.js"],
+    ["var ws = new WebSocket(u);\nimport { ws } from \"./m\";\nws.onmessage = f;", "ws is bound again at :2 by an import"],
+    ["var ws = new WebSocket(u);\nclass ws {}\nws.onmessage = f;", "ws is bound again at :2 by a function or class of that name", "webview/probe.js"],
+    ["var ws = new WebSocket(u);\nenum ws { A }\nws.onmessage = f;", "ws is bound again at :2 by an enum or namespace of that name"],
+    ["const ws = new WebSocket(u);\nnamespace N { export var ws: any = window; }\nnamespace N { ws.onmessage = f; }", "ws is bound again at :2 by a namespace's export"],
+    ["let ws = new WebSocket(u);\n[ws] = [window];\nws.onmessage = f;", "ws is written at :2 by a destructuring target", "webview/probe.js"],
+    ["let ws = new WebSocket(u);\nfor (ws of [window]) {}\nws.onmessage = f;", "ws is written at :2 by a for...in or for...of head", "webview/probe.js"],
+    ["let ws = new WebSocket(u);\nws = window;\nws.onmessage = f;", "ws is written at :2 by an assignment other than a statement of its own assigning new WebSocket(...)", "webview/probe.js"],
+    ["let ws = new WebSocket(u);\nws ||= window;\nws.onmessage = f;", "ws is written at :2 by a compound assignment", "webview/probe.js"],
+    ["let ws = new WebSocket(u);\nws++;\nws.onmessage = f;", "ws is written at :2 by ++ or --", "webview/probe.js"],
+    ["\nfor (let ws = new WebSocket(u); ; ) {\n  ws.onmessage = f; break;\n}", "ws is not declared by a let, const or var statement of its own (:2)", "webview/probe.js"],
+    ["ws.onmessage = f;", "ws is not declared by a let, const or var statement of its own", "webview/probe.js"],
+    ["\nlet ws = pick();\nws.onmessage = f;", "ws is declared at :2 bound to something other than new WebSocket(...)", "webview/probe.js"],
+    ["\ndeclare var ws: any;\nif (0) ws = new WebSocket(u); ws.onmessage = f;", "ws is declared at :2 by an ambient declaration (declare), which binds nothing at run time"],
+    ["namespace N {\n  export var ws: any = new WebSocket(u);\n  export function arm() { ws.onmessage = f; }\n}", "ws is declared at :2 as a namespace's export, which is a property of the namespace object"],
+    ["let ws;\nws.onmessage = f;", "ws is never bound to new WebSocket(...)", "webview/probe.js"],
+    ["document.body.onmessage = f;", "the receiver is not a name"],
+  ];
+  for (const [src, want, file] of named) {
+    const got = roads(src, file);
+    if (!got.includes(UNPROVED + want)) missed.push("not refused naming the site (" + want + "): " + JSON.stringify(src) + " (refused for: " + JSON.stringify(got) + ")");
+  }
+  assert.deepEqual(missed, [], "a handler the census accepts refused, a road not refused for its reason, a refused handler that is a census site, or a refusal on an unproved socket that does not name its site:\n" + missed.join("\n"));
 });
 
 type Leg = { site: string; arm?: string };   // a leg's listener (file:line) and the arm it names, if any
