@@ -2008,8 +2008,20 @@ def _route_table_renderers(tree, scopes):
     membership test (`p in _PAGE_RENDERERS`, Handler._need's auth class) or a one-argument `.get(...)`. Anything else is loud: any other
     binding of the name anywhere in the file (an assignment or deletion, a parameter, a def or class, an except-as, an import, a match
     capture: `scopes`' binders, so a `.get` read under that name elsewhere could be some other object's), a subscript store or deletion
-    (`_PAGE_RENDERERS[p] = page` reads the name and writes the table), another method, the table or its `.get` passed on, a `**` entry
-    or a renderer that is not a plain name. Returns (renderer names, ids of the `.get` calls)."""
+    (`_PAGE_RENDERERS[p] = page` reads the name and writes the table), another method, the table or its `.get` passed on (a `.get`
+    with a starred argument, which can carry a default, and a membership test chained past the table, which hands the table to the
+    next operand's `__contains__`, among them), a `**` entry or a renderer that is not a plain name. The roads that write the table
+    without naming it where this walk reads a name are loud too, each by one syntactic check that no line of kernel.py meets today
+    (the reviewer's round-7 findings extra8-1 and extra8-2): a star import (`from m import *` binds whatever m's `__all__` lists); a
+    reference to `globals` other than a `globals().get(...)` read with one string-constant key (the two live reads, of
+    `_JUDGE_MODEL_VALUES` and `_MODEL_VALUES`, are that shape; a computed key could fetch the table and write through it); any
+    reference to `vars`, `locals`, `exec` or `eval`, a name or an attribute `.exec` or `.eval` (keyed on references, not calls, so
+    `e = exec` and `builtins.exec(...)` are read); and the table reached as an attribute or by its name as a string (the
+    module-object road: `sys.modules[__name__]._PAGE_RENDERERS`, `setattr(m, '_PAGE_RENDERERS', ...)`). THE BOUND, the roads no one
+    syntactic check refuses and this census does not read: a getattr or setattr whose name is computed or names a builtin such as
+    exec, a `__dict__` write with a computed name, the `__import__` and importlib roads, and a write from another module (sys.modules
+    has 10 live uses in kernel.py and `__dict__` 1, a read of glob's module dict, so neither can be refused by name). Returns
+    (renderer names, ids of the `.get` calls)."""
     defs = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == _ROUTE_TABLE for t in n.targets)]
     if len(defs) != 1 or len(defs[0].targets) != 1 or not isinstance(defs[0].value, ast.Dict):
         raise AssertionError("kernel.py: %s is not one module-level dict literal (%d bindings); classify it here" % (_ROUTE_TABLE, len(defs)))
@@ -2020,20 +2032,53 @@ def _route_table_renderers(tree, scopes):
         if b is not defs[0].targets[0]:
             raise AssertionError("kernel.py line %d: %s bound again (an assignment, a deletion, a parameter, a def or class, an except-as, an import or a match capture), which a .get would read in the table's place; classify it here" % (b.lineno, _ROUTE_TABLE))
     parent = scopes.parent
+    _refuse_dynamic_table_roads(tree, parent)
     gets = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Name) and node.id == _ROUTE_TABLE) or node is defs[0].targets[0]:
             continue
         up = parent.get(node)
-        if isinstance(node.ctx, ast.Load) and isinstance(up, ast.Compare) and node in up.comparators and all(isinstance(o, (ast.In, ast.NotIn)) for o in up.ops):
+        if (isinstance(node.ctx, ast.Load) and isinstance(up, ast.Compare) and len(up.ops) == 1 and node in up.comparators
+                and isinstance(up.ops[0], (ast.In, ast.NotIn))):
             continue
         call = parent.get(up)
         if (isinstance(node.ctx, ast.Load) and isinstance(up, ast.Attribute) and up.attr == "get" and isinstance(call, ast.Call) and call.func is up
-                and len(call.args) == 1 and not call.keywords):
+                and len(call.args) == 1 and not any(isinstance(a, ast.Starred) for a in call.args) and not call.keywords):
             gets.add(id(call))
             continue
         raise AssertionError("kernel.py line %d: a use of %s this census does not read (a subscript store or deletion, another method, a .get with a default, the table passed on, or its .get passed on); classify it here" % (node.lineno, _ROUTE_TABLE))
     return {v.id for v in table.values}, gets
+
+
+_NAMESPACE_ROADS = ("vars", "locals", "exec", "eval")   # a reference to any of these can write the module's namespace or run code that does
+
+
+def _refuse_dynamic_table_roads(tree, parent):
+    """The loud half of _route_table_renderers' dynamic roads (its docstring; the reviewer's round-7 findings extra8-1 and extra8-2):
+    each check is one syntactic read that no line of kernel.py meets today, and each raises with a classify-it-here message naming
+    the road."""
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and any(al.name == "*" for al in n.names):
+            raise AssertionError("kernel.py line %d: a star import (`from %s import *`), which binds whatever that module's __all__ lists, %s "
+                                 "among them, where no binder names it; classify it here" % (n.lineno, n.module or ".", _ROUTE_TABLE))
+        if isinstance(n, ast.Name) and n.id == "globals":
+            call = parent.get(n)
+            attr = parent.get(call)
+            read = parent.get(attr)
+            if not (isinstance(call, ast.Call) and call.func is n and not call.args and not call.keywords
+                    and isinstance(attr, ast.Attribute) and attr.attr == "get" and isinstance(read, ast.Call) and read.func is attr
+                    and len(read.args) == 1 and not read.keywords and isinstance(read.args[0], ast.Constant) and isinstance(read.args[0].value, str)):
+                raise AssertionError("kernel.py line %d: a reference to globals other than a globals().get read with one string-constant key "
+                                     "(a globals() write, or a computed key that fetches %s and writes through it); classify it here" % (n.lineno, _ROUTE_TABLE))
+        if isinstance(n, ast.Name) and n.id in _NAMESPACE_ROADS:
+            raise AssertionError("kernel.py line %d: a reference to %s, which can write the module's namespace or run code that writes %s by "
+                                 "name; classify it here" % (n.lineno, n.id, _ROUTE_TABLE))
+        if isinstance(n, ast.Attribute) and n.attr in ("exec", "eval"):
+            raise AssertionError("kernel.py line %d: an attribute .%s (builtins.%s runs code that can write %s by name); classify it here"
+                                 % (n.lineno, n.attr, n.attr, _ROUTE_TABLE))
+        if (isinstance(n, ast.Attribute) and n.attr == _ROUTE_TABLE) or (isinstance(n, ast.Constant) and n.value == _ROUTE_TABLE):
+            raise AssertionError("kernel.py line %d: %s reached as an attribute or by its name as a string (a module-object write: "
+                                 "sys.modules[__name__].%s, setattr(m, '%s', ...)); classify it here" % (n.lineno, _ROUTE_TABLE, _ROUTE_TABLE, _ROUTE_TABLE))
 
 
 _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
@@ -2408,13 +2453,14 @@ class StampCensusResolvesByBinding(unittest.TestCase):
                     return self._send(200, _page(), "text/html")
                 """)
 
-    # Below, apart from the route table's own two cases, one case each pins these binders _bound_names reads: a del, an except-as, a
+    # Below, apart from the route table's own three cases, one case each pins these binders _bound_names reads: a del, an except-as, a
     # match capture (as, star and a mapping's rest), an import under `as`, a dotted import, a from-import plain and under `as`, and an
     # async def; these header positions scope_of places in the scope around a def, a lambda or a class: a def's decorators, defaults,
-    # keyword-only defaults, a parameter's annotation and the return annotation, a class's decorators, bases and keywords, and a
-    # lambda's default and keyword-only default; and an async def as a scope of its own. A census that loses any one of them reds its
-    # case (before these cases, losing any of them left every test green). Each case pins its rule on one form: a rule split by kind (an
-    # *args, **kwargs or keyword-only annotation apart from a positional one, an async def's header apart from a def's) has no case.
+    # keyword-only defaults, a parameter's annotation, a *args annotation and the return annotation, an async def's decorators, a
+    # class's decorators, bases and keywords, and a lambda's default and keyword-only default; and an async def as a scope of its own.
+    # A census that loses any one of them reds its case (before these cases, losing any of them left every test green). Each case pins
+    # its rule on one form: a rule split further by kind (a **kwargs or keyword-only annotation apart from a positional one, an async
+    # def's defaults or annotations apart from a def's) has no case.
 
     def test_a_del_of_the_table_read_in_the_calling_scope_is_refused(self):
         # a del binds the name it deletes: a second binding of the variable the call reads
@@ -2465,11 +2511,42 @@ class StampCensusResolvesByBinding(unittest.TestCase):
         # Subscript that writes), so it is no binder of the name and reaches this refusal like another method or the table passed on
         uses = (("_PAGE_RENDERERS['/x'] = _x_page", "a subscript store or deletion"), ("del _PAGE_RENDERERS['/chat']", "a subscript store or deletion"),
                 ("_PAGE_RENDERERS.update({'/x': _x_page})", "another method"), ("_PAGE_RENDERERS.get(self.path, _x_page)", "a .get with a default"),
-                ("print(_PAGE_RENDERERS)", "the table passed on"), ("_pick(_PAGE_RENDERERS.get)", "its .get passed on"))
+                ("print(_PAGE_RENDERERS)", "the table passed on"), ("_pick(_PAGE_RENDERERS.get)", "its .get passed on"),
+                ("_PAGE_RENDERERS.get(*(self.path, _x_page))", "a .get with a default"),   # the reviewer's round-7 finding extra8-3: a starred argument counted as one, and can carry a default
+                ("self.path not in _PAGE_RENDERERS in _pick", "the table passed on"),     # extra8-3: a chained membership hands the table to the next operand's __contains__
+                ("_Add() == _PAGE_RENDERERS", "the table passed on"))                     # extra8-4: a comparison other than in or not in hands the table to the other operand's method, which can add a renderer
         for use, shape in uses:
             with self.subTest(use=use):
                 with self.assertRaisesRegex(AssertionError, r"a use of _PAGE_RENDERERS this census does not read \([^)]*" + re.escape(shape)):
                     self._census("_x_page", "def do_GET(self):\n    " + use + "\n    _page = _PAGE_RENDERERS.get(self.path)\n    return self._send(200, _page(), \"text/html\")\n")
+
+    def test_a_dynamic_write_to_the_table_is_refused_naming_its_road(self):
+        # the reviewer's round-7 findings extra8-1 and extra8-2: every road below writes the table without naming it where the use
+        # classification reads a name, and each is refused by one syntactic check at 0 live uses in kernel.py; the one globals() read
+        # kernel.py makes, a .get with a string-constant key, is the control and passes
+        roads = (("from _tables import *", None, r"a star import \(`from _tables import \*`\)"),
+                 (None, "globals().get(_key)['/x'] = _x_page", r"a reference to globals other than a globals\(\)\.get read with one string-constant key"),
+                 (None, "globals()[_key] = _PAGES", r"a reference to globals other than a globals\(\)\.get read with one string-constant key"),
+                 (None, "globals().update(_PAGES)", r"a reference to globals other than a globals\(\)\.get read with one string-constant key"),
+                 (None, "_g = globals", r"a reference to globals other than a globals\(\)\.get read with one string-constant key"),
+                 (None, "vars()[_key] = _PAGES", r"a reference to vars, which can write the module's namespace"),
+                 (None, "locals()[_key] = _PAGES", r"a reference to locals, which can write the module's namespace"),
+                 (None, "exec(_code)", r"a reference to exec, which can write the module's namespace"),
+                 (None, "_e = exec", r"a reference to exec, which can write the module's namespace"),
+                 (None, "eval(_code)", r"a reference to eval, which can write the module's namespace"),
+                 (None, "builtins.exec(_code)", r"an attribute \.exec \(builtins\.exec runs code"),
+                 (None, "builtins.eval(_code)", r"an attribute \.eval \(builtins\.eval runs code"),
+                 (None, "sys.modules[__name__]._PAGE_RENDERERS['/x'] = _x_page", r"_PAGE_RENDERERS reached as an attribute or by its name as a string"),
+                 (None, "setattr(sys.modules[__name__], '_PAGE_RENDERERS', _PAGES)", r"_PAGE_RENDERERS reached as an attribute or by its name as a string"))
+        do_get = "    _page = _PAGE_RENDERERS.get(self.path)\n    return self._send(200, _page(), \"text/html\")\n"
+        for module_line, use, refusal in roads:
+            with self.subTest(road=module_line or use):
+                src = ((module_line + "\n") if module_line else "") + self.TABLE + self.OUTSIDE % "_x_page" + "class Handler:\n" + textwrap.indent(
+                    "def do_GET(self):\n" + (("    " + use + "\n") if use else "") + do_get, "    ")
+                with self.assertRaisesRegex(AssertionError, refusal):
+                    _text_html_200_writers(src)
+        calls, names = self._census("_x_page", "def do_GET(self):\n    _v = globals().get('_MODEL_VALUES')\n" + do_get)
+        self.assertEqual((calls, names), ({"_chat_page", "_feed_page"}, set()), "a globals().get read with a string-constant key, kernel.py's live shape, is read as before")
 
     def test_a_table_that_is_not_one_plain_module_level_literal_is_refused(self):
         # the census reads the renderers off the table's one literal, so a table it cannot read that way is loud, never read partly
@@ -2530,6 +2607,12 @@ class StampCensusResolvesByBinding(unittest.TestCase):
                 return (lambda _page, *, b=self._send(200, _page(), "text/html"): b)
             """)
         self.assertEqual(calls, {"_chat_page", "_feed_page"}, "the keyword-only default reads do_GET's variable, not the lambda's parameter")
+
+    def test_a_vararg_annotations_call_reads_the_scope_around_the_def(self):
+        self.assertEqual(self._header_send("def g(*b: self._send(200, _page(), \"text/html\")):"), ({"_page"}, set()), "a *args annotation is evaluated in do_GET, as a positional one is")
+
+    def test_an_async_defs_decorators_call_reads_the_scope_around_the_def(self):
+        self.assertEqual(self._header_send("@self._send(200, _page(), \"text/html\")\n    async def g():"), ({"_page"}, set()), "an async def's decorator is evaluated in do_GET, as a def's is")
 
     def test_a_table_read_bound_in_a_nested_async_def_is_not_credited_to_a_call_in_the_def_around_it(self):
         # an async def is a scope of its own, as a def is: _pick's `_page` is _pick's, do_GET's is the module's function
