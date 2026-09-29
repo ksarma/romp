@@ -38,8 +38,8 @@ its job's first, so in practice nothing is excused); when the clone's .git was r
 info/exclude changed; or when one of those names is now in an ancestor directory. After the pytest leg and the served
 leg it also reads that leg's environment (the venvs below) against the tree its build left, and records the run
 invalid, naming the paths, when a file there was added, changed or is gone. That re-read after each leg, and the
-verification of each later checkout, are the runner's producers of invalid, and the legs after either do not run. The batcher's tree is read for its HEAD sha and branch only, so it need not
-be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
+verification of each later checkout, are the runner's producers of invalid, and the legs after either do not run.
+The batcher's tree is read for its HEAD sha and branch only, so it need not be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
 length the deepest session-host socket path depends on, is unchanged, the run's and each leg's own. Each checkout is
@@ -55,24 +55,24 @@ or not, is reparented to the runner and reaped as soon as it exits while the leg
 leg's group as a defunct process.
 
 The legs (LEGS) are pytest (all of tests/, below), deps (`npm ci` from the sha's lockfile), bats, manager and tools
-(node --test), ledger (scripts/upstream-ledger.py check), the three webview legs (typecheck, npm-test, build), and served
-(the browser-backed served-page tests, below). They run as CI's jobs run them (round 2, the coordinator's decision 13;
-leg_groups): each leg mirrors one step of the swept sha's ci.yml, found by its name (LEG_STEPS), and the legs whose
-steps one job holds run in one fresh checkout, in that job's step order, as CI's steps in one job share its checkout,
-while each such group starts from a checkout of its own, as each of CI's jobs does. The grouping is read from ci.yml,
-never restated here, and the result records each group's job, legs, checkout and setup (runner.checkout.groups) and the
-order the legs ran in (order). The ledger's check is in no job of ci.yml (CI runs it in a workflow of its own), so it
-runs in a checkout of its own, after the ci.yml groups. The groups run in ci.yml's job order, the pytest leg's job
-first, since its skips decide what the served leg also runs. npm ci runs where the group's job runs it: as the deps leg
-in the first job that holds that step (DEPS_STEP), and as the setup of any other group whose job runs it before one of
-its legs; a job that runs none gets none. So the pytest leg runs as CI's Python cells run it, with no node dependencies
+(node --test), ledger (scripts/upstream-ledger.py check), the three webview legs (typecheck, npm-test, build), and
+served (the browser-backed served-page tests, below). They are grouped as CI's jobs group their steps (round 2, the
+coordinator's decision 13; leg_groups). Each leg mirrors one step of the swept sha's ci.yml, found by its name
+(LEG_STEPS). The legs whose steps one job holds run in one fresh checkout, in that job's step order, as CI's steps in
+one job share its checkout, and each such group starts from a checkout of its own, as each of CI's jobs does. The
+grouping is read from ci.yml, never restated here; the result records each group's job, legs, checkout and setup
+(runner.checkout.groups) and the order the legs ran in (order). The ledger's check is in no job of ci.yml (CI runs it
+in a workflow of its own), so the ledger leg runs in a checkout of its own, after the ci.yml groups. The groups run in
+ci.yml's job order, except that the pytest leg's job runs first, since the pytest leg's skips decide what the served
+leg also runs. npm ci runs where the group's job runs it: as the deps leg in the first job that holds that step
+(DEPS_STEP), and as the setup of any other group whose job runs it before one of the group's legs. A job that runs no
+npm ci gets none. So the pytest leg runs as CI's Python cells run it, with no node dependencies
 and no browser: in a checkout where npm ci never runs, with PLAYWRIGHT_BROWSERS_PATH at an empty directory, so the
 browser-backed tests skip there as they do in CI, and the other tests in the served globs' files (63 in six files when
-the served rulings were made) run with the SDK, as CI runs them; and the legs of a job that runs no npm ci (the bats,
-manager and tools legs, whose CI jobs run none) run with no node_modules, as there. Each group runs in its job's step order,
-so the npm-test leg runs over a checkout holding no bundle a served test built, as CI's Test step does. Every head owes
-every leg, a member's head included,
-whatever its diff: the webview legs read files outside kernel/kernel.py, ui/ and vscode-extension/ (tests, other kernel
+the served rulings were made) run with the SDK, as CI runs them; and the bats, manager and tools legs, whose CI jobs
+run no npm ci, run with no node_modules, as there. Each group runs in its job's step order, so the npm-test leg runs
+over a checkout holding no bundle a served test built, as CI's Test step does. Every head owes every leg, a member's
+head included, whatever its diff: the webview legs read files outside kernel/kernel.py, ui/ and vscode-extension/ (tests, other kernel
 modules, docs), and the served tests boot the kernel and serve the webview bundle, so no set of changed paths shows
 either may be skipped. deps, the webview legs and served are marked not owed only when the sha has no
 vscode-extension/package.json, and the ledger only when it has no ledger script; a reader refuses any other not-owed
@@ -176,26 +176,28 @@ read /proc/<pid>/environ of the runner and of every other process of the batcher
 as that user. The result records the allowlist's hash (runner.leg_env), and a reader refuses a result
 recorded under another; the hash covers what the runner itself sets, that the served leg adds its step's env:
 block, and the shape each leg runs in (its own TMPDIR, HOME and state root; one checkout per ci.yml job, the steps it
-groups by), so a result written before round 2's fixes, whose legs shared all four, reads as recorded under another
-(decision 15); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
-in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups). The result also records the versions of node, npm, bats, git and gitleaks the legs found, and, per
+groups by), so a result written before round 2's fixes, whose legs shared one TMPDIR, HOME, state root and checkout,
+reads as recorded under another (decision 15); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
+in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups).
+The result also records the versions of node, npm, bats, git and gitleaks the legs found, and, per
 leg, the names it left in its private HOME (runner.home_left, {leg: names}; a setup's are in its own record), with
 home_empty true when no leg and no setup left anything; recorded only.
 
 What a leg leaves, and what of it reaches the legs after it (round 2, Class B and the coordinator's decision 13).
-Closed: its TMPDIR, private HOME and private state root are its own and removed when it ends, so nothing it leaves
-there reaches any later leg; and nothing it leaves in its checkout reaches a leg of another job, since each job's legs
-start from a fresh clone verified against the sha's tree: not a file in the clone's .git (a hook, info/attributes,
-info/exclude, config, a ref or refs/replace, packed-refs, objects/info/alternates), and not an ignored file (bytecode,
-node_modules, dist). Shared, as CI's steps in one job share its checkout: the legs of one job share that checkout, and
-the re-read after each leg makes the run invalid on what it reads (above); anything else a leg leaves there (a hook or
-an attributes file in the clone's .git, a replace ref, an ignored file other than after deps) reaches the later legs of
-its job, as it would reach CI's later steps. Open, since the runner runs on the batcher's machine as the batcher's user
-(the stated outside): /tmp outside each TMPDIR, /dev/shm, /run/user/<uid>, the shared npm and Playwright caches, the
-passwd home (the home directory the password database names, which a leg can write to and which is not HOME), tmux's
-socket directory (tmux ignores TMPDIR), --python's directory, which leads the PATH of every leg outside the two venvs,
-and the batcher's repository, whose objects every clone reads (a rewritten object of the sha fails the next job's
-verification, above). A leg can leave a file in any of these that a later leg reads.
+Closed: a leg's TMPDIR, private HOME and private state root are its own and are removed when it ends, so nothing it
+leaves there reaches a later leg. Nothing it leaves in its checkout reaches a leg of another job, since each job's
+legs start from a fresh clone verified against the sha's tree: no file in the clone's .git (a hook, info/attributes,
+info/exclude, config, a ref or refs/replace, packed-refs, objects/info/alternates) and no ignored file (bytecode,
+node_modules, dist). Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
+each leg makes the run invalid when it finds one of the changes it checks for (above); anything else a leg leaves in
+that checkout (a hook or an attributes file in the clone's .git, a replace ref, an ignored file other than one the
+deps leg adds outside vscode-extension/node_modules) reaches the later legs of its job, as it would reach CI's later
+steps. Open, because the runner runs on the batcher's machine as the batcher's user (the stated outside): /tmp outside
+each TMPDIR, /dev/shm, /run/user/<uid>, the shared npm and Playwright caches, the passwd home (the home directory the
+password database names, which is not HOME and which a leg can write to), tmux's socket directory (tmux ignores
+TMPDIR), --python's directory, which leads the PATH of every leg outside the two venvs, and the batcher's repository,
+whose objects every clone reads (a rewritten object of the sha fails the next job's verification). A leg can leave a
+file in any of these that a later leg reads.
 
 The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
 the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
