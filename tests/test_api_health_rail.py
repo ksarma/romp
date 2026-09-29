@@ -724,7 +724,10 @@ class Detail(unittest.TestCase):
         for s in shown:
             self.assertNotIn("fleet", s.lower())
         self.assertNotIn("'blocked'", self.JS)
-        self.assertNotIn("blocked", self.JS.split("data-act=reveal")[0].split("var PAUSE")[1] if "var PAUSE" in self.JS else "", "the amber state is never called blocked")
+        # the code, comments blanked: the region's two markers and the word are read as code, never as a comment (the condition's
+        # membership had read the raw text, a pin no census judged: tests/test_served_pins_read_elements.py, round 6)
+        code = served_css.js_code(self.JS)
+        self.assertNotIn("blocked", code.split("data-act=reveal")[0].split("var PAUSE")[1] if "var PAUSE" in code else "", "the amber state is never called blocked")
         self.assertNotIn("\u2014", self.JS)
         # the words a reader SEES: the code lines without their `//` comments (upstream's own comment on the
         # 429 cell spells "colour"; it renders nothing, and upstream's text stands as landed)

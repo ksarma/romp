@@ -1260,6 +1260,9 @@ READER_FORMS = ("parser", "assert", "position", "view-pin", "position-unpinned",
 # served_css functions returning a TEXT derived from the one they are given, its comments blanked with offsets kept: a VIEW of the text,
 # the author's pass 6 re-point form (a literal membership or position pin over one is not comment-satisfiable by construction: `view-pin`)
 _VIEWS = {"code", "markup", "js_code", "css_code"}
+# the lead of an `assert` reader row's source column where the row is a literal membership over the text itself, the pins census's
+# row: reader_status holds it to a pins row at its module, line and text (round 6)
+_MEMBERSHIP = "membership: "
 # str methods whose result is the text transformed or cut into pieces: a COPY of the text, which the pins census does not bind, so a
 # literal membership or position pin over one is unjudged (`membership-unpinned`, `position-unpinned`)
 _COPIES = {"lower", "upper", "casefold", "strip", "lstrip", "rstrip", "replace", "translate", "expandtabs", "removeprefix", "removesuffix", "swapcase",
@@ -1324,9 +1327,13 @@ def readers_of(path, getters, constants, routes=None):
     (`parser`, the one road for an element, an attribute or a rule); `X.<index|find|rindex|rfind|count>(needle)` with a literal or
     loop-literal needle over the text itself (`position`: a pins-census row, judged there), over a view (`view-pin`: an order or
     count over comment-blanked text, the author's pass 6 re-point form) or over a copy (`position-unpinned`: a read the pins census does
-    not see), and with any other needle (`position-unpinned`); a literal membership `<lit> in X` under assertIn, assertNotIn,
-    assertTrue or a bare assert over the text (`assert`: the pins census's row), over a view (`view-pin`) or over a copy
-    (`membership-unpinned`), and `<needle> in X` with a non-literal needle (`membership-unpinned`); `re.<fn>(..., X)` or
+    not see), and with any other needle (`position-unpinned`); a literal membership `<lit> in X` over the text, wherever it stands,
+    and an assertIn or assertNotIn over the text whatever its needle (`assert`), over a view (`view-pin`) or over a copy
+    (`membership-unpinned`), and a comparison `<needle> in X` with a non-literal needle (`membership-unpinned`). A positive literal
+    membership over the text itself (assertIn with a literal needle, `<lit> in X`, and `<lit> not in X` anywhere but under a bare
+    assert or assertTrue) leads its source column with _MEMBERSHIP, and reader_status holds it to a pins row at its module, line and
+    text, unclassified without one (round 6, the coordinator's decision B.3); an assertIn with a non-literal needle is `assert` and
+    no pins row judges it (extra8-8: a stated read, not a membership the pins census reads); `re.<fn>(..., X)` or
     `<pattern>.<fn>(X)` with the pattern a Name bound by re.compile in the module (`regex`); `X[a:b]` with both bounds Names a
     `for` over a `served_css.<fn>(...)` iterable binds (`span-slice`: offsets the parser derived) and any other subscript of X
     (`slice`); any other str method on X (`method`, the method's name in the source column); X.encode/decode/read (`conversion`:
@@ -1352,6 +1359,14 @@ def readers_of(path, getters, constants, routes=None):
     reads = functools.partial(_response_reads, tree)   # the positions each helper of the module reads a response at (_bind), read on demand
     seg = lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
     nodes = list(ast.walk(tree))   # one walk of the module for the patterns and the classes below
+    parents = {id(ch): n for n in nodes for ch in ast.iter_child_nodes(n)}
+
+    def asserted(node):   # a comparison a bare assert or self.assertTrue asserts, directly or as a conjunct
+        p = parents.get(id(node))
+        while isinstance(p, ast.BoolOp) and isinstance(p.op, ast.And):
+            node, p = p, parents.get(id(p))
+        return isinstance(p, ast.Assert) and p.test is node \
+            or isinstance(p, ast.Call) and isinstance(p.func, ast.Attribute) and p.func.attr == "assertTrue" and bool(p.args) and p.args[0] is node
     patterns = {t.id for node in nodes if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
                 and isinstance(node.value.func, ast.Attribute) and isinstance(node.value.func.value, ast.Name) and node.value.func.value.id == "re"
                 and node.value.func.attr == "compile" for t in node.targets if isinstance(t, ast.Name)}
@@ -1484,6 +1499,7 @@ def readers_of(path, getters, constants, routes=None):
                 if path and path.split("?")[0] in routes and "refused" in reads().get(_callee(node), ()):
                     rows.append((node.lineno, "unclassified", routes[path.split("?")[0]],
                                  "refused fetch, %s returns a read the follow cannot place: %s" % (_callee(node), seg(node))))
+                member = False
                 if isinstance(f, ast.Attribute) and text(f.value):   # X.<method>(...)
                     t = text(f.value)
                     if f.attr in _POSITION:
@@ -1517,13 +1533,16 @@ def readers_of(path, getters, constants, routes=None):
                         # compared whole, spliced or not (the close of the author's pass 9: a splice in the member position had read as a
                         # pin over a copy, a raw read of the constant the page was searched for)
                         container = node.args[1] if len(node.args) > 1 else next((kw.value for kw in node.keywords if kw.arg == "container"), None)
+                        needle = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "member"), None)
                         if container is not None and text(container):
                             form, t = pin("assert", container), text(container)   # the row is over the text read, the container's
+                            # a literal needle asserted IN the text itself: a membership the pins census must judge (reader_status)
+                            member = f.attr == "assertIn" and form == "assert" and needle is not None and literal(needle)
                         else:
                             form = "assert"
                     else:
                         form = "assert"
-                    rows.append((node.lineno, form, t, seg(node)))
+                    rows.append((node.lineno, form, t, (_MEMBERSHIP if member else "") + seg(node)))
                 elif depth == 0 and (isinstance(f, ast.Name) and f.id in helpers or isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
                                      and f.value.id == "self" and f.attr in methods and f.attr not in _ASSERTS):
                     # a helper of this module, or a method of the same class (`self._code(js)`; the fixer pass of the author's pass 9): followed once
@@ -1553,7 +1572,11 @@ def readers_of(path, getters, constants, routes=None):
                 for i, (op, right) in enumerate(zip(node.ops, node.comparators)):
                     left = node.left if i == 0 else node.comparators[i - 1]
                     if isinstance(op, (ast.In, ast.NotIn)) and text(right):
-                        rows.append((node.lineno, pin("assert", right) if literal(left) else "membership-unpinned", text(right), seg(node)))
+                        form = pin("assert", right) if literal(left) else "membership-unpinned"
+                        # a literal membership over the text itself the pins census must judge (reader_status): `in` anywhere, and
+                        # `not in` anywhere but under a bare assert or self.assertTrue (a negative form a comment can red, never green)
+                        member = form == "assert" and (isinstance(op, ast.In) or not asserted(node))
+                        rows.append((node.lineno, form, text(right), (_MEMBERSHIP if member else "") + seg(node)))
                     elif text(left) or text(right):
                         rows.append((node.lineno, "compare", text(left) or text(right), seg(node)))
         # the rulings on the census bounds (2026-09-28): a fetched tuple bound to one name is read by a constant index or an unpack by
@@ -1957,6 +1980,25 @@ _ONE_CELL_REASON = ("the reader census is a source-text fact whose rows were der
                     "this one, not replaced by anything")
 
 
+def reader_status(fname, line, form, text, source, pins, members, kinds):
+    """The reader census's status of one reader row (test_every_reader_of_a_served_page_is_the_parser_or_a_stated_read): the parser
+    road, a stated read, `raw` (a read of markup by another road), `source` (a read of JS or CSS source) or `unclassified`. A
+    `position` row with no pins row at its module, line and text (`pins`, the position rows of rows_of) is demoted to
+    position-unpinned, a raw read; an `assert` row that is a literal membership (its source column led by _MEMBERSHIP) with no
+    pins row there (`members`, the membership rows of rows_of) is unclassified: the status claims the pins census judges it, and
+    this checks the claim (round 6, the coordinator's decision B.3; negative forms, assertNotIn and `not in` under a bare assert or
+    assertTrue, carry no mark, since a comment can red them, never green them)."""
+    if form == "position" and (fname, line, text) not in pins:
+        form = "position-unpinned"   # a position pin the pins census does not see (inside a followed helper): raw
+    if form == "assert" and source.startswith(_MEMBERSHIP) and (fname, line, text) not in members:
+        return "unclassified"
+    if form in ("parser", "assert", "position", "view-pin", "span-slice", "conversion", "value-use", "splice", "compare"):
+        return form
+    if form == "unclassified":
+        return "unclassified"
+    return "raw" if "markup" in kinds[text] else "source"
+
+
 # The one visible listing (the coordinator's round 6 decisions on PR 858, B.4): rows that stand in main's
 # tests/test_fetch_wrapper_census.py, each with its reason. The decision was to re-point that module's page and worker reads through
 # served_css unless that would weaken what it asserts, and it would: importing served_css puts the module on the parser road, where
@@ -2292,7 +2334,8 @@ def test_module_level():
         # added a fresh regex over the raw page beside it (the viewport meta, satisfiable by a commented copy, the case it existed to
         # stop). The population is EVERY read of a served text across the suite, derived by readers_of (its form space in
         # READER_FORMS and pinned below), and each form has a status: the parser road (`parser`); a stated read that is not a read of
-        # markup by another road (`assert`: a literal membership the pins census judges or a whole-text compare; `position` with a
+        # markup by another road (`assert`: a literal membership the pins census judges, which reader_status holds to a pins row since
+        # round 6, a negative literal membership, an assertIn over a non-literal needle, or a whole-text compare; `position` with a
         # literal needle: a pins-census row, an order or count over text the census judges against every comment span, not an
         # element's extent or attributes; `view-pin`: a literal membership or position pin over the parser's comment-blanked VIEW of
         # the text, served_css.code, markup, js_code or css_code, the author's pass 6 re-point form, not comment-satisfiable by construction;
@@ -2312,22 +2355,16 @@ def test_module_level():
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         kinds = {g: frozenset([getter_kind(g)]) for g in getters}
         kinds.update(constants)
-        rows, pins, road = [], set(), {}
+        rows, pins, members, road = [], set(), set(), {}
         for fname, (derived, _, on_road, readers) in population_census().items():   # derived once per process, shared with the pins census
             road[fname] = on_road
             rows += [(fname, line, form, text, source) for line, form, text, source in readers]
             pins |= {(fname, row[0], row[2]) for row in derived if row[3] in _POSITION}
+            members |= {(fname, row[0], row[2]) for row in derived if row[3] == "in"}
         self.assertGreater(len(rows), 1000, "the population read: %d rows" % len(rows))
         self.assertEqual(sorted({r[2] for r in rows} - set(READER_FORMS)), [], "a form readers_of names that READER_FORMS does not")
         self.assertTrue(len({r[2] for r in rows}) >= 10, "the forms met across the suite: %r" % (sorted({r[2] for r in rows}),))
-        def status(fname, line, form, text, source):
-            if form == "position" and (fname, line, text) not in pins:
-                form = "position-unpinned"   # a position pin the pins census does not see (inside a followed helper): raw
-            if form in ("parser", "assert", "position", "view-pin", "span-slice", "conversion", "value-use", "splice", "compare"):
-                return form
-            if form == "unclassified":
-                return "unclassified"
-            return "raw" if "markup" in kinds[text] else "source"
+        status = lambda *r: reader_status(*r, pins, members, kinds)
         by = {}
         for r in rows:
             by.setdefault(status(*r), []).append(r)
@@ -2516,7 +2553,9 @@ def _kw(self, lit, body):
                                                                     "splitlines: page.splitlines()", "splitlines: page.splitlines()"])
         self.assertEqual([r[3] for r in rows if r[1] == "splice"], ['page + "k3"', 'f"{page}"', '"%s" % page', 'page + "k7"', '"k10" + km._LANDING_MOBILE_JS'])
         self.assertEqual([r[3] for r in rows if r[0] == 74], ["body.index(lit)"], "the helper's parameter bound by keyword, its read a row at the helper's line")
-        self.assertEqual([r[3] for r in rows if r[0] in (58, 59, 70)], ['self.assertIn("k1", container=page)', 're.search("k2", string=page)', 'self.assertRegex(page, "k9")'])
+        # a literal membership over the text itself leads its source column with the mark reader_status reads (round 6)
+        self.assertEqual([r[3] for r in rows if r[0] in (58, 59, 70)], ['membership: self.assertIn("k1", container=page)', 're.search("k2", string=page)',
+                                                                        'self.assertRegex(page, "k9")'])
         self.assertTrue([r for r in rows if r[1] == "value-use" and r[3].startswith("helper _has")] and [r for r in rows if r[1] == "value-use" and r[3].startswith("helper _win")]
                         and [r for r in rows if r[1] == "value-use" and r[3].startswith("helper _lines")], "helpers and a method of the class followed one level")
         self.assertEqual([r[3].split(":")[0] for r in rows if r[1] == "unclassified"], ["search", "parse_it", "fromstring", "parse_it", "list"])
@@ -3700,7 +3739,7 @@ class T(unittest.TestCase):
         self.assertEqual([(r[0], r[1], r[3].split(":")[0]) for r in readers],
                          [(17, "unclassified", "refused fetch, _strip returns a read the follow cannot place"),
                           (18, "unclassified", "refused fetch, _bound returns a read the follow cannot place"),
-                          (20, "assert", 'self.assertIn("y1", c2)'), (22, "assert", 'self.assertIn("y2", d2)')])
+                          (20, "assert", "membership"), (22, "assert", "membership")])
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
                          {"_strip": ["refused"], "_bound": ["refused"], "_attr": ["unknown"], "_dec": ["unknown"], "test_a": []})
 
@@ -3756,6 +3795,61 @@ V = _argued(2)
                          [(9, "_landing", where % "Assign"), (10, "_landing", where % "AnnAssign"), (11, "_LANDING_MOBILE_JS", where % "AugAssign"),
                           (12, "_landing", where % "NamedExpr"), (13, "_landing", where % "Lambda"), (15, "_landing", where % "Yield"),
                           (19, "_landing", where % "Return"), (21, "_landing", where % "Return"), (23, "_chat_page", where % "Return")])
+
+
+    def test_a_literal_membership_no_pins_row_judges_is_unclassified(self):
+        # round 6 (the coordinator's decision B.3, the "assert" status): the reader census took `assert` for a literal membership
+        # on the claim that the pins census judges it, and nothing checked that a pins row stands there, so a literal membership in
+        # a form rows_of does not read passed unjudged (the live row: tests/test_api_health_rail.py's `"var PAUSE" in self.JS`, the
+        # condition of a conditional expression, re-pointed through served_css.js_code in this change). readers_of marks a literal
+        # membership over the text itself (_MEMBERSHIP), and reader_status makes a marked row with no pins row at its module, line
+        # and text unclassified. The negative forms carry no mark: assertNotIn, and `not in` under a bare assert or assertTrue (a
+        # comment can red them, never green them). So the pinned forms (5 to 7), the negative ones (8 to 10, and 25, conjuncts of a
+        # bare assert), a non-literal needle
+        # (23, the stated extra8-8 shape) and a whole-text compare (24) keep their status, and the forms the pins census does not
+        # read are unclassified: a conditional expression (11), a disjunction (12), any() over literals (13), assertFalse of a `not
+        # in` (14), an if of one (15), a membership bound to a Name (17), assertEqual and assertIs of one (18, 19), assertIn by
+        # keywords (20), a chained comparison (21) and a walrus (22). Dropping the demotion, either mark, the negative exemption, its
+        # conjunct road or the positive `not in` reds this. The rows are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest
+class T(unittest.TestCase):
+    def test_a(self):
+        page = km._landing()
+        self.assertIn("m1", page)
+        assert "m2" in page
+        self.assertTrue("m3" in page and "m4" in page)
+        self.assertNotIn("m5", page)
+        assert "m6" not in page
+        self.assertTrue("m7" not in page)
+        tail = page[:9] if "m8" in page else ""
+        self.assertTrue("m9" in page or "m10" in page)
+        self.assertTrue(any(w in page for w in ("n1", "n2")))
+        self.assertFalse("n3" not in page)
+        if "n4" not in page:
+            self.fail("n4")
+        ok = "n5" in page
+        self.assertEqual("n6" in page, True)
+        self.assertIs("n7" in page, True)
+        self.assertIn(member="n8", container=page)
+        self.assertTrue("n9" in page in (True,))
+        self.assertTrue((hit := "n10" in page))
+        self.assertIn(needle, page)
+        self.assertEqual(page, "x")
+        assert "o1" not in page and "o2" not in page
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        pins = {("m.py", r[0], r[2]) for r in rows if r[3] in _POSITION}
+        members = {("m.py", r[0], r[2]) for r in rows if r[3] == "in"}
+        statuses = [(r[0], reader_status("m.py", *r, pins, members, {"_landing": frozenset(["markup"])})) for r in readers if r[1] == "assert"]
+        self.assertEqual([line for line, st in statuses if st == "unclassified"], [11, 12, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22])
+        self.assertEqual([line for line, st in statuses if st == "assert"], [5, 6, 7, 7, 8, 9, 10, 23, 24, 25, 25])
 
 
 if __name__ == "__main__":
