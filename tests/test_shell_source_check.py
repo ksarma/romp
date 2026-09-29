@@ -18,21 +18,21 @@ them reds; recompute the recorded digest from that commit, never from the fork's
 NoOtherWriter holds that nothing else names the check: no file in the tree but the kernel and ui/webview/pane-source.ts,
 the reader the shell's bundled palette goes through, whose code lines are the project's at the same commit byte for byte
 (pinned by sha256) and only read it; and in the kernel's code nothing but the adopted lines, the lock and the gates. The
-censuses and runs below read the served shell's inline scripts, not the /dist bundles it loads: the palette's two window
-listeners (palette-main.js) are ui/webview/foreign-sender-listeners.test.ts's census and executed legs. The rest runs the
-served landing: the census of every window message
-listener in its inline scripts (addEventListener for a message or a messageerror; every onmessage assignment, whatever
-its receiver, which must be one of the sockets and the channel ONMESSAGE_RECEIVERS lists; and no onmessageerror handler
-on any receiver), the same census over all of kernel.py and every page it serves (KernelListenerCensus), and node
-executing the scripts in a stand-in browser. The run goes through every callback they leave for later (timers, animation
-frames, idle callbacks, microtasks, load listeners) and an exercise: every other listener and handler they register (on
-the window, the document, a frame or an element), handed a stand-in event; every callback they hand to a stand-in (an
-observer's, a fetch's then); and every word a message listener's arms compare against, from each pane. Then it forges a
-message from each sender the shell must refuse (a page that opened it, on another origin or on its location.origin, a
-sandboxed frame, a window it does not hold, a frame nested in a pane, sandboxed or on its location.origin, a window on
-its location.origin nested in a pane that replaced its window.parent with the shell, a window it opened, on another
-origin or on its location.origin, itself, its own dispatch, a sourceless post with the opaque origin) and from a pane,
-over windows that carry the edges a browser gives them (parent, top, opener, and the shell's frames), and reads which
+listener censuses and the runs that follow read the pages' inline scripts, not the /dist bundles the shell loads: the
+palette's two window listeners (palette-main.js) are ui/webview/foreign-sender-listeners.test.ts's census and executed
+legs. The rest runs the served landing: the census of every window message listener in its inline scripts
+(addEventListener for a message or a messageerror; every onmessage assignment, whatever its receiver, which must be one
+of the sockets and the channel ONMESSAGE_RECEIVERS lists; and no onmessageerror handler on any receiver), the same
+census over all of kernel.py and every page it serves (KernelListenerCensus), and node executing the scripts in a
+stand-in browser. The run goes through every callback they leave for later (timers, animation frames, idle callbacks,
+microtasks, load listeners) and an exercise: every other listener and handler they register (on the window, the
+document, a frame or an element), handed a stand-in event; every callback they hand to a stand-in (an observer's, a
+fetch's then); and every word a message listener's arms compare against, from each pane. Then it forges a message from
+each sender the shell must refuse (a page that opened it, on another origin or on its location.origin, a sandboxed
+frame, a window it does not hold, a frame nested in a pane, sandboxed or on its location.origin, a window on its
+location.origin nested in a pane that replaced its window.parent with the shell, a window it opened, on another origin
+or on its location.origin, itself, its own dispatch, a sourceless post with the opaque origin) and from a pane, over
+windows that carry the edges a browser gives them (parent, top, opener, and the shell's frames), and reads which
 function the check is when each message is delivered. The other pages' scripts run through the same exercise for their
 census (ServedPagesExecuted). ServedScriptPopulation derives the pages every census here reads (SERVED_BUILDERS) from
 kernel.py's syntax tree, each read as the kernel's _send writes it (_as_served: a page of the page class carries the
