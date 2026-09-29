@@ -38,8 +38,8 @@ legs after it do not run. The batcher's tree is read for its HEAD sha and branch
 be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
-length the deepest session-host socket path depends on, is unchanged. TMPDIR and the checkout are removed on every
-exit path: SIGTERM, SIGHUP and SIGINT (Ctrl-C) stop each leg's process group, the runner exiting 128 plus the signal's
+length the deepest session-host socket path depends on, is unchanged, the run's and each leg's own. TMPDIR (the run's,
+and the running leg's) and the checkout are removed on every exit path: SIGTERM, SIGHUP and SIGINT (Ctrl-C) stop each leg's process group, the runner exiting 128 plus the signal's
 number, and on Linux the runner is a child subreaper that kills whatever a leg left
 running, a descendant that left the group included; each checkout records its sha beside it, and every run
 removes the checkouts of runs that are no longer running. Every orphaned descendant of a leg, in its process group
@@ -135,8 +135,12 @@ failure.
 
 The leg environment is an allowlist (LEG_ALLOW, leg_sets): USER and LOGNAME pass when set, and the runner
 sets everything else. PATH is the directory of --python (for the pytest and served legs, of its venv's python) and
-those of node, npm, bats, git and gitleaks, then /usr/bin and /bin; HOME is a private empty directory and XDG_STATE_HOME
-a private state root (session hosts off) under TMPDIR, a fresh short directory under /tmp removed at the end;
+those of node, npm, bats, git and gitleaks, then /usr/bin and /bin; TMPDIR is a fresh short directory under /tmp that
+each leg gets for itself, made when the leg starts and removed when it ends, and HOME (empty when the leg starts) and
+XDG_STATE_HOME (a private state root, session hosts off) are under it, so nothing one leg leaves in its HOME, state
+root or TMPDIR reaches a later leg (round 2, Class B: an .npmrc whose node-options would replace npm test's heap cap, a
+.gitconfig, a session-hosts file flipped on); the npm ci setup of a --leg re-run gets its own the same way, and the
+run keeps a TMPDIR of its own for what is not a leg (the venv builds and the tool-version probe);
 npm_config_cache and PLAYWRIGHT_BROWSERS_PATH point at the shared caches the batcher's environment names, but the
 pytest leg's PLAYWRIGHT_BROWSERS_PATH, an empty directory under TMPDIR (NO_BROWSERS), as CI's Python cells have no
 browser; SHELL=/bin/bash,
@@ -155,8 +159,9 @@ read /proc/<pid>/environ of the runner and of every other process of the batcher
 as that user. The result records the allowlist's hash (runner.leg_env), and a reader refuses a result
 recorded under another; the hash covers what the runner itself sets and that the served leg adds its step's env:
 block, not the values of that block, which are the swept sha's own (as the SDK's pin is) and are recorded in the
-leg's env_set. The result also records the versions of node, npm, bats, git and gitleaks the legs found, and whether
-the private HOME was empty at the end.
+leg's env_set. The result also records the versions of node, npm, bats, git and gitleaks the legs found, and, per
+leg, the names it left in its private HOME (runner.home_left, {leg: names}; a setup's are in its own record), with
+home_empty true when no leg and no setup left anything; recorded only.
 
 The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
 the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
@@ -1490,7 +1495,8 @@ def build_path(python, env):
 
 def leg_context(tmpdir, python, env=None, pytest_python=None, served_env=None, served_python=None):
     """The per-run values the leg environment is built from: TMPDIR, the private HOME and state root under it (both
-    removed with it), the shared npm and Playwright caches as the batcher's environment resolves them, PATH (every leg's
+    removed with it; each leg runs with its own three in their place, leg_scratch), the shared npm and Playwright caches
+    as the batcher's environment resolves them, PATH (every leg's
     but the pytest leg's and the served leg's: it leads with --python's directory), the pytest leg's PATH, which leads
     with its own interpreter's directory (`pytest_python`, the venv sdk_environment builds; --python when the run has no
     pytest leg), the served leg's PATH, which leads with its venv's directory (`served_python`, the venv
@@ -1595,10 +1601,18 @@ def recorded_hash(result):
     return h if isinstance(h, str) else None
 
 
+def leg_scratch(ctx, tmpdir):
+    """The context one leg runs in (round 2, Class B): the run's (leg_context), with the leg's own fresh TMPDIR and a
+    private HOME and state root under it, so nothing an earlier leg left in any of the three reaches a later leg (an
+    .npmrc whose node-options replace npm test's heap cap, a .gitconfig, a session-hosts file flipped on). It has the run
+    context's shape, so leg_env_hash reads the same policy from either."""
+    return dict(ctx, tmpdir=tmpdir, home=os.path.join(tmpdir, "home"), xdg=os.path.join(tmpdir, "xdg-state"))
+
+
 def prepare_home(ctx):
     """The private HOME (empty), the pytest leg's empty browser directory (NO_BROWSERS), and the private state root, with
     session hosts off in its romp directory (the runner's own floor for leg code that starts a backend over the default
-    state dir)."""
+    state dir), all under ctx's TMPDIR: the run's, for the tool-version probe, and each leg's own (leg_scratch)."""
     os.mkdir(ctx["home"], 0o700)
     os.mkdir(os.path.join(ctx["tmpdir"], NO_BROWSERS), 0o700)
     os.makedirs(os.path.join(ctx["xdg"], "romp"), mode=0o700)
@@ -1607,7 +1621,7 @@ def prepare_home(ctx):
 
 
 def home_left(ctx):
-    """The names a run left in the private HOME, sorted (empty: the HOME was empty at the end)."""
+    """The names a leg left in its private HOME, sorted (empty: the HOME was empty when the leg ended)."""
     try:
         return sorted(os.listdir(ctx["home"]))
     except OSError:
@@ -3107,7 +3121,8 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
     # The legs run in a private clone of the exact sha under the state dir (A1), verified against the sha's tree before
     # any leg (A2) and re-read after every leg (A4); it and TMPDIR are removed on every exit path (A5).
     sweep_stale_checkouts(sha)
-    checkout = marker = tmpdir = hold = served_hold = None
+    # leg_tmp: the TMPDIR of the leg (or setup) running now, made at its start and removed at its end (round 2, Class B)
+    checkout = marker = tmpdir = hold = served_hold = leg_tmp = None
     served_python = getattr(args, "served_python", None) or python
     try:
         checkout, marker, create_s = make_checkout(tree, sha)
@@ -3191,7 +3206,16 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             # tests cannot run. A --leg re-run of pytest alone has no setup: the pytest leg runs with no node_modules.
             setup = {"owed": True, "cmd": list(DEPS_CMD), "cwd": "vscode-extension", "rc": None}
             print("sweep %s: setup (npm ci) ..." % short(sha), flush=True)
-            run_leg(checkout, "deps", setup, wraps, ctx, logdir)
+            # the setup runs as a leg does, in a TMPDIR, HOME and state root of its own (round 2, Class B)
+            leg_tmp = make_tmpdir()
+            lctx = leg_scratch(ctx, leg_tmp)
+            prepare_home(lctx)
+            run_leg(checkout, "deps", setup, wraps, lctx, logdir)
+            left = home_left(lctx)
+            if left:
+                setup["home_left"] = left[:20]
+            shutil.rmtree(leg_tmp, ignore_errors=True)
+            leg_tmp = None
             run["runner"]["checkout"]["setup"] = setup
             after = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS)
             if not passed("deps", setup) or after:
@@ -3200,6 +3224,8 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                               passed("deps", setup) else "changed it: " + describe_faults(after), setup.get("log")))
         data = data or {"schema": SCHEMA, "sha": sha, "runs": []}
         data.update(branch=branch, tree=tree)
+        # Round 2, Class B: what each leg left in its private HOME, {leg: names}, recorded only.
+        run["runner"]["home_left"] = home_left_by_leg = {}
         data["runs"].append(run)
         write_result(path, data)
         for name in LEGS:
@@ -3223,7 +3249,12 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             # before deps, the ignored files the legs before it left, which its re-read excuses as long as it leaves them
             known = ignored_now(checkout, entries) if name == "deps" else None
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
-            run_leg(checkout, name, rec, wraps, ctx, logdir)
+            # Round 2, Class B: each leg runs in a fresh TMPDIR of its own, with its private HOME and state root under
+            # it (leg_scratch), removed when the leg ends, so nothing it leaves there reaches a later leg.
+            leg_tmp = make_tmpdir()
+            lctx = leg_scratch(ctx, leg_tmp)
+            prepare_home(lctx)
+            run_leg(checkout, name, rec, wraps, lctx, logdir)
             if not passed(name, rec):
                 # Round 2, decision 14 (A6): a leg that did not pass is on disk as soon as run_leg returns, before
                 # deps_skipped, the re-read of the checkout and the venv's re-read below, so a stop during any of them
@@ -3231,6 +3262,11 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                 # the record. A pass is written only after its re-read, which could void it: read_history counts a
                 # stopped run's finished legs, so a pass written first and then stopped would stand unverified.
                 write_result(path, data)
+            left = home_left(lctx)
+            if left:
+                home_left_by_leg[name] = left[:20]
+            shutil.rmtree(leg_tmp, ignore_errors=True)
+            leg_tmp = None
             if name == "pytest":
                 unselected = []
                 ids, why = deps_skipped(rec.get("log"), served_files, unselected)
@@ -3260,8 +3296,8 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                 write_result(path, data)
                 break
             write_result(path, data)
-        left = home_left(ctx)
-        run["runner"].update(home_empty=not left, home_left=left[:20])
+        # whether no leg, and no setup (whose own record names what it left), left anything in its private HOME
+        run["runner"]["home_empty"] = not home_left_by_leg and not (run["runner"]["checkout"].get("setup") or {}).get("home_left")
     finally:
         reap_descendants()
         # The shared locks on the legs' environments are held to here, after the reap, so no rebuild removes a venv while
@@ -3281,6 +3317,8 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                         else "%s, so remove the venv by hand" % why), flush=True)
             finally:
                 h.release()
+        if leg_tmp:
+            shutil.rmtree(leg_tmp, ignore_errors=True)
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
         remove_checkout(checkout, marker)

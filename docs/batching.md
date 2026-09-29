@@ -232,8 +232,11 @@ subject; `verify` refuses the branch otherwise.
    versions and macOS run only in the batch's CI. CI's free-threaded cell runs pytest with
    `PYTHON_GIL=0`, which the sweep does not set, so a free-threaded `--python` runs with its own
    default. Each
-   leg gets an allowlisted environment: a private HOME and state dir, a PATH built from the tool
-   directories, npm's global config and git's system config off, CI's switches, and nothing of your shell's (no key, token or session variable, no
+   leg gets an allowlisted environment: a TMPDIR of its own, made when the leg starts and removed
+   when it ends, with a private HOME and state dir under it, so nothing a leg leaves in any of the
+   three reaches a later leg (the `npm ci` setup of a `--leg` re-run gets its own too); a PATH built
+   from the tool directories; npm's global config and git's system config off; CI's switches; and
+   nothing of your shell's (no key, token or session variable, no
    PYTEST_ADDOPTS or NODE_OPTIONS); `npm test` also gets this machine's 8 GB heap cap
    (`NODE_OPTIONS=--max-old-space-size=8192`), which CI does not set. The allowlist governs
    variables only: the legs run as your user, so a file stays readable at its absolute path (a

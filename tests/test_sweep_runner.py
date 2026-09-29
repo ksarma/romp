@@ -223,13 +223,17 @@ def tree_of(root):
 
 
 root = checkout_root(os.getcwd())
+# Round 2, Class B: the TMPDIR of every leg that ran before this one (read from the calls already recorded) that still
+# exists now: each leg's own is removed when it ends, so none should.
+earlier = [json.loads(line)["values"].get("TMPDIR") for line in open(LOG)] if os.path.exists(LOG) else []
 with open(LOG, "a") as f:
     f.write(json.dumps({"leg": leg, "argv": args, "cwd": os.getcwd(), "names": sorted(os.environ), "root": root,
                         "tree": tree_of(root) if root else None,
                         "values": {k: v for k, v in os.environ.items() if k in keep or k.startswith("ROMP_")},
                         # the names whose value carries the test's marker, and what the batcher's HOME would hand a leg
                         "marked": sorted(k for k, v in os.environ.items() if marker and marker in v),
-                        "home_files": sorted(n for n in (".npmrc", ".gitconfig", ".zshenv") if os.path.exists(os.path.join(home, n))),
+                        "home_files": sorted(n for n in (".npmrc", ".gitconfig", ".zshenv", ".leftover")
+                                             if os.path.exists(os.path.join(home, n))),
                         "sdk": glob.glob(os.path.join(home, ".local", "state", "romp", "sdkvenv", "lib", "*", "site-packages")),
                         # the interpreter this leg ran as, and what the venv it runs in holds (None outside one)
                         "exe": here, "venv_installs": installs if in_venv else None,
@@ -238,6 +242,7 @@ with open(LOG, "a") as f:
                         "browsers": (sorted(os.listdir(os.environ["PLAYWRIGHT_BROWSERS_PATH"]))
                                      if os.path.isdir(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")) else None),
                         "tmp": sorted(os.listdir(os.environ["TMPDIR"])) if os.path.isdir(os.environ.get("TMPDIR", "")) else None,
+                        "earlier_tmp_alive": sorted({t for t in earlier if t and os.path.exists(t)}),
                         "state": state}) + "\n")
 act = ctl.get("action", {}).get(leg)
 if act == "commit":
@@ -290,6 +295,16 @@ elif act == "spawn":                             # two writers into TMPDIR, one 
     subprocess.Popen([sys.executable, "-c", writer, tmp, os.path.join(ctl["marks"], "setsid.pid"), "setsid"], start_new_session=True)
     open(os.path.join(ctl["marks"], "ready"), "w").write(str(os.getpid()))
     time.sleep(120)
+elif act == "plant":                             # config a later leg would read, left where legs could share it
+    with open(os.path.join(home, ".npmrc"), "w") as f:
+        f.write("node-options=--require=/nonexistent/hook.js\n")
+    with open(os.path.join(home, ".gitconfig"), "w") as f:
+        f.write("[core]\n\thooksPath = /nonexistent/hooks\n")
+    os.makedirs(state_root, exist_ok=True)
+    with open(os.path.join(state_root, "session-hosts"), "w") as f:
+        f.write("on\n")
+    with open(os.path.join(os.environ["TMPDIR"], "planted-by-a-leg"), "w") as f:
+        f.write("planted\n")
 elif act == "home":
     with open(os.path.join(home, ".leftover"), "w") as f:
         f.write("a test that wrote into HOME\n")
@@ -2261,16 +2276,80 @@ class LegEnvironment(_Base):
                 elif sys.platform != "darwin":
                     self.assertEqual(c["values"]["PLAYWRIGHT_BROWSERS_PATH"], os.path.join(home, ".cache", "ms-playwright"))
         runner = w.result()["runner"]
-        self.assertIs(runner.get("home_empty"), True, "the result records whether the private HOME was empty at the end")
-        self.assertEqual(runner["home_left"], [])
+        self.assertIs(runner.get("home_empty"), True, "the result records whether any leg left anything in its private HOME")
+        self.assertEqual(runner["home_left"], {})
 
     def test_a_file_a_leg_leaves_in_home_is_recorded(self):
+        """Round 2, Class B (B3, re-aimed): the result names, per leg, what the leg left in its private HOME, and a
+        later leg does not see it, since each leg's HOME is its own."""
         w = self.w
         w.ctl({"action": {"manager": "home"}})
         w.run(check=0)
         runner = w.result()["runner"]
-        self.assertIs(runner.get("home_empty"), False, "the result records whether the private HOME was empty at the end")
-        self.assertEqual(runner["home_left"], [".leftover"])
+        self.assertIs(runner.get("home_empty"), False, "the result records whether any leg left anything in its private HOME")
+        self.assertEqual(runner["home_left"], {"manager": [".leftover"]})
+        calls = w.calls()
+        after = [c for c in calls[[c["leg"] for c in calls].index("manager") + 1:]]
+        self.assertTrue(after, "a leg runs after the manager leg")
+        for c in after:
+            self.assertEqual(c["home_files"], [], "%s does not see the file the manager leg left in its HOME" % c["leg"])
+
+    def test_what_a_leg_leaves_in_its_home_state_root_or_tmpdir_reaches_no_later_leg(self):
+        """Round 2, Class B (B1, B3, B6): every leg gets its own private HOME, state root (session hosts off) and TMPDIR,
+        made at its start and removed when it ends. The pytest leg plants an .npmrc and a .gitconfig in its HOME,
+        session-hosts on in its state root and a file in its TMPDIR: no later leg sees any of them, each leg's three
+        directories are its own, every earlier leg's TMPDIR is gone when a later leg starts (not only after the run), and
+        the result names what the pytest leg left in its HOME. At the head the ten legs shared one HOME, state root and
+        TMPDIR, made once per run and removed at its end."""
+        w = self.w
+        w.ctl({"action": {PYTEST_LEG: "plant"}})
+        w.run(check=0)
+        calls = w.calls()
+        self.assertEqual(calls[0]["leg"], PYTEST_LEG)
+        self.assertEqual(sorted(c["leg"] for c in calls), sorted(sweep.LEGS), "every leg ran once")
+        seen = {}
+        for c in calls:
+            for k in ("HOME", "XDG_STATE_HOME", "TMPDIR"):
+                seen.setdefault(k, []).append(c["values"][k])
+                self.assertFalse(os.path.exists(c["values"][k]), "%s's %s is gone after the run" % (c["leg"], k))
+            self.assertEqual(os.path.dirname(c["values"]["HOME"]), c["values"]["TMPDIR"], "HOME is under the leg's TMPDIR")
+            self.assertEqual(os.path.dirname(c["values"]["XDG_STATE_HOME"]), c["values"]["TMPDIR"])
+        for c in calls[1:]:
+            with self.subTest(leg=c["leg"]):
+                self.assertEqual(c["home_files"], [], "no .npmrc or .gitconfig from an earlier leg in its HOME")
+                self.assertEqual(c["state"], {"session-hosts": "off\n"}, "its state root is the runner's floor alone")
+                self.assertNotIn("planted-by-a-leg", c["tmp"], "no file an earlier leg left in its TMPDIR")
+                self.assertEqual(c["earlier_tmp_alive"], [], "every earlier leg's TMPDIR is removed when that leg ends")
+        for k, values in seen.items():
+            self.assertEqual(len(set(values)), len(values), "every leg has its own %s: %s" % (k, values))
+        self.assertEqual(w.result()["runner"]["home_left"], {PYTEST_LEG: [".gitconfig", ".npmrc"]},
+                         "the result names what each leg left in its HOME")
+        self.assertIs(w.result()["runner"]["home_empty"], False)
+
+    def test_the_setup_of_a_leg_rerun_gets_a_home_state_root_and_tmpdir_of_its_own(self):
+        """Round 2, Class B (B1): the npm ci setup of a --leg re-run runs as a leg does, in a TMPDIR of its own with a
+        private HOME and state root under it, removed when it ends: what it plants there does not reach the leg it set up
+        for, and its record names what it left in its HOME. At the head the setup and the re-run leg shared one."""
+        w = self.w
+        w.ctl({"rc": {"served": 1}})
+        w.run(check=1)
+        w.ctl({"action": {"deps": "plant"}})
+        before = len(w.calls())
+        w.run("--leg", "served", "--flake", Runner.FLAKE, check=0)
+        setup_call, served_call = w.calls()[before:]
+        self.assertEqual((setup_call["leg"], served_call["leg"]), ("deps", "served"))
+        self.assertNotEqual(setup_call["values"]["TMPDIR"], served_call["values"]["TMPDIR"])
+        self.assertEqual(served_call["home_files"], [], "the setup's .npmrc and .gitconfig are not in the leg's HOME")
+        self.assertEqual(served_call["state"], {"session-hosts": "off\n"})
+        self.assertNotIn("planted-by-a-leg", served_call["tmp"])
+        self.assertEqual(served_call["earlier_tmp_alive"], [], "the setup's TMPDIR is gone before the leg starts")
+        self.assertEqual(self.setup_record(w)["home_left"], [".gitconfig", ".npmrc"])
+        self.assertIs(w.result()["runner"]["home_empty"], False, "a setup that left something makes home_empty false")
+
+    @staticmethod
+    def setup_record(w):
+        """The npm ci setup the newest run recorded (runner.checkout.setup)."""
+        return w.result()["runner"]["checkout"]["setup"]
 
     def test_no_leg_log_header_holds_a_value_of_the_leg_environment(self):
         w = self.all_legs_world()
@@ -2407,8 +2486,10 @@ class PytestEnvironment(_Base):
         self.assertEqual([(s["exe"], s["module"]) for s in w.setups() if s["kind"] == "import"],
                          [(sdk["python"], "claude_agent_sdk")], "the SDK step's own import check ran in the venv")
         self.assertEqual(sorted(call["tmp"]), ["home", sweep.NO_BROWSERS, "xdg-state"],
-                         "the builds' own directories under TMPDIR are gone before the legs")
-        tmp = os.path.dirname(call["values"]["HOME"])
+                         "the leg's TMPDIR holds its private HOME, state root and empty browser directory alone")
+        # the builds run under the run's TMPDIR (round 2, Class B: each leg's own TMPDIR is fresh, apart from it)
+        tmp = w.result()["runner"]["tmpdir"]
+        self.assertNotEqual(call["values"]["TMPDIR"], tmp, "the pytest leg's TMPDIR is its own, not the run's")
         sdk_setups = [s for s in w.setups() if s["home"].startswith(tmp + os.sep + "sdk-")]
         served_setups = [s for s in w.setups() if s["home"].startswith(tmp + os.sep + "served-")]
         self.assertTrue(sdk_setups and served_setups, w.setups())
