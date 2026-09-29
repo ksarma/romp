@@ -921,8 +921,11 @@ class Runner(_Base):
         """The owner's build question 4: CI's PDF renderer smoke step is a leg, pdf-smoke, in the extension job's group
         after npm ci: it runs node --test over tools/pdf-smoke.test.mjs alone, from the root of the checkout the deps leg
         installed node_modules in, between npm-test and build as the step stands in the job, and its test count is read
-        from its log. A run of it that passes no test (its one test skipped for want of pdfjs-dist) is red. The tools leg
-        still runs the same file, with no node_modules. Before, the step ran only in CI."""
+        from its log. Where pdfjs-dist is missing the real file passes its fixture test and skips its two pdfjs-dist
+        tests (node prints pass 1, skipped 2, rc 0), so the leg passes there, as CI's step does: running after npm ci is
+        what keeps it asserting (the node_modules check here, and CiParity's check that the step follows its job's npm
+        ci). A head whose file passes no test (one that drops the fixture test, say) is red, as any test leg is. The
+        tools leg still runs the same file, with no node_modules. Before, the step ran only in CI."""
         w = self.w
         w.ctl({"action": {"deps": "ignored"}})          # the fake npm ci leaves vscode-extension/node_modules
         w.run(check=0)
@@ -939,8 +942,18 @@ class Runner(_Base):
         self.assertIs(calls["tools"]["node_modules"], False, "with no node_modules")
         rec = w.result()["legs"]["pdf-smoke"]
         self.assertEqual((rec["rc"], rec["tests"], rec["failed"], rec["why"]), (0, 1, 0, sweep.PDF_WHY))
-        w.change({"notes.txt": "a head where the smoke test skips\n"})
-        w.ctl({"action": {"deps": "ignored"}, "out": {"pdf-smoke": "# tests 1\n# pass 0\n# skipped 1\n# fail 0\n"}})
+        # the real file's counts where pdfjs-dist is missing: its fixture test passes, its two pdfjs-dist tests skip
+        w.change({"notes.txt": "a head where the two pdfjs-dist tests skip\n"})
+        w.ctl({"action": {"deps": "ignored"},
+               "out": {"pdf-smoke": "# tests 3\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 2\n# todo 0\n"}})
+        w.run(check=0)
+        rec = w.result()["legs"]["pdf-smoke"]
+        self.assertEqual((rec["rc"], rec["tests"], rec["failed"], w.result()["verdict"]), (0, 1, 0, "pass"),
+                         "passes, as CI's step does")
+        # a head whose file passes no test
+        w.change({"notes.txt": "a head whose smoke file passes no test\n"})
+        w.ctl({"action": {"deps": "ignored"},
+               "out": {"pdf-smoke": "# tests 2\n# pass 0\n# fail 0\n# cancelled 0\n# skipped 2\n# todo 0\n"}})
         p = w.run(check=1)
         self.assertIn("pdf-smoke (rc 0 but no test ran)", p.stdout)
 
@@ -5921,8 +5934,9 @@ class CiParity(unittest.TestCase):
         the step's command from the repository root (the step's working-directory:) with no switch (the step sets none),
         and it runs where the step stands: in the job whose npm ci comes before it, after that npm ci (the deps leg in
         that group, first), so tools/pdf-smoke.test.mjs opens the installed pdfjs-dist and asserts, as in CI. The tools
-        leg's glob holds the same file, which it runs with no node_modules in a job that runs no npm ci, where it skips,
-        as in CI's job for the tools step."""
+        leg's glob holds the same file, which it runs with no node_modules in a job that runs no npm ci, where its two
+        pdfjs-dist tests skip and its fixture test runs, as in CI's job for the tools step. The file passes that way too
+        (pass 1, skipped 2), so the step's place after npm ci, checked here, is what keeps the leg asserting."""
         self.assertEqual(sweep.LEG_STEPS[sweep.PDF_LEG], PDF_LABEL)
         job, env, run = self.step(PDF_LABEL)
         self.assertEqual(shlex.split(run), self.legs[sweep.PDF_LEG]["cmd"][:2] + list(sweep.GLOBS[sweep.PDF_LEG]),

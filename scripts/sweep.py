@@ -77,7 +77,7 @@ the served rulings were made) run with the SDK, as CI runs them; and the bats, m
 run no npm ci, run with no node_modules, as there. Each group runs in its job's step order, so the npm-test leg runs
 over a checkout holding no bundle a served test built, as CI's Test step does, and the pdf-smoke leg runs in the
 extension job's checkout after npm ci, where pdfjs-dist is installed, as CI's step does (the tools leg runs the same
-file with no node_modules, where it skips). Every head owes every leg, a member's
+file with no node_modules, where its two pdfjs-dist tests skip and its fixture test runs). Every head owes every leg, a member's
 head included, whatever its diff: the webview legs read files outside kernel/kernel.py, ui/ and vscode-extension/ (tests, other kernel
 modules, docs), and the served tests boot the kernel and serve the webview bundle, so no set of changed paths shows
 either may be skipped. deps, the webview legs, pdf-smoke and served are marked not owed only when the sha has no
@@ -300,10 +300,11 @@ SCHEMA = 2
 LEGS = ("pytest", "deps", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "pdf-smoke", "build", "served")
 WEBVIEW_LEGS = ("typecheck", "npm-test", "build")
 # CI's PDF renderer smoke step (round 2, the owner's build question 4): node --test over tools/pdf-smoke.test.mjs, which
-# opens a synthetic PDF with the pdfjs-dist the extension job's npm ci installs, and skips where it is not installed. It
-# runs in the job that holds its step, after that job's npm ci (leg_groups), so it asserts there as in CI; the tools leg
-# runs the same file with no node_modules, where it skips, as CI's job for the tools step does. It is a test leg: a run
-# of it that passes no test (its one test skipped, pdfjs-dist missing) is red.
+# opens a synthetic PDF with the pdfjs-dist the extension job's npm ci installs; where it is not installed the file's two
+# pdfjs-dist tests skip and its fixture test still runs and passes, so the leg passes there, as CI's step does. It runs
+# in the job that holds its step, after that job's npm ci (leg_groups), so it asserts there as in CI: that place, which
+# CiParity holds to the step's, is what keeps it asserting. The tools leg runs the same file with no node_modules, as
+# CI's job for the tools step does. It is a test leg: a run of it that passes no test is red.
 PDF_LEG = "pdf-smoke"
 # The browser-backed served-page tests, the files CI's served step selects: a leg of their own, as CI runs them in a
 # step of their own (the served ruling, 2026-09-28). Last in LEGS; it runs in the job that holds its step, after that

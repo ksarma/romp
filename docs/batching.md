@@ -214,7 +214,9 @@ subject; `verify` refuses the branch otherwise.
    tooling node tests, the ledger check (in a checkout of its own: CI runs it in a workflow of its
    own), `npm run typecheck`, `npm test`, the PDF renderer smoke test (`node --test
    tools/pdf-smoke.test.mjs`, after `npm ci` in the extension job's checkout, as CI's step runs it,
-   so it opens a PDF with the installed `pdfjs-dist` and is red if it skips), `npm run build` and
+   so it opens a PDF with the installed `pdfjs-dist`; without `pdfjs-dist` the file's two tests of
+   it skip and its fixture test passes, so the leg would pass, as CI's step would, and running
+   after `npm ci` is what keeps it asserting), `npm run build` and
    the served leg: every leg at every
    head, whatever it changed, since the webview tests and the served tests
    also read files outside `kernel/kernel.py`, `ui/` and `vscode-extension/`. The served leg runs
