@@ -723,7 +723,9 @@ def read_history(runs):
     cannot vouch for them (a pass written after its re-read can still be voided by a later leg's re-read, whose invalid
     mark a stop can keep from being written).
       never    the records no runner writes: a --leg re-run with no known flake named for a leg it ran, a flake
-               named for a leg the run did not run or that had no failed run before it at this sha;
+               named for a leg the run did not run or that had no failed run before it at this sha, a --leg re-run
+               after a run that did not finish (the runner refuses a --leg re-run unless the newest run finished, so
+               an unfinished run's passes could otherwise stand under a finished re-run's record);
       dead     why no run at this sha can pass any more: a leg that failed in two runs (a known flake is excused once),
                or a failed run whose leg a later run passed without --flake naming it;
       need     {leg: (run number, record)} for each leg whose newest attempt failed: the next run that runs it counts
@@ -736,6 +738,11 @@ def read_history(runs):
         num = i + 1
         legs = run.get("legs") or {}
         flakes = run.get("flakes") or {}
+        if run.get("kind") == "leg" and i > 0 and not runs[i - 1].get("finished"):
+            # verify low 4: effective() lays a --leg re-run over the full run before it and reads the newest run's
+            # finish, so the unfinished run's passes would read as a finished run's
+            out["never"].append("run %d is a --leg re-run after run %d, which did not finish; the runner re-runs a leg only "
+                                "after a finished run" % (num, i))
         if not isinstance(flakes, dict):
             out["never"].append("run %d's flakes are not a mapping of leg to known flake" % num)
             flakes = {}

@@ -6402,6 +6402,29 @@ class Reader(unittest.TestCase):
                 self.assertEqual(case, want, line)
                 self.assertIn(named, line)
 
+    def test_a_leg_rerun_after_a_run_that_did_not_finish_is_a_record_no_runner_writes(self):
+        """Verify low 4 (round 2, the owner's build question 2 at the reader's overlay): the runner refuses a --leg
+        re-run unless the newest run finished, so a finished --leg re-run after a run with no finished stamp is a record
+        no runner writes, and reads invalid naming both runs. Before, the reader laid the re-run over the unfinished full
+        run and took the re-run's finish as the record's, so the unfinished run's passes (bats, manager, tools, the
+        ledger) read as a finished run's and the sha passed. Once after an unfinished full run, once after an unfinished
+        --leg re-run of a finished red full run."""
+        stopped_full = self.run_rec(legs=self.legs(pytest=1), finished=None)
+        cases = (
+            ("after an unfinished full run", self.result(runs=[stopped_full, self.rerun()]), 2, 1),
+            ("after an unfinished --leg re-run", self.red_then(self.rerun(finished=None),
+                                                               self.rerun(started="2026-01-01T00:04:00Z",
+                                                                          finished="2026-01-01T00:05:00Z")), 3, 2),
+        )
+        for label, data, num, before in cases:
+            with self.subTest(label):
+                self.assertIsNone(data["runs"][before - 1]["finished"])
+                self.write(data)
+                case, line = self.case()
+                self.assertEqual(case, "invalid", line)
+                self.assertIn("run %d is a --leg re-run after run %d, which did not finish; the runner re-runs a leg only "
+                              "after a finished run" % (num, before), line)
+
     def test_a_history_the_runner_never_writes_is_invalid(self):
         """The records no runner writes, each refused by name: a --leg re-run that names no flake (or a blank one), a
         flake for a leg with no failed run before it, a flake for a leg the run did not run, a run recorded at another
