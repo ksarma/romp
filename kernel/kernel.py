@@ -70658,10 +70658,16 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // otherwise the hold road publishes from the hold, or from the re-raise bound rp where one stands (beside lastPan). A PAN of a
 // keyboard raised at this zoom, inside the layout viewport (the scale and h unchanged since the previous run with the keyboard up,
 // and the value in force written at a raise or a re-raise under the current zoom with no zoom alone since: ps, ph and kz, beside
-// lastPan), re-bounds from the hold into the reading's interval [kbPx, panPx], so the shell follows that keyboard's pan wherever the reading allows (the
-// maintainer's round 6 ruling, 2026-09-29: keeping the value there left the composer 44 px below the visible band's bottom for a
-// light-zoom hold of 20 at 1.05 dragged to 0, where 0 px leaves 24, and a pan to the share after a no-pan re-raise under a light
-// zoom opened a band under the composer, 2.67 px at 1.008, 3.33 px at 1.01 and 16 px at 1.05; node cells). Any other report inside
+// lastPan), re-bounds from the hold into the reading's interval [kbPx, panPx] (the maintainer's round 6 ruling, 2026-09-29: keeping
+// the value there left the composer 44 px below the visible band's bottom for a light-zoom hold of 20 at 1.05 dragged to 0, where
+// 0 px leaves 24, and a pan to the share after a no-pan re-raise under a light zoom opened a band under the composer, 2.67 px at
+// 1.008, 3.33 px at 1.01 and 16 px at 1.05; node cells). It bounds from the hold, not from a re-raise bound rp above the hold: a
+// keyboard raised again with the visual viewport deep under the zoom, where rp is the reading less the share and exceeds the hold,
+// and then panned back up publishes the smaller hold, so a band opens under the composer where rp would leave none (disclosed, the
+// re-bound source being the maintainer's call: a hold of 83 from scale 1, the keyboard down under a zoom of 2 and raised again at
+// offsetTop 590, rp 168, then a pan to 422, publishes 83, a band of 85 px; 29 px at 1.5, raised again at 495.2, rp 214, a pan to
+// 281.33; 20.82 px at 1.1, raised again at 250, rp 173, a pan to 150; node cells, test_kernel_mobile's reraiseDeep cells pin
+// them). Any other report inside
 // the layout viewport takes the stance: where the zoom's share is below the value, the value bounded into the reading's interval;
 // where the share reaches it, the larger of the value and kbPx, so a zoom alone never re-lays the shell there (the pinch-aware
 // note above: its share is the whole of its pan), except after a pan the rule re-bounded: the rule's value is published and not

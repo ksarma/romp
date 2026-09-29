@@ -1022,6 +1022,13 @@ for (const [p, s, tag] of [[30, 1.05, 'p30-s1.05'], [83, 1.2, 'p83-s1.2'], [83, 
 // a hold of 83 raised at scale 1, then ONE report that pinches to 2 as a taller keyboard comes in (the band 508 to 460: no zoom
 // alone, since h changed, and no raise, since no keyboard-down run came between), then that keyboard's pan up to 40
 { const f = 'swapZoom'; r6rest(f); r6step(f, 'kbUp', 508, 83, 1); r6step(f, 'swapPinch2', 230, 200, 2); r6step(f, 'up40', 230, 40, 2); }
+// a pan after a re-raise bound above the hold (disclosed in the fit() comment): a hold of 83 at scale 1, the keyboard down under a
+// zoom, raised again with the visual viewport deep (the re-raise bound, the reading less the share, above the hold), then that
+// keyboard panned back up. The pan rule re-bounds from the hold, not from the re-raise bound
+for (const [s, deep, pan] of [[2, 590, 422], [1.5, 495.2, 281.33], [1.1, 250, 150]]) {
+  const f = 'reraiseDeep' + s; r6rest(f); r6step(f, 'E1-kbUp', 508, 83, 1); r6step(f, 'E2-kbDownZ', 844 / s, 0, s);
+  r6step(f, 'E3-reRaiseDeep', 508 / s, deep, s); r6step(f, 'P-panUp', 508 / s, pan, s);
+}
 // the 0px road clears the written-hold flag where it clears the hold (the maintainer's round 6 ruling, 2026-09-29, the flag's
 // clearing rule): a hold of 83 at scale 1 (the band 460, the flag set), the pointer fine with the visual viewport at rest (the 0px
 // road clears the hold and the flag), then coarse again under a real pinch with the same keyboard up, the nohold family's three
@@ -1719,6 +1726,29 @@ class MobileFitExecutes(unittest.TestCase):
                          [43, 0, 40, 0, 0], "the rule's pan, then the zooms alone publish from the re-raise bound: %r" % (t,))
         self.assertEqual([band(t[k]) for k in ("A4-kbUpPanInShare", "zoomAlone1.1", "zoomBack1.05")], [-24.0, 5.0, 16.0],
                          "the band under the composer: none after the rule's pan, 5 px after the zoom alone, 16 px after the zoom back")
+
+    def test_a_pan_after_a_re_raise_bound_above_the_hold_re_bounds_from_the_hold(self):
+        # DISCLOSED, and these cells are its witness (the fit() comment names them): the pan rule re-bounds from the hold, not from a
+        # re-raise bound above it. A hold of 83 at scale 1, the keyboard down under the zoom and raised again with the visual viewport
+        # deep, so the re-raise bound (the reading less the share) is above the hold: 168 at scale 2, 214 at 1.5, 173 at 1.1. Then
+        # that keyboard panned back up: a pan by the test (the scale and the band's height unchanged), the rule re-bounds from the
+        # hold and publishes 83, and a band opens under the composer (85, 29 and 20.82 px) where the re-raise bound would leave none.
+        # Re-bounding from the larger of the hold and the value in force closes it; the re-bound source is the maintainer's call, and
+        # these cells pin the built behaviour so a change to it is made on purpose.
+        px = self._r6_px
+
+        def band(st, top):   # how far the composer's bottom sits above the visible band's bottom at a published top
+            return round((st["offsetTop"] + st["height"]) - (top + px(st["appH"])), 2)
+
+        for s, rp, gap in (("2", 168, 85.0), ("1.5", 214, 29.0), ("1.1", 173, 20.82)):
+            t = self._r6("reraiseDeep" + s)
+            self.assertEqual({round(t[k]["height"] * t[k]["scale"]) for k in ("E3-reRaiseDeep", "P-panUp")}, {508},
+                             "the cell's premise: the same keyboard raised again and panned, so the pan is a pan: %r" % (t,))
+            self.assertEqual(t["E3-reRaiseDeep"]["scale"], t["P-panUp"]["scale"], "the cell's premise: no zoom between the re-raise and the pan")
+            self.assertEqual([px(t[k]["appTop"]) for k in ("E1-kbUp", "E2-kbDownZ", "E3-reRaiseDeep", "P-panUp")], [83, 0, rp, 83],
+                             "the hold, the keyboard down, the re-raise bound above the hold, then the pan re-bounded from the hold: %r" % (t,))
+            self.assertEqual(band(t["P-panUp"], 83), gap, "the band under the composer after the pan: %r" % (t["P-panUp"],))
+            self.assertLessEqual(band(t["P-panUp"], rp), 0, "the cell's premise: the re-raise bound would leave no band there: %r" % (t["P-panUp"],))
 
     def test_every_stance_cell_of_the_extended_families_publishes_the_stance_value(self):
         # round 6's extended families' stance cells (the maintainer's round 6 ruling, 2026-09-29), ported into the driver so the tree
