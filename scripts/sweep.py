@@ -178,7 +178,11 @@ are read from ci.yml's served step), plus the box rule's 8 GB heap cap for npm t
 set. So no credential, session identity or
 test-narrowing variable (PYTEST_ADDOPTS, PYTHONPATH, NODE_OPTIONS) of the batcher's shell reaches a leg, and
 no dotfile of the batcher's HOME does (an .npmrc, a git config and its hooks, a shell rc, the live
-deployment's SDK), nor the npmrc of a node installed under it. pytest also runs with `-c /dev/null --rootdir=. --confcutdir=.`, so no pytest.ini or
+deployment's SDK), nor the global npmrc of a node installed under it (<prefix>/etc/npmrc, turned off). npm's builtin
+config file (npmrc in npm's package root), which npm reads before any other and nothing turns off, is read by the runner:
+one that sets any key but prefix refuses the run, naming the file (round 2, extra6-2), and the result records its
+presence and sha256 (runner.npm_builtin); an npm whose package root the runner cannot find above its real path (a shim,
+such as volta's) records none, and its builtin file is not read. pytest also runs with `-c /dev/null --rootdir=. --confcutdir=.`, so no pytest.ini or
 conftest.py above the tree configures it. --wrap prefixes run with the runner's environment, and the
 allowlist applies after them (`env -i`), so nothing a wrap sets reaches the leg. What the allowlist does not
 govern: files stay readable at their absolute paths (a credential file, an agent's socket), and every leg can
@@ -466,6 +470,13 @@ LEG_FIXED = {"SHELL": "/bin/bash", "LANG": "C.UTF-8", "CI": "true"}
 # replacing npm test's heap cap), and git's system config (user-writable under a Homebrew git; a core.hooksPath there
 # would run in the fixture repos of the bats files that set neither GIT_CONFIG_GLOBAL nor HOME).
 TOOL_CONFIG_OFF = {"npm_config_globalconfig": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+# npm's builtin config file, <npm's package root>/npmrc, is read before the user and global files and neither the private
+# HOME nor npm_config_globalconfig turns it off (round 2, extra6-2): it is as user-writable as the global one under nvm,
+# fnm, volta or a ~/.local prefix, and a node-options line there reaches every npm leg. Homebrew's node writes one that
+# sets prefix alone. The runner reads the file of the npm the legs find on their PATH, refuses the run when it sets any
+# key but prefix, and records its presence and sha256 (npm_builtin).
+NPM_BUILTIN = "npmrc"
+NPM_BUILTIN_KEYS = ("prefix",)
 # The box floor, which CI does not need: every port variable the tree reads is set to a dead port, so leg code its own
 # suite does not floor cannot reach a live manager, kernel, dashboard or postal bus on this machine (each falls back to
 # the live deployment's port when unset). XDG_STATE_HOME, the state root, is private per run (leg_sets).
@@ -1778,6 +1789,58 @@ def tool_versions(ctx):
                 rec["error"] = str(e)[:200]
         out[tool] = rec
     return out
+
+
+def npm_builtin(ctx):
+    """{"npm", "root", "path", "present", "sha256", "keys"}: the builtin config file of the npm the legs find on their
+    PATH (NPM_BUILTIN under npm's package root, which npm reads before any other config file, round 2, extra6-2). The root
+    is the directory above the npm's real path (its bin/npm-cli.js, where npm's installs link it) whose package.json names
+    npm; an npm with no such directory above it (a shim, such as volta's, or no npm on the PATH) records root None, and
+    the runner cannot read its builtin file. Raises Refused, naming the file and the keys, when the file sets any key but
+    NPM_BUILTIN_KEYS: every line that is not blank or a comment (`;` or `#`) must be `prefix = <value>`, so a section, a
+    bare key or any other key is refused."""
+    npm = shutil.which("npm", path=ctx["path"])
+    rec = {"npm": npm, "root": None, "path": None, "present": False, "sha256": None, "keys": []}
+    if not npm:
+        return rec
+    d = os.path.dirname(os.path.realpath(npm))
+    for cand in (d, os.path.dirname(d)):
+        try:
+            with open(os.path.join(cand, "package.json"), encoding="utf-8") as f:
+                named = json.load(f).get("name") == "npm"
+        except (OSError, ValueError, AttributeError):
+            named = False
+        if named:
+            rec["root"] = cand
+            break
+    if rec["root"] is None:
+        return rec
+    path = os.path.join(rec["root"], NPM_BUILTIN)
+    rec["path"] = path
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except FileNotFoundError:
+        return rec
+    except OSError as e:
+        raise Refused("npm's builtin config file %s cannot be read (%s); npm reads it in every npm leg, so the runner reads "
+                      "it first" % (path, e))
+    rec.update(present=True, sha256=hashlib.sha256(data).hexdigest())
+    keys = []
+    for line in data.decode("utf-8", "replace").splitlines():
+        text = line.strip()
+        if not text or text[0] in ";#":
+            continue
+        keys.append(text.split("=", 1)[0].strip() if "=" in text and not text.startswith("[") else text)
+    rec["keys"] = keys
+    other = [k for k in keys if k not in NPM_BUILTIN_KEYS]
+    if other:
+        raise Refused("npm's builtin config file %s sets %s; npm reads it in every npm leg before any other config file, and "
+                      "neither the private HOME nor npm_config_globalconfig turns it off (a node-options line there would "
+                      "replace npm test's heap cap), so the runner refuses a builtin file that sets any key but %s: remove "
+                      "the other keys, or put an npm whose builtin file holds none first on PATH"
+                      % (path, ", ".join(repr(k) for k in other), " and ".join(NPM_BUILTIN_KEYS)))
+    return rec
 
 
 def expand(tree, patterns):
@@ -3546,6 +3609,9 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         prepare_home(ctx)
         run["runner"]["leg_env"] = {"allow": list(LEG_ALLOW), "hash": leg_env_hash(ctx)}
         run["runner"]["tools"] = tool_versions(ctx)
+        # npm's builtin config file, which nothing turns off: refused, before anything is recorded, when it sets any key but
+        # prefix (round 2, extra6-2); its presence and sha256 are recorded either way
+        run["runner"]["npm_builtin"] = npm_builtin(ctx)
         early = groups[0]["setup_before"] is not None and groups[0]["setup_before"] == groups[0]["legs"][0]
         if early:
             # The first group's job runs npm ci before its first leg (a --leg re-run of a leg its job runs after npm ci,

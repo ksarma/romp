@@ -18,6 +18,7 @@ leg. The real suite never runs. Synthetic data only.
 import ast
 import fcntl
 import glob
+import hashlib
 import importlib.util
 import json
 import os
@@ -3024,6 +3025,79 @@ class LegEnvironment(_Base):
             self.assertEqual(c["values"].get("XDG_RUNTIME_DIR"), env["XDG_RUNTIME_DIR"], "the wrap reaches the user bus")
         for c in w.calls():
             self.assertNotIn("XDG_RUNTIME_DIR", c["names"])
+
+
+class NpmBuiltin(_Base):
+    """Round 2, extra6-2: npm's builtin config file (npmrc in npm's package root) is read by npm before any other config
+    file, and neither the private HOME nor npm_config_globalconfig=/dev/null turns it off, so a node-options line there
+    reached every npm leg as NODE_OPTIONS. The runner reads the builtin file of the npm the legs find on their PATH,
+    refuses the run when it sets any key but prefix (Homebrew's holds prefix alone), and records its presence and sha256
+    either way. The npm here is the fake, installed as npm's installs lay it out: bin/npm on PATH a symlink to the
+    package's bin/npm-cli.js, beside the package's package.json."""
+
+    def install_npm(self, npmrc=None):
+        w = self.w
+        pkg = os.path.join(w.tmp, "npm-install", "lib", "node_modules", "npm")
+        os.makedirs(os.path.join(pkg, "bin"))
+        with open(os.path.join(pkg, "package.json"), "w") as f:
+            json.dump({"name": "npm", "version": "0.0.0-fake"}, f)
+        os.rename(os.path.join(w.bin, "npm"), os.path.join(pkg, "bin", "npm-cli.js"))
+        os.symlink(os.path.join(pkg, "bin", "npm-cli.js"), os.path.join(w.bin, "npm"))
+        if npmrc is not None:
+            with open(os.path.join(pkg, "npmrc"), "w") as f:
+                f.write(npmrc)
+        return pkg
+
+    def test_a_builtin_npmrc_that_sets_a_key_but_prefix_refuses_the_run(self):
+        """node-options (the refuter's road), userconfig pointing at a file that sets node-options (the completeness
+        check's road, which a list of named keys misses), a section and a bare key are each refused naming the file and
+        the key, before anything is recorded or run. At c60fb907e each run passed, the node-options line reaching the npm
+        legs."""
+        w = self.w
+        hook = os.path.join(w.tmp, "hook.js")
+        userconfig = os.path.join(w.tmp, "userconfig")
+        with open(userconfig, "w") as f:
+            f.write("node-options=--require %s\n" % hook)
+        cases = (("node-options", "node-options=--require %s\n" % hook, "'node-options'"),
+                 ("userconfig", "prefix=/opt/x\nuserconfig=%s\n" % userconfig, "'userconfig'"),
+                 ("a section", "; a comment\n[registry]\nprefix=/opt/x\n", "'[registry]'"),
+                 ("a bare key", "ignore-scripts\n", "'ignore-scripts'"))
+        pkg = self.install_npm()
+        for label, text, named in cases:
+            with self.subTest(case=label):
+                w.change({"notes.txt": "a head for %s\n" % label})      # each case at a head of its own
+                with open(os.path.join(pkg, "npmrc"), "w") as f:
+                    f.write(text)
+                before = len(w.calls())
+                p = w.run(check=2)
+                self.assertIn("npm's builtin config file %s sets %s" % (os.path.join(pkg, "npmrc"), named), p.stderr)
+                self.assertIn("refuses a builtin file that sets any key but prefix", p.stderr)
+                self.assertEqual(w.calls()[before:], [])
+                self.assertFalse(os.path.exists(w.result_path()))
+
+    def test_a_builtin_npmrc_that_sets_prefix_alone_is_recorded_and_the_run_proceeds(self):
+        """Homebrew's shape: a builtin npmrc holding prefix alone (and comments) is recorded, with its sha256, and the run
+        passes; so does an npm with no builtin file, recorded as absent."""
+        w = self.w
+        text = "; Homebrew's\nprefix = /opt/homebrew\n# end\n"
+        pkg = self.install_npm(npmrc=text)
+        w.run(check=0)
+        rec = w.result()["runner"]["npm_builtin"]
+        self.assertEqual(rec, {"npm": os.path.join(w.bin, "npm"), "root": pkg, "path": os.path.join(pkg, "npmrc"),
+                               "present": True, "sha256": hashlib.sha256(text.encode()).hexdigest(), "keys": ["prefix"]})
+        os.remove(os.path.join(pkg, "npmrc"))
+        w.change({"notes.txt": "another head\n"})
+        w.run(check=0)
+        rec = w.result()["runner"]["npm_builtin"]
+        self.assertEqual((rec["root"], rec["present"], rec["sha256"]), (pkg, False, None))
+
+    def test_an_npm_whose_package_the_runner_cannot_find_records_none(self):
+        """An npm that is not a link into its package (a shim, such as volta's; here the plain fake) has no builtin file
+        the runner can find: the record says so (root None), the disclosed limit, and the run proceeds."""
+        w = self.w
+        w.run(check=0)
+        self.assertEqual(w.result()["runner"]["npm_builtin"], {"npm": os.path.join(w.bin, "npm"), "root": None, "path": None,
+                                                               "present": False, "sha256": None, "keys": []})
 
 
 class LegPath(unittest.TestCase):

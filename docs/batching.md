@@ -259,7 +259,11 @@ subject; `verify` refuses the branch otherwise.
    from the tool directories, `--python`'s first; npm's global config and git's system config off; CI's switches; and
    nothing of your shell's (no key, token or session variable, no
    PYTEST_ADDOPTS or NODE_OPTIONS); `npm test` also gets this machine's 8 GB heap cap
-   (`NODE_OPTIONS=--max-old-space-size=8192`), which CI does not set. The allowlist governs
+   (`NODE_OPTIONS=--max-old-space-size=8192`), which CI does not set. npm's builtin config file
+   (`npmrc` in npm's own package directory), which npm reads before any other and nothing turns
+   off, is read by the sweep: one that sets anything but `prefix` refuses the run, naming the file,
+   and the result records whether it exists and its sha256 (an npm shim, such as volta's, whose
+   package the sweep cannot find above it, records none). The allowlist governs
    variables only: the legs run as your user, so a file stays readable at its absolute path (a
    credential file, an agent's socket), and a leg can read `/proc/<pid>/environ` of the runner and
    of your other processes, your shell and sessions included. Nothing a leg leaves in its checkout
