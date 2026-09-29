@@ -9284,8 +9284,9 @@ the contract said the same; the claim was false, and the follow-on is a privacy 
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
 upstream or tests, SECURITY.md, CONTRIBUTING.md and vscode-extension/ci-browser-legs.txt, alone (76 files, the ledger entry's
-where line; run 2026-09-29 at the head that carries the fixes for the file review's round 20, over 1d591384e, where the one
-file added to the delta is CONTRIBUTING.md, whose copy of the roster rule's reason that round's extra10-2 corrected with the
+where line; run 2026-09-29 at the head that carries the landing merge of the fork's main at 6dd80a6e7, over 6dd80a6e7, the
+merge adding no file to the delta; the run 2026-09-29 at the head that carries the fixes for the file review's round 20, over
+1d591384e, listed the same 76, where the one file added to the delta is CONTRIBUTING.md, whose copy of the roster rule's reason that round's extra10-2 corrected with the
 roster's own; the run 2026-09-28 at the head where the legs joined the roster PR 887 landed, after the landing merge of the fork's main at 1d591384e
 (the coordinator's ruling on the roster after the file review's round 19), over 1d591384e, listed 75, the listing the branch's
 whole delta over it, where the two files added to the delta are that roster, vscode-extension/ci-browser-legs.txt, which gained the legs'
