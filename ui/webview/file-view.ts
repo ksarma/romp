@@ -3104,8 +3104,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   type's initial and whether a button is down; for an over or an out whether its relatedTarget is an element or none; for a
   //   blur or a focus whether its target is the window, the document or an element; for a mousedown its button; and for a mouseup
   //   its button and its detail capped at 2. A token equal to the one before it is dropped, and in a run of moves (pointermove and
-  //   mousemove) a token the run already holds, since the grammar reads a run of moves only by the tokens it holds; a chain that
-  //   reaches 1,024 tokens stops, and its click takes nothing. Nothing else is read: no other event type (a keydown, which the
+  //   mousemove) a token the run already holds, since the grammar reads a run of moves only by the tokens it holds; a chain longer
+  //   than 1,024 tokens stops, and its click takes nothing. Nothing else is read: no other event type (a keydown, which the
   //   gate's own listener hears, is admitted anywhere in a chain, so the chain listener does not hear it; no focusin, focusout,
   //   gotpointercapture, lostpointercapture, wheel or scroll), and no coordinate, pressure, size or time. A click takes the slot
   //   only where ownChain admits the chain under the slot's pointer type, the grammar that the execution check of the file review's
@@ -3193,10 +3193,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // pen's still click with it shown 300 ms later, and the node guards' rows of that pointerout in Chromium's order, in
   // Firefox's and by a pen, each red at ddb446fae, the rows also under a gate without that arm and the pen's row under one
   // whose arm marks the mouse's records alone, and the cells under a gate without that arm and without the blur's rule, the
-  // pen's cell also under one whose arm marks the mouse's records alone and that reads no blur, since the blur's rule refuses
-  // those cells too where the viewer's window held the focus, as it does in them (at this head the three cells read the same
+  // pen's cell also under one whose arm marks the mouse's records alone and that reads no blur, since the blur's rule refused
+  // those cells too where the viewer's window held the focus, as it did in them (at bef9ff8fc the three cells read the same
   // under a gate without that arm alone and opened under one without both; where the element cancels its mousedown no blur
-  // comes and the arm alone closes those shapes, Chromium's grid 0 of 1,850 with and without the blur's rule in its
+  // comes and the arm alone closed those shapes, Chromium's grid 0 of 1,850 with and without the blur's rule in its
   // measurement, and the same three shapes with an element that cancels its mousedown are cells too, red under a gate without
   // that arm alone, the pen's also under one whose arm marks the mouse's records alone, all as bef9ff8fc measured them; the
   // allowlist refuses those orders by the same pointerout in their chains);
@@ -3231,8 +3231,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the tap's compatibility events start in the viewer, and the blur of this window where it held the focus and the element takes
   // that tap's mousedown without cancelling it. In it by reading, not drivable here: a second finger resting on another document
   // during the viewer's tap, in Firefox and WebKit; a tap whose click the engine withholds (a long press's context menu, a tap past
-  // the click slop without a pointercancel), in Firefox and WebKit; a foreign tap by the same pen under the same pointerId; and
-  // WebKit's hover update landing inside a finger's slow tap. The residual needs an element that appears
+  // the click slop without a pointercancel), in Firefox and WebKit; a foreign tap by the same pen under the same pointerId;
+  // WebKit's hover update landing inside a finger's slow tap; and, on a WebKit that sends no hover update when a frame shows again,
+  // the viewer's own tap on the picture whose frame the top page hides at that tap's pointerup and shows again, then another
+  // document's tap on an element over the control that hides at its pointerup, whose chain is then the viewer's own tap's
+  // (Playwright's WebKit sends that hover update, the mouse's pointerout, pointerover and pointermove with no button down, which
+  // refuse it: 0 of 30 at d9fb76da0 where bef9ff8fc opened 30 of 30, the Files pane 18 and the chat 12; Chromium and Firefox open
+  // it at neither). The residual needs an element that appears
   // over the picture during a tap, and where the viewer's window held the focus, a cover that cancels its mousedown and appears
   // over the picture during a tap. The elements of the dashboard's top page that cancel a press are the pane gutters, which
   // cancel their mousedown and sit between the panes, never over one, and the update banner's drag handle, which cancels its
@@ -3268,8 +3273,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // in no repetition, and Chromium opened neither order (Chromium 0 of 8 over both orders' shapes), and the next click opened in
   // every repetition. A third order of the class outside the residual, found by a later check of these fixes (the closing check
   // at 142ade155 after the fixes for the file review's round 18), opened the tab with the sign covered in WebKit, and in
-  // Chromium in one shape, and the gate closes it wherever this window hears an event in the held press's chain that no press of
-  // the viewer's own carries; what is left goes to the owner: the mouse pressed on the control with the control
+  // Chromium in one shape, and the gate closes it wherever this window hears an event in the held press's chain that no chain the
+  // allowlist admits carries there; what is left goes to the owner: the mouse pressed on the control with the control
   // shown, any button, and held while the top page hides the viewer's frame and shows it again (display none, as the phone
   // layout hides every pane but the one shown), so that the release lands on the top page; then a mouse click on an element of
   // another document over the control that hides at that click's mousedown or its pointerdown reaches this window as a
@@ -3382,14 +3387,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // focus not back; a 2,000 px block inserted above the picture during a held press and removed (WebKit, 3 of 3), whose chain
   // carries the mouse's boundary events with no button down; and, refused where bef9ff8fc's gate opened them, two own gestures of
   // a focus move that round 19's measurement of the blur's rule drove: the focus moved between a mouse click's pointerup and its
-  // click (Chromium 18, Firefox 14, WebKit 18) and a finger held while the focus moves (Chromium 14), since the allowlist admits a
-  // blur of the window nowhere. The press held while the focus moves out of the viewer's window, and a tap whose pointerup the
+  // click (Chromium 18, Firefox 14, WebKit 18, and 9 of 9 in each engine at d9fb76da0, whose gate is this head's) and a finger held
+  // while the focus moves (Chromium 14, and 6 of 6 at d9fb76da0), since the allowlist admits a blur of the window nowhere, and 2
+  // Firefox taps of round 19's recorded rows whose own pointerdown took the focus out of the viewer's window; and on a device with
+  // a mouse and a touchscreen or a pen, a finger's tap or a pen's press during which the mouse moves in the viewer and a mouse
+  // click during which a finger resting on the viewer moves (Chromium, touch and pen emulated, 3 of 3 each at d9fb76da0, each open
+  // at bef9ff8fc), since a tap's contact admits no mouse event but the four to no element, a press no touch event and a pen's press
+  // no mouse event with no button down. The press held while the focus moves out of the viewer's window, and a tap whose pointerup the
   // focus moves at, paid the retired blur rule's cost and pay the allowlist's the same (round 19's measurement: a mouse press held
   // on the control or on the picture while the page or a peer frame moves the focus, Chromium 18 of 18, Firefox 14 of 14 and
   // WebKit 18 of 18 for each mover, a pen's press held so, Chromium 14 of 14, the focus moved at a mouse click's own pointerdown,
   // 18, 14 and 18, and at a tap's pointerup, 18, 14 and 18); so does a Firefox press dragged out of the frame and back, the
-  // retired held arm's cost (8 of 8). By reading, not measured: WebKit's hover update landing inside a finger's slow tap after the
-  // content moved under a resting mouse, an eraser or a barrel button, a capture handler that moves the focus at a press in a way
+  // retired held arm's cost (8 of 8). By reading, not measured: the same on a device with both with the mouse leaving the viewer,
+  // and in Firefox and WebKit; WebKit's hover update landing inside a finger's slow tap after the content moved under a resting
+  // mouse, an eraser or a barrel button, a capture handler that moves the focus at a press in a way
   // no census drove, a touch-order pen's double tap's second tap, a press whose chain passes the cap of 1,024 tokens, and any event
   // of an engine not measured. The first own click and the first own tap after a focus move, and Firefox's blur after the
   // viewer's own open, fall outside any chain a click reads and cost nothing (round 19's measurement: 0 of 141, 0 of 132, and a
@@ -3452,7 +3463,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const CHAIN_TYPES = ["pointerdown", "pointerup", "pointercancel", "pointerover", "pointerout", "pointerenter", "pointerleave", "pointermove", "mousedown", "mouseup", "mouseover", "mouseout", "mousemove", "touchstart", "touchend", "touchcancel", "dragstart", "contextmenu", "auxclick", "blur", "focus"];
   const CHAIN_CAP = 1024;                                 // the chain's length: a longer one stops recording and refuses at its click, since the grammar was measured on none so long
   let chain: string[] | null = null;                      // the tokens since the last primary pointerdown, null before the first
-  let chainFull = false;                                  // the chain reached CHAIN_CAP: its click takes nothing
+  let chainFull = false;                                  // a token to record came with the chain at CHAIN_CAP, so the chain is longer than the cap: its click takes nothing
   let moveRun = -1;                                       // where the chain's last run of moves (pointermove and mousemove) starts, -1 when its last token is no move
   /** An event's token: its type, and for a pointer event its pointer type's initial and whether a button is down, for an over or an
    *  out whether it has a relatedTarget, for a blur or a focus whether its target is the window, the document or an element, for a
@@ -3471,7 +3482,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   };
   /** The chain listener, one function on every type of CHAIN_TYPES: a primary pointerdown starts the chain; a token equal to the one
    *  before it is dropped, and in a run of moves a token the run already holds, since the grammar reads a move only by the set a run
-   *  holds; a chain at CHAIN_CAP stops. */
+   *  holds; a chain at CHAIN_CAP records no more, and one more token to record marks it longer than the cap, whose click takes
+   *  nothing. */
   const onChain = (ev: Event): void => {
     if (ev.type === "pointerdown" && (ev as PointerEvent).isPrimary !== false) { chain = []; chainFull = false; moveRun = -1; }
     if (chain === null || chainFull) return;
@@ -3507,10 +3519,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     for (let i = 2; i < n - 2; i++) if (!inside.has(t[i])) return false;
     return true;
   };
-  /** A tap (p "t") or a touch-order pen's (p "p"): its pointerdown, a touchstart, its own moves and boundary events with the contact
-   *  down, its pointerup, its pointerout and pointerleave to no element, a touchend, at most one compatibility boundary pair
-   *  (mouseout and mouseover to an element, or a mouseover from no element), one or more mousemoves with no button, the mousedown,
-   *  the focus arriving and a mouseup of detail 1. */
+  /** A tap (p "t") or a touch-order pen's (p "p"): its pointerdown, a touchstart where one comes, its own moves and boundary events
+   *  with the contact down, its pointerup, its own pointerouts and pointerleaves to no element and a touchend where they come, at
+   *  most one compatibility boundary pair (mouseout and mouseover to an element, or a mouseover from no element), one or more
+   *  mousemoves with no button, the mousedown, the focus arriving and a mouseup of detail 1. */
   const tapChain = (t: readonly string[], p: string): boolean => {
     let i = 0; const n = t.length;
     if (t[i++] !== "pointerdown:" + p + "B") return false;
@@ -3538,8 +3550,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     else ok = false;
     return ok && blursPaired(t);
   };
-  /** The allowlist: whether a chain is one the viewer's own gestures make, the grammar above widened three ways: a tap's mouseup
-   *  of detail 1 or 2; the focus arriving anywhere before a press's mousedown and anywhere in a tap before its pointerup; and during a
+  /** The allowlist: whether a chain is one the viewer's own gestures make, the grammar above widened three ways: a finger's tap's
+   *  mouseup of detail 1 or 2; the focus arriving anywhere before a press's mousedown and anywhere in a tap before its pointerup; and during a
    *  finger's contact the mouse's pointerout, pointerover, mouseout and mouseover to no element with no button. An element's blur
    *  that no element's focus follows before the next pointerup or mouseup is refused, and a blur of the window anywhere. */
   const ownChain = (c0: readonly string[], t: string | null): boolean => {

@@ -192,14 +192,19 @@
 //   of 12 in the road probe, where 09f58bec6's gate opened all 12; the mousedown's clear's, in the three engines, a left click
 //   with another mouse button held, the other pressed before it or during it (Chromium 16 of 16, Firefox 28 of 28, WebKit 12 of
 //   12 and its chord of a left click into a held right press 4 of 4; the file review's round 19, extra7-1), WebKit's chord of a
-//   left click into a held right press the one member the refusal of a standing record added;; and the own-chain allowlist's (the file review's round
+//   left click into a held right press the one member the refusal of a standing record added; and the own-chain allowlist's (the file review's round
 //   20: the rulings pass's census and the execution check's, Playwright's engines on Linux, touch emulated): the viewer's own
 //   press held across a short hide of its frame with the focus not back at the release, released within about 10 ms of the show
 //   with the body box focused or held on the control while the viewer's own input holds the focus (Chromium, 60 of 360 mouse
 //   presses and 36 of 72 pen presses of the check's grid), whose chain is extra5-1's with the focus not back; a 2,000 px block
 //   inserted above the picture during a held press and removed (WebKit, 3 of 3); and two own gestures of a focus move that round
 //   19's measurement of the blur's rule drove, which bef9ff8fc's gate opened, the focus moved between a mouse click's pointerup
-//   and its click (Chromium 18, Firefox 14, WebKit 18) and a finger held while the focus moves (Chromium 14). The retired blur's
+//   and its click (Chromium 18, Firefox 14, WebKit 18, and 9 of 9 in each engine at d9fb76da0) and a finger held while the focus
+//   moves (Chromium 14, and 6 of 6 at d9fb76da0), and 2 Firefox taps of round 19's recorded rows whose own pointerdown took the
+//   focus out of the viewer's window; and on a device with a mouse and a touchscreen or a pen, a finger's tap or a pen's press
+//   during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves (Chromium,
+//   touch and pen emulated, 3 of 3 each at d9fb76da0, whose gate is this head's, each open at bef9ff8fc), and by reading the same
+//   with the mouse leaving the viewer, and in Firefox and WebKit. The retired blur's
 //   rule's own cost, a focus move out of the viewer's window during the viewer's own press or between a tap's pointerup and its
 //   compatibility mousedown, refused once in the three engines in a probe kept out of the tree, the allowlist pays the same, and
 //   the retired leave's arm for no button and mouseout's clear cost nothing measured, no tap or chain cell of either leg
@@ -1693,7 +1698,8 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
  *  decisions on them), in chainCells's shape, the viewer's page in a same-origin frame of a top page beside another pane on the hybrid
  *  page, on the Files pane: an order of each of the round's four findings as its engine sends it, whose covered click opened the tab
  *  at bef9ff8fc, whose gate read none of the events that tell it apart, and opens nothing here, the gate's allowlist refusing a chain
- *  no gesture of the viewer's own makes, the next click opening once; each run `reps` times, each run a cell of its own. In WebKit:
+ *  its grammar does not admit (the Chromium cell's chain is also the viewer's own press held on the control across the hide while
+ *  the viewer's own input holds the focus, a cost), the next click opening once; each run `reps` times, each run a cell of its own. In WebKit:
  *  extra7-1's moved click (the mouse pressed on the control with the control shown and held while the top page hides the viewer's
  *  frame, released at once on the top page, the frame shown again at once, then Playwright's click on the control, which moves the
  *  mouse to the point first, on an element of the top page over the control that cancels its mousedown and hides at it, so the viewer
