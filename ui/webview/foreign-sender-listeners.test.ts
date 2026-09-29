@@ -1503,10 +1503,12 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     parameter, a catch parameter, an import, a function, class, enum or namespace of the name), and no namespace's
 //     export of the name sits anywhere in the file; the one write accepted is a plain assignment of `new WebSocket(...)`
 //     that is a statement of its own, and every other write refuses (another assignment, one inside another expression, a
-//     compound assignment, ++ or --, a destructuring target, a loop head, a write inside a with statement, and a write in
-//     another case clause of the declaration's switch, whatever binding the census finds for its name there, none or an
-//     outer one, since at run time it sets the declaration's name); and a socket is bound at least once. The refusal
-//     names the site. The proof trusts `new WebSocket(...)` because the name WebSocket is refused below; a global
+//     compound assignment, ++ or --, a destructuring target, a loop head); so does a write inside the declaration's scope
+//     that the census resolves to no binding, to one outside that scope, or to a function declared in a block that does
+//     not hold the write (a function that is an if statement's clause or a label's statement counts as a block of its
+//     own, as esbuild wraps it in one): a write inside a with statement, or in another case clause of the declaration's
+//     switch, where at run time it sets the declaration's name; and a socket is bound at least once. The refusal names
+//     the site. The proof trusts `new WebSocket(...)` because the name WebSocket is refused below; a global
 //     WebSocket replaced through an object built elsewhere with a computed key and copied onto the window is on the list
 //     of what the rules cannot see, and through it a socket the census accepts can be the window.
 //     A window other than this page's own is refused whatever the value. On every other receiver the census resolves
@@ -1823,10 +1825,23 @@ function writeOf(n: any): { kind: string; assign?: any } | null {
   if (up && up.viaLiteral) return { kind: up.loop ? "a for...in or for...of head" : "a destructuring target" };
   return r.at.operatorToken.kind === ts.SyntaxKind.EqualsToken ? { kind: "an assignment", assign: r.at } : { kind: "a compound assignment" };
 }
+/** The block a function declaration binds its name in for certain: the block, file or namespace body whose statement it
+ *  is, or the case block of the switch whose case clause holds it. A function declaration that is an if statement's
+ *  clause or a label's statement (sloppy-mode JavaScript allows both) is its own block: esbuild wraps it in a block of
+ *  its own. hoistedDecl takes a function declared in a block as hoisted to its function too, which sloppy-mode
+ *  JavaScript does only when no let, const or class of the name sits in a block in between (a switch's case block
+ *  holding a let of the name, say) and strict code never does; otherwise the function binds in its own block only. */
+const ownBlock = (f: any): any => {
+  const p = f.parent;
+  if (ts.isBlock(p) || ts.isSourceFile(p) || ts.isModuleBlock(p)) return p;
+  return ts.isCaseClause(p) || ts.isDefaultClause(p) ? p.parent : f;
+};
 /** What socketRefusal names a write by when the write sits inside the declaration's scope and declOf resolves its name to
- *  nothing or to a binding outside that scope (rule 3): the cause, whatever the write's form. */
-const UNPLACED_WRITE = "a write whose name the census resolves to no declaration or to one outside the declaration's scope"
-  + " (inside a with statement, or in another case clause of the declaration's switch)";
+ *  nothing, to a binding outside that scope, or to a function declaration whose own block (ownBlock) does not hold the
+ *  write (rule 3): the cause, whatever the write's form. */
+const UNPLACED_WRITE = "a write whose name the census resolves to no declaration, to one outside the declaration's scope, or"
+  + " to a function whose own block does not hold the write (inside a with statement, or in another case clause of the"
+  + " declaration's switch)";
 /** Why the road census cannot prove `recv` a WebSocket, whose own onmessage handler only its server posts to, naming the
  *  site; null when it can. The proof fails closed:
  *  1. `recv` is a name, and the declaration declOf finds for it is a let, const or var statement's own, with a plain name
@@ -1841,12 +1856,15 @@ const UNPLACED_WRITE = "a write whose name the census resolves to no declaration
  *     the name counts wherever it sits in the file.
  *  3. The one write accepted is a plain `=` that assigns new WebSocket(...), a statement of its own, to a name declOf
  *     resolves to the declaration. Every other write refuses (writeOf): an assignment of anything else or inside another
- *     expression, a compound assignment, ++ or --, a destructuring target, a loop head; so does a write inside the
- *     declaration's scope whose name declOf resolves to nothing or to a binding outside that scope. That is a write
- *     inside a with statement, and a write in another case clause of the switch whose case block holds the declaration,
- *     whatever declOf resolves it to: declOf reads only the clause the name sits in, so it finds an outer binding of the
- *     name, or none, where at run time the write sets the declaration's. Such a write is named by that cause, whatever
- *     its form.
+ *     expression, a compound assignment, ++ or --, a destructuring target, a loop head. So does a write inside the
+ *     declaration's scope whose name declOf resolves to nothing, to a binding outside that scope, or to a function
+ *     declaration whose own block (ownBlock) does not hold the write: the census has not shown that such a write misses
+ *     the declaration. That is a write inside a with statement, and a write in another case clause of the switch whose
+ *     case block holds the declaration: declOf reads only the clause the name sits in, so from there it finds an outer
+ *     binding of the name, a function declared in some other block (which hoistedDecl takes as hoisted), or none, where
+ *     at run time the write sets the declaration's. A write declOf resolves to any other binding inside the
+ *     declaration's scope (an inner let, a parameter, a function declared in the block that holds the write) sets that
+ *     binding, not the socket. A refused write is named by its cause, whatever its form.
  *  4. A socket is bound at least once: the initialiser, or an accepted assignment.
  *  A member or key name, a label, a type's name and a name in a type are no binding and no reference (namesNoBinding).
  *  The proof trusts new WebSocket(...) because the road census refuses the name WebSocket other than as the constructor a
@@ -1875,7 +1893,7 @@ function socketRefusal(recv: any, sf: any): string | null {
         if (!b.scope || (holds(scopeD, b.scope) && (holds(b.scope, recv) || holds(b.scope, d.name)))) refuseAt(n, "bound again", b.kind);
       } else {
         const w = writeOf(n), t = w ? declOf(n) : undefined;
-        if (w && (t === d || ((t === null || !holds(scopeD, t)) && holds(scopeD, n)))) {
+        if (w && (t === d || ((t === null || !holds(scopeD, t) || (ts.isFunctionDeclaration(t) && !holds(ownBlock(t), n))) && holds(scopeD, n)))) {
           if (w.assign && t === d && isSocketNew(w.assign.right) && ts.isExpressionStatement(outer(w.assign).parent)) sockets.push(w.assign.right);
           else refuseAt(n, "written", t !== d ? UNPLACED_WRITE : w.assign ? "an assignment other than a statement of its own assigning new WebSocket(...)" : w.kind);
         }
@@ -2210,6 +2228,13 @@ test("the road census reads what it claims: every road around the spelled regist
     ["const ws = new WebSocket(u); namespace N { var ws: any = window; } namespace N { ws.onmessage = f; }", undefined, 0],
     ["const ws = new WebSocket(u); namespace N { ws.onmessage = f; }", undefined, 0],
     ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: } arm();", "webview/probe.js", 0],
+    // a write in another case clause of the declaration's switch that sets a binding of its own there, which the census
+    // resolves it to: an inner let, a parameter, a function declared in the block that holds the write, or one in a case
+    // clause of an inner switch that holds the write
+    ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { let ws; ws = window; } } arm();", "webview/probe.js", 0],
+    ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: (function (ws) { ws = window; })(1); } arm();", "webview/probe.js", 0],
+    ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} ws = window; } } arm();", "webview/probe.js", 0],
+    ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: switch (0) { case 0: function ws() {} case 1: ws = window; } } arm();", "webview/probe.js", 0],
     ["const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;", undefined, 0],
     ["document.body.onmessage = null; x.onmessage = undefined; y.onmessageerror = z.onmessage = null;", undefined, 0],
     ["window.onmessageerror = f; document.defaultView.onmessage = g; const w = window; w.onmessage = h;", undefined, 3],
@@ -2326,9 +2351,9 @@ test("the road census reads what it claims: every road around the spelled regist
       ["let ws = pick(); ws.onmessage = f;", "webview/probe.js"],
       ["let ws; ws.onmessage = f;", "webview/probe.js"],
       // a write in another case clause of the switch whose case block holds the declaration refuses as a write inside the
-      // declaration's scope, whatever declOf resolves its name to (it reads only the clause the name sits in): nothing,
-      // or a binding of the name outside the switch (a var, a parameter, an import, a function), which at run time the
-      // write does not reach, a destructuring target's write included
+      // declaration's scope when declOf (which reads only the clause the name sits in) resolves its name to nothing, or to
+      // a binding of the name outside the switch (a var, a parameter, an import, a function), which at run time the write
+      // does not reach, a destructuring target's write included
       ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: ws = window; } arm();", "webview/probe.js"],
       ["switch (0) { case 0: let ws: any = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: ws = window; } arm();"],
       ["var ws; switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: ws = window; } arm();", "webview/probe.js"],
@@ -2336,6 +2361,19 @@ test("the road census reads what it claims: every road around the spelled regist
       ["import { ws } from \"./m\"; switch (0) { case 0: let ws: any = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: ws = window; } arm();"],
       ["function ws() {} switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: ws = window; } arm();", "webview/probe.js"],
       ["var ws; switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: [ws] = [window]; } arm();", "webview/probe.js"],
+      // and when declOf resolves it to a function declared in a block inside the switch that does not hold the write
+      // (hoistedDecl takes the function as hoisted, but with the case block's let in between it binds in its own block
+      // only): the block in the write's clause, in the declaration's clause, in default:, or an if statement's, a
+      // destructuring write, and a function that is an if statement's clause or a label's statement, which esbuild wraps
+      // in a block of its own
+      ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} } ws = window; } arm();", "webview/probe.js"],
+      ["switch (0) { case 0: let ws: any = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} } ws = window; } arm();"],
+      ["switch (0) { case 0: let ws = new WebSocket(u); { function ws() {} } var arm = () => { ws.onmessage = f; }; case 1: ws = window; } arm();", "webview/probe.js"],
+      ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; default: { function ws() {} } ws = window; } arm();", "webview/probe.js"],
+      ["function g() { switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: if (1) { function ws() {} } ws = window; } arm(); } g();", "webview/probe.js"],
+      ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { function ws() {} } [ws] = [window]; } arm();", "webview/probe.js"],
+      ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: if (1) function ws() {} ws = window; } arm();", "webview/probe.js"],
+      ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; }; case 1: { l: function ws() {} ws = window; } } arm();", "webview/probe.js"],
       // an ambient declaration, which binds nothing at run time (an ambient var's name is a property of the global object)
       ["declare var ws: any = new WebSocket(u); (window as any).ws = window; ws.onmessage = f;"],
       ["declare let ws: any = new WebSocket(u); (window as any).ws = window; ws.onmessage = f;"],
@@ -2443,15 +2481,17 @@ test("the road census reads what it claims: every road around the spelled regist
   }
   // a refusal on a receiver the census cannot prove a socket names the site: where the name is bound again or written, by
   // what, or why its declaration proves nothing (socketRefusal), one row per kind; a write inside the declaration's scope
-  // whose name declOf resolves to nothing or to a binding outside it is named by that cause whatever the write assigns,
-  // one row each in another case clause of the declaration's switch with no outer binding, with an outer one, and
+  // whose name declOf resolves to nothing, to a binding outside it, or to a function whose own block does not hold the
+  // write is named by that cause whatever the write assigns, one row each in another case clause of the declaration's
+  // switch with no outer binding, with an outer one, with a function declared in a block the write is not in, and
   // assigning new WebSocket(...), and one inside a with statement; and for a declaration that is no let, const or var
   // statement's own one row per shape (a for head's, a catch clause's parameter, none)
   const UNPROVED = "an onmessage handler on a receiver the census cannot resolve to this page's window or to a socket: ";
   // the kind named for a write rule 3 refuses by its cause, spelled out here rather than read from UNPLACED_WRITE, so
   // that a change to that text reds these rows
-  const UNPLACED = "a write whose name the census resolves to no declaration or to one outside the declaration's scope"
-    + " (inside a with statement, or in another case clause of the declaration's switch)";
+  const UNPLACED = "a write whose name the census resolves to no declaration, to one outside the declaration's scope, or"
+    + " to a function whose own block does not hold the write (inside a with statement, or in another case clause of the"
+    + " declaration's switch)";
   const named: Array<[string, string, string?]> = [
     ["var ws = new WebSocket(u);\nvar ws = new WebSocket(u2);\nws.onmessage = f;", "ws is bound again at :2 by a second declaration", "webview/probe.js"],
     ["var ws = new WebSocket(u);\nvar [ws] = [window];\nws.onmessage = f;", "ws is bound again at :2 by a destructuring target", "webview/probe.js"],
@@ -2468,6 +2508,7 @@ test("the road census reads what it claims: every road around the spelled regist
     ["let ws = new WebSocket(u);\nws = window;\nws.onmessage = f;", "ws is written at :2 by an assignment other than a statement of its own assigning new WebSocket(...)", "webview/probe.js"],
     ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; };\ncase 1: ws = window; } arm();", "ws is written at :2 by " + UNPLACED, "webview/probe.js"],
     ["var ws; switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; };\ncase 1: ws = window; } arm();", "ws is written at :2 by " + UNPLACED, "webview/probe.js"],
+    ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; };\ncase 1: { function ws() {} } ws = window; } arm();", "ws is written at :2 by " + UNPLACED, "webview/probe.js"],
     ["switch (0) { case 0: let ws = new WebSocket(u); var arm = () => { ws.onmessage = f; };\ncase 1: ws = new WebSocket(u2); } arm();", "ws is written at :2 by " + UNPLACED, "webview/probe.js"],
     ["var ws = new WebSocket(u);\nwith (o) { ws = window; }\nws.onmessage = f;", "ws is written at :2 by " + UNPLACED, "webview/probe.js"],
     ["let ws = new WebSocket(u);\nws ||= window;\nws.onmessage = f;", "ws is written at :2 by a compound assignment", "webview/probe.js"],
