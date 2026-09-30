@@ -206,15 +206,18 @@
 //   inserted above the picture during a held press and removed (WebKit, 3 of 3); and on a device with a mouse and a pen, a pen's
 //   press during which the mouse moves in the viewer (Chromium, pen emulated, 3 of 3 at d9fb76da0, open at bef9ff8fc), a cost the
 //   incremental reads pay too; four own gestures the allowlist refused before its read-outs, which bef9ff8fc's gate opened, open
-//   since: the focus moved between a mouse click's pointerup and its click and a finger held while the focus moves, each in an
-//   order with an element's or the document's blur first (round 19's measurement of the blur's rule, its recorded rows replayed,
-//   Chromium 18 and 14, Firefox 14 and WebKit 18, with Firefox's 2 taps whose own pointerdown took the focus out of the viewer's
+//   since: the focus leaving this window, and nothing else, between a mouse click's pointerup and its mouseup, and a finger
+//   held while the focus leaves this window once, each in one of the three orders the read-outs take, an element's blur, the
+//   document's or both, then the window's (round 19's measurement of the blur's rule, its recorded rows replayed, Chromium
+//   18 and 14, Firefox 14 and WebKit 18, with Firefox's 2 taps whose own pointerdown took the focus out of the viewer's
 //   window, 66 in all), and a finger's tap during which the mouse moves in the viewer and a mouse click during which a finger
 //   resting on the viewer moves (Chromium, touch emulated); and by reading any event the grammar does not name that a real gesture
 //   brings into a press or a tap, among them the places below where the incremental reads would open, 21 families of which are
 //   measured since, and the device's gestures in Firefox and WebKit. The read-outs (the coordinator's ruling on the allowlist's
 //   build) add no covered click: each takes events
-//   out only at the place and in the order the viewer's own gesture puts them, and where a covered chain of the recorded rows
+//   out only where the viewer's own gesture puts them (the focus-leaving ones only the focus leaving this window, and nothing
+//   else, between a mouse's pointerup and its mouseup, and one run of it before a finger's pointerup, each in one of three
+//   orders, an element's blur, the document's or both, then the window's), and where a covered chain of the recorded rows
 //   carries the focus leaving the viewer's window it leaves before the covered pointerup, at the press another document's element
 //   takes, and none carries the mouse's moves in a finger's contact or a finger's move in a mouse's press, so of the 19,325 covered
 //   clicks of every recorded row that reach the allowlist the read-outs change no chain; the covered grid read 0 covered clicks
