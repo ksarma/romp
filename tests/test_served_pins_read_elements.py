@@ -39,10 +39,11 @@ class, reads nothing, and check (5) refuses their text returns), or a
 Name bound to either in the same function (a tuple assignment counts by position; a Name bound to a SLICE of one counts
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
-the author's pass 7), or a `self.<attr>` bound to one in any method of the same class (a setUp, or a setUpClass's `cls.<attr>`,
-read as the `self.<attr>` wherever the census reads one, since the focused re-check of round 6 in its reads of a fetched tuple too;
-round 6, CLS: a class attribute had been outside the derivation, 83 rows in four suite modules) or of an in-module base class, nearest
-first and breadth-first, every base a class lists before any base's own bases (round 6, INHERIT; the textual census does not read
+the author's pass 7), or a `self.<attr>` bound to one in any method of the same class (a setUp, or a setUpClass's `cls.<attr>`;
+a read spelled `cls.<attr>` is read as the `self.<attr>` in _resolve, _position_key, _bind's alias and unpack branches, readers_of's
+refusal loop and rows_of's declined form for an inherited attribute, since the focused re-check of round 6 and the fix pass after
+it; round 6, CLS: a class attribute had been outside the derivation, 83 rows in four suite modules) or of an in-module base class,
+nearest first and breadth-first, every base a class lists before any base's own bases (round 6, INHERIT; the textual census does not read
 inheritance, so such a row is a declined form; the order is not Python's, the Reach paragraph below), or a body FETCHED by a literal path
 (the author's pass 8, 2026-09-20: `_, body = _serve_get("/sw.js", ...)`, `page = self._get_text("/")`, through `.read(...)` and
 `.decode(...)`, alone or by tuple unpack, and since round 6 a `.decode(...)` or `.read(...)` of any served text read inline or bound
@@ -1102,7 +1103,7 @@ def rows_of(path, getters, constants, routes=None):
     census reads (the author's pass 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
     no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice, a
     subscript (`resp[1]`), a name bound to or unpacked from a fetched tuple's position (or a conversion of one), an inherited
-    attribute (_base_attrs), a `.decode(...)`/`.read(...)` call or a text a helper of the module returns (_ByHelper; round 6); served
+    attribute (_base_attrs; spelled `self.` or `cls.`), a `.decode(...)`/`.read(...)` call or a text a helper of the module returns (_ByHelper; round 6); served
     is whether the text is a FETCHED body (_fetched), judged as Handler._send serves it (judged_texts; the rulings at the merge of
     main's login cookie split, 2026-09-28)."""
     tree, lines = _parsed(path)
@@ -1144,7 +1145,7 @@ def rows_of(path, getters, constants, routes=None):
                 _bind(targets, value, names, attrs, getters, constants, sliced, routes, reads)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
             readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced) and not isinstance(x, ast.Subscript) \
-                and not (isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id == "self" and x.attr in inherited) \
+                and not (isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id in ("self", "cls") and x.attr in inherited) \
                 and not (isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr in ("decode", "read")) \
                 and not isinstance(text_of(x), _ByHelper)   # PEEL and RETTEXT: declined
             rows = []
@@ -3441,9 +3442,12 @@ class U(unittest.TestCase):
         # own setUp before B's for P (i6), and the first listed base before the second for R (i7, N's before Q's). The walk is
         # breadth-first, every listed base before any base's own base, so Z(M, Q) reads Q's binding (i8) where Python's method
         # resolution order reaches M's base B first: the order the module docstring's Reach discloses, and this row its witness.
-        # Dropping INHERIT reds the rows here, dropping the declined clause reds i1's form, letting a farther base's binding
-        # overwrite a nearer one reds i6 to i8, walking the listed bases last first reds i7, and walking a base's own bases before
-        # the later listed bases reds i8. The rows of both derivations are named, never inferred.
+        # A subclass's setUpClass reading the inherited attribute with the cls. spelling is a declined form too (i9, V; the fix
+        # pass after round 6's focused re-check: the CLS reads had read it as the page, and the declined clause, which read the
+        # self. spelling alone, had marked it readable). Dropping INHERIT reds the rows here, dropping the declined clause reds
+        # i1's form, reading only the self. spelling there reds i9's, letting a farther base's binding overwrite a nearer one reds
+        # i6 to i8, walking the listed bases last first reds i7, and walking a base's own bases before the later listed bases reds
+        # i8. The rows of both derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 class B(unittest.TestCase):
@@ -3486,6 +3490,11 @@ class R(N, Q):
 class Z(M, Q):
     def test_f(self):
         self.assertIn("i8", self.html)
+class V(B):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        assert "i9" in cls.html
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3497,10 +3506,12 @@ class Z(M, Q):
             os.unlink(f.name)
         self.assertEqual(rows, [(16, "i1", "_landing", "in", False, False), (17, "i2", "_chat_page", "in", False, True), (18, "i3", "_feed_page", "in", True, False),
                                 (23, "i4", "_chat_page", "in", True, False), (32, "i6", "_chat_page", "in", False, False),
-                                (38, "i7", "_chat_page", "in", False, False), (41, "i8", "_feed_page", "in", False, False)])
+                                (38, "i7", "_chat_page", "in", False, False), (41, "i8", "_feed_page", "in", False, False),
+                                (46, "i9", "_landing", "in", False, False)])
         self.assertEqual(sites, [(18, "i3", "_feed_page", "in"), (23, "i4", "_chat_page", "in")])
         self.assertEqual([r[:3] for r in readers], [(16, "assert", "_landing"), (17, "assert", "_chat_page"), (18, "assert", "_feed_page"), (23, "assert", "_chat_page"),
-                                                    (32, "assert", "_chat_page"), (38, "assert", "_chat_page"), (41, "assert", "_feed_page")])
+                                                    (32, "assert", "_chat_page"), (38, "assert", "_chat_page"), (41, "assert", "_feed_page"),
+                                                    (46, "assert", "_landing")])
 
 
     def test_a_conversion_of_a_served_text_is_read_as_that_text(self):
