@@ -411,8 +411,12 @@ return of a function the census follows that returns its parameter, is refused w
 file stores it, and is otherwise under the call limit; an item of self, a parameter's, is text such a base holds. A local
 container (a name a function the pass reads binds whole to a list, dict or set literal or comprehension or to a call of parse_qs,
 or a name with one of these uses: a store or delete through it or an item of it; an append or extend; setattr or delattr, or a
-method spelled on a class, handed it or an item of it; a binding to a name the function declares global or nonlocal; one of the
-in-place changers of a list, dict, set, deque or OrderedDict called on it or read off it unbound (update, setdefault, append,
+method spelled on a class, handed it or an item of it; a binding of it, or of a new object holding it, to a name the function
+declares global or nonlocal, or as a default of a function or a lambda (unless every binding of the name is a plain assignment of
+a str: a string constant, or an if-expression or a boolean operation over such values); an augmented assignment to a name bound to
+it or to an item of it, which runs that value's own in-place method (`e += [v]` extends a list, `e |= {...}` updates a dict); one
+of the in-place changers of a list, dict, set, deque or OrderedDict called on it or read off it unbound (update, setdefault,
+append,
 extend, insert, pop, popitem, popleft, clear, add, discard, remove, sort, reverse, appendleft, extendleft, rotate, move_to_end,
 difference_update, intersection_update and symmetric_difference_update, or a spelled-out `__init__`, `__setitem__`, `__delitem__`,
 `__setattr__`, `__delattr__`, `__ior__`, `__iadd__`, `__isub__`, `__iand__`, `__ixor__` or `__imul__`), or a method whose return a
@@ -421,9 +425,10 @@ read off one; and, for a name that is no parameter and every binding of which is
 import's, a builtin's or a followed function's), any use outside a closed set: a read, a call's argument, a subscript load, a
 binding to a name the walk follows, the name itself an operand, and a method the census reads a text through with its return used
 (get, keys, values, items, index, count, copy, split, rsplit, splitlines, partition, rpartition, removeprefix, removesuffix,
-group, join, format, format_map, replace, strip, lstrip, rstrip or encode), so any other method, an attribute read, a store of it
-into another object, a call of it, a default or a match subject, and an item of it handed to another object's method by an
-operator; each directly or through a name bound to it, to an item of it or to a new object holding one) is read whole only where
+group, join, format, format_map, replace, strip, lstrip, rstrip or encode), so any other method, an attribute read, it or a new
+object holding it stored into another object, called, matched or held where the census does not read it, and an item of it so used
+or handed to another object's method by an operator; each directly or through a name bound to it, to an item of it or to a new
+object holding one) is read whole only where
 every occurrence of its name, resolved by binding, is one of the proven forms:
 its one binding (a plain single-name assignment to a list, dict, set or tuple literal or to a call whose return the census reads
 as a value slot, an import's, one of the seven builtins a page may name, a parameter's or a method's on one of those); the base of
@@ -444,7 +449,10 @@ string constant being a str, and a copy of a dict, a list or a set, or a slice o
 and a new object holding its receiver's items. Any other method called on the item, and a read method or a subscript load outside
 its type's set (a
 spelled-out dunder among them), whether the return is used or dropped, an attribute read off it other than as a method's callee, a
-store into it, setattr or delattr handed it, and a method spelled on a class handed it as its first argument (a builtin class, as
+store into it, an augmented assignment to a name bound to it (which runs the item's own in-place method, and refuses for a str
+item too, whose augmented assignment only rebinds the name), setattr or delattr handed it, and a method spelled on a class handed
+it as its first argument (a
+builtin class, as
 in `list.append`, or a class of collections imported as the module or by name, as in `deque.append`), directly or through a name
 bound to it, refuses the container; a str has no read set, nor has an item whose type the census does not know (a call's return, a
 name it does not follow), so any method or subscript load on one refuses; and so does the item's hand-off to another object's
@@ -463,8 +471,8 @@ unpacking
 target); a delete; a method other than append, extend or a read method of its type, a read method outside its type's set or a
 spelled-out dunder among them, or an attribute of it read other than as a method's callee; setattr or delattr, or a method spelled
 on a class (a builtin class, or a class of collections imported as the module or by name), handed it as its first argument; a
-store by a key that is no constant;
-an append or extend of other than one plain argument; or any occurrence in a function or lambda nested in it, or a class
+store by a key that is no constant; an append or extend of other than one plain argument; an augmented assignment to a name bound
+to it or to an item of it; or any occurrence in a function or lambda nested in it, or a class
 body it defines, whose code the census does not read (a closure capture) or which makes a class attribute; a comprehension is read
 where it stands, as the function's own body is: a read of the fourth form and an append of a read value there pass, the container
 as a comprehension's source, in its condition or as its element refuses as any other read does, and a change the census cannot
@@ -481,9 +489,13 @@ in-place changers with its return used, through an attribute read off it, stored
 handed to another object's method by an operator, is read through its binding (its witnesses: a queue bound through a boolean
 operation that a fetch is put into, the put's return used, or through its put read off it unbound; a dict of lists so bound,
 stored into another object through which a fetch is stored into it; and one whose item is compared with an object whose `__eq__`
-appends a fetch to it); and a name bound to anything but a literal or a call of parse_qs, handed itself to another object's method
-by an operator, is read through its binding (its witness: an import's object compared with an object whose `__eq__` stores a fetch
-on it, read through str). An attribute
+appends a fetch to it); a name bound only to calls, an item of which is held in a new object that is stored into another object,
+called or matched, is read through its binding (its witness: a list read out of a dict bound to a call of dict, held in a new list
+stored into another object through which a fetch is stored into it); and a name bound to anything but a literal or a call of
+parse_qs, handed itself, or in a new object holding it, to another object's method by an operator, is read through its binding
+(its witnesses: an import's object compared with an object whose `__eq__` stores a fetch on it, read through str; and a dict bound
+to a call of dict, held in a new list compared with an object whose `__eq__` stores a fetch into it through that list). An
+attribute
 read in a page position, as a value or
 anywhere on the path of a receiver or a container (but never inside the index of a subscript over a
 container whose text the pass does not read: below), is refused by name unless the root its base reaches by
@@ -619,9 +631,9 @@ constant (a literal or a comprehension a top-level assignment binds) is a contai
 run-time memo no type is read through, where the file changes it other than by the writes listed above for a route's type (a store
 or delete through an item of it or on it as an attribute, a method called on it or on an item of it other than one the census
 reads a text through (named above), a method called on it whose return is dropped, one of the in-place changers named above read
-off it or an item of it unbound, an attribute read off it other than as a method's callee, a setattr or delattr on it, or it or an
-item of it handed to another object's method by an operator),
-changes it through a name bound to it, to an item of it or to a new
+off it or an item of it unbound, an attribute read off it other than as a method's callee, a setattr or delattr on it, an
+augmented assignment to it, which runs its own in-place method, or it or an item of it handed to another object's method by an
+operator), changes it through a name bound to it, to an item of it or to a new
 object holding one (each name read by its spelling in every scope, so a local of that spelling counts too), or lets it or such a
 name leave the census's sight (stored into another object, returned, yielded, handed as a default or matched; an item of a literal
 that holds only constants and tuples of them, which cannot change, excepted), though none of these rebinds the name; a module name
@@ -783,8 +795,9 @@ any other form inside such a block's body, a name a star import may rebind, a mo
 namespace through a computed name or may rewrite it at run time (the reason naming the form and its line), a builtin in a file
 that may rewrite the builtins, and a rebound import, builtin, function or
 class among them), any other kind of expression in a page (a non-empty bytes, float, complex or Ellipsis constant, an f-string's
-format spec,
-any other operator, a comparison and a unary expression among them), and a route whose body yields no piece and no file slot (each
+format spec, any other operator, a comparison and a unary expression among them, and a yield, a yield from or an await, whose
+value is what the generator is sent, what the iterator it delegates to returns or what the awaited object returns, not its
+operand), and a route whose body yields no piece and no file slot (each
 refusal of page text applies where the pass reads that text, never inside the index of a subscript over a container whose text the
 pass does not read: above), unless the served allowlist, SERVED_ALLOW, names the place by its function and expression, with the
 number of places the entry
@@ -2121,8 +2134,9 @@ class Scan(ast.NodeVisitor):
         assignment binds to a list, dict or set literal or comprehension) that is changed other than by the forms write records (a
         store or delete through an item of it or an attribute, a method called on it or an item of it outside the closed set
         _READ_THROUGH (the in-place changers among them), a method called on it whose return is dropped, a changer read off it or an
-        item of it unbound, an attribute read off it other than as a method's callee, a setattr or delattr on it, or it or an item of
-        it an operand whose other operand is no constant, handed to that operand's method (coperands): cwrites), or that a
+        item of it unbound, an attribute read off it other than as a method's callee, a setattr or delattr on it, an augmented
+        assignment to it, which runs its own in-place method (visit_AugAssign), or it or an item of it an operand whose other operand
+        is no constant, handed to that operand's method (coperands): cwrites), or that a
         name bound to it, to an item of it or to a new
         object holding one is changed through (at a depth reaching it: its levels of new objects taken off), or that such a name, or it,
         leaves the file's sight through (stored into another object, returned, yielded, handed as a default or matched: the container
@@ -2231,6 +2245,9 @@ class Scan(ast.NodeVisitor):
     def visit_AugAssign(self, n):   # a module-level `X += ...` rebinds X after its binding
         if isinstance(n.target, ast.Name) and not self.stack: self.write(n.target.id, n.lineno)
         self.cbind([n.target], n.value)
+        # layer iv: an augmented assignment runs its target's in-place method (`e += [v]` is list.__iadd__), a change of the name it
+        # binds, in any scope (cflows reads a module container changed through a name bound to it, or to an item of it, so)
+        if isinstance(n.target, ast.Name): self.cwrite(n.target, n.lineno)
         self.generic_visit(n)
     def visit_Import(self, n):
         self.alias.update({a.asname or a.name: a.name for a in n.names}); self.imports.extend((a.name.split(".")[0], n.lineno) for a in n.names)
@@ -3332,6 +3349,11 @@ _DEF_ALIAS = ("a callee whose name the file reads other than as a call's callee 
 _DEF_STRING = "a callee whose name a string constant of the file spells, which a lookup by name may reach, which the census does not follow"
 _LAMBDA_VALUE = "a lambda reached through a name's value, a callee no def statement defines, which the census does not follow"   # resolve's and _defaults's
 _FUNC_OBJECT = "a function or class object"   # _scoped's and _base's reason for such a name read as a value, refused wherever it stands
+# resolve's reasons for a yield, a yield from and an await read as a page value: each evaluates to a value other than its operand (what
+# the generator is sent, what the delegated iterator returns, what the awaited object returns), which the census does not read
+_NOT_OPERAND = {ast.Yield: "a yield, whose value is what its generator is sent, not its operand",
+                ast.YieldFrom: "a yield from, whose value is what the iterator it delegates to returns, not its operand",
+                ast.Await: "an await, whose value is what the awaited object returns, not its operand"}
 _METHOD_SUBCLASS = ("a method called on self, which a subclass another file defines may override with code the census does not "
                     "read")   # _Served._method_call's, the one outcome of the follow arm on self (choice 4 of the eleventh round's rulings)
 _METHOD_UNPLACED = ("a method called on self that a class statement of the file defines whose bases the census cannot place, which may "
@@ -4867,6 +4889,9 @@ _CT_ITEM_ATTR = "an attribute of an item of it read other than as a method's cal
 _CT_THROUGH = "through %s, a name the function binds to an item of it or to a new object holding one: %s"
 _CT_CLASS = "handed to %s, a method spelled on a class, as the object it runs on"   # a builtin class or a class of collections: _Served._class_callee
 _CT_ITEM_CLASS = "an item of it " + _CT_CLASS
+_AS_DEFAULT = "a default of a function or a lambda"   # _flow's escape detail for a value a def's or a lambda's default holds
+_CT_AUG = ("changed in place through %s, a name the function binds to it or to an item of it, by an augmented assignment, which runs "
+           "the target's own method")   # _Served._containers's, at an augmented assignment to such a name ("aug")
 # A function whose frame's local mapping is reached, or run as code, hands out or mutates the real container object on every CPython
 # version (a mutation, not a rebind, so it needs no 3.13 write-through), so the container proof cannot prove a container it binds is read
 # whole: a page function whose own subtree holds, anywhere and whether called or not, one of the SEVEN bare names in _FRAME_NAMES (locals,
@@ -5206,7 +5231,7 @@ def _flow(u, parents, fresh=0, inside=False):
                 got = _target_names(t); names += got[0]; other = other or got[1]
             if other: return steps + [("escape", p, "stored into another object", fresh, inside)]
             return steps + [("bind", p, names) + (item(fresh, inside) if loop else (fresh, inside))]   # a loop's target: an item of its source
-        if isinstance(p, ast.arguments): return steps + [("escape", p, "a default of a function or a lambda", fresh, inside)]
+        if isinstance(p, ast.arguments): return steps + [("escape", p, _AS_DEFAULT, fresh, inside)]
         if isinstance(p, ast.Match): return steps + [("escape", p, "matched by a match statement", fresh, inside)]
         if type(p) is ast.Compare and not all(type(o) in (ast.Is, ast.IsNot) for o in p.ops) and any(
                 type(o) is not ast.Constant for o in [p.left] + p.comparators if o is not cur):
@@ -5922,8 +5947,11 @@ class _Served(object):
         whose type the census does not know, a call's return or a name it does not follow: _CT_ITEM_UNKNOWN), an attribute read off it
         other than as a method's callee (_CT_ITEM_ATTR), a method spelled on a class handed it as its first argument (_CT_ITEM_CLASS:
         a builtin class, or a class of collections imported as the module or by name, _class_callee), a store into it ("changed
-        through an item of it or an expression holding it"), and setattr or delattr handed it, refuses the container, directly or
-        through a name bound to it (_CT_THROUGH, or "changed through <name>, a name the function binds to it or to an item of it"); so
+        through an item of it or an expression holding it"), an augmented assignment to a name bound to it (_CT_AUG: it runs the
+        item's own in-place method, and it refuses for a str item too, whose augmented assignment only rebinds the name), and setattr
+        or delattr handed it,
+        refuses the container, directly or through a name bound to it (_CT_THROUGH, or "changed through <name>, a name the function
+        binds to it or to an item of it"); so
         does its hand-off to another object's method
         by an operator whose other operand is no constant (an operand of a binary operation or a comparison, a subscript's index, a
         slice's bound, an augmented assignment's value, or what a .index() or .count() with an argument that is no constant compares:
@@ -5934,32 +5962,48 @@ class _Served(object):
         and ihn, a list read out of a local dict of lists by a subscript load, by `.get` and through a name bound to it, which a
         module function it is handed appends a fetch to, and itcw, such a list handed to append spelled on a class of the file that
         derives from list). A container is a name an assignment, augmented or annotated, or a walrus binds whole to such a literal or
-        comprehension or to a call of parse_qs (_parse_qs_call), or a name with one of these uses at no level of new objects around it
-        (changes()): a store or delete through it or through an item of it; an append or extend; setattr or delattr, or a method
-        spelled on a class, handed it or an item of it; a binding to a name the function declares global or nonlocal; on the container
-        itself (its own name, or a name bound to it whole), one of the in-place changers (_CHANGERS, `__init__` and popleft among
+        comprehension or to a call of parse_qs (_parse_qs_call), or a name with one of these uses (changes()). At any level of new
+        objects around it, since a new object that holds it hands it on: a binding to a name the function declares global or nonlocal;
+        a default of a function or a lambda, unless every binding of the name is a plain assignment of one name to a value _value_type
+        reads as a str (strs: a string constant, or an if-expression or a boolean operation over such values, which no code changes in
+        place); and, for a name bound only to calls (called, below), it itself leaving the function's sight (stored into another
+        object, a default, matched, called or held where the census does not read it). At no level of new objects around it: a store
+        or delete through it or through an item of it; an append or extend; setattr or delattr, or a method spelled on a class, handed
+        it or an item of it; an augmented assignment to a name bound to it or to an item of it, which runs that value's own in-place
+        method (`e += [v]` is list.__iadd__, `e |= {...}` dict.__ior__: "aug", an event the walk records at the target, a Store, where
+        it reaches that name; the container's own name so assigned is a second binding); on the container itself (its own name, or a
+        name bound to it whole), one of the in-place changers (_CHANGERS, `__init__` and popleft among
         them) called on it or read off it unbound, or a method whose return a statement drops; on an item of it, any method (a read
         method is a step of the item's walk, never a "method" use) or an attribute read; and, for a name that is no parameter and
         every binding of which is a plain assignment of one name to a call (called: the census reads it as that call's value slot or a
         followed function's return), any use outside a closed set (a read, a call's argument, a subscript load, a binding to a name
         the walk follows, the name itself an operand, and a method of _READ_THROUGH with its return used): any other method, any
-        attribute read, stored into another object, called, handed as a default or matched, and an item of it handed to another
-        object's method by an operator (the 07:37Z ruling's condition 2); each directly or through a name it binds to it, to an item
-        of it or to a new object holding one. What these uses do not mark is the stated limit, each road passing silently: a change a
+        attribute read, and an item of it leaving the function's sight or handed to another object's method by an operator (the 07:37Z
+        ruling's condition 2); each directly or through a name it binds to it, to an item of it or to a new object holding one. What
+        these uses do not mark is the stated limit, each road passing silently: a change a
         function makes to its own parameter by a use outside those listed is the call limit (its witness pput); a name bound other
         than only by plain assignments of calls, changed by a method outside _CHANGERS with its return used (xput), through an
         attribute read off it (xatr), stored into another object (xesc) or through an item of it handed to another object's method by
-        an operator (xiop), is read through its binding; and a name bound to anything but a literal or a call of parse_qs, handed
-        itself to another object's method by an operator, is read through its binding (oeqw). Each of the three is measured live as a
-        check (the closed set on a parameter or on a name bound to an expression, and the own operand on a name bound to a call, each
-        refuse pages of the live tree), so each is stated rather than refused. Any other occurrence refuses
+        an operator (xiop), is read through its binding; a name bound only to calls, an item of which is held in a new object that
+        leaves the function's sight, is read through its binding (cesw3); and a name bound to anything but a literal or a call of
+        parse_qs, handed itself, or in a new object holding it, to another object's method by an operator, is read through its binding
+        (oeqw, cop1). Each road but xatr's is stated because the one check that would refuse it refuses pages of the live tree,
+        measured: the closed set on a parameter (pput's road); a method outside the closed set, an escape and an item's operand on a
+        name bound to an expression (xput's, xesc's and xiop's); an item held in a new object that leaves the function, on a name
+        bound to a call (cesw3's: an item of such a name that an unpacking binds, a str, stored in a new list into a dict); and the
+        operand on a name bound to a call, itself or in a new object (oeqw's and cop1's: an int in a text concatenation). xatr's
+        check, an attribute read off any name marking it, is 0 live, but it would mark every local whose attribute a page reads, so
+        the attribute-root walk (_attr_root) and the class walk's local arm (_class_root), which resolve such a read by binding, would
+        never reach a local, and the alias chains their count pins drive would be refused at their first local; it is stated with its
+        witness instead. Any other
+        occurrence refuses
         the container, by the rule and not by a list, the clause naming the role it fails (_CONTAINER): bound to another name, or to a
         name the function declares global or nonlocal (whose uses leave it), or into an attribute or another object; a second binding
         (an augmented assignment, a walrus, or a for, with, except, match or unpacking target); del; any method but append, extend or a
         read method of the type its binding gives it, or an attribute of it read other than as a method's callee; setattr or delattr,
         or a method spelled on a class, handed it as its first argument (_CT_CLASS); a store by a key that is no constant, or other
-        than as the one target of a plain assignment; an append or extend of other than one plain argument; and any
-        occurrence in a
+        than as the one target of a plain assignment; an append or extend of other than one plain argument; an augmented assignment to
+        a name bound to it or to an item of it (_CT_AUG); and any occurrence in a
         function or lambda nested in it, or a class body it defines (a closure capture whose code the census does not read, or a class
         attribute; a nested scope's own binding of the spelling is not an occurrence of this container). A comprehension is read where it
         stands, as the function's own body is: a read of the fourth form and an append of a read value there pass, the container as a
@@ -6003,8 +6047,15 @@ class _Served(object):
                 y, fr, ins = todo.pop()
                 for n, c in self._container_step(xs if y == x and fr == 0 and not ins else names.get(y, ())):
                     nested = any(isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)) for s in c[1:])   # in a
-                    if not isinstance(n.ctx, ast.Load): continue   # function, lambda or class body nested in it: closure capture (code the census does
-                    # not read) or a class attribute, so the container refuses; a comprehension is read where it stands (_own_use)
+                    # function, lambda or class body nested in it: closure capture (code the census does not read) or a class attribute, so
+                    # the container refuses; a comprehension is read where it stands (_own_use)
+                    if not isinstance(n.ctx, ast.Load):   # a binding, but an augmented assignment to a name bound to it or to an item of
+                        # it, or to a new object holding one, runs the target's in-place method (`e += [v]` is list.__iadd__, `e |= {...}`
+                        # dict.__ior__): a change through that name ("aug"; its own name's is a second binding, refused below)
+                        pa = parents.get(id(n))
+                        if isinstance(pa, ast.AugAssign) and pa.target is n and (y != x or fr or ins):
+                            events.append((n.lineno, n.col_offset, y, fr, n, c, "aug", pa, y, fr, nested, ins))
+                        continue
                     use = _own_use(n, parents, own) if y == x and fr == 0 and not ins and not nested else None
                     if use is not None and (use[0] == "refuse" or use[2] is not None):
                         events.append((n.lineno, n.col_offset, y, fr, n, c, "own" if use[0] == "refuse" else "rmeth", use[1], use[2], 0, False, False))
@@ -6025,21 +6076,34 @@ class _Served(object):
                 isinstance(parents.get(id(n)), ast.Assign) and parents.get(id(n)).targets == [n] and isinstance(parents.get(id(n)).value, ast.Call)
                 for n, _c in stores)
 
-            def changes(e):   # a use that makes x a container (at no level of new objects around it), directly or through a name bound
-                # to it, to an item of it or to a new object holding one: a store or delete through it, an append or extend, setattr or
-                # delattr or a method spelled on a class (_class_callee) handed it, or a binding to a global or nonlocal name; on its own
-                # name, one of the in-place changers (_CHANGERS) called on it or read off it unbound, or a method whose return a statement
-                # drops; on an item of it, any method (a read method is a step, never a "method" event) or an attribute read; and for a
-                # name bound only to calls (called), any use outside the closed set (a read, a call's argument, a binding to a name the walk
-                # follows, a subscript load, a method of _READ_THROUGH with its return used, and the name itself an operand): any other method,
-                # any attribute read, stored into another object, called, handed as a default or matched, or an item of it handed to
-                # another object's method by an operator (the 07:37Z ruling's condition 2)
+            # a name every binding of which is a plain assignment of one name to a value the census reads as a str (_value_type: a string
+            # constant, or an if-expression or a boolean operation over them): a default of a function or a lambda hands on a value no code
+            # can change in place, so that hand-off marks no container of it (the page functions' own str locals a nested def takes as its
+            # default, which _defaults reads)
+            strs = bool(stores) and all(
+                isinstance(parents.get(id(n)), ast.Assign) and parents.get(id(n)).targets == [n]
+                and _value_type(parents.get(id(n)).value, {}) == ("str", None) for n, _c in stores)
+
+            def changes(e):   # a use that makes x a container, directly or through a name bound to it, to an item of it or to a new object
+                # holding one. At any level of new objects around it, since a new object that holds it hands it on: a binding to a global or
+                # nonlocal name; a default of a function or a lambda, unless every binding of x is a str (strs); and for a name bound only
+                # to calls (called), it itself (not an item of it) leaving the function's sight (stored into another object, a default,
+                # matched, called or held anywhere else). At no level: a store or delete through it, an append or extend, setattr or delattr
+                # or a method spelled on a class (_class_callee) handed it, or an augmented assignment to a name bound to it or to an item
+                # of it ("aug"); on its own name, one of the in-place changers (_CHANGERS) called on it or read off it unbound, or a method
+                # whose return a statement drops; on an item of it, any method (a read method is a step, never a "method" event) or an
+                # attribute read; and for a name bound only to calls, any use outside the closed set (a read, a call's argument, a binding to
+                # a name the walk follows, a subscript load, a method of _READ_THROUGH with its return used, and the name itself an
+                # operand): any other method, any attribute read, and an item of it leaving the function's sight or handed to another
+                # object's method by an operator (the 07:37Z ruling's condition 2)
                 kind, node, detail = e[6], e[7], e[8]
+                if kind == "gescape" or kind == "escape" and detail == _AS_DEFAULT and not strs or called and kind == "escape" and not e[11]:
+                    return True
                 if e[9]: return False
-                if kind == "gescape": return True
-                if called and e[11] and kind == "operand": return True
+                if kind == "aug": return True
+                if called and e[11] and kind in ("operand", "escape"): return True
                 if _item_recv(e) is not None: return kind in ("method", "attr")
-                if called and not e[11] and (kind in ("attr", "escape") or kind == "method" and detail not in _READ_THROUGH): return True
+                if called and not e[11] and (kind == "attr" or kind == "method" and detail not in _READ_THROUGH): return True
                 return kind in ("store", "grow", "handed") or kind == "tcall" and self._class_callee(node.func.value, ctx) or (
                     kind in ("method", "attr") and detail in _CHANGERS or kind == "method" and isinstance(parents.get(id(node)), ast.Expr))
             if not any(changes(e) for e in events) and not any(
@@ -6080,6 +6144,7 @@ class _Served(object):
                 # receiver or a subscript load's base, through the _own_use event recorded first at the same place; what passes here is the
                 # container or an item of it handed to such a call, or an item of it, or a name bound to one, read
                 elif fresh: pass   # a use of a new object around it, not of it
+                elif kind == "aug": why = _CT_AUG % y   # an augmented assignment to a name bound to it or to an item of it
                 elif kind == "tcall":   # a method spelled on a value handed it as its first argument: a class's runs on it; any other call
                     if self._class_callee(node.func.value, ctx):   # (a module's function, a class the census does not resolve) is the call limit
                         why = ((_CT_CLASS if node.args[0] is n else _CT_ITEM_CLASS) % detail if y == x and not fr
@@ -7796,8 +7861,8 @@ class _Served(object):
                 if x is not None: self.resolve(x, ctx, label, done)
         elif isinstance(e, ast.Set):
             for x in e.elts: self.resolve(x, ctx, label, done)
-        elif isinstance(e, (ast.Await, ast.Yield, ast.YieldFrom, ast.NamedExpr, ast.Starred)):
-            if e.value is not None: self.resolve(e.value, ctx, label, done)
+        elif type(e) in _NOT_OPERAND: self._unread(e, _NOT_OPERAND[type(e)], where)   # its value is not its operand: refused by name
+        elif isinstance(e, (ast.NamedExpr, ast.Starred)): self.resolve(e.value, ctx, label, done)
         elif isinstance(e, ast.BoolOp):
             for x in e.values: self.resolve(x, ctx, label, done)
         elif isinstance(e, ast.Name) and e.id == "__file__" and self.file_bound:   # a statement of the file binds it, in any scope and

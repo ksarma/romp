@@ -540,7 +540,12 @@ container (a name a function the pass reads binds whole to a list, dict or set
 literal or comprehension or to a call of parse_qs, or a name with one of these
 uses: a store or delete through it or an item of it; an append or extend;
 setattr or delattr, or a method spelled on a class, handed it or an item of it;
-a binding to a name the function declares global or nonlocal; one of the
+a binding of it, or of a new object holding it, to a name the function declares
+global or nonlocal, or as a default of a function or a lambda (unless every
+binding of the name is a plain assignment of a str: a string constant, or an
+if-expression or a boolean operation over such values); an augmented assignment
+to a name bound to it or to an item of it, which runs that value's own in-place
+method (`e += [v]` extends a list, `e |= {...}` updates a dict); one of the
 in-place changers of a list, dict, set, deque or OrderedDict called on it or
 read off it unbound (update, setdefault, append, extend, insert, pop, popitem,
 popleft, clear, add, discard, remove, sort, reverse, appendleft, extendleft,
@@ -557,9 +562,10 @@ walk follows, the name itself an operand, and a method the census reads a text
 through with its return used (get, keys, values, items, index, count, copy,
 split, rsplit, splitlines, partition, rpartition, removeprefix, removesuffix,
 group, join, format, format_map, replace, strip, lstrip, rstrip or encode), so
-any other method, an attribute read, a store of it into another object, a call
-of it, a default or a match subject, and an item of it handed to another
-object's method by an operator; each directly or through a name bound to it, to
+any other method, an attribute read, it or a new object holding it stored into
+another object, called, matched or held where the census does not read it, and
+an item of it so used or handed to another object's method by an operator; each
+directly or through a name bound to it, to
 an item of it or to a new object holding one) is read whole only where every
 occurrence of
 its name, resolved by binding, is one of the proven forms: its one binding (a
@@ -593,8 +599,11 @@ type and a new object holding its receiver's items. Any other method called on
 the item, and a read
 method or a subscript load outside its type's set (a spelled-out dunder among
 them), whether the return is used or dropped, an attribute read off it other
-than as a method's callee, a store into it, setattr or delattr handed it, and a
-method spelled on a class handed it as its first argument (a builtin class, as
+than as a method's callee, a store into it, an augmented assignment to a name
+bound to it (which runs the item's own in-place method, and refuses for a str
+item too, whose augmented assignment only rebinds the name), setattr or delattr
+handed it, and a method spelled on
+a class handed it as its first argument (a builtin class, as
 in `list.append`, or a class of collections imported as the module or by name,
 as in `deque.append`), directly or through a name bound to it, refuses the
 container; a str has no read set, nor has an item whose type the census does not
@@ -625,8 +634,8 @@ dunder among them, or an attribute of it read other than as a method's callee;
 setattr or delattr, or a method spelled on a class (a builtin class, or a class
 of collections imported as the module or by name), handed it as its first
 argument; a store by a key that is no constant; an append or extend of other
-than one
-plain argument; or any occurrence in a function or lambda nested in it, or a
+than one plain argument; an augmented assignment to a name bound to it or to an
+item of it; or any occurrence in a function or lambda nested in it, or a
 class body it defines, whose code the census does not read (a closure capture)
 or which makes a class attribute; a comprehension is read where it stands, as
 the function's own body is: a read of the fourth form and an append of a read
@@ -653,11 +662,17 @@ operator, is read through its binding (its witnesses: a queue bound through a
 boolean operation that a fetch is put into, the put's return used, or through
 its put read off it unbound; a dict of lists so bound, stored into another
 object through which a fetch is stored into it; and one whose item is compared
-with an object whose `__eq__` appends a fetch to it); and a name bound to
-anything but a literal or a call of parse_qs, handed itself to another object's
-method by an operator, is read through its binding (its witness: an import's
-object compared with an object whose `__eq__` stores a fetch on it, read through
-str).
+with an object whose `__eq__` appends a fetch to it); a name bound only to
+calls, an item of which is held in a new object that is stored into another
+object, called or matched, is read through its binding (its witness: a list read
+out of a dict bound to a call of dict, held in a new list stored into another
+object through which a fetch is stored into it); and a name bound to anything
+but a literal or a call of parse_qs, handed itself, or in a new object holding
+it, to another object's method by an operator, is read through its binding (its
+witnesses: an import's object compared with an object whose `__eq__` stores a
+fetch on it, read through str; and a dict bound to a call of dict, held in a new
+list compared with an object whose `__eq__` stores a fetch into it through that
+list).
 An attribute read in a page position, as a value or anywhere on the
 path of a receiver or a container (but never inside the index of a subscript
 over a container whose text the pass does not read: below), is refused by name
@@ -864,9 +879,10 @@ attribute, a method called on it or on an item of it other than one the census
 reads a text through (named above), a method called on it whose return is
 dropped, one of the in-place changers named above read off it or an item of it
 unbound, an attribute read off it other than as a method's callee, a setattr or
-delattr on it, or it or an item of it handed to another object's method by an
-operator), changes it
-through a name bound to it, to an item of it or to a new object holding one
+delattr on it, an augmented assignment to it, which runs its own in-place
+method, or it or an item of it handed to another object's method by an
+operator), changes it through a name bound to it, to an item of it or to a new
+object holding one
 (each name read by its spelling in every scope, so a local of that spelling
 counts too), or lets it or such a name leave the census's sight (stored into
 another object, returned, yielded, handed as a default or matched; an item of a
@@ -1118,10 +1134,12 @@ other form inside such a block's body, a name a star import may rebind, a module
 name in a file that writes its module namespace through a computed name or may
 rewrite it at run time (the reason naming the form and its line), a builtin in a
 file that may rewrite the builtins, and a rebound import, builtin,
-function or class among them), any other kind of
-expression in a page (a non-empty bytes, float, complex or Ellipsis constant, an
-f-string's format spec, any other operator, a comparison and a unary expression
-among them), and a route whose body yields no piece and no file slot (each
+function or class among them), any other kind of expression in a page (a
+non-empty bytes, float, complex or Ellipsis constant, an f-string's format spec,
+any other operator, a comparison and a unary expression among them, and a yield,
+a yield from or an await, whose value is what the generator is sent, what the
+iterator it delegates to returns or what the awaited object returns, not its
+operand), and a route whose body yields no piece and no file slot (each
 refusal of page text applies where the pass reads that text, never inside the
 index of a subscript over a container whose text the pass does not read: above),
 unless the served allowlist, SERVED_ALLOW, names the place
