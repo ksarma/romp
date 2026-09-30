@@ -6,7 +6,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { applyFeedDelta, upsertById } from "./feed-delta";
+import { applyFeedDelta, tryApplyFeedDelta, upsertById } from "./feed-delta";
 import { mergeHostFeeds, FederationManager } from "./federation";
 import { ageRgb } from "./age-color";
 import { liveNow } from "./feed-age";
@@ -49,6 +49,20 @@ test("`top` present ⇒ it is the COMPLETE set of non-keyed fields — a field t
   assert.deepEqual(out.ledgers, b.ledgers);
 });
 
+test("a `top` that is not an object is REFUSED (the author's fixer pass after the maintainer's round 5, refusal-5): a string or an array top spread its characters or items into the frame as keys ('0', '1', ...) and applied, a content acceptance outside every named refusal; applyFeedDelta throws, tryApplyFeedDelta returns the refusal, the base stands, and an absent or object top applies as before", () => {
+  const b = base();
+  for (const top of ["str", ["a", "b"], 7, true, null]) {
+    assert.throws(() => applyFeedDelta(b, { type: "feedDelta", now: 1010, buildId: 2, top } as any), /feedDelta top is not an object/, "top " + JSON.stringify(top) + " is refused (it applied, a string's characters as the frame's keys)");
+  }
+  const r = tryApplyFeedDelta(b, { type: "feedDelta", now: 1010, buildId: 2, top: "str" } as any);
+  assert.equal(r.ok, false, "the checked apply returns the refusal for both roads to act on");
+  assert.match(String((r as any).error), /top is not an object/);
+  assert.deepEqual(b.asks.map((a: any) => a.text), ["goal 0", "goal 1", "goal 2"], "the base stands");
+  const ok = applyFeedDelta(b, { type: "feedDelta", now: 1010, buildId: 2, top: { order: ["TESTSID"], working: [] } });
+  assert.equal("0" in ok, false, "an object top applies with no index keys");
+  assert.deepEqual(applyFeedDelta(b, { type: "feedDelta", now: 1010, buildId: 2 }).order, ["TESTSID"], "an absent top carries the base's fields over");
+});
+
 test("ledgers upsert by sid; a `ledgers` key in the delta means the client holds a list afterwards", () => {
   const b = { ...base(), ledgers: undefined as any };
   delete (b as any).ledgers;
@@ -75,7 +89,8 @@ test("a delta-applied frame merges exactly like a pushed full frame", () => {
 });
 
 test("federation applies deltas onto the LOCAL host's held frame and re-emits; no base → needFullFeed", () => {
-  assert.match(FED, /import \{ applyFeedDelta \} from "\.\/feed-delta";/);
+  assert.match(FED, /import \{ tryApplyFeedDelta \} from "\.\/feed-delta";/, "the checked apply (its throw caught in feed-delta.ts, so both roads are covered by construction: the maintainer's round 5 of the wsBytesByHost review, refusals-2)");
+  assert.equal((FED.match(/[^A-Za-z]applyFeedDelta\(/g) || []).length, 0, "federation.ts calls the bare apply nowhere: a throw out of it would escape the socket handler again");
   const i = FED.indexOf('if (m && m.type === "feedDelta") {');
   assert.ok(i > 0, "inbound has a feedDelta branch");
   const branch = FED.slice(i, i + 2400);
@@ -86,8 +101,8 @@ test("federation applies deltas onto the LOCAL host's held frame and re-emits; n
   assert.match(branch, /const base = this\.perHostFeed\[host\];/, "the local path's base is the merge's frame");
   assert.match(branch, /this\.diag\("feedDelta-nobase"/);
   assert.match(branch, /s\(\{ type: "needFullFeed" \}\)/);
-  assert.match(branch, /this\.perHostFeed\[host\] = applyFeedDelta\(base, m\);\s*\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);[^\n]*\n\s*this\.emitMergedFeed\(\);/,
-    "applied, its arrival stamped beside it (the pane's clock anchor), re-emitted");
+  assert.match(branch, /const r = tryApplyFeedDelta\(base, m\);\s*\n\s*if \(!r\.ok\) \{ this\.refuseLocalApply\(m, r\.error\); return; \}\s*\n\s*this\.perHostFeed\[host\] = r\.next;\s*\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);[^\n]*\n\s*this\.localFeedApply = undefined;[^\n]*\n\s*this\.emitMergedFeed\(\);/,
+    "applied through the checked apply (a throw is the local road's refusal, refuseLocalApply: a bare needFullFeed to the local kernel once per stall, its own row, the shell told when the answering full did not repair the stream), its arrival stamped beside it (the pane's clock anchor), the latch cleared, re-emitted");
   assert.ok(FED.indexOf('if (m && m.type === "feed") {') < i, "the full-frame branch stays first and unchanged");
 });
 
@@ -226,7 +241,7 @@ test("with no local frame yet the pair comes from the newest REMOTE arrival — 
 test("federation stamps the arrival beside the frame on the wire paths, drops it with the host, and the merge is handed it", () => {
   assert.match(FED, /private perHostFeedAt: Record<string, number> = \{\};/);
   assert.match(FED, /this\.perHostFeed\[host\] = m;\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);/, "a full frame's arrival");
-  assert.match(FED, /this\.perHostFeed\[host\] = applyFeedDelta\(base, m\);\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);[^\n]*\n\s*this\.emitMergedFeed\(\);/, "a delta's arrival");
+  assert.match(FED, /this\.perHostFeed\[host\] = r\.next;\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);[^\n]*\n\s*this\.localFeedApply = undefined;[^\n]*\n\s*this\.emitMergedFeed\(\);/, "a delta's arrival (the checked apply's result; a throw is refused before any write: refuseLocalApply)");
   assert.match(FED, /delete this\.perHostFeed\[host\];\n\s*delete this\.perHostFeedAt\[host\];/, "a detach forgets both");
   assert.match(FED, /mergeHostFeeds\(this\.perHostFeed, this\.hostSeq, this\.view\(\), dead, this\.perHostFeedAt, this\.hostsRead\)/,
     "every emit carries the arrivals (fifth), then upstream's hostsRead (sixth: whether a /tunnels poll has answered yet, so a pane's absence-driven writers stand down until it has)");
