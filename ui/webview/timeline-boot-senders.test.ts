@@ -110,7 +110,7 @@ function collector(): { perf: RompPerf; counted: () => number; posted: Array<Rec
     now: () => 1000, wallNow: () => 1_700_000_000_000, post: (m) => posted.push(m), raf: null, caf: null, setInterval: null,
     observer: null, supportedEntryTypes: [], heapBytes: () => null, domCount: () => null, visible: () => true,
     hiddenPane: () => false, ua: "chrome-desktop", pageUrl: ORIGIN + "/timeline", windowEvents: null, documentEvents: null,
-    switches: () => ({ share: false, mute: false }), entries: () => null, marks: () => null, env: () => null,
+    switches: () => ({ share: false, mute: false }), entries: () => null, marks: () => null, fedBytes: () => null, fedAttached: () => null, env: () => null,
   };
   const perf = createPerfTelemetry("timeline", deps);
   const counted = (): number => Object.values(perf.snapshot().frames as Record<string, { n: number }>).reduce((a, st) => a + st.n, 0);
