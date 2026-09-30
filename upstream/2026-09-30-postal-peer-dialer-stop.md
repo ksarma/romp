@@ -3,7 +3,7 @@ title: The postal peer-identity, peer-tier, read-receipt and quarantine tests st
 status: candidate
 where: tests/test_postal_peer_identity.py (_end_dialer, new; its registration after each up notify); tests/test_postal_peer_tier.py (the same); tests/test_postal_read_receipts.py (the same); tests/test_postal_quarantine.py (the same); upstream/2026-09-30-postal-peer-dialer-stop.md (this entry)
 added: 2026-09-30
-pr:
+pr: 939
 tier: docs
 offered:
 closed:
