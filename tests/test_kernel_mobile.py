@@ -58,6 +58,26 @@ def _viewport_meta_tokens(html):
     return (served_css.meta_content(html, "viewport") or "").split(",")
 
 
+def _live_scripts(html):
+    """[(element, code)] for every live script element of a served page, in document order: the element as the parser reads it
+    (served_css.elements: its offsets, its attributes, the elements open at its start tag) and its content through
+    served_css.js_code, the code with its comments blanked and its offsets kept, so `element.content_start + code.index(x)` is x's
+    offset in the page. The parser road for a read of a script's text in this module (the landing merge of main, 2026-09-30: the
+    lazy panes' tests, fork PR 821, had searched the raw page for a script constant's text and for the layout probe's, and the census
+    in tests/test_served_pins_read_elements.py fails such a read in a module that imports served_css); a script inside an HTML
+    comment is comment text and no element."""
+    by_start = {el.content_start: el for el in served_css.elements(html) if el.kind == "script"}
+    return [(by_start[s], served_css.js_code(html[s:e])) for s, e, kind in served_css.element_spans(html) if kind == "script"]
+
+
+def _head_code(scripts):
+    """The code of the head script among a page's live scripts (_live_scripts): the one live script element inside <head>, which
+    the notified-session seed's cells execute and read. Refuses a head with no script, or with more than one."""
+    heads = [code for el, code in scripts if "head" in el.stack]
+    assert len(heads) == 1, "one live script element in the head, found %d" % len(heads)
+    return heads[0]
+
+
 class ViewportMetaReader(unittest.TestCase):
     """The viewport meta helper reads the ELEMENT (the author's pass 9, 2026-09-20, the maintainer's round 5 ruling): it had matched a regular
     expression over the raw page, so a meta written inside an HTML comment read as the live one, the exact case the helper existed
@@ -237,7 +257,7 @@ class LandingShell(unittest.TestCase):
         self.assertIn("padding-bottom:var(--mtabs-h", html)    # .col reserves the bar's height
         self.assertIn("--mtabs-h", served_css.js_code(km._LANDING_MOBILE_JS))      # ...measured from the live bar (offsetHeight); the code, comments blanked
         self.assertIn("#f-timeline.m-on{display:block}", html) # timeline is a mobile tab pane (it lives in the row now)
-        self.assertIn("data-tab", km._LANDING_MOBILE_JS)       # show() marks the active pane on <body>
+        self.assertIn("data-tab", served_css.js_code(km._LANDING_MOBILE_JS))       # show() marks the active pane on <body>; the code, comments blanked (a comment of the lazy panes spells it)
 
     def test_lazy_panes_markup_loader_and_the_promotions_place_in_show(self):
         # stage 0 (2026-09-18): the Waiting and Files panes are served with data-src (_LANDING_DESKTOP_PANES_JS promotes them at boot on
@@ -266,16 +286,24 @@ class LandingShell(unittest.TestCase):
         self.assertIn("body.pane-failed #pane-load{display:flex;flex-direction:column;gap:14px;cursor:pointer}", html, "the failed state keeps the element up (a tap on it retries)")
         self.assertIn("body.pane-failed #pane-load>.rl-in{display:none}", html, "…with the loader down and the message in its place")
         self.assertIn("body.pane-failed #pane-load-msg{display:block}", html)
-        self.assertLess(html.index("@media " + km._MOBILE_MQ + "{"), html.index("body.pane-failed #pane-load{display:flex"), "the failed paint lives inside the phone media block too")
+        # where a pane-load rule sits, read as parsed rules (served_css.rules; the landing merge of main, 2026-09-30: the raw page's first
+        # spelling of the phone query had stood for the media block, a read the census fails in a module on the parser road)
+        mobile = ("@media " + km._MOBILE_MQ,)
+        placed = lambda sel, decl: [r.at for r in served_css.rules(html) if r.selector == sel and decl in r.decls]
+        self.assertEqual(placed("body.pane-failed #pane-load", ("display", "flex")), [mobile], "the failed paint lives inside the phone media block too")
         self.assertIn("#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}", html)
         self.assertIn("body.pane-loading #pane-load{display:flex}", html)
         self.assertIn("body.theme-light #pane-load{background:#F1EAE2}", html)
-        self.assertLess(html.index("@media " + km._MOBILE_MQ + "{"), html.index("body.pane-loading #pane-load{display:flex}"), "the paint lives inside the phone media block")
-        self.assertLess(html.index("#pane-load{display:none}"), html.index("@media " + km._MOBILE_MQ + "{"), "hidden by default, outside it")
+        self.assertEqual(placed("body.pane-loading #pane-load", ("display", "flex")), [mobile], "the paint lives inside the phone media block")
+        self.assertEqual(placed("#pane-load", ("display", "none")), [()], "hidden by default, outside it")
         self.assertEqual(html.count("<script>"), 22, "+1 2026-09-19: the desktop promotion of the Waiting and Files panes (_LANDING_DESKTOP_PANES_JS), its own script so a throw in the mobile script cannot strand a desktop pane (review round 1); the mobile script carries the lazy panes")
         # D7 (review round 1, regression-5): the desktop promotion is its own element, spliced BEFORE the mobile script, reading the media query itself
-        self.assertEqual(html.count("<script>" + km._LANDING_DESKTOP_PANES_JS + "</script>"), 1)
-        self.assertLess(html.index(km._LANDING_DESKTOP_PANES_JS), html.index("var LAZY='data-lazy-src'"), "the desktop promotion runs before the mobile script")
+        # read as live script elements, each one's code through served_css.js_code (_live_scripts; the landing merge of main, 2026-09-30:
+        # the raw page's spelling of the constant had stood for the element)
+        desk = served_css.js_code(km._LANDING_DESKTOP_PANES_JS)
+        own = [el for el, code in _live_scripts(html) if code == desk and not el.attrs]
+        self.assertEqual(len(own), 1, "one live <script> element, with no attribute, whose code is the desktop promotion's: %r" % ([el.content_start for el in own],))
+        self.assertLess(own[0].content_start, html.index("var LAZY='data-lazy-src'"), "the desktop promotion runs before the mobile script")
         self.assertIn("matchMedia(" + json.dumps(km._MOBILE_MQ) + ")", km._LANDING_DESKTOP_PANES_JS, "it reads the layout from the shared media query, not from the mobile script's probe")
         self.assertNotIn("__rompMobileOn", km._LANDING_DESKTOP_PANES_JS)
         self.assertIn("['f-waiting','f-files'].forEach(", km._LANDING_DESKTOP_PANES_JS)
@@ -3153,14 +3181,18 @@ out({first:first,redial:redial,sockets:sockets.length,mobile:parentMobile()});""
         self.assertLess(js.index('RESTART_DIET=true;'), js.index('?"&skeleton=1":""'), "before the dial line reads the flag")
         html = km._landing()
         probe = "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(km._MOBILE_MQ) + ").matches);}catch(e){return false;}};"
-        self.assertEqual(html.count(probe), 1, "the head defines the layout probe once")
-        self.assertLess(html.index(probe), html.index("<iframe"), "…before any iframe, so a pane's shim can read it at its own load (the wid mint's race)")
-        self.assertLess(html.index(probe), html.index("window.__rompMobileOn=mobileOn;"), "…and the mobile script's cached-list version replaces it when the body's scripts run")
+        # read in the live scripts' code, through served_css.js_code (_live_scripts; the landing merge of main, 2026-09-30: the raw page's
+        # spelling had stood for the definition, a read the census fails in a module on the parser road)
+        held = [(el, code) for el, code in _live_scripts(html) if probe in code]
+        self.assertEqual([code.count(probe) for el, code in held], [1], "the page defines the layout probe once: one live script holds it, once")
+        at = held[0][0].content_start + held[0][1].index(probe)   # its offset in the page (js_code keeps offsets)
+        self.assertLess(at, html.index("<iframe"), "…before any iframe, so a pane's shim can read it at its own load (the wid mint's race)")
+        self.assertLess(at, html.index("window.__rompMobileOn=mobileOn;"), "…and the mobile script's cached-list version replaces it when the body's scripts run")
 
 
 # The head's notified-session seed (review round 3, 2026-09-19, fresh-1), executed: the shell's head <script> under the auth
 # test's harness (its stubs of the few browser globals the head touches) plus a Map-backed localStorage of this module's own.
-from test_kernel_auth_hardening import _HEAD_HARNESS as _AUTH_HEAD_HARNESS, _head_script as _auth_head_script   # noqa: E402  the harness and the head extractor, never its TestCases
+from test_kernel_auth_hardening import _HEAD_HARNESS as _AUTH_HEAD_HARNESS   # noqa: E402  the harness, never its TestCases (the head script is read through the parser: _head_code)
 
 _SEED_SID_A = "aaaaaaaa-1111-2222-3333-444444444444"   # web: the tab the phone was on when it buzzed
 _SEED_SID_B = "bbbbbbbb-1111-2222-3333-444444444444"   # api: the session that buzzed
@@ -3195,7 +3227,7 @@ class NotifiedSessionSeed(unittest.TestCase):
         if throws:
             env["ROMP_TEST_LS_THROWS"] = "1"
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
-            f.write(_AUTH_HEAD_HARNESS + _SEED_STORE + _auth_head_script(km._landing()) + _SEED_DRIVER)
+            f.write(_AUTH_HEAD_HARNESS + _SEED_STORE + _head_code(_live_scripts(km._landing())) + _SEED_DRIVER)
             path = f.name
         try:
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30, env=env)
@@ -3259,7 +3291,7 @@ class NotifiedSessionSeed(unittest.TestCase):
 
     def test_the_seed_sits_in_the_head_after_the_layout_probe_and_before_the_standalone_flip(self):
         html = km._landing()
-        head = _auth_head_script(html)
+        head = _head_code(_live_scripts(html))
         seed = head.index("searchParams.get('push-reveal')")
         self.assertLess(head.index("window.__rompMobileOn=function(){"), seed, "after the layout probe (tests/test_per_viewer_focus.py pins the wid mint as the head's first statement)")
         self.assertLess(seed, head.index("if(navigator.standalone){"), "before the standalone flip")

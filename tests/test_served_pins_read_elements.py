@@ -1979,8 +1979,10 @@ def served_body(text, kind):
     merge of main's login cookie split, 2026-09-28: since that change a fetched page is no longer its getter's text). _send itself runs,
     on a stand-in request that holds an authorized page (`_page_ok`) and the session the response signs in (`_set_cookie`), and its
     written bytes are the body: for a page document the sign-in seed and then _PAGE_KEY_JS go first in the head, in the order _send
-    assembles them; a text with no `<head>`, or served as another type, is written as it stands. A fetch on the cookie alone gets the
-    key script without the seed; the sign-in form is the wider one, and every fetched row is judged against it."""
+    assembles them; a text with no `<head>`, or served as another type, is written as it stands. Since the merge of the lazy panes
+    (fork PR 821), _send first stamps `data-romp-served=200` on the `<html>` tag of every text/html 200 whose body has one
+    (km._stamp_served_html), so a page document's root tag, and that of a headless one, carries the stamp too. A fetch on the cookie alone
+    gets the key script without the seed; the sign-in form is the wider one, and every fetched row is judged against it."""
     written = []
 
     class _Request:
@@ -2121,14 +2123,18 @@ def reader_status(fname, line, form, text, source, pins, members, kinds):
     return "raw" if "markup" in kinds[text] else "source"
 
 
-# The one visible listing (the coordinator's round 6 decisions on PR 858, B.4): rows that stand in main's
-# tests/test_fetch_wrapper_census.py, each with its reason. The decision was to re-point that module's page and worker reads through
-# served_css unless that would weaken what it asserts, and it would: importing served_css puts the module on the parser road, where
-# the reader census fails every raw read of a page it can see, and the module's sign-in test reads the served landing byte-exact
-# at offsets (the seed's `<script>` right after `<head>`, the wrapper's exact bytes right after the seed's end tag), which only an
-# element-level check, blind to the tags' exact bytes, could replace. A pins row is keyed (module, literal, text, form, served) and
-# must still be flagged; a reader row is keyed (module, form, text, source) and must still be produced. An entry that matches no
-# row reds (a stale entry), and no row outside the listing is exempt.
+# The one visible listing: rows that stand in main's tests/test_fetch_wrapper_census.py (the coordinator's round 6 decisions on PR 858,
+# B.4) and in main's tests/test_pane_state_broadcast.py (the coordinator's ruling at the landing merge of main, 2026-09-30), each with
+# its reason. The B.4 decision was to re-point test_fetch_wrapper_census.py's page and worker reads through served_css unless that
+# would weaken what it asserts, and it would: importing served_css puts the module on the parser road, where the reader census fails
+# every raw read of a page it can see, and the module's sign-in test reads the served landing byte-exact at offsets (the seed's
+# `<script>` right after `<head>`, the wrapper's exact bytes right after the seed's end tag), which only an element-level check, blind
+# to the tags' exact bytes, could replace. The two test_pane_state_broadcast.py rows are the lazy panes' (fork PR 821), which landed
+# after this census was written: each hands a served text to a callee outside the value-use allowlist, in a module that does not
+# import served_css; the same ruling re-pointed the two such rows of tests/test_kernel_mobile.py, a module on the parser road, through
+# served_css.js_code instead (its _live_scripts). A pins row is keyed (module, literal, text, form, served) and must still be flagged;
+# a reader row is keyed (module, form, text, source) and must still be produced. An entry that matches no row reds (a stale entry),
+# and no row outside the listing is exempt.
 _LISTED_PINS = (
     (("test_fetch_wrapper_census.py", "(", "_sw_js", "index", True),
      "the worker test's `sw.index(\"(\", m.start())` (test_the_service_workers_fetches_go_to_routes_that_need_no_credential): a comment "
@@ -2149,6 +2155,16 @@ _LISTED_READERS = (
      "_render_login is handed on uncalled through NON_PAGE_HTML and called as `render()` in a loop over it (_fail_closed's check "
      "(5)), so the census cannot tell which text each body is, and the module's reads of it (the fetch call and member scans, "
      "the bundle regex) are in neither census"),
+    (("test_pane_state_broadcast.py", "unclassified", "_landing", "enumerate: enumerate(hlines)"),
+     "_mobile_show_roads walks the landing's lines (hlines, a split copy of the landing) through enumerate, a callee outside the "
+     "value-use allowlist, and passes each line through the module's own _js_code (which empties a line that is a `//` comment and "
+     "cuts a trailing `   //` or `;//` one) before it looks for a `__rompMobileTab(` call and the two lines above it; the module does "
+     "not import served_css, so it is off the parser road, where the reader census fails no raw read of a page"),
+    (("test_pane_state_broadcast.py", "unclassified", "_TOKEN_LOGIN_HTML", "stamp: stamp(200, km._TOKEN_LOGIN_HTML, \"text/html\")"),
+     "test_the_kernel_stamps_every_200_html_document_it_writes_and_nothing_else hands the paste-the-token page to the kernel's "
+     "served-stamp writer (km._stamp_served_html, bound as `stamp`), a callee outside the value-use allowlist, and asserts the text "
+     "comes back as it went in (the rootless exception): at this site the kernel's function under test reads the text, and the test "
+     "compares what comes back with the text whole"),
 )
 
 
@@ -3224,9 +3240,15 @@ def _outer(path):
         # literal occurs in none of its texts, and still flags one a comment satisfies, in a render and in a served body alike.
         render = pages()["_landing"]
         body = served_body(render, "markup")
-        head = render.index("<head>") + len("<head>")
-        injected = body[head:len(body) - (len(render) - head)]
-        self.assertEqual((body[:head], body[head + len(injected):]), (render[:head], render[head:]), "the getter's text around what _send puts in its head")
+        # since the merge of the lazy panes (fork PR 821) _send stamps the root tag of a text/html 200 before it fills the head
+        # (km._stamp_served_html, pinned over the writers in tests/test_pane_state_broadcast.py): the text around the head's insert is
+        # the stamped render, which differs from the render by the one stamp
+        stamped = km._stamp_served_html(200, render, _SERVED_CTYPE["markup"])
+        self.assertEqual(stamped.replace(" data-romp-served=200", "", 1), render, "the stamp is the one change to the render before the head")
+        self.assertTrue(body.startswith("<!DOCTYPE html><html data-romp-served=200 "), "the served landing's root tag carries the stamp: %r" % body[:60])
+        head = stamped.index("<head>") + len("<head>")
+        injected = body[head:len(body) - (len(stamped) - head)]
+        self.assertEqual((body[:head], body[head + len(injected):]), (stamped[:head], stamped[head:]), "the getter's text, stamped, around what _send puts in its head")
         key = "<script>" + km._PAGE_KEY_JS + "</script>"
         self.assertTrue(injected.endswith(key), "the page-key script goes last of the two: %r" % injected[-120:])
         seed = injected[:-len(key)]
@@ -3235,7 +3257,8 @@ def _outer(path):
         self.assertEqual(served_body(pages()["_sw_js"], "script"), pages()["_sw_js"], "a script is served as it stands")
         missing = [t for t in getter_renders("_files_page")[1:] if "needs the ui/ modules" in t]
         self.assertTrue(missing, "the page _files_page returns without its sheet: %r" % (getter_renders("_files_page")[1:],))
-        self.assertEqual(served_body(missing[0], "markup"), missing[0], "a text with no head is served as it stands")
+        self.assertEqual(served_body(missing[0], "markup"), km._stamp_served_html(200, missing[0], _SERVED_CTYPE["markup"]), "a text with no head is served with the root tag's stamp alone")
+        self.assertEqual(served_body(missing[0], "markup").replace(" data-romp-served=200", "", 1), missing[0], "...which is the one change to it")
         s, e = served_css.comment_spans(render)[0]
         comment = render[s:e]
         rows = [("m.py", 1, "__rompPageKey", "_landing", "in", True, True), ("m.py", 2, "__rompPageKey", "_landing", "in", True, False),
