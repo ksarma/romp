@@ -568,8 +568,8 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
         real = km._subagent_tree
         swapped = []
 
-        def read_then_swap(d):
-            out = real(d)
+        def read_then_swap(d, *args, **kwargs):           # the walk passes the tree read's `faults` list by keyword
+            out = real(d, *args, **kwargs)
             if str(d) == str(p) and not swapped:
                 swapped.append(self._replace_with_tree(p))
             return out
@@ -615,10 +615,10 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
         real_lstat, real_note = km._lstat_or_none, km._subagent_walk_dep_note
         inside, swapped, calls = [], [], []
 
-        def note(d, tree):
+        def note(d, tree, *args, **kwargs):               # the walk passes its `notes` list by keyword
             inside.append(str(d))
             try:
-                return real_note(d, tree)
+                return real_note(d, tree, *args, **kwargs)
             finally:
                 inside.pop()
 
@@ -667,8 +667,8 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
         real = km._subagent_tree
         made, reads = [], []
 
-        def read_then_create(d):
-            out = real(d)
+        def read_then_create(d, *args, **kwargs):         # the walk passes the tree read's `faults` list by keyword
+            out = real(d, *args, **kwargs)
             if str(d) == str(p) and not made:
                 reads.append(out)
                 landed = p / "workflows" / "wf_1" / ("agent-%s.jsonl" % AID_GHOST)
@@ -717,8 +717,9 @@ class WalkNoteForAPathThatHoldsNoTree(_World):
         """At the transcript's own subagents path. Red with an absent path noted under a stat taken after the read, on
         the rebuild assertion (the later components equal at_build). Red at the fork's merge of romp-on/romp PR #1822
         too, but only in a build with no earlier _subagent_meta_map read of the path, as here: in a chat build
-        _stamp_agents reads the map on the same path first, which notes the path None, and the build keeps the first
-        key it records per path."""
+        _stamp_agents reads the map on the same path first, which notes the path None, and a build at that merge kept
+        the first key it recorded per path (this tree records a path reported under two different keys under
+        _CHAT_DEP_KEYS_DIFFER instead, _chat_build_deps)."""
         self._tree_appears_after_the_read_of_an_absent_path(km._subagents_dir(self.tpath))
 
     def _rebuilds_after_each_swap(self, p):

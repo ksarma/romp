@@ -3215,8 +3215,60 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the bound holds at the median for a cycle that carries at most one such
   end, and a cycle that carries two is at or over it; a first cycle after a
   restart with several such ends pays the first walk and a later walk for
-  each further one. No end is queued
-  for an agent none of
+  each further one. An end whose resolution could not be made (below) adds
+  no walk while its fault lasts, only one read of each place the walk
+  could not read per cycle, one read for all the ends of a session
+  waiting on that place (and, for a place whose read fails, the
+  session's transcript, resolved once per cycle, then, for a place in a
+  subagents tree in that transcript's project directory, an lstat of each
+  directory from the subagents directory down to the place's parent,
+  stopping at the first that does not read as a real directory, with,
+  first, a stat of a sibling session directory when the place's read
+  failed with ELOOP or EBADF), and is resolved once, after one of those
+  places reads again or the walk no longer reaches it: at the first cycle
+  after, or, when more such ends are due, at a later one, since a cycle
+  resolves at most one of them, oldest first
+  (`_AGENT_FAULTED_LOOKUPS_MAX`), so each is one such end; the two faults
+  that read cannot see, a listing that fails past its first entry and a
+  resolution of the place's real path that fails while its lstat answers,
+  each have their end resolved at each cycle while they last, in turn with
+  the other ends due. For a session with no transcript the end keeps
+  waiting, since the kernel cannot tell a transcript that is gone from one
+  that a fault on its project directory hides (below): keeping the end fails
+  safe, so it waits until one of its places reads and is then resolved, or
+  until the table's bound gives it up, counted in `releaseLost`, and the
+  wait never drops it uncounted while none of its places reads (a start of
+  the agent drops it, the file live again, and a later end of the agent is
+  resolved as a new end is, which with no transcript drops it uncounted, as
+  below); when resolving the transcript raises, the end keeps waiting too,
+  and is given up, counted, if resolving still raises once a place reads.
+  The wait watches only for one of those places reading again or leaving the
+  walk's way: a file of the agent's that appears under a place the walk
+  already read (a tree it searched, or the project directory it listed),
+  copied or restored there by hand or written after its end was drained,
+  is not resolved while every place the walk could not read still fails,
+  until one of them reads or the bound gives its end up (a residual).
+  Measured on 2026-09-30 with 4096 such ends of one session, the most the
+  kernel keeps, waiting on one place in a project directory of two entries:
+  a cycle while they wait took 1.1 to 3.4 ms, where a read of each end's own
+  places took 53 to 67 ms with one place an end and 232 to 259 ms with two;
+  ends of several sessions cost one read for each session, so a table whose
+  ends are each of their own session costs what those reads of each end's
+  own places cost (4096 ends of 4096 sessions waiting on one place took 40
+  to 52 ms a cycle over two runs at a load of 8 to 9, medians 41.4 and 41.6
+  ms, one cycle of fourteen past the bound, where a read of each end's own
+  places took 41 to 43 ms at that load and the ends of one session 1.1 to
+  1.9 ms; a lower bound, since the fixture stubbed the transcript's
+  resolution), and, by the same reading, more than the bound with two places
+  an end; the cycle in which the place reads again took 1.1 to 1.9 ms for
+  its one resolution, where resolving all 4096 took 631 to 728 ms; and the
+  table emptied in 4096 cycles, one resolution each, about 68 minutes at the
+  default one cycle a second (`PUSH_MIN_INTERVAL_S`), longer when a cycle
+  runs past half a second and no event wakes the pusher after it, and sooner
+  when a watched tab's live-tail wake runs a cycle inside that second or a
+  cycle raises, since its first retry starts half a second later
+  (`PUSHER_FAIL_BACKOFF_S`). No end is
+  queued for an agent none of
   those names: a Workflow run's agents when the object holds no roster for
   the run (one the report retires before any progress frame, or one that
   ends or loses its CLI before any), and a subagent the old kernel knew only
@@ -3237,6 +3289,65 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the file, or one dropped past the queue's bound, does not forget the
   end, and a release taken then pops the running agent's entry; only the
   first of those counts in `falseEnds`, at the next cycle);
+  an end whose file resolution could not be made (a place the walk needed
+  could not be read, for a reason other than absence, as under a session
+  directory that cannot be searched) releases nothing and is remembered,
+  and the resolution is made again at the first cycle at which one of the
+  places the walk could not read reads again or the walk no longer reaches
+  it (a place outside the project directory the session's transcript now
+  lies in, or, in a subagents tree, a link, a file or nothing at or below
+  the subagents directory on its way there, or a sibling session directory
+  the walk does not take for a directory), or at a later one when more
+  such ends are due (one a cycle, above), each read once per cycle until
+  then with no walk (`_release_ended_agents` in `kernel/kernel.py`), so
+  its records are released once the fault clears, with their checkpoint
+  document, unless a cycle drains the agent's start first or more such
+  ends wait than the kernel keeps (`_AGENT_RELEASED_MAX`, 4096): the
+  oldest is then given up, counted in `releaseLost`, its records left to
+  the cache's own bounds; a fault on the project directory of the session's
+  transcript can be taken for a session with no transcript (a refused
+  listing of that directory, or a refused stat of the transcript in it,
+  reads as a directory with no transcript in it when the kernel's session
+  discovery walks the project directories again while the fault lasts,
+  which it does whenever its change check moves: among others after a
+  session is added or renamed, a new transcript lands in a session's
+  project directory, or the kernel starts, and at once when the fault
+  refuses the stat of the project directory itself, as a parent directory
+  that cannot be searched or an I/O error does, since discovery's change
+  check reads that stat; an SDK session's refused stat of its transcript
+  falls to that walk), and the end then releases nothing and is neither
+  remembered nor counted, its records left to the cache's own bounds, a
+  residual that predates this change and is not reached by it; the two roads
+  that release a remembered file with no resolution, an end remembered
+  while nothing was held, for an agent with no end
+  waiting on a fault (an end that waits on a fault forgets the remembered
+  one and carries the agent's release), and an owed release's pay, still
+  read a fault on the file's path as the file gone and drop its records
+  with no document, a residual this change does not close, and the pay
+  reaches an agent with an end waiting on a fault too: an owed release that
+  finds nothing held is remembered as above while that end waits (with at
+  most one such end resolved a cycle, that can last cycles after the fault
+  clears, one for each end due ahead of it), so a read that holds the file
+  while a fault covers its path is dropped with no document, and a release
+  either road takes for that agent while its file is there ends the waiting
+  end too, since it covered the agent's file, while a release that is itself
+  that drop with no document keeps the waiting end, so its resolution after
+  the fault remembers the agent as above and the next whole read of the file
+  is released with its document (both roads, and the deferral, are cases of
+  `AgentEnd` in `tests/test_record_cache_agent_end.py`); whether the file is
+  there is a second check made after the release returns, not the check the
+  release itself made, and a fault that begins or clears between the two, a
+  window that holds the release's own work after its read (its document
+  write when it saw the file, and the drop) and, at the pay, the owed
+  releases paid after it, is a residual of this change: one that clears
+  there follows a drop with no document and ends the waiting end, so the
+  next whole read of the file is held until the cache's own bounds reach
+  it, and one that begins there keeps the waiting end after a release that
+  covered the file, so its resolution after the fault remembers the agent
+  as above; a follow-up fix after this change closes that window:
+  `release_entry` in `kernel/event_model.py` would report whether its own
+  read found the file, and both roads would decide from that answer whether
+  the waiting end ends, in place of the second check;
   a whole re-read of a file after its release was taken is held whole
   until the count cap, the byte budget or a quiescent drop reaches it,
   unless a later end of the agent comes after that release: one that finds
@@ -3262,14 +3373,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `releaseLost` (releases given up, the entry left to the cache's own
   eviction, the count cap or the byte budget, or a later quiescent drop,
   counted once per path per cycle where the release names a path (an end
-  given up past the bound of the ends the backend keeps, or one whose file
-  never resolved before its resolution raised, counts one each): no
+  given up past the bound of the ends the backend keeps or of the ends
+  waiting on a fault, or one whose file never resolved before its
+  resolution raised, counts one each): no
   document could be written, as with
   `ROMP_CKPT_CONVERGE_MS=0` or `ROMP_CKPT_CONVERGE_MB=0` or when the check
   whether a write was due raised; an owed release was dropped past its
   bound; an agent's end was dropped past the queue's bound and then past the
   bound of the ends the backend keeps (an end kept is released at the drain
-  like any other); or resolving or paying one raised. With the drop writes
+  like any other); an end whose file resolution could not be made was
+  given up past the bound of the ends waiting on a fault, the oldest
+  first; or resolving or paying one raised. With the drop writes
   off, an agent whose two ends, its stop and its task's end, reach two cycles
   counts two. Each cause is said once on stderr in a summary line, and a
   release that raises also writes its own line with the traceback at every
@@ -3945,20 +4059,71 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   it was listed, served while every identity stands because a directory
   entry's creation, removal or renaming moves its parent's stamps and every
   parent is in the list, with `hit` and `miss` (trees vouched for by one stat
-  per known directory against trees walked), `scoped` (reads served from the
+  per known directory against trees walked; what each counts, a failed
+  validation before a walk included: the comment at `_SUBAGENT_TREE_STATS`
+  in `kernel/kernel.py`), `scoped` (reads served from the
   cycle's one sample with no stat at all: one sample per subagents root per
   pusher cycle, jobs pass or connect push since 2026-09-18, the first reader
   validating or walking and every later reader of the cycle served it, so
   scoped over hit plus miss plus scoped is the share of reads that re-sampled
-  a root another reader took in the same cycle), `evict` (roots dropped because
+  a root another reader took in the same cycle; a sample that reported a
+  fault below its root, a listing, an entry's type or a child's lstat
+  failing for a reason other than absence, is not held, and the next reader
+  in the cycle walks again: `_subagent_tree`'s docstring, THE CYCLE SCOPE, in
+  `kernel/kernel.py`, and `Guards`
+  `test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is` in
+  `tests/test_subagent_tree_stamps_per_cycle.py`), `evict` (roots dropped because
   no alive session's transcript names them, on every jobs pass and, as a
   belt, after each feed build and from the tracking-off frame), `dirStats`
-  (the stats validations paid), `walkMs` and `validateMs` (the time in each,
+  (what it counts: the comment at `_SUBAGENT_TREE_STATS` in
+  `kernel/kernel.py`; the agent-file lookup's directory stats joined it with
+  this change, so a figure from a kernel without this change and one from a
+  kernel with it are not one series; the cost the memo's reads pay, road by
+  road with the case that
+  pins each term: `_subagent_tree_memo_report`'s docstring in
+  `kernel/kernel.py`), `walkMs` and `validateMs` (the time in each,
   every thread), and the gauges `roots` (entries) and `dirs` (directories
   held); a directory stamped within the last two seconds, or one whose
   listing failed, is stored unvouched and walked again until it is quiet and
   lists cleanly, the racy-stamp rule, since a filesystem stamps with a
-  coarser clock than the wall clock and a failure moves no stamp;
+  coarser clock than the wall clock and a failure moves no stamp; the key a
+  chat build records for a subagents tree the agent-file miss walk looked
+  through (recorded by every build that looks the agent up: the walk's own,
+  and a lookup the agent-file memo or a held launch fold answers replays the
+  walk's noted keys; the project directory the walk lists is no build's
+  dependency: the scope of that record and that residual are stated once in
+  `_subagent_file`'s docstring in `kernel/kernel.py`) is the stamp per
+  directory of the read that answered the walk, never a stat taken after it,
+  so a file landing after the cycle's sample under a directory the sampled
+  listing lacked leaves the recorded key behind the next signature's re-stat
+  and the tab is rebuilt; a root whose lstat fails for a reason other than
+  absence (EACCES from a parent, EIO) is not read as absent: its readers
+  answer their standing entries unheld or an unreadable marker (the feed
+  key's component; the chat build is told to read again), except that with
+  no entry standing the sidecar map answers `{}` and the agent-file lookup
+  answers a caller that passes no faults list `None`, so while the fault
+  lasts the viewer says the agent's transcript is missing, the Agent card
+  shows no steps and a sidecar read made with no resolved path
+  (`_subagent_meta`) answers `{}` (`ViewerUnderAnUnreadableTree` in
+  `tests/test_subagent_tree_memo.py`; having the viewer state the fault
+  is a follow-up fix after this change), while the release at an agent's end
+  passes one and releases nothing until the lookup can be made (the
+  `recordCache` paragraph); the agent-file walk excludes that tree
+  from its search and nothing else, answering a file found under any
+  other tree (`FaultExcludesItsOwnTree` in the same module), the shape
+  stated once in `_subagent_tree`'s docstring in `kernel/kernel.py`, and
+  a fault on the walk's read of any other place it searches (a place
+  below a tree's root, a candidate file, a project-directory entry, the
+  listing, or the real-path resolution of a tree's root or of a candidate,
+  strict on every interpreter) excludes that place alone (the places:
+  `_subagent_file_walk`'s docstring; `FaultOnTheWalksOwnRead`,
+  `RealpathFailureIsAFault`); a launch
+  fold that did not read the file (the reader's fail path, or a raise) or
+  whose resolution could not be made (the shapes: the comment in
+  `_awaiting_nest` in `kernel/kernel.py`) is held for the one
+  `_awaiting_nest` call that observed it, so that call folds it once, not
+  once per agent whose owner it was consulted for, and the next call folds
+  it again;
   `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
   both stand, and on this fork while `cleared.jsonl` stands too, its stat a
