@@ -5,12 +5,14 @@
 # modules that batch fork PR #925 added, all fork PR #919's (test_fetch_wrapper_census.py, test_file_cap_binding.py,
 # test_login_cookie_not_token.py, test_remote_ws_set_cookie_strip.py and test_session_cookie_auth.py), and the
 # fourth the writers of three modules that batch fork PR #934 carried, all added by fork PR #875 (test_card_boards.py,
-# test_postal_bus_revive_guard.py and test_subagent_tree_cycle_scope.py).
+# test_postal_bus_revive_guard.py and test_subagent_tree_cycle_scope.py), and the fifth the writer of one
+# module that batch fork PR #936 carried, added by fork PR #860 (test_client_diag_capped_shape.py).
 # The census pin compares it with the census by equality (_writer_set_faults): a module that writes the name and is
 # not here faults as a new writer, and a module here that no longer writes it faults until its line is removed.
 # Lines leave as writers migrate; a new writer is not added (omit the write or move it to the conftest floor),
 # except as a rename of a line here; the first three landing merges' lines were added on the reviewer's rulings of
-# round 2 on fork PR #894, which had the file derived again at each merge, and the fourth's by the same derivation.
+# round 2 on fork PR #894, which had the file derived again at each merge, and the fourth's and the fifth's by the
+# same derivation.
 permission_ask_feeder_drive.py
 test_anchor_mints.py
 test_api_error_tail.py
@@ -52,6 +54,7 @@ test_clear_wrap.py
 test_cleared_set_memo.py
 test_cli_scope.py
 test_client_diag_allowlist.py
+test_client_diag_capped_shape.py
 test_client_diag_reconnect_stamp.py
 test_client_diag_rotation.py
 test_close_confirm.py
