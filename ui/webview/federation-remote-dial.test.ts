@@ -37,7 +37,7 @@ function terms(): any {
   return { app: "chat", iid: PAGE_IID, active: "TESTHOST:" + SID, col: "", skeleton: 1, provrows: 0, proto: 2, delta: 1 };
 }
 
-async function withManager(fn: (fm: any) => void | Promise<void>, opts: { noWid?: boolean } = {}): Promise<void> {
+async function withManager(fn: (fm: any) => void | Promise<void>, opts: { noWid?: boolean; terms?: () => any } = {}): Promise<void> {
   const g: any = globalThis;
   const saved: Record<string, any> = {};
   const set = (k: string, v: any) => { saved[k] = { had: k in g, v: g[k] }; g[k] = v; };
@@ -50,7 +50,7 @@ async function withManager(fn: (fm: any) => void | Promise<void>, opts: { noWid?
   set("window", {
     dispatchEvent: () => {},
     __rompLocalSend: () => {},
-    __rompDialTerms: () => terms(),
+    __rompDialTerms: () => (opts.terms || terms)(),
     sessionStorage: { getItem: () => "" },
     parent: { postMessage: () => {} },
   });
@@ -80,6 +80,27 @@ test("the first dial carries the page's terms: skeleton, delta, the bare-sid act
     assert.equal(q.get("reconnect"), null, "a FIRST dial is no reconnect");
     fm.conns.get("TESTHOST").closed = true;
   });
+});
+
+test("the pre-open shape (review round 3, 2026-09-19): a skeleton posture whose watched tab is ANOTHER host's dials TESTHOST with skeleton=1 and no active", async () => {
+  // The shim's __rompDialTerms answers skeleton 1 on the phone until the local socket opens (RESTART_DIET && !everConnected, the
+  // reload core's tail in kernel.py). On a healthy page the relay is dialed after that open and this shape never leaves (the served
+  // phone pass in tests/test_federated_dial_terms_served.py pins the healthy dial); in the window before it the relay dial would carry
+  // the term with no active for a host that does not own the stored tab, and the remote's relay no-active rule then skeletons every
+  // transcript-bearing tab (test_chat_skeleton_reconnect.py test_11_b and test_11_e pin that half). This pins what the URL builder
+  // does with those terms, so the kernel half's input is the one it was proven against.
+  await withManager((fm) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote("TESTHOST", true);
+    assert.equal(FakeWS.made.length, 1, "an up host is dialed at once");
+    const q = qOf(FakeWS.made[0].url);
+    assert.equal(q.get("skeleton"), "1", "the page's pre-open skeleton posture rides the remote dial");
+    assert.equal(q.get("active"), null, "the stored tab is OTHERHOST's, so TESTHOST is told no active (its no-active rule skeletons every tab)");
+    assert.equal(q.get("delta"), "1");
+    assert.equal(q.get("iid"), "hublab:" + PAGE_IID, "the iid is namespaced by the hub's wid");
+    assert.equal(q.get("reconnect"), null, "a FIRST dial is no reconnect");
+    fm.conns.get("TESTHOST").closed = true;
+  }, { terms: () => ({ app: "chat", iid: PAGE_IID, active: "OTHERHOST:" + LOCAL_SID, col: "", skeleton: 1, provrows: 0, proto: 2, delta: 1 }) });
 });
 
 test("a redial that got a ready acked states reconnect=1&proto and the same iid, and posts NO ready on its open", async () => {

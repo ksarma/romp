@@ -5650,9 +5650,9 @@ census_memo() {   # <census helper> <bash file> [<arguments>...]: prints what th
         run census_unread_shapes "$TEST_DIR/plant-g.sh"
         [ "$output" = "2:$plant" ]
     done
-    # round 12b (ITEM 2, the owner's call on case 203's margin): the census's sensitivity to the shapes it reads and
-    # its pins over the shapes it cannot read moved, plants and assertions unchanged, to the two cases at the end of
-    # this file titled "every read of the hook is DECLARED, round 12b split (1 of 2)" and "(2 of 2)"
+    # round 12b (ITEM 2, the fold owner's call on case 203's margin): the census's sensitivity to the shapes it reads
+    # and its pins over the shapes it cannot read moved, plants and assertions unchanged, to the two cases at the end
+    # of this file titled "every read of the hook is DECLARED, round 12b split (1 of 2)" and "(2 of 2)"
     # round 9bc (F.1 (7), the round 9b audit), derived in round 10c (the round 9 rulings' J): the eight shapes the
     # bound DISCLOSES, neither read by the census nor pinned absent, ten witnesses each planted alone and passing both
     # unflagged, the census's counts over the copy equal to its counts over the hook, so the disclosure is shown true by
@@ -9470,22 +9470,23 @@ r8b5_eleven_parent_merge() {   # a base on the remote (BASE); ten sides from it,
 # ── round 9d (the round 8 rulings' A, option (b)): the credential feed, its pieces, and the additive run ──
 # The round 8 refuters (A.1) found the read inside gitleaks publishing: gitleaks ran git log -p itself and counted
 # a commit whole once one of its files had a hunk, so a stream cut inside a commit passed the ERR arm and the
-# count arm and a credential in a dropped file published through a real push. The repository owner took option
-# (b) (A.2): the hook reads the lines the pushed commits add itself and gitleaks scans exactly those bytes,
-# running no git (the design, fold 3's design-b-final, built under romp-manager's rulings of 2026-09-24 on its
-# three owner points). The feed's row (the CREDENTIAL FEED of the push) is driven by the cases re-aimed into the
-# slots the retired reads held (the table's case and short case, the cut with exit 1 and with a SIGKILL, the tr
+# count arm and a credential in a dropped file published through a real push. The coordinator, romp-manager,
+# chose option (b) (A.2) on 2026-09-24, confirmed by the repository owner on the landing page, 2026-09-29: the
+# hook reads the lines the pushed commits add itself and gitleaks scans exactly those bytes, running no git
+# (the design, fold 3's design-b-final, built under romp-manager's rulings of 2026-09-24 on its three open
+# points). The feed's row (the CREDENTIAL FEED of the push) is driven by the cases re-aimed into the slots the
+# retired reads held (the table's case and short case, the cut with exit 1 and with a SIGKILL, the tr
 # silent and cut, the awk silent, a line before and after the answer); the cases below hold the rest: each
 # finding named with its commit and file, the ~ line (the zip and PDF witnesses, red under the mutant that drops
 # it), the cap and the overlap of the pieces (the chunk and piece-boundary witnesses, which the round 9 refuters
 # found green under CAP=110000 and 130000 and V=4096 and 2500, far from the bounds: each title names the mutant
 # range it is red for, and since round 10b the witnesses at the bounds, CAP and V read from the hook, hold both
 # bounds, beside the value pins in tests/gitleaks-config.bats; until round 10b this comment said each was red
-# under a one-constant mutant of the hook), the changed meaning of a merge and a rename (the owner's item 2: a merge
+# under a one-constant mutant of the hook), the changed meaning of a merge and a rename (the design's item 2: a merge
 # that brings in content a remote holds and a pure rename of a published file pass; since round 12f, which reads
 # every pushed merge by its first-parent diff as main's hook does, the merge's case is refused, as at main, the cost
 # romp-manager's ruling on round 12e's audit, 2026-09-27 03:31Z, its (1), discloses), two refs at one commit fed
-# once, the allowlist, and the additive run over the five rules that fire on a file's path (the owner's item 1:
+# once, the allowlist, and the additive run over the five rules that fire on a file's path (the design's item 1:
 # each rule's witness refused, silent with the run removed; its figure checked like the main run's, the files
 # gitleaks' global path allowlist skips left out by the rule the hook states, under either core.quotePath since
 # round 9e). Every credential-shaped string is assembled at run time: gitleaks scans this file too.
@@ -9624,7 +9625,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     at_base
 }
 
-@test "round 9d: a merge that brings in content a remote already holds (the owner's item 2; re-aimed in round 12f): main published a credential, a branch merges main, and the merge adds no line in none of its parents, so the feed's combined read finds nothing, but its first-parent diff holds main's credential line, and the push is refused naming the merge and leak.py, as main's hook refuses it (passed from round 9 to 5246a10a7: romp-manager's ruling on round 12e's audit, 2026-09-27 03:31Z, its (1), reads every pushed merge by its first-parent diff and discloses this refusal of a credential a remote already holds as a cost, parity with main; its witness in the round 12f section, sidecred; until round 9 the scan read a merge by its first-parent diff and refused this push)" {
+@test "round 9d: a merge that brings in content a remote already holds (the design's item 2; re-aimed in round 12f): main published a credential, a branch merges main, and the merge adds no line in none of its parents, so the feed's combined read finds nothing, but its first-parent diff holds main's credential line, and the push is refused naming the merge and leak.py, as main's hook refuses it (passed from round 9 to 5246a10a7: romp-manager's ruling on round 12e's audit, 2026-09-27 03:31Z, its (1), reads every pushed merge by its first-parent diff and discloses this refusal of a credential a remote already holds as a cost, parity with main; its witness in the round 12f section, sidecred; until round 9 the scan read a merge by its first-parent diff and refused this push)" {
     r9d_base
     git -C "$REPO" checkout -q -b feat
     commit_file f.txt "feature" "f1"
@@ -9643,7 +9644,7 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     [ -z "$(git -C "$TEST_DIR/remote.git" rev-parse -q --verify refs/heads/feat)" ]
 }
 
-@test "round 9d: a pure rename of a published file passes (the owner's item 2): the rename adds only its edits, none here, so nothing is fed and no scanner runs (until round 9 the scan read a rename as a deletion and an addition and refused this push); a commit removing the published credential passes too" {
+@test "round 9d: a pure rename of a published file passes (the design's item 2): the rename adds only its edits, none here, so nothing is fed and no scanner runs (until round 9 the scan read a rename as a deletion and an addition and refused this push); a commit removing the published credential passes too" {
     real_gitleaks
     export ROMP_PRIVATE_STRINGS="$TEST_DIR/no-denylist"
     add_remote
@@ -9732,23 +9733,23 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     at_base
 }
 
-@test "round 9d: the path-scoped run, pkcs12-file: a keystore added as cert.p12 is refused naming the rule, the commit and the file (the owner's item 1; the pieces' digit names cannot trigger a rule that fires on a path)" {
+@test "round 9d: the path-scoped run, pkcs12-file: a keystore added as cert.p12 is refused naming the rule, the commit and the file (the design's item 1; the pieces' digit names cannot trigger a rule that fires on a path)" {
     r9d_witness_case pkcs12-file
 }
 
-@test "round 9d: the path-scoped run, nuget-config-password: a password in an added nuget.config is refused naming the rule, the commit and the file (the owner's item 1)" {
+@test "round 9d: the path-scoped run, nuget-config-password: a password in an added nuget.config is refused naming the rule, the commit and the file (the design's item 1)" {
     r9d_witness_case nuget-config-password
 }
 
-@test "round 9d: the path-scoped run, kubernetes-secret-yaml: a Kubernetes Secret in an added secret.yaml is refused naming the rule, the commit and the file (the owner's item 1)" {
+@test "round 9d: the path-scoped run, kubernetes-secret-yaml: a Kubernetes Secret in an added secret.yaml is refused naming the rule, the commit and the file (the design's item 1)" {
     r9d_witness_case kubernetes-secret-yaml
 }
 
-@test "round 9d: the path-scoped run, hashicorp-tf-password: a password in an added main.tf is refused naming the rule, the commit and the file (the owner's item 1)" {
+@test "round 9d: the path-scoped run, hashicorp-tf-password: a password in an added main.tf is refused naming the rule, the commit and the file (the design's item 1)" {
     r9d_witness_case hashicorp-tf-password
 }
 
-@test "round 9d: the path-scoped run, freemius-secret-key: a secret key in an added app.php is refused naming the rule, the commit and the file (the owner's item 1)" {
+@test "round 9d: the path-scoped run, freemius-secret-key: a secret key in an added app.php is refused naming the rule, the commit and the file (the design's item 1)" {
     r9d_witness_case freemius-secret-key
 }
 
@@ -12009,7 +12010,7 @@ r11c_blank_context_push() {   # the push of main under GIT_DIFF_OPTS=--unified=3
     at_base
 }
 
-@test "round 11c (C, extra5-1, decision 7's execution item 5): the key's older spelling, diff.suppress-blank-empty=true in the clone, which git still reads, under GIT_DIFF_OPTS=--unified=3, prints a blank context line empty; the same clean push passes through the hook, whose feed reads GIT_DIFF_OPTS as main's git log does (round 12n), so the three context lines reach diff-tree and the feed's command-line -c diff.suppressBlankEmpty=false alone, read last, beats the key, while a copy dropping the -c pin from the feed's line refuses it (refused at 93684a4d1, as under the key's own spelling; re-aimed in round 12a, the round 11 rulings' F, the owner's choice (1), and again in round 12n, romp-manager's ruling P on round 12l's audit A1: until then the hook's feed ran under env -u GIT_DIFF_OPTS and only a copy without it could isolate the -c pin; the copy edits the feed's line alone, the first-parent read's line carrying the same pin, witnessed by its own round 12e case)" {
+@test "round 11c (C, extra5-1, decision 7's execution item 5): the key's older spelling, diff.suppress-blank-empty=true in the clone, which git still reads, under GIT_DIFF_OPTS=--unified=3, prints a blank context line empty; the same clean push passes through the hook, whose feed reads GIT_DIFF_OPTS as main's git log does (round 12n), so the three context lines reach diff-tree and the feed's command-line -c diff.suppressBlankEmpty=false alone, read last, beats the key, while a copy dropping the -c pin from the feed's line refuses it (refused at 93684a4d1, as under the key's own spelling; re-aimed in round 12a, the round 11 rulings' F, the fold owner's choice (1), and again in round 12n, romp-manager's ruling P on round 12l's audit A1: until then the hook's feed ran under env -u GIT_DIFF_OPTS and only a copy without it could isolate the -c pin; the copy edits the feed's line alone, the first-parent read's line carrying the same pin, witnessed by its own round 12e case)" {
     local neither="$TEST_DIR/pre-push-neither"
     r11c_blank_context_history
     git -C "$REPO" config diff.suppress-blank-empty true
@@ -14948,7 +14949,7 @@ PY
     [ "$status" -ne 0 ]
 }
 
-# Round 12e (the round 12c audit's F2, the owner's option (b)): the deriving case read the labels from the hook's
+# Round 12e (the round 12c audit's F2, the fold owner's option (b)): the deriving case read the labels from the hook's
 # ASCII_SAFE_LABELS block by its spelling, so a second assignment after the block (ASCII_SAFE_LABELS="... BIG5") left
 # every case green while a BIG5 commit published. The case now derives the list the hook USES by execution: a real push
 # through the hook with an awk on its PATH that saves the label read's program and the ROMP_ENC_LABELS the hook hands it
@@ -14987,7 +14988,7 @@ r12e_enc_accepted() {   # <labels file, one per line>: the captured program, und
     LC_ALL=C "$real_awk" -F '\t' 'NR == FNR { if ($2 != "label") bad = 1; no[$1 + 0] = 1; next } !(FNR in no) { print } END { exit bad }' "$E/refused" "$1"
 }
 
-@test "round 12c (D, the list's deriving case; re-aimed in round 12e, the round 12c audit's F2, the owner's option (b)): the list the hook USES is derived by execution: a real push through the hook, the identifier scan armed, with an awk on its PATH that saves the label read's program and the ROMP_ENC_LABELS the hook hands it (the list as the hook sets it at run time, by whatever road); that program, run over one synthetic commit per label iconv -l prints, passes some of them, and each label it passes is converted to UTF-8 by the platform's iconv as git's reencode_string_iconv converts (python3's ctypes, one process: one conversion from the initial state, no flush, any error but E2BIG counting as git reading the raw bytes): every ASCII byte decodes to itself, each high byte that converts decodes to bytes none of them ASCII, and each lead byte followed by every ASCII byte fails to convert; on glibc the labels passed number the header's two class counts summed and every one opens, elsewhere the case prints what it covered; red on a copy of the hook whose list adds SHIFT_JIS, BIG5, CP1258 or CP1255 inside its block, on one that assigns the list again after the block adding BIG5 or CP932 (a label no pin names), and on one whose label read is handed the list with GBK added, each where the platform's iconv prints the label and converts it unsafely (where it converts it safely, or does not print it, the case says so on fd 3: the 02:31Z ruling on the round 12c questions, its (1))" {
+@test "round 12c (D, the list's deriving case; re-aimed in round 12e, the round 12c audit's F2, the fold owner's option (b)): the list the hook USES is derived by execution: a real push through the hook, the identifier scan armed, with an awk on its PATH that saves the label read's program and the ROMP_ENC_LABELS the hook hands it (the list as the hook sets it at run time, by whatever road); that program, run over one synthetic commit per label iconv -l prints, passes some of them, and each label it passes is converted to UTF-8 by the platform's iconv as git's reencode_string_iconv converts (python3's ctypes, one process: one conversion from the initial state, no flush, any error but E2BIG counting as git reading the raw bytes): every ASCII byte decodes to itself, each high byte that converts decodes to bytes none of them ASCII, and each lead byte followed by every ASCII byte fails to convert; on glibc the labels passed number the header's two class counts summed and every one opens, elsewhere the case prints what it covered; red on a copy of the hook whose list adds SHIFT_JIS, BIG5, CP1258 or CP1255 inside its block, on one that assigns the list again after the block adding BIG5 or CP932 (a label no pin names), and on one whose label read is handed the list with GBK added, each where the platform's iconv prints the label and converts it unsafely (where it converts it safely, or does not print it, the case says so on fd 3: the 02:31Z ruling on the round 12c questions, its (1))" {
     local hdr single multi l n k E=$TEST_DIR/enc q="'"
     r12c_base
     iconv -l | sed 's,//$,,; s,/$,,' | LC_ALL=C sort -u > "$TEST_DIR/iconv-labels"

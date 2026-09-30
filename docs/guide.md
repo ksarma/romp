@@ -316,7 +316,8 @@ were reading in full and lists the others as skeleton tabs: the strip is complet
 once, each tab with its name, color and status, and a transcript arrives only when it
 is wanted. Click a skeleton tab and the romp loader stands in until its transcript
 lands; the tabs you do not click fill in one at a time while the page is idle, never
-while the browser tab is hidden. Until then a skeleton tab's hover tooltip says it is
+while the browser tab is hidden. On a phone, after it comes back, the other tabs stay
+skeletons and load only when you tap them, until the connection drops again. Until then a skeleton tab's hover tooltip says it is
 not loaded yet.
 
 ![After a reconnect, the tab you were reading is back in full while the other tabs wait as skeletons](assets/guide/reconnect-skeleton-tabs.png){ width="32%" }

@@ -24,11 +24,19 @@ export interface ChatVisibilityDeps {
 }
 
 /** Publish the chat page's hidden word on its own events. `root` is the element the observer watches (the
- *  page's body); with no root or no observer nothing is installed and nothing published. */
-export function watchChatVisibility(root: Element | null, deps: ChatVisibilityDeps): void {
+ *  page's body); with no root or no observer nothing is installed and nothing published. `onShown` (stage 0,
+ *  2026-09-18) runs when the published word flips from hidden to shown, the exact event the idle prefetch's
+ *  hidden test (render.ts paneHidden) reads: the phone shell shows the chat tab. Never on the first word, never
+ *  on a repeat, never on a flip to hidden. */
+export function watchChatVisibility(root: Element | null, deps: ChatVisibilityDeps, onShown?: () => void): void {
   if (!root || !deps.Observer) return;
   let intersecting: boolean | null = null;   // the observer's last word; null until it speaks
-  const publish = () => { publishPaneHidden(deps.doc.hidden, intersecting, deps.win); };
+  let word: boolean | null = null;           // the last word published (publishPaneHidden's own return; the flag's name stays in paint-gate.ts)
+  const publish = () => {
+    const was = word;
+    word = publishPaneHidden(deps.doc.hidden, intersecting, deps.win);
+    if (was === true && word === false && onShown) onShown();
+  };
   new deps.Observer((entries) => { intersecting = entries.some((e) => e.isIntersecting); publish(); }).observe(root);
   deps.doc.addEventListener("visibilitychange", publish);
 }
