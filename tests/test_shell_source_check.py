@@ -924,7 +924,9 @@ class ServedScriptPopulation(unittest.TestCase):
         # script ahead of its own scripts, as _send writes it on the response that signs a browser in; every other document
         # is as built but for the stamp _send writes on a text/html 200 whose body carries an <html> tag (kernel.py
         # _stamp_served_html: ` data-romp-served=200` after the first `<html`), since _send adds nothing else outside the
-        # page class
+        # page class. _as_served writes every document as a 200, whatever status the kernel sends it with, so the stamp
+        # expected here on a document the kernel sends with another status (the too-large page, a 413) is this model's,
+        # not the kernel's response
         pages = _served_pages()
         renderers = {f.__name__ for f in km._PAGE_RENDERERS.values()}
         self.assertEqual(len(renderers), 8, "the shell, the six pane pages and the timeline")
