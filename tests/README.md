@@ -258,21 +258,23 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   plugin manager's lookups by name, `config.option` read through `getattr`,
   `getattr` and its kin, an item of a namespace such as `vars(sys)`, and
   `config.workerinput`) is admitted only when its key is proved to be one
-  fixed string other than the option's: a literal, or a name a function
-  binds once to a literal in the conftest's own text with nothing there that
-  can rebind it. A name of the conftest's module scope is not proven, however
-  the conftest binds it, since code outside the conftest's text can rebind it
-  at run time: a test module's `monkeypatch.setattr` on the conftest, or a
-  store through `sys.modules`, as `tests/test_session_end_thread_guard.py`
-  does to a name of `tests.conftest`. A key reached through any import (a
-  name an import binds, or an attribute read on one) is not proven, whatever
-  the imported module binds it to. The reviewer's ruling of 2026-09-29
-  withdrew the proof that read the imported file, after four verifications in
-  a row found an honest way to bind the import, or the module's attribute, to
-  another object at run time (a stub in `sys.modules`, a directory ahead on
-  the import path, another module rebinding the attribute). Every key of a
-  keyed read `tests/conftest.py` makes is a literal in its own text, so
-  neither refuses anything of it. A key taken
+  fixed string other than the option's, and the one proof the rule has is a
+  string literal at the read site. A name of any kind is not proven, whatever
+  the conftest binds it to, and a keyed read by one is refused with one plain
+  reason: a function's local bound once to a literal, a closure's cell, a
+  parameter, a default, a name of the conftest's module scope and a name an
+  import binds alike, since code outside the conftest's text can falsify what
+  the text binds a name to. The reviewer's rulings withdrew the three proofs
+  of a name the rule once had, each after verifications found an honest way to
+  falsify it at run time: a key reached through an import (a stub in
+  `sys.modules`, a directory ahead on the import path, another module
+  rebinding the attribute), a name of the module's scope (a test module's
+  `monkeypatch.setattr` on the conftest, or a store through `sys.modules`, as
+  `tests/test_session_end_thread_guard.py` does to a name of `tests.conftest`),
+  and, on 2026-09-30, a function's local (a trace or profile function a plugin
+  sets writes it through the frame; a module writes the cell a nested function
+  closes over). Every key of a keyed read `tests/conftest.py` makes is a
+  literal in its own text, so none of this refuses anything of it. A key taken
   from a list, a loop, a parameter, a default, a class attribute or a fold is
   refused, so a helper that passes keys is refused visibly rather than
   admitted. The rule states the trade this makes:
@@ -291,7 +293,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   reaches and rewrites objects a proof over the text cannot bound. In the
   conftest's own text, `exec`, `eval`, and reads of `f_locals`,
   `cell_contents`, `__closure__`, `f_globals`, `f_back` or `sys._getframe`
-  defeat the proof of a fixed key and of a function's local; and, under the
+  defeat the proof of a fixed key; and, under the
   reviewer's ruling of 2026-09-29,
   so do a builtin `setattr`, `delattr` or `object.__setattr__` call (a bare
   name, or through `builtins`) whose target name the proof does not prove, and
@@ -313,8 +315,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   namespace or an attribute by a name, or build code: a function's
   `__globals__`, an object's `__dict__`, `setattr`, `delattr`, `globals`,
   `vars`, `locals`, `compile`, `types.FunctionType` and `types.CodeType`),
-  since a function in such a module can rewrite a name or a cell of the conftest
-  through an object the conftest hands it; any other name is refused as one
+  since a function in such a module can rewrite what a keyed read of the
+  conftest reads through an object the conftest hands it; any other name is refused as one
   `tests/__init__.py` does not name. `tests/__init__.py`, the conftest's one
   in-repo direct import, names nothing outside the allowlist, so the allowlist
   refuses nothing of it; a name added to `tests/__init__.py` reds the pin that
@@ -354,19 +356,18 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   only identifiers `tests/__init__.py` holds (what a function that returns
   nothing leaves behind, an object the module fills at its import, a name bound
   by an attribute store on its own module in `sys.modules`). The allowlist
-  refuses a name, not a road, so a road that would rewrite a cell of a
-  function of the conftest -- `setattr` reached through `sys.modules` by a
-  name built at run time and handed the cell the function's `__closure__`
-  holds, spelling only identifiers `tests/__init__.py` holds -- is NOT refused
-  and passes too (it is refused only where it spells a name outside the
-  allowlist; aimed at a name of the conftest's module scope, such a road
-  rewrites no key the rule proves). Code outside the conftest's text and the
-  modules it imports directly (a test module, a plugin) is not read at all: a
-  name of the module's scope it could rebind is not proven, and what it can
-  still do includes rewriting a function's code object or a cell, or writing a
-  function's local through its frame's `f_locals` from a trace function
-  (`sys.settrace`), none of which an honest author writes; each is listed with
-  its witness. The rule claims no more than this. Its
+  refuses a name, not a road, so a road that would rewrite the code of a
+  hook of the conftest -- `setattr` reached through `sys.modules` by a
+  name built at run time and handed the hook and a code object whose literal
+  key is replaced, spelling only identifiers `tests/__init__.py` holds -- is
+  NOT refused and passes too (it is refused only where it spells a name
+  outside the allowlist). Code outside the conftest's text and the modules it
+  imports directly (a test module, a plugin) is not read at all, and can still
+  falsify a read by a literal key through writes to objects at run time: the
+  hook's code object rewritten, a plugin that copies `config.option.plugins`
+  into another option the conftest reads, or one that wraps
+  `config.getoption`, none of which an honest author writes; each is listed
+  with its witness. The rule claims no more than this. Its
   docstring, `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`,
   lists in WHAT IT DOES NOT READ what it leaves unrefused. A name
   is licensed only when a child pytest over a copy of the conftest writes the
