@@ -393,10 +393,11 @@ that precondition stands the item limit, for the local container proof below:
 what code does with an item of a container the proof reads, or with the object
 that a name bound other than to a literal or a call of parse_qs holds, after the
 census has read it, in a spelling the proof does not refuse, is outside what the
-census reads and passes silently, one witness for each road: a name an unpacking
-binds from a tuple or list display that holds the item, which takes that
-display's level, so a change through it is read as a change of a new object
-holding the item (its witnesses: a list read out of a local dict of lists, bound
+census reads and passes silently, one witness for each road the checks found: a
+name an unpacking binds from a tuple or list display that holds the item, which
+takes that display's level, so a change through it is read as a change of a new
+object holding the item (its witnesses: a list read out of a local dict of
+lists, bound
 so and appended to, and bound so and extended by an augmented assignment; and a
 queue bound through a boolean operation, bound so, its put read off that name
 unbound and called); a subscript of a new object holding the item as an
@@ -742,18 +743,20 @@ setattr or delattr, or a method spelled on a class (a builtin class, or a class
 of collections imported as the module or by name), handed it as its first
 argument; a store by a key that is no constant; an append or extend of other
 than one plain argument; an augmented assignment to a name bound to it or to an
-item of it; or any occurrence in a function or lambda nested in it (a def's
-header, its defaults among them, included; a lambda's defaults, which run where
-it stands, excepted), or a class body it defines, whose code the census does not
-read (a closure capture) or which makes a class attribute; a comprehension is
-read where it stands, as
-the function's own body is: a read of the fourth form and an append of a read
-value there pass, the container as a comprehension's source, in its condition or
-as its element refuses as any other read does, and a change the census cannot
-fold, a comprehension target store among them, refuses. The first
+item of it; or any occurrence, whatever the use, in a def or class statement
+nested in the function (its decorators; its header, a def's defaults and
+annotations and a class's bases and keywords among them; and its body, where an
+occurrence is a closure capture whose code the census does not read, or makes a
+class attribute) or in the body of a lambda nested in the function (a lambda's
+defaults, which run where it stands, excepted); a comprehension is read where it
+stands, as the function's own body is: a read of the fourth form and an append
+of a read value there pass, the container as a comprehension's source, in its
+condition or as its element refuses as any other read does, and a change the
+census cannot fold, a comprehension target store among them, refuses. The first
 parameter of a method or a route handler is not read so: every attribute read
-and method call on it is refused already. The container, or an item of it,
-handed as an argument to any other call is under the call limit, what the callee
+and method call on it is refused already. Outside a nested def or class
+statement and a lambda's body, the container, or an item of it, handed as an
+argument to any other call is under the call limit, what the callee
 does with it not read (its witnesses: a local dict a module function it is
 handed stores a fetch into; a list read out of a local dict of lists by a
 subscript load, by `.get`, or through a name bound to it, which a module

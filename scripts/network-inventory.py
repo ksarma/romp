@@ -317,9 +317,10 @@ is handed; a content type the census reads other than as a string constant or a 
 every version, so no frame can rewrite an intermediate the census had read. Beside that precondition stands the item limit, for
 the local container proof below: what code does with an item of a container the proof reads, or with the object that a name bound
 other than to a literal or a call of parse_qs holds, after the census has read it, in a spelling the proof does not refuse, is
-outside what the census reads and passes silently, one witness for each road: a name an unpacking binds from a tuple or list
-display that holds the item, which takes that display's level, so a change through it is read as a change of a new object holding
-the item (its witnesses: a list read out of a local dict of lists, bound so and appended to, and bound so and extended by an
+outside what the census reads and passes silently, one witness for each road the checks found: a name an unpacking binds from a
+tuple or list display that holds the item, which takes that display's level, so a change through it is read as a change of a new
+object holding the item (its witnesses: a list read out of a local dict of lists, bound so and appended to, and bound so and
+extended by an
 augmented assignment; and a queue bound through a boolean operation, bound so, its put read off that name unbound and called); a
 subscript of a new object holding the item as an augmented assignment's target, read as a store into that object (its witness:
 that list held in a new list and extended through a subscript of it); a match statement's capture of the item, or of the name
@@ -536,14 +537,16 @@ target); a delete; a method other than append, extend or a read method of its ty
 spelled-out dunder among them, or an attribute of it read other than as a method's callee; setattr or delattr, or a method spelled
 on a class (a builtin class, or a class of collections imported as the module or by name), handed it as its first argument; a
 store by a key that is no constant; an append or extend of other than one plain argument; an augmented assignment to a name bound
-to it or to an item of it; or any occurrence in a function or lambda nested in it (a def's header, its defaults among them,
-included; a lambda's defaults, which run where it stands, excepted), or a class body it defines, whose code the census does not
-read (a closure capture) or which makes a class attribute; a comprehension is read
-where it stands, as the function's own body is: a read of the fourth form and an append of a read value there pass, the container
-as a comprehension's source, in its condition or as its element refuses as any other read does, and a change the census cannot
-fold, a comprehension target store among them, refuses. The first parameter of a method or a route
-handler is not read so: every attribute read and method call on it is refused already. The container, or an item of it, handed as
-an argument to any other call is under the call limit, what the callee does with it not read (its witnesses: a local dict a module
+to it or to an item of it; or any occurrence, whatever the use, in a def or class statement nested in the function (its
+decorators; its header, a def's defaults and annotations and a class's bases and keywords among them; and its body, where an
+occurrence is a closure capture whose code the census does not read, or makes a class attribute) or in the body of a lambda nested
+in the function (a lambda's defaults, which run where it stands, excepted); a comprehension is read where it stands, as the
+function's own body is: a read of the fourth form and an append of a read value there pass, the container as a comprehension's
+source, in its condition or as its element refuses as any other read does, and a change the census cannot fold, a comprehension
+target store among them, refuses. The first parameter of a method or a route handler is not read so: every attribute read and
+method call on it is refused already. Outside a nested def or class statement and a lambda's body, the container, or an item of
+it, handed as an argument to any other call is under the call limit, what the callee does with it not read (its witnesses: a local
+dict a module
 function it is handed stores a fetch into; a list read out of a local dict of lists by a subscript load, by `.get`, or through a
 name bound to it, which a module function it is handed appends a fetch to; and such a list handed to append spelled on a class of
 the file that derives from list). What the proof does not read of a name so marked, or of an item of a container it reads, is the
@@ -5687,8 +5690,9 @@ class _Served(object):
     reaching the caller's frame instead is a stated limit, its witness fhlp. Beside that precondition stands the item limit (the
     19:33Z ruling, _containers): what code does with an item of a container the proof reads, or with the object a name bound other
     than to a literal or a call of parse_qs holds, after the census has read it, in a spelling the proof does not refuse, passes
-    silently, one witness for each road (iunp, iuag and iatr, a name an unpacking binds from a display that holds the item; isag, a
-    subscript of a new object holding it as an augmented assignment's target; imat and xmat, a match capture; xies and cesw3, an item
+    silently, one witness for each road the checks found (iunp, iuag and iatr, a name an unpacking binds from a display that holds the
+    item; isag, a subscript of a new object holding it as an augmented assignment's target; imat and xmat, a match capture; xies and
+    cesw3, an item
     stored into another object or held in a new object that leaves the function; dmcap, dmcapl, dxies and dcmp, a default taking the
     item through a name the proof does not follow (a match capture, an attribute of another object, a comprehension's target in a
     def's default); dwal, a name a walrus in a def's default binds to the item, changed through after the def; xput, xesc and xiop, on
@@ -6044,9 +6048,10 @@ class _Served(object):
         defines or another import names, a module's function), is under the call limit, as the container is (its witnesses ihc, ihg
         and ihn, a list read out of a local dict of lists by a subscript load, by `.get` and through a name bound to it, which a
         module function it is handed appends a fetch to, and itcw, such a list handed to append spelled on a class of the file that
-        derives from list), in a lambda's default too (dcallc), while in a def's default the occurrence refuses it as one in a def
-        nested in the function. A container is a name an assignment, augmented or annotated, or a walrus binds whole to such a literal
-        or comprehension or to a call of parse_qs (_parse_qs_call), or a name with one of these uses (changes()). At any level of new
+        derives from list), in a lambda's default too (dcallc), while anywhere in a nested def or class statement (a def's default, a
+        decorator, a class's base) the occurrence refuses it as one nested in the function. A container is a name an assignment,
+        augmented or annotated, or a walrus binds whole to such a literal or comprehension or to a call of parse_qs (_parse_qs_call),
+        or a name with one of these uses (changes()). At any level of new
         objects around it, since a new object that holds it hands it on: a binding to a name the function declares global or nonlocal;
         a default of a function or a lambda that holds it (_flow's escape _AS_DEFAULT, the value walked up to the default through
         subscript loads, read methods' returns, boolean operations, if-expressions' branches, walruses' values, starred values, awaits
@@ -6081,9 +6086,10 @@ class _Served(object):
         the rule below does not refuse, is the item limit (the 19:33Z ruling), which SERVED_PAGES and _Served's docstring state beside
         the frame precondition: what code does with an item of a container the proof reads, or with the object a name bound other than
         to a literal or a call of parse_qs holds, after the census has read it, in a spelling the proof does not refuse, passes
-        silently, one witness for each road: a name an unpacking binds from a display that holds the item, which takes that display's
-        level, so a change through it is read as done to a new object holding the item (iunp, appended to; iuag, extended by an
-        augmented assignment; iatr, a queue's put read off such a name unbound and called); a subscript of a new object holding the
+        silently, one witness for each road the checks found: a name an unpacking binds from a display that holds the item, which
+        takes that display's level, so a change through it is read as done to a new object holding the item (iunp, appended to; iuag,
+        extended by an augmented assignment; iatr, a queue's put read off such a name unbound and called); a subscript of a new object
+        holding the
         item as an augmented assignment's target, a store into that object (isag); a match statement's capture of the item, or of the
         name itself, for a name bound other than to a literal, a call of parse_qs or only calls (imat, xmat); an item of such a name
         stored into another object and changed there (xies), and an item of a name bound only to calls held in a new object that
@@ -6101,9 +6107,10 @@ class _Served(object):
         statement and lambda body the function nests), marks the name at any level (unless strs holds), so that road refuses: _flow
         records the escape _AS_DEFAULT only where the value climbs to the default's ast.arguments through the steps that carry it on
         (a subscript load, a read method's return, a boolean operation, an if-expression's branch, a walrus's value, a starred value,
-        an await, a new object). A def's default is part of the def statement (_scope_names chains the def over every name its header
-        reads; a lambda's defaults run where it stands), so a name read there is an occurrence in a def nested in the function, which
-        refuses a container whatever the use, and a bind step from it is not followed: a comprehension's target there holding the item
+        an await, a new object). A def's default is part of the def statement (_scope_names chains a def or a class over every name
+        its whole statement reads, its decorators and header included; a lambda's defaults run where it stands), so a name read there
+        is an occurrence in a def nested in the function, which refuses a container whatever the use, and a bind step from it is not
+        followed: a comprehension's target there holding the item
         (dcmp) and a walrus there inside a call, its name appended through after the def (dwal), are the item limit on a name the
         proof does not read as a container. Otherwise any other use in a default ends the walk as it does in the function's own body:
         a call's argument, the call limit, what the call returns not read (dcall, through a name bound to the item, a nested def's
@@ -6125,15 +6132,16 @@ class _Served(object):
         read method of the type its binding gives it, or an attribute of it read other than as a method's callee; setattr or delattr,
         or a method spelled on a class, handed it as its first argument (_CT_CLASS); a store by a key that is no constant, or other
         than as the one target of a plain assignment; an append or extend of other than one plain argument; an augmented assignment to
-        a name bound to it or to an item of it (_CT_AUG); and any occurrence in a function or lambda nested in it (a def's header, its
-        defaults among them, included, as _scope_names chains it; a lambda's defaults, which run where it stands, excepted), or a
-        class body it defines (a closure capture whose code the census does not read, or a class attribute; a nested scope's own
-        binding of the spelling is not an occurrence of this container). A comprehension is read where it
+        a name bound to it or to an item of it (_CT_AUG); and any occurrence, whatever the use, in a def or class statement nested in
+        the function, as _scope_names chains the statement (its decorators; its header, a def's defaults and annotations and a class's
+        bases and keywords among them; and its body, where an occurrence is a closure capture whose code the census does not read, or
+        makes a class attribute), or in the body of a lambda nested in the function (a lambda's defaults, which run where it stands,
+        excepted); a nested scope's own binding of the spelling is not an occurrence of this container. A comprehension is read where it
         stands, as the function's own body is: a read of the fourth form and an append of a read value there pass, the container as a
         comprehension's source, in its condition or as its element refuses as any other read does (_own_use, _role), and a change the
-        census cannot fold (a comprehension target store) refuses. Handed as an argument to any other call (not setattr or delattr,
-        nor a method spelled on a class the census resolves, handed it as its first argument, which refuse above), it is under the
-        call limit: what the callee does
+        census cannot fold (a comprehension target store) refuses. Outside a nested def or class statement and a lambda's body, handed
+        as an argument to any other call (not setattr or delattr, nor a method spelled on a class the census resolves, handed it as
+        its first argument, which refuse above), it is under the call limit: what the callee does
         with it is not read (its witness ctwit, a container a function it is handed to changes), the census reading neither the callee nor
         the return. A container a
         function that reaches its frame binds refuses too (_reaches_frame, _FRAME_CONTAINER). The first parameter of a method (_SelfParam)
@@ -6170,8 +6178,10 @@ class _Served(object):
                 y, fr, ins = todo.pop()
                 for n, c in self._container_step(xs if y == x and fr == 0 and not ins else names.get(y, ())):
                     nested = any(isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)) for s in c[1:])   # in a
-                    # function, lambda or class body nested in it: closure capture (code the census does not read) or a class attribute, so
-                    # the container refuses; a comprehension is read where it stands (_own_use)
+                    # def or class statement nested in it, anywhere in the statement (_scope_names chains its decorators, header and body),
+                    # or in a lambda's body: a closure capture (code the census does not read), a class attribute, or a value the
+                    # statement's decorator or header hands on, so the container refuses whatever the use; a comprehension is read where it
+                    # stands (_own_use)
                     if not isinstance(n.ctx, ast.Load):   # a binding, but an augmented assignment to a name bound to it or to an item of
                         # it, or to a new object holding one, runs the target's in-place method (`e += [v]` is list.__iadd__, `e |= {...}`
                         # dict.__ior__): a change through that name ("aug"; its own name's is a second binding, refused below)
@@ -6253,7 +6263,8 @@ class _Served(object):
             for e in sorted(events, key=lambda e: e[:2]):
                 _l, _c, y, fr, n, c, kind, node, detail, fresh, nested, inside = e
                 why, recv = None, _item_recv(e)
-                if nested: why = "read or changed in a function, lambda or class body nested in it"   # closure capture (code unread) or a class attribute
+                if nested: why = "read or changed in a def or class statement, or a lambda's body, nested in it"   # _scope_names: a closure
+                # capture (code unread), a class attribute, or a value a nested statement's decorator or header hands on
                 elif kind == "gescape": why = "bound to %s, a name the function declares global or nonlocal, whose uses leave it" % detail
                 elif kind == "escape": why = detail   # it, or an object holding it, stored elsewhere, handed as a default, matched or called
                 elif kind == "own": why = detail
