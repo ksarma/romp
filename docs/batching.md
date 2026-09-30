@@ -14,10 +14,15 @@ then the merged tree is the tree the sweep and CI tested. `scripts/batch.py land
 right before the merge and refuses if the batch head no longer contains it; a move after that read
 is not stopped, and `finish` reports it loudly (maintainer step 6). One job of `ci.yml`, the secret
 scan, also runs in a workflow of its own (`.github/workflows/secret-scan.yml`) on every push of a
-branch or a tag whose commit carries that file, a member PR's and the merge to main included. GitHub
-reads a push's workflows from the commit the push puts on its ref, so a branch cut from main before
-the file landed starts no run of it until it merges main (CLAUDE.md, "Credentials", says what the
-scan reads and which pushes start no run). Nothing in the landing reads that workflow's runs.
+branch or a tag whose commit carries that file, a member PR's and the merge to main included, and
+on every push to an open PR's branch. GitHub reads a push's workflows from the commit the push puts
+on its ref, and a PR's from the merge commit it makes of the PR's head and its base, which carries
+main's copy of the file, so a member PR's pushes are scanned even on a branch cut from main before
+the file landed. Among the pushes that start no run: a push to such a branch that has no open PR,
+until it merges main; a tag on such a commit; and a push that deletes the file. A PR that conflicts
+with its base gets no run of its own until the conflict is resolved (CLAUDE.md, "Credentials", says
+what the scan reads, which pushes start no run and GitHub's other limits). Nothing in the landing
+reads that workflow's runs.
 
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
 `land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps the commit a
@@ -40,7 +45,9 @@ reached main (`finish` runs it, and it also runs on every push to main).
    discussed before it joins a batch; a `hold` label keeps a PR out of the next batch.
 3. Sweep your head before its review round and again before its closing check:
    `scripts/sweep.py run --tree <your worktree> --python <python>` (step 3 under "If you are the
-   batcher" says what that interpreter needs). It owes every leg at your head, as at a batch
+   batcher" says what that interpreter and your machine need: node, npm, bats, git and gitleaks on
+   PATH, the Playwright Chromium the head's lockfile pins, Linux for full reaping, and about 2
+   hours of wall time). It owes every leg at your head, as at a batch
    head, the webview legs, the PDF smoke test and the served leg included, whatever you changed. The round and the check read that result
    (`scripts/sweep.py check --tree <your worktree>`, which reads it as `verify` and `plan` do)
    where they read CI before, and it must pass at the head they read; a push after the sweep
@@ -66,9 +73,10 @@ reached main (`finish` runs it, and it also runs on every push to main).
    (kind: coordinate); it re-pins your head and rebuilds. A push after the cut leaves your PR open
    after the batch merges, and `finish` reports that rather than hiding it.
 8. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
-9. Expect no `ci.yml` run on your PR. Its Checks tab shows the secret scan's run of each push whose
-   commit carries `.github/workflows/secret-scan.yml` (`Secret scan on push (gitleaks)`; a branch cut
-   from main before that file landed shows none until it merges main), the tier-label check after
+9. Expect no `ci.yml` run on your PR. Its Checks tab shows the secret scan's runs of each push
+   (`Secret scan on push (gitleaks)`: one for the pull request, and one for the push when its commit
+   carries `.github/workflows/secret-scan.yml`, which a branch cut from main before that file landed
+   does not until it merges main), the tier-label check after
    the PR opens or reopens or its labels change, not after a push, and Tier policy's skipped rows,
    which evaluate nothing on the fork. The tests run in your own sweep at your head (item 3), in the
    batch's sweep at the batch head, and in the one CI run on the batch branch.
@@ -82,7 +90,8 @@ to require are the job checks a batch push reports: `Python <version> (ubuntu-la
 Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t), `Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
 `Vendored tooling (node --test, ubuntu-latest)`, `vscode-extension (typecheck + test + build)` and
 `Served pages (pytest, ubuntu-latest)`. A batch push also reports `Secret scan on push
-(gitleaks)`, from `.github/workflows/secret-scan.yml`, the same scan as `Secret scan (gitleaks)`
+(gitleaks)`, from `.github/workflows/secret-scan.yml`, for the push and, once the batch PR is open,
+for the pull request, the same scan as `Secret scan (gitleaks)`
 under a name of its own, since a required check is matched by job name whatever the workflow;
 requiring `Secret scan (gitleaks)` already covers the scan. Do not require `Exactly one tier
 label` on the fork: its copy runs only when a PR opens or reopens or its labels change, never on a
@@ -186,7 +195,18 @@ subject; `verify` refuses the branch otherwise.
    Nothing need be installed in it: the runner builds a venv for each leg that runs pytest and runs
    no test in `<python>` itself. When `<python>` is another version, pass
    `--served-python <a 3.12 interpreter>` as well; the sweep refuses to build the served leg's venv
-   from any other version, naming what to pass.
+   from any other version, naming what to pass. The machine also needs node, npm, bats, git and
+   gitleaks on PATH (the legs' PATH is built from where yours finds each, and the result records
+   their versions; the bats leg requires gitleaks, as CI's does); the Chromium build that the
+   Playwright version pinned in the head's `vscode-extension/package-lock.json` (1.62.1 today)
+   downloads, already in the Playwright cache your environment names (`PLAYWRIGHT_BROWSERS_PATH`,
+   else on macOS `~/Library/Caches/ms-playwright`, and elsewhere `ms-playwright` under
+   `$XDG_CACHE_HOME`, or under `~/.cache` when that is unset or empty), since the served
+   leg requires it and the sweep installs no browser (`npx playwright install chromium` in
+   `vscode-extension/`, after `npm ci`, puts it there); and Linux for full reaping, since only
+   there is the sweep a child subreaper, so elsewhere a leg's orphaned descendants are not reaped
+   (below). A full sweep takes about 2 hours: the full sweeps of 2026-09-30 took 2 h 11 min and
+   2 h 8 min, with 2 pytest workers.
    The pytest leg runs in a venv holding what the batch head's `ci.yml` installs in CI's Python cells
    (pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads),
    so the SDK-gated tests run as they do in CI. The runner builds the venv from `--python`
@@ -266,8 +286,11 @@ subject; `verify` refuses the branch otherwise.
    holds more than one short-summary header line (a skip reason or a failure message that quotes
    one), since which one opens pytest's own summary is then not known; a warnings summary pytest
    prints after the short summary (it does for a warning a `pytest_terminal_summary` hook emits),
-   whose lines follow its `=` header; and a reason or message
-   running on to a line that starts with an upper-case word that is none of pytest's kinds and
+   whose lines follow its `=` header; a reason or message running on to a line that starts with
+   `=` (or is shaped like pytest's closing line), a quoted header or closing line of an inner
+   pytest, say, when a non-blank line follows that line before the next kind line, as pytest's own
+   closing line does when that reason or message is the short summary's last; and a reason or
+   message running on to a line that starts with an upper-case word that is none of pytest's kinds and
    then `tests` before a slash, a space or the line's end (such as `ALL tests of this file ...`),
    which the reader takes for a line of a kind pytest does not write. Two summaries pytest writes
    correctly are read wrong with no refusal. The first: a reason or message running on to a line
@@ -320,9 +343,12 @@ subject; `verify` refuses the branch otherwise.
    writes into your repository: each job's clone holds the sha alone, with no branch and no tag of
    yours, as CI's checkout fetches the pushed sha alone, and names no remote, so a `git fetch` in
    a later job copies nothing. When your repository is shallow as the sweep starts, each clone is
-   shallow the same way: the sweep reads your shallow file once, before the first leg, and gives
-   every clone that copy, so a leg that writes the file changes no later job's clone. The legs of
-   one job share its
+   shallow the same way: the sweep reads your shallow file before the first leg and gives every
+   clone that copy, so a leg that writes the file changes no later job's clone. After the last leg
+   the sweep reads the file again, and when it differs from that copy (a leg wrote it, or anything
+   else did during the run) the run is invalid, naming the file: the sweep does not restore it, so
+   your repository stays shallow where the file now says, and the next sweep's clones would be cut
+   there. The legs of one job share its
    checkout, as CI's steps do. The machine itself stays shared, and a leg can leave a file there
    that a later leg reads: `/tmp` outside each TMPDIR, `/dev/shm`, `/run/user/<uid>`, the npm and
    Playwright caches, your passwd home, tmux's socket directory (tmux ignores TMPDIR), `--python`'s
@@ -330,7 +356,8 @@ subject; `verify` refuses the branch otherwise.
    checkout (a tracked file; a file no rule of a
    tracked `.gitignore` covers, whatever the clone's own git state says; after `npm ci`, any
    ignored file outside `vscode-extension/node_modules` that `npm ci` added or changed) makes the
-   run invalid, and so does a job's fresh checkout that is not the sha's tree. A leg can also leave
+   run invalid, and so does a job's fresh checkout that is not the sha's tree, or a shallow file
+   changed during the run (above). A leg can also leave
    a process running. The sweep reaps its own process tree: when a leg ends, it kills its children
    again and again until none is left or 30 s pass, and on Linux, where the sweep is a child
    subreaper and so adopts each orphaned descendant of a leg (a `setsid` child, a double-forked
@@ -348,7 +375,8 @@ subject; `verify` refuses the branch otherwise.
    runs out, which runs on into the next leg until the next reap. A write by one of these makes the
    run invalid only when the re-read after a leg, or the check of a later job's fresh checkout,
    reads the path it wrote, and the run then names the leg after which, or the checkout in which,
-   the change was found, which need not be the leg that started the process. The sweep writes every
+   the change was found, which need not be the leg that started the process; or when it changes
+   your shallow file before the re-read after the last leg, and the run then names the file. The sweep writes every
    run to
    `<state dir>/sweeps/<full sha>.json`, which keeps every run at that sha. The state dir is
    `$ROMP_STATE_DIR`, else `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and
@@ -362,7 +390,8 @@ subject; `verify` refuses the branch otherwise.
    failures count too: a leg that failed in a run that went invalid, the leg that made it invalid
    included, needs `--flake` like any other failure, and a second failure inside an invalid run
    leaves the head unable to pass (the runner exits 1 for such a run, not 3). A pass inside an
-   invalid run counts for nothing, since the checkout or a venv changed under it, and an invalid run
+   invalid run counts for nothing, since the checkout or a venv changed under it, or your shallow
+   file changed during it, and an invalid run
    that failed no leg needs no flake. A re-run of a leg (`--leg`) is refused while the newest full
    run is invalid, so the flake for a failure in an invalid run is spent on a full run. SIGTERM
    stops the runner, and so do SIGHUP and Ctrl-C (SIGINT) unless it was started with them ignored

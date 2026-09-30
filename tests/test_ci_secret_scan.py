@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""The secret scan runs on every push whose commit carries its workflow, a workflow of its own, as one definition with
-ci.yml's secrets job (.github/workflows/secret-scan.yml, 2026-09-30).
+"""The secret scan runs on every push whose commit carries its workflow and on every push to an open pull request's
+branch, a workflow of its own, as one definition with ci.yml's secrets job (.github/workflows/secret-scan.yml, 2026-09-30).
 
 Since 2026-09-27 ci.yml runs only on a push to a batch branch, by hand and on its weekly schedule. A push the pre-push
 hook did not scan (CLAUDE.md, "Credentials", lists the kinds) then waited for the next of those runs, and a commit that
 left every branch before one (force-pushed over, or on a deleted branch) was never scanned by CI, though GitHub still
 serves it by its sha. secret-scan.yml runs ci.yml's secrets job on every push of a branch or a tag whose commit
-carries that file (the PR's narrow landing delta, ruling 1): GitHub reads a push's workflows from the commit the push
-puts on its ref, so a branch cut before the file landed starts no run until it merges main (the file's header says
-which pushes start none). The two copies are held equal here instead of being written once as a reusable workflow that
+carries that file (the PR's narrow landing delta, ruling 1) and on a pull request's opened, synchronize and reopened
+events (the ruling of 2026-09-30 12:42Z, item 1): GitHub reads a push's workflows from the commit the push puts on its
+ref, and a pull request's from the merge commit it makes of the PR's head and its base, which carries the base's copy,
+so a PR's pushes are scanned on a branch cut before the file landed and on a PR from another repository, while a
+branch cut before the file with no open PR starts no run until it merges main (the file's header says which pushes start
+none). The two copies are held equal here instead of being written once as a reusable workflow that
 both call: GitHub renders a called job's check name as "<caller job> / <called job>", and scripts/batch.py land tells
 ci.yml's jobs by the names GitHub renders (ci_jobs, the coordinator's decision 18), as does the list of checks
 docs/batching.md's maintainer section gives.
@@ -26,11 +29,19 @@ files one way. No YAML library is in the test deps.
    secret-scan.yml's here (check 3 below).
 2. WHAT THE SCAN NEEDS, in both copies, since the equality alone passes a change made to both: the permissions are
    `contents: read` alone; the checkout step fetches at depth 0, without which the scan reads one commit; the install
-   step checks the download against its pinned sha256.
+   step checks the download against its pinned sha256; and the steps hold one history-scan line (`run: gitleaks git .`)
+   whose --log-opts passes git log exactly --all, --diff-merges=first-parent and --text (every branch and tag the
+   checkout fetched, a merge's own diff, and a path git would print as binary), on which the texts' coverage claims
+   rest (the focused re-check's item 2 after the merge of main: dropping --all from both copies passed every check).
 3. TRIGGERS. secret-scan.yml's top-level keys are name, on and jobs, in that order, so no concurrency group (whose cancel
    would drop a push's run when the next push to its branch arrives), and no workflow-level env:, defaults: or
-   permissions:. Its on: block is `push:` alone, with no filter, so every push of any branch or tag whose commit
-   carries the file starts a run. Its jobs: holds the one job, and the job has no concurrency: key.
+   permissions:. Its on: block is exactly `push:` with no filter, so every push of any branch or tag whose commit
+   carries the file starts a run, and `pull_request:` with `types: [opened, synchronize, reopened]` and no other
+   filter, so a PR onto any base is scanned when it opens, on each push to its branch and when it reopens (SCAN_ON_LINES;
+   a block that lacks either trigger, filters one, or adds another is red, the old push-only block among them). The
+   block is held to those exact lines, so a spelling GitHub reads the same way (the types line dropped, since those
+   three are its default) is red too, and is made together with SCAN_ON_LINES. Its jobs: holds the one job, and the job
+   has no concurrency: key.
 4. NAMES. Each copy's name line is its literal, and each name is held by exactly one content line across the workflow
    files (tests/test_ci_vendored_job.py's check_name_once). The names differ on purpose: GitHub matches a required
    status check by job name whatever the workflow, so one name for two jobs would let either meet a rule that names it.
@@ -44,6 +55,7 @@ the same line."""
 import difflib
 import os
 import re
+import shlex
 import sys
 import unittest
 
@@ -62,8 +74,17 @@ HELD = ("runs-on", "permissions", "timeout-minutes", "steps")
 PERMISSIONS = ["    permissions:", "      contents: read"]
 FETCH_DEPTH = "          fetch-depth: 0"
 CHECKSUM = re.compile(r'^          echo "\$\{GITLEAKS_SHA256\}  /tmp/gitleaks\.tar\.gz" \| sha256sum -c -$')
+# The history scan's line in the steps, and the git log options its --log-opts must pass, no more and no fewer: --all
+# (every branch and tag the checkout fetched, not the pushed ref's history alone), --diff-merges=first-parent (a merge's
+# own diff, which `git log -p` omits) and --text (a path whose attributes mark it -diff, which `git log -p` prints as a
+# binary line with no hunk). ci.yml's comment on the step gives the reasons; an added option (a --since, a pathspec)
+# could narrow what the scan reads.
+SCAN_RUN = re.compile(r"^        run: gitleaks git \. (?P<args>.*)$")
+LOG_OPTS = ("--all", "--diff-merges=first-parent", "--text")
 SCAN_TOP_KEYS = ["name", "on", "jobs"]
-SCAN_ON_LINES = ["on:", "  push:", ""]
+# The on: block, comment-only lines dropped: push with no filter, and pull_request with GitHub's three default types
+# written out and no branch filter (under pull_request a branch filter selects the base branch).
+SCAN_ON_LINES = ["on:", "  push:", "  pull_request:", "    types: [opened, synchronize, reopened]", ""]
 CI_NAME = "Secret scan (gitleaks)"
 SCAN_NAME = "Secret scan on push (gitleaks)"
 # A key line at four spaces, the job's own keys.
@@ -138,9 +159,38 @@ def identity_faults(ci_src, scan_src):
     return faults
 
 
+def log_opts_faults(who, steps):
+    """The faults of one copy's history-scan line: the steps hold exactly one `run: gitleaks git .` line, its words split
+    as a shell splits them, one --log-opts=VALUE word among them (the option written as a word of its own, with its
+    value in the next, is refused too, so the one form is read), and VALUE's words are LOG_OPTS, in any order."""
+    found = [m for m in (SCAN_RUN.match(l) for l in steps) if m]
+    if len(found) != 1:
+        return ["%s's %s job's steps hold %d `run: gitleaks git .` lines, not 1, so the history scan's log options cannot be "
+                "read" % (who, JOB, len(found))]
+    try:
+        words = shlex.split(found[0].group("args"))
+    except ValueError as e:
+        return ["%s's %s job's history-scan line cannot be split into words (%s)" % (who, JOB, e)]
+    values = [w[len("--log-opts="):] for w in words if w.startswith("--log-opts=")]
+    if len(values) != 1 or "--log-opts" in words:
+        return ["%s's %s job's history-scan line gives %d --log-opts=VALUE words%s, not 1" % (
+            who, JOB, len(values), " and --log-opts as a word of its own" if "--log-opts" in words else "")]
+    try:
+        got = shlex.split(values[0])
+    except ValueError as e:
+        return ["%s's %s job's --log-opts value cannot be split into words (%s)" % (who, JOB, e)]
+    if sorted(got) != sorted(LOG_OPTS):
+        missing = [o for o in LOG_OPTS if o not in got]
+        added = [o for o in got if o not in LOG_OPTS or got.count(o) > 1]
+        return ["%s's %s job's history scan passes --log-opts %r, not %r (%s)" % (
+            who, JOB, got, list(LOG_OPTS), "; ".join(
+                (["lacks " + ", ".join(missing)] if missing else []) + (["adds " + ", ".join(added)] if added else [])))]
+    return []
+
+
 def needs_faults(ci_src, scan_src):
-    """Check 2: in each copy, the permissions are contents: read alone, the checkout fetches at depth 0 and the install
-    step checks the download's sha256."""
+    """Check 2: in each copy, the permissions are contents: read alone, the checkout fetches at depth 0, the install
+    step checks the download's sha256, and the history scan passes git log exactly LOG_OPTS (log_opts_faults)."""
     a, b, faults = _both(ci_src, scan_src)
     if faults:
         return faults
@@ -154,6 +204,7 @@ def needs_faults(ci_src, scan_src):
         if not any(CHECKSUM.match(l) for l in steps):
             faults.append("%s's %s job's steps hold no line checking the download against GITLEAKS_SHA256 with sha256sum -c"
                           % (who, JOB))
+        faults += log_opts_faults(who, steps)
     return faults
 
 
@@ -206,25 +257,35 @@ class SecretScanIsCiJobOnEveryPush(unittest.TestCase):
         self.assertNoFaults(identity_faults(self.ci, self.scan), (
             "ci.yml's secrets job and secret-scan.yml's are not the same job (above). They are one definition of the secret "
             "scan, run by ci.yml on a batch push, by hand and on the schedule, and by secret-scan.yml on every push whose "
-            "commit carries it; a "
+            "commit carries it and every push to an open pull request's branch; a "
             "change to one copy is made to the other in the same commit, every key but the name."))
 
     def test_2_both_copies_hold_what_the_scan_needs(self):
         self.assertNoFaults(needs_faults(self.ci, self.scan), (
             "A copy of the secrets job lost something the scan needs (above): read-only contents, a full-history checkout, "
-            "or the checksum check on the pinned gitleaks download."))
+            "the checksum check on the pinned gitleaks download, or the history scan's git log options (--all, "
+            "--diff-merges=first-parent, --text)."))
 
-    def test_3_secret_scan_runs_on_every_push_and_cancels_no_run(self):
+    def test_3_secret_scan_runs_on_every_push_and_every_pull_request_push_and_cancels_no_run(self):
         self.assertNoFaults(trigger_faults(self.scan), (
             "secret-scan.yml's triggers or layout changed (above). It runs on every push of any branch or tag whose commit "
-            "carries it, with no "
-            "filter and no concurrency group, so each push's run completes; its one job is ci.yml's secrets job, and a "
+            "carries it, and on a pull request's opened, synchronize and reopened events, with no "
+            "filter and no concurrency group, so each run completes; its one job is ci.yml's secrets job, and a "
             "workflow-level env:, defaults: or permissions: would reach that job from outside the block check 1 compares."))
 
     def test_4_each_copy_keeps_its_own_name(self):
         self.assertNoFaults(name_faults(self.ci, self.scan, workflow_texts()), (
             "The two secrets jobs' names changed, or a name is on more than one content line of the workflow files (above). "
             "GitHub matches a required status check by job name whatever the workflow, so the two jobs keep two names."))
+
+
+# The history scan's line as both copies hold it, the anchor of the plants on its log options.
+SCAN_LINE = ('        run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml '
+             '--log-opts="--all --diff-merges=first-parent --text"')
+
+
+# pull_request's types line as secret-scan.yml holds it, the anchor of the plants on that trigger.
+TYPES_LINE = "    types: [opened, synchronize, reopened]"
 
 
 class EachFieldRedsOnItsDefect(unittest.TestCase):
@@ -311,11 +372,28 @@ class EachFieldRedsOnItsDefect(unittest.TestCase):
                          "has no %s: key" % key)
 
     def test_what_the_scan_needs_changed_in_both_copies_is_red(self):
+        """Each plant is made to both copies alike, so the identity check reads it green and check 2 is the one that must
+        be red, naming what changed."""
         plants = (
             ("contents: write", "      contents: read", ["      contents: write"], "permissions are"),
             ("fetch-depth 1", FETCH_DEPTH, ["          fetch-depth: 1"], "fetch-depth: 0"),
             ("no checksum check", '          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -', [],
              "sha256sum -c"),
+            # the history scan's git log options (the focused re-check's item 2 after the merge of main)
+            ("--all dropped", SCAN_LINE, [SCAN_LINE.replace('="--all ', '="')], "lacks --all"),
+            ("--diff-merges=first-parent dropped", SCAN_LINE, [SCAN_LINE.replace(" --diff-merges=first-parent", "")],
+             "lacks --diff-merges=first-parent"),
+            ("--text dropped", SCAN_LINE, [SCAN_LINE.replace(' --text"', '"')], "lacks --text"),
+            ("all three dropped", SCAN_LINE, [SCAN_LINE.replace('--all --diff-merges=first-parent --text', '')],
+             "lacks --all, --diff-merges=first-parent, --text"),
+            ("a narrowing option added", SCAN_LINE, [SCAN_LINE.replace(' --text"', ' --text --since=2026-01-01"')],
+             "adds --since=2026-01-01"),
+            ("--log-opts dropped", SCAN_LINE, [SCAN_LINE.replace(' --log-opts="--all --diff-merges=first-parent --text"', '')],
+             "gives 0 --log-opts=VALUE words"),
+            ("--log-opts as a word of its own", SCAN_LINE, [SCAN_LINE.replace('--log-opts=', '--log-opts ')],
+             "--log-opts as a word of its own"),
+            ("the history scan moved into a block scalar", SCAN_LINE,
+             ["        run: |", "          " + SCAN_LINE.split("run: ", 1)[1]], "hold 0 `run: gitleaks git .` lines"),
         )
         for what, anchor, new, word in plants:
             with self.subTest(what=what):
@@ -327,8 +405,14 @@ class EachFieldRedsOnItsDefect(unittest.TestCase):
         plants = (
             ("a branch filter", "  push:", ["  push:", "    branches: [main]"], "top", "on: block"),
             ("a tags filter", "  push:", ["  push:", "    tags: ['v*']"], "top", "on: block"),
-            ("a pull_request trigger", "  push:", ["  push:", "  pull_request:"], "top", "on: block"),
-            ("push replaced", "  push:", ["  pull_request:"], "top", "on: block"),
+            ("push dropped", "  push:", [], "top", "on: block"),
+            ("a pull_request branch filter", TYPES_LINE, [TYPES_LINE, "    branches: [main]"], "top", "on: block"),
+            ("a pull_request type dropped", TYPES_LINE, ["    types: [opened, reopened]"], "top", "on: block"),
+            ("a pull_request type added", TYPES_LINE, ["    types: [opened, synchronize, reopened, edited]"], "top",
+             "on: block"),
+            ("pull_request replaced by pull_request_target", "  pull_request:", ["  pull_request_target:"], "top",
+             "on: block"),
+            ("a third trigger", TYPES_LINE, [TYPES_LINE, "  workflow_dispatch:"], "top", "on: block"),
             ("a concurrency group", "on:", ["concurrency:", "  group: g", "  cancel-in-progress: true", "on:"], "top",
              "top-level keys"),
             ("a workflow env:", "on:", ["env:", "  GITLEAKS_CONFIG: other.toml", "on:"], "top", "top-level keys"),
@@ -339,6 +423,13 @@ class EachFieldRedsOnItsDefect(unittest.TestCase):
         for what, anchor, new, part, word in plants:
             with self.subTest(what=what):
                 self.red(self.ci, self.plant(self.scan, anchor, new, part), "triggers", word)
+
+    def test_the_push_only_triggers_are_red(self):
+        """The on: block as it stood before the pull_request trigger (`push:` alone) is red: a PR whose branch lacks the
+        file (cut before it landed, or from another repository) would start no run (the 12:42Z ruling's item 1)."""
+        scan = self.plant(self.plant(self.scan, "  pull_request:", [], "top"), TYPES_LINE, [], "top")
+        self.assertIn("on:\n  push:\n\njobs:", scan, "the plant rebuilds the old push-only block")
+        self.red(self.ci, scan, "triggers", "on: block")
 
     def test_a_concurrency_key_on_both_jobs_is_red(self):
         runs_on = "    runs-on: ubuntu-latest"

@@ -19,9 +19,9 @@ inherited value, and a leg log's header shows each variable by its name only.
 The legs run in private checkouts of the exact sha, never in the batcher's tree, one checkout per CI job (below): a
 private repository under <state dir>/sweeps/trees that reads the batcher's objects through its alternates, as
 `git clone --shared` does, holds no branch or tag of theirs and names no remote (shallow where their repository was
-when the run started: the runner reads its shallow file once, before the first leg, and every checkout gets that
-copy, so a leg that writes the file changes no later job's checkout), checked out at the sha with hooks off
-(make_checkout),
+when the run started: the runner reads its shallow file before the first leg, and every checkout gets that copy, so a
+leg that writes the file changes no later job's checkout; the runner reads the file again after the last leg, below),
+checked out at the sha with hooks off (make_checkout),
 every runner git call made with GIT_* removed, git's global and system configuration off and refs/replace ignored. It
 copies none of the batcher's repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or
 replace refs, so the legs see the sha's tree plus the tool installs, and
@@ -41,8 +41,12 @@ or an unchecked hash-based one, or a node_modules or dist tree that node, tsc or
 its job's first, so in practice nothing is excused); when the clone's .git was replaced or its HEAD, config or
 info/exclude changed; or when one of those names is now in an ancestor directory. After the pytest leg and the served
 leg it also reads that leg's environment (the venvs below) against the tree its build left, and records the run
-invalid, naming the paths, when a file there was added, changed or is gone. That re-read after each leg, and the
-verification of each later checkout, are the runner's producers of invalid, and the legs after either do not run.
+invalid, naming the paths, when a file there was added, changed or is gone. After the last leg it reads the batcher's
+repository's shallow file again and records the run invalid, naming the file, when it is not the copy read before the
+first leg (shallow_moved): no job of the run read what a leg wrote there, but the runner does not restore the file, and
+the next run's checkouts would read it. That re-read after each leg, the verification of each later checkout and the
+shallow file's re-read after the last leg are the runner's producers of invalid; the legs after either of the first
+two do not run.
 The batcher's tree is read for its HEAD sha and branch only, so it need not be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
@@ -176,7 +180,10 @@ make it, and so is one whose node id holds " tests/"; a log that holds more than
 skip reason or a failure message that quotes one) is refused, since which one opens pytest's own summary is not known;
 a warnings summary pytest prints after the short summary (pytest 9.1.1 does so for a warning that a
 pytest_terminal_summary hook of a conftest or a plugin emits) is refused, since its lines follow its header, a line
-starting with "=", before the closing summary line; and a reason or message that runs on to a line starting with an upper-case word that is none of pytest's kinds, an
+starting with "=", before the closing summary line; a reason or message that runs on to a line starting with "=" or
+shaped like pytest's closing summary line (a quoted header or closing line of an inner pytest, say) is refused when a
+non-blank line follows that line before the next kind line, which pytest's own closing summary line does when that
+reason or message is the short summary's last; and a reason or message that runs on to a line starting with an upper-case word that is none of pytest's kinds, an
 optional description and then "tests" before a slash, a space or the line's end (such as "ALL tests of this file need
 node_modules") is read as a kind the reader does not read. Under pytest 8 a subtest's skip prints as a SKIPPED line of
 its whole test, the same node id. Two summaries pytest writes correctly are read wrong without a refusal. The first: a
@@ -247,7 +254,11 @@ node_modules, dist). Nor does a branch or tag a leg writes into the batcher's re
 its clone's alternates: each clone holds the sha alone, no branch and no tag of that repository (make_checkout), as
 CI's checkout fetches the pushed sha alone, and names no remote, so a plain `git fetch` in a later job copies none. Nor
 does a shallow file a leg writes there: each clone gets the one the runner read before the first leg (shallow_snapshot;
-the narrow landing delta's ruling 8). Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
+the narrow landing delta's ruling 8). That file does reach the next run, whose snapshot reads it, so every checkout of
+that run is cut where the leg's file says, and the batcher's repository stays shallow: the runner writes nothing there
+and does not restore it, and instead the run in which the file changed is invalid, naming it (shallow_moved; the
+owner's question 2 after the merge of main), unless that run ends before the re-read after its last leg (stopped, or
+refused before its first leg), which then names nothing. Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
 each leg makes the run invalid when it finds one of the changes it checks for (above); anything else a leg leaves in
 that checkout (a hook or an attributes file in the clone's .git, a replace ref, an ignored file other than one the
 deps leg adds outside vscode-extension/node_modules) reaches the later legs of its job, as it would reach CI's later
@@ -273,8 +284,9 @@ reparented to the runner. On Linux a prctl that fails refuses the run instead, a
 (runner.subreaper). (4) A descendant still alive when reap_descendants' 30 s bound runs out: it stays the runner's
 child and runs on into the next leg, until the next reap. A write by one of these makes the run invalid only when the
 re-read after a leg, or a later checkout's verification, checks the path it wrote, and the invalid mark then names the
-leg after which, or the checkout in which, the change was found, which need not be the leg that started the process;
-any other write leaves the run valid.
+leg after which, or the checkout in which, the change was found, which need not be the leg that started the process,
+or when it changes the batcher's shallow file before the re-read after the last leg, whose mark names the file; any
+other write leaves the run valid.
 
 The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
 the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
@@ -296,7 +308,8 @@ the result red, naming the failed run and its logs. Invalidity voids a run's pas
 Class A): a leg that failed in an invalid run counts as a failure, the leg whose re-read made the run invalid included,
 so it blocks a plain full run and uses that leg's one flake, and a second failure inside an invalid run leaves the sha
 unable to pass (the reader reads it red, and the runner exits 1 for such a run, not 3); a pass in an invalid run counts
-for nothing, since its checkout or venv changed. An invalid run that failed no leg needs no flake. The pass line and
+for nothing, since its checkout or venv changed, or the batcher's shallow file changed during it. An invalid run that
+failed no leg needs no flake. The pass line and
 verify's record name each invalid run with the legs it failed; the reader's invalid line names the run it reads
 invalid, with the legs that run failed. A leg that did not pass
 is written to the result as soon as it exits, before the re-read after it, so a stop during that re-read keeps its
@@ -771,7 +784,8 @@ def read_history(runs):
     """What the whole history at one sha says, read over every finished leg attempt of every run. Invalidity voids a
     run's passes, never its failures (round 2, Class A): in an invalid run each finished, owed leg that did not pass is
     an attempt, a failure, whatever else happened in the run, the leg whose re-read made the run invalid included, and
-    the run's passes are dropped, since its checkout or a venv changed and a pass there proves nothing. An invalid run
+    the run's passes are dropped, since its checkout or a venv changed, or the batcher's shallow file changed during it,
+    and a pass there proves nothing. An invalid run
     that failed no leg needs no flake and is only named (round 1 decision 18 stands for it). The never-checks stay off
     for an invalid run: a flake it names for a leg after the invalidating one, which never ran, is a record the runner
     does write. A leg is read by its own finished stamp, not its run's, so a stopped run's finished legs count too; but a
@@ -1196,21 +1210,65 @@ def common_dir(tree):
     return common if os.path.isabs(common) else os.path.abspath(os.path.join(tree, common))
 
 
-def shallow_snapshot(tree):
-    """The bytes of the batcher's repository's shallow file (<common dir>/shallow) as it stands now, or None when it has
-    none. The runner reads it once, before the first leg, and gives that snapshot to every job's checkout
-    (make_checkout), never the live file: a leg can find the batcher's repository through its clone's alternates and
-    write that file, and a checkout that re-read it would then be shallow at the leg's boundary, so what the leg wrote
-    would reach every later job (the narrow landing delta's ruling 8). A shallow file that exists and cannot be read
-    refuses the run, naming it."""
-    path = os.path.join(common_dir(tree), "shallow")
+def shallow_path(tree):
+    """The batcher's repository's shallow file, <common dir>/shallow, which shallow_snapshot reads before the first leg
+    and shallow_moved reads again after the last."""
+    return os.path.join(common_dir(tree), "shallow")
+
+
+def _read_shallow(path):
+    """The bytes of the shallow file at `path`, or None when there is none; any other OSError propagates."""
     try:
         with open(path, "rb") as f:
             return f.read()
     except FileNotFoundError:
         return None
+
+
+def shallow_snapshot(tree):
+    """The bytes of the batcher's repository's shallow file (<common dir>/shallow) as it stands now, or None when it has
+    none. The runner takes this snapshot before the first leg and gives it to every job's checkout
+    (make_checkout), never the live file: a leg can find the batcher's repository through its clone's alternates and
+    write that file, and a checkout that re-read it would then be shallow at the leg's boundary, so what the leg wrote
+    would reach every later job (the narrow landing delta's ruling 8). After the last leg the runner reads the file
+    again (shallow_moved), and a file that differs from this snapshot makes the run invalid. A shallow file that exists
+    and cannot be read refuses the run, naming it."""
+    path = shallow_path(tree)
+    try:
+        return _read_shallow(path)
     except OSError as e:
         raise Refused("the shallow file of the repository at %s cannot be read (%s: %s)" % (tree, path, e))
+
+
+def _shallow_words(data):
+    """A shallow file's state in words, for the invalid mark: absent, or how many commits it names."""
+    if data is None:
+        return "absent"
+    n = len([line for line in data.split(b"\n") if line.strip()])
+    return "naming %d commit%s" % (n, "" if n == 1 else "s")
+
+
+def shallow_moved(path, snapshot):
+    """The re-read of the batcher's repository's shallow file after the last leg (the owner's question 2 after the merge
+    of main, ruled 2026-09-30): None when the file at `path` holds the bytes shallow_snapshot read before the
+    first leg (`snapshot`; absent then and now included), else the run's invalid mark, naming the file. Each job's
+    checkout got the snapshot, so within the run no later job read what a leg wrote there; but the file stays as the leg
+    left it (the runner writes nothing in the batcher's repository, so it does not restore it), and the next run's
+    snapshot reads it, so every checkout of that run, at any sha, would be cut at the leg's boundary, and the batcher's
+    own repository stays shallow. The mark voids this run's passes and keeps its failures, as every invalid mark does,
+    and it names the file rather than a leg: the re-read runs once, after the last leg, so it cannot tell which leg,
+    setup or process wrote it. A file that cannot be read now counts as changed, since whether it moved is not known.
+    A run that ends before the re-read (stopped by a signal, or refused before its first leg) records no such mark: the
+    re-read follows the legs inside the run's try block, which a stop's exception leaves."""
+    try:
+        now_ = _read_shallow(path)
+    except OSError as e:
+        return ("after the legs the batcher's repository's shallow file %s cannot be read (%s), so whether a leg changed "
+                "it is not known; the next run's checkouts would read it" % (path, e))
+    if now_ == snapshot:
+        return None
+    return ("after the legs the batcher's repository's shallow file %s is not the one read before the first leg (%s "
+            "then, %s now); the next run's checkouts would read it" % (path, _shallow_words(snapshot), _shallow_words(now_)))
 
 
 def make_checkout(tree, sha, shallow):
@@ -1225,8 +1283,8 @@ def make_checkout(tree, sha, shallow):
     common dir let a plain `git fetch` copy them). `shallow` is the batcher's shallow file as shallow_snapshot read it
     before the first leg (None: their repository was not shallow then); when it is not None it becomes the checkout's
     shallow file, so the checkout is shallow as a `git clone --shared` of their repository would have been when the run
-    started (the land check, finding 2), and a shallow file a leg writes there later reaches no job's checkout (the
-    narrow landing delta's ruling 8). It copies none of the batcher's
+    started (the land check, finding 2), and a shallow file a leg writes there later reaches no job's checkout of this
+    run (the narrow landing delta's ruling 8; the run is then invalid, shallow_moved). It copies none of the batcher's
     repository config, info/attributes, info/exclude, hooks, sparse patterns, index flags or refs/replace either, and a
     leg's git writes land in it. The marker beside it, written first, holds the full sha,
     so a later run can tell whether that sha's lock is held (sweep_stale_checkouts). Any exception between the marker's
@@ -1922,7 +1980,8 @@ def _tokenized(name, leg, value, ctx):
 # the same leg environment (body item 9's rule: a leg-environment change changes the hash). LEG_CHECKOUT's text moved it
 # again at the focused re-check's ruling 4 (the sha alone, no branch, tag or remote, and the batcher's shallow file) and
 # at the narrow landing delta's ruling 8 (that shallow file as it stood when the run started, since a leg's write to it
-# no longer reaches a later job): each is a change in what a job's checkout holds.
+# no longer reaches a later job): each is a change in what a job's checkout holds. The re-read of that file after the last
+# leg (shallow_moved) changes no leg's environment and no checkout, only which runs read invalid, so it left the hash.
 LEG_SCRATCH = "each leg: a fresh TMPDIR of its own, HOME and XDG_STATE_HOME under it, removed when the leg ends"
 LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone of the sha alone, no branch, no "
                 "tag and no remote, shallow where the batcher's repository was when the run started, in the job's step "
@@ -3400,6 +3459,10 @@ def deps_skipped(path, served_files, others=None):
         elif _SUMMARY_WORD.match(line):
             cur, seen, ended = None, True, False
         elif line.startswith("=") or PYTEST_SUMMARY.fullmatch(line):
+            if ended:
+                # a second such line before the next kind line is itself a non-blank line after one, so it too leaves the
+                # set unknown (the focused re-check's item 1 after the merge of main: its words went unread)
+                unread.append(("a line after a line starting with '=' or shaped like the closing summary line", line))
             cur, ended = None, True
         elif line.strip() and (_KIND_SHAPED.match(line) or not seen or ended):
             unread.append(("a kind this reader does not read" if _KIND_SHAPED.match(line) else "a line before any kind line"
@@ -3946,8 +4009,10 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             raise stopped[0]
 
     try:
-        # The batcher's shallow file, read once, before the first leg: every job's checkout gets this snapshot, so a
-        # shallow file a leg writes into the batcher's repository reaches no later job (the narrow landing delta's ruling 8).
+        # The batcher's shallow file, read before the first leg: every job's checkout gets this snapshot, so a
+        # shallow file a leg writes into the batcher's repository reaches no later job (the narrow landing delta's ruling 8);
+        # after the last leg it is read again at the same path against this snapshot (shallow_moved).
+        shallow_file = shallow_path(tree)
         shallow = shallow_snapshot(tree)
         checkout, marker, create_s = make_checkout(tree, sha, shallow)
         _plant_for_tests(checkout)
@@ -4158,6 +4223,14 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             # the group's checkout goes when its legs end; the next group starts from a fresh one
             remove_checkout(checkout, marker)
             checkout = marker = None
+        # The owner's question 2 after the merge of main: the batcher's shallow file read again after the last leg (every
+        # leg's own reap done), and a file that is not the snapshot read before the first leg makes the run invalid, naming
+        # it (shallow_moved), beside any invalid mark a leg's re-read already wrote: no job of this run read it, but the
+        # next run's snapshot would.
+        moved_shallow = shallow_moved(shallow_file, shallow)
+        if moved_shallow:
+            run["invalid"] = "; ".join(m for m in (run["invalid"], moved_shallow) if m)
+            _write_under_stop(path, data)
         # whether no leg, and no setup (whose own record names what it left), left anything in its private HOME
         run["runner"]["home_empty"] = not home_left_by_leg and not any((gr["setup"] or {}).get("home_left") for gr in grecs)
     finally:

@@ -372,12 +372,15 @@ elif act == "refs":                              # a tag and a branch written in
     head = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
     for ref in ("refs/tags/leaked-tag", "refs/heads/leaked-branch"):
         subprocess.run(["git", "--git-dir", common, "update-ref", ref, head], check=True)
-elif act == "shallow":                           # the BATCHER's shallow file written at the sha, found from the clone
+elif act in ("shallow", "shallow-unreadable"):  # the BATCHER's shallow file written at the sha, found from the clone;
+    # shallow-unreadable then leaves it unreadable (mode 0)
     with open(os.path.join(root, ".git", "objects", "info", "alternates")) as fh:
         common = os.path.dirname(fh.read().split("\n")[0].rstrip("/"))
     head = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
     with open(os.path.join(common, "shallow"), "w") as f:
         f.write(head + "\n")
+    if act == "shallow-unreadable":
+        os.chmod(os.path.join(common, "shallow"), 0)
 elif act == "home":
     with open(os.path.join(home, ".leftover"), "w") as f:
         f.write("a test that wrote into HOME\n")
@@ -2129,11 +2132,13 @@ class Checkout(_Base):
         shallow and its history, read from there, is one commit. Every leg of every later job still reads the checkout its
         job had when the run started, not shallow, with the head's two commits: the runner read that file once, before the
         first leg, and gave each checkout that snapshot. At the landing head each job's checkout copied the live file, so
-        every later job's checkout was shallow at the leg's boundary and read one commit."""
+        every later job's checkout was shallow at the leg's boundary and read one commit. The run is invalid, since the
+        re-read after the last leg finds the file changed (the owner's question 2 after the merge of main; its pins
+        follow), and every leg still ran, since that re-read comes after the last."""
         w = self.w
         w.change({"README.md": "# notes-api, a second commit\n"})
         w.ctl({"action": {PYTEST_LEG: "shallow"}, "record_history": True})
-        p = w.run(check=0)
+        p = w.run(check=3)
         self.assertEqual(w.git("rev-parse", "--is-shallow-repository"), "true",
                          "premise: the leg wrote the batcher's shallow file: %s" % (p.stdout + p.stderr))
         calls = w.calls()
@@ -2145,6 +2150,130 @@ class Checkout(_Base):
         for c in later:
             self.assertEqual(c["history"], ["false", "2"],
                              "%s's checkout is the one its job had when the run started" % c["leg"])
+
+    def shallow_mark(self, then, now):
+        """The invalid mark the re-read after the last leg writes for this world's batcher's shallow file."""
+        path = os.path.join(os.path.realpath(self.w.tree), ".git", "shallow")
+        return path, ("after the legs the batcher's repository's shallow file %s is not the one read before the first leg "
+                      "(%s then, %s now); the next run's checkouts would read it" % (path, then, now))
+
+    def test_a_shallow_file_a_leg_writes_makes_the_run_invalid_naming_it(self):
+        """The owner's question 2 after the merge of main: the pytest leg writes the batcher's shallow file, absent when the
+        run started. The runner reads that file again after the last leg and records the run invalid, naming the file,
+        what it was when the run started and what it is now: the run exits 3, every leg ran (the re-read comes after the
+        last), and the reader reads it invalid, naming the file. The file stays as the leg left it (the runner writes
+        nothing in the batcher's repository) and the next run's snapshot reads it: a third commit, swept with no leg
+        writing anything, is a valid run whose every checkout is cut at the leg's boundary, the residual the texts state
+        (its witness). Before the re-read the first run passed, and nothing named the file the next run read."""
+        w = self.w
+        w.change({"README.md": "# notes-api, a second commit\n"})
+        w.ctl({"action": {PYTEST_LEG: "shallow"}})
+        p = w.run(check=3)
+        path, named = self.shallow_mark("absent", "naming 1 commit")
+        r = w.result()
+        self.assertEqual((r["verdict"], r["invalid"]), ("invalid", named), p.stdout + p.stderr)
+        self.assertEqual(w.legs_called(), SEED_ORDER, "every leg ran: the re-read comes after the last")
+        self.assertIn("sweep invalid at %s: %s" % (w.head()[:10], named), p.stdout)
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "invalid", a["line"])
+        self.assertIn(path, a["line"])
+        # the residual's witness: the next run reads the file as its snapshot, unchanged by its own legs
+        w.change({"README.md": "# notes-api, a third commit\n"})
+        w.ctl({"record_history": True})
+        before = len(w.calls())
+        p = w.run(check=0)
+        self.assertEqual(w.result()["invalid"], None, p.stdout + p.stderr)
+        later = w.calls()[before:]
+        self.assertEqual([c["leg"] for c in later], SEED_ORDER)
+        for c in later:
+            self.assertEqual(c["history"], ["true", "2"],
+                             "%s's checkout is cut where the earlier run's leg wrote the file" % c["leg"])
+
+    def test_a_shallow_file_changed_during_the_run_keeps_its_failures(self):
+        """The owner's question 2 after the merge of main, with Class A's rule: the pytest leg writes the batcher's shallow
+        file and bats fails in the same run. The run is invalid, naming the file, and its failure counts: the reader's
+        line names bats's failure, and a plain run at the sha is then refused naming it, as after any invalid run that
+        failed a leg."""
+        w = self.w
+        w.ctl({"rc": {"bats": 1}, "action": {PYTEST_LEG: "shallow"}})
+        p = w.run(check=3)
+        path, named = self.shallow_mark("absent", "naming 1 commit")
+        self.assertEqual(w.result()["invalid"], named, p.stdout + p.stderr)
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "invalid", a["line"])
+        self.assertIn("%s; run 1's failures count: bats (rc 1; log " % named, a["line"])
+        w.ctl({})
+        p = w.run(check=2)
+        self.assertIn("the run at %s failed bats in run 1 (rc 1); a later run counts over a failed leg only with --flake"
+                      % w.head()[:10], p.stderr)
+
+    def test_a_shallow_file_changed_in_a_run_a_leg_already_made_invalid_is_named_beside_that_mark(self):
+        """The re-read after the last leg runs when a leg's re-read has already made the run invalid and ended it: the
+        pytest leg writes the batcher's shallow file, bats leaves an untracked file in its checkout, and the invalid mark
+        names both, the checkout's first."""
+        w = self.w
+        w.ctl({"action": {PYTEST_LEG: "shallow", "bats": "leak"}})
+        p = w.run(check=3)
+        _path, named = self.shallow_mark("absent", "naming 1 commit")
+        self.assertEqual(w.legs_called(), [PYTEST_LEG, "bats"], "the legs after bats did not run")
+        self.assertEqual(w.result()["invalid"], "after the bats leg the checkout is not the sha's tree: untracked 1 (leaked.txt); "
+                                                "the legs after it did not run; " + named, p.stdout + p.stderr)
+
+    def test_a_leg_rerun_that_writes_the_shallow_file_no_longer_reads_pass(self):
+        """The owner's question 2 after the merge of main, its ruled pin: bats fails in a valid full run, and the --leg
+        re-run that names its flake passes bats but writes the batcher's shallow file. The re-run is invalid, naming the
+        file (exit 3), and the sha no longer reads pass: the reader reads it invalid and `sweep.py check` exits 1. Before
+        the re-read the re-run exited 0 and the sha read pass."""
+        w = self.w
+        w.ctl({"rc": {"bats": 1}})
+        w.run(check=1)
+        w.ctl({"action": {"bats": "shallow"}})
+        p = w.run("--leg", "bats", "--flake", Runner.FLAKE, check=3)
+        path, named = self.shallow_mark("absent", "naming 1 commit")
+        rerun = w.data()["runs"][1]
+        self.assertEqual((rerun["kind"], rerun["verdict"], rerun["invalid"], rerun["legs"]["bats"]["rc"]),
+                         ("leg", "invalid", named, 0), p.stdout + p.stderr)
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "invalid", a["line"])
+        self.assertIn(path, a["line"])
+        c = subprocess.run([sys.executable, str(SWEEP), "check", "--tree", w.tree], env=w.env, text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        self.assertEqual(c.returncode, 1, c.stdout + c.stderr)
+        self.assertIn(named, c.stdout + c.stderr)
+
+    def test_a_shallow_file_that_cannot_be_read_after_the_legs_makes_the_run_invalid(self):
+        """The re-read after the last leg fails closed: the pytest leg writes the batcher's shallow file and leaves it
+        unreadable (mode 0), so whether it moved is not known, and the run is invalid, naming the file and the error."""
+        w = self.w
+        w.ctl({"action": {PYTEST_LEG: "shallow-unreadable"}})
+        path = os.path.join(os.path.realpath(w.tree), ".git", "shallow")
+        self.addCleanup(lambda: os.path.exists(path) and os.chmod(path, 0o644))
+        p = w.run(check=3)
+        with self.assertRaises(OSError, msg="premise: the shallow file cannot be read (a test run as root reads it)"):
+            open(path, "rb").close()
+        invalid = w.result()["invalid"]
+        self.assertIn("after the legs the batcher's repository's shallow file %s cannot be read (" % path, invalid,
+                      p.stdout + p.stderr)
+        self.assertIn("so whether a leg changed it is not known; the next run's checkouts would read it", invalid)
+        self.assertEqual(w.legs_called(), SEED_ORDER)
+
+    def test_a_shallow_file_the_legs_leave_as_it_was_keeps_the_run_valid(self):
+        """The re-read's other side: the batcher's repository is shallow when the run starts and no leg writes the file,
+        so the re-read after the last leg finds the snapshot's bytes and the run passes. In a run at the next commit a leg
+        rewrites the file with other bytes (that commit as its boundary), and the run is invalid, naming both states."""
+        w = self.w
+        w.change({"README.md": "# notes-api, a second commit\n"})
+        tree = os.path.realpath(w.tree)
+        with open(os.path.join(tree, ".git", "shallow"), "w") as f:
+            f.write(w.git("rev-parse", "HEAD~1") + "\n")
+        self.assertEqual(w.git("rev-parse", "--is-shallow-repository"), "true", "premise: the batcher's repository is shallow")
+        p = w.run(check=0)
+        self.assertEqual(w.result()["invalid"], None, p.stdout + p.stderr)
+        w.change({"README.md": "# notes-api, a third commit\n"})
+        w.ctl({"action": {"manager": "shallow"}})
+        p = w.run(check=3)
+        _path, named = self.shallow_mark("naming 1 commit", "naming 1 commit")
+        self.assertEqual(w.result()["invalid"], named, p.stdout + p.stderr)
 
     def test_a_shallow_file_that_cannot_be_read_refuses_the_run_before_any_leg(self):
         """The narrow landing delta's ruling 8, its refusal: the batcher's repository is shallow at its first commit and
@@ -5532,6 +5661,28 @@ class ShortSummaryReader(unittest.TestCase):
                                 "SKIPPED tests/test_b.py::test_b - Skipped: macOS only")
                 self.assertNotKnown(path, "a line after a line starting with '=' or shaped like the closing summary line",
                                     "'npm ci not run here'")
+
+    def test_a_second_equals_or_closing_shaped_line_before_the_next_kind_line_makes_the_set_not_known(self):
+        """The focused re-check's item 1 after the merge of main (ruling 9's second half completed): a skip reason that
+        runs on to two lines each starting with "=" or shaped like the closing summary line, the DEPS_SKIP words on the
+        second, before the next kind line. The second is a non-blank line after the first, so the set is not known,
+        naming it. Before, the second line ended the reason again and its words went unread, so the reader gave ([],
+        None) with the skip among the unselected ones. The same rule refuses a reason whose last line is a quoted "="
+        line right before pytest's own closing line, which is then a non-blank line after it: a summary pytest writes
+        correctly, read loudly."""
+        cases = (("==== inner ====", "==== npm ci not run ===="),
+                 ("==== inner ====", "1 skipped (npm ci not run) in 0.10s"),
+                 ("1 passed in 0.10s", "==== npm ci not run ===="))
+        for first, second in cases:
+            with self.subTest(first=first, second=second):
+                path = self.log("SKIPPED tests/test_a.py::test_eq - Skipped: inner run said:", first, second,
+                                "SKIPPED tests/test_b.py::test_b - Skipped: macOS only")
+                self.assertNotKnown(path, "a line after a line starting with '=' or shaped like the closing summary line: %r"
+                                    % second)
+        with self.subTest(case="a quoted '=' line right before the closing line"):
+            path = self.log("SKIPPED tests/test_a.py::test_eq - Skipped: inner run said:", "==== inner ====")
+            self.assertNotKnown(path, "a line after a line starting with '=' or shaped like the closing summary line: %r"
+                                % "=================== 3 passed, 2 skipped in 0.01s ===================")
 
     def test_an_equals_line_followed_by_a_kind_line_or_a_blank_is_read(self):
         """The rule's other side, the disclosed residual (the module docstring's second summary read wrong without a

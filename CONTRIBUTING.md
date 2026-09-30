@@ -110,8 +110,14 @@ branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux; member PRs
 and merges to main run none of it (`docs/batching.md`). The macOS cells run on the
 weekly schedule and on demand from the Actions tab, not on a batch push. CI's
 secret scan alone runs on every push of a branch or a tag whose commit carries
-`.github/workflows/secret-scan.yml`; a branch cut from main before that file
-landed starts no run of it until it merges main.
+`.github/workflows/secret-scan.yml`, and on every push to an open pull
+request's branch. Among the pushes that start no run of it: a push to a branch
+cut from main before that file landed that has no open pull request, until the
+branch merges main; a tag on such a commit; and a push that deletes the file. A
+pull request that conflicts with its base gets no run of its own until the
+conflict is resolved, and a first-time contributor's run may wait for a
+maintainer to approve it. CLAUDE.md, "Credentials", lists these and GitHub's
+other limits.
 
 ## Measuring dashboard pane performance
 
