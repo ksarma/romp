@@ -428,26 +428,56 @@ list); a change a function makes to its own parameter by a use outside those the
 proof lists, what a function does with a value it is handed, the call limit (its
 witness: a queue a module function takes as its parameter and puts a fetch into,
 the put's return used); and on the module side, a list of a module container
-bound to a name by an unpacking nested in another, or by a loop's unpacking, in
-a function or at module level, which the module side reads at a depth that does
-not reach the container, or held in a new list in either place and extended
-through a subscript of it by an augmented assignment (its witnesses: a list of a
-module dict of lists so bound in a function by a nested unpacking and appended
-to, so bound there by a loop's unpacking and appended to, and so held there and
-extended; and the same three at module level). A default of a function or a
-lambda that reads the name, or a name the proof follows from it (a name that a
-plain or annotated assignment, a walrus, or a loop's, a comprehension's or a
-with statement's target, an unpacking's names among them, binds to it, to an
-item of it or to a new object holding one, outside every def or class statement
-and lambda body the function nests), marks the name at any level of new objects
-(unless the str exemption the local container's definition below states holds),
-and a def's default is an occurrence in a def nested in the function, so that
-road refuses; a default that takes the item through a name the proof does not
-follow from it passes silently, part of the item limit (its witnesses: a dict of
-lists bound through a boolean operation, a list of it captured by a match
-statement's mapping pattern and taken as the default of a nested def, and of a
-lambda, that appends a fetch to it; and a list of that dict stored as another
-object's attribute and taken from that attribute as a nested def's default that
+bound to a name by an unpacking nested in another, or by a loop's or a
+comprehension's unpacking (a generator expression's among them), in a function
+or at module level, which the module side reads at a depth that does not reach
+the container, or held in a new list in either place and extended through a
+subscript of it by an augmented assignment (its witnesses: a list of a module
+dict of lists so bound in a function by a nested unpacking and appended to, so
+bound there by a loop's unpacking and appended to, and so held there and
+extended; the same three at module level; and the list so bound by a list
+comprehension's unpacking and appended to in its element, in a function and at
+module level, and by a generator expression's unpacking at module level). A
+default of a function or a lambda that holds the name, or a name the proof
+follows from it (a name that a plain or annotated assignment, a walrus, or a
+loop's, a comprehension's or a with statement's target, an unpacking's names
+among them, binds to it, to an item of it or to a new object holding one,
+outside every def or class statement and lambda body the function nests), marks
+the name at any level of new objects (unless the str exemption the local
+container's definition below states holds), so that road refuses; a default
+holds it where the default's value is that name, or reaches it only through
+subscript loads on it, the returns of the read methods get, keys, values, items
+and copy (and of index or count with a constant argument), boolean operations,
+if-expressions' branches, walruses' values, starred values, awaits and new
+objects (a list, tuple, set or dict display, a comprehension holding it as its
+element, or a binary operation whose other operand is a constant). A def's
+default is part of the def statement, so the name read there is an occurrence in
+a def nested in the function, which refuses a container whatever the use, and
+the proof follows no name bound there (a walrus's or a comprehension's target),
+so a change through such a name is the item limit (its witness: a dict of lists
+bound through a boolean operation, a list of it bound by a walrus inside a call
+in a nested def's default and appended to through the walrus's name after the
+def); a lambda's default runs where the lambda stands, in the function's own
+scope. Otherwise any other use of the name or of an item of it in a default is
+read as that use is in the function's own body: handed to a call as an argument,
+it is under the call limit, what the call does with it and what it returns not
+read (its witnesses: a dict of lists bound through a boolean operation, a list
+of it bound to a name and handed to a module function that returns it, its
+return taken as the default of a nested def that appends a fetch to it; the list
+handed so directly, in a nested def's default and in a lambda's; and the same in
+a lambda's default where the dict is a local literal); and handed to another
+object's method by an operator, it is read as that operand is elsewhere, refused
+where the proof refuses such an operand and otherwise one of the item limit's
+operand roads above (its witness: that list, through a name bound to it, added
+to an object whose `__radd__` appends a fetch to it, in a nested def's default).
+A default that takes the item through a name the proof does not follow from it
+passes silently, part of the item limit (its witnesses: a dict of lists bound
+through a boolean operation, a list of it captured by a match statement's
+mapping pattern and taken as the default of a nested def, and of a lambda, that
+appends a fetch to it; a list of that dict stored as another object's attribute
+and taken from that attribute as a nested def's default that appends a fetch to
+it; and a list of that dict bound by a comprehension's target in a nested def's
+default, the comprehension's list that default, through which the nested def
 appends a fetch to it). A
 `_send`
 definition in a class that a function defines, a page function that a function
@@ -712,9 +742,11 @@ setattr or delattr, or a method spelled on a class (a builtin class, or a class
 of collections imported as the module or by name), handed it as its first
 argument; a store by a key that is no constant; an append or extend of other
 than one plain argument; an augmented assignment to a name bound to it or to an
-item of it; or any occurrence in a function or lambda nested in it, or a
-class body it defines, whose code the census does not read (a closure capture)
-or which makes a class attribute; a comprehension is read where it stands, as
+item of it; or any occurrence in a function or lambda nested in it (a def's
+header, its defaults among them, included; a lambda's defaults, which run where
+it stands, excepted), or a class body it defines, whose code the census does not
+read (a closure capture) or which makes a class attribute; a comprehension is
+read where it stands, as
 the function's own body is: a read of the fourth form and an append of a read
 value there pass, the container as a comprehension's source, in its condition or
 as its element refuses as any other read does, and a change the census cannot
@@ -945,9 +977,10 @@ delattr on it, an augmented assignment to it, which runs its own in-place
 method, or it or an item of it handed to another object's method by an
 operator), changes it through a name bound to it, to an item of it or to a new
 object holding one (each name read by its spelling in every scope, so a local of
-that spelling counts too; a name an unpacking nested in another or a loop's
-unpacking binds, and a subscript of a new object as an augmented assignment's
-target, being the item limit, above), or lets it or such a name leave the
+that spelling counts too; a name an unpacking nested in another, or a loop's or
+a comprehension's unpacking, binds, and a subscript of a new object as an
+augmented assignment's target, being the item limit, above), or lets it or such
+a name leave the
 census's sight (stored into
 another object, returned, yielded, handed as a default or matched; an item of a
 literal that holds only constants and tuples of them, which cannot change,

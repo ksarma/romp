@@ -338,19 +338,39 @@ operator (its witnesses: an import's object compared with an object whose `__eq_
 dict bound to a call of dict, held in a new list compared with an object whose `__eq__` stores a fetch into it through that list);
 a change a function makes to its own parameter by a use outside those the proof lists, what a function does with a value it is
 handed, the call limit (its witness: a queue a module function takes as its parameter and puts a fetch into, the put's return
-used); and on the module side, a list of a module container bound to a name by an unpacking nested in another, or by a loop's
-unpacking, in a function or at module level, which the module side reads at a depth that does not reach the container, or held in
-a new list in either place and extended through a subscript of it by an augmented assignment (its witnesses: a list of a module
-dict of lists so bound in a function by a nested unpacking and appended to, so bound there by a loop's unpacking and appended to,
-and so held there and extended; and the same three at module level). A default of a function or a lambda that reads the name, or a
-name the proof follows from it (a name that a plain or annotated assignment, a walrus, or a loop's, a comprehension's or a with
-statement's target, an unpacking's names among them, binds to it, to an item of it or to a new object holding one, outside every
-def or class statement and lambda body the function nests), marks the name at any level of new objects (unless the str exemption
-the local container's definition below states holds), and a def's default is an occurrence in a def nested in the function, so
-that road refuses; a default that takes the item through a name the proof does not follow from it passes silently, part of the
-item limit (its witnesses: a dict of lists bound through a boolean operation, a list of it captured by a match statement's mapping
-pattern and taken as the default of a nested def, and of a lambda, that appends a fetch to it; and a list of that dict stored as
-another object's attribute and taken from that attribute as a nested def's default that appends a fetch to it). A `_send`
+used); and on the module side, a list of a module container bound to a name by an unpacking nested in another, or by a loop's or a
+comprehension's unpacking (a generator expression's among them), in a function or at module level, which the module side reads at
+a depth that does not reach the container, or held in a new list in either place and extended through a subscript of it by an
+augmented assignment (its witnesses: a list of a module dict of lists so bound in a function by a nested unpacking and appended
+to, so bound there by a loop's unpacking and appended to, and so held there and extended; the same three at module level; and the
+list so bound by a list comprehension's unpacking and appended to in its element, in a function and at module level, and by a
+generator expression's unpacking at module level). A default of a function or a lambda that holds the name, or a name the proof
+follows from it (a name that a plain or annotated assignment, a walrus, or a loop's, a comprehension's or a with statement's
+target, an unpacking's names among them, binds to it, to an item of it or to a new object holding one, outside every def or class
+statement and lambda body the function nests), marks the name at any level of new objects (unless the str exemption the local
+container's definition below states holds), so that road refuses; a default holds it where the default's value is that name, or
+reaches it only through subscript loads on it, the returns of the read methods get, keys, values, items and copy (and of index or
+count with a constant argument), boolean operations, if-expressions' branches, walruses' values, starred values, awaits and new
+objects (a list, tuple, set or dict display, a comprehension holding it as its element, or a binary operation whose other operand
+is a constant). A def's default is part of the def statement, so the name read there is an occurrence in a def nested in the
+function, which refuses a container whatever the use, and the proof follows no name bound there (a walrus's or a comprehension's
+target), so a change through such a name is the item limit (its witness: a dict of lists bound through a boolean operation, a list
+of it bound by a walrus inside a call in a nested def's default and appended to through the walrus's name after the def); a
+lambda's default runs where the lambda stands, in the function's own scope. Otherwise any other use of the name or of
+an item of it in a default is read as that use is in the function's own body: handed to a call as an argument, it is
+under the call limit, what the call does with it and what it returns not read (its witnesses: a dict of lists bound through a
+boolean operation, a list of it bound to a name and handed to a module function that returns it, its return taken as the default
+of a nested def that appends a fetch to it; the list handed so directly, in a nested def's default and in a lambda's; and the same
+in a
+lambda's default where the dict is a local literal); and handed to another object's method by an operator, it is read as that
+operand is elsewhere, refused where the proof refuses such an operand and otherwise one of the item limit's operand roads above
+(its witness: that list, through a name bound to it, added to an object whose `__radd__` appends a fetch to it, in a nested def's
+default). A default that takes the item through a name the proof does not follow from it passes silently, part of the item limit
+(its witnesses: a dict of lists bound through a boolean operation, a list of it captured by a match statement's mapping
+pattern and taken as the default of a nested def, and of a lambda, that appends a fetch to it; a list of that dict stored as
+another object's attribute and taken from that attribute as a nested def's default that appends a fetch to it; and a list of that
+dict bound by a comprehension's target in a nested def's default, the comprehension's list that default, through which the nested
+def appends a fetch to it). A `_send`
 definition in a class that a function defines, a page function that a function encloses, a `_send` call inside a lambda's body, and
 a Content-Type write inside one that is no `_send` definition's own write fail the run by name: the census does not read the
 enclosing function's or lambda's scope, so it would take a name that scope binds (a builtin or a module name it shadows) for the
@@ -516,8 +536,9 @@ target); a delete; a method other than append, extend or a read method of its ty
 spelled-out dunder among them, or an attribute of it read other than as a method's callee; setattr or delattr, or a method spelled
 on a class (a builtin class, or a class of collections imported as the module or by name), handed it as its first argument; a
 store by a key that is no constant; an append or extend of other than one plain argument; an augmented assignment to a name bound
-to it or to an item of it; or any occurrence in a function or lambda nested in it, or a class
-body it defines, whose code the census does not read (a closure capture) or which makes a class attribute; a comprehension is read
+to it or to an item of it; or any occurrence in a function or lambda nested in it (a def's header, its defaults among them,
+included; a lambda's defaults, which run where it stands, excepted), or a class body it defines, whose code the census does not
+read (a closure capture) or which makes a class attribute; a comprehension is read
 where it stands, as the function's own body is: a read of the fourth form and an append of a read value there pass, the container
 as a comprehension's source, in its condition or as its element refuses as any other read does, and a change the census cannot
 fold, a comprehension target store among them, refuses. The first parameter of a method or a route
@@ -670,8 +691,9 @@ reads a text through (named above), a method called on it whose return is droppe
 off it or an item of it unbound, an attribute read off it other than as a method's callee, a setattr or delattr on it, an
 augmented assignment to it, which runs its own in-place method, or it or an item of it handed to another object's method by an
 operator), changes it through a name bound to it, to an item of it or to a new object holding one (each name read by its spelling
-in every scope, so a local of that spelling counts too; a name an unpacking nested in another or a loop's unpacking binds, and a
-subscript of a new object as an augmented assignment's target, being the item limit, above), or lets it or such a
+in every scope, so a local of that spelling counts too; a name an unpacking nested in another, or a loop's or a comprehension's
+unpacking, binds, and a subscript of a new object as an augmented assignment's target, being the item limit, above), or lets it or
+such a
 name leave the census's sight (stored into another object, returned, yielded, handed as a default or matched; an item of a literal
 that holds only constants and tuples of them, which cannot change, excepted), though none of these rebinds the name; a module name
 bound to a call whose object the file changes in one of those ways, directly or through a name bound to it, to an item of it or to
@@ -2185,9 +2207,10 @@ class Scan(ast.NodeVisitor):
         walk, its literal no literal of constants), it is changed (Result.changed), and the served pass reads it as a run-time memo
         wherever it takes text through it but as a call's argument (_Served.cmemos, the call limit). Each state the walk pops is
         expanded once, in _cflow_step. What this side does not read is the item limit (the 19:33Z ruling, _Served._containers): a name
-        that an unpacking nested in another, or a loop's unpacking, binds in a function or at module level is read at a depth that
-        does not reach the container (cbind gives each name of a tuple or list target, or a loop's, one item step, whatever its
-        nesting: mupn and mfl in a function, mtn and mtl at module level), and a subscript of a new object holding an item, as an
+        that an unpacking nested in another, or a loop's or a comprehension's unpacking (a generator expression's among them), binds
+        in a function or at module level is read at a depth that does not reach the container (cbind gives each name of a tuple or
+        list target, or of a loop's or a comprehension's target, one item step, whatever its nesting: mupn, mfl and mcf in a function,
+        mtn, mtl, mcn and mcg at module level), and a subscript of a new object holding an item, as an
         augmented assignment's target, in either place, is a store into that object (masf in a function, mts at module level); each
         passes silently."""
         for x, v in self.consts.items():
@@ -5666,11 +5689,15 @@ class _Served(object):
     than to a literal or a call of parse_qs holds, after the census has read it, in a spelling the proof does not refuse, passes
     silently, one witness for each road (iunp, iuag and iatr, a name an unpacking binds from a display that holds the item; isag, a
     subscript of a new object holding it as an augmented assignment's target; imat and xmat, a match capture; xies and cesw3, an item
-    stored into another object or held in a new object that leaves the function; dmcap, dmcapl and dxies, a default taking the item
-    through a name the proof does not follow (a match capture, an attribute of another object); xput, xesc and xiop, on a name bound
-    other than only to calls; oeqw and cop1, an operand; pput, the call limit on a parameter; mupn, mfl and masf, the module side's
-    unpacking nested in another or a loop's, and its subscript of a new object, in a function, and mtn, mtl and mts, the same at
-    module level, Scan.cflows). A parameter in the body is
+    stored into another object or held in a new object that leaves the function; dmcap, dmcapl, dxies and dcmp, a default taking the
+    item through a name the proof does not follow (a match capture, an attribute of another object, a comprehension's target in a
+    def's default); dwal, a name a walrus in a def's default binds to the item, changed through after the def; xput, xesc and xiop, on
+    a name bound
+    other than only to calls, and dop, xiop's operand in a default; oeqw and cop1, an operand; pput, the call limit on a parameter,
+    and dcall, dcall0, dcalll and dcallc, the call limit in a default, the item handed to a call whose return the default takes; mupn,
+    mfl, mcf and masf, the module side's unpacking nested in another, a loop's or a comprehension's, and its subscript of a new
+    object, in a function, and mtn, mtl, mcn, mcg and mts, the same at module level, mcg a generator expression's, Scan.cflows). A
+    parameter in the body is
     a value slot whose text is its argument's, read at the call, or, where a followed call omits it, its default's (_defaults).
     The other value slots the pass reads as no text are the kinds and roles a full served pass over the kernel hands resolve: a
     None, bool or int constant, the empty bytes constant, a Mult or LShift whose operands are int constants or such BinOps
@@ -6017,11 +6044,15 @@ class _Served(object):
         defines or another import names, a module's function), is under the call limit, as the container is (its witnesses ihc, ihg
         and ihn, a list read out of a local dict of lists by a subscript load, by `.get` and through a name bound to it, which a
         module function it is handed appends a fetch to, and itcw, such a list handed to append spelled on a class of the file that
-        derives from list). A container is a name an assignment, augmented or annotated, or a walrus binds whole to such a literal or
-        comprehension or to a call of parse_qs (_parse_qs_call), or a name with one of these uses (changes()). At any level of new
+        derives from list), in a lambda's default too (dcallc), while in a def's default the occurrence refuses it as one in a def
+        nested in the function. A container is a name an assignment, augmented or annotated, or a walrus binds whole to such a literal
+        or comprehension or to a call of parse_qs (_parse_qs_call), or a name with one of these uses (changes()). At any level of new
         objects around it, since a new object that holds it hands it on: a binding to a name the function declares global or nonlocal;
-        a default of a function or a lambda, unless the name is no parameter and every binding of it is a plain assignment of one name
-        to a value _value_type types as a str (strs: a string constant; a walrus of one; a boolean operation or an if-expression whose
+        a default of a function or a lambda that holds it (_flow's escape _AS_DEFAULT, the value walked up to the default through
+        subscript loads, read methods' returns, boolean operations, if-expressions' branches, walruses' values, starred values, awaits
+        and new objects), unless the name is no parameter and
+        every binding of it is a plain assignment of one name to a value _value_type types as a str (strs: a string constant; a walrus
+        of one; a boolean operation or an if-expression whose
         operands or branches all are; or an item read, by a subscript load without a slice or by a dict's get (its default, where it
         has one, of the items' type too), out of a container every item of which is one, such a container being a list, tuple or dict
         literal (with no starred element or ** entry, a dict's items its values), a slice of a list or a tuple one, a copy of a list
@@ -6057,17 +6088,30 @@ class _Served(object):
         name itself, for a name bound other than to a literal, a call of parse_qs or only calls (imat, xmat); an item of such a name
         stored into another object and changed there (xies), and an item of a name bound only to calls held in a new object that
         leaves the function (cesw3); a default of a function or a lambda that takes the item through a name the walk does not follow
-        from the container, a match statement's capture (dmcap, a nested def's default; dmcapl, a lambda's) or an attribute of another
-        object the item is stored into (dxies); on a name bound other than only by plain assignments of calls, a method outside the
+        from the container, a match statement's capture (dmcap, a nested def's default; dmcapl, a lambda's), an attribute of another
+        object the item is stored into (dxies) or a comprehension's target in a def's default (dcmp); a name a walrus in a def's
+        default binds to the item, changed through after the def (dwal); on
+        a name bound other than only by plain assignments of calls, a method outside the
         changers with its return used (xput), the name stored into another object (xesc) or an item of it handed to another object's
-        method by an operator (xiop); a name bound to anything but a literal or a call of parse_qs, handed itself, or in a new object
-        holding it, to another object's method by an operator (oeqw, cop1); and a change a function makes to its own parameter by a
-        use outside those listed, the call limit (pput). A default of a function or a lambda that reads the name, or a name the walk
-        follows from it (a "bind" step of _flow: a plain or annotated assignment, a walrus, or a loop's, a comprehension's or a with
-        statement's target, an unpacking's names among them, outside every def or class statement and lambda body the function nests),
-        marks the name at any level (unless strs holds), and a def's default is an occurrence in a def nested in the function, so that
-        road refuses; the walk follows no match capture and no attribute of another object, so a default taking the item through one
-        is the item limit (dmcap, dmcapl, dxies). The roads a check was measured for are the limit because that one check refuses
+        method by an operator (xiop, and dop, in a nested def's default); a name bound to anything but a literal or a call of
+        parse_qs, handed itself, or in a new object holding it, to another object's method by an operator (oeqw, cop1); and a change a
+        function makes to its own parameter by a use outside those listed, the call limit (pput). A default of a function or a lambda
+        that holds the name, or a name the walk follows from it (a "bind" step of _flow: a plain or annotated assignment, a walrus, or
+        a loop's, a comprehension's or a with statement's target, an unpacking's names among them, outside every def or class
+        statement and lambda body the function nests), marks the name at any level (unless strs holds), so that road refuses: _flow
+        records the escape _AS_DEFAULT only where the value climbs to the default's ast.arguments through the steps that carry it on
+        (a subscript load, a read method's return, a boolean operation, an if-expression's branch, a walrus's value, a starred value,
+        an await, a new object). A def's default is part of the def statement (_scope_names chains the def over every name its header
+        reads; a lambda's defaults run where it stands), so a name read there is an occurrence in a def nested in the function, which
+        refuses a container whatever the use, and a bind step from it is not followed: a comprehension's target there holding the item
+        (dcmp) and a walrus there inside a call, its name appended through after the def (dwal), are the item limit on a name the
+        proof does not read as a container. Otherwise any other use in a default ends the walk as it does in the function's own body:
+        a call's argument, the call limit, what the call returns not read (dcall, through a name bound to the item, a nested def's
+        default; dcall0 and dcalll, the item directly, a nested def's and a lambda's; dcallc, a lambda's, on a container bound to a
+        literal), and an operand, refused where the proof refuses such an operand and otherwise the item limit (dop, on a name bound
+        through a boolean operation). The walk follows no match capture and no attribute of another object, so a default taking the
+        item through one is the item limit (dmcap, dmcapl, dxies). The roads a check was measured for are the limit because that one
+        check refuses
         pages of the live tree: the closed set on a parameter (pput's road); a method outside the closed set, an escape and an item's
         operand on a name bound to an expression (xput's, xesc's and xiop's); an item held in a new object that leaves the function,
         on a name bound to a call (cesw3's: an item of such a name that an unpacking binds, a str, stored in a new list into a dict);
@@ -6081,9 +6125,10 @@ class _Served(object):
         read method of the type its binding gives it, or an attribute of it read other than as a method's callee; setattr or delattr,
         or a method spelled on a class, handed it as its first argument (_CT_CLASS); a store by a key that is no constant, or other
         than as the one target of a plain assignment; an append or extend of other than one plain argument; an augmented assignment to
-        a name bound to it or to an item of it (_CT_AUG); and any occurrence in a
-        function or lambda nested in it, or a class body it defines (a closure capture whose code the census does not read, or a class
-        attribute; a nested scope's own binding of the spelling is not an occurrence of this container). A comprehension is read where it
+        a name bound to it or to an item of it (_CT_AUG); and any occurrence in a function or lambda nested in it (a def's header, its
+        defaults among them, included, as _scope_names chains it; a lambda's defaults, which run where it stands, excepted), or a
+        class body it defines (a closure capture whose code the census does not read, or a class attribute; a nested scope's own
+        binding of the spelling is not an occurrence of this container). A comprehension is read where it
         stands, as the function's own body is: a read of the fourth form and an append of a read value there pass, the container as a
         comprehension's source, in its condition or as its element refuses as any other read does (_own_use, _role), and a change the
         census cannot fold (a comprehension target store) refuses. Handed as an argument to any other call (not setattr or delattr,
