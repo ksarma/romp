@@ -39,20 +39,23 @@ const MODAL = WAITING.slice(WAITING.indexOf("function showReply("), WAITING.inde
 // ── the source leg: the deleted case's pins, as written ──────────────────────────────────────────
 test("the Reply modal takes the focus back into its box when the pane regains it, and the listener goes with the modal (pinned at source)", () => {
   assert.match(MODAL, /const onFocus = \(\) => \{ if \(!overlay\.isConnected\) \{ window\.removeEventListener\("focus", onFocus\); return; \} input\.focus\(\); \};/);
-  assert.match(MODAL, /const close = \(\) => \{ overlay\.remove\(\); document\.removeEventListener\("keydown", onKey, true\); window\.removeEventListener\("focus", onFocus\); \};/);
+  // since the 2026-09-19 keyboard fold (reply-sheet-keyboard.test.ts) the same close also drops the window resize listener
+  assert.match(MODAL, /const close = \(\) => \{ overlay\.remove\(\); document\.removeEventListener\("keydown", onKey, true\); window\.removeEventListener\("focus", onFocus\); window\.removeEventListener\("resize", kbFit\); \};/);
   assert.match(MODAL, /window\.addEventListener\("focus", onFocus\);\n\s*input\.focus\(\);\n\}/, "armed at open, after the modal is in the document");
 });
 
 // ── the executed leg ─────────────────────────────────────────────────────────────────────────────
 // the listener, the close and the arming lines, executed out of the source with the names they read handed in
 type Armed = { onFocus: () => void; close: () => void };
-function arm(overlay: unknown, input: unknown, win: unknown, doc: unknown, onKey: unknown): Armed {
+// kbFit is the keyboard fold's resize listener (reply-sheet-keyboard.test.ts executes it); here it is a reference the close line
+// removes, nothing more
+function arm(overlay: unknown, input: unknown, win: unknown, doc: unknown, onKey: unknown, kbFit: unknown = () => {}): Armed {
   const line = (re: RegExp, what: string): string => { const m = MODAL.match(re); assert.ok(m, what + " not found in showReply: re-anchor"); return m![0]; };
   const onFocus = line(/^\s*const onFocus = .*$/m, "the onFocus line");
   const close = line(/^\s*const close = .*$/m, "the close line");
   const arming = line(/document\.addEventListener\("keydown", onKey, true\);\n\s*window\.addEventListener\("focus", onFocus\);\n\s*input\.focus\(\);/, "the arming lines");
   const body = onFocus + "\n" + close + "\n" + arming + "\nreturn { onFocus, close };";
-  return new Function("overlay", "input", "window", "document", "onKey", body)(overlay, input, win, doc, onKey) as Armed;
+  return new Function("overlay", "input", "window", "document", "onKey", "kbFit", body)(overlay, input, win, doc, onKey, kbFit) as Armed;
 }
 // an EventTarget stand-in for the window and the document: remembers its listeners by type, records every removal, and can
 // fire one type; dispatch walks a COPY of the set, as the DOM does, so a listener that removes itself mid-dispatch still runs
@@ -101,7 +104,9 @@ test("close() removes the window focus listener with the modal, by the reference
   a.close();
   assert.equal(overlay.isConnected, false, "the overlay left the document (the shim's remove, off its body)");
   assert.equal(win.count("focus"), 0, "the focus listener went with it");
-  assert.equal(win.removed.length, 1); assert.equal(win.removed[0][0], "focus"); assert.equal(win.removed[0][1] === a.onFocus, true, "removed under the reference it was added under");
+  // the keyboard fold's resize listener goes in the same close (reply-sheet-keyboard.test.ts arms and executes it; here a stand-in)
+  assert.deepEqual(win.removed.map(([t]) => t), ["focus", "resize"], "the focus listener and the fold's resize listener, in that order");
+  assert.equal(win.removed[0][1] === a.onFocus, true, "removed under the reference it was added under");
   assert.deepEqual(doc.removed.map(([t, f, o]) => [t, f === onKey, o]), [["keydown", true, true]], "the Escape handler, removed with its capture flag");
   win.fire("focus");
   assert.equal(focused(), 1, "nothing focuses the box after the close: only the open's own focus is on record");

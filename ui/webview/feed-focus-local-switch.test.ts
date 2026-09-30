@@ -31,8 +31,8 @@ test("every jump this pane posts is noted in ONE place, the host api's postMessa
   assert.match(fn, /if \(!m \|\| \(m\.type !== "openSession" && m\.type !== "showOnTimeline"\)\) return;/, "the two posts that jump into a session");
   assert.match(fn, /if \(inRender \|\| inModalRender \|\| !\(inInputEvent\(\) \|\| frameGesture\)\) return;/,
     "only a post made inside the reader's input event (or a frame carrying their gesture: a bell click, a notification tap) and outside a render is a jump (rounds two and three)");
-  assert.match(FEED, /\} else if \(m\.sid\) \{\s*\n\s*frameGesture = !!m\.gesture;[^\n]*\n\s*try \{ vscodeApi\?\.postMessage\(\{ type: "openSession", id: String\(m\.sid\) \}\); \} finally \{ frameGesture = false; \}/,
-    "the revealCard fallback honours the gesture the shell marked on the frame, for that post alone");
+  assert.match(FEED, /\} else if \(decision === "open"\) \{\s*\n\s*frameGesture = !!m\.gesture;[^\n]*\n\s*try \{ vscodeApi\?\.postMessage\(\{ type: "openSession", id: String\(m\.sid\) \}\); \} finally \{ frameGesture = false; \}/,
+    "the revealCard fallback (paint-gate.ts revealDecision `open`, a sid named) honours the gesture the shell marked on the frame, for that post alone");
   assert.match(fn, /if \(!sid \|\| !focusedIdentity\(sid\)\.live\) return;/, "a closed session's jump changes no tab (the chat's confirmRevive), so it moves nothing here");
   assert.match(fn, /applyLocalFocus\(sid, m\.type === "showOnTimeline", true, null\);/,
     "this pane's own jump: a Summary or card jump (showOnTimeline) switches and scrolls, a session name or peer chip (openSession) only switches (round two)");

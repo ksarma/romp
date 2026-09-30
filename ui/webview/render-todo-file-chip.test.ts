@@ -218,7 +218,7 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
   const fn = new Function(
     "el", "notice", "todoFoldLabel", "applyFold", "rememberFold", "utDetailHint", "applyUtHint", "utHintFor", "UT_HINT_CLASS",
     "linkifyPrRefs", "prRepoFor", "isCoarsePointer", "renderingSid", "utDetailOpen", "linkifyPathTokens", "linkifyFileUris",
-    "openPathLink", "vscodeApi", "activeId", "openPath", "linkifyUrls", "urlChip", "linkTarget",
+    "openPathLink", "vscodeApi", "activeId", "openPath", "linkifyUrls", "urlChip", "linkTarget", "window",
     code + "\nreturn { renderTodo, showUserTodoReply, todoFileChip, todoLinkChip, openpath, utreply };");
   const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
   // renderTodo is ONE notice() (the notice vocabulary, 2026-09-08): the stub returns the turn the builder would, with the
@@ -231,6 +231,10 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
     openPathLink, null, activeId,
     (p: string, sid: string | null) => opened.push([p, sid]),
     linkifyUrls, urlChip, linkTarget,
+    // the window the modal's keyboard fold reads: this fake's elements have no isConnected, so at open the fold (kbFit) takes its
+    // disconnected return, removing the resize listener it had just added, and neither restCap nor grow runs here
+    // (reply-sheet-keyboard.test.ts executes them); the stand-in only has to take that listener's add and its removal
+    { addEventListener() { /* the fold's resize listener, added at open */ }, removeEventListener() { /* and removed by the fold's disconnected return */ } },
   );
   return { ...out, opened };
 }

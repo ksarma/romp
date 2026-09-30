@@ -2956,6 +2956,85 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
   border: 1px solid var(--box-border); border-radius: 6px; outline: none; resize: vertical; }
 .ut-reply-input:focus { border-color: var(--accent); }
 .ut-reply-input.bad { border-color: #ff6a6a; }
+/* THE SHEET ON A PHONE WITH THE KEYBOARD UP (the user 2026-09-19, screenshot): a todo's long detail filled the
+   sheet and the answer box was one squeezed line above Cancel and Send. .confirm-box is a column flex box capped at
+   the window (max-height, overflow hidden) whose children all shrink; a wrapped text block's automatic minimum
+   (min-height: auto) refuses to give, the textarea's (overflow auto) resolves to zero, so the box took the whole
+   deficit and the cap clipped instead of scrolling. Three rules on this dialog's own selectors, never on .confirm-box
+   or .picker-box (seven dialogs share them): the answer box never shrinks and holds three rows (rows=3; resize:
+   vertical stays), the detail is the part that gives way, capped and scrolling within itself (#pinned-notes above is
+   the precedent; overflow-y: auto is what lets it shrink, the same rule that zeroes the textarea's minimum, since a
+   scroll container's automatic flex minimum is zero) down to a FLOOR of two of its own lines (2lh, with 32px ahead of it
+   for an engine without the lh unit: two lines at the default 13px, 0.86em at line-height 1.4): the picker's fold keeps
+   one row of its list for the same reason (.picker-overlay.kb-tight .picker-list below), a region that gives way must
+   never give way to NOTHING, invisible and unscrollable, with no sign anything was dropped; without the floor the detail
+   resolved to 0px at 390x508 once the answer had grown (the maintainer's round 1 ruling). One line would show a passage
+   as a single moving line; two is the smallest window in which a scroll visibly moves text and a link keeps a line of
+   context. The deficit past the floor goes to the box, which scrolls (the fourth rule below). The cap has two regimes
+   (the maintainer's ruling at the merge with main). With the keyboard up it is 12em of the detail's own font, about
+   eight and a half of its lines (line-height 1.4), and the flex shrink takes the detail down toward its floor from there;
+   no viewport term enters (a 35dvh arm once stood beside it as the keyboard-up cap and never bound: at 508px it resolved
+   to 177.8px against 12em's 134px at the default font; the maintainer's round 1 ruling). At rest, the keyboard down, it
+   is the larger of 12em and 34.8% of the pane's height (its innerHeight, which is the visual viewport's height except
+   under a pinch zoom), which both builders publish as --ut-rest-h only while the keyboard is down (restCap; with the
+   property absent the term is 0px and the cap is 12em; in the shell on Android Chrome 108 and later, in a tab or
+   installed, that read sees no keyboard, so
+   the term applies under it too, a stated residual described at restCap), so a taller pane shows more of a long
+   detail; the term is the larger above about 386px. The share is derived at the pane heights a phone gives (the
+   maintainer's rulings on the cap pass and on the share), measured in the served phone shell with its webfont loaded,
+   in Chromium and in WebKit (the engine of every browser on iOS), in both panes. The shell's tab bar comes off the
+   window before the pane gets it (31px in a browser; 65px in the installed app, which adds the home-indicator inset),
+   so mobile Safari on a 390x844 iPhone gives panes of 620 to 709px (620 in the 651px window of the iPhone 16e and 17e
+   entries in Playwright's device registry, 633 in the common 664px window of the iPhone 12, 13 and 14 entries, both
+   with the toolbars shown, and 709 in a 740px window with the toolbars collapsed), and the installed app a pane of
+   732px: its window is the screen less the status bar (confirmed on a device), and its pane that less the 65px bar.
+   The recorded 8-line detail (250.5px in Chromium, 250 in WebKit) would show in full at the common Safari pane from
+   a share of 0.396, but the tightest sheet, the pane's todo with both chips, keeps the cap within its room (259px) at
+   the app's pane only up to 0.354, so no share does both. The share holds the chip sheet's room at the app's pane:
+   0.348 is the middle of the band that holds it there and shows the 8-line detail in full there too (0.343 to 0.354;
+   from 0.341 in WebKit), and its cap there, 254.7px, is 4.2px over the 8-line detail and 4.4px under the chip sheet's
+   room. In Safari's panes that sheet has less room than the cap (147 to 236px), so the flex shrink, not the cap, sets
+   its detail's height there. The boundary: the 8-line detail shows in full from a 720px pane (a 751px Safari window;
+   from 717px in WebKit), so in the common 664px window (a 633px pane) it shows about 220 of its 251px and scrolls the
+   rest. The 20- and 40-line details (626px and about 1300px) are longer than the room at every phone height (397px
+   under a short ask at the app's pane), so they scroll within the cap whatever the share. At every phone height, 600px
+   and up, and at any share, the answer box keeps its three rows and Send stays in the box: the flex shrink holds that.
+   Below that (at rest at 300px with both chips, and with the keyboard up under a long ask, both chips or a narrow phone)
+   the floors alone overflow the box, and the box's own scroll (the fourth rule below) is the backstop, with the actions
+   row kept in view (the fifth). A scroll container's overflow-x
+   computes to auto once overflow-y is set, so an unbreakable token (a long identifier, a bare path with no link) made
+   the detail a sideways scroller; overflow-wrap: anywhere breaks the token as .pn-detail and .ut-reply-quote already
+   do, and overflow-x: hidden is #pinned-notes's companion declaration, kept so a token the wrap cannot break is
+   clipped rather than scrolled sideways; it is not inert: a non-visible overflow on either axis makes the element a
+   scroll container on both (a visible half beside it computes to auto), so it also keeps the detail scrolling
+   should overflow-y ever go, which is why only a spelling pin guards that declaration on its own. And a short window (the
+   keyboard up; both builders toggle kb-tight on this window's own resize, as the picker does) pins the sheet to the
+   top under the picker's 12px frame so the buttons sit above the keyboard. The picker's kb-tight rules on
+   .picker-overlay reach this overlay through the class it shares (the dvh cap, overflow-y auto on the box).
+   A fourth rule, the box's own scroll at EVERY height (the maintainer's round 1 ruling): the shared .picker-box is
+   overflow hidden and scrolls only under the fold, so above 480px a row laid out past the box's cap was clipped, and
+   clipped content is not hit-testable. At 390x508 with the keyboard up, a wrapped ask with both chips and an answer
+   grown to the window-share cap put Cancel and Send below the clip, and a tap where Send was painted fell on the
+   backdrop, which closes the sheet: the typed answer was gone. The box scrolls instead, whatever the window's height;
+   the grow handlers in both builders cap the answer at the room the box has left (read from the box, never from the
+   window), so the scroll is the backstop for the state the floors alone overflow, never the everyday path.
+   A fifth rule keeps the actions row in view at the box's bottom (the maintainer's round 2 ruling, B-i). With the keyboard
+   up only the detail yields, down to its two lines; the answer box keeps three rows, the ask keeps all its lines (a todo at
+   the kernel's 300-character cap wraps to about six at 390 wide, and one made of short lines runs to sixty-one) and the pane's
+   chips are rows of their own, so where those floors pass the cap the box scrolls, and the focus left the scroll at the
+   answer box with Cancel and Send partly or wholly past the clip: in the pane at 390x420 and 480 with a 300-character ask,
+   and at 320 wide with the composition's ask, a tap at Send's centre fell on the backdrop and closed the sheet with the
+   answer, in Chromium, Firefox and WebKit. The row is sticky at the bottom of the box's scrollport, in the box's own background so
+   what scrolls under it does not show through, and it holds Send inside the clip at every height the rulings name (230 to
+   508 with the keyboard up, in both panes and three engines). The one thing it must not cover is the answer box, so the
+   grow handlers scroll the box to its end when the answer box's bottom lies under the row (their last line). What the row
+   can cover is content the engine scrolls into view at the box's bottom (the detail's first line, or part of it, at 230 and
+   at 300); that is a scroll of the box away, never out of reach. */
+#ut-reply-prompt .ut-reply-input { flex: 0 0 auto; min-height: calc(3lh + 16px); }
+#ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 32px; min-height: 2lh; max-height: max(12em, calc(0.348 * var(--ut-rest-h, 0px))); overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere; overscroll-behavior: contain; }
+#ut-reply-prompt.kb-tight { align-items: flex-start; padding: 12px 16px; }
+#ut-reply-prompt .picker-box { overflow-y: auto; }
+#ut-reply-prompt .confirm-actions { position: sticky; bottom: 0; background: var(--vscode-editorWidget-background, #252526); }
 
 /* ---------- postal cards (romp peer mail) + teammate messages ---------- */
 /* Both are THE notice since 2026-09-08 (renderPostalService / renderTeammate): a peer's mail wears its
