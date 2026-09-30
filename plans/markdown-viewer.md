@@ -9034,18 +9034,18 @@ Chromium 18 and 14, Firefox 14 and WebKit 18, with Firefox's 2 taps whose own po
 window, 66 in all, and the first own-gesture adversary's rows at d9fb76da0), and on a device with a mouse and a touchscreen, a
 finger's tap during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves
 (Chromium, touch emulated, that adversary's rows), in the browser at 5288151dd, which brought the read-outs, 13 of 13 in each
-engine, 13 of 13 and 5 of 5 each, the pen's press during which the mouse moves 0 of 5 there and 5 of 5 at bef9ff8fc; and by
-reading any event the grammar does not name that a real gesture brings into a press or a tap, since the allowlist refuses each
-such chain by construction, among them every place below where the incremental reads would open (21 families of them measured
-since, below), and besides them a touch-order pen's tap with the focus leaving before its compatibility mousedown,
-an eraser or a barrel button and any event of an engine not measured (the file review's round 17, tests-1
-with regression-1, its round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them, the closing
-check after those fixes, the closing check at 142ade155 after the fixes for the file review's round 18, the file review's round
-19, extra5-1, extra8-1 and extra8-2, and its round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's
-decisions on them); where the allowlist costs more than the incremental reads the file review's round 20 drafted in its place
-(the coordinator's ruling on the allowlist's build leaves each such place to the owner's decision, and the ruling after the
-focused re-check at ff255168f keeps the allowlist, stating these costs): not at its three measured costs above, which are theirs
-too, the held press with the focus not back by their read of extra5-1, the block and the pen's press by their read of extra7-1 as
+engine, 13 of 13 in Chromium and 5 of 5 each, the pen's press during which the mouse moves 0 of 5 there and 5 of 5 at bef9ff8fc;
+and by reading any event the grammar does not name that a real gesture brings into a press or a tap, since the allowlist refuses
+each such chain by construction, among them every place below where the incremental reads would open (21 families of them measured
+since, below), and besides them a touch-order pen's tap with the focus leaving before its compatibility mousedown, an eraser
+or a barrel button and any event of an engine not measured (the file review's round 17, tests-1 with regression-1, its
+round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them, the closing check after those
+fixes, the closing check at 142ade155 after the fixes for the file review's round 18, the file review's round 19, extra5-1,
+extra8-1 and extra8-2, and its round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them);
+where the allowlist costs more than the incremental reads the file review's round 20 drafted in its place (the coordinator's
+ruling on the allowlist's build leaves each such place to the owner's decision, and the ruling after the focused re-check
+at ff255168f keeps the allowlist, stating these costs): not at its three measured costs above, which are theirs too, the
+held press with the focus not back by their read of extra5-1, the block and the pen's press by their read of extra7-1 as
 drafted (a read of extra7-1 that marks the mouse's records alone closes the same covered clicks and would open the pen's press);
 but at 21 families of the viewer's own gesture measured in the browser at ff255168f by a probe of these fixes kept out of the tree
 (Playwright's engines on Linux, the Files pane, touch and pen emulated in Chromium, five of each gesture per engine), each refused

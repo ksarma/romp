@@ -3492,9 +3492,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // all, and the first own-gesture adversary's rows at d9fb76da0), and on a device with a mouse and a touchscreen, a finger's tap
   // during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves (Chromium,
   // touch emulated, that adversary's rows); in the browser at 5288151dd, which brought the read-outs, the first opened 13 of 13 in
-  // each engine (the Files pane and the chat), the second 13 of 13, the device's tap and click 5 of 5 each and the pen's press
-  // during which the mouse moves 0 of 5, each as the same probe read it at bef9ff8fc but the pen's, 5 of 5 there. The press
-  // held while the focus moves out of the viewer's window, and a tap whose pointerup the focus moves at, paid the retired
+  // each engine (the Files pane and the chat), the second 13 of 13 in Chromium, the device's tap and click 5 of 5 each and the
+  // pen's press during which the mouse moves 0 of 5, each as the same probe read it at bef9ff8fc but the pen's, 5 of 5 there. The
+  // press held while the focus moves out of the viewer's window, and a tap whose pointerup the focus moves at, paid the retired
   // blur rule's cost and pay the allowlist's the same (round 19's measurement: a mouse press held on the control or on
   // the picture while the page or a peer frame moves the focus, Chromium 18 of 18, Firefox 14 of 14 and WebKit 18 of 18
   // for each mover, a pen's press held so, Chromium 14 of 14, the focus moved at a mouse click's own pointerdown, 18, 14
