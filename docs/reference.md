@@ -3217,11 +3217,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   restart with several such ends pays the first walk and a later walk for
   each further one. An end whose resolution could not be made (below) adds
   no walk while its fault lasts, only one read of each place the walk
-  could not read per cycle, and is resolved once, at the first cycle after
-  one of those places reads again, where it is one such end; the two faults
-  that read cannot see, a listing that fails past its first entry and a
-  resolution of the place's real path that fails while its lstat answers,
-  each have their end resolved at each cycle while they last. No end is
+  could not read per cycle (and, for a place whose read fails, the
+  session's transcript, resolved once per cycle, then, for a place in a
+  subagents tree in that transcript's project directory, an lstat of each
+  directory from the subagents directory down to the place's parent,
+  stopping at the first that does not read as a real directory, with,
+  first, a stat of a sibling session directory when the place's read
+  failed with ELOOP or EBADF), and is resolved once, at the first cycle
+  after one of those places reads again or the walk no longer reaches it,
+  where it is one such end; the two faults that read cannot see, a listing
+  that fails past its first entry and a resolution of the place's real
+  path that fails while its lstat answers, each have their end resolved at
+  each cycle while they last. No end is
   queued for an agent none of
   those names: a Workflow run's agents when the object holds no roster for
   the run (one the report retires before any progress frame, or one that
@@ -3247,16 +3254,25 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   could not be read, for a reason other than absence, as under a session
   directory that cannot be searched) releases nothing and is remembered,
   and the resolution is made again at the first cycle at which one of the
-  places the walk could not read reads again, each read once per cycle
-  until then with no walk (`_release_ended_agents` in `kernel/kernel.py`),
-  so its records are released once the fault clears, with their
-  checkpoint document, unless a cycle drains the agent's start first; the
-  two roads that release a remembered file with no resolution, an end
-  remembered while nothing was held and an owed release's pay, still read
-  a fault on the file's path as the file gone and drop its records with no
-  document, a residual this change does not close (both roads, and the
-  deferral, are cases of `AgentEnd` in
-  `tests/test_record_cache_agent_end.py`);
+  places the walk could not read reads again or the walk no longer reaches
+  it (a place outside the project directory the session's transcript now
+  lies in, or, in a subagents tree, a link, a file or nothing at or below
+  the subagents directory on its way there, or a sibling session directory
+  the walk does not take for a directory), each read once per cycle until
+  then with no walk (`_release_ended_agents` in `kernel/kernel.py`), so
+  its records are released once the fault clears, with their checkpoint
+  document, unless a cycle drains the agent's start first; the two roads
+  that release a remembered file with no resolution, an end remembered
+  while nothing was held, for an agent with no end
+  waiting on a fault (an end that waits on a fault forgets the remembered
+  one and carries the agent's release), and an owed release's pay, still
+  read a fault on the file's path as the file gone and drop its records
+  with no document, a residual this change does not close, and the pay
+  reaches an agent with an end waiting on a fault too: an owed release
+  that finds nothing held is remembered as above while that end waits, so
+  a read that holds the file while a fault covers its path is dropped
+  with no document (both roads, and the deferral, are cases of `AgentEnd`
+  in `tests/test_record_cache_agent_end.py`);
   a whole re-read of a file after its release was taken is held whole
   until the count cap, the byte budget or a quiescent drop reaches it,
   unless a later end of the agent comes after that release: one that finds

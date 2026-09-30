@@ -18,7 +18,9 @@ holds the file is remembered and the file is released at the first cycle after a
 recordable cursor for is released without a document and read whole at its next fold; a file that no longer exists is
 released with nothing written. An end whose file lookup could not be made (a place the walk needed could not be read)
 releases nothing and is remembered, and the lookup is made again at the first cycle at which one of the places the walk
-could not read reads again, each read once per cycle until then with no walk.
+could not read reads again or the walk no longer reaches it, each read once per cycle until then with no walk (with the
+session's transcript path for a place whose read fails, and the directories from the subagents directory down to a place
+in a subagents tree whose read fails).
 
 Synthetic data only: a notes-api project under a temp root, placeholder ids, a private sid, hostname TESTHOST.
 """
@@ -834,11 +836,14 @@ class AgentEnd(unittest.TestCase):
     # place the walk needed could not be read, for a reason other than absence) is not "no file for the agent": nothing is
     # released, the end is remembered with the places the walk could not read (_AGENT_ENDED_FAULTED), and it is looked up
     # again at the first cycle at which one of them reads again, by the read the walk makes of it, one per place per cycle
-    # and no walk until then (_unread_place_reads). The code before the change passed no faults list: with no resolution
-    # standing it read the bare None as no file and gave the end up, counted nowhere and not looked up again after the fault
-    # cleared; with one standing it released under the fault, where em.release_entry's os.path.exists read the fault as the
-    # file gone and popped the records without their checkpoint document. Each fault is a real EACCES (skipped as root,
-    # whom permission bits do not bind), restored inside the case, since a cleanup runs after tearDown removed the tree.
+    # (with the session's transcript path for a place whose read fails and the directories from the subagents directory
+    # down to a place in a tree whose read fails, the cases below that say a place is read as the walk reads it) and no
+    # walk until then (_unread_place_reads). The code before the change passed no faults list: with no resolution
+    # standing it read the bare None as no file and gave the end up, counted nowhere and not looked up again after the
+    # fault cleared; with one standing it released under the fault, where em.release_entry's os.path.exists read the
+    # fault as the file gone and popped the records without their checkpoint document. Each fault is a real EACCES
+    # (skipped as root, whom permission bits do not bind), restored inside the case, since a cleanup runs after tearDown
+    # removed the tree.
 
     @contextlib.contextmanager
     def _unreadable(self, *dirs, mode=0o000):
@@ -1005,8 +1010,10 @@ class AgentEnd(unittest.TestCase):
         """The own subagents directory at mode 000: its lstat succeeds (its parent can be searched) while its listing and
         the lstat of the file in it are refused. The walk excludes the directory for its listing and the file for its
         lstat, and each cycle under the fault reads the directory by its lstat and its listing's first entry and the file
-        by its lstat, with no walk; the first cycle after the clear walks once and releases. Red under a mutant that reads
-        a directory by its lstat alone: the directory reads at every faulted cycle, and the end is walked at each."""
+        by its lstat, then, that read failing, the tree's root on the walk's way to the file by one more lstat (the
+        directory itself, a real one, so the walk reaches the file), with no walk; the first cycle after the clear walks
+        once and releases. Red under a mutant that reads a directory by its lstat alone: the directory reads at every
+        faulted cycle, and the end is walked at each."""
         own = os.path.dirname(self.agent)
         size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
         with self._unreadable(own):
@@ -1019,8 +1026,8 @@ class AgentEnd(unittest.TestCase):
             for n in (1, 2):
                 with self._recording() as got:
                     km._begin_checkpoint_cycle()
-                self.assertEqual(got, {"lstat": [own, self.agent], "stat": [], "scandir": [own], "walks": 0},
-                                 "faulted cycle %d: each place read once and no walk" % n)
+                self.assertEqual(got, {"lstat": [own, self.agent, own], "stat": [], "scandir": [own], "walks": 0},
+                                 "faulted cycle %d: each place read once, the root on the way to the file, and no walk" % n)
             self._held_unwritten_nothing(self.agent, size, "under the fault")
         with self._recording() as got:
             km._begin_checkpoint_cycle()
@@ -1056,6 +1063,41 @@ class AgentEnd(unittest.TestCase):
             km._begin_checkpoint_cycle()
         self.assertEqual(got["walks"], 1, "looked up again once the entry reads")
         self._released_with_its_document(path, size)
+
+    def test_a_project_directory_entry_replaced_by_a_looping_link_answers_its_own_read_so_its_end_is_looked_up(self):
+        """A sibling session directory reached through a link whose target lies in a directory at mode 000: the walk's
+        os.stat of the entry fails and the end is remembered with the entry. The link is then replaced by a link to itself:
+        the entry's os.stat reads ELOOP, which the walk takes for not a directory and the place read answers the same
+        way, so the next cycle looks the end up, and the walk, finding no file, releases nothing. Red under a mutant that
+        drops the entry's _REG_MISSING_ERRNOS answer: the read falls through to the transcript, whose project directory
+        holds the entry, so the place stays lasting and no walk is made."""
+        proj = os.path.dirname(self.leaf)
+        away = os.path.join(self.root, "elsewhere")
+        target = os.path.join(away, SIB_SID)
+        os.makedirs(os.path.join(target, "subagents"))
+        link = os.path.join(proj, SIB_SID)
+        os.symlink(target, link)
+        path = os.path.join(link, "subagents", "agent-%s.jsonl" % AID3)
+        _append(path, _agent_lines(AID3, 0, 40))
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        with self._unreadable(away):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((link, "entry"),)},
+                             "precondition: remembered with the entry")
+            os.unlink(link)
+            os.symlink(link, link)
+            with self.assertRaises(OSError, msg="precondition: the entry's os.stat fails") as cm:
+                os.stat(link)
+            self.assertEqual(cm.exception.errno, errno.ELOOP, "precondition: the entry's os.stat reads ELOOP")
+            faults, excluded = [], []
+            self.assertEqual((km._subagent_file_walk(self.leaf, AID3, [], faults, [], excluded), faults, excluded),
+                             (None, [], []), "precondition: the walk takes the looping entry for not a directory")
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual((got["walks"], getattr(km, "_AGENT_ENDED_FAULTED", {})), (1, {}),
+                             "the next cycle looks the end up, one walk, and forgets it")
+            self.assertEqual((self._weight(path), self._stat("released"), self._stat("releaseLost")),
+                             (size, NOTHING_RELEASED, 0), "nothing released or given up: the walk found no file")
 
     def _sibling_agent(self, proj):
         """The third agent's file under a sibling session directory's tree in `proj`, where only the walk's project
@@ -1137,6 +1179,299 @@ class AgentEnd(unittest.TestCase):
             km._begin_checkpoint_cycle()                                 # the sibling reads; the own tree does not
             self._released_with_its_document(path, size)
 
+    # A place whose read fails is lasting only where the walk the lookup makes now reaches it (fork PR 882's focused
+    # re-check, condition 1: every error the place read takes as lasting is one the walk faults on). The walk lists the
+    # project directory of the session's transcript and no other, so a project directory, an entry or a place in a tree
+    # outside that one is not reached. Inside it, the walk enters a sibling session directory only when its os.stat reads
+    # a directory (_REG_MISSING_ERRNOS read as not one), and goes below a tree's root only through real directories, never
+    # a link, while an os.lstat of the place follows a link at every component but the last. Each case below changes what
+    # lies on the way to a place the end's walk could not read, or where the session's transcript lies, so that the walk
+    # no longer reaches the place and answers, while the place's own read still fails. Under a read that takes every
+    # failed place as lasting (no transcript read, no read of the way), the end stays until the table's bound gives it up
+    # and is counted in releaseLost: each case whose name says a place is read as the walk reads it is red there at its
+    # last step (no walk, the end kept), and the control holds there too. The unit pin
+    # test_a_failed_place_answers_where_the_transcript_lies_in_another_project_and_waits_with_no_transcript_or_a_raise is
+    # red there at each kind's first other-project answer.
+
+    def _read_fails(self, p, kind="tree"):
+        """Whether the place's own read fails for a reason other than absence: the read _unread_place_reads makes first,
+        for a place in a tree an os.lstat and the first entry of its listing for a directory there, for the project
+        directory an os.stat and the first entry of its listing, and for an entry of it an os.stat, _REG_MISSING_ERRNOS
+        read as not a directory."""
+        try:
+            if stat.S_ISDIR((os.lstat if kind == "tree" else os.stat)(p).st_mode) and kind != "entry":
+                with os.scandir(p) as it:
+                    next(it, None)
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+        except OSError as e:
+            return not (kind == "entry" and e.errno in (errno.EBADF, errno.ELOOP))
+        return False
+
+    def _looked_up_at_the_next_cycle(self, aid, places, path, size, kind="tree"):
+        """Each of the end's places (of `kind`) still fails its own read, the walk the lookup makes now answers (no file,
+        no fault), and the next cycle looks the end up: one walk, the end forgotten, nothing released or given up, and
+        the records still held, since the walk found no file to release."""
+        self.assertEqual([self._read_fails(p, kind) for p in places], [True] * len(places),
+                         "precondition: each place's own read still fails")
+        faults, excluded = [], []
+        self.assertEqual((km._subagent_file_walk(self.leaf, aid, [], faults, [], excluded), faults, excluded),
+                         (None, [], []), "precondition: the walk the lookup makes now answers, with no file and no fault")
+        with self._recording() as got:
+            km._begin_checkpoint_cycle()
+        self.assertEqual((got["walks"], getattr(km, "_AGENT_ENDED_FAULTED", {})), (1, {}),
+                         "the next cycle looks the end up, one walk, and forgets it")
+        self.assertEqual((self._weight(path), self._stat("released"), self._stat("releaseLost")),
+                         (size, NOTHING_RELEASED, 0), "nothing released or given up: the walk found no file")
+
+    def _sibling_entry_no_longer_a_directory(self, replace):
+        """A sibling session directory reached through a link, the agent's file under its tree, the link's target at mode
+        000: the walk reads the entry by os.stat, a directory, and excludes the tree, whose root's lstat fails, so the end
+        is remembered with that root, a place in a subagents tree. `replace(link)` then leaves the entry something the
+        walk's os.stat takes for not a directory, and the walk enters nothing there."""
+        proj = os.path.dirname(self.leaf)
+        target = os.path.join(self.root, "elsewhere", SIB_SID)
+        os.makedirs(os.path.join(target, "subagents"))
+        link = os.path.join(proj, SIB_SID)
+        os.symlink(target, link)
+        path = os.path.join(link, "subagents", "agent-%s.jsonl" % AID3)
+        _append(path, _agent_lines(AID3, 0, 40))
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        place = os.path.join(link, "subagents")
+        with self._unreadable(target):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((place, "tree"),)},
+                             "precondition: remembered with the sibling's tree root")
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual(got, {"lstat": [place], "stat": [], "scandir": [], "walks": 0},
+                             "precondition: a cycle under the fault reads the root once (EACCES, no read on the way to a "
+                             "root, and no os.stat of the entry for that errno) and makes no walk")
+            replace(link)
+            self._looked_up_at_the_next_cycle(AID3, (place,), path, size)
+
+    def test_a_sibling_session_directory_replaced_by_a_looping_link_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 1 (ELOOP): the link replaced by a link to itself. The walk's os.stat of the entry reads ELOOP, which it
+        takes for not a directory, while the lstat of the place reads the same ELOOP through the entry."""
+        def loop(link):
+            os.unlink(link)
+            os.symlink(link, link)
+        self._sibling_entry_no_longer_a_directory(loop)
+
+    def test_a_sibling_session_directory_whose_stat_reads_ebadf_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 1 (EBADF, by mock: a FUSE filesystem can answer a lookup so, a local one does not): every os.stat and
+        os.lstat that resolves the entry reads EBADF, which the walk's os.stat of the entry takes for not a directory."""
+        real = {n: getattr(os, n) for n in ("stat", "lstat")}
+
+        def ebadf(link):
+            def call(n):
+                def f(p, *a, **k):
+                    s = os.fspath(p) if isinstance(p, (str, os.PathLike)) else None
+                    if s is not None and (s == link and n == "stat" or s.startswith(link + os.sep)):
+                        raise OSError(errno.EBADF, "the lookup answered EBADF", s)
+                    return real[n](p, *a, **k)
+                return f
+            for n in real:
+                setattr(os, n, call(n))
+        try:
+            self._sibling_entry_no_longer_a_directory(ebadf)
+        finally:
+            for n, f in real.items():
+                setattr(os, n, f)
+
+    def test_an_own_session_directory_left_looping_by_a_clear_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 1 through a /clear: the session directory replaced by a link to itself before the end, so the walk's lstat
+        of the own subagents directory reads ELOOP, a fault, and the end is remembered with that place. While the session's
+        transcript stays the same the place is lasting and no walk is made. A /clear then moves the session to a new
+        transcript in the same project: the old session directory is a sibling to the walk from it, read by os.stat, whose
+        ELOOP it takes for not a directory. Red under a mutant that answers ELOOP for the own session directory too: the
+        cycles before the /clear walk at each."""
+        proj = os.path.dirname(self.leaf)
+        sess = os.path.join(proj, SID)
+        own = os.path.join(sess, "subagents")
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
+        os.rename(sess, os.path.join(self.root, "moved-session"))
+        os.symlink(sess, sess)                                           # the session directory a link to itself
+        km._begin_checkpoint_cycle()                                     # the end's cycle: the own lstat reads ELOOP
+        self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID): ((own, "tree"),)},
+                         "precondition: remembered with the own subagents directory")
+        for n in (1, 2):
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual(got, {"lstat": [own], "stat": [], "scandir": [], "walks": 0},
+                             "cycle %d before the /clear: the own place is lasting (its session directory the own one, "
+                             "not read by os.stat), and no walk" % n)
+        self.leaf = os.path.join(proj, "11111111-2222-3333-4444-a9e7e1d0c0e2.jsonl")   # the transcript after the /clear,
+        _append(self.leaf, [{"type": "user", "uuid": "11111111-2222-3333-4444-000000000003", "sessionId": SID,   # which
+                             "timestamp": "2026-09-24T10:30:00.000Z",                   # setUp's _path_of stub answers
+                             "message": {"role": "user", "content": "Start the notes-api migration review."}}])
+        self._looked_up_at_the_next_cycle(AID, (own,), self.agent, size)
+
+    def _nested_place_behind_a_link(self, replace):
+        """The workflow agent's directory (workflows/wf_notesapi01) at mode 000: the walk excludes it for its listing and
+        the agent's file in it for its lstat, and the end is remembered with both. Two cycles under the fault read both as
+        lasting and make no walk, the directories on the way to them being real. `replace(own, moved)` then moves a
+        directory on the way out of the tree (to `moved`) and leaves a link in its place, which the walk never goes
+        through, while an lstat of each place follows it."""
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        own = os.path.dirname(self.agent)
+        wf = os.path.dirname(self.wf_agent)
+        size = self._ended_with_its_file_resolved(WF_AID, self.wf_agent, standing=False)
+        moved = os.path.join(self.root, "moved")
+        os.chmod(wf, 0o000)
+        try:
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, WF_AID): ((wf, "tree"), (self.wf_agent, "tree"))},
+                             "precondition: remembered with the workflow directory and the file in it")
+            for n in (1, 2):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                self.assertEqual(got["walks"], 0, "precondition: faulted cycle %d makes no walk" % n)
+            replace(own, moved)
+            self._looked_up_at_the_next_cycle(WF_AID, (wf, self.wf_agent), self.wf_agent, size)
+        finally:                                                         # wherever the workflow directory is now
+            for d in (wf, os.path.join(moved, "wf_notesapi01"), os.path.join(moved, "workflows", "wf_notesapi01")):
+                with contextlib.suppress(OSError):
+                    os.chmod(d, 0o755)
+
+    def test_a_directory_below_a_trees_root_replaced_by_a_looping_link_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 2: the workflows directory moved out and a link to itself left in its place."""
+        def loop(own, moved):
+            os.rename(os.path.join(own, "workflows"), moved)
+            os.symlink(os.path.join(own, "workflows"), os.path.join(own, "workflows"))
+        self._nested_place_behind_a_link(loop)
+
+    def test_a_directory_below_a_trees_root_replaced_by_a_link_to_it_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 2: the workflows directory moved out and a link to it left in its place, so the workflow directory's lstat
+        answers through the link and its listing is still refused, and the file's lstat still reads EACCES."""
+        def link(own, moved):
+            os.rename(os.path.join(own, "workflows"), moved)
+            os.symlink(moved, os.path.join(own, "workflows"))
+        self._nested_place_behind_a_link(link)
+
+    def _transcript_in_another_project(self):
+        """The session's transcript now lies in another project directory, which holds nothing else: the walk the lookup
+        makes lists that directory and no other."""
+        other = os.path.join(self.root, "projects", "-home-TESTHOST-notes-web")
+        os.makedirs(other)
+        self.leaf = os.path.join(other, SID + ".jsonl")                  # which setUp's _path_of stub answers
+        _append(self.leaf, [{"type": "user", "uuid": "11111111-2222-3333-4444-000000000004", "sessionId": SID,
+                             "timestamp": "2026-09-24T10:30:00.000Z",
+                             "message": {"role": "user", "content": "Continue the notes-api review from the web checkout."}}])
+
+    def test_a_project_directory_the_session_no_longer_lists_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """The project directory at mode 300, so the walk excludes it for its listing, and the third agent's end, its file
+        under a sibling's tree, is remembered with it; a cycle under the fault reads it by its os.stat and its listing and
+        makes no walk. The session's transcript then lies in another project directory, the one the walk lists now, so the
+        next cycle looks the end up. Red under a mutant that reads the transcript for a place in a tree alone, and under
+        one that keeps a project directory lasting whatever the transcript."""
+        proj = os.path.dirname(self.leaf)
+        path = self._sibling_agent(proj)
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        with self._unreadable(proj, mode=0o300):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((proj, "project"),)},
+                             "precondition: remembered with the project directory")
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual(got, {"lstat": [], "stat": [proj], "scandir": [proj], "walks": 0},
+                             "precondition: a cycle under the fault reads the project directory once and makes no walk")
+            self._transcript_in_another_project()
+            self._looked_up_at_the_next_cycle(AID3, (proj,), path, size, kind="project")
+
+    def test_a_project_directory_entry_the_session_no_longer_lists_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """A sibling session directory reached through a link whose target lies in a directory at mode 000, so the walk's
+        os.stat of the entry fails and excludes it, and the third agent's end, its file under that sibling's tree, is
+        remembered with the entry; a cycle under the fault reads the entry by one os.stat and makes no walk. The session's
+        transcript then lies in another project directory, whose entries are the ones the walk reads now, so the next
+        cycle looks the end up. Red under a mutant that reads the transcript for a place in a tree alone, and under one
+        that keeps an entry lasting whatever the transcript."""
+        proj = os.path.dirname(self.leaf)
+        away = os.path.join(self.root, "elsewhere")
+        target = os.path.join(away, SIB_SID)
+        os.makedirs(os.path.join(target, "subagents"))
+        link = os.path.join(proj, SIB_SID)
+        os.symlink(target, link)
+        path = os.path.join(link, "subagents", "agent-%s.jsonl" % AID3)
+        _append(path, _agent_lines(AID3, 0, 40))
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        with self._unreadable(away):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((link, "entry"),)},
+                             "precondition: remembered with the entry, a project-directory entry")
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual(got, {"lstat": [], "stat": [link], "scandir": [], "walks": 0},
+                             "precondition: a cycle under the fault reads the entry once and makes no walk")
+            self._transcript_in_another_project()
+            self._looked_up_at_the_next_cycle(AID3, (link,), path, size, kind="entry")
+
+    def test_a_directory_on_the_way_to_a_place_whose_read_fails_there_keeps_the_place_unreadable_with_no_walk(self):
+        """The control of road 2: the workflow directory at mode 000, the end remembered with it and the file in it, then
+        the session directory at mode 000 as well, so each place's read fails and so does the lstat of the tree's root on
+        the walk's way to it (EACCES), a fault the walk's own lstat of that root meets too. Each cycle keeps both places
+        unreadable and makes no walk. Red under a mutant that takes a failed read on the way for a way the walk does not
+        go: the first such cycle walks."""
+        wf = os.path.dirname(self.wf_agent)
+        own = os.path.dirname(self.agent)
+        size = self._ended_with_its_file_resolved(WF_AID, self.wf_agent, standing=False)
+        with self._unreadable(wf):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, WF_AID): ((wf, "tree"), (self.wf_agent, "tree"))},
+                             "precondition: remembered with the workflow directory and the file in it")
+            with self._unreadable(os.path.dirname(own)):
+                for n in (1, 2):
+                    with self._recording() as got:
+                        km._begin_checkpoint_cycle()
+                    self.assertEqual(got["walks"], 0, "cycle %d: each place's read fails, and the root's on the way to it, "
+                                                      "so no walk" % n)
+                self._held_unwritten_nothing(self.wf_agent, size, "under the fault")
+
+    def test_a_failed_place_answers_where_the_transcript_lies_in_another_project_and_waits_with_no_transcript_or_a_raise(self):
+        """The answers made before the way to a place is read, for each kind of place, each place's read failing (EACCES):
+        the project directory at mode 300 (its listing refused), an entry of it (the own session directory) under the
+        project directory at mode 600 (its os.stat refused), and the own subagents directory under the session directory
+        at mode 000 (its os.lstat refused). Each is lasting from the session's own transcript; each answers when the
+        transcript lies in another project directory, since the walk lists that one, and one of the two other directories
+        has a name the session's own extends (-home-TESTHOST-notes, against the own -home-TESTHOST-notes-api); and each
+        stays lasting when the session has no transcript or its resolution raises, neither of which says where the walk
+        goes (a lookup made then would give the end up while the place still cannot be read). Red under a mutant that
+        answers either of those two, under one that reads the transcript for a place in a tree alone, and under one that
+        takes a place in a tree as inside the project directory by its name without the separator (p.startswith(project)):
+        the tree's subcase for -home-TESTHOST-notes, whose path is a prefix of the place's."""
+        proj = os.path.dirname(self.leaf)
+        sess = os.path.join(proj, SID)
+        own = os.path.join(sess, "subagents")
+        elsewhere = os.path.join(self.root, "projects", "-home-TESTHOST-notes-web", SID + ".jsonl")
+        prefix = os.path.join(self.root, "projects", "-home-TESTHOST-notes", SID + ".jsonl")   # a name the own extends
+        own_transcript = km._path_of
+
+        def raises(sid, now=None):
+            raise RuntimeError("the session registry could not be read")
+        for p, kind, refused, mode in ((proj, "project", proj, 0o300), (sess, "entry", proj, 0o600),
+                                       (own, "tree", sess, 0o000)):
+            with self.subTest(kind=kind), self._unreadable(refused, mode=mode):
+                km._path_of = own_transcript                             # restored by tearDown
+                self.assertTrue(self._read_fails(p, kind), "precondition: the place's own read fails")
+                self.assertFalse(km._unread_place_reads(p, kind, SID), "control: lasting from the session's own transcript")
+                for other in (elsewhere, prefix):
+                    km._path_of = lambda sid, now=None, other=other: other
+                    self.assertTrue(km._unread_place_reads(p, kind, SID), "another project directory (%s): the walk lists "
+                                    "that one" % os.path.basename(os.path.dirname(other)))
+                for why, stub in (("no transcript", lambda sid, now=None: None), ("a resolution that raises", raises)):
+                    km._path_of = stub
+                    self.assertFalse(km._unread_place_reads(p, kind, SID), "%s: the fault lasts" % why)
+
+    def test_a_trees_root_replaced_by_a_link_to_it_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 2 at the root: the own subagents directory moved out and a link to it left in its place. The walk takes
+        a linked subagents directory for no tree and searches nothing under it. Red under a mutant that reads the
+        directories on the way from below the root."""
+        def link(own, moved):
+            os.rename(own, moved)
+            os.symlink(moved, own)
+        self._nested_place_behind_a_link(link)
+
     def test_a_faulted_end_forgets_its_unheld_end_so_nothing_pops_the_records_unwritten_under_the_fault(self):
         """An end remembered as unheld, then a read that holds the file, then the agent's second end in a batch whose
         lookup faults. The faulted end carries the agent from then on and the unheld end is forgotten, so the remembered
@@ -1174,12 +1509,14 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._stat("releaseLost"), 1, "the end given up is counted")
         self.assertEqual(err.getvalue().count("recordCache.releaseLost"), 1, "said once on stderr: %r" % err.getvalue())
 
-    # Two roads release a path with no lookup, so the deferral above does not reach them: the remembered unheld releases and
-    # the owed releases' pay (em.checkpoint_pay_owed_releases). Each calls em.release_entry on the path, whose own
-    # os.path.exists answers False under a fault as it does for a file that is gone, and pops the records with no document
-    # (fork PR 913's code, pre-existing). The two cases below are the named witnesses of that residual as it stands; the
-    # held follow-up (only ENOENT and ENOTDIR read as gone, any other error deferring the release) turns them red and
-    # replaces them.
+    # Two roads release a path with no lookup, so the deferral above does not reach them: the remembered unheld releases of
+    # an agent with no faulted end (a faulted end forgets the agent's unheld end, the case above) and the owed releases'
+    # pay (em.checkpoint_pay_owed_releases). Each calls em.release_entry on the path, whose own os.path.exists answers
+    # False under a fault as it does for a file that is gone, and pops the records with no document (fork PR 913's code,
+    # pre-existing). The pay also remembers an owed release it finds absent as unheld while the agent's faulted end waits,
+    # so the unheld release reaches that agent too; its last step is the first case below. The two cases below are the
+    # named witnesses of that residual as it stands; the held follow-up (only ENOENT and ENOTDIR read as gone, any other
+    # error deferring the release) turns them red and replaces them.
 
     def test_residual_an_unheld_end_paid_under_an_unreadable_tree_pops_the_records_without_their_document(self):
         self._end_before_any_read()

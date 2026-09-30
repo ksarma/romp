@@ -15808,7 +15808,7 @@ def _begin_checkpoint_cycle():
     end, against the same room (_release_ended_agents: the cycle's live-set events drained, the owed release of an agent whose
     start that drain carries cancelled while the kernel holds the agent's end, the owed releases paid, the ends an earlier
     cycle saw while nothing was held released again, the ends whose file lookup could not be made looked up again once a
-    place their walk could not read reads again, then the batch's ends).
+    place their walk could not read reads again or the walk no longer reaches it, then the batch's ends).
     The order carries a property: each cycle pays what an earlier cycle deferred before any end that is new to it, so the
     owed quiescent drops and the owed releases are each paid before the batch's ends. They take their writes from one budget,
     each in one step (em.checkpoint_cycle_take), so whichever runs first gets the room when only one document fits. An owed
@@ -15851,9 +15851,12 @@ _AGENT_ENDED_FAULTED = {}           # (sid, agent id) -> ((place, kind), ...) fo
 #                                     walk could not read once, with the kind of read the walk makes of it
 #                                     (_unread_place_kind), oldest first, at most _AGENT_RELEASED_MAX (past it the oldest is
 #                                     given up, counted in releaseLost). Not yet: the end is looked up again at the first cycle
-#                                     at which one of its places reads again (_unread_place_reads, one read per place per cycle
-#                                     until then and no walk), and forgotten when a lookup is made, a start of the agent is
-#                                     drained, or the resolution or the release raises. The pusher thread's alone
+#                                     at which one of its places reads again or the walk no longer reaches it
+#                                     (_unread_place_reads: one read per place per cycle until then, with the session's
+#                                     transcript path for a place whose read fails and the directories from the subagents
+#                                     directory down to a place in a tree whose read fails, and no walk), and forgotten when a
+#                                     lookup is made, a start of the agent is drained, or the resolution or the release
+#                                     raises. The pusher thread's alone
 
 
 def _remember_faulted_end(pair, places):
@@ -15876,21 +15879,40 @@ def _unread_place_kind(p, project):
     return "project" if p == project else "entry" if os.path.dirname(p) == project else "tree"
 
 
-def _unread_place_reads(p, kind):
+def _unread_place_reads(p, kind, sid):
     """Whether the place `p`, which an agent-file walk could not read (_subagent_file's `unread`), reads again, by the read
-    the walk makes of it (`kind`, _unread_place_kind): the project directory by one os.stat and the first entry of its
-    listing; a project-directory entry by one os.stat, _REG_MISSING_ERRNOS read as not a directory, as the walk reads
-    them; a place in a subagents tree by one os.lstat, and a directory there by the first entry of its listing too, since
-    a directory whose own lstat succeeds can still refuse its listing (its read bit off, EMFILE); ENOENT and ENOTDIR are
-    absence. True when the read answers, with what is there or with nothing there; False on any other error: the fault
-    lasts. Two faults are not seen here, and the end of each is looked up again at each cycle while it lasts
-    (tests/test_record_cache_agent_end.py AgentEnd, a residual witness each): a listing that fails only past its first
-    entry, and a strict os.path.realpath of the place (_find_agent_file's resolution of a tree's root or a candidate)
-    that fails while the place's own lstat answers, which on Linux takes a race or a failure the kernel's own resolution
-    of the path does not meet, since an lstat of the whole path reads every component the realpath reads."""
+    the walk makes of it (`kind`, _unread_place_kind), for an end of the session `sid`: the project directory by one
+    os.stat and the first entry of its listing; a project-directory entry by one os.stat, _REG_MISSING_ERRNOS read as not
+    a directory, as the walk reads them; a place in a subagents tree by one os.lstat, and a directory there by the first
+    entry of its listing too, since a directory whose own lstat succeeds can still refuse its listing (its read bit off,
+    EMFILE); ENOENT and ENOTDIR are absence. True when the read answers, with what is there or with nothing there; False
+    on any other error, the fault lasting, unless the walk the lookup makes now does not reach the place: True then, so
+    the end is looked up. Where that walk goes is read only once the place's read has failed, from the session's
+    transcript as the lookup resolves it (_path_of). The walk lists that transcript's project directory and no other, so
+    a project directory that is not it, an entry of another directory and a place in a tree outside it are not reached.
+    Inside it, a place in a subagents tree can still lie off the walk's way, since its os.lstat follows a link at every
+    component of the path but the last, while the walk enters a sibling session directory only when its os.stat reads a
+    directory and goes below a tree's root only through real directories, never a link. So for such a place the way the
+    walk would take to it is read: an os.lstat of each directory from the tree's root down to the place's parent, where
+    a link, a file or nothing is a way the walk does not go and any other error a fault the walk meets there too; and
+    first, when the failure was ELOOP or EBADF and the place's session directory is not the session's own, an os.stat of
+    that directory, where _REG_MISSING_ERRNOS or anything but a directory is one the walk does not enter (an lstat of the
+    place resolves that directory as the os.stat does, so the two disagree only on those errnos; the own session
+    directory is reached by the walk's own lstat, whose ELOOP is a fault). A session with no transcript and a resolution
+    that raises say nothing of where the walk goes, so the fault lasts: an answer there would have the lookup give the
+    end up while the place still cannot be read, uncounted with no transcript and counted on a raise, where the wait
+    keeps it and looks it up once a place reads again (tests/test_record_cache_agent_end.py AgentEnd
+    test_a_failed_place_answers_where_the_transcript_lies_in_another_project_and_waits_with_no_transcript_or_a_raise). A
+    read that took every failed place as lasting would keep an end whose places the walk no longer reaches until the
+    table's bound gave it up (AgentEnd, the cases whose names say a place is read as the walk reads it, each red at its
+    last step under that read). Two faults are not seen here, and the end of each is looked up again at each cycle while
+    it lasts (AgentEnd, a residual witness each): a listing that fails only past its first entry, and a strict
+    os.path.realpath of the place (_find_agent_file's resolution of a tree's root or a candidate) that fails while the
+    place's own lstat answers, which on Linux takes a race or a failure the kernel's own resolution of the path does not
+    meet, since an lstat of the whole path reads every component the realpath reads."""
     try:
         if kind == "tree":
-            listed = stat.S_ISDIR(os.lstat(p).st_mode)     # the walk's own lstat, which never follows a link
+            listed = stat.S_ISDIR(os.lstat(p).st_mode)     # the walk's own lstat, which never follows a link at the place
         else:
             os.stat(p)                                     # the project directory or an entry, through a link as the walk
             listed = kind == "project"                     #  reads them; only the project directory is listed
@@ -15901,7 +15923,43 @@ def _unread_place_reads(p, kind):
     except (FileNotFoundError, NotADirectoryError):
         return True                                        # nothing there now: the walk reads that as it reads any absence
     except OSError as e:
-        return kind == "entry" and e.errno in _REG_MISSING_ERRNOS   # an entry the walk reads as not a directory
+        if kind == "entry" and e.errno in _REG_MISSING_ERRNOS:
+            return True                                    # an entry the walk reads as not a directory
+        failed = e.errno
+    try:                                                   # a place whose read failed: lasting only where the walk from the
+        path = _path_of(sid)                               #  session's transcript now reaches it
+    except Exception:
+        return False                                       # nothing says where the walk goes: the fault lasts
+    if not path:
+        return False                                       # no transcript: likewise
+    project = str(Path(str(path)).parent)
+    if kind == "project":
+        return p != project                                # the walk lists that transcript's project directory, no other
+    if kind == "entry":
+        return os.path.dirname(p) != project               # and reads the entries of that one alone
+    if not p.startswith(project + os.sep):
+        return True                                        # a place in a tree outside the project the walk lists
+    parts = p[len(project) + 1:].split(os.sep)
+    if len(parts) < 2 or parts[1] != "subagents":
+        return False                                       # not a place in the walk's trees: its own read decides
+    entry = os.path.join(project, parts[0])
+    if failed in _REG_MISSING_ERRNOS and entry != str(_subagents_dir(path).parent):
+        try:                                               # a sibling session directory, read by os.stat as the walk reads it
+            if not stat.S_ISDIR(os.stat(entry).st_mode):
+                return True
+        except OSError as e:
+            return e.errno in _REG_MISSING_ERRNOS          # not a directory to the walk, which enters nothing; else its fault
+    d = os.path.join(entry, "subagents")
+    for name in parts[2:]:                                 # each directory from the tree's root down to the place's parent
+        try:
+            if not stat.S_ISDIR(os.lstat(d).st_mode):
+                return True                                # a link or a file on the way: the walk never goes through it
+        except (FileNotFoundError, NotADirectoryError):
+            return True
+        except OSError:
+            return False                                   # the walk's own read of that directory fails there too
+        d = os.path.join(d, name)
+    return False
 
 
 def _release_end(pair, popped):
@@ -15910,9 +15968,10 @@ def _release_end(pair, popped):
     path adding it to `popped`. "faulted" when the lookup could not be made: nothing is released, the end is remembered
     with the places its walk could not read (_AGENT_ENDED_FAULTED) and its unheld end forgotten, so the unheld releases,
     which release a path with no lookup, do not take the file for this end while its tree cannot be read, where
-    em.release_entry's os.path.exists would read a fault as the file gone and pop its records unwritten; a standing
-    resolution answered under such a place defers the same way. None when the session has no transcript or the agent no
-    file, or when the resolution or the release raised (given up, counted in releaseLost and written to stderr). Every
+    em.release_entry's os.path.exists would read a fault as the file gone and pop its records unwritten, unless an owed
+    release of the pair paid as absent remembers the end as unheld again (a residual _release_ended_agents states); a
+    standing resolution answered under such a place defers the same way. None when the session has no transcript or the
+    agent no file, or when the resolution or the release raised (given up, counted in releaseLost and written to stderr). Every
     outcome but "faulted" forgets a faulted end of the pair; "absent" remembers the end as unheld, and every other
     outcome forgets an unheld end of the pair except a None for a session with no transcript or an agent with no file,
     which leaves it (a raise forgets it)."""
@@ -15996,8 +16055,9 @@ def _release_ended_agents():
     - The releases still owed are paid (em.checkpoint_pay_owed_releases). An owed end whose release is taken now is marked
       taken, and every remembered end for that path is forgotten. When any was paid, an owed end whose release was not
       taken and is no longer owed (paid as absent or lost, raised, given up at the owed table's bound, forgotten at a
-      checkpoint-directory rebind, or cancelled above) is dropped, and one paid as absent is remembered as unheld; one left
-      in the table is still never counted, since its entry was not popped.
+      checkpoint-directory rebind, or cancelled above) is dropped, and one paid as absent is remembered as unheld, a
+      faulted end of the pair left as it is (the residual below); one left in the table is still never counted, since its
+      entry was not popped.
     - Each end remembered as unheld (_AGENT_ENDED_UNHELD: an end seen while the cache held nothing for the file) that this
       batch does not speak for is released again, oldest first: still absent, it stays remembered; taken, it is recorded as
       a taken release (a start a later cycle drains while _AGENT_RELEASED still holds the end is a false end); deferred or
@@ -16006,9 +16066,14 @@ def _release_ended_agents():
       after the read.
     - Each faulted end (_AGENT_ENDED_FAULTED: an end whose file lookup could not be made, below) that this batch does not
       speak for waits for one of the places its lookup's walk could not read to read again: each is read once per cycle,
-      by the read the walk makes of it (_unread_place_reads), until one answers, and no walk is made until then. Once one
-      answers, the end is looked up again and released as a batch's end is (below), or, when that lookup could not be made
-      either, remembered with the places its walk could not read this time. So a fault's end is looked up at the first
+      by the read the walk makes of it (_unread_place_reads), until one answers, and no walk is made until then. A place
+      whose read fails answers too where the walk the lookup makes now no longer reaches it (a place outside the project
+      directory of the session's current transcript, or, for a place in a subagents tree, a link, a file or nothing at or
+      below the subagents directory on its way there, or a sibling session directory the walk does not take for a
+      directory), which the same call reads only on that failure; a session with no transcript, or a resolution of it
+      that raises, leaves the fault lasting. Once one answers, the end is looked up again and released as a batch's end
+      is (below), or, when that lookup could not be made either, remembered with the places its walk could not read this
+      time. So a fault's end is looked up at the first
       cycle after the fault clears, not at every cycle while it lasts; what the wait costs is the faulted-end entry of
       _subagent_tree_memo_report's docstring. A place whose read answers while the walk's read of it still fails (a
       listing that fails past its first entry, or a strict realpath of the place that fails while its lstat answers:
@@ -16028,19 +16093,29 @@ def _release_ended_agents():
       beside em.RECORD_CACHE_BUDGET_FLOOR_BYTES). An end whose file lookup could not be made (_subagent_file reported a
       fault: the file found nowhere while a place the walk needed could not be read for a reason other than absence, or a
       standing resolution answered under such a place) releases nothing, is remembered as faulted (above), and forgets
-      the agent's unheld end, so the unheld releases do not take the file for this end while its tree cannot be read.
+      the agent's unheld end, so the unheld releases do not take the file for this end while its tree cannot be read,
+      unless the owed releases' pay remembers it again (the residual below).
       Not yet: the code before this change passed no faults list, so it read the lookup's bare None as no file for the
       agent and gave the end up, counted nowhere and never looked up again after the fault cleared, and with a resolution
       standing it released under the fault, where em.release_entry's os.path.exists read the fault as the file gone and
       popped the records with no checkpoint document (tests/test_record_cache_agent_end.py AgentEnd, the cases of an end
       whose file lookup could not be made).
-    The deferral covers the ends this function looks up. The two roads that release a remembered path with no lookup,
-    the unheld ends and the owed releases' pay, are not deferred by a fault: em.release_entry's own os.path.exists reads
-    a fault on the path as the file gone and pops the records with no document. That residual predates this change (fork
-    PR #913's code, not reached through the lookup), and its witnesses are AgentEnd
-    test_residual_an_unheld_end_paid_under_an_unreadable_tree_pops_the_records_without_their_document and
+    The deferral covers the ends this function looks up. The two roads that release a remembered path with no lookup
+    are not deferred by a fault: the unheld ends whose pair holds no faulted end (a faulted end forgets its pair's
+    unheld end and carries the pair's release, which the lookup it makes once a place reads again releases or remembers
+    as unheld again), and the owed releases' pay. On both, em.release_entry's own os.path.exists reads a fault on the
+    path as the file gone and pops the records with no document. The pay also leaves an unheld end beside a faulted end
+    of the same pair: an owed release paid as absent (its entry evicted or popped between the deferral and the pay) is
+    remembered as unheld with the pair's faulted end left in place, so the unheld releases take that path at each cycle
+    with no lookup while the faulted end waits, and a read that holds the file while a fault covers its path is popped
+    with no document (as when the fault that deferred the pair's later end refused a listing, and the directory's
+    search bit then goes too). That residual predates this change (fork PR #913's code, not reached through the
+    lookup), and its witnesses are AgentEnd
+    test_residual_an_unheld_end_paid_under_an_unreadable_tree_pops_the_records_without_their_document, whose release is
+    also the last step of the road through an owed release paid as absent, and
     test_residual_an_owed_release_paid_under_an_unreadable_tree_pops_the_records_without_their_document; the follow-up
-    reads only ENOENT and ENOTDIR as the file gone and defers the release on any other error.
+    reads only ENOENT and ENOTDIR as the file gone and defers the release on any other error, which closes it on each of
+    those roads.
     An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
     written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
     (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters
@@ -16100,7 +16175,7 @@ def _release_ended_agents():
     for pair, places in list(_AGENT_ENDED_FAULTED.items()):
         if pair in last:
             continue                                   # the batch speaks for the agent: its own last event governs below
-        if places and not any(_unread_place_reads(p, kind) for p, kind in places):
+        if places and not any(_unread_place_reads(p, kind, pair[0]) for p, kind in places):
             continue                                   # no place its lookup could not read reads yet: not yet, and no walk
         _release_end(pair, popped)                     # one reads again: looked up again, released once the lookup is made
     n = 0
@@ -36240,7 +36315,8 @@ def _subagent_tree(d, faults=None):
     read) or, with none standing, an answer no readable and no absent tree produces where the reader can carry one
     (_subagent_file None with a fault, to a caller that passes a faults list: _awaiting_nest gives it the call's
     lifetime, and _release_ended_agents reads it, or a standing resolution answered with a fault, as not yet, releasing
-    nothing and looking the end up again once a place the walk could not read reads again), except the feed key's
+    nothing and looking the end up again once a place the walk could not read reads again or the walk no longer reaches
+    it), except the feed key's
     reader: _subagent_dirs_ident answers (d,), (_TREE_UNREADABLE,) whatever
     entry stands, so the feed key moves into the fault and out of it and an entry the feed derived under the fault is
     never served after it clears (its docstring states the rule's scope and the roads it leaves open). A running chat
@@ -36640,14 +36716,22 @@ def _subagent_tree_memo_report():
         _AGENT_ENDED_FAULTED; on a pusher cycle alone, in its jobs stage before the push): per remembered end per cycle,
         one read of each place its walk could not read, stopping at the first that answers (_unread_place_reads: for a
         place in a subagents tree one os.lstat, and for a directory there the first entry of its listing too; for a
-        project-directory entry one os.stat; for the project directory one os.stat and the first entry of its listing),
+        project-directory entry one os.stat; for the project directory one os.stat and the first entry of its listing;
+        and for any place whose read fails, the session's transcript path (_path_of, memoized on the pusher cycle's
+        scope), then, for a place in a tree inside that transcript's project directory, the way the walk would take to
+        it: one os.lstat of each directory from the tree's root down to the place's parent (none for a root, then one per
+        level: 1 for a flat candidate, 2 for a workflow agent's directory, 3 for the file in it), and first, when the
+        place's own read failed with ELOOP or EBADF under a sibling session directory, one os.stat of that directory,
+        which can answer before any lstat of the way; the lstats stop at the first that does not read a real directory),
         and no walk while none answers; at most _AGENT_RELEASED_MAX ends, for as long as the fault lasts; no counter. In
         the cycle one answers, one lookup, with the walk's terms above, as a new end's lookup costs.
         tests/test_record_cache_agent_end.py AgentEnd, over two faulted cycles each:
         test_a_faulted_end_costs_one_lstat_of_its_unread_place_per_cycle_and_is_looked_up_only_once_that_place_reads
-        (in the three slots, {lstat: [the place], stat: [], scandir: [], walks: 0} per cycle, one walk at the clear),
+        (in the three slots, {lstat: [the place], stat: [], scandir: [], walks: 0} per cycle, one walk at the clear: the
+        place a root),
         test_a_directory_whose_listing_is_refused_is_read_by_its_listing_so_its_end_is_not_walked_while_it_stays_refused
-        (two places: 2 lstats and 1 listing per cycle, no walk),
+        (two places: 3 lstats, the third the root on the way to the file whose read failed, and 1 listing per cycle, no
+        walk),
         test_a_project_directory_entry_is_read_through_its_link_so_its_end_is_not_walked_while_the_target_is_unreadable
         (1 os.stat, no walk) and
         test_a_project_directory_whose_listing_is_refused_is_read_by_its_listing_so_its_end_is_not_walked_meanwhile
@@ -36992,7 +37076,8 @@ def _subagent_file(path, agent_id, faults=None, notes=None, unread=None):
     project-directory entry or the listing the walk needed could not be read (_subagent_file_walk's faults, and the
     places a fault excludes, stated there), so a caller can give it the shorter lifetime
     (_awaiting_nest, as it does _agent_launch_ids' faults) or read it as not yet (_release_ended_agents, which releases
-    nothing and looks the end up again once a place the walk could not read reads again); such a lookup memoizes
+    nothing and looks the end up again once a place the walk could not read reads again or the walk no longer reaches
+    it); such a lookup memoizes
     nothing, so the next call walks again (a read that did not happen is not a miss), and answers the memo's standing
     resolution for the agent only when that path lies under a place the walk could not read (_subagent_file_walk's
     `excluded`), else None:
