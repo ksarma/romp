@@ -290,7 +290,9 @@ subject; `verify` refuses the branch otherwise.
    reaches a leg of another job: no file in the clone's `.git` (a hook, an attributes file, a
    replace ref) and no ignored file (bytecode, `node_modules`). Nor does a branch or tag a leg
    writes into your repository: each job's clone holds the sha alone, with no branch and no tag of
-   yours, as CI's checkout fetches the pushed sha alone. The legs of one job share its
+   yours, as CI's checkout fetches the pushed sha alone, and names no remote, so a `git fetch` in
+   a later job copies nothing. When your repository is shallow, each clone is shallow the same
+   way. The legs of one job share its
    checkout, as CI's steps do. The machine itself stays shared, and a leg can leave a file there
    that a later leg reads: `/tmp` outside each TMPDIR, `/dev/shm`, `/run/user/<uid>`, the npm and
    Playwright caches, your passwd home, tmux's socket directory (tmux ignores TMPDIR), `--python`'s

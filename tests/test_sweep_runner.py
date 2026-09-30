@@ -239,6 +239,11 @@ def parent_ignored():
 
 
 root = checkout_root(os.getcwd())
+# a plain fetch of every remote the leg's checkout names, when the test asks, before its refs are read: the fetch a test
+# of a later job could run (the land-check of ruling 4: a clone whose origin named the batcher's repository copied the
+# branch and tag a leg wrote there on this fetch)
+if ctl.get("fetch_all") and root:
+    subprocess.run(["git", "-C", root, "fetch", "-q", "--all"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 # the refs this leg's checkout holds, when the test asks (the focused re-check's ruling 4: each clone holds none)
 refs = (sorted(subprocess.run(["git", "-C", root, "for-each-ref", "--format=%%(refname)"], stdout=subprocess.PIPE, text=True,
                               check=True).stdout.split()) if ctl.get("record_refs") and root else None)
@@ -269,7 +274,10 @@ with open(LOG, "a") as f:
                         "ignored": sorted(n for n in ("SIGHUP", "SIGINT") if signal.getsignal(getattr(signal, n)) == signal.SIG_IGN),
                         # and the runner's: its pid (this leg's parent, since env execs the command) and what it ignores
                         "parent": os.getppid(), "parent_ignored": parent_ignored(),
-                        "state": state, "refs": refs}) + "\n")
+                        "state": state, "refs": refs,
+                        # the remotes this leg's checkout names, when the test asks for its refs
+                        "remotes": (subprocess.run(["git", "-C", root, "remote"], stdout=subprocess.PIPE, text=True,
+                                                   check=True).stdout.split() if ctl.get("record_refs") and root else None)}) + "\n")
 act = ctl.get("action", {}).get(leg)
 if act == "commit":
     subprocess.run(["git", "-C", ctl["tree"], "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null",
@@ -2082,11 +2090,13 @@ class Checkout(_Base):
     def test_a_branch_or_tag_a_leg_writes_into_the_batchers_repository_reaches_no_later_job(self):
         """The focused re-check at the round-2 fix head, its B finding (ruling 4): the pytest leg finds the batcher's
         repository through its clone's objects/info/alternates and writes a tag and a branch there. Every leg, in every
-        job's checkout, sees no ref at all, since each clone holds the sha alone, no branch and no tag, as CI's checkout
-        fetches the pushed sha alone. At the round-2 fix head each clone copied every branch and tag of that repository,
-        and every later job's clone held the two the leg wrote."""
+        job's checkout, runs a plain `git fetch --all` and then sees no ref at all, since each clone holds the sha alone,
+        no branch and no tag, and names no remote, so that fetch copies nothing. At the round-2 fix head each clone
+        copied every branch and tag of that repository, and every later job's clone held the two the leg wrote; at the
+        first fix of ruling 4 each clone's origin named that repository, and the fetch copied them (the land check's
+        finding 1)."""
         w = self.w
-        w.ctl({"action": {PYTEST_LEG: "refs"}, "record_refs": True})
+        w.ctl({"action": {PYTEST_LEG: "refs"}, "record_refs": True, "fetch_all": True})
         p = w.run(check=0)
         self.assertEqual(sorted(w.git("for-each-ref", "--format=%(refname)", "refs/tags", "refs/heads").split()),
                          ["refs/heads/leaked-branch", "refs/heads/main", "refs/tags/leaked-tag"],
@@ -2099,6 +2109,8 @@ class Checkout(_Base):
             self.assertEqual([r for r in c["refs"] if "leaked" in r], [], "%s's checkout holds a ref the pytest leg wrote" % c["leg"])
         for c in calls:
             self.assertEqual(c["refs"], [], "%s's checkout holds no ref" % c["leg"])
+        for c in calls:
+            self.assertEqual(c["remotes"], [], "%s's checkout names no remote" % c["leg"])
 
     def test_a_stop_during_the_checkout_or_between_its_marker_and_the_clone_leaves_nothing_under_trees(self):
         """Round 2, extra5-2, keyed on events: the runner is stopped while its first clone waits, once after the real
@@ -3454,6 +3466,48 @@ class CheckoutRoads(unittest.TestCase):
                     self.assertEqual(c["tree"], expected, "%s did not see the sha's tree" % c["leg"])
                 self.assertEqual(w.data()["sha"], sha)
 
+
+
+class ShallowBatcher(unittest.TestCase):
+    """The land check of ruling 4, its finding 2: a batcher's repository that is shallow (a depth-limited fetch wrote its
+    shallow file, and the parents of the commits it names are absent) gives each job's checkout the same shallow view,
+    so a leg that reads history reads what CI's depth-1 checkout gives it (a test that skips in a shallow checkout
+    skips). The checkout is made with git init and alternates, which copy no shallow file, so before the fix the
+    checkout did not know it was shallow and `git log` there failed on the absent parent (rc 128), where the
+    `git clone --shared` of the head before ruling 4 made a shallow clone and walked one commit."""
+
+    def test_a_shallow_batchers_repository_gives_a_shallow_checkout_whose_history_reads(self):
+        tmp = tempfile.mkdtemp(prefix="sweepshallow-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+                   GIT_AUTHOR_NAME="romp tests", GIT_AUTHOR_EMAIL="tests@example.invalid",
+                   GIT_COMMITTER_NAME="romp tests", GIT_COMMITTER_EMAIL="tests@example.invalid")
+
+        def g(*args, cwd=tmp, check=True):
+            return subprocess.run(["git", *args], cwd=cwd, env=env, text=True, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, check=check)
+
+        full = os.path.join(tmp, "full")
+        g("init", "-q", full)
+        for n in (1, 2):
+            with open(os.path.join(full, "f.txt"), "w") as f:
+                f.write("%d\n" % n)
+            g("add", "f.txt", cwd=full)
+            g("commit", "-q", "-m", "c%d" % n, cwd=full)
+        tree = os.path.join(tmp, "tree")
+        g("clone", "-q", "--depth", "1", "file://" + full, tree)
+        sha = g("rev-parse", "HEAD", cwd=tree).stdout.strip()
+        self.assertEqual(g("rev-parse", "--is-shallow-repository", cwd=tree).stdout.strip(), "true",
+                         "premise: the batcher's repository is shallow")
+        self.assertNotEqual(g("cat-file", "-e", sha + "^", cwd=tree, check=False).returncode, 0,
+                            "premise: the parent's object is absent from it")
+        path, marker, _s = sweep.make_checkout(tree, sha)
+        self.addCleanup(sweep.remove_checkout, path, marker)
+        log = g("log", "--format=%H", cwd=path, check=False)
+        self.assertEqual((log.returncode, log.stdout.split()), (0, [sha]),
+                         "the checkout's history reads, one commit: %s" % log.stderr.strip())
+        self.assertEqual(g("rev-parse", "--is-shallow-repository", cwd=path).stdout.strip(), "true",
+                         "the checkout knows it is shallow")
 
 
 # The keys of leg_context, with placeholder values: leg_sets' NAMES do not depend on them.

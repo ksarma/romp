@@ -18,7 +18,8 @@ inherited value, and a leg log's header shows each variable by its name only.
 
 The legs run in private checkouts of the exact sha, never in the batcher's tree, one checkout per CI job (below): a
 private repository under <state dir>/sweeps/trees that reads the batcher's objects through its alternates, as
-`git clone --shared` does, and holds no branch or tag of theirs, checked out at the sha with hooks off (make_checkout),
+`git clone --shared` does, holds no branch or tag of theirs and names no remote (shallow when their repository is),
+checked out at the sha with hooks off (make_checkout),
 every runner git call made with GIT_* removed, git's global and system configuration off and refs/replace ignored. It
 copies none of the batcher's repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or
 replace refs, so the legs see the sha's tree plus the tool installs, and
@@ -224,7 +225,7 @@ legs start from a fresh clone verified against the sha's tree: no file in the cl
 info/exclude, config, a ref or refs/replace, packed-refs, objects/info/alternates) and no ignored file (bytecode,
 node_modules, dist). Nor does a branch or tag a leg writes into the batcher's repository, which it can find through
 its clone's alternates: each clone holds the sha alone, no branch and no tag of that repository (make_checkout), as
-CI's checkout fetches the pushed sha alone. Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
+CI's checkout fetches the pushed sha alone, and names no remote, so a plain `git fetch` in a later job copies none. Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
 each leg makes the run invalid when it finds one of the changes it checks for (above); anything else a leg leaves in
 that checkout (a hook or an attributes file in the clone's .git, a replace ref, an ignored file other than one the
 deps leg adds outside vscode-extension/node_modules) reaches the later legs of its job, as it would reach CI's later
@@ -1145,10 +1146,12 @@ def _random_tail(n=8):
 def make_checkout(tree, sha):
     """(path, marker, seconds): a private repository at <state dir>/sweeps/trees/<sha12>-<random> that reads the
     batcher's objects (their common dir's objects, named in its objects/info/alternates, as `git clone --shared` names
-    them) and holds none of their refs, with `origin` naming their common dir, then `checkout -q --detach <sha>` there
-    with hooks off: the sha alone, with no branch and no tag, as CI's checkout fetches the pushed sha alone, so a branch
-    or tag a leg writes into the batcher's repository reaches no later job's checkout (the focused re-check's ruling 4:
-    a clone copied every branch and tag, and such refs crossed to every later job). It copies none of the batcher's
+    them) and holds none of their refs, with no remote, then `checkout -q --detach <sha>` there with hooks off: the sha
+    alone, with no branch and no tag, as CI's checkout fetches the pushed sha alone, so a branch or tag a leg writes
+    into the batcher's repository reaches no later job's checkout (the focused re-check's ruling 4: a clone copied every
+    branch and tag, and such refs crossed to every later job; and its land check, finding 1: an `origin` naming their
+    common dir let a plain `git fetch` copy them). When the batcher's repository is shallow its shallow file is copied,
+    so the checkout is shallow as a `git clone --shared` of it would be (the land check, finding 2). It copies none of the batcher's
     repository config, info/attributes, info/exclude, hooks, sparse patterns, index flags or refs/replace either, and a
     leg's git writes land in it. The marker beside it, written first, holds the full sha,
     so a later run can tell whether that sha's lock is held (sweep_stale_checkouts). Any exception between the marker's
@@ -1181,10 +1184,16 @@ def make_checkout(tree, sha):
         p = subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q", path], env=_git_env(), text=True,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if p.returncode == 0:
-            # the batcher's objects, read where they are as --shared reads them, and none of their refs
+            # the batcher's objects, read where they are as --shared reads them, none of their refs and no remote naming
+            # their repository, so no plain fetch in a later job copies a ref a leg wrote there (the land check of
+            # ruling 4, its finding 1)
             with open(os.path.join(path, ".git", "objects", "info", "alternates"), "w") as f:
                 f.write(os.path.join(common, "objects") + "\n")
-            p = git(path, "remote", "add", "origin", common, check=False)
+            # a shallow batcher's repository gives a shallow checkout, as `git clone --shared` of one does (the land
+            # check of ruling 4, its finding 2: without its shallow file a checkout reading history failed on an
+            # absent parent)
+            if os.path.isfile(os.path.join(common, "shallow")):
+                shutil.copyfile(os.path.join(common, "shallow"), os.path.join(path, ".git", "shallow"))
         if p.returncode == 0:
             p = git(path, "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
         if p.returncode != 0:
@@ -1804,8 +1813,9 @@ def _tokenized(name, leg, value, ctx):
 # a runner before them, which shared one HOME, state root, TMPDIR and checkout across the legs, reads as recorded under
 # the same leg environment (body item 9's rule: a leg-environment change changes the hash).
 LEG_SCRATCH = "each leg: a fresh TMPDIR of its own, HOME and XDG_STATE_HOME under it, removed when the leg ends"
-LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone of the sha alone, no branch and no "
-                "tag, in the job's step order, npm ci where the job runs it; each job's legs their own")
+LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone of the sha alone, no branch, no "
+                "tag and no remote, shallow where the batcher's repository is, in the job's step order, npm ci where the "
+                "job runs it; each job's legs their own")
 
 
 def leg_env_doc(ctx):
