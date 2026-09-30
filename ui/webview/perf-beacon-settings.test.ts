@@ -54,3 +54,26 @@ test("the store keys are one contract: settings.ts, the collector, the pane shim
   assert.equal(readers.length, 2, "the pane shim's and the shell's readers, byte for byte the same");
   assert.equal((KERNEL.match(/perfShare/g) || []).length, 0, "the kernel never reads the share switch: the collector does, per page");
 });
+
+// The share sub-line against the SHARED categories, derived (the author's pass 3, 2026-09-20; the copy said nothing of the per-machine
+// byte figure and this file stayed green): the collector's shared field list is the `data.<key> =` writes of extend() in
+// perf-telemetry.ts, and perf-telemetry.test.ts pins the same keys as SHARED_KEYS; the two must be one set, every key must
+// have a phrase in the copy and every phrase must name a key, so a shared field with no words in the person's consent text
+// reds here until the copy says it. nav and marks are one category to a reader (both are page-load timings: the navigation
+// entry, the shim's marks and the paint entries), so both map to "page-load".
+test("the share sub-line names every shared category: the collector's shared fields and the test's SHARED_KEYS are one set, and each has its phrase in the copy", () => {
+  const share = GEAR.indexOf("id=rs-perfshare"), mute = GEAR.indexOf("id=rs-perfmute");
+  const sub = GEAR.slice(share, mute).match(/<span class=rs-sub>([^<]*)<\/span>/)![1];
+  const extend = PERF.slice(PERF.indexOf("private extend("), PERF.indexOf("private bytesNow("));
+  const written = [...new Set([...extend.matchAll(/\bdata\.(\w+) = /g)].map((m) => m[1]))].sort();
+  const pinned = JSON.parse(read("perf-telemetry.test.ts").match(/^const SHARED_KEYS = (\[.*\]);$/m)![1]).sort();
+  assert.ok(written.length >= 8, "the collector writes the shared fields in extend(): " + written.join(","));
+  assert.deepEqual(written, pinned, "the collector's shared fields and the test's SHARED_KEYS are one set");
+  const phrase: Record<string, RegExp> = {
+    nav: /page-load/, marks: /page-load/, res: /download/, vis: /visibility/, wsBytes: /socket-byte/,
+    wsBytesByHost: /once per attached machine, by position rather than by name/, rafGap: /frame-gap/,
+    env: /description of the browser's environment/,
+  };
+  assert.deepEqual(Object.keys(phrase).sort(), written, "every shared key has a phrase and every phrase names a shared key");
+  for (const [key, re] of Object.entries(phrase)) assert.match(sub, re, "the copy says nothing of " + key);
+});
