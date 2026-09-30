@@ -1038,10 +1038,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         branch's other paths cannot fit under the cut in any order, so the family is one stem); every module of the family is
         on the cell, every path on the where line is on the cell but at most the entry's own, and every path on the line is a
         file of the tree, so a module the cut drops, a module the tree gained, or a stale path on the line is a red naming it.
-        The entry's own path is the one path the cut may take, and only as the line's last: the row's title links that file,
-        so the table CI publishes names it whatever the cut leaves. Since the landing merge the line also names PR 860's relay
-        module, and no spelling this one-level expander reads fits every path under the cut, so the pin lets the cut take that
-        one path and no other.
+        The entry's own path is the one path the cut may take, and only as the line's last: in the table CI publishes, the
+        row's title links that file, whatever the cut leaves. Since the landing merge the line also names PR 860's relay
+        module, and no spelling this one-level expander reads fits every path under the cut, so the pin lets the cut take the
+        entry's own path and no other.
         The paths on the line beyond the family (the branch's other files: since the author's pass 11 the shared round-label
         rule tests/review_round_labels_rule.py and its test, since the maintainer's round 7 the entry's own path, which the line
         had left out, and since the landing merge PR 860's tests/test_relay_dial_declares_held_pair.py, one line of which the
