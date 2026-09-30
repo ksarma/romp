@@ -6,12 +6,14 @@
 # fork PR #919's (test_fetch_wrapper_census.py, test_file_cap_binding.py, test_login_cookie_not_token.py,
 # test_remote_ws_set_cookie_strip.py, test_session_cookie_auth.py and test_session_cookie_per_kernel.py), and the
 # third the writers of two modules that batch fork PR #929 carried, both fork PR #897's (test_postal_isolation.py,
-# which gained the write, and test_postal_remote_sids_mirror.py, which it added).
+# which gained the write, and test_postal_remote_sids_mirror.py, which it added), and the fourth the writers of three
+# modules that batch fork PR #934 carried, all added by fork PR #875 (test_card_boards.py,
+# test_postal_bus_revive_guard.py and test_subagent_tree_cycle_scope.py).
 # The census pin compares it with the census by equality (_writer_set_faults): a module that writes the name and is
 # not here faults as a new writer, and a module here that no longer writes it faults until its line is removed.
 # Lines leave as writers migrate; a new writer is not added (omit the write or move it to the conftest floor),
-# except as a rename of a line here; the landing merges' lines were added on the reviewer's rulings of round 2 on
-# fork PR #894, which had the file derived again at each merge.
+# except as a rename of a line here; the first three landing merges' lines were added on the reviewer's rulings of
+# round 2 on fork PR #894, which had the file derived again at each merge, and the fourth's by the same derivation.
 bench_chatbuild.py
 permission_ask_feeder_drive.py
 test_anchor_mints.py
@@ -46,6 +48,7 @@ test_browser_owned_order.py
 test_bundle_build_mode.py
 test_bus_seed_token.py
 test_cap_switch_offer.py
+test_card_boards.py
 test_card_summary_anchor_e2e.py
 test_chain_rooted_minting.py
 test_chat_build_sig_inputs.py
@@ -415,6 +418,7 @@ test_pinned_notes.py
 test_planner_seen_memo.py
 test_post_push_coalescing.py
 test_postal_bus_lifetime.py
+test_postal_bus_revive_guard.py
 test_postal_hydrate_scope.py
 test_postal_hydrate_unresolved.py
 test_postal_isolation.py
@@ -494,6 +498,7 @@ test_stale_echo_placement.py
 test_stat_rule_readers.py
 test_states_overlay_fold.py
 test_subagent_transcripts.py
+test_subagent_tree_cycle_scope.py
 test_subagent_tree_memo.py
 test_summary_anchor_outrun.py
 test_tab_meta_push.py

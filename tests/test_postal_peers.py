@@ -23,22 +23,32 @@ class PeerMode(unittest.TestCase):
         os.environ.pop("ROMP_POSTAL_PEERS", None)
         pm.PEERS.clear()
 
+    def _put_client_only_back(self, prior):
+        # put back, not popped: the run's conftest sets client-only to "1" before every test (upstream's floor, which
+        # fork PR #875 folded), and its module check compares the name with that floor after the module's teardown
+        if prior is None:
+            os.environ.pop("ROMP_POSTAL_CLIENT_ONLY", None)
+        else:
+            os.environ["ROMP_POSTAL_CLIENT_ONLY"] = prior
+
     def test_flag_retires_client_only(self):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
+        prior = os.environ.get("ROMP_POSTAL_CLIENT_ONLY")
         os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"
         try:
             self.assertFalse(pm.is_client_only(),
                              "peer mode: every machine runs its own bus — client-only is retired")
         finally:
-            os.environ.pop("ROMP_POSTAL_CLIENT_ONLY", None)
+            self._put_client_only_back(prior)
 
     def test_flag_off_client_only_unchanged(self):
         os.environ["ROMP_POSTAL_PEERS"] = "0"          # peer mode is the DEFAULT now; 0 = legacy scheme
+        prior = os.environ.get("ROMP_POSTAL_CLIENT_ONLY")
         os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"
         try:
             self.assertTrue(pm.is_client_only(), "legacy mode: the singleton scheme is untouched")
         finally:
-            os.environ.pop("ROMP_POSTAL_CLIENT_ONLY", None)
+            self._put_client_only_back(prior)
 
     def test_peers_on_is_the_default(self):
         os.environ.pop("ROMP_POSTAL_PEERS", None)

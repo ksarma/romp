@@ -261,20 +261,23 @@ kernel the guard test's refused notify kicks the revive on EVERY run, and the te
 (the reviewer's re-ruling of round 2 on fork PR #894): its trio stays around the call, the revive is rebound to a
 wrapper that sets an Event in a finally, the restore waits on that Event, and for the whole window subprocess.run is a
 scoped fake that records and answers any call whose argv names romp-postal-service and passes every other call, from
-any thread, to the real run; its one assertion on the fake is that no postal-service call reached the real run. Why:
+any thread, to the real run; its assertions on the fake, read after the wait, are that no postal-service call reached
+the real run and that the fake answered none. Why:
 with the test at its base text (round 2's first commit) the restore won the race in every run, and the ensure's
 child, forked with the restored environment, which names no port, pinged the machine's fixed bus port, so on a box
 whose own bus listens there a plain run reached that bus; the bus's fixed-port refusal
 (tests/test_postal_fixed_port_belt.py) stops a bind, not that ping. The round-1 rewrite asserted that the refused
 notify runs the ensure once, the opposite of upstream's fix (their PR 1848 returns before the ensure under
-client-only; fork PR #875 folds it with the skip gated on the kernel having ensured no bus of its own), and the
-reviewer's ruling of round 1 removed that assertion: the test asserts nothing about whether the revive runs the
-ensure, so it holds under this kernel, upstream's and fork PR #875's. Its text and fork PR #875's copy of the test
-cannot both stand: a merge of the two heads read on 2026-09-25 writes fork PR #875's lines into this test with no
-conflict marker, its recorder of subprocess.run installed over this test's fake, which
-test_the_peer_notify_guard_test_runs_the_trio_the_wrap_the_wait_and_the_scoped_fake_as_statements_that_run reds; so
-whichever of the two lands second resolves the test by hand and keeps fork PR #875's assertion beside this wait and
-fake. The pins
+client-only; fork PR #875 folded it with the skip gated on the kernel having ensured no bus of its own), and the
+reviewer's ruling of round 1 removed that assertion. Fork PR #875 landed first, and the merge of main that brought it
+wrote that PR's lines into this test with no conflict marker, its recorder of subprocess.run installed over this
+test's fake (its real_run bound to the fake, so the fake stayed installed after the test and every later
+subprocess.run in the process recursed), which
+test_the_peer_notify_guard_test_runs_the_trio_the_wrap_the_wait_and_the_scoped_fake_as_statements_that_run reds; the
+commit after that merge resolved the test by hand: the recorder and its polling loop went, and fork PR #875's
+assertion stayed, as an assertion that the fake's list of postal-service calls is empty, with the kernel's
+_BUS_ENSURED[0] held False from before the revive is rebound until after the wait, since that PR's skip reads it. The
+pins
 below read the test's parts as statements that run (the trio, the wrap and the fake set before the call; the wait
 before the fake and the environment are put back; none after a return, a raise, a skip or an exit, none in the body of a
 try with an except clause), hold every other statement of the test to putting back none of what those set, in any
@@ -4852,7 +4855,8 @@ def _census_table(paths=None):
 # ten postal modules set at import, were the environment a real bus started with from inside the peer-notify guard test
 # (the revive road's ensure runs with the test process's environment, and the guard's own trio was restored by the time
 # the thread spawned; since round 2 of fork PR #894's review the test waits the revive out before its restore, and a
-# scoped fake answers the revive's ensure, so no ensure child starts from it): the port named as the
+# scoped fake answers any ensure the revive runs, so no ensure child starts from it; since the merge of main that
+# brought fork PR #875 the revive runs none under the test's client-only): the port named as the
 # run's own (conftest's marker beside it) licensed the bind, client-only was inert with peers on, and the seam's one
 # row kept the bus from ever autostopping. The pin below holds the set of names
 # written at module level by the test modules EQUAL to this table, with every licence's condition checked per write, so
@@ -12581,7 +12585,8 @@ class HermeticKernelPostal(unittest.TestCase):
         fixture's own code set or pop each name in the setup of each probe test of its context, each following a write
         of the name; test_a_re_asserted_licence_holds_only_where_a_child_pytest_sees_the_fixtures_own_re_assert
         runs every facet under it). Here: the proof refuses nothing over the real conftest and grants every name the
-        filter counts, eleven today, among them each name a `reasserted` licence names; and THE LIVE CONFTEST MODULES,
+        filter counts, twelve today (client-only joined the port among _dead_manager_port's at the merge of main that
+        brought fork PR #875), among them each name a `reasserted` licence names; and THE LIVE CONFTEST MODULES,
         the conftest.py files a run under tests/ loads (every one under tests/, walked, and one at the checkout's root),
         are one, tests/conftest.py, whose fixtures the filter refuses none of."""
         got = _conftest_reasserts_proved()
@@ -12592,7 +12597,7 @@ class HermeticKernelPostal(unittest.TestCase):
         live += [p for p in (os.path.join(os.path.dirname(HERE), "conftest.py"),) if os.path.isfile(p)]
         self.assertEqual([os.path.relpath(p, HERE) for p in live], ["conftest.py"], "the live conftest modules: one")
         sites, refused = _reassert_sites()
-        self.assertEqual((refused, set(sites), len(sites)), ((), names, 11),
+        self.assertEqual((refused, set(sites), len(sites)), ((), names, 12),
                          "the filter refuses none of the one live conftest module's fixtures, and the proof grants every name "
                          "it counts")
         for name, lic in LICENSED_MODULE_LEVEL_WRITES.items():
@@ -15533,7 +15538,7 @@ class HermeticKernelPostal(unittest.TestCase):
         false refusal on the safe side, the text road's), and a conftest in a package whose __init__.py makes
         pytest.fixture drop autouse, which the filter counts (the package's code runs before the module, outside what it
         reads), is refused by the proof. THE REAL tests/conftest.py, run as its copy: a copy with a
-        pytest_collection_modifyitems that takes _dead_manager_port out of each test refuses the four names that fixture
+        pytest_collection_modifyitems that takes _dead_manager_port out of each test refuses the five names that fixture
         re-asserts and licenses the rest (the conftest pin reads the unplanted copy, where every name is licensed)."""
         verdicts = {}
         for group in _proof_facets():
@@ -15608,10 +15613,11 @@ class HermeticKernelPostal(unittest.TestCase):
         planted = open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read() + hook
         got, rc, out = _reassert_proof([("planted", planted, {}, sites)], real=True)
         stopped = {n for n, s in sites.items() if any(f == "_dead_manager_port" for f, _l, _o in s)}
-        self.assertEqual(stopped, {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT"})
+        self.assertEqual(stopped, {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT",
+                                   "ROMP_POSTAL_CLIENT_ONLY"})
         self.assertEqual({n for n, why in got["planted"].items() if why}, stopped,
                          "the copy of tests/conftest.py whose hook takes _dead_manager_port out of each test: the proof "
-                         "refuses the four names it re-asserts and licenses the rest (rc %d): %s" % (rc, got["planted"]))
+                         "refuses the five names it re-asserts and licenses the rest (rc %d): %s" % (rc, got["planted"]))
 
     def test_the_proof_refuses_a_road_keyed_on_each_fact_of_the_childs_context_and_grants_a_road_keyed_on_a_mark(self):
         """THE CHILD'S CONTEXT (the reviewer's ruling of 2026-09-24 23:17Z on round 2 of fork PR #894, (4), after the
@@ -16187,7 +16193,7 @@ class HermeticKernelPostal(unittest.TestCase):
         under tests/ at any depth but __pycache__ and what it holds, read by pathlib's rglob, is among them (the package
         whole). THE ROADS: each condition of _proof_copy_roads holds in this process, a real run, evaluated in
         tests.conftest's own namespace; the proof over a copy of tests/conftest.py carrying _COPY_ROAD_HOOK refuses the
-        four names _dead_manager_port re-asserts in each read, the three _no_real_service_env re-asserts (the verifier's
+        five names _dead_manager_port re-asserts in each read, the three _no_real_service_env re-asserts (the verifier's
         X7, a module collected third or later) and the one _no_real_claude_config re-asserts (its Y1, a module collected
         second to six-hundredth) in the reads of the fourth module collected and in no other, and the two _no_cli_scope
         re-asserts (a module collected first) in the reads of the first and in no other, and grants the one other; and
@@ -16248,7 +16254,8 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(refused, ())
         by = {fixture: {n for n, s in sites.items() if any(f == fixture for f, _l, _o in s)}
               for fixture in ("_dead_manager_port", "_no_real_service_env", "_no_real_claude_config", "_no_cli_scope")}
-        self.assertEqual(by, {"_dead_manager_port": {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT"},
+        self.assertEqual(by, {"_dead_manager_port": {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT",
+                                                     "ROMP_POSTAL_CLIENT_ONLY"},
                               "_no_real_service_env": {"ROMP_SERVICE_ENV", "ROMP_SERVICE_ENV_FILE", "ROMP_SUPERVISED"},
                               "_no_real_claude_config": {"CLAUDE_CONFIG_DIR"}, "_no_cli_scope": {"ROMP_CLAUDE_BIN", "ROMP_CLI_SCOPE"}})
         values = os.path.join(scratch, "copy-roads")
@@ -17737,7 +17744,7 @@ class HermeticKernelPostal(unittest.TestCase):
         finally waits on that Event, keeping the result, BEFORE it puts the fake and the environment back, and puts the
         real revive back; and, after the try, the wait's result asserted and one list asserted empty that the road from the
         fake to the real run appends to, the postal-service calls that reached the real run (another list asserted empty
-        beside it, as fork PR #875's assertion will be once the two texts meet, is not what this reads). The environment
+        beside it, fork PR #875's assertion on the fake's own list, is not what this reads). The environment
         goes back in one for statement over the mapping saved before the trio from os.environ.get of the trio's three
         names. The wrapper, the fake and the road carry no decorator. No other statement of the test, run or not, binds or
         deletes an attribute on any object in any binding form
@@ -17752,10 +17759,11 @@ class HermeticKernelPostal(unittest.TestCase):
         rule on a plant of its own.
         Why the wait and the fake: with the test at its base text the restore won the race in every run, and the ensure's
         child, forked with the restored environment, which names no port, pinged the machine's fixed bus port (the
-        verifier's plant in round 2); the fake answers the revive's ensure, so under this kernel no ensure child starts at
-        all, and the wait keeps every call the revive makes inside the window the fake covers. The test asserts nothing
-        about whether the revive runs the ensure, so it holds under upstream's PR 1848 and fork PR #875's gate as under
-        this kernel. What this pin GUARANTEES is the shape, the weaker thing; what the fake does with each argv is run by
+        verifier's plant in round 2); the fake answers any ensure the revive runs, so no ensure child starts at all, and
+        the wait keeps every call the revive makes inside the window the fake covers. Since the merge of main that brought
+        fork PR #875 the test also asserts that the fake answered no postal-service call, that PR's assertion: under its
+        gate the revive returns before its ensure while the kernel has ensured no bus of its own, which the test holds
+        for the window. What this pin GUARANTEES is the shape, the weaker thing; what the fake does with each argv is run by
         the pin below it, and that no process of the test's run dials the fixed port or starts an ensure child by the
         executed pin after that."""
         self._guard_shape()
@@ -17777,8 +17785,9 @@ class HermeticKernelPostal(unittest.TestCase):
         environment a pop in the finally before the wait, a pop and a del before the call, |=, dict.__setitem__ on it, a
         name bound to it, os.environb, os.putenv, os.unsetenv, environ imported from os, os.environ rebound and
         mock.patch.dict. The road: the fake calling the real run itself reds, and so does a second road from the fake that
-        records nothing. And fork PR #875's assertion kept beside this test's, after the try as the guard test's comment
-        anticipates or inside the try where upstream's text has it, reads green with the road's list read (the verifier's
+        records nothing. And fork PR #875's assertion beside this test's, a second copy after the try, where the guard test
+        has it since the merge of main that brought that PR, or inside the try where upstream's text has it, reads green
+        with the road's list read (the verifier's
         third finding: the pin counted two lists asserted empty and reddened); with the fake's own list asserted in the
         road's place it reds.
         Since round 2's fifth commit (the verifier's two findings on the fourth), a name the parts are read by holding
@@ -18230,7 +18239,7 @@ class HermeticKernelPostal(unittest.TestCase):
         # ...and inside the try before the notify statement, an assertion that calls nothing ahead of it (the twenty-eighth
         # commit: with the notify statement's one call read as at most one, that assertion counts as the first notify
         # statement and the test's own is stray; every pin passed under that reading before this placement was held)
-        for label, anchor in (("after the try, as the guard test's comment anticipates", "after the try"),
+        for label, anchor in (("after the try, a second copy beside the guard test's own", "after the try"),
                               ("inside the try, where upstream's text has it", "in the try"),
                               ("inside the try, before the notify statement", "before the notify")):
             node, where = anchors[anchor]
@@ -18352,7 +18361,8 @@ class HermeticKernelPostal(unittest.TestCase):
         sitecustomize (_DIAL_SPY) on its PYTHONPATH, so every Python process of that run records each socket connect by
         port, each subprocess.Popen whose command names romp-postal-service, and its argv at exit, and refuses a connect to the machine's fixed bus port (the postal service's default
         port, read from bin/romp-postal-service) before it reaches the network. No process of the run dials the fixed
-        port, and no romp-postal-service process is started or exits: the test's fake answers the revive's ensure. The
+        port, and no romp-postal-service process is started or exits: under the test's client-only the revive runs no
+        ensure, and the test's fake answers any that runs. The
         start is read from the spy's spawn record, which the process that runs subprocess.Popen on the postal service
         writes before the fork, from whichever thread runs it, so a child a thread forks as the run ends is seen though
         its dial and its exit come after the run (since round 2's twenty-seventh commit on fork PR #894: before it this
@@ -18404,8 +18414,8 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual([r for r in dials if r["port"] == fixed], [], "no process of the run dials the machine's fixed bus port %d" % fixed)
         self.assertEqual([r for r in recs if r["kind"] == "spawn"
                           or (r["kind"] == "exit" and any(a.endswith("romp-postal-service") for a in r["argv"]))], [],
-                         "no romp-postal-service process is started (the spawn, recorded before the fork) or exits: the test's fake answers "
-                         "the revive's ensure")
+                         "no romp-postal-service process is started (the spawn, recorded before the fork) or exits: the revive runs no "
+                         "ensure under the test's client-only, and the test's fake answers any that runs")
 
     def _spied_pytest(self, targets, fixed):
         """A child pytest over `targets` from the checkout with _DIAL_SPY as its sitecustomize, refusing and recording every
@@ -18629,22 +18639,24 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(rc, 0, out[-3000:])
         self.assertIn("2 passed", out, out[-3000:])
 
-    def test_the_module_env_fixture_watches_the_seams_and_the_trio_and_no_name_conftest_re_asserts_but_the_port(self):
+    def test_the_module_env_fixture_watches_the_seams_and_the_trio_and_no_name_conftest_re_asserts_but_the_port_and_client_only(self):
         """The list conftest's _module_env_restored watches (the reviewer's ruling of round 1 on fork PR #894): at least the
         seams _shared_state_restored watches per test and the postal trio; not PYTEST_CURRENT_TEST, which pytest writes
         for every phase; and no name conftest re-asserts before every test (read from its fixtures, autouse or not, by
         _conftest_fixture_env_names, the wide read: a name written or popped anywhere in a fixture's own body, and not
         one reached through a call or a loop over a name, the credential names and the scope limits among them, none of
         which is watched), since
-        conftest's own write would read as the module's, except ROMP_POSTAL_PORT, which the fixture compares with the
-        value conftest's pop gives it (unset) instead of with its snapshot."""
+        conftest's own write would read as the module's, except the two trio legs conftest re-asserts, ROMP_POSTAL_PORT
+        and, since the merge of main that brought fork PR #875, ROMP_POSTAL_CLIENT_ONLY, which the fixture compares with
+        the value conftest's re-assert gives each (unset, and "1") instead of with its snapshot."""
         from tests import conftest
         watched = set(conftest.MODULE_WATCHED_ENV_NAMES)
         self.assertLessEqual(set(conftest._SEAM_ENV_NAMES) | set(TRIO), watched)
         self.assertIn("ROMP_POSTAL_HOST", conftest._SEAM_ENV_NAMES, "the bus-name seam is watched per test beside the sessions file")
         self.assertNotIn("PYTEST_CURRENT_TEST", watched)
-        self.assertEqual(watched & _conftest_fixture_env_names(), {"ROMP_POSTAL_PORT"})
-        self.assertEqual(conftest.MODULE_ENV_FLOORS, {"ROMP_POSTAL_PORT": None}, "the port is compared with its floor, unset")
+        self.assertEqual(watched & _conftest_fixture_env_names(), {"ROMP_POSTAL_PORT", "ROMP_POSTAL_CLIENT_ONLY"})
+        self.assertEqual(conftest.MODULE_ENV_FLOORS, {"ROMP_POSTAL_PORT": None, "ROMP_POSTAL_CLIENT_ONLY": "1"},
+                         "the port is compared with its floor, unset, and client-only with its floor, \"1\"")
 
     def test_a_seam_written_in_setupmodule_setupclass_or_a_module_fixture_with_no_restore_is_named_by_its_module(self):
         """THE PLANTS for conftest's _module_env_restored (the reviewer's ruling of round 1 on fork PR #894): a child pytest
@@ -18656,7 +18668,11 @@ class HermeticKernelPostal(unittest.TestCase):
         before setUpModule runs. At the round-1 head (951479a14) the same run was green. A fourth plant leaves
         ROMP_POSTAL_PORT set in its tearDownModule, and the module after it, whose snapshot then carries that port and
         whose test's per-test pop clears it, is not named: the port is compared with its floor (unset), not with the
-        snapshot, so conftest's own pop is never read as the next module's change."""
+        snapshot, so conftest's own pop is never read as the next module's change. A fifth pops ROMP_POSTAL_CLIENT_ONLY in
+        its tearDownModule and is named, and the module after it, whose snapshot then lacks client-only and whose test's
+        per-test re-assert sets it to "1" (conftest's since the merge of main that brought fork PR #875), is not named:
+        client-only is compared with its floor ("1"), not with the snapshot, so that re-assert is never read as the next
+        module's change (compared with the snapshot, the module after it was named)."""
         later = textwrap.dedent("""\
             import os, subprocess, sys
 
@@ -18707,6 +18723,15 @@ class HermeticKernelPostal(unittest.TestCase):
                 def test_one():
                     pass
             """),
+            "test_e1_client_only_left.py": textwrap.dedent("""\
+                import os
+
+                def tearDownModule():
+                    os.environ.pop("ROMP_POSTAL_CLIENT_ONLY", None)
+
+                def test_one():
+                    pass
+            """),
         }
         after_port = textwrap.dedent("""\
             import os
@@ -18714,8 +18739,14 @@ class HermeticKernelPostal(unittest.TestCase):
             def test_the_port_is_popped_for_the_test():
                 assert os.environ.get("ROMP_POSTAL_PORT") is None
         """)
+        after_client_only = textwrap.dedent("""\
+            import os
+
+            def test_client_only_is_re_asserted_for_the_test():
+                assert os.environ.get("ROMP_POSTAL_CLIENT_ONLY") == "1"
+        """)
         modules = dict(plants, **{"test_a2_later.py": later, "test_b2_later.py": later, "test_c2_later.py": later,
-                                  "test_d2_after_the_port.py": after_port})
+                                  "test_d2_after_the_port.py": after_port, "test_e2_after_client_only.py": after_client_only})
         marker = os.path.join(tempfile.mkdtemp(), "inherited.txt")
         self.addCleanup(shutil.rmtree, os.path.dirname(marker), True)
         plant_dir = os.path.dirname(marker)
@@ -18727,13 +18758,15 @@ class HermeticKernelPostal(unittest.TestCase):
                          {"test_%s2_later.py" % p: os.path.join(plant_dir, "%s1-sessions.json" % p) for p in "abc"},
                          "each later module's child inherits the value its planted module wrote: %s" % out[-2000:])
         self.assertEqual(rc, 1, "the run is red on the planted modules: %s" % out[-3000:])
-        self.assertIn("8 passed, 4 errors", out, "every test passes; the four errors are the planted modules' teardowns")
+        self.assertIn("10 passed, 5 errors", out, "every test passes; the five errors are the planted modules' teardowns")
         named = sorted(set(re.findall(r"module (test_\w+\.py) left the environment changed after its teardown", out)))
         self.assertEqual(named, sorted(plants), "each planted module is named, and no other: %s" % out[-3000:])
         self.assertIn("module test_a1_setupmodule.py left the environment changed after its teardown: ROMP_SESSIONS_FILE was "
                       "unset and is now set", out, "the setUpModule plant: the snapshot precedes setUpModule")
         self.assertIn("module test_d1_port_left.py left the environment changed after its teardown: ROMP_POSTAL_PORT was unset "
                       "and is now set", out, "the port a module leaves set is named against its floor")
+        self.assertIn("module test_e1_client_only_left.py left the environment changed after its teardown: ROMP_POSTAL_CLIENT_ONLY "
+                      "was set and is now unset", out, "client-only a module leaves unset is named against its floor")
 
     def test_every_watched_name_is_popped_at_import_so_a_shell_carrying_each_leaves_both_checks_green(self):
         """The verifier's finding on round 2 of fork PR #894: conftest popped ROMP_POSTAL_PORT at import and no other name

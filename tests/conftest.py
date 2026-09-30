@@ -965,14 +965,19 @@ def _dead_manager_port():
 # pops it at import too), so every such kernel of a whole run read 25302, the machine's fixed bus port: a spy over one full
 # serial run recorded the tests whose kernel's bus calls (a peer notify at a detach or a trust change, the GET /peers
 # behind the routes that list remotes) dialled it, which on a box whose own bus listens there reach that bus; where
-# nothing listens, as on CI, a refused notify kicked the revive into a real romp-postal-service ensure. A dead port cannot
+# nothing listens, as on CI, a refused notify kicked the revive into a real romp-postal-service ensure (before the merge
+# of main that brought fork PR #875: under the client-only floor above, an in-process kernel's revive returns before its
+# ensure unless that kernel ensured a bus of its own, _BUS_ENSURED). A dead port cannot
 # be EXPORTED instead: the bus's fixed-port refusal licenses a port equal to the child's import-time ROMP_POSTAL_PORT
 # beside ROMP_POSTAL_HERMETIC, which this file sets, so an exported port would license a revive's child to bind a real bus
 # on it. So every loaded kernel module's BUS_PORT is set to DEAD_BUS_PORT before each test and put back after it. A refused
-# call then kicks the revive on every box, not only where nothing listens, so the tests whose notify is refused stub the
-# revive themselves (_revive_postal_bus, put back by a cleanup); the peer-notify guard test in tests/test_kernel.py and the
-# tunnels module's _PostalTrio exercise the revive road and keep their own handling (the guard waits the revive out under
-# a scoped fake of subprocess.run; the trio patches BUS_PORT to a port of the test's own and stubs _ensure_postal_bus).
+# call then kicks the revive on every box, not only where nothing listens; under the client-only floor the revive returns
+# before its ensure while the kernel has ensured no bus of its own, and the tests whose notify is refused stub the revive
+# themselves as well (_revive_postal_bus, put back by a cleanup), which holds whatever that flag reads; the peer-notify
+# guard test in tests/test_kernel.py and the tunnels module's _PostalTrio exercise the revive road and keep their own
+# handling (the guard holds _BUS_ENSURED False and waits the revive out under a scoped fake of subprocess.run, asserting
+# the fake answered no postal-service call; the trio patches BUS_PORT to a port of the test's own and stubs
+# _ensure_postal_bus).
 # The same spy found the postal service loaded in-process (load_source of bin/romp-postal-service under a name that starts
 # romp_postal) dialling the fixed port too, through its client's BASE, which it builds from the same popped name at
 # import: tests/test_postal_relay_honesty.py's three set_working tests, whose tool call beats the bus first. So every
@@ -1254,7 +1259,7 @@ def restore_env(name, prior):
 # this file's import, before collection (the lines above), so nothing the developer's shell carries reaches the check,
 # and it reads the same run on every box.
 MODULE_WATCHED_ENV_NAMES = _SEAM_ENV_NAMES + ("ROMP_POSTAL_PEERS", "ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PORT")
-MODULE_ENV_FLOORS = {"ROMP_POSTAL_PORT": None}
+MODULE_ENV_FLOORS = {"ROMP_POSTAL_PORT": None, "ROMP_POSTAL_CLIENT_ONLY": "1"}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -1267,12 +1272,14 @@ def _module_env_restored(request):
     the postal trio (peers, client-only and the port). Not watched: PYTEST_CURRENT_TEST, which pytest writes for every
     phase, and every name this file re-asserts before every test (the dead ports, the service-env, claude-config,
     catalog, scope and CLI-binary floors, ROMP_SUPERVISED and the credential names), whose write here would read as a
-    change on the module in whose first test to be set up it ran. The one trio leg this file re-asserts,
-    ROMP_POSTAL_PORT (popped before every test), is watched against the value that re-assert gives it, unset
-    (MODULE_ENV_FLOORS), rather than against the snapshot: a port a module leaves set after its teardown reaches the
-    next module's setUpModule, setUpClass and module fixtures, and every child they spawn, before that module's first
-    test to be set up pops it. Every name outside the list is outside this check: a diff of the whole environment reds
-    on the runner's own writes."""
+    change on the module in whose first test to be set up it ran. The two trio legs this file re-asserts,
+    ROMP_POSTAL_PORT (popped before every test) and ROMP_POSTAL_CLIENT_ONLY (set to "1" before every test since the
+    merge of main that brought fork PR #875), are watched against the value that re-assert gives each, unset and "1"
+    (MODULE_ENV_FLOORS), rather than against the snapshot: a value a module leaves after its teardown reaches the next
+    module's setUpModule, setUpClass and module fixtures, and every child they spawn, before that module's first test
+    to be set up re-asserts it; and against the snapshot, the re-assert's own write would read as a change on the next
+    module (a module that left client-only unset had the module after it named). Every name outside the list is outside
+    this check: a diff of the whole environment reds on the runner's own writes."""
     before = {name: os.environ.get(name) for name in MODULE_WATCHED_ENV_NAMES}
     yield
     left = []
