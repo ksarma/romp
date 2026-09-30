@@ -152,6 +152,22 @@ remove_file() {   # <path> <message>
     git -C "$REPO" commit -qm "$2"
 }
 
+# An in-place sed edit that GNU sed and BSD sed (macOS) both run. BSD sed reads the
+# word after a bare -i as the backup suffix, so `sed -i SCRIPT FILE` runs FILE as
+# the script there ("invalid command code"); a suffix attached to -i is read the
+# same way by both. Both keep the file's mode, and the backup is removed at once.
+sed_in_place() {   # <sed script> <file>
+    sed -i.sed-bak "$1" "$2" && rm -f "$2.sed-bak"
+}
+
+# Write an a, i or c command as one -e argument: the command, a backslash, a newline, then
+# the text (sed -e '2a\<newline>TEXT'). GNU sed and BSD sed (macOS) read that form alike.
+# BSD sed refuses GNU's one-line forms (2a TEXT, 2a\TEXT). Given the text as a second -e
+# argument (-e '2a\' -e TEXT, a GNU extension), it reads an empty text and runs TEXT as
+# commands. Given the script without -e, the sed of macOS 15 and earlier prints the last text
+# line with no newline after it. Start a text line that begins with blanks with a backslash,
+# which both seds remove: the sed of macOS 10.15 and earlier removes the blanks otherwise.
+
 # The 2026-09-06 incident, reproduced. main publishes an identifier (LEAK_SHA,
 # pushed, so the remote has it); a branch is cut from there and commits work of
 # its own, whose tree INHERITS the leak although its diff is clean. Leaves HEAD on
@@ -3668,9 +3684,10 @@ wc_silent() {   # a wc that reads its input and answers nothing, exit 0
     hidden_file_on_remote_then_clean_commit
     blob="$(git -C "$REPO" rev-parse "$sha:notes.txt")"
     expected="$(git -C "$REPO" ls-tree -r -z -l "$sha" | wc -c)"                # the listing's bytes: the input the rewrite must match
+    expected=${expected//[[:space:]]/}                                          # its digits alone, as the hook's line prints them: BSD wc (macOS) pads a count with blanks
     tr_silent_on "$blob"                                                        # the hidden blob's sha is in the tip's listing and in no other scratch file of this push
     run _hook_in "$REPO" -c 'printf "a\\0b" | tr "\\0" "\\n" | wc -c'          # a clean input runs through the real tr
-    [ "$output" = 3 ]
+    [ "$output" -eq 3 ]                                                         # a number: BSD wc answers "       3"
     run_hook "$BASE"
     [ "$status" -eq 1 ]
     [[ "$output" == *"the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the rewrite of listing wrote 0 bytes for $expected read; tr exited 0)"* ]]
@@ -3690,6 +3707,7 @@ wc_silent() {   # a wc that reads its input and answers nothing, exit 0
     remove_file notes.txt "remove it"                          # the tip is clean: only the per-commit half can name it
     attrs="$(git -C "$REPO" rev-parse "$leak:.gitattributes")"
     expected="$(printf '%s\t%s\0%s\t%s\0' "$attrs" .gitattributes "$blob" notes.txt | wc -c)"   # the post-images file holds the commit's two records
+    expected=${expected//[[:space:]]/}                             # its digits alone, as the hook's line prints them: BSD wc pads a count with blanks
     tr_silent_on "$(printf '%s\t%s' "$blob" notes.txt)"        # the blob and the path: the leak commit's post-images, and no other scratch file (the removal's deletions hold the blob alone)
     run_hook
     [ "$status" -eq 1 ]
@@ -3705,6 +3723,7 @@ wc_silent() {   # a wc that reads its input and answers nothing, exit 0
     third_path_committed
     blob="$(git -C "$REPO" rev-parse "$merge:b.txt")"
     expected="$(printf '%s\t%s\0' "$blob" b.txt | wc -c)"
+    expected=${expected//[[:space:]]/}                             # its digits alone, as the hook's line prints them: BSD wc pads a count with blanks
     tr_silent_on "$(printf '%s\t%s' "$blob" b.txt)"            # the merge's post-images alone: the sources are on the remote, the removal's deletions hold the blob without the path
     run_hook "$BASE"
     [ "$status" -eq 1 ]
@@ -4112,7 +4131,7 @@ grep_refusing() {   # <bash test over the shim's "$@">
     # both kinds are in use, and the two lists are disjoint
     [[ "$tags" == *'gate="'* ]]
     [[ "$tags" == *'own="'* ]]
-    [ "$(printf '%s\n' "$tags" | sed 's/^[a-z]*=//' | sort | uniq -d | wc -l)" = 0 ]
+    [ "$(printf '%s\n' "$tags" | sed 's/^[a-z]*=//' | sort | uniq -d | wc -l)" -eq 0 ]   # a number: BSD wc (macOS) pads a count with blanks
 }
 
 @test "the ADDED LINES grep exiting 2 (an error, not a no-match) is refused as unscanned naming the read, through a real push: a grep that could not read the lines is not a commit that added nothing, and the remote stays at the base" {
@@ -4666,7 +4685,7 @@ leak_in_middle_commit_after_base() {   # a base on the remote (BASE), then a com
     run _hook_in "$REPO" -c 'printf "x\n" | awk "{ printf \"tip\\t%s\\n\", \$0 }"; echo "status $?"'
     [ "$output" = "status 0" ]
     run _hook_in "$REPO" -c 'git grep --no-color -I -l -z -e "" "$1" -- | tr "\0" "\n" | wc -l' _ "$sha"
-    [ "$output" = 2 ]                                      # .gitattributes and other.txt read; notes.txt skipped under -diff
+    [ "$output" -eq 2 ]                                    # .gitattributes and other.txt read; notes.txt skipped under -diff (a number: BSD wc pads a count with blanks)
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     [[ "$output" == *"the TREE of the tip of refs/heads/main (${sha:0:10}) was joined short with the grep's read list for the BINARY VERDICT check (the join appended 0 candidate rows where the -z listing names 3 regular files with bytes and the grep's read list 2 of them, so the count expected is 1; awk and tr exited 0)"* ]]
@@ -4779,7 +4798,8 @@ echo "--- a status outside the set with the file open is the set's own refusal"
 judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -o "$1/out" -- bash -c 'exit 3'; echo "o-status rc=$? failed_scan=$failed_scan"
 echo "--- the descriptor is closed again: a second read after the first opens afresh"
 failed_scan=0
-judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -o "$1/out2" -- bash -c 'ls /proc/self/fd 2>/dev/null | tr "\n" " "'; echo "fds=$(cat "$1/out2")"
+# /dev/fd lists the open descriptors of the process reading it, ls here, on Linux (a link to /proc/self/fd) and on macOS (its fdesc file system, with no /proc)
+judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -o "$1/out2" -- bash -c 'ls /dev/fd 2>/dev/null | tr "\n" " "'; echo "fds=$(cat "$1/out2")"
 PROBE
     } > "$probe"
     run bash "$probe" "$TEST_DIR/p"
@@ -5630,15 +5650,18 @@ census_memo() {   # <census helper> <bash file> [<arguments>...]: prints what th
     [[ "$census" == *"swallowed=0 "* ]]
     [ "$(grep -c '^declared: body [0-9]* byte_counts: git head od awk cat$' <<< "$output")" -eq 1 ]
     # the census's own sensitivity, executed over planted copies (the first line is the shebang; the plant is line 2)
-    sed '1a x=$(git rev-parse HEAD 2>/dev/null || true)' "$HOOK" > "$TEST_DIR/plant-a.sh"                    # the plain substitution
+    sed -e '1a\
+x=$(git rev-parse HEAD 2>/dev/null || true)' "$HOOK" > "$TEST_DIR/plant-a.sh"                    # the plain substitution
     run undeclared_reads "$TEST_DIR/plant-a.sh"
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
     [[ "$output" == *'undeclared: 2:x=$(git rev-parse HEAD 2>/dev/null || true)'* ]]
-    sed '1a tipname="$(git rev-parse --short HEAD 2>/dev/null || true)"' "$HOOK" > "$TEST_DIR/plant-b.sh"    # the spelling the hook uses: the substitution inside double quotes stays visible
+    sed -e '1a\
+tipname="$(git rev-parse --short HEAD 2>/dev/null || true)"' "$HOOK" > "$TEST_DIR/plant-b.sh"    # the spelling the hook uses: the substitution inside double quotes stays visible
     run undeclared_reads "$TEST_DIR/plant-b.sh"
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
     [[ "$output" == *'undeclared: 2:tipname="$(git rev-parse --short HEAD 2>/dev/null || true)"'* ]]
-    sed '1a hits=$(printf "%s\\n" "$read_out" | grep -c x || true)' "$HOOK" > "$TEST_DIR/plant-c.sh"          # a grep over captured content, the class round 5 reopened
+    sed -e '1a\
+hits=$(printf "%s\\n" "$read_out" | grep -c x || true)' "$HOOK" > "$TEST_DIR/plant-c.sh"          # a grep over captured content, the class round 5 reopened
     run undeclared_reads "$TEST_DIR/plant-c.sh"
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
     [[ "$output" == *'undeclared: 2:hits=$(printf "%s\n" "$read_out" | grep -c x || true)'* ]]
@@ -6929,7 +6952,8 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
         cover "$output"
     }
     # a planted read with no row: a judged_read call whose tag the table lacks
-    sed '2a judged_read gate="the PLANTED read with no row" 0 "the PLANTED read could not be made (a probe exited {rc})" -- git rev-parse HEAD' "$HOOK" > "$P/hook-read"
+    sed -e '2a\
+judged_read gate="the PLANTED read with no row" 0 "the PLANTED read could not be made (a probe exited {rc})" -- git rev-parse HEAD' "$HOOK" > "$P/hook-read"
     run reads_table_check "$P/hook-read" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
     [ "$status" -ne 0 ]
     [ "$output" = "the gate= tags and the table's gate rows differ: < the PLANTED read with no row " ]
@@ -7001,7 +7025,8 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
     [ "$output" = "the read outside judged_read at line $tl is matched by 2 keys: $tt" ]
     cover "$output"
     # a planted read outside judged_read, declared at its site, with no row
-    sed '2a # outside judged_read: planted for the table case\
+    sed -e '2a\
+# outside judged_read: planted for the table case\
 zz_planted=$(git config core.zzsynthPlanted 2>/dev/null || true)' "$HOOK" > "$P/hook-outside"
     run reads_table_check "$P/hook-outside" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
     [ "$status" -ne 0 ]
@@ -8201,7 +8226,9 @@ feed_git_cut_then() {   # <bash line run after the cut>: a git whose feed answer
 # answer to cut, in the table's order, each named in the row's short column (a row with none says why
 # there): each puts a tool first on the hook's PATH that, for THAT read's argument shape alone (or its
 # input), runs the REAL tool, cuts its answer short by the cut the case names (bytes:N keeps the first N
-# bytes, less:N drops the last N, lines:N keeps the first N lines, and since round 9d before:<prefix>:<n> keeps the
+# bytes, digits:N keeps the blanks a count begins with and its first N digits (BSD wc, macOS's, pads a count
+# with blanks and GNU wc does not, so bytes:1 of a BSD count is a blank), less:N drops the last N, lines:N keeps
+# the first N lines, and since round 9d before:<prefix>:<n> keeps the
 # bytes ahead of the n-th line that begins with the prefix), prints the cut answer and exits 0 (a
 # real non-zero exit passes through uncut), and records the call with the whole and the cut byte counts;
 # the case pushes for real through core.hooksPath, asserts the shim FIRED with an answer cut short
@@ -8215,6 +8242,7 @@ calls_short_on_shim() {   # <plain|text|input> <tool> <calls name> <cut> <shape:
     r_head="$(PATH=$p; command -v head)"; r_mktemp="$(PATH=$p; command -v mktemp)"; r_rm="$(PATH=$p; command -v rm)"
     case "$cut" in
         bytes:*) keep="k=${cut#bytes:}" ;;
+        digits:*) keep="v=\$($(printf %q "$r_cat") \"\$w\"); v=\${v%%[![:space:]]*}; k=\$((\${#v} + ${cut#digits:}))" ;;
         less:*)  keep="k=\$((n - ${cut#less:})); [ \"\$k\" -ge 0 ] || k=0" ;;
         lines:*) keep="k=\$($(printf %q "$r_head") -n ${cut#lines:} \"\$w\" | $(printf %q "$r_wc") -c); k=\${k//[[:space:]]/}" ;;
         before:*)                                       # round 9d: the bytes ahead of the n-th line that begins with the prefix (before:<prefix>:<n>)
@@ -8524,7 +8552,7 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     git -C "$REPO" add twelve.txt
     git -C "$REPO" commit -qm "twelve clean lines"
     sha="$(git -C "$REPO" rev-parse HEAD)"
-    calls_short_on wc line-count '[ "${1:-}" = -l ] && [ "$#" -eq 1 ]' bytes:1
+    calls_short_on wc line-count '[ "${1:-}" = -l ] && [ "$#" -eq 1 ]' digits:1
     push_main_through_hook_with_shim
     fired_short line-count "wc -l"
     [ "$status" -ne 0 ]
@@ -8649,7 +8677,7 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
 @test "round 8b3 short case: the BYTE COUNT of a tag capture: a wc whose wc -c over the tag capture answers the first digit of its count (exit 0), through a real push of a tag whose message names the host, is refused naming both numbers, and the remote never gets the tag" {
     r8b2_tag_naming_the_host
     size="$(git -C "$REPO" cat-file -s "$tag")"
-    calls_short_on_input wc tag-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "object " bytes:1
+    calls_short_on_input wc tag-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "object " digits:1
     push_ref_through_hook_with_shim refs/tags/v1
     fired_short tag-count "wc -c"
     [ "$status" -ne 0 ]
@@ -8737,7 +8765,10 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     clean_tip_after_base
     n="$(git -C "$REPO" ls-tree -r -z -l "$sha" | wc -c | tr -d ' ')"
     [ "$n" -ge 100 ]
-    calls_short_on wc rewrite-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ] && [ -f /dev/stdin ] && [[ "$(readlink /proc/self/fd/0)" == */listing.nl ]]' bytes:1
+    # wc -c reading the tip listing's rewrite, told from the other scratch files by device and inode (the shell's -ef, over
+    # the scratch directory the hook makes under TMPDIR with the prefix romp-pre-push.): /proc/self/fd, which named the
+    # file here until now, is Linux's alone
+    calls_short_on wc rewrite-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ] && [ -f /dev/stdin ] && for f in "${TMPDIR:-/tmp}"/romp-pre-push.*/listing.nl; do [ /dev/stdin -ef "$f" ] && break; done' digits:1
     push_main_through_hook_with_shim
     fired_short rewrite-count "wc -c"
     [ "$status" -ne 0 ]
@@ -11557,7 +11588,7 @@ r11a_shape_case() {   # <S1|S2|S3|S4|W7>: the shape's config in the work tree, i
     nb=$(wc -c < "$REPO/.gitleaks.toml"); nb=${nb//[[:space:]]/}
     [ "${#nb}" -ge 2 ]
     commit_file ok.txt "nothing to see" "a clean commit"
-    calls_short_on_input wc cfg-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "r11a byte count marker" bytes:1
+    calls_short_on_input wc cfg-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "r11a byte count marker" digits:1
     push_main_through_hook_with_shim
     fired_short cfg-count "wc -c"
     r11a_refused_by_reader "romp pre-push: the gitleaks config $R11A_WT was read short (the shell read $nb bytes of the ${nb:0:1} wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere); no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"
@@ -12272,11 +12303,12 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
         "/--format='message/s/ --encoding=UTF-8 / /"
         's/^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" --diff-merges=first-parent /    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" --diff-merges=first-parent /'
         '/ --diff-merges=first-parent /s/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /'
-        '1a unset GIT_DIFF_OPTS')
+        '1a\
+unset GIT_DIFF_OPTS')
     local -a said=("runs with GIT_DIFF_OPTS taken from it (-u GIT_DIFF_OPTS)" "carries no -c diff.suppressBlankEmpty=false" "git rev-list at line" "git log at line" "git log at line" "runs with GIT_DIFF_OPTS taken from it (-u GIT_DIFF_OPTS)" "carries no -c diff.suppressBlankEmpty=false" "the statement at line 2 names GIT_DIFF_OPTS")
     local k
     for k in 0 1 2 3 4 5 6 7; do
-        sed "${drop[k]}" "$HOOK" > "$TEST_DIR/pins-$k.sh"
+        sed -e "${drop[k]}" "$HOOK" > "$TEST_DIR/pins-$k.sh"
         [ "$(diff "$HOOK" "$TEST_DIR/pins-$k.sh" | grep -c '^>')" -eq 1 ]                 # the change landed, on one line
         run r11c_pins_check "$TEST_DIR/pins-$k.sh"
         [ "$status" -ne 0 ]
@@ -12841,7 +12873,8 @@ r12b_log_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the scan of recor
         printf '#!/usr/bin/env bash\n'
         printf 'case " $* " in *" --log-level trace "*) ;; *) exec %q "$@" ;; esac\n' "$GL"
         printf 'case "$PWD" in */creds.d) ;; *) exec %q "$@" ;; esac\n' "$GL"
-        printf 'stat -L -c %%a /proc/self/fd/2 >> %q; readlink /proc/self/fd/2 >> %q\n' "$TEST_DIR/calls.logmode" "$TEST_DIR/calls.logpath"
+        printf 'f=""; for c in "${TMPDIR:-/tmp}"/*/*; do if [ /dev/stderr -ef "$c" ]; then f=$c; fi; done\n'   # the file stderr is, found by device and inode (the shell's -ef) under TMPDIR, where the hook makes its scratch directory: /proc/self/fd is Linux's alone
+        printf 'if [ -n "$f" ]; then ls -ln "$f" 2>/dev/null | cut -c1-10; else echo none; fi >> %q; echo "${f:-none}" >> %q\n' "$TEST_DIR/calls.logmode" "$TEST_DIR/calls.logpath"   # its mode as ls -l prints it: GNU stat's -c is not BSD stat's
         printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
         printf 'if grep -qF -- %q "$e"; then echo in-log >> %q; else echo absent >> %q; fi\n' "$(r12b_token)" "$TEST_DIR/calls.premise" "$TEST_DIR/calls.premise"
         printf 'cat "$e" >&2; rm -f "$e"; exit "$s"\n'
@@ -12851,7 +12884,7 @@ r12b_log_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the scan of recor
 }
 r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reached the trace log, which was mode 600 and is gone, the token printed nowhere and the hook's TMPDIR empty
     [ "$(tail -n 1 "$TEST_DIR/calls.premise")" = in-log ]
-    [ "$(tail -n 1 "$TEST_DIR/calls.logmode")" = 600 ]
+    [ "$(tail -n 1 "$TEST_DIR/calls.logmode")" = "-rw-------" ]     # mode 600
     [[ "$(tail -n 1 "$TEST_DIR/calls.logpath")" == "$TMPDIR/romp-pre-push."*"/creds.log" ]]
     [ ! -e "$(tail -n 1 "$TEST_DIR/calls.logpath")" ]
     [[ "$output" != *"$(r12b_token)"* ]]
@@ -12982,8 +13015,10 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     [ "$(sed -n "$((h + 1))p" "$HOOK")" = "    LC_ALL=C awk '" ]
     run census_memo undeclared_reads "$HOOK"
     [[ "$output" == *"declared: body $((h + 1)) path_skips: awk"* ]]
-    sed "${h}a\\    git rev-parse HEAD > /dev/null" "$HOOK" > "$TEST_DIR/plant-r12l-1.sh"
-    sed "${h}a\\    x=\$(git rev-parse HEAD || :)" "$HOOK" > "$TEST_DIR/plant-r12l-2.sh"
+    sed -e "${h}a\\
+\\    git rev-parse HEAD > /dev/null" "$HOOK" > "$TEST_DIR/plant-r12l-1.sh"
+    sed -e "${h}a\\
+\\    x=\$(git rev-parse HEAD || :)" "$HOOK" > "$TEST_DIR/plant-r12l-2.sh"
     sed "$((h + 1))s/^    LC_ALL=C awk '\$/    LC_ALL=C ROMP_X=\$(git rev-parse HEAD) awk '/" "$HOOK" > "$TEST_DIR/plant-r12l-3.sh"
     sed "$((h + 1))s/^    LC_ALL=C awk '\$/    LC_ALL=C ROMP_X=\$(git rev-parse HEAD || true) awk '/" "$HOOK" > "$TEST_DIR/plant-r12l-4.sh"
     local -a want=('    git rev-parse HEAD > /dev/null' '    x=$(git rev-parse HEAD || :)' "    LC_ALL=C ROMP_X=\$(git rev-parse HEAD) awk '" "    LC_ALL=C ROMP_X=\$(git rev-parse HEAD || true) awk '")
@@ -13006,8 +13041,10 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     # the fold owner's call): the awk runs only when the read passes, so the statement's status is the read's when it
     # fails and the awk's otherwise, and both lines are declared (round 12m's census named them).
     sed "$((h + 1))s|^    LC_ALL=C awk '\$|    git rev-parse HEAD > /dev/null; LC_ALL=C awk '|" "$HOOK" > "$TEST_DIR/plant-r12m-1.sh"
-    sed "${h}a\\    git rev-parse HEAD > /dev/null ||" "$HOOK" > "$TEST_DIR/plant-r12m-2.sh"
-    sed "${h}a\\    git rev-parse HEAD > /dev/null &&" "$HOOK" > "$TEST_DIR/plant-r12m-3.sh"
+    sed -e "${h}a\\
+\\    git rev-parse HEAD > /dev/null ||" "$HOOK" > "$TEST_DIR/plant-r12m-2.sh"
+    sed -e "${h}a\\
+\\    git rev-parse HEAD > /dev/null &&" "$HOOK" > "$TEST_DIR/plant-r12m-3.sh"
     local -a w12m=("    git rev-parse HEAD > /dev/null; LC_ALL=C awk '" '    git rev-parse HEAD > /dev/null ||' '    git rev-parse HEAD > /dev/null &&')
     local -a u12m=("undeclared: $((h + 1)):${w12m[0]}" "undeclared: $((h + 1)):${w12m[1]}"$'\n'"undeclared: $((h + 2)):    LC_ALL=C awk '")
     for k in 1 2 3; do
@@ -13153,8 +13190,8 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
     n=$(grep -n '^scanner_version() {' "$HOOK" | cut -d: -f1)
     [ -n "$n" ]
-    sed "${n}a\\
-    v=\$(\"\$gl\" version)" "$HOOK" > "$TEST_DIR/plant-r10c-sv.sh"
+    sed -e "${n}a\\
+\\    v=\$(\"\$gl\" version)" "$HOOK" > "$TEST_DIR/plant-r10c-sv.sh"
     [ "$(sed -n "$((n + 1))p" "$TEST_DIR/plant-r10c-sv.sh")" = '    v=$("$gl" version)' ]
     run census_unread_shapes "$TEST_DIR/plant-r10c-sv.sh"
     [ "$output" = "$((n + 1)):    v=\$(\"\$gl\" version)" ]
@@ -13306,7 +13343,8 @@ r12b3_canary_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the canary's 
     {
         printf '#!/usr/bin/env bash\n'
         printf 'case "$PWD" in */creds.c) ;; *) exec %q "$@" ;; esac\n' "$GL"
-        printf 'stat -L -c %%a /proc/self/fd/2 >> %q; readlink /proc/self/fd/2 >> %q\n' "$TEST_DIR/calls.clogmode" "$TEST_DIR/calls.clogpath"
+        printf 'f=""; for c in "${TMPDIR:-/tmp}"/*/*; do if [ /dev/stderr -ef "$c" ]; then f=$c; fi; done\n'   # the file stderr is, found by device and inode as r12b_log_watcher finds it
+        printf 'if [ -n "$f" ]; then ls -ln "$f" 2>/dev/null | cut -c1-10; else echo none; fi >> %q; echo "${f:-none}" >> %q\n' "$TEST_DIR/calls.clogmode" "$TEST_DIR/calls.clogpath"
         printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
         printf 'if grep -qF -- %q "$e"; then echo in-log >> %q; else echo absent >> %q; fi\n' "$(r12b3_value)" "$TEST_DIR/calls.cpremise" "$TEST_DIR/calls.cpremise"
         printf 'cat "$e" >&2; rm -f "$e"; exit "$s"\n'
@@ -13325,7 +13363,7 @@ r12b3_canary_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the canary's 
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [ "$(cat "$TEST_DIR/calls.cpremise")" = in-log ]
-    [ "$(cat "$TEST_DIR/calls.clogmode")" = 600 ]
+    [ "$(cat "$TEST_DIR/calls.clogmode")" = "-rw-------" ]          # mode 600
     [[ "$(cat "$TEST_DIR/calls.clogpath")" == "$TMPDIR/romp-pre-push."*"/creds.canary.log" ]]
     [ ! -e "$(cat "$TEST_DIR/calls.clogpath")" ]
     [[ "$output" != *"$(r12b3_value)"* ]]
@@ -13630,10 +13668,10 @@ r12d_m_edit() {   # <m2|m13>: the credential written into the base's nuget confi
 r12d_sk_merge() {   # the evil merge of item 3: config/deploy.sh at its base (seven lines), a side and a main edit, and the merge adding the sidekiq URL as the file's last line with no final newline; sha and merge are the merge
     r12d_base_file config/deploy.sh 'a\nb\nc\nd\ne\nf\ng\n'
     git -C "$REPO" checkout -q -b side
-    sed -i 's/^a$/a-side/' "$REPO/config/deploy.sh"
+    sed_in_place 's/^a$/a-side/' "$REPO/config/deploy.sh"
     git -C "$REPO" commit -qam "side: line a"
     git -C "$REPO" checkout -q main
-    sed -i 's/^d$/d-main/' "$REPO/config/deploy.sh"
+    sed_in_place 's/^d$/d-main/' "$REPO/config/deploy.sh"
     git -C "$REPO" commit -qam "main: line d"
     git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
     printf 'a-side\nb\nc\nd-main\ne\nf\ng\n%s' "$(r12d_sk)" > "$REPO/config/deploy.sh"
@@ -13790,10 +13828,10 @@ r12d_sk_merge() {   # the evil merge of item 3: config/deploy.sh at its base (se
     r11a_base
     r12d_base_file config/deploy.sh 'a\nb\nc\nd\ne\nf\ng'
     git -C "$REPO" checkout -q -b side
-    sed -i 's/^a$/a-side/' "$REPO/config/deploy.sh"
+    sed_in_place 's/^a$/a-side/' "$REPO/config/deploy.sh"
     git -C "$REPO" commit -qam "side: line a"
     git -C "$REPO" checkout -q main
-    sed -i 's/^d$/d-main/' "$REPO/config/deploy.sh"
+    sed_in_place 's/^d$/d-main/' "$REPO/config/deploy.sh"
     git -C "$REPO" commit -qam "main: line d"
     git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
     printf 'a-side\nb\nc\nmerge-own\nd-main\ne\nf\ng' > "$REPO/config/deploy.sh"
@@ -14017,7 +14055,7 @@ mkv-far 5000 0=1a45dfa3 4200=42827a6d6174726f736b61
 dex+webp 60 0=6465780a 8=57454250 36=70
 mp4-badbrand+exe 30 0=4d5a 4=66747970 8=7a7a7a7a'
 r12d_types_check() {   # <hook file> <work directory>: prints "mismatch: <label> ..." for each piece whose skip by the running gitleaks differs from the hook's ~ line, "framed: <label>" for a framed piece gitleaks skips, and a closing line "types: entries=<n> pieces=<n> skipped=<n>"
-    local hook=$1 W=$2 P n=0 name cls lo hi rest c ci cj off hex a T num w t sk bad
+    local hook=$1 W=$2 P n=0 name cls lo hi rest c ci cj off hex a T num w t sk bad entries
     local -a conds alts args
     mkdir -p "$W/s" "$W/f" "$W/p"
     P=$(awk -v q="'" '$0 == "CRED_PIECES_AWK=" q { p = 1; next } p { print; if (substr($0, length($0)) == q) exit }' "$hook"); P=${P%\'}
@@ -14101,7 +14139,8 @@ r12d_types_check() {   # <hook file> <work directory>: prints "mismatch: <label>
         [ "$bad" -eq "$t" ] || echo "mismatch: $name: gitleaks skip=$bad, the hook's ~ line=$t"
         if [ "$t" -eq 1 ] && ! grep -qxF "$num	." "$W/rep.f"; then echo "framed: $name"; fi
     done < "$W/manifest"
-    echo "types: entries=$(wc -l < "$W/table") pieces=$n skipped=$sk"
+    entries=$(wc -l < "$W/table"); entries=${entries//[[:space:]]/}      # the digits alone, which the caller's sed reads: BSD wc (macOS) pads a count with blanks
+    echo "types: entries=$entries pieces=$n skipped=$sk"
 }
 
 @test "round 12d (b): the type table is DERIVED: the hook's own piecing text writes the ~ line ahead of exactly the pieces the running gitleaks skips by type, over a piece for each entry of the hook's table and each alternative, for each matcher of h2non/filetype v1.1.3 (which gitleaks 8.25.0 to 8.30.1 call), NUL bytes mapped as the feed maps them, for each image, video and audio matcher beside a skip signature, and for the edges; each framed piece is read; and the check reds over planted copies missing Mach-O's entry, the mp4 entry that claims a piece first, and the short OLE entry's bound" {
@@ -14527,13 +14566,13 @@ r12d2_census_fixture() {   # the census's history: a base on the remote (BASE), 
     printf '\nBEGIN\nK2\nEND\n\nBEGIN\nK1\nEND\n' > "$REPO/keys/slide.txt"
     mkdir -p "$REPO/new" "$REPO/ren2" "$REPO/notes"
     git -C "$REPO" mv old/moved.txt new/moved.txt
-    sed -i '10s/.*/moved line ten/' "$REPO/new/moved.txt"
+    sed_in_place '10s/.*/moved line ten/' "$REPO/new/moved.txt"
     sed '15s/.*/orig line fifteen/' "$REPO/src/orig.txt" > "$REPO/src/copy.txt"
     printf 'orig line 31\n' >> "$REPO/src/orig.txt"
     git -C "$REPO" mv ren/r1.txt ren2/q1.txt                       # new basenames: git pairs a moved file with one of its own basename past any rename limit
     git -C "$REPO" mv ren/r2.txt ren2/q2.txt
-    sed -i '5s/.*/first rename line five/' "$REPO/ren2/q1.txt"
-    sed -i '5s/.*/second rename line five/' "$REPO/ren2/q2.txt"
+    sed_in_place '5s/.*/first rename line five/' "$REPO/ren2/q1.txt"
+    sed_in_place '5s/.*/second rename line five/' "$REPO/ren2/q2.txt"
     printf 'alpha\nbeta2\ngamma\n' > "$REPO/drv/file.drv"
     printf 'a\nb' > "$REPO/notes/nonl.txt"
     seq 1 20 | sed 's/^/sub line /; 5s/.*/sub line five/; 9s/.*/sub line nine/' > "$REPO/sub/s.txt"   # two edits one hunk apart in git diff's context, then a file added
@@ -14543,7 +14582,7 @@ r12d2_census_fixture() {   # the census's history: a base on the remote (BASE), 
     git -C "$REPO/sub" commit -qm "the submodule's new file"
     git -C "$REPO" add -A
     git -C "$REPO" commit -qm "the census edits"
-    sed -i '12s/.*/twelve/' "$REPO/src/nums.txt"
+    sed_in_place '12s/.*/twelve/' "$REPO/src/nums.txt"
     git -C "$REPO" commit -qam "a second commit"
     unset ROMP_NO_GITLEAKS
 }
@@ -14658,7 +14697,7 @@ r12d2_fp_merge() {   # <zz|nuget|m2>: decision 5's check's first-parent witnesse
             printf 'K1=v\nK2=v\nK3=v\nK4=side\n%s\nK5=v\nK6=v\n' "$(r12d_zz)" > "$REPO/config/app.env"
             git -C "$REPO" commit -qam "side: K4 changed, a key added after it"
             git -C "$REPO" checkout -q main
-            sed -i 's/^K4=v$/K4=side/' "$REPO/config/app.env"
+            sed_in_place 's/^K4=v$/K4=side/' "$REPO/config/app.env"
             git -C "$REPO" commit -qam "main: the same K4 change" ;;
         nuget|m2)
             r12d_base_file deploy/prod.nuget.config '<configuration>\n<feed name="a" />\n<feed name="b" />\n</configuration>\n'
@@ -14671,7 +14710,7 @@ r12d2_fp_merge() {   # <zz|nuget|m2>: decision 5's check's first-parent witnesse
             fi
             git -C "$REPO" commit -qam "side: feed a renamed, a password added beside it"
             git -C "$REPO" checkout -q main
-            sed -i 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
+            sed_in_place 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
             git -C "$REPO" commit -qam "main: the same rename" ;;
     esac
     git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
@@ -15062,14 +15101,15 @@ r12e_enc_capture() {   # <hook>: a real push of main through that hook (the remo
     [ -s "$TEST_DIR/enc/prog" ]
 }
 r12e_enc_accepted() {   # <labels file, one per line>: the captured program, under the captured ROMP_ENC_LABELS, over one synthetic commit per label as git cat-file --batch answers it (its header carrying that label's encoding line); prints each label it passes, one per line; status 1 when its record is not every commit read, or it refuses a commit of no label
-    local E=$TEST_DIR/enc real_awk lab n
+    local E=$TEST_DIR/enc real_awk lab n k
     real_awk="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
     lab=$(< "$E/labels")
     LC_ALL=C "$real_awk" '{ printf "%040d\n", NR }' "$1" > "$E/list"
     LC_ALL=C "$real_awk" '{ b = "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor A <a@example.invalid> 0 +0000\ncommitter A <a@example.invalid> 0 +0000\nencoding " $0 "\n\nc\n"; printf "%040d commit %d\n%s\n", NR, length(b), b }' "$1" > "$E/stream"
     LC_ALL=C ROMP_ENC_FILE="$E/list" ROMP_ENC_RECORD="$E/rec" ROMP_ENC_LABELS="$lab" "$real_awk" "$(< "$E/prog")" < "$E/stream" > "$E/refused" || return 1
-    n=$(wc -l < "$1")
-    [ "$(< "$E/rec")" = "$n $(wc -l < "$E/refused")" ] || { echo "the comparison's record reads \"$(< "$E/rec")\" over $n commits"; return 1; }
+    n=$(wc -l < "$1"); n=${n//[[:space:]]/}                                # the counts' digits alone, as the record holds them: BSD wc (macOS) pads a count with blanks
+    k=$(wc -l < "$E/refused"); k=${k//[[:space:]]/}
+    [ "$(< "$E/rec")" = "$n $k" ] || { echo "the comparison's record reads \"$(< "$E/rec")\" over $n commits"; return 1; }
     LC_ALL=C "$real_awk" -F '\t' 'NR == FNR { if ($2 != "label") bad = 1; no[$1 + 0] = 1; next } !(FNR in no) { print } END { exit bad }' "$E/refused" "$1"
 }
 
@@ -15111,7 +15151,8 @@ r12e_enc_accepted() {   # <labels file, one per line>: the captured program, und
     for k in in-SHIFT_JIS in-BIG5 in-CP1258 in-CP1255 after-BIG5 after-CP932 read-GBK; do
         l=${k#*-}
         case "$k" in
-            in-*) sed "/^ASCII_SAFE_LABELS='\$/a\\    $l" "$HOOK" > "$TEST_DIR/list-$k" ;;
+            in-*) sed -e "/^ASCII_SAFE_LABELS='\$/a\\
+\\    $l" "$HOOK" > "$TEST_DIR/list-$k" ;;
             after-*) awk -v q="$q" -v add="ASCII_SAFE_LABELS=\"\$ASCII_SAFE_LABELS $l\"" '$0 == "ASCII_SAFE_LABELS=" q { inb = 1; print; next } { print } inb && $0 == q { print add; inb = 0 }' "$HOOK" > "$TEST_DIR/list-$k" ;;
             read-*) sed "s/ ROMP_ENC_LABELS=\$ASCII_SAFE_LABELS awk / ROMP_ENC_LABELS=\"\$ASCII_SAFE_LABELS $l\" awk /" "$HOOK" > "$TEST_DIR/list-$k" ;;
         esac
@@ -15280,7 +15321,7 @@ r12e_fp_own() {   # <zz|nuget|m2>: round 12d2's first-parent witnesses (r12d2_fp
             printf 'K1=v\nK2=v\nK3=v\nK4=side\n%s\nK5=v\nK6=v\n' "$(r12d_zz)" > "$REPO/config/app.env"
             git -C "$REPO" commit -qam "side: K4 changed, a key added after it"
             git -C "$REPO" checkout -q main
-            sed -i 's/^K4=v$/K4=side/' "$REPO/config/app.env"
+            sed_in_place 's/^K4=v$/K4=side/' "$REPO/config/app.env"
             git -C "$REPO" commit -qam "main: the same K4 change"
             git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
             printf 'K1=v\nK2=v\nK3=v\nK4=side\n%s\nK4b=merge\nK5=v\nK6=v\n' "$(r12d_zz)" > "$REPO/config/app.env"
@@ -15296,7 +15337,7 @@ r12e_fp_own() {   # <zz|nuget|m2>: round 12d2's first-parent witnesses (r12d2_fp
             fi
             git -C "$REPO" commit -qam "side: feed a renamed, a password added beside it"
             git -C "$REPO" checkout -q main
-            sed -i 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
+            sed_in_place 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
             git -C "$REPO" commit -qam "main: the same rename"
             git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
             if [ "$1" = nuget ]; then
@@ -15518,7 +15559,8 @@ r12e_fp_refused() {   # <clause>: the push just made was refused by that line of
 @test "round 12e (the FIRST-PARENT DIFF read, its foreign arm): a git whose first-parent diff-tree prints a Binary notice after each diff header (a line --text keeps a real git from printing), through a real push of evilI, is refused naming the merge and that line's read, no credential named, and the remote stays at its base (red under the mutant deleting that arm)" {
     r11a_base
     r12e_evil ihc
-    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed "/^diff --git /a Binary files differ"; exit "${PIPESTATUS[0]}"; fi' "$r12e_fp_shape" "$TEST_DIR/calls.fpforeign")"
+    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed -e %q; exit "${PIPESTATUS[0]}"; fi' "$r12e_fp_shape" "$TEST_DIR/calls.fpforeign" '/^diff --git /a\
+Binary files differ')"
     push_main_through_hook_with_shim
     [ "$(wc -l < "$TEST_DIR/calls.fpforeign")" -eq 1 ]
     r12e_fp_refused "the FIRST-PARENT DIFF of the pushed merges could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside merge 1 of those it was given, ${merge:0:10}, that is none of the shapes a two-way diff prints, so what that line stands for went unread)"
@@ -15924,7 +15966,8 @@ r12f_nl_shape='[[ " $* " == *" diff-tree "* ]] && [[ " $* " == *" --name-status 
 @test "round 12f (the NAME LISTING read, its foreign arm): a git whose name listing prints a line that is no status line after the commit's head marker, through a real push of the reversed key block under the textconv driver, is refused naming the commit and that line's read, and the remote stays at its base (red under the mutant deleting that arm)" {
     r11a_base
     r12e_tc attr
-    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed "1a zzsynth"; exit "${PIPESTATUS[0]}"; fi' "$r12f_nl_shape" "$TEST_DIR/calls.nlforeign")"
+    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed -e %q; exit "${PIPESTATUS[0]}"; fi' "$r12f_nl_shape" "$TEST_DIR/calls.nlforeign" '1a\
+zzsynth')"
     push_main_through_hook_with_shim
     [ "$(wc -l < "$TEST_DIR/calls.nlforeign")" -eq 1 ]
     r12e_attr_refused "the NAME LISTING of the pushed commits could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside commit 1 of those it was given, ${sha:0:10}, that is no status line of --name-status, so a path that line stands for went unlisted)"
@@ -16370,12 +16413,18 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
         -e "$((at[tip_blobs] + 1))"'s/ "$1"$/ "$1" \&/' \
         -e "$((at[merge_rename_candidates] + 1))"'s/^    \(.*\)$/    if :; then \1; fi/' \
         -e "$((at[path_skips] + 1))"'s/^    LC_ALL=C awk /    :; LC_ALL=C awk /' \
-        -e "${at[tip_candidates]}"'a\    if :; then :; fi' \
-        -e "$((at[unlisted_verdict_path] + 1))"'i\    {' \
-        -e "$((at[unlisted_verdict_path] + 1))"'a\    }' \
-        -e "${at[name_listing]}"'a\    set +o pipefail' \
-        -e "${at[diff_attrs]}"'a\    shopt -u -o pipefail' \
-        -e "${at[parent_counts]}"'a\    set -euo pipefail' \
+        -e "${at[tip_candidates]}"'a\
+\    if :; then :; fi' \
+        -e "$((at[unlisted_verdict_path] + 1))"'i\
+\    {' \
+        -e "$((at[unlisted_verdict_path] + 1))"'a\
+\    }' \
+        -e "${at[name_listing]}"'a\
+\    set +o pipefail' \
+        -e "${at[diff_attrs]}"'a\
+\    shopt -u -o pipefail' \
+        -e "${at[parent_counts]}"'a\
+\    set -euo pipefail' \
         "$HOOK" > "$c"
     [ "$(diff "$HOOK" "$c" | grep -c '^>')" -eq 12 ]
     local -A planted=(
