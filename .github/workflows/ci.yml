@@ -391,9 +391,11 @@ jobs:
       # each). GitHub itself is already on the critical path (checkout), so this adds no new
       # dependency — and no bats test needs a tool the runner image lacks: node, python3 and curl are
       # on the GitHub images (the manager suites run the real bin/romp-manager under node; romp.bats and
-      # install-sh.bats run python3 and curl), the rest mock their subjects on PATH; gitleaks, two steps
-      # below, is the one extra install, for tests/gitleaks-config.bats. The step timeout kills any
-      # residual network hang in minutes instead of letting it eat the job's budget.
+      # install-sh.bats run python3 and curl), the rest mock their subjects on PATH; gitleaks, below, is
+      # one extra install, for tests/gitleaks-config.bats and the credential cases of
+      # tests/pre-push-hook.bats, and on macOS a bash 5.1 or later, below, is the other, for the pre-push
+      # hook. The step timeout kills any residual network hang in minutes instead of letting it eat the
+      # job's budget.
       - name: Install bats (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 5
@@ -406,13 +408,40 @@ jobs:
         if: runner.os == 'macOS'
         timeout-minutes: 15
         run: brew install bats-core
+      - name: Install bash 5.1 or later (macOS)
+        # The pre-push hook's body runs only under bash 5.1 or later: under an older bash, where a scan
+        # would run, its gate (bash_gate, at the top of .githooks/pre-push) re-runs the hook under a bash
+        # 5.1 or later at /opt/homebrew/bin/bash or /usr/local/bin/bash, and refuses the push when neither
+        # holds one (a clone with neither scan armed pushes as before under any bash). The image has only
+        # /bin/bash 3.2.57 (the actions/runner-images readme for macos-26-arm64, the image macos-latest
+        # names, at 20260907.0351, the version run 36689060323 ran on), so without this step
+        # tests/pre-push-hook.bats fails in its setup, which finds no bash 5.1 or later to name, and the
+        # other files that run the hook with a scan armed have their pushes refused by the gate. The check
+        # below compares the installed version as the gate does, major then minor, so a bottle older than 5.1
+        # fails this step rather than the tests. Homebrew links the new bash into /opt/homebrew/bin, which
+        # comes before /bin on PATH, so the step then puts a directory holding only a link to /bin/bash first
+        # on PATH for the steps after it: bats and the tests still run under bash 3.2.57, the version this
+        # cell exists to check, and the hook's gate is what finds the newer bash, at its fixed path. The
+        # gate's own cases in tests/pre-push-hook.bats run only under a bash older than 5.1 first on PATH, so
+        # this cell is the one CI cell that runs them, and they fail here, rather than skip, if a bash 5.1 or
+        # later comes first on PATH.
+        if: runner.os == 'macOS'
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          brew install bash
+          /opt/homebrew/bin/bash -c '[ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }'
+          mkdir -p "$RUNNER_TEMP/bash-3.2"
+          ln -sf /bin/bash "$RUNNER_TEMP/bash-3.2/bash"
+          PATH="$RUNNER_TEMP/bash-3.2:$PATH" bash -c '[ "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2 ]'
+          echo "$RUNNER_TEMP/bash-3.2" >> "$GITHUB_PATH"
       - name: Install gitleaks (Linux)
         # tests/gitleaks-config.bats skips itself when gitleaks is absent, so without this step the
         # repo's scanning rules (.gitleaks.toml: the value-anchored allowlist, the merge-commit scan)
         # would be checked nowhere; ROMP_GITLEAKS_REQUIRE=1 on the Run bats step below turns that
         # skip into a red job, so a broken install cannot ship as green skips. The same pinned,
-        # checksummed release the secrets job installs; bump the two version/sha pairs together.
-        # Linux only: the macOS cell is manual (see the header), and one arbiter is enough.
+        # checksummed release the secrets job installs; bump the three version/sha pairs together (this
+        # step's, the macOS step's below and the secrets job's; each asset has its own checksum).
         if: runner.os == 'Linux'
         timeout-minutes: 5
         env:
@@ -425,6 +454,32 @@ jobs:
           echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+      - name: Install gitleaks (macOS)
+        # The same pinned release as the Linux step above and the secrets job, as its darwin arm64 asset
+        # (macos-latest is macos-26-arm64, and the step fails on another architecture rather than install
+        # a binary that cannot run), checked against the release's own gitleaks_8.28.0_checksums.txt with
+        # shasum, since the image has no sha256sum. It goes where the Linux step puts it, /usr/local/bin,
+        # which is on PATH after the directory the bash step above puts first, so bash 3.2.57 stays the
+        # bash first on PATH and `command -v gitleaks` finds this binary (the last line checks it). Without
+        # it the credential cases of tests/pre-push-hook.bats skip in this cell, and tests/gitleaks-config.bats
+        # fails in its setup under ROMP_GITLEAKS_REQUIRE=1 (the Run bats step below). Before this step and
+        # that switch, both files skipped here: 380 skips, "gitleaks not installed", in dispatch
+        # 36714942087, 364 in the hook's file and 16 in the config file's.
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        env:
+          GITLEAKS_VERSION: 8.28.0
+          GITLEAKS_SHA256: d942f3ad147250c9edbaab3fed9e482f98d3b59ba10ae97b8d75647e3ade492c
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = arm64 ]
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          sudo mkdir -p /usr/local/bin
+          sudo install "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
+          [ "$(command -v gitleaks)" = /usr/local/bin/gitleaks ]
       - name: Run bats
         # A per-test bound from bats itself (BATS_TEST_TIMEOUT, since bats-core 1.8: a background sleep,
         # then pkill or ps on the test's children), so one hung test fails in minutes and is NAMED in the
@@ -434,12 +489,10 @@ jobs:
         # slowest legitimate test on macOS (the romp-serve probe tests hold 60 s by design).
         env:
           BATS_TEST_TIMEOUT: "180"
-          # ROMP_GITLEAKS_REQUIRE=1 on Linux only: the Linux cell installs the pinned gitleaks in the
-          # step above, so tests/gitleaks-config.bats skipping there would hide a broken install
-          # behind ten green skips; with the switch its setup() fails and names the reason. macOS
-          # has no install step and may keep skipping. Off-Linux the expression yields an empty
-          # value, which the file reads as the switch unset (the PYTHON_GIL idiom above).
-          ROMP_GITLEAKS_REQUIRE: ${{ runner.os == 'Linux' && '1' || '' }}
+          # ROMP_GITLEAKS_REQUIRE=1 in both cells: each installs the pinned gitleaks in a step above
+          # (macOS since 2026-09-30), so tests/gitleaks-config.bats skipping would hide a broken install
+          # behind green skips; with the switch its setup() fails and names the reason.
+          ROMP_GITLEAKS_REQUIRE: "1"
         run: bats --print-output-on-failure tests/*.bats
       # T224: the manager<->kernel handshake proof (tests/manager-*.test.js: restart coalescing, the
       # quiet-window chain, the drain-lease refusal notices) ran only by hand until now. It runs HERE,
@@ -472,7 +525,8 @@ jobs:
         # (gitleaks_<version>_checksums.txt), rather than the marketplace action: a step that exists
         # to keep secrets out of the repo should not hand a token to a third-party action, and
         # gitleaks-action needs a licence key for organisation-owned repos. To bump, change both
-        # lines together (here and in the shell job above), or the checksum check fails loudly.
+        # lines together, here and in the shell job's two install steps above (each asset has its own
+        # checksum), or the checksum check fails loudly.
         timeout-minutes: 5
         env:
           GITLEAKS_VERSION: 8.28.0

@@ -9,9 +9,11 @@
 #   identifiers   strings only YOU can enumerate (names, hostnames, vault
 #                 names), read from ~/.config/romp/private-strings.txt: one
 #                 banned string per line, `#` comments and blank lines ignored,
-#                 matched case-insensitively. With no such file the scan stays
-#                 out of your way, so on a clone that never set one up (any
-#                 contributor's machine) it is a no-op.
+#                 matched case-insensitively. Where the hook can tell that
+#                 nothing is at that path, the scan stays out of your way, so
+#                 on a clone that never set one up (any contributor's machine)
+#                 it is a no-op; where it cannot tell (denylist_state), the
+#                 push is refused.
 #   credentials   strings NOBODY can enumerate in advance (a token's text is
 #                 unknown until it leaks), matched by gitleaks' rules, tuned by
 #                 the repo's .gitleaks.toml, over the lines the pushed commits
@@ -1721,17 +1723,17 @@
 # (refuse_replace_refs): a scan under replacement cannot vouch for the bytes
 # pushed. Only where a scan would otherwise run, though: the refusal exists
 # because a replace ref makes the scanned bytes diverge from the transferred
-# bytes, so a CLEAN REPORT would be false; where no scan runs (no denylist
-# file, and gitleaks skipped or absent) there is no report and nothing false to
-# prevent, and a clone that never asked for either scan is unaffected, as
-# CLAUDE.md promises. The two arming tests (identifier_scan_armed,
-# credential_scan_armed) are the ones the scans' own early returns read, so the
-# gate and the scans agree on whether a scan is ARMED. The gate is per clone,
-# not per ref: a push a scan would read nothing of (a deletion of a remote ref
-# alone, which both scans skip before reading a byte; a denylist holding only
-# comments, which arms a scan that greps for nothing) is refused under a
-# replace ref too, the safe side, and moving the gate into the two per-ref
-# loops would refuse twice.
+# bytes, so a CLEAN REPORT would be false; where no scan runs (nothing at the
+# denylist's path, known with certainty, and gitleaks skipped or absent) there
+# is no report and nothing false to prevent, and a clone that never asked for
+# either scan is unaffected, as CLAUDE.md promises. The two arming tests
+# (identifier_scan_armed, credential_scan_armed) are the ones the scans' own
+# early returns read, so the gate and the scans agree on whether a scan is
+# ARMED. The gate is per clone, not per ref: a push a scan would read nothing of
+# (a deletion of a remote ref alone, which both scans skip before reading a
+# byte; a denylist holding only comments, which arms a scan that greps for
+# nothing) is refused under a replace ref too, the safe side, and moving the
+# gate into the two per-ref loops would refuse twice.
 #
 # Why pushed commits rather than a working-tree scan: the hook is symlinked into
 # the SHARED git hooks dir (by install.sh), so it fires from every worktree —
@@ -1742,17 +1744,325 @@
 # Env: ROMP_PRIVATE_STRINGS (denylist path), ROMP_GITLEAKS (scanner binary),
 # ROMP_NO_GITLEAKS=1 (skip the credential scan and its notice); gitleaks' own
 # GITLEAKS_CONFIG and GITLEAKS_CONFIG_TOML are read, as gitleaks reads them,
-# when the work tree holds no .gitleaks.toml.
+# when nothing is at the work tree's .gitleaks.toml (a path there the hook
+# cannot resolve refuses the push, gitleaks_config). ROMP_HOOK_BASHES is a test
+# seam, read only under a bash older than 5.1 with a scan armed (the gate's
+# paragraph, below).
 # Bypass a false positive from either scan with `git push --no-verify`.
 #
-# The hook runs under the bash first on PATH, a stock mac's /bin/bash (3.2.57)
-# among them. Every array expansion with no operator is written
-# ${a[@]+"${a[@]}"}, since bash before 4.4 calls an array with no element
-# unbound under set -u (a count, ${#a[@]}, and a substring, ${a[@]:1}, are safe
-# there and left as they are), and the EXIT trap below refuses a push that bash
-# ends before the verdict while reporting success, as bash 3.2.57 ended it on
-# such an error (the trap's comment; tests/pre-push-hook.bats pins both, its
-# bash 3.2 cases).
+# Whether each scan WOULD run: the identifier scan unless the denylist's path
+# (ROMP_PRIVATE_STRINGS, else the XDG default) is absent, the credential scan
+# when it is not skipped (ROMP_NO_GITLEAKS) and a gitleaks binary resolves and
+# is executable (ROMP_GITLEAKS, else the first on PATH). Each scan's own early
+# return reads its predicate, and so does refuse_replace_refs, so the
+# replace-ref gate and the scans agree on whether a scan is armed; that gate is
+# per clone (its own note). The predicates decide only whether a scan runs: an
+# empty denylist arms a scan that greps for nothing, and a skipped or absent
+# scanner keeps its silence or its notice (gitleaks_notice). Each is called as
+# a condition (an `if`, an `||`), where set -e does not act on it. They stand
+# here, ahead of bash_gate, since the gate's own test (scans_armed, below) is
+# built from them and runs before set -euo pipefail under any bash, 3.2.57
+# among them; they are written in syntax that bash runs (test, case, local,
+# parameter trims and command substitutions, no array).
+# The denylist's path is read three ways (denylist_state; the coordinator's
+# ruling on the audit's N1, 2026-09-30): a regular file, which arms the scan;
+# absent, which leaves it off, the no-op a clone that never set one up gets;
+# and neither, where the hook cannot tell a denylist from none: a symlink that
+# does not lead to a regular file the hook can reach (its target missing, a
+# loop, a directory, or a target beyond a directory the hook cannot search),
+# anything else that is not a regular file (a device such as /dev/null among
+# them), a path under a directory that cannot be searched, one under a symlink
+# that does not lead to a directory the hook can search, or a path whose
+# lookup answers anything but that nothing is there. The third arms the scan
+# too, and the scan refuses the push naming the path and the reason
+# (scan_identifiers), since whether it should run is unknown; it arms the
+# replace-ref gate with it. Until then the test was [ -f ] alone, so a denylist
+# under a directory that could not be searched, or a dangling symlink at the
+# path, read as absent, the scan stayed off and the push published, nothing
+# printed, under every bash. Absent is the lookup's own answer, read in two
+# steps. The walk finds nothing at the path, neither a symlink nor what one
+# names, while the deepest directory above it that exists can be searched (a
+# directory that does not exist is read through to its parent), or finds a
+# file that is not a directory where a directory on the path would be. A
+# relative path's walk ends at the current directory, and where that cannot
+# be searched the path cannot tell, the refusal naming the directory: looking
+# up . needs search permission there, so the walk's tests find nothing at .,
+# and . read through to its parent is . again (until the gate re-check's R2
+# the walk read it forever and the hook never ended; the walk now stops
+# wherever a step leaves the path as it was, at . or at /). Then
+# lookup_answer opens the path for reading, in the C locale, and only bash's
+# "No such file or directory" or "Not a directory" for that open reads as
+# absent. The walk's tests alone cannot tell nothing at the path from a lookup
+# that failed on its last name ([ -e ] is false for both), so any other answer
+# cannot tell and is named in the refusal: an I/O error on a network or FUSE
+# file system, a denial by a security module, a name too long, or an open that
+# succeeds. A path under a regular file reads as absent (the open answers Not
+# a directory), while a path under a symlink to a regular file is refused by
+# the walk's symlink clause; both are safe, the first being the lookup's own
+# answer. The walk and the open run no program: test and case, and the
+# builtin : in a command substitution.
+# The XDG default needs HOME. With HOME unset and neither ROMP_PRIVATE_STRINGS
+# nor XDG_CONFIG_HOME holding a value (xdg_default_unformed),
+# identifier_scan_armed answers that the path cannot be formed, a cannot-tell
+# answer that arms the scan and that the scan's refusal names, and
+# private_strings_file spells the path $HOME/.config/romp/private-strings.txt
+# as written (the gate audit's GATE-1, 2026-09-30). That refusal gives only the
+# remedies that apply with no path to look at: set HOME, set XDG_CONFIG_HOME,
+# or name the path with ROMP_PRIVATE_STRINGS; the remedy the other cannot-tell
+# answers get, a regular file at the path or nothing there, does not apply to a
+# path that names no file (the recheck's RC-1, 2026-09-30, found the refusal
+# giving both). Until GATE-1 the path read $HOME bare: the body, under set -u,
+# ended the hook on its expansion with bash's line alone, while the gate's
+# test, which runs before set -u, read /.config/romp/private-strings.txt as
+# absent, and under bash 3.2.57 took the no-op and published the push. Every
+# expansion in these functions that reads a variable which may be unset does so
+# through a default, so a call gives the same answer with set -u and without
+# it; set -u is the one shell option that parts the gate's test from the body's
+# arming tests (set -e does not act inside a condition, and no pipeline stands
+# here). tests/pre-push-hook.bats' case on the armed test's answers runs the
+# body's side under the options the text sets between the gate's call and the
+# EXIT trap.
+private_strings_file() {   # the denylist's path; with HOME unset the XDG default is spelled $HOME/.config/..., as written, for the refusal to name (identifier_scan_armed)
+    printf '%s' "${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-${HOME-\$HOME}/.config}/romp/private-strings.txt}"
+}
+denylist_state() {   # <path>: prints file, absent, or a clause saying why the hook cannot tell a denylist there from none
+    local p=$1 d
+    if [ -f "$p" ]; then echo file; return 0; fi
+    if [ -L "$p" ]; then echo "is a symlink that does not lead to a regular file the hook can reach"; return 0; fi
+    if [ -e "$p" ]; then echo "is not a regular file"; return 0; fi
+    while [ -n "$p" ]; do
+        case "$p" in
+            */*) d=${p%/*}; [ -n "$d" ] || d=/ ;;
+            *) d=. ;;
+        esac
+        if [ -d "$d" ]; then
+            if [ -x "$d" ]; then lookup_answer "$1"; else echo "is under a directory that cannot be searched ($d)"; fi
+            return 0
+        fi
+        if [ -L "$d" ]; then echo "is under a symlink that does not lead to a directory the hook can search ($d)"; return 0; fi
+        if [ -e "$d" ]; then lookup_answer "$1"; return 0; fi
+        if [ "$d" = "$p" ]; then   # the step leaves . and / as they are, so the walk would read the same name forever; . reads as nothing there when the current directory cannot be searched
+            if [ "$d" = . ]; then echo "is under the current directory, which cannot be searched (${PWD:-.})"; else echo "is under a directory that cannot be looked up ($d)"; fi
+            return 0
+        fi
+        p=$d
+    done
+    echo "could not be looked up"
+}
+lookup_answer() {   # <path> where denylist_state's walk found nothing: prints absent when opening it for reading fails with no such file or not a directory, else a clause naming what the open answered
+    local err
+    if err=$(exec 2>&1; LC_ALL=C; : < "$1"); then
+        echo "could be opened, where the lookup before it found nothing"
+        return 0
+    fi
+    case "$err" in
+        *": No such file or directory"|*": Not a directory") echo absent ;;
+        *) echo "could not be looked up (${err##*: })" ;;
+    esac
+}
+xdg_default_unformed() {   # status 0 when the denylist's path is the XDG default and cannot be formed: HOME unset, and neither ROMP_PRIVATE_STRINGS nor XDG_CONFIG_HOME holding a value; read by identifier_scan_armed and by scan_identifiers' refusal, which picks its remedies by it
+    [ -z "${ROMP_PRIVATE_STRINGS:-}" ] && [ -z "${XDG_CONFIG_HOME:-}" ] && [ -z "${HOME+set}" ]
+}
+identifier_scan_armed() {   # sets denylist_is, the global, to denylist_state's answer for the path, or to the clause for a default that cannot be formed
+    if xdg_default_unformed; then
+        denylist_is="is the XDG default, which cannot be formed with HOME unset"
+        return 0
+    fi
+    denylist_is=$(denylist_state "$(private_strings_file)")
+    [ "$denylist_is" != absent ]
+}
+gitleaks_resolved() {   # what names the scanner, executable or not: ROMP_GITLEAKS when it holds a value, else command -v's answer for gitleaks; nothing when neither names one, status 0 either way
+    local gl
+    gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
+    printf '%s' "$gl"
+}
+gitleaks_binary() {   # the scanner's path when one resolves and is executable; nothing otherwise, status 0 either way
+    local gl
+    gl=$(gitleaks_resolved)
+    if [ -n "$gl" ] && [ -x "$gl" ]; then printf '%s' "$gl"; fi
+}
+credential_scan_armed() {
+    [ -z "${ROMP_NO_GITLEAKS:-}" ] && [ -n "$(gitleaks_binary)" ]
+}
+# The gate's test (scans_armed; the coordinator's ruling at 13:37Z, 2026-09-30,
+# which keeps CLAUDE.md's promise that a clone that asked for neither scan is
+# unaffected): status 0 when either scan would run, or when whether one would
+# cannot be told, read from the body's own inputs before the gate acts, and
+# status 1 only when neither would, known with certainty. Its identifier half
+# is identifier_scan_armed itself, so the one answer that leaves it off is
+# denylist_state's absent: a regular file, a symlink of any kind, a path whose
+# lookup cannot tell and an XDG default that cannot be formed (HOME unset) all
+# arm it, and so does a substitution that failed, whose empty answer is not
+# absent. Its credential half is off when
+# ROMP_NO_GITLEAKS holds a value, the skip credential_scan_armed reads, and
+# otherwise on whenever gitleaks_resolved names anything, executable or not:
+# ROMP_GITLEAKS holding a value, or command -v answering for gitleaks (a path,
+# or a function's name). credential_scan_armed needs the same answer and an
+# executable file at it, so the test is a superset of it; the dot the
+# substitution ends with tells an answer of nothing from a substitution that
+# failed, which reads as armed. The replace-ref gate arms on the same two
+# predicates. So every state the body treats as armed, the test treats as
+# armed (the ledger entry's item 40 derives it, and tests/pre-push-hook.bats'
+# case on the arming inputs reads each step's arming test from this text and
+# fails when it reads an input the gate's test does not, when the gate's test
+# reads one the body's tests do not, and when a statement between the gate's
+# call and the EXIT trap sets a shell option, writes an input, or runs a
+# command substitution or a write to a file; set -euo pipefail, the one shell
+# option statement there, is named, and the case on the armed test's answers
+# runs the body's side under it).
+scans_armed() {   # status 0 when either scan would run or whether one would cannot be told, 1 when neither would, known with certainty; bash_gate's test, ahead of set -euo pipefail
+    local found
+    identifier_scan_armed && return 0
+    [ -z "${ROMP_NO_GITLEAKS:-}" ] || return 1
+    found=$(gitleaks_resolved; echo .)
+    [ "$found" != . ]
+}
+# What the credential scan prints when it is not armed: nothing when a skip was
+# asked for (ROMP_NO_GITLEAKS), else a notice that no gitleaks resolved. No
+# binary is loud rather than silent, but not a blocker: requiring an install to
+# push would break every clone that never wanted the scanner, and CI scans the
+# full history regardless. scan_credentials prints it, and so does bash_gate
+# when it ends the hook under an older bash with neither scan armed, so the
+# two cannot print different texts.
+gitleaks_notice() {
+    [ -z "${ROMP_NO_GITLEAKS:-}" ] || return 0     # a skip asked for: silent
+    echo "romp pre-push: gitleaks not installed, pushing WITHOUT a secret scan." >&2
+    echo "  Install gitleaks 8.25.0 or later (brew install gitleaks, or the release .github/workflows/ci.yml pins)." >&2
+    echo "  ROMP_GITLEAKS names a binary that is not on PATH; ROMP_NO_GITLEAKS=1 silences this." >&2
+}
+#
+# The hook's body runs under bash 5.1 or later, and only there (the
+# coordinator's rulings, 2026-09-30: the gate at 11:02Z, its threshold raised
+# from 4.4 to 5.1 at 13:37Z). git runs the hook under the bash first on PATH
+# (the shebang is env bash), a stock mac's /bin/bash 3.2.57 among them, and
+# each audit of the body under bash 3.2.57 found another way that bash ended
+# the hook, or skipped a read, and reported success: an array with no element,
+# which bash before 4.4 calls unbound under set -u; an EXIT trap, after which
+# bash 3.2.57 exits 0 on such an error; a failed bare [[ ]], (( )) or ( ), or a
+# failed pipeline that ends in a compound command, which its set -e does not
+# act on; a loop or a { } group whose redirection fails, which it skips; and a
+# here-string whose temporary file it cannot write, which fails that
+# redirection. Bash 4.4.18 ends the hook on the first three. The last two stay
+# open under bash 4.4 and 5.0, which skip such a compound under set -e too and
+# write every here-string to a temporary file; bash 5.1 ends the shell on the
+# failed redirection and writes a here-string shorter than a pipe's buffer to a
+# pipe (its CHANGES, 5.1-alpha: item aaaa of the changes to bash, and item c of
+# the new features in bash). Run by hand with every file write refused, the hook
+# under bash 4.4.18 and 5.0 passed a push adding a banned string, exit 0 with
+# bash's line alone, where 5.1.16 and 5.2.21 refused it (probed 2026-09-30; the
+# ledger entry's item 40). With the gate at 5.1 that class is closed for the
+# body as a whole, the here-string road among it, since no bash that skips such
+# a compound runs the body; the census of it (52 compounds) is not needed.
+# So bash_gate, below, is the first thing the hook runs, ahead of the read of
+# the ref list, in syntax bash 3.2.57 runs. Under bash 5.1 or later it does
+# nothing. Under an older bash it first asks whether either scan would run
+# (scans_armed, above), and where neither would, known with certainty, it ends
+# the hook as the body ends it then: gitleaks_notice, the one function the
+# body prints that notice with (or nothing, when the credential scan is
+# skipped), and status 0, without reading the ref list, which git does not
+# require (git ignores a hook that leaves its refs unread). So a clone that
+# asked for neither scan pushes as it did under any bash, as CLAUDE.md promises
+# (the replace-ref paragraph above), where the hook can tell that nothing is at
+# the denylist's path; where it cannot tell (such as a directory above the path
+# it cannot search, a symlink there that leads nowhere, or HOME unset with
+# neither ROMP_PRIVATE_STRINGS nor XDG_CONFIG_HOME holding a value), the push
+# is refused under every bash. Where a scan would run, or whether one would
+# cannot be told, it re-runs the hook, with its arguments and its stdin
+# untouched, under the first of /opt/homebrew/bin/bash and /usr/local/bin/bash
+# (where Homebrew installs bash, on Apple silicon and on Intel) that reports
+# bash 5.1 or later: each candidate is asked for its version with stdin from
+# /dev/null, so the question cannot take the ref list, and with BASH_ENV empty,
+# so no startup file prints into the answer; an answer that is not two numbers,
+# one word among them, passes the candidate over. One function, bash_admitted,
+# compares the running bash's version and each candidate's, so the two
+# comparisons cannot come apart.
+# With none, it refuses the push, naming the running bash and the remedy. The
+# re-run carries ROMP_HOOK_REEXEC, the path it re-ran under, and a hook that
+# finds it set while a bash older than 5.1 runs it with a scan armed refuses
+# rather than re-running again, so a candidate that reports 5.1 or later and
+# then runs the hook under an older bash ends in a refusal, not a loop; under
+# bash 5.1 or later the gate unsets it, so no program the hook runs sees it.
+# An exec that fails ends the hook with bash's own status, which refuses the
+# push (no trap is set yet). The cost: a clone that asked for a scan, whose
+# bash first on PATH is older than 5.1 (a stock mac's 3.2, or a Linux release
+# that ships 4.2 to 5.0) and that has no bash 5.1 or later at those two paths,
+# cannot push through the hook until one is installed there (brew install
+# bash, on a mac) or put first on PATH, or pushes with --no-verify.
+# The test seam, ROMP_HOOK_BASHES, in the form the coordinator accepted on
+# 2026-09-30 (13:37Z): a colon-separated list of paths that replaces the two
+# candidates when it is set (set and empty, it names none). It changes which
+# program runs the hook, so it is read only where the gate acts, under a bash
+# older than 5.1 with a scan armed; every candidate it names is asked its
+# version like the two and passed over unless it reports 5.1 or later; and it
+# gives no power the pusher's environment lacks: PATH already chooses the bash
+# that runs the hook, and --no-verify skips the hook. tests/pre-push-hook.bats
+# sets it, so that file run under a bash older than 5.1 on a machine whose two
+# paths hold no newer bash re-runs the hook under the newer bash the file
+# finds.
+# The empty-array guards, the EXIT trap and the denylist's descriptor 7 came
+# before the gate and are kept, since each holds under bash 5.1 and later too:
+# every array expansion with no operator is written ${a[@]+"${a[@]}"} (a count,
+# ${#a[@]}, and a substring, ${a[@]:1}, are left as they are), and the EXIT trap
+# refuses a push that the hook ends before its verdict while reporting success
+# (the trap's comment; tests/pre-push-hook.bats pins the guards, the trap and
+# the gate). What descriptor 7 guards since the threshold is 5.1: the
+# refusal's words, since under bash 5.1 and later a loop that read the
+# denylist through done < file would end the hook on bash's own line and no
+# romp line when the file cannot be opened, where the open ahead of the loop
+# refuses naming the file and the remedy; and the road bash 4.4 and 5.0 took,
+# should the body ever run under a bash that skips such a loop (scan_identifiers'
+# comment on it).
+bash_admitted() {   # <major> <minor>: status 0 when the version is 5.1 or later; the one comparison bash_gate makes, for the running bash and for each candidate
+    [ "$1" -gt 5 ] || { [ "$1" -eq 5 ] && [ "$2" -ge 1 ]; }
+}
+bash_gate() {   # <the hook's arguments>: returns under bash 5.1 or later; under an older bash ends the hook as the body would when neither scan is armed, and otherwise re-runs the hook under a newer bash or refuses the push (the paragraph above)
+    local candidates rest candidate version major minor where
+    if bash_admitted "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"; then
+        unset ROMP_HOOK_REEXEC
+        return 0
+    fi
+    if ! scans_armed; then
+        gitleaks_notice
+        exit 0
+    fi
+    if [ -n "${ROMP_HOOK_REEXEC:-}" ]; then
+        echo "" >&2
+        echo "romp pre-push: BLOCKED. The hook re-ran itself under $ROMP_HOOK_REEXEC, which reported bash 5.1 or later, but bash $BASH_VERSION is still running it." >&2
+        echo "  The push is refused rather than re-run. Install bash 5.1 or later (with Homebrew: brew install bash), or put one first on PATH, and push again; if ROMP_HOOK_REEXEC was set before the push, unset it." >&2
+        echo "  To bypass for one push (you are sure it is fine): git push --no-verify" >&2
+        exit 1
+    fi
+    candidates=${ROMP_HOOK_BASHES-/opt/homebrew/bin/bash:/usr/local/bin/bash}
+    rest=$candidates
+    while [ -n "$rest" ]; do
+        candidate=${rest%%:*}
+        case "$rest" in
+            *:*) rest=${rest#*:} ;;
+            *) rest="" ;;
+        esac
+        if [ -z "$candidate" ] || [ ! -f "$candidate" ] || [ ! -x "$candidate" ]; then continue; fi
+        # shellcheck disable=SC2016  # the candidate expands the version, not this shell
+        version=$(BASH_ENV='' "$candidate" -c 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"' < /dev/null) || continue
+        case "$version" in *" "*) ;; *) continue ;; esac     # one word would stand for both numbers below; a third word fails the minor's test
+        major=${version%% *}
+        minor=${version#* }
+        case "$major" in ''|*[!0-9]*) continue ;; esac
+        case "$minor" in ''|*[!0-9]*) continue ;; esac
+        if bash_admitted "$major" "$minor"; then
+            ROMP_HOOK_REEXEC=$candidate
+            export ROMP_HOOK_REEXEC
+            exec "$candidate" "$0" "$@"
+        fi
+    done
+    where=${candidates//:/ or }                                  # the list searched, so the line names what was tried
+    if [ -n "${ROMP_HOOK_BASHES+set}" ]; then where="the paths ROMP_HOOK_BASHES names (${ROMP_HOOK_BASHES:-none})"; fi
+    echo "" >&2
+    echo "romp pre-push: BLOCKED. The hook needs bash 5.1 or later; bash $BASH_VERSION is running it, and no bash 5.1 or later was found at $where." >&2
+    echo "  The push is refused rather than scanned under a bash older than 5.1, which can end a scan early, or skip one of its reads, and report success. Install bash 5.1 or later (with Homebrew: brew install bash), or put one first on PATH, and push again." >&2
+    echo "  To bypass for one push (you are sure it is fine): git push --no-verify" >&2
+    exit 1
+}
+bash_gate "$@"
 set -euo pipefail
 # Replacement off for every git below (the header's premise): the scans read
 # the objects the push transfers, never a substitute.
@@ -1802,6 +2112,7 @@ hidden_prior=0          # a subset of hidden_paths: a changed file whose previou
 scratch=""              # a directory for the added-lines capture (scan_identifiers), the NUL-delimited listings the binary-verdict check reads (refuse_hidden_paths) and the credential feed (scan_credentials); made on first use (make_scratch), removed by the EXIT trap below
 read_rc=0               # judged_read's two answers for the read just made: its status, and its output when no file took it
 read_out=""
+denylist_is=""          # denylist_state's answer for the denylist's path, set by identifier_scan_armed each time it runs and read by scan_identifiers after its early return, so the refusal names what the arming test read
 hook_verdict=""         # set by the verdict's two exits at the end of the hook and by nothing else, so the EXIT trap can tell the hook's own end from bash ending it; no function declares the name, since a local of that name would stand in for it in the trap when bash ends the hook inside that function
 # The scratch directory is removed from here, on EXIT, by its exact minted
 # path and never a glob (the header's scratch paragraph): a clean pass, a
@@ -1827,11 +2138,14 @@ hook_verdict=""         # set by the verdict's two exits at the end of the hook 
 # scratch directory, under both bashes and before this change as well. That
 # does no harm: the stage's status fails its pipeline, and the caller's
 # refusal stands whatever the removal breaks after it (a later write there by
-# a simple command ends the hook under set -e; under bash 3.2.57 a loop or a
-# { } group whose redirection fails is skipped and the hook goes on, the
-# ledger entry's open item). Any other status is kept as bash set it (the
-# verdict's exit 1, a failed write under set -e, a signal), so under bash 5.2,
-# which ends the hook on such an error with status 1, the trap changes nothing.
+# a simple command ends the hook under set -e). Any other status is kept as
+# bash set it (the verdict's exit 1, a failed write under set -e, a signal), so
+# under bash 5.2, which ends the hook on such an error with status 1, the trap
+# changes nothing. Since the gate (bash_gate, above) the body runs only under
+# bash 5.1 or later, so bash 3.2.57's status 0 on such an error is no longer
+# reached; the arm stays, for any end of the hook with status 0 before its
+# verdict under any bash (tests/pre-push-hook.bats, the EXIT trap's case, plants
+# an exit 0 ahead of the verdict).
 # Its refusal takes the form of the hook's other BLOCKED blocks, the verdict's
 # bypass line last, since the verdict is not reached; a stage's refusal comes
 # ahead of its caller's, and the bypass line prints again if the hook reaches
@@ -1842,7 +2156,7 @@ exit_trap() {   # <the status bash is ending the hook, or a pipeline stage, with
     if [ -z "$hook_verdict" ] && [ "$1" -eq 0 ]; then
         echo "" >&2
         echo "romp pre-push: BLOCKED. bash $BASH_VERSION ended the hook, or a stage of one of its pipelines, on the error above before its verdict, and reported success." >&2
-        echo "  The push is refused rather than published unscanned. The error above is in the hook, not in the push: report it, or put bash 4.4 or later first on PATH, where an array with no element raises no such error." >&2
+        echo "  The push is refused rather than published unscanned. The error above is in the hook, not in the push: report it." >&2
         echo "  To bypass for one push (you are sure it is fine): git push --no-verify" >&2
         exit 1
     fi
@@ -2145,30 +2459,6 @@ judged_read() {   # <gate="name"|own="name"> <expected statuses, comma-separated
     [ -z "$detail" ] || clause=${clause//\{detail\}/"$("$detail" || :)"}
     unscanned "$clause"
     return 1
-}
-# Whether each scan WOULD run: the identifier scan when the denylist file exists
-# (ROMP_PRIVATE_STRINGS, else the XDG default), the credential scan when it is
-# not skipped (ROMP_NO_GITLEAKS) and a gitleaks binary resolves and is
-# executable (ROMP_GITLEAKS, else the first on PATH). Each scan's own early
-# return reads its predicate, and so does refuse_replace_refs, so the gate and
-# the scans agree on whether a scan is armed; the gate is per clone (its own
-# note). The predicates decide only whether a scan runs: an empty denylist arms
-# a scan that greps for nothing, and a skipped or absent scanner keeps its
-# silence or its notice in scan_credentials. Each is called as a condition (an
-# `if`, an `||`), where set -e does not act on it.
-private_strings_file() {
-    printf '%s' "${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
-}
-identifier_scan_armed() {
-    [ -f "$(private_strings_file)" ]
-}
-gitleaks_binary() {   # the scanner's path when one resolves and is executable; nothing otherwise, status 0 either way
-    local gl
-    gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
-    if [ -n "$gl" ] && [ -x "$gl" ]; then printf '%s' "$gl"; fi
-}
-credential_scan_armed() {
-    [ -z "${ROMP_NO_GITLEAKS:-}" ] && [ -n "$(gitleaks_binary)" ]
 }
 
 # A clone that carries a replace ref is refused before either scan runs (the
@@ -3515,6 +3805,14 @@ scan_identifiers() {
     local -a words
     strings_file="$(private_strings_file)"
     identifier_scan_armed || return 0
+    if [ "$denylist_is" != file ]; then
+        if xdg_default_unformed; then   # the path names no file, so the remedies are the ones that form it (the paragraph above private_strings_file)
+            unscanned "the DENYLIST $strings_file $denylist_is, so the hook cannot tell whether a denylist is there; set HOME, set XDG_CONFIG_HOME, or name the path with ROMP_PRIVATE_STRINGS, and push again"
+        else
+            unscanned "the DENYLIST $strings_file $denylist_is, so the hook cannot tell whether a denylist is there; make the path name a readable regular file (or leave nothing there, which turns the scan off) and push again"
+        fi
+        return 0
+    fi
 
     # Banned strings: strip comments and surrounding whitespace, drop blanks. The
     # `|| [ -n "$line" ]`: a last line with no trailing newline (an editor that
@@ -3530,7 +3828,16 @@ scan_identifiers() {
     # goes on under set -e, so a denylist with no read permission read as
     # empty, the return below turned the whole identifier scan off, and the
     # push published with bash's line alone (bash 5.2 ended the hook with
-    # status 1 and no romp line; found by execution).
+    # status 1 and no romp line; found by execution). Bash 4.4 and 5.0 skip
+    # such a loop too: with the loop read through done < file again,
+    # tests/pre-push-hook.bats' case on the DENYLIST read published the push
+    # under bash 4.4.18 and 5.0 (the gate audit's mutant, 2026-09-30). Since
+    # the gate admits 5.1 and later (13:37Z) none of those bashes runs this
+    # loop, and bash 5.1 and later end the hook on such a redirection with
+    # bash's line alone, so what the descriptor guards now is the refusal's
+    # words, the file and the remedy named where bash would name only the
+    # file; it stays for any bash that skips such a loop, should the body ever
+    # run under one.
     grep_args=()
     { exec 7< "$strings_file"; } || {
         unscanned "the DENYLIST $strings_file could not be opened for reading, so which strings the identifier scan greps for is unknown; make it readable and push again"
@@ -5333,19 +5640,36 @@ scanner_version() {   # <gitleaks>
 # (fail closed: the canary then checks that form too). A global allowlist
 # with no targetRules skips a piece whole, which the byte figure refuses, and
 # names no form.
+# The work tree's .gitleaks.toml is read the way the denylist's path is
+# (denylist_state, N1's rule; the coordinator's ruling on the gate audit's S1,
+# 2026-09-30): a regular file is the config; absent, the lookup's own answer,
+# hands the choice to GITLEAKS_CONFIG, GITLEAKS_CONFIG_TOML or gitleaks'
+# default as before; and any other answer (a symlink that does not lead to a
+# regular file the hook can reach, a path that is not a regular file, a path
+# under a directory that cannot be searched, a lookup that answers anything
+# but that nothing is there) refuses the push naming the path and the reason,
+# since whether the repository's own rules are there is unknown. Until then
+# the test was [ -f ] alone, so a .gitleaks.toml that was a dangling symlink,
+# or a symlink into a directory the hook could not search, read as absent and
+# the scan ran under GITLEAKS_CONFIG or gitleaks' default, the repository's
+# rules dropped, with nothing printed.
 # Status 0 when the scan may run; 1 when refused here (failed_creds set, and
 # failed_scan by unscanned).
 gitleaks_config() {   # sets cfg, cfg_name and cfg_forms, the caller's
-    local LC_ALL=C wt d k n f p l nb count opened tl_n=0 fixed="no scanner run was made, and the scan follows once the config is fixed"
+    local LC_ALL=C wt d k n f p l nb count opened toml_is tl_n=0 fixed="no scanner run was made, and the scan follows once the config is fixed"
     local tl_i=0 tl_end=0 tl_ln=0 tl_rest="" tl_what="" tl_str="" tl_plain=0 tl_q="" tl_low="" tl_ext="" tl_extln=-1 tl_hit=0 tl_dpath=""
     local tl_dupk="" tl_dups1="" tl_dupl1=0 tl_dups2="" tl_dupl2=0
     local tl_fp=0 tl_ft=0 tl_fa=0 tl_ictx="" tl_and=0
     local -a tl_all tl_segs tl_orig chain_file chain_shown chain_short chain_start chain_end chain_extln chain_nonl copy
     cfg=(); cfg_name="the default config gitleaks embeds"; cfg_forms=""
     wt=$(pwd -P)
-    if [ -f .gitleaks.toml ]; then
+    toml_is=$(denylist_state .gitleaks.toml)
+    if [ "$toml_is" = file ]; then
         chain_file=("$wt/.gitleaks.toml"); chain_short=(.gitleaks.toml); chain_shown=(".gitleaks.toml (the work tree's)")
         cfg_name="the work tree's .gitleaks.toml"
+    elif [ "$toml_is" != absent ]; then
+        unscanned "the gitleaks config .gitleaks.toml (the work tree's) $toml_is, so whether the repository's own rules are there is unknown; make the path name a readable regular file and push again; $fixed"
+        failed_creds=1; return 1
     elif [ -n "${GITLEAKS_CONFIG:-}" ]; then
         f=$GITLEAKS_CONFIG
         case "$f" in /*) ;; *) f="$wt/$f" ;; esac
@@ -6569,13 +6893,7 @@ scan_credentials() {
     local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend qseen seen_lines="" run_rc=0
     local -a cfg=() ix_sha ix_path pdirs feed_opts=()
     if ! credential_scan_armed; then
-        [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0     # a skip asked for: silent
-        # No binary. Loud rather than silent, but not a blocker: requiring an
-        # install to push would break every clone that never wanted the
-        # scanner, and CI scans the full history regardless.
-        echo "romp pre-push: gitleaks not installed, pushing WITHOUT a secret scan." >&2
-        echo "  Install gitleaks 8.25.0 or later (brew install gitleaks, or the release .github/workflows/ci.yml pins)." >&2
-        echo "  ROMP_GITLEAKS names a binary that is not on PATH; ROMP_NO_GITLEAKS=1 silences this." >&2
+        gitleaks_notice                                 # silent under a skip, else the notice (its comment)
         return 0
     fi
     gl="$(gitleaks_binary)"

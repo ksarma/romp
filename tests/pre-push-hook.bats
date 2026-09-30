@@ -82,6 +82,35 @@ HOOK="$ROMP_DIR/.githooks/pre-push"
 
 load git-hermetic
 
+# The hook's gate (bash_gate, 2026-09-30; its threshold 5.1 since the coordinator's ruling at 13:37Z): under a bash
+# older than 5.1, where a scan would run, the hook re-runs itself under the first bash 5.1 or later at
+# /opt/homebrew/bin/bash or /usr/local/bin/bash, or refuses the push when neither holds one, and where neither scan
+# would run it ends as the body does then; ROMP_HOOK_BASHES, its test seam, replaces those two paths and is read only
+# under a bash older than 5.1. Every case here runs the hook under the bash first on PATH, and setup's denylist arms
+# the identifier scan, so setup exports the seam naming a bash 5.1 or later from newer_bash: a run of this file under
+# an older bash first on PATH (a stock mac's /bin/bash 3.2, or a build of 3.2, 4.4 or 5.0 on a Linux box, whose two
+# paths hold no newer bash) re-runs the hook's body there, and a machine with none fails setup, naming why. Under bash
+# 5.1 or later the seam is read by nothing, and NEWER_BASH is the bash first on PATH. The gate's own cases set the
+# seam per case.
+bash_version_of() {   # <bash path>: prints "<major> <minor>" as that bash reports them, with stdin from /dev/null; nothing when it reports none
+    "$1" -c 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"' < /dev/null 2> /dev/null || :
+}
+at_least_51() {   # <"major minor">: status 0 when the two numbers are 5.1 or later, as the gate compares them
+    local major=${1%% *} minor=${1#* }
+    case "$major" in ''|*[!0-9]*) return 1 ;; esac
+    case "$minor" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$major" -gt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -ge 1 ]; }
+}
+newer_bash() {   # prints the first bash 5.1 or later among the gate's two paths and the two system paths; nothing when none is found
+    local b
+    for b in /opt/homebrew/bin/bash /usr/local/bin/bash /usr/bin/bash /bin/bash; do
+        if [ -f "$b" ] && [ -x "$b" ] && at_least_51 "$(bash_version_of "$b")"; then
+            printf '%s' "$b"
+            return 0
+        fi
+    done
+}
+
 setup() {
     # Hermetic git: the fixtures commit and merge with plain defaults, and a developer's global
     # config (merge.ff=only, commit.gpgsign, a hooks path) must not reach them (the #968 review).
@@ -113,6 +142,20 @@ setup() {
     # 12l's audit A1), so a value in the runner's environment would move the hunks every credential case frames; the
     # cases that set it export it for their own push alone.
     unset GIT_DIFF_OPTS
+    # The gate's seam (the note above newer_bash). ROMP_HOOK_REEXEC is the gate's own marker, never the runner's.
+    unset ROMP_HOOK_REEXEC
+    HOOK_BASH=$(command -v bash)
+    HOOK_BASH_VERSION=$(bash_version_of "$HOOK_BASH")
+    if at_least_51 "$HOOK_BASH_VERSION"; then
+        NEWER_BASH=$HOOK_BASH
+    else
+        NEWER_BASH=$(newer_bash)
+        if [ -z "$NEWER_BASH" ]; then
+            echo "the bash first on PATH ($HOOK_BASH) is ${HOOK_BASH_VERSION% *}.${HOOK_BASH_VERSION#* }, older than 5.1, and no bash 5.1 or later is at /opt/homebrew/bin/bash, /usr/local/bin/bash, /usr/bin/bash or /bin/bash: the hook's gate refuses every push under that bash with no newer one to re-run under, so this file cannot run the hook's body here; install one (brew install bash)" >&2
+            return 1
+        fi
+    fi
+    export ROMP_HOOK_BASHES="$NEWER_BASH"
 }
 
 teardown() { rm -rf "${TEST_DIR:-}"; }
@@ -4886,10 +4929,12 @@ CENSUS_TOOLS='git|grep|egrep|fgrep|awk|gawk|mawk|sed|tr|wc|od|cat|cut|sort|uniq|
 # the tagged read the tags judge.
 # What is PINNED ABSENT: census_unread_shapes lists these shapes in the hook's comment-stripped RAW text (the masked
 # text hides what quotes hold), each once per line: a command word that BEGINS with a parameter expansion or a
-# substitution, other than the three the hook's own reads use, each excepted only inside the function it is keyed on
-# (round 10c; until then by its spelling anywhere, so a runner function of the hook running "$@" passed): the tagged
-# command judged_read runs, "$@", and its -d rider, "$detail", which prints and reads nothing, inside judged_read, and
-# the scanner, "$gl", inside scanner_run, the extents census_functions derives. The scanner's other variable command
+# substitution, other than the three the hook's own reads use and the gate's one, each excepted only inside the
+# function it is keyed on (round 10c; until then by its spelling anywhere, so a runner function of the hook running
+# "$@" passed): the tagged command judged_read runs, "$@", and its -d rider, "$detail", which prints and reads nothing,
+# inside judged_read, the scanner, "$gl", inside scanner_run, and, since the gate (2026-09-30), the candidate bash,
+# "$candidate", inside bash_gate, which asks a candidate for its version with stdin from /dev/null and execs it with the
+# hook's path and arguments, reading no object, the extents census_functions derives. The scanner's other variable command
 # word, scanner_version's "$gl" version, is a judged_read call's tagged command, the read its tag (the VERSION of the
 # scanner) judges, which this pin does not read, so it needs no exception; case 203 pins the same word in
 # scanner_version outside the call. An owner whose extent is missing (a rename) is named by the pin, and its
@@ -5532,7 +5577,7 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
     sed -E 's/[[:space:]]+#.*$//' "$1" > "$rf" || :
     mapfile -t stripped < "$rf"
     census_functions
-    for f in judged_read scanner_run; do                        # the functions the exceptions are keyed on (round 10c): one missing, a rename say, is named here, and its exceptions then except nothing
+    for f in judged_read scanner_run bash_gate; do              # the functions the exceptions are keyed on (round 10c; bash_gate since the gate, 2026-09-30): one missing, a rename say, is named here, and its exceptions then except nothing
         [ -n "${fstart[$f]:-}" ] || echo "0:the extent of $f, which an exception of the bound is keyed on, is missing"
     done
     # The word-shaped pins read the raw text and again that text with its quote and backslash characters removed, so a
@@ -5553,15 +5598,15 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
     done < <(printf '%s\n' "${stripped[@]}" | sed -E 's/^[[:space:]]*#.*$//' | grep -nE -- "$re" || true)
     while IFS= read -r t; do hit[${t%%:*}]=1; done < <(printf '%s\n' "${stripped[@]}" | sed -E 's/^[[:space:]]*#.*$//' | sed -E "s/[\"'\\\\]//g" | grep -nE -- "$wre" || true)
     census_records "$1" vars '' "$mf" > "$rf"
-    while IFS=$'\x1f' read -r -a rec; do                        # a command word that begins with a parameter expansion or a substitution: one of the three the bound names, inside the function it is keyed on
+    while IFS=$'\x1f' read -r -a rec; do                        # a command word that begins with a parameter expansion or a substitution: one of the four the bound names, inside the function it is keyed on
         census_rec "${rec[@]}"
         census_command
         [ "$wkind" = var ] || continue
         owner=""
-        for f in judged_read scanner_run; do
+        for f in judged_read scanner_run bash_gate; do
             if [ -n "${fstart[$f]:-}" ] && [ $((ln - 1)) -ge "${fstart[$f]}" ] && [ $((ln - 1)) -le "${fend[$f]}" ]; then owner=$f; fi
         done
-        case "$owner:$rword" in 'judged_read:"$@"'|'judged_read:"$detail"'|'scanner_run:"$gl"') continue ;; esac
+        case "$owner:$rword" in 'judged_read:"$@"'|'judged_read:"$detail"'|'scanner_run:"$gl"'|'bash_gate:"$candidate"') continue ;; esac
         hit[$ln]=1
     done < "$rf"
     rm -f "$mf" "$rf"
@@ -13085,7 +13130,7 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     done
 }
 
-@test "every read of the hook is DECLARED, round 12b split (2 of 2): the pins over the shapes the census CANNOT read, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a command word held in a variable by a lookup or a path-qualified default, a lookup's answer as the command word, a trap action running a reading tool, source or . of a substitution and bash -c, each pinned once and read by the census nowhere; an alias defined and the word-shaped pins read unquoted; a variable given a reading tool's path then run; a here-doc; the scanner's lookup excepted by its exact text; the three variable command words excepted only inside their owners; an owner renamed named by the pin, its words then pinned" {
+@test "every read of the hook is DECLARED, round 12b split (2 of 2): the pins over the shapes the census CANNOT read, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a command word held in a variable by a lookup or a path-qualified default, a lookup's answer as the command word, a trap action running a reading tool, source or . of a substitution and bash -c, each pinned once and read by the census nowhere; an alias defined and the word-shaped pins read unquoted; a variable given a reading tool's path then run; a here-doc; the scanner's lookup excepted by its exact text; the four variable command words (the gate's since 2026-09-30) excepted only inside their owners; an owner renamed named by the pin, its words then pinned" {
     needs_bash4
     local plant k=0
     # ... and pins absent a command word held in a variable by a lookup or a path-qualified default, a lookup's answer
@@ -13132,7 +13177,7 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     run undeclared_reads "$TEST_DIR/plant-r10c-p.sh"
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
     # a variable given a reading tool's path and then run as the command word: each line pinned once (the property: a
-    # command word that begins with a parameter expansion is one of the three the bound names)
+    # command word that begins with a parameter expansion is one of the four the bound names)
     { sed -n '1p' "$HOOK"; printf '%s\n' 'g=/usr/bin/git' '"$g" rev-parse HEAD'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-g.sh"
     run census_unread_shapes "$TEST_DIR/plant-r9b-g.sh"
     [ "$output" = $'2:g=/usr/bin/git\n3:"$g" rev-parse HEAD' ]
@@ -13173,19 +13218,20 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     { sed -n '1p' "$HOOK"; printf '%s\n' 'gx="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-l.sh"
     run census_unread_shapes "$TEST_DIR/plant-r9b-l.sh"
     [ "$output" = '2:gx="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"' ]
-    # round 10c (the round 9 rulings' J, extra7-2): the three variable command words are excepted only inside the
+    # round 10c (the round 9 rulings' J, extra7-2): the variable command words are excepted only inside the
     # function each is keyed on, so a runner function of the hook called with git (multi-line, one-line, and running
-    # its arguments behind command), "$detail" and "$gl" outside their owners (planted together), and "$gl" version in
+    # its arguments behind command), "$detail", "$gl" and, since the gate (2026-09-30), the gate's exec of "$candidate"
+    # outside their owners (planted together), and "$gl" version in
     # scanner_version outside its judged_read call are each pinned once and read by the census nowhere (each passed both
     # instruments at 3a454668b, where the exceptions held by their spelling anywhere); the hook's own "$gl" version is
     # the tagged command of a judged_read call inside scanner_version, which the pin does not read
     [ -n "$(awk '/^scanner_version\(\) \{/ { p = 1 } p && /judged_read gate="the VERSION of the scanner" .* -- "\$gl" version;/ { f = 1 } p && /^}$/ { exit } END { if (f) print "found" }' "$HOOK")" ]
     { sed -n '1p' "$HOOK"; printf '%s\n' 'probe_run() {' '    "$@" 2>/dev/null' '}' 'probe_run git rev-parse HEAD' \
         'probe_one() { "$@" 2>/dev/null; }' 'probe_one git rev-parse HEAD' 'probe_cmd() { command "$@"; }' 'probe_cmd git rev-parse HEAD' \
-        '"$detail"' '"$gl" detect --source .'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r10c-s.sh"
+        '"$detail"' '"$gl" detect --source .' 'exec "$candidate" "$0" "$@"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r10c-s.sh"
     run census_unread_shapes "$TEST_DIR/plant-r10c-s.sh"
     [ "$status" -eq 0 ]
-    [ "$output" = $'3:    "$@" 2>/dev/null\n6:probe_one() { "$@" 2>/dev/null; }\n8:probe_cmd() { command "$@"; }\n10:"$detail"\n11:"$gl" detect --source .' ]
+    [ "$output" = $'3:    "$@" 2>/dev/null\n6:probe_one() { "$@" 2>/dev/null; }\n8:probe_cmd() { command "$@"; }\n10:"$detail"\n11:"$gl" detect --source .\n12:exec "$candidate" "$0" "$@"' ]
     run undeclared_reads "$TEST_DIR/plant-r10c-s.sh"
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
     n=$(grep -n '^scanner_version() {' "$HOOK" | cut -d: -f1)
@@ -13205,6 +13251,11 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     run census_unread_shapes "$TEST_DIR/plant-r10c-sr.sh"
     [ "${lines[0]}" = "0:the extent of scanner_run, which an exception of the bound is keyed on, is missing" ]
     [[ "$output" == *$'\n'*':    ( cd "$dir" && umask 077 && { [ "$trace" -eq 0 ] || export NO_COLOR=1; } && "$gl" ${GL_ARGS[@]+"${GL_ARGS[@]}"} < /dev/null 1>&2 2> "$logf" ) || rc=$?'* ]]
+    sed 's/^bash_gate() {/bash_gate_renamed() {/' "$HOOK" > "$TEST_DIR/plant-gate-r.sh"
+    run census_unread_shapes "$TEST_DIR/plant-gate-r.sh"
+    [ "${lines[0]}" = "0:the extent of bash_gate, which an exception of the bound is keyed on, is missing" ]
+    [[ "$output" == *$'\n'*':            exec "$candidate" "$0" "$@"'* ]]
+    [[ "$output" == *$'\n'*':        version=$(BASH_ENV='"''"' "$candidate" -c '* ]]
 }
 
 # ── round 12b3: the skip canary (romp-manager's ruling, 2026-09-26 20:08Z) ──
@@ -17125,7 +17176,7 @@ WANT
 }
 
 exit_trap_refused() {   # the push just made printed the EXIT trap's refusal whole, in the form of the hook's other BLOCKED blocks: a blank line, the BLOCKED line naming a bash, the refusal with its remedy, and the verdict's bypass line, in that order
-    [[ "$output" == *$'\n\nromp pre-push: BLOCKED. bash '*$' ended the hook, or a stage of one of its pipelines, on the error above before its verdict, and reported success.\n  The push is refused rather than published unscanned. The error above is in the hook, not in the push: report it, or put bash 4.4 or later first on PATH, where an array with no element raises no such error.\n  To bypass for one push (you are sure it is fine): git push --no-verify'* ]]
+    [[ "$output" == *$'\n\nromp pre-push: BLOCKED. bash '*$' ended the hook, or a stage of one of its pipelines, on the error above before its verdict, and reported success.\n  The push is refused rather than published unscanned. The error above is in the hook, not in the push: report it.\n  To bypass for one push (you are sure it is fine): git push --no-verify'* ]]
 }
 
 @test "bash 3.2 (2026-09-30, the EXIT trap): a copy of the hook that ends with status 0 after the identifier scan, ahead of its verdict, is refused by the trap's line naming bash, and the remote stays at its base; the same copy under the trap line the hook carried before, the scratch directory's removal alone, publishes the push, as bash 3.2.57 ended the hook with status 0 on an unbound name" {
@@ -17149,12 +17200,14 @@ exit_trap_refused() {   # the push just made printed the EXIT trap's refusal who
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse main)" ]
 }
 
-@test "bash 3.2 (2026-09-30, the positions the EXIT trap covers): an unbound name planted in the merge's rename-candidate helper, once in the hook's own shell (the helper judged_read runs with -o, in an || list) and once in its awk (a pipeline stage bash forks for a simple command), with an identifier at the tip, is refused under every bash and the remote stays at its base; under a bash before 4, the trap's line is among the refusal's lines" {
+@test "bash 3.2 (2026-09-30, the positions the EXIT trap covers): an unbound name planted in the merge's rename-candidate helper, once in the hook's own shell (the helper judged_read runs with -o, in an || list) and once in its awk (a pipeline stage bash forks for a simple command), with an identifier at the tip, is refused under every bash and the remote stays at its base; under a body bash before 4, the trap's line is among the refusal's lines, and since the gate the body runs under bash 5.1 or later (4.4 or later until 13:37Z), where bash's own status 1 refuses and the trap's line is absent" {
     local plant hookbash
     third_path_merge "nothing to see" pushed
     third_path_committed
     commit_file leak.txt "home is /home/zzsynthuser/code" "leak at the tip"
-    hookbash=$(bash -c 'echo "${BASH_VERSINFO[0]}"')
+    # the bash that runs the hook's BODY: since the gate (bash_gate, 2026-09-30) the bash first on PATH when that is
+    # 5.1 or later, else the newer bash the gate re-runs the hook under (ROMP_HOOK_BASHES, from setup)
+    hookbash=$("$NEWER_BASH" -c 'echo "${BASH_VERSINFO[0]}"')
     for plant in shell stage; do
         case "$plant" in
             shell) awk '{ print } /^merge_rename_candidates\(\) \{/ { print "    : \"$3\"" }' "$HOOK" > "$TEST_DIR/hook-$plant" ;;
@@ -17170,6 +17223,8 @@ exit_trap_refused() {   # the push just made printed the EXIT trap's refusal who
         [ "$plant" = shell ] || [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${merge:0:10} could not be read (the rename candidates' awk or tr exited 1)"* ]] || false
         if [ "$hookbash" -lt 4 ]; then
             exit_trap_refused
+        else
+            [[ "$output" != *"ended the hook, or a stage of one of its pipelines"* ]] || false
         fi
     done
 }
@@ -17220,4 +17275,1289 @@ exit_trap_refused() {   # the push just made printed the EXIT trap's refusal who
     [[ "$output" == *"romp pre-push: the DENYLIST $strings could not be opened for reading, so which strings the identifier scan greps for is unknown; make it readable and push again; the scan is incomplete, so the push is refused"* ]] || false
     [[ "$output" == *"  To bypass for one push (you are sure it is fine): git push --no-verify"* ]] || false   # the verdict's own refusal
     [[ "$output" != *"ended the hook, or a stage of one of its pipelines"* ]] || false
+}
+
+# ── the gate (2026-09-30, the coordinator's rulings at 11:02Z and 13:37Z) ────────────────
+# The hook stops running its body under a bash older than 5.1 (4.4 until 13:37Z): bash_gate, the first thing it runs,
+# ends the hook as the body would where neither scan would run (the armed test's cases, at the end of the file), and
+# otherwise re-runs the hook under the first candidate that reports bash 5.1 or later (/opt/homebrew/bin/bash, then
+# /usr/local/bin/bash, or the paths ROMP_HOOK_BASHES names, a test seam read only under a bash older than 5.1),
+# asking each for its version with stdin from /dev/null and BASH_ENV empty, and an answer that is not two numbers
+# passes a candidate over; one function, bash_admitted, compares the running bash's version and each candidate's. It
+# refuses the push when no candidate reports 5.1 or later; a re-run hook still under a bash older than 5.1 refuses
+# rather than re-running again. Setup's denylist arms the identifier scan in every case below, so the gate acts. The
+# cases that need the gate to act skip where the bash first on PATH, which runs the hook in every case, is 5.1 or
+# later, since the gate does nothing there: a run of this file under an older bash first on PATH (the macOS cell's
+# 3.2, or a build of 3.2, 4.4 or 5.0 first on PATH) is where they run. So the per-push Linux cells never run them, and
+# the macOS cell, which runs only on a dispatch or on the weekly schedule, is the one CI cell that does; there they act
+# only because the Shell job's step Install bash 5.1 or later (macOS) puts a link to /bin/bash first on PATH, ahead of
+# Homebrew's bash, so in a macOS cell on CI (CI=true, uname Darwin) a bash 5.1 or later first on PATH fails these
+# cases instead of skipping them, and the gate cannot go unchecked there with every check green (the gate audit's F1).
+# The seam's case, the comparison's case and the armed test's own reading (at the end of the file) run under every
+# bash. The gate's candidates below are small sh programs:
+# one answers the version question with a fixed text and runs NEWER_BASH otherwise, one drains its stdin when asked,
+# one answers from NEWER_BASH and runs the hook under the older bash. Each [[ ]] ends in || false, as in the bash 3.2
+# cases above.
+gate_acts() {   # skips the case unless the bash first on PATH is older than 5.1, the one bash the gate acts under; in a macOS cell on CI a bash 5.1 or later there fails the case (the note above)
+    at_least_51 "$HOOK_BASH_VERSION" || return 0
+    if [ "${CI:-}" = true ] && [ "$(uname -s)" = Darwin ]; then
+        echo "the bash first on PATH ($HOOK_BASH) is ${HOOK_BASH_VERSION% *}.${HOOK_BASH_VERSION#* }, 5.1 or later, in a macOS cell on CI, the one CI cell where the gate's cases run: the Shell job's step Install bash 5.1 or later (macOS) puts a link to /bin/bash first on PATH for them, and without it they would skip here too and no CI cell would check the gate" >&2
+        return 1
+    fi
+    skip "the bash first on PATH is ${HOOK_BASH_VERSION% *}.${HOOK_BASH_VERSION#* }, 5.1 or later, where the hook's gate does nothing; these cases run under an older bash first on PATH (the macOS cell's 3.2)"
+}
+gate_fake() {   # <name> <answer>: a candidate at $TEST_DIR/<name> that prints the answer when asked its version (first argument -c) and otherwise runs NEWER_BASH with its arguments, recording each run in calls.<name> (probe or run)
+    {
+        printf '#!/bin/sh\n'
+        printf 'case "$1" in -c) echo probe >> %q; echo %q; exit 0 ;; esac\n' "$TEST_DIR/calls.$1" "$2"
+        printf 'echo run >> %q\n' "$TEST_DIR/calls.$1"
+        printf 'exec %q "$@"\n' "$NEWER_BASH"
+    } > "$TEST_DIR/$1"
+    chmod 755 "$TEST_DIR/$1"
+}
+gate_probe_copy() {   # <copy>: the hook with one line ahead of set -euo pipefail that prints the bash running it, its arguments and ROMP_HOOK_REEXEC, on stderr
+    awk '$0 == "set -euo pipefail" && !d { print "echo \"gate probe: bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}; $# arguments: $*; marker ${ROMP_HOOK_REEXEC-unset}\" >&2"; d = 1 } { print }' "$HOOK" > "$1"
+    [ "$(grep -c '^echo "gate probe: ' "$1")" -eq 1 ]           # the plant landed, once
+    chmod 755 "$1"
+}
+gate_clean_push_ready() {   # a base on the remote (BASE), then a clean commit on main that the scans pass
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file web.txt "the web session's work" "clean work"
+}
+gate_refused() {   # <where, as the line names it>: the output opens with the gate's refusal whole, in the form of the hook's other BLOCKED blocks (a blank line, the BLOCKED line naming the running bash and where the gate looked, the remedy, the bypass line), and holds no other romp line
+    local want
+    want=$'\n'"romp pre-push: BLOCKED. The hook needs bash 5.1 or later; bash $("$HOOK_BASH" -c 'echo "$BASH_VERSION"') is running it, and no bash 5.1 or later was found at $1."$'\n'"  The push is refused rather than scanned under a bash older than 5.1, which can end a scan early, or skip one of its reads, and report success. Install bash 5.1 or later (with Homebrew: brew install bash), or put one first on PATH, and push again."$'\n'"  To bypass for one push (you are sure it is fine): git push --no-verify"
+    [ "${output:0:${#want}}" = "$want" ]
+    [ "$(grep -c '^romp pre-push' <<< "$output")" -eq 1 ]
+}
+gate_loop_refused() {   # <the path ROMP_HOOK_REEXEC names>: as gate_refused, for the re-run hook's refusal
+    local want
+    want=$'\n'"romp pre-push: BLOCKED. The hook re-ran itself under $1, which reported bash 5.1 or later, but bash $("$HOOK_BASH" -c 'echo "$BASH_VERSION"') is still running it."$'\n'"  The push is refused rather than re-run. Install bash 5.1 or later (with Homebrew: brew install bash), or put one first on PATH, and push again; if ROMP_HOOK_REEXEC was set before the push, unset it."$'\n'"  To bypass for one push (you are sure it is fine): git push --no-verify"
+    [ "${output:0:${#want}}" = "$want" ]
+    [ "$(grep -c '^romp pre-push' <<< "$output")" -eq 1 ]
+}
+at_remote_main() { [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse main)" ]; }
+
+@test "the gate (2026-09-30, no newer bash): under a bash older than 5.1, with no candidate that reports bash 5.1 or later (a path that does not exist, a file that is not executable, the running bash itself, candidates that answer 4.3, 4.4 and 5.0, the last two taken until the threshold became 5.1 at 13:37Z, one that answers a non-number and one that answers the one word 5, which read as both numbers until the gate audit's G4), a clean push the scans would pass is refused by the gate's block, naming the running bash, where it looked and the remedy, with no other romp line and the remote at its base; each candidate that runs was asked its version and none ran the hook; set and empty, the list names no candidate and the push is refused the same way" {
+    local list f
+    gate_acts
+    gate_clean_push_ready
+    gate_fake old43 "4 3"
+    gate_fake old44 "4 4"
+    gate_fake old50 "5 0"
+    gate_fake garbled "five one"
+    gate_fake oneword "5"
+    printf '#!/bin/sh\nexit 0\n' > "$TEST_DIR/not-executable"
+    chmod 644 "$TEST_DIR/not-executable"
+    list="$TEST_DIR/no-such-bash:$TEST_DIR/not-executable:$HOOK_BASH:$TEST_DIR/old43:$TEST_DIR/old44:$TEST_DIR/old50:$TEST_DIR/garbled:$TEST_DIR/oneword"
+    export ROMP_HOOK_BASHES="$list"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    gate_refused "the paths ROMP_HOOK_BASHES names ($list)"
+    for f in old43 old44 old50 garbled oneword; do
+        [ "$(cat "$TEST_DIR/calls.$f")" = probe ]                   # asked its version once and never run with the hook
+    done
+    export ROMP_HOOK_BASHES=""
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    gate_refused "the paths ROMP_HOOK_BASHES names (none)"
+}
+
+@test "the gate (2026-09-30, the re-run): under a bash older than 5.1 the hook re-runs under the first candidate that reports bash 5.1 or later, a candidate that answers 5.0 passed over: a copy of the hook that prints, ahead of set -euo pipefail, the bash running it, its arguments and ROMP_HOOK_REEXEC prints them once, from that bash, with git's two arguments and the marker unset, and the clean push reaches the remote; a candidate that answers 5.1, and one that answers 10.0, is taken and runs the hook; a startup file named by BASH_ENV that prints a line does not reach the answer, since the version is asked with BASH_ENV empty (until the gate audit's G4 it made the newer bash's answer three words and the push was refused); and the hook, re-run the same way, refuses a push adding a banned line, the remote at its base" {
+    local probe="$TEST_DIR/hook-gate-probe" newer want
+    gate_acts
+    gate_clean_push_ready
+    gate_probe_copy "$probe"
+    gate_fake old50 "5 0"
+    newer=$(bash_version_of "$NEWER_BASH")
+    at_least_51 "$newer"
+    want="gate probe: bash ${newer% *}.${newer#* }; 2 arguments: origin $TEST_DIR/remote.git; marker unset"
+    export ROMP_HOOK_BASHES="$TEST_DIR/old50:$NEWER_BASH"
+    HOOK=$probe push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [ "$(grep -c '^gate probe: ' <<< "$output")" -eq 1 ]                # printed once: the older bash re-ran the hook before this line
+    [ "$(grep '^gate probe: ' <<< "$output")" = "$want" ]
+    at_remote_main
+    [ "$(cat "$TEST_DIR/calls.old50")" = probe ]
+    # the version compared as two numbers, 5.1 the least taken: a candidate that answers 5.1, then one that answers 10.0
+    for fake in at51:"5 1" at100:"10 0"; do
+        gate_fake "${fake%%:*}" "${fake#*:}"
+        commit_file "${fake%%:*}.txt" "more of the web session's work" "clean work under ${fake%%:*}"
+        export ROMP_HOOK_BASHES="$TEST_DIR/${fake%%:*}:$NEWER_BASH"
+        HOOK=$probe push_main_through_hook_with_shim
+        [ "$status" -eq 0 ]
+        [ "$(grep '^gate probe: ' <<< "$output")" = "$want" ]
+        [ "$(tr '\n' ' ' < "$TEST_DIR/calls.${fake%%:*}")" = "probe run " ]     # asked, then run with the hook
+        at_remote_main
+    done
+    # a startup file that prints: every bash below sources it but the one asked its version
+    printf 'echo "startup file: a line on stdout"\n' > "$TEST_DIR/bash-env.sh"
+    commit_file startup.txt "more of the web session's work" "clean work under a startup file"
+    export ROMP_HOOK_BASHES="$NEWER_BASH"
+    export BASH_ENV="$TEST_DIR/bash-env.sh"
+    HOOK=$probe push_main_through_hook_with_shim
+    unset BASH_ENV
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"startup file: a line on stdout"* ]] || false       # the plant landed: the hook's own bashes sourced it
+    [ "$(grep '^gate probe: ' <<< "$output")" = "$want" ]
+    at_remote_main
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak at the tip"
+    export ROMP_HOOK_BASHES="$NEWER_BASH"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/main ($(git -C "$REPO" rev-parse --short=10 HEAD)) would publish a personal identifier in:"* ]] || false
+    [[ "$output" != *"BLOCKED. The hook"* ]] || false
+}
+
+@test "the gate (2026-09-30, stdin): the refs on stdin reach the re-run hook whole: under a bash older than 5.1, with a candidate that drains its stdin when asked its version, two ref lines, the last with no newline, each ref's tip carrying a banned string, are refused naming both tips (the version question reads /dev/null, never the refs)" {
+    local main_sha side_sha
+    gate_acts
+    commit_file one.txt "home is /home/zzsynthuser/code" "main's leak"
+    main_sha=$(git -C "$REPO" rev-parse HEAD)
+    git -C "$REPO" checkout -q --orphan side
+    git -C "$REPO" rm -rq --cached .
+    rm -f "$REPO/one.txt"
+    commit_file two.txt "a note from TESTHOST" "side's leak"
+    side_sha=$(git -C "$REPO" rev-parse HEAD)
+    {
+        printf '#!/bin/sh\n'
+        printf 'case "$1" in -c) cat > /dev/null; echo drained >> %q ;; esac\n' "$TEST_DIR/calls.drain"
+        printf 'exec %q "$@"\n' "$NEWER_BASH"
+    } > "$TEST_DIR/drain"
+    chmod 755 "$TEST_DIR/drain"
+    printf 'refs/heads/main %s refs/heads/main %s\nrefs/heads/side %s refs/heads/side %s' "$main_sha" "$ZERO" "$side_sha" "$ZERO" > "$TEST_DIR/refs"
+    [ "$(tail -c 1 "$TEST_DIR/refs")" = "${ZERO:39}" ]                  # the last line ends without a newline
+    export ROMP_HOOK_BASHES="$TEST_DIR/drain"
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git < "$TEST_DIR/refs"
+    [ "$status" -ne 0 ]
+    [ "$(cat "$TEST_DIR/calls.drain")" = drained ]                      # the plant ran: the candidate was asked its version, and drained what it was given
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/main (${main_sha:0:10}) would publish a personal identifier in:"* ]] || false
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/side (${side_sha:0:10}) would publish a personal identifier in:"* ]] || false
+}
+
+@test "the gate (2026-09-30, the loop guard): under a bash older than 5.1, a candidate that answers 5.1 or later when asked and then runs the hook under the older bash is run once, and the re-run hook, still under that bash with ROMP_HOOK_REEXEC set, refuses the push naming the candidate rather than re-running again, the remote at its base; a ROMP_HOOK_REEXEC set before the push refuses the same way under that bash, naming its value" {
+    gate_acts
+    gate_clean_push_ready
+    {
+        printf '#!/bin/sh\n'
+        printf 'case "$1" in -c) exec %q "$@" ;; esac\n' "$NEWER_BASH"
+        printf 'echo run >> %q\n' "$TEST_DIR/calls.liar"
+        printf '[ "$(grep -c run %q)" -le 3 ] || exit 97\n' "$TEST_DIR/calls.liar"   # a bound, so a hook with no guard ends here instead of looping
+        printf 'exec %q "$@"\n' "$HOOK_BASH"
+    } > "$TEST_DIR/liar"
+    chmod 755 "$TEST_DIR/liar"
+    export ROMP_HOOK_BASHES="$TEST_DIR/liar"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [ "$(cat "$TEST_DIR/calls.liar")" = run ]                           # run once with the hook, never again
+    gate_loop_refused "$TEST_DIR/liar"
+    export ROMP_HOOK_REEXEC="$TEST_DIR/set-before-the-push"
+    export ROMP_HOOK_BASHES="$NEWER_BASH"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    gate_loop_refused "$TEST_DIR/set-before-the-push"
+}
+
+@test "the gate (2026-09-30, the default candidates): under a bash older than 5.1 with ROMP_HOOK_BASHES unset, the candidates are /opt/homebrew/bin/bash and then /usr/local/bin/bash: where one reports bash 5.1 or later the hook re-runs under the first that does (a copy printing its bash prints that one's version, and the clean push reaches the remote), and where neither does the push is refused naming both paths, the remote at its base" {
+    local b want="" probe="$TEST_DIR/hook-gate-probe" v
+    gate_acts
+    unset ROMP_HOOK_BASHES
+    for b in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+        if [ -f "$b" ] && [ -x "$b" ] && at_least_51 "$(bash_version_of "$b")"; then want=$b; break; fi
+    done
+    gate_clean_push_ready
+    gate_probe_copy "$probe"
+    HOOK=$probe push_main_through_hook_with_shim
+    if [ -n "$want" ]; then
+        echo "# $want reports bash 5.1 or later: the case expects the re-run" >&3
+        v=$(bash_version_of "$want")
+        [ "$status" -eq 0 ]
+        [ "$(grep '^gate probe: ' <<< "$output")" = "gate probe: bash ${v% *}.${v#* }; 2 arguments: origin $TEST_DIR/remote.git; marker unset" ]
+        at_remote_main
+    else
+        echo "# neither path holds a bash 5.1 or later here: the case expects the refusal" >&3
+        [ "$status" -ne 0 ]
+        at_base
+        gate_refused "/opt/homebrew/bin/bash or /usr/local/bin/bash"
+    fi
+}
+
+@test "the gate (2026-09-30, the seam read only under a bash older than 5.1): under bash 5.1 or later, with ROMP_HOOK_BASHES set empty and set to a path that does not exist, the hook runs its body: a clean push passes with no romp line, and a push adding a banned line is refused by the scan; a ROMP_HOOK_REEXEC set before the push refuses nothing there, and the gate unsets it before the body runs" {
+    local seam probe="$TEST_DIR/hook-gate-probe" newer
+    gate_probe_copy "$probe"
+    newer=$(bash_version_of "$NEWER_BASH")
+    at_least_51 "$newer"
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file web.txt "the web session's work" "clean work"
+    for seam in "" "$TEST_DIR/no-such-bash"; do
+        export ROMP_HOOK_BASHES="$seam"
+        export ROMP_HOOK_REEXEC="$TEST_DIR/set-before-the-push"
+        run _hook_newer "$REPO" "$probe" origin git@example.invalid:x/y.git <<< "refs/heads/main $(git -C "$REPO" rev-parse HEAD) refs/heads/main $BASE"
+        [ "$status" -eq 0 ]
+        [ "$output" = "gate probe: bash ${newer% *}.${newer#* }; 2 arguments: origin git@example.invalid:x/y.git; marker unset" ]
+    done
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak at the tip"
+    for seam in "" "$TEST_DIR/no-such-bash"; do
+        export ROMP_HOOK_BASHES="$seam"
+        run _hook_newer "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< "refs/heads/main $(git -C "$REPO" rev-parse HEAD) refs/heads/main $BASE"
+        [ "$status" -ne 0 ]
+        [[ "$output" == *"romp pre-push: the tip of refs/heads/main ($(git -C "$REPO" rev-parse --short=10 HEAD)) would publish a personal identifier in:"* ]] || false
+        [[ "$output" != *"BLOCKED. The hook"* ]] || false
+    done
+}
+_hook_newer() { cd "$1" && shift && "$NEWER_BASH" "$@"; }   # the hook run by hand under NEWER_BASH, a bash 5.1 or later, whatever bash is first on PATH
+
+# ── the denylist's path told absent from cannot-tell (2026-09-30, N1) ─────────
+# identifier_scan_armed tested [ -f ] alone until the audit's N1, so a private-strings file under a directory that
+# could not be searched, or a dangling symlink at the path, read as absent: the identifier scan stayed off and the push
+# published with nothing printed, under every bash. denylist_state now reads the path three ways, a regular file,
+# absent, or neither, and neither arms the scan, which refuses the push naming the path and the reason. Absent is read
+# in two steps since the gate audit's N1-a: the walk finds nothing at the path, and then an open of the path must
+# answer No such file or directory or Not a directory (lookup_answer); a name too long for the file system is the one
+# other answer a case can plant on any machine, standing for the faults (an I/O error, a security module's denial)
+# that the walk's tests read as nothing there. The cases below run under every bash (under a bash older than 5.1 the
+# gate re-runs the hook under NEWER_BASH first).
+denylist_refused() {   # <path> <reason, as denylist_state prints it> [<remedy>, when not the one for a path that can be looked at]: the refusal line for a path the hook cannot tell from absent, and the verdict's bypass line
+    local remedy="${3:-make the path name a readable regular file (or leave nothing there, which turns the scan off) and push again}"
+    [[ "$output" == *"romp pre-push: the DENYLIST $1 $2, so the hook cannot tell whether a denylist is there; $remedy; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"  To bypass for one push (you are sure it is fine): git push --no-verify"* ]] || false
+}
+
+@test "the DENYLIST path (2026-09-30, N1, a directory that cannot be searched): a private-strings file in a directory of mode 600 (read, no search), through a real push of a commit adding one of its strings, is refused naming the path, the directory and the reason, with the remote at its base; until then [ -f ] read the path as absent, the scan stayed off and the push published" {
+    local dir="$TEST_DIR/locked" strings="$TEST_DIR/locked/private-strings.txt"
+    leak_in_middle_commit_after_base
+    mkdir -p "$dir"
+    printf '# synthetic\nzzsynthuser\n' > "$strings"
+    chmod 600 "$dir"
+    [ ! -x "$dir" ]                                                     # the plant landed: this user cannot search the directory (root searches any, so the case cannot run as root)
+    export ROMP_PRIVATE_STRINGS="$strings"
+    push_main_through_hook_with_shim
+    chmod 700 "$dir"
+    [ "$status" -ne 0 ]
+    at_base
+    denylist_refused "$strings" "is under a directory that cannot be searched ($dir)"
+    [[ "$output" != *"ADDS a personal identifier"* ]] || false          # refused on the path, not by a scan the hook could not arm
+}
+
+@test "the DENYLIST path (2026-09-30, N1, a dangling symlink): a symlink at the private-strings path whose target does not exist, through a real push of a commit adding a banned string, is refused naming the path and the reason, with the remote at its base; until then it read as absent, the scan stayed off and the push published" {
+    local link="$TEST_DIR/strings-link"
+    leak_in_middle_commit_after_base
+    ln -s "$TEST_DIR/no-such-denylist.txt" "$link"
+    [ -L "$link" ]                                                      # the plant landed: a link that names nothing
+    [ ! -e "$link" ]
+    export ROMP_PRIVATE_STRINGS="$link"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    denylist_refused "$link" "is a symlink that does not lead to a regular file the hook can reach"
+}
+
+@test "the DENYLIST path (2026-09-30, N1, the other paths the hook cannot tell from absent): a directory at the path, a path under a directory that cannot be searched two levels up, a path under a symlink that names no directory, a symlink to a regular file beyond a directory that cannot be searched, and a path whose directory's name is too long for the file system (the walk finds nothing there, and the open answers File name too long, not that nothing is there; read as absent until the gate audit's N1-a) are each refused naming the reason, run by hand over a commit adding a banned string" {
+    local long reason
+    leak_in_middle_commit_after_base
+    mkdir -p "$TEST_DIR/a-directory" "$TEST_DIR/outer/inner"
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/a-directory"
+    run_hook "$BASE"
+    [ "$status" -ne 0 ]
+    denylist_refused "$TEST_DIR/a-directory" "is not a regular file"
+    printf '# synthetic\nzzsynthuser\n' > "$TEST_DIR/outer/inner/private-strings.txt"
+    chmod 600 "$TEST_DIR/outer"
+    [ ! -x "$TEST_DIR/outer" ]
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/outer/inner/private-strings.txt"
+    run_hook "$BASE"
+    chmod 700 "$TEST_DIR/outer"
+    [ "$status" -ne 0 ]
+    denylist_refused "$TEST_DIR/outer/inner/private-strings.txt" "is under a directory that cannot be searched ($TEST_DIR/outer)"
+    ln -s "$TEST_DIR/no-such-directory" "$TEST_DIR/dir-link"
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/dir-link/private-strings.txt"
+    run_hook "$BASE"
+    [ "$status" -ne 0 ]
+    denylist_refused "$TEST_DIR/dir-link/private-strings.txt" "is under a symlink that does not lead to a directory the hook can search ($TEST_DIR/dir-link)"
+    mkdir -p "$TEST_DIR/sealed"
+    printf '# synthetic\nzzsynthuser\n' > "$TEST_DIR/sealed/private-strings.txt"
+    ln -s "$TEST_DIR/sealed/private-strings.txt" "$TEST_DIR/sealed-link"
+    chmod 600 "$TEST_DIR/sealed"
+    [ ! -e "$TEST_DIR/sealed-link" ]                                    # the plant landed: the link's target is there, beyond a directory this user cannot search
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/sealed-link"
+    run_hook "$BASE"
+    chmod 700 "$TEST_DIR/sealed"
+    [ "$status" -ne 0 ]
+    denylist_refused "$TEST_DIR/sealed-link" "is a symlink that does not lead to a regular file the hook can reach"
+    long=$(printf 'n%.0s' {1..300})
+    [ "${#long}" -eq 300 ]                                               # over the 255 bytes a name may hold on Linux and macOS file systems
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/$long/private-strings.txt"
+    run_hook "$BASE"
+    [ "$status" -ne 0 ]
+    case "$output" in *"could not be looked up (Filename too long)"*) reason="could not be looked up (Filename too long)" ;; *) reason="could not be looked up (File name too long)" ;; esac   # musl's spelling, else glibc's and macOS's
+    denylist_refused "$ROMP_PRIVATE_STRINGS" "$reason"
+}
+
+@test "the DENYLIST path (2026-09-30, N1, the controls): a readable private-strings file still arms the scan (a real push of a commit adding one of its strings is refused as an identifier the commit adds, the remote at its base), and so does a symlink that names one; an absent path still reads as absent (a file missing from a directory, a path under directories that do not exist, a path under a top-level directory that does not exist, whose walk reads / (unpinned until the gate audit's N1-b), a path under a regular file, a relative path, and the XDG default in a home with no .config), the push passing with no romp line, and a real push of the same commit then publishes it" {
+    local p
+    leak_in_middle_commit_after_base
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: commit ${leak:0:10} ADDS a personal identifier in:"* ]] || false
+    [[ "$output" != *"the DENYLIST"* ]] || false
+    ln -s "$STRINGS" "$TEST_DIR/strings-link"
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/strings-link"
+    run_hook "$BASE"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${leak:0:10} ADDS a personal identifier in:"* ]] || false
+    [ ! -e /nonexistent-romp-denylist-dir ]
+    for p in "$TEST_DIR/does-not-exist.txt" "$TEST_DIR/no-such-dir/deeper/private-strings.txt" /nonexistent-romp-denylist-dir/private-strings.txt "$STRINGS/private-strings.txt" "no-such-denylist.txt"; do
+        export ROMP_PRIVATE_STRINGS="$p"
+        run_hook "$BASE"
+        [ "$status" -eq 0 ]
+        [[ "$output" != *"romp pre-push"* ]] || false
+    done
+    unset ROMP_PRIVATE_STRINGS XDG_CONFIG_HOME
+    [ ! -e "$HOME/.config/romp" ]
+    run_hook "$BASE"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]] || false
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    at_remote_main
+}
+
+# ── the gate's one comparison (2026-09-30, the gate audit's G2; read by property since the re-check's R1) ──
+# bash_gate compared the running bash's version and each candidate's in two places until the gate audit's G2, and no
+# run on CI or on the builders' bashes read the running side's minor: a copy that let bash 4.0 to 4.3 run the body
+# turned nothing red, and a threshold raised on one side alone would have gone unseen. Both now call bash_admitted, so
+# the fake candidates of cases 709 and 710 (answers of 4.3, 4.4, 5.0, 5.1 and 10.0) check the one comparison under an
+# older bash, and this case reads bash_gate's text and runs bash_admitted itself under every bash, so the per-push
+# Linux cells, where the gate's own cases skip, check the comparison too. Until the re-check's R1 the case read
+# spellings (the first if's text, test's six comparison operators, the other calls of bash_admitted), so a second
+# comparison of the running bash written another way ahead of the first if (a case on "$BASH_VERSION" that returns 0,
+# a (( )) or a [[ ]] that is not an if) let bash 4.0 to 4.3 run the body with nothing red. It now reads the properties
+# that decide whether the body runs, or the hook ends with status 0, under an older bash: nothing runs ahead of the
+# gate's call but function definitions (bash_admitted and bash_gate, and since the coordinator's ruling at 13:37Z the
+# armed test and the functions it calls), each a first line with nothing after its brace but a comment; only local
+# lines of names alone stand ahead of bash_gate's first if; that if passes bash_admitted the running bash's
+# BASH_VERSINFO[0] and [1], and its branch unsets ROMP_HOOK_REEXEC and returns; the if after it is the no-op, whose
+# condition negates scans_armed and whose branch prints through gitleaks_notice and exits 0; the word return stands
+# once in bash_gate, the word exec once, inside the branch of its candidate test, the line exit 0 once, the no-op's,
+# and every other line naming exit is exit 1, its last line one, so bash_gate returns from the first if's branch
+# alone and ends the hook with status 0 from the no-op alone; and BASH_VERSINFO stands outside single quotes only on
+# the first if (the candidate is asked its version inside the single-quoted script it runs), BASH_VERSION only on
+# echo lines. The spelling checks stay beside them: the candidate test's text, no number compared with test's
+# operators, and bash_admitted's body, so a change to the threshold edits bash_admitted's body and this case together
+# (4.4 until 13:37Z, 5.1 since).
+# Since the audit of the re-check's fix (R1-A1) the case also runs bash_gate: gate_as_older cuts every definition
+# ahead of the gate's call from a text, passes the first if two numbers where it passes the running bash's, and runs
+# the copy under the bash first on PATH with no candidate listed, so every bash runs the gate as a bash older than
+# 5.1 would. Passed 5 and 2, the control, the run reaches the body; passed 3 and 2 with setup's denylist arming the
+# identifier scan it refuses the push; passed 3 and 2 with neither scan armed it ends with status 0 and prints what
+# the hook's body prints for the same state, the credential scan's notice, or nothing under ROMP_NO_GITLEAKS, never
+# reaching the body. A copy that skips the armed test (its condition made false) or inverts it is named by the helper,
+# and in the run the first refuses where neither scan is armed and the second ends with status 0 where one is. A check
+# of the text cannot find a command that bash_gate assembles at run time: the audit found three copies whose
+# bash_gate returns that way passing this case under both bashes, each reaching the body under bash 3.2.57, and two
+# more such copies pass every case under bash 5.2 (the census cases name the audit's three, whose command word begins
+# with an expansion or is eval, and not these two). The case plants all five ahead of the candidates line, through
+# gate_insert, which writes a line as it is (gate_plant's awk reads the backslash of the ANSI-C name as an escape):
+# gate-assembled-split, a name split over two variables; gate-assembled-eval, an eval of printed text;
+# gate-assembled-command, the split name after command; gate-assembled-inside, an expansion inside the word; and
+# gate-assembled-ansi, an ANSI-C quoted name. The helper names none of them and the run reaches the body in each.
+# Neither check finds a return or an exec that depends on something the run does not reproduce, and two plants
+# witness this, each pinned so that a change to either check that closes or widens the gap turns the case red:
+# gate-conditional returns only where the running bash, read through an indirect expansion of a name its quoting
+# splits, is bash 4, so the run refuses it under bash 3.2, 5.0 and 5.2 and reaches the body under 4.0 to 4.4;
+# gate-assembled-exec runs a candidate answering 4 through an exec it assembles, and the run lists no candidate. The
+# helper names neither. Case 709, run under a bash older than 5.1, turns red on gate-assembled-exec (its candidates
+# answering 4.3 and 4.4 are taken; case 710 did too until its passed-over candidate answered 5.0); only a run of the
+# gate's cases under a bash 4, which no CI cell has, turns red on gate-conditional.
+gate_one_comparison() {   # <hook text>: prints a line per departure from what the case's title names; nothing when the text holds it all
+    awk -v q="'" '
+        function words(s, w,   a, n, i, c) {   # how many times the word w stands in s, quotes and backslashes dropped first, since bash reads r\eturn and r""eturn as return
+            gsub(/[\\"]/, "", s)
+            gsub(q, "", s)
+            gsub(/[^A-Za-z0-9_]/, " ", s)
+            n = split(s, a, " ")
+            c = 0
+            for (i = 1; i <= n; i++) if (a[i] == w) c++
+            return c
+        }
+        st == "a" && /^}$/ { st = ""; adone = 1; next }
+        st == "a" { abody = abody (abody == "" ? "" : " | ") $0; next }
+        st == "g" && /^}$/ { st = ""; gdone = 1; next }
+        st == "g" { body[++nb] = $0; next }
+        st == "f" && /^}$/ { st = ""; next }
+        st == "f" { next }
+        /^[ \t]*#/ || /^[ \t]*$/ { next }
+        /^bash_admitted\(\) \{/ && adef == "" { adef = $0; st = "a"; next }
+        /^bash_gate\(\) \{/ && gdef == "" { gdef = $0; st = "g"; next }
+        /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/ { if ($0 !~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{([ \t]+#.*)?$/) fdef = fdef (fdef == "" ? "" : " | ") $0; st = "f"; next }
+        $0 == "bash_gate \"$@\"" && adone && gdone { called = 1; exit }
+        { top = $0; exit }
+        END {
+            if (top != "") print "a command ahead of the call of bash_gate: " top
+            else if (!called) print "the call of bash_gate after the two definitions: none"
+            if (fdef != "") print "a definition ahead of the call of bash_gate with more than a comment after its brace: " fdef
+            if (adef !~ /^bash_admitted\(\) \{([ \t]+#.*)?$/) print "the first line of bash_admitted, a comment alone after the brace: " (adef == "" ? "none" : adef)
+            if (gdef !~ /^bash_gate\(\) \{([ \t]+#.*)?$/) print "the first line of bash_gate, a comment alone after the brace: " (gdef == "" ? "none" : gdef)
+            first = 0
+            for (i = 1; i <= nb && !first; i++) if (body[i] ~ /^[ \t]*if /) first = i
+            for (i = 1; i < first; i++) if (body[i] !~ /^    local( [a-z_]+)+$/) print "ahead of the first if of bash_gate, a line other than a local of names alone: " body[i]
+            if (body[first] != "    if bash_admitted \"${BASH_VERSINFO[0]}\" \"${BASH_VERSINFO[1]}\"; then") print "the first if of bash_gate: " (first ? body[first] : "none")
+            else if (body[first + 1] != "        unset ROMP_HOOK_REEXEC" || body[first + 2] != "        return 0" || body[first + 3] != "    fi") print "the branch of the first if of bash_gate: " body[first + 1] " | " body[first + 2] " | " body[first + 3]
+            noop = (first && body[first + 6] == "        exit 0") ? first + 6 : 0
+            if (!first || body[first + 4] != "    if ! scans_armed; then" || body[first + 5] != "        gitleaks_notice" || body[first + 6] != "        exit 0" || body[first + 7] != "    fi") print "the no-op after the first if of bash_gate (if ! scans_armed; then, gitleaks_notice, exit 0, fi): " body[first + 4] " | " body[first + 5] " | " body[first + 6] " | " body[first + 7]
+            r = 0; e = 0; x = 0; cand = 0
+            for (i = 1; i <= nb; i++) {
+                r += words(body[i], "return")
+                if (words(body[i], "exec")) { e += words(body[i], "exec"); x = i }
+                if (!cand && body[i] == "        if bash_admitted \"$major\" \"$minor\"; then") cand = i
+            }
+            if (r != 1) print "return in bash_gate: " r " times"
+            if (e != 1) print "exec in bash_gate: " e " times"
+            else if (cand) {
+                for (i = cand + 1; i <= nb && body[i] != "        fi"; i++) ;
+                if (x <= cand || x >= i) print "exec outside the branch of the candidate test of bash_gate: " body[x]
+            }
+            for (i = 1; i <= nb; i++) if (words(body[i], "exit") && body[i] !~ /^[ \t]*exit 1$/ && i != noop) print "an exit in bash_gate other than a line exit 1 and the exit 0 that ends the no-op: " body[i]
+            if (body[nb] != "    exit 1") print "the last line of bash_gate: " (nb ? body[nb] : "none")
+            for (i = 1; i <= nb; i++) {
+                t = body[i]
+                gsub(q "[^" q "]*" q, "", t)
+                if (i != first && index(t, "BASH_VERSINFO")) print "BASH_VERSINFO outside single quotes in bash_gate, off its first if: " body[i]
+            }
+            for (i = 1; i <= nb; i++) if (index(body[i], "BASH_VERSION") && body[i] !~ /^[ \t]*echo "/) print "BASH_VERSION in bash_gate off an echo line: " body[i]
+            for (i = 1; i <= nb; i++) if (i != first && body[i] ~ /-(eq|ne|gt|ge|lt|le)[ \t]/) print "a number compared in bash_gate: " body[i]
+            calls = ""
+            for (i = 1; i <= nb; i++) if (i != first && index(body[i], "bash_admitted")) calls = calls (calls == "" ? "" : " | ") body[i]
+            if (calls != "        if bash_admitted \"$major\" \"$minor\"; then") print "the other calls of bash_admitted in bash_gate: " (calls == "" ? "none" : calls)
+            if (abody != "    [ \"$1\" -gt 5 ] || { [ \"$1\" -eq 5 ] && [ \"$2\" -ge 1 ]; }") print "the body of bash_admitted: " (abody == "" ? "none" : abody)
+        }' "$1"
+}
+gate_plant() {   # <out> <line> <text>: a copy of the hook whose one line equal to <line>, inside bash_gate or its call, reads <text> (\n in it starts a new line; empty deletes the line); status 1 unless exactly one line matched
+    awk -v old="$2" -v new="$3" '
+        /^bash_gate\(\) \{/ { g = 1 }
+        (g || $0 == "bash_gate \"$@\"") && $0 == old { n++; if (new != "") print new; next }
+        g && /^}$/ { g = 0 }
+        { print }
+        END { exit n == 1 ? 0 : 1 }' "$HOOK" > "$1"
+}
+gate_insert() {   # <out> <line> <text>: a copy of the hook with <text>, as written (no escape in it read), on a line of its own ahead of the hook's one line equal to <line>; status 1 unless exactly one line matched
+    local n
+    [ "$(grep -c -F -x -e "$2" "$HOOK")" = 1 ] || return 1
+    n=$(grep -n -F -x -e "$2" "$HOOK" | cut -d: -f1)
+    { head -n "$((n - 1))" "$HOOK"; printf '%s\n' "$3"; tail -n "+$n" "$HOOK"; } > "$1"
+}
+gate_as_older() {   # <hook text> <major> <minor>: every line ahead of the gate's call cut from the text (the definitions and comments), the first if passing <major> and <minor> where it passes the running bash's two numbers, run under the bash first on PATH with no candidate (ROMP_HOOK_BASHES set and empty) and ROMP_HOOK_REEXEC unset; prints what bash_gate printed, then BODY-REACHED when it returned, and ends with the copy's status; status 3, naming why, when the text has no one call to cut at or no first if to rewrite
+    local copy="$TEST_DIR/gate-as-older"
+    [ "$(grep -c -x -F 'bash_gate "$@"' "$1")" = 1 ] || { echo "no one call of bash_gate to cut at"; return 3; }
+    sed -n '1,/^bash_gate "\$@"$/p' "$1" | sed '$d' | sed 's/^    if bash_admitted "\${BASH_VERSINFO\[0\]}" "\${BASH_VERSINFO\[1\]}"; then$/    if bash_admitted '"$2 $3"'; then/' > "$copy"
+    [ "$(grep -c "^    if bash_admitted $2 $3; then\$" "$copy")" = 1 ] || { echo "no first if to pass $2 and $3"; return 3; }
+    printf '%s\n' 'bash_gate origin url' 'echo BODY-REACHED' >> "$copy"
+    ( unset ROMP_HOOK_REEXEC; ROMP_HOOK_BASHES='' "$HOOK_BASH" "$copy" < /dev/null 2>&1 )
+}
+gate_unarmed() {   # neither scan armed: no denylist at the path, and either the credential scan skipped (skip) or no gitleaks resolving with the scan not skipped (notice), gitleaks taken off PATH
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/no-denylist.txt"
+    unset ROMP_GITLEAKS
+    if [ "$1" = skip ]; then export ROMP_NO_GITLEAKS=1; else unset ROMP_NO_GITLEAKS; path_without_gitleaks; fi
+}
+
+@test "the gate (2026-09-30, one comparison): the running bash's version reaches the body only through bash_admitted, under every bash: nothing runs ahead of the gate's call but function definitions, each with nothing after its brace but a comment; only local lines of names alone stand ahead of bash_gate's first if, which passes bash_admitted the running bash's BASH_VERSINFO[0] and [1] and whose branch unsets ROMP_HOOK_REEXEC and returns; the if after it is the no-op (since 13:37Z), if ! scans_armed, gitleaks_notice, exit 0; return stands once in bash_gate, exec once, inside the branch of its candidate test, which passes the answer's two numbers, exit 0 once, the no-op's, and every other line naming exit is exit 1, the last line one; BASH_VERSINFO stands outside single quotes only on the first if, BASH_VERSION only on echo lines; no number is compared with test's -eq, -ne, -gt, -ge, -lt or -le; bash_admitted's body is the one 5.1 test, and it admits 5.1, 5.2, 5.10, 6.0 and 10.0 and refuses 3.2, 4.4, 4.10, 5.0 and 0.0; copies whose first if passes a fixed minor or compares inline, whose candidate test compares inline, whose bash_admitted admits 5.0, that compare the running bash ahead of the first if with a case on BASH_VERSION, a (( )) or a [[ ]] (the three the re-check's R1 found unnamed) or at the gate's call, whose bash_gate falls off its end, exits 0 in the loop guard, execs a second time, or skips or inverts the armed test are each named; and bash_gate cut from the hook and run under every bash as a bash older than 5.1 would run it, with no candidate listed, refuses the push with a scan armed, ends with status 0 printing what the body prints with neither armed, and where its first if passed 5 and 2 reaches the body; the copies that skip or invert the armed test refuse where neither scan is armed and pass where one is; five copies whose bash_gate returns through a command it assembles at run time (gate-assembled-split, -eval, -command, -inside and -ansi), which no reading of the text sees, reach the body in that run with the helper naming none, and two whose return or exec depends on something the run does not reproduce (gate-conditional, which returns only under bash 4, and gate-assembled-exec, which runs a candidate answering 4) are named by neither, the disclosed residual (the gate audit's G2; the re-check's R1; the audit of its fix, R1-A1; the rulings at 13:37Z)" {
+    local pair plant body_out
+    local lcl='    local candidates rest candidate version major minor where'
+    run gate_one_comparison "$HOOK"
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+    eval "$(sed -n '/^bash_admitted() {/,/^}/p' "$HOOK")"
+    [ "$(type -t bash_admitted)" = function ]                          # the plant landed: the hook's own function, defined here
+    for pair in "5 1" "5 2" "5 10" "6 0" "10 0"; do
+        bash_admitted ${pair% *} ${pair#* }
+    done
+    for pair in "3 2" "4 4" "4 10" "5 0" "0 0"; do
+        ! bash_admitted ${pair% *} ${pair#* } || false
+    done
+    plant="$TEST_DIR/gate-fixed-minor"
+    sed 's/^    if bash_admitted "\${BASH_VERSINFO\[0\]}" "\${BASH_VERSINFO\[1\]}"; then$/    if bash_admitted "${BASH_VERSINFO[0]}" 4; then/' "$HOOK" > "$plant"
+    [ "$(grep -c '^    if bash_admitted "${BASH_VERSINFO\[0\]}" 4; then$' "$plant")" -eq 1 ]
+    run gate_one_comparison "$plant"
+    [ "$output" = 'the first if of bash_gate:     if bash_admitted "${BASH_VERSINFO[0]}" 4; then' ]
+    plant="$TEST_DIR/gate-inline-running"
+    sed 's/^    if bash_admitted "\${BASH_VERSINFO\[0\]}" "\${BASH_VERSINFO\[1\]}"; then$/    if [ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] \&\& [ "${BASH_VERSINFO[1]}" -ge 0 ]; }; then/' "$HOOK" > "$plant"
+    [ "$(grep -c '^    if \[ "${BASH_VERSINFO\[0\]}" -gt 5 \]' "$plant")" -eq 1 ]
+    run gate_one_comparison "$plant"
+    [ "${lines[0]}" = 'the first if of bash_gate:     if [ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -ge 0 ]; }; then' ]
+    [ "${#lines[@]}" -eq 1 ]
+    plant="$TEST_DIR/gate-inline-candidate"
+    sed 's/^        if bash_admitted "\$major" "\$minor"; then$/        if [ "$major" -gt 5 ] || { [ "$major" -eq 5 ] \&\& [ "$minor" -ge 1 ]; }; then/' "$HOOK" > "$plant"
+    [ "$(grep -c '^        if \[ "\$major" -gt 5 \]' "$plant")" -eq 1 ]
+    run gate_one_comparison "$plant"
+    [ "${lines[0]}" = 'a number compared in bash_gate:         if [ "$major" -gt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -ge 1 ]; }; then' ]
+    [ "${lines[1]}" = 'the other calls of bash_admitted in bash_gate: none' ]
+    [ "${#lines[@]}" -eq 2 ]
+    plant="$TEST_DIR/gate-admits-50"
+    sed 's/^    \[ "\$1" -gt 5 \] || { \[ "\$1" -eq 5 \] && \[ "\$2" -ge 1 \]; }$/    [ "$1" -gt 5 ] || { [ "$1" -eq 5 ] \&\& [ "$2" -ge 0 ]; }/' "$HOOK" > "$plant"
+    [ "$(grep -c '^    \[ "\$1" -gt 5 \] || { \[ "\$1" -eq 5 \] && \[ "\$2" -ge 0 \]; }$' "$plant")" -eq 1 ]
+    run gate_one_comparison "$plant"
+    [ "$output" = 'the body of bash_admitted:     [ "$1" -gt 5 ] || { [ "$1" -eq 5 ] && [ "$2" -ge 0 ]; }' ]
+    # The re-check's R1: three comparisons of the running bash ahead of the first if that the spellings missed, each
+    # letting every bash 4, 4.0 to 4.4, run the body.
+    plant="$TEST_DIR/gate-case-running"
+    gate_plant "$plant" "$lcl" "$lcl"'\n    case "$BASH_VERSION" in 4.*) unset ROMP_HOOK_REEXEC; return 0 ;; esac'
+    run gate_one_comparison "$plant"
+    [ "${lines[0]}" = 'ahead of the first if of bash_gate, a line other than a local of names alone:     case "$BASH_VERSION" in 4.*) unset ROMP_HOOK_REEXEC; return 0 ;; esac' ]
+    [ "${lines[1]}" = 'return in bash_gate: 2 times' ]
+    [ "${lines[2]}" = 'BASH_VERSION in bash_gate off an echo line:     case "$BASH_VERSION" in 4.*) unset ROMP_HOOK_REEXEC; return 0 ;; esac' ]
+    [ "${#lines[@]}" -eq 3 ]
+    plant="$TEST_DIR/gate-arith-running"
+    gate_plant "$plant" "$lcl" "$lcl"'\n    (( BASH_VERSINFO[0] >= 4 )) && { unset ROMP_HOOK_REEXEC; return 0; }'
+    run gate_one_comparison "$plant"
+    [ "${lines[0]}" = 'ahead of the first if of bash_gate, a line other than a local of names alone:     (( BASH_VERSINFO[0] >= 4 )) && { unset ROMP_HOOK_REEXEC; return 0; }' ]
+    [ "${lines[1]}" = 'return in bash_gate: 2 times' ]
+    [ "${lines[2]}" = 'BASH_VERSINFO outside single quotes in bash_gate, off its first if:     (( BASH_VERSINFO[0] >= 4 )) && { unset ROMP_HOOK_REEXEC; return 0; }' ]
+    [ "${#lines[@]}" -eq 3 ]
+    plant="$TEST_DIR/gate-dbracket-running"
+    gate_plant "$plant" "$lcl" "$lcl"'\n    [[ $BASH_VERSION == 4.* ]] && { unset ROMP_HOOK_REEXEC; return 0; }'
+    run gate_one_comparison "$plant"
+    [ "${lines[0]}" = 'ahead of the first if of bash_gate, a line other than a local of names alone:     [[ $BASH_VERSION == 4.* ]] && { unset ROMP_HOOK_REEXEC; return 0; }' ]
+    [ "${lines[1]}" = 'return in bash_gate: 2 times' ]
+    [ "${lines[2]}" = 'BASH_VERSION in bash_gate off an echo line:     [[ $BASH_VERSION == 4.* ]] && { unset ROMP_HOOK_REEXEC; return 0; }' ]
+    [ "${#lines[@]}" -eq 3 ]
+    # The other ways the body could run, or the push pass, under an older bash: the comparison moved to the call, a
+    # bash_gate that falls off its end, an exit 0 where the loop guard refuses, a second exec that takes a candidate
+    # answering any bash 4, 4.0 to 4.4, and the armed test skipped (its condition false) or inverted.
+    plant="$TEST_DIR/gate-at-the-call"
+    gate_plant "$plant" 'bash_gate "$@"' '[[ $BASH_VERSION == 4.* ]] || bash_gate "$@"'
+    run gate_one_comparison "$plant"
+    [ "$output" = 'a command ahead of the call of bash_gate: [[ $BASH_VERSION == 4.* ]] || bash_gate "$@"' ]
+    plant="$TEST_DIR/gate-falls-through"
+    gate_plant "$plant" '    exit 1' ''
+    run gate_one_comparison "$plant"
+    [ "$output" = 'the last line of bash_gate:     echo "  To bypass for one push (you are sure it is fine): git push --no-verify" >&2' ]
+    plant="$TEST_DIR/gate-exit-0"
+    gate_plant "$plant" '        exit 1' '        exit 0'
+    run gate_one_comparison "$plant"
+    [ "$output" = 'an exit in bash_gate other than a line exit 1 and the exit 0 that ends the no-op:         exit 0' ]
+    plant="$TEST_DIR/gate-second-exec"
+    gate_plant "$plant" '        case "$minor" in '"''"'|*[!0-9]*) continue ;; esac' '        case "$minor" in '"''"'|*[!0-9]*) continue ;; esac\n        case "$major" in 4) ROMP_HOOK_REEXEC=$candidate; export ROMP_HOOK_REEXEC; exec "$candidate" "$0" "$@" ;; esac'
+    run gate_one_comparison "$plant"
+    [ "$output" = 'exec in bash_gate: 2 times' ]
+    plant="$TEST_DIR/gate-noop-skipped"
+    gate_plant "$plant" '    if ! scans_armed; then' '    if false; then'
+    run gate_one_comparison "$plant"
+    [ "$output" = 'the no-op after the first if of bash_gate (if ! scans_armed; then, gitleaks_notice, exit 0, fi):     if false; then |         gitleaks_notice |         exit 0 |     fi' ]
+    plant="$TEST_DIR/gate-noop-inverted"
+    gate_plant "$plant" '    if ! scans_armed; then' '    if scans_armed; then'
+    run gate_one_comparison "$plant"
+    [ "$output" = 'the no-op after the first if of bash_gate (if ! scans_armed; then, gitleaks_notice, exit 0, fi):     if scans_armed; then |         gitleaks_notice |         exit 0 |     fi' ]
+    # The audit of the re-check's fix, R1-A1: bash_gate run as a bash older than 5.1 would run it, under every bash. The
+    # control first: passed 5 and 2 the run reaches the body, so a refusal below is the gate's and not the run's.
+    run gate_as_older "$HOOK" 5 2
+    [ "$status" -eq 0 ]
+    [ "$output" = BODY-REACHED ]
+    run gate_as_older "$HOOK" 3 2
+    [ "$status" -eq 1 ]
+    gate_refused "the paths ROMP_HOOK_BASHES names (none)"
+    [[ "$output" != *BODY-REACHED* ]] || false
+    # The armed test (the ruling at 13:37Z): with neither scan armed the run ends with status 0, printing what the body
+    # prints for the same state (the body run by hand under NEWER_BASH), and never reaches the body; the copies that
+    # skip or invert the armed test refuse there and, with setup's denylist armed, pass.
+    gate_unarmed skip
+    run gate_as_older "$HOOK" 3 2
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+    run _hook_newer "$REPO" "$HOOK" origin git@example.invalid:x/y.git < /dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+    run gate_as_older "$TEST_DIR/gate-noop-skipped" 3 2
+    [ "$status" -eq 1 ]
+    gate_refused "the paths ROMP_HOOK_BASHES names (none)"
+    export ROMP_PRIVATE_STRINGS="$STRINGS"
+    run gate_as_older "$TEST_DIR/gate-noop-inverted" 3 2
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+    # Five copies whose bash_gate returns through a command it assembles at run time: the helper names none, and the run
+    # reaches the body in each.
+    local cand='    candidates=${ROMP_HOOK_BASHES-/opt/homebrew/bin/bash:/usr/local/bin/bash}' k=0
+    local -a ids=(gate-assembled-split gate-assembled-eval gate-assembled-command gate-assembled-inside gate-assembled-ansi)
+    local -a texts=(
+        '    _a=ret; _b=urn; "$_a$_b" 0'
+        "    eval \"\$(printf ret; printf 'urn 0')\""
+        '    _r=ret; _t=urn; command "$_r$_t" 0'
+        '    _x=eturn; r$_x 0'
+        "    \$'\\x72eturn' 0"
+    )
+    while [ "$k" -lt "${#ids[@]}" ]; do
+        echo "plant ${ids[k]}"                                          # names the plant when a line below fails
+        plant="$TEST_DIR/${ids[k]}"
+        gate_insert "$plant" "$cand" "${texts[k]}"
+        [ "$(grep -c -F -x -e "${texts[k]}" "$plant")" -eq 1 ]          # the plant landed, as written
+        run gate_one_comparison "$plant"
+        [ "$output" = "" ]
+        run gate_as_older "$plant" 3 2
+        [ "$status" -eq 0 ]
+        [ "$output" = BODY-REACHED ]
+        k=$((k + 1))
+    done
+    # The disclosed residual, a return or an exec that depends on something the run does not reproduce: the helper names
+    # neither plant, and the run refuses both, except gate-conditional under a bash 4, where it returns as the hook
+    # would.
+    plant="$TEST_DIR/gate-conditional"
+    gate_insert "$plant" "$cand" '    _n=BASH_VER"SINFO"; _x=eturn; [ "${!_n}" = 4 ] && r$_x 0'
+    [ "$(grep -c -F -x -e '    _n=BASH_VER"SINFO"; _x=eturn; [ "${!_n}" = 4 ] && r$_x 0' "$plant")" -eq 1 ]
+    run gate_one_comparison "$plant"
+    [ "$output" = "" ]
+    run gate_as_older "$plant" 3 2
+    case "$HOOK_BASH_VERSION" in
+        "4 "*) [ "$status" -eq 0 ]; [ "$output" = BODY-REACHED ] ;;
+        *) [ "$status" -eq 1 ]; gate_refused "the paths ROMP_HOOK_BASHES names (none)" ;;
+    esac
+    plant="$TEST_DIR/gate-assembled-exec"
+    gate_insert "$plant" '        if bash_admitted "$major" "$minor"; then' '        [ "$major" = 4 ] && { ROMP_HOOK_REEXEC=$candidate; export ROMP_HOOK_REEXEC; _e=ex; _c=ec; "$_e$_c" "$candidate" "$0" "$@"; }'
+    [ "$(grep -c -F -x -e '        [ "$major" = 4 ] && { ROMP_HOOK_REEXEC=$candidate; export ROMP_HOOK_REEXEC; _e=ex; _c=ec; "$_e$_c" "$candidate" "$0" "$@"; }' "$plant")" -eq 1 ]
+    run gate_one_comparison "$plant"
+    [ "$output" = "" ]
+    run gate_as_older "$plant" 3 2
+    [ "$status" -eq 1 ]
+    gate_refused "the paths ROMP_HOOK_BASHES names (none)"
+    # Last, since it takes gitleaks off PATH for the rest of the case: with neither scan armed and the credential scan
+    # not skipped, the run prints the notice the body prints, and nothing else.
+    gate_unarmed notice
+    run _hook_newer "$REPO" "$HOOK" origin git@example.invalid:x/y.git < /dev/null
+    [ "$status" -eq 0 ]
+    body_out=$output
+    [[ "$body_out" == "romp pre-push: gitleaks not installed, pushing WITHOUT a secret scan."* ]] || false   # the plant landed: the body printed its notice
+    run gate_as_older "$HOOK" 3 2
+    [ "$status" -eq 0 ]
+    [ "$output" = "$body_out" ]
+}
+
+# ── the denylist walk from a current directory that cannot be searched (2026-09-30, the re-check's R2) ──────
+# denylist_state's walk reads a relative path's directories up to ., and until the re-check's R2 it stepped from . to
+# . again: where the current directory cannot be searched, [ -d . ], [ -L . ] and [ -e . ] are all false (looking up
+# . needs search permission on the current directory), so the hook spun at full CPU and never refused. The walk now
+# ends where a step leaves the path as it was (. or /), and at . the answer is cannot tell, naming the current
+# directory. The hook runs from the top of the work tree, which git has entered, so a push cannot plant this; the case
+# runs the function cut from the hook's text, each call under a CPU limit, so a walk that never ends fails the case
+# within that bound instead of hanging the file. Each call first checks that this user cannot search the directory, as
+# cases 708, 715 and 717 check their plants: root can search any directory, where the walk opens the path and reads it
+# as absent, so the case cannot run as root and says so on that line (the audit of the re-check's fix, R2-a).
+_denylist_state_from() {   # <directory> <path>: denylist_state run from <directory> at mode 600, under a 5 s CPU limit; prints whether this user can search . there and whether . could be looked up, then the answer
+    cd "$1" && chmod 600 . || return 3
+    if [ -x . ]; then echo "search: yes"; else echo "search: no"; fi
+    if [ -e . ]; then echo "dot: found"; else echo "dot: nothing"; fi
+    ulimit -t 5
+    denylist_state "$2"
+}
+
+@test "the DENYLIST path (2026-09-30, the re-check's R2, a relative path from a current directory that cannot be searched): denylist_state and lookup_answer, cut from the hook, run from a directory of mode 600 over a relative path (a name alone, one under a directory that does not exist, one under .., one under . and one with a trailing slash), each call under a 5 s CPU limit, answer, where looking up . needs search permission as on Linux, that the path is under the current directory, which cannot be searched, naming it (elsewhere the walk's first clause, naming .); until then the walk read . forever and the call ended only at the limit" {
+    local dir="$TEST_DIR/unsearchable" p
+    eval "$(sed -n '/^denylist_state() {/,/^}/p; /^lookup_answer() {/,/^}/p' "$HOOK")"
+    [ "$(type -t denylist_state)" = function ]                         # the plant landed: the hook's own functions, defined here
+    [ "$(type -t lookup_answer)" = function ]
+    mkdir -p "$dir"
+    for p in private-strings.txt no-such-dir/private-strings.txt ../private-strings.txt ./private-strings.txt private-strings.txt/; do
+        run _denylist_state_from "$dir" "$p"
+        chmod 700 "$dir"
+        [ "${lines[0]}" = "search: no" ]                                # the plant landed: this user cannot search the directory (root searches any, so the case cannot run as root)
+        [ "$status" -eq 0 ]                                             # 137 or 152: the CPU limit ended a walk that never would
+        case "${lines[1]}" in
+            "dot: nothing") [ "${lines[2]}" = "is under the current directory, which cannot be searched ($dir)" ] ;;   # Linux, and wherever looking up . needs search permission
+            "dot: found") [ "${lines[2]}" = "is under a directory that cannot be searched (.)" ] ;;                     # a system that lets . be looked up there never reaches the step
+            *) false ;;
+        esac
+        [ "${#lines[@]}" -eq 3 ]
+    done
+}
+
+# ── the gate's armed test (2026-09-30, the coordinator's ruling at 13:37Z: the contributor promise stays) ──────
+# The gate applies only where a scan would run. Under a bash older than 5.1, bash_gate first asks scans_armed whether
+# either scan would run, from the body's own inputs: the identifier scan through identifier_scan_armed itself (the
+# denylist's path, ROMP_PRIVATE_STRINGS or the XDG default, present as a file or as a symlink of any kind, a path
+# whose lookup cannot tell, or an XDG default that cannot be formed, HOME unset), the credential scan unless
+# ROMP_NO_GITLEAKS holds a value, whenever gitleaks_resolved names anything (ROMP_GITLEAKS holding a value, or command
+# -v answering for gitleaks), executable or not. Where neither would, known with certainty, the hook ends as the body
+# ends then: the credential scan's notice, printed by gitleaks_notice, the one function the body prints it with, or
+# nothing under ROMP_NO_GITLEAKS, and status 0, with no newer bash needed. Anything else is armed, and the gate acts
+# as it did. The first two cases run where the gate acts (gate_acts); the next two run under every bash, so the
+# per-push Linux cells check the armed test too: the test cut from the hook and asked about each state beside the
+# body's own two predicates, run under the shell options the body runs under (since the gate audit's GATE-1), and the
+# arming inputs read from the hook's text. Cases 727 and 728, at the end of the file, came with the audit of build 2
+# (GATE-1, HOME unset through a real push; S1-A1). The mutants that drop one armed condition from scans_armed each
+# turn a line of the second and third case red.
+gate_noop_refs() { printf 'refs/heads/main %s refs/heads/main %s' "$(git -C "$REPO" rev-parse HEAD)" "$BASE"; }
+gate_armed_both_ways() {   # <state>: with the state the caller set, the hook under the older bash is refused by the gate's block with no newer bash listed, and with NEWER_BASH listed re-runs under it (the probe copy's line, from the newer bash, once)
+    local probe="$TEST_DIR/hook-gate-probe" newer
+    echo "state: $1"                                                    # names the state when a line below fails
+    export ROMP_HOOK_BASHES=""
+    run _hook_in "$REPO" "$probe" origin git@example.invalid:x/y.git <<< "$(gate_noop_refs)"
+    [ "$status" -ne 0 ]
+    gate_refused "the paths ROMP_HOOK_BASHES names (none)"
+    export ROMP_HOOK_BASHES="$NEWER_BASH"
+    newer=$(bash_version_of "$NEWER_BASH")
+    run _hook_in "$REPO" "$probe" origin git@example.invalid:x/y.git <<< "$(gate_noop_refs)"
+    [ "$(grep -c '^gate probe: ' <<< "$output")" -eq 1 ]
+    [ "$(grep '^gate probe: ' <<< "$output")" = "gate probe: bash ${newer% *}.${newer#* }; 2 arguments: origin git@example.invalid:x/y.git; marker unset" ]
+    [[ "$output" != *"BLOCKED. The hook"* ]] || false
+}
+gate_scanner_fakes() {   # a gitleaks that exits 0 in glbin (for PATH), the same program off PATH, and a file that is not executable
+    mkdir -p "$TEST_DIR/glbin" "$TEST_DIR/offpath"
+    printf '#!/bin/sh\nexit 0\n' > "$TEST_DIR/glbin/gitleaks"
+    chmod 755 "$TEST_DIR/glbin/gitleaks"
+    cp "$TEST_DIR/glbin/gitleaks" "$TEST_DIR/offpath/scanner"
+    printf '#!/bin/sh\nexit 0\n' > "$TEST_DIR/offpath/not-executable"
+    chmod 644 "$TEST_DIR/offpath/not-executable"
+}
+
+@test "the gate's armed test (2026-09-30, 13:37Z, the no-op): under a bash older than 5.1 with no newer bash listed (ROMP_HOOK_BASHES set and empty), neither scan armed (no denylist at the path, no gitleaks resolving, the credential scan not skipped) keeps today's no-op: the hook prints the credential scan's notice alone on stderr, nothing on stdout, and exits 0, the three answers the body gives for the same push under the newer bash, the body never running under the older bash (a copy printing ahead of set -euo pipefail prints nothing), and a real push reaches the remote; with ROMP_NO_GITLEAKS=1 and a gitleaks on PATH the hook exits 0 and prints nothing, as the body does, and never runs that gitleaks (red before the ruling: the gate refused both)" {
+    local probe="$TEST_DIR/hook-gate-probe" refs rc
+    gate_acts
+    gate_clean_push_ready
+    gate_probe_copy "$probe"
+    gate_unarmed notice
+    export ROMP_HOOK_BASHES=""
+    refs=$(gate_noop_refs)
+    rc=0; ( cd "$REPO" && bash "$probe" origin git@example.invalid:x/y.git <<< "$refs" > "$TEST_DIR/old.out" 2> "$TEST_DIR/old.err" ) || rc=$?
+    [ "$rc" -eq 0 ]
+    rc=0; ( cd "$REPO" && "$NEWER_BASH" "$HOOK" origin git@example.invalid:x/y.git <<< "$refs" > "$TEST_DIR/body.out" 2> "$TEST_DIR/body.err" ) || rc=$?
+    [ "$rc" -eq 0 ]
+    [ "$(head -n 1 "$TEST_DIR/body.err")" = "romp pre-push: gitleaks not installed, pushing WITHOUT a secret scan." ]   # the plant landed: the body printed its notice
+    [ ! -s "$TEST_DIR/old.out" ]
+    [ ! -s "$TEST_DIR/body.out" ]
+    cmp "$TEST_DIR/old.err" "$TEST_DIR/body.err"
+    HOOK=$probe push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    at_remote_main
+    [[ "$output" == *"romp pre-push: gitleaks not installed, pushing WITHOUT a secret scan."* ]] || false
+    [[ "$output" != *"gate probe: "* ]] || false
+    [[ "$output" != *"BLOCKED"* ]] || false
+    commit_file more.txt "more of the web session's work" "more clean work"
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    mkdir -p "$TEST_DIR/glbin"
+    printf '#!/bin/sh\necho ran >> %q\nexit 0\n' "$TEST_DIR/calls.gitleaks" > "$TEST_DIR/glbin/gitleaks"
+    chmod 755 "$TEST_DIR/glbin/gitleaks"
+    export PATH="$TEST_DIR/glbin:$PATH" ROMP_NO_GITLEAKS=1
+    refs=$(gate_noop_refs)
+    run _hook_in "$REPO" "$probe" origin git@example.invalid:x/y.git <<< "$refs"
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+    run _hook_newer "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< "$refs"
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+    [ ! -e "$TEST_DIR/calls.gitleaks" ]
+}
+
+@test "the gate's armed test (2026-09-30, 13:37Z, each armed state gets the gate): under a bash older than 5.1, each state in which a scan would run, or whether one would cannot be told, is refused by the gate's block with no newer bash listed and re-runs under the newer bash with one listed: a denylist that is a regular file, a symlink to one, a dangling symlink, a denylist in a directory that cannot be searched, the XDG default under HOME (ROMP_PRIVATE_STRINGS and XDG_CONFIG_HOME unset) and XDG_CONFIG_HOME's own; with no denylist and the credential scan not skipped, a gitleaks on PATH, ROMP_GITLEAKS naming one off PATH, and ROMP_GITLEAKS naming a file that is not executable (the test arms on what names the scanner, executable or not, a superset of the body's)" {
+    local dir oldpath
+    gate_acts
+    gate_clean_push_ready
+    gate_probe_copy "$TEST_DIR/hook-gate-probe"
+    export ROMP_PRIVATE_STRINGS="$STRINGS"                              # the identifier half first, the credential scan skipped (setup's ROMP_NO_GITLEAKS=1)
+    gate_armed_both_ways "a denylist that is a regular file"
+    ln -s "$STRINGS" "$TEST_DIR/strings-link"
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/strings-link"
+    gate_armed_both_ways "a symlink to a regular file"
+    ln -s "$TEST_DIR/no-such-denylist.txt" "$TEST_DIR/dangling-link"
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/dangling-link"
+    gate_armed_both_ways "a dangling symlink"
+    dir="$TEST_DIR/locked"
+    mkdir -p "$dir"
+    printf '# synthetic\nzzsynthuser\n' > "$dir/private-strings.txt"
+    chmod 600 "$dir"
+    [ ! -x "$dir" ]                                                     # the plant landed: this user cannot search the directory (root searches any, so the case cannot run as root)
+    export ROMP_PRIVATE_STRINGS="$dir/private-strings.txt"
+    gate_armed_both_ways "a denylist in a directory that cannot be searched"
+    chmod 700 "$dir"
+    unset ROMP_PRIVATE_STRINGS XDG_CONFIG_HOME
+    mkdir -p "$HOME/.config/romp"
+    cp "$STRINGS" "$HOME/.config/romp/private-strings.txt"
+    gate_armed_both_ways "the XDG default under HOME"
+    rm -rf "$HOME/.config/romp"
+    export XDG_CONFIG_HOME="$TEST_DIR/xdg"
+    mkdir -p "$XDG_CONFIG_HOME/romp"
+    cp "$STRINGS" "$XDG_CONFIG_HOME/romp/private-strings.txt"
+    gate_armed_both_ways "XDG_CONFIG_HOME's denylist"
+    unset XDG_CONFIG_HOME
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/no-denylist.txt"             # the credential half, no denylist
+    unset ROMP_NO_GITLEAKS ROMP_GITLEAKS
+    path_without_gitleaks
+    gate_scanner_fakes
+    oldpath=$PATH
+    export PATH="$TEST_DIR/glbin:$PATH"
+    gate_armed_both_ways "a gitleaks on PATH"
+    export PATH="$oldpath" ROMP_GITLEAKS="$TEST_DIR/offpath/scanner"
+    gate_armed_both_ways "ROMP_GITLEAKS naming a gitleaks off PATH"
+    export ROMP_GITLEAKS="$TEST_DIR/offpath/not-executable"
+    gate_armed_both_ways "ROMP_GITLEAKS naming a file that is not executable"
+}
+
+@test "the gate's armed test (2026-09-30, 13:37Z, its answers, under every bash): scans_armed, cut from the hook with the definitions ahead of the gate's call and run with no shell option set, as the gate runs it, answers armed for each state the previous case names, for a function named gitleaks and for HOME unset with neither ROMP_PRIVATE_STRINGS nor XDG_CONFIG_HOME holding a value (the XDG default cannot be formed; the gate audit's GATE-1), and unarmed for no denylist with the credential scan skipped (ROMP_NO_GITLEAKS=1, and =0, which the body reads as a skip too), for no denylist with no gitleaks resolving (ROMP_GITLEAKS unset, and set and empty), and for HOME unset where ROMP_PRIVATE_STRINGS or XDG_CONFIG_HOME names a path with nothing there; in every state the body's own predicates (identifier_scan_armed, credential_scan_armed), run under the shell options the hook sets between the gate's call and the EXIT trap (set -euo pipefail, read from the text by arming_inputs), arm nothing the test leaves unarmed, a run that bash ends on an error counting as armed, since the hook it stands for refuses the push (until GATE-1 the body's side ran with no option set, and under set -u HOME's expansion ended it where the test read the path as absent)" {
+    local dir state want got body line opts
+    eval "$(sed -n '1,/^bash_gate "\$@"$/p' "$HOOK" | sed '$d')"
+    [ "$(type -t scans_armed)" = function ]                            # the plant landed: the hook's own functions, defined here
+    [ "$(type -t credential_scan_armed)" = function ]
+    opts=$(arming_inputs "$HOOK" | sed -n "s/^a shell option set between the call of bash_gate and the EXIT trap, which the body's arming tests run under and the gate's test does not: //p")
+    [ -n "$opts" ]                                                      # the body's options, read from the text (set -euo pipefail)
+    dir="$TEST_DIR/locked"
+    mkdir -p "$dir" "$TEST_DIR/xdg/romp" "$TEST_DIR/xdg-empty"
+    printf '# synthetic\nzzsynthuser\n' > "$dir/private-strings.txt"
+    cp "$STRINGS" "$TEST_DIR/xdg/romp/private-strings.txt"
+    ln -s "$STRINGS" "$TEST_DIR/strings-link"
+    ln -s "$TEST_DIR/no-such-denylist.txt" "$TEST_DIR/dangling-link"
+    gate_scanner_fakes
+    path_without_gitleaks
+    # each state: a label, the answer the test must give, and the assignments that set it up from no denylist, no
+    # gitleaks resolving and the credential scan not skipped
+    while IFS='|' read -r state want line; do
+        (
+            export ROMP_PRIVATE_STRINGS="$TEST_DIR/no-denylist.txt"
+            unset ROMP_NO_GITLEAKS ROMP_GITLEAKS XDG_CONFIG_HOME
+            eval "$line"
+            [ "$state" != "a denylist in a directory that cannot be searched" ] || chmod 600 "$dir"
+            got=armed; ( set +eu +o pipefail; scans_armed ) || got=unarmed
+            body=$( eval "$opts"; if identifier_scan_armed || credential_scan_armed; then echo armed; else echo unarmed; fi ) || true
+            [ -n "$body" ] || body="ended by an error"
+            chmod 700 "$dir"
+            echo "$state: the test $got, the body $body"
+            [ "$got" = "$want" ] || { echo "  the test answered $got, where $want was due"; exit 1; }
+            [ "$body" = unarmed ] || [ "$got" = armed ] || { echo "  the body arms where the test does not"; exit 1; }
+        ) || false
+    done <<'STATES'
+a denylist that is a regular file|armed|export ROMP_PRIVATE_STRINGS="$STRINGS"
+a symlink to a regular file|armed|export ROMP_PRIVATE_STRINGS="$TEST_DIR/strings-link"
+a dangling symlink|armed|export ROMP_PRIVATE_STRINGS="$TEST_DIR/dangling-link"
+a denylist in a directory that cannot be searched|armed|export ROMP_PRIVATE_STRINGS="$dir/private-strings.txt"
+the XDG default under HOME|armed|unset ROMP_PRIVATE_STRINGS; mkdir -p "$HOME/.config/romp"; cp "$STRINGS" "$HOME/.config/romp/private-strings.txt"
+XDG_CONFIG_HOME's denylist|armed|unset ROMP_PRIVATE_STRINGS; export XDG_CONFIG_HOME="$TEST_DIR/xdg"
+a gitleaks on PATH|armed|export PATH="$TEST_DIR/glbin:$PATH"
+ROMP_GITLEAKS naming a gitleaks off PATH|armed|export ROMP_GITLEAKS="$TEST_DIR/offpath/scanner"
+ROMP_GITLEAKS naming a file that is not executable|armed|export ROMP_GITLEAKS="$TEST_DIR/offpath/not-executable"
+a function named gitleaks|armed|gitleaks() { :; }
+no denylist and the credential scan skipped|unarmed|export ROMP_NO_GITLEAKS=1 PATH="$TEST_DIR/glbin:$PATH"
+no denylist and ROMP_NO_GITLEAKS=0|unarmed|export ROMP_NO_GITLEAKS=0 PATH="$TEST_DIR/glbin:$PATH"
+no denylist and no gitleaks resolving|unarmed|:
+no denylist, ROMP_GITLEAKS set and empty and no gitleaks on PATH|unarmed|export ROMP_GITLEAKS=
+the XDG default with no romp directory under HOME|unarmed|unset ROMP_PRIVATE_STRINGS; rm -rf "$HOME/.config/romp"
+HOME unset, with neither ROMP_PRIVATE_STRINGS nor XDG_CONFIG_HOME|armed|unset ROMP_PRIVATE_STRINGS; mkdir -p "$HOME/.config/romp"; cp "$STRINGS" "$HOME/.config/romp/private-strings.txt"; unset HOME
+HOME unset, ROMP_PRIVATE_STRINGS naming no file|unarmed|unset HOME
+HOME unset, XDG_CONFIG_HOME naming a directory with no romp directory|unarmed|unset ROMP_PRIVATE_STRINGS HOME; export XDG_CONFIG_HOME="$TEST_DIR/xdg-empty"
+STATES
+}
+
+# The derivation behind the armed test, read from the text (the ruling at 13:37Z asked for a pin that fails if the
+# body gains an arming input the gate's test does not read, keyed on a property): arming_inputs finds the body's steps
+# (every function called at the top level after the EXIT trap's line), takes each step's arming test (its lines up to
+# its first return, the early return that leaves the scan off) and the functions those lines call, transitively, and
+# collects what they read: each variable expanded that is neither a local of those functions nor the hook's own state
+# (a name the top level assigns only literal values), each name looked up (command -v or -V, type, which, hash) and
+# each literal path a test operator reads; the top-level lines after the trap's line that are not steps (the verdict)
+# must read the hook's own state alone. It collects the same from the gate's no-op (bash_gate's lines from the end of
+# its first if's branch through its exit 0) and the functions it calls, and prints a line for each input of the body
+# missing there, for a step with no early return, and for a top-level statement between the gate's call and the trap's
+# line that runs anything but set, export, unset, read, trap, test or an assignment, since the gate's no-op runs none of
+# those statements. Since the gate audit's GATE-2 (2026-09-30) it also reads what those allowed statements do, since
+# the body's arming tests run after them and the gate's test before them: it names each statement there that sets a
+# shell option (set, shopt; the body's arming tests run under it and the gate's test does not, and the case on the
+# armed test's answers runs the body's side under exactly the options named here), that writes a variable the body's
+# arming tests read, or PATH, which every lookup and command they run reads, or IFS, which splits their words (an
+# assignment standing alone, a name that export, unset or read is handed, an assignment expansion ${name=} or
+# ${name:=}), or that runs a command substitution or a process substitution or redirects output to a file, any of
+# which can change the file system the tests read. It names an input the gate's no-op reads that the body's arming
+# tests do not, since such an input can turn the gate off where the body stays armed; a name of the hook's own state
+# that the body's arming tests read and no function among them assigns, whose value the gate's test never sees; a
+# function defined twice; and a function defined after the gate's call that the gate's test calls or the body's
+# arming tests look up. With the hook as it is it prints one line, set -euo pipefail's: the gate's test calls
+# identifier_scan_armed and gitleaks_resolved, the functions the body's arming tests read the denylist's path and the
+# scanner through, and reads ROMP_NO_GITLEAKS as credential_scan_armed does.
+arming_inputs() {   # <hook text>: prints a line per departure (above), the shell options the body runs under among them; set -euo pipefail's line alone when the gate's test reads every arming input of the body
+    awk -v q="'" '
+        function strip(s,   i, c, out, sq, dq, prev) {   # the line with a comment removed, reading quotes on the line
+            out = ""; sq = 0; dq = 0; prev = " "
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
+                if (sq) { if (c == q) sq = 0; out = out c; prev = c; continue }
+                if (c == "\\") { out = out c substr(s, i + 1, 1); i++; prev = "x"; continue }
+                if (c == q && !dq) { sq = 1; out = out c; prev = c; continue }
+                if (c == "\"") dq = !dq
+                if (c == "#" && !dq && (prev == " " || prev == "\t")) break
+                out = out c; prev = c
+            }
+            return out
+        }
+        function has(s, w,   t) { t = " " s " "; gsub(/[^A-Za-z0-9_]/, " ", t); return index(t, " " w " ") > 0 }
+        function locals(f,   i, n, a, j, w) {   # the names each local line of f declares
+            for (i = 1; i <= len[f]; i++) if (fl[f, i] ~ /^[ \t]*local[ \t]/) {
+                n = split(fl[f, i], a, /[ \t]+/)
+                for (j = 1; j <= n; j++) { w = a[j]; sub(/=.*/, "", w); if (w ~ /^[A-Za-z_][A-Za-z0-9_]*$/ && w != "local") loc[w] = 1 }
+            }
+        }
+        function take(s, side, where,   t, nm) {   # the inputs one line reads
+            t = s
+            gsub(q "[^" q "]*" q, "", t)
+            while (match(t, /\$\{?[#!]?[A-Za-z_][A-Za-z0-9_]*/)) {
+                nm = substr(t, RSTART, RLENGTH); sub(/^\$\{?[#!]?/, "", nm)
+                t = substr(t, RSTART + RLENGTH)
+                if (!(nm in loc) && !(nm in state)) got(side, "variable " nm, where)
+                else if ((nm in state) && !(nm in loc) && side == "body" && !(nm in bstate)) { bstate[nm] = where; nbst++; bstorder[nbst] = nm }
+            }
+            t = s
+            gsub(q "[^" q "]*" q, "", t)
+            while (match(t, /(^|[;&|( \t])[A-Za-z_][A-Za-z0-9_]*=/)) {   # the names the line assigns
+                nm = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH)
+                sub(/^[;&|( \t]/, "", nm); sub(/=$/, "", nm)
+                if (side == "body") bassign[nm] = 1
+            }
+            t = s
+            gsub(q "[^" q "]*" q, "", t)
+            while (match(t, /(^|[;&|(]|\$\()[ \t]*(command[ \t]+-[pvV]*[vV][pvV]*|type([ \t]+-[A-Za-z]+)*|which|hash([ \t]+-[A-Za-z]+)*)[ \t]+[A-Za-z0-9_.\/-]+/)) {
+                nm = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH)
+                sub(/^[^a-z]*/, "", nm); gsub(/[ \t]+/, " ", nm); got(side, "lookup " nm, where)
+            }
+            t = s
+            gsub(q "[^" q "]*" q, "", t)
+            while (match(t, /\[ +(! +)?-[a-zA-Z] +[^] $"]+ +\]/)) {
+                nm = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH)
+                sub(/^\[ +(! +)?-[a-zA-Z] +/, "", nm); sub(/ +\]$/, "", nm); got(side, "file " nm, where)
+            }
+        }
+        function got(side, what, where) {
+            if (side == "gate") { if (!(what in gate)) { gate[what] = where; ngate++; gorder[ngate] = what } }
+            else if (!(what in body)) { body[what] = where; nbody++; border[nbody] = what }
+        }
+        function closure(s, side, where,   f) {   # the hook functions a line calls, each read whole once per side
+            for (f in len) if (has(s, f) && !((side, f) in seen)) { seen[side, f] = 1; locals(f); whole(f, side, where " > " f) }
+        }
+        function whole(f, side, where,   i) { for (i = 1; i <= len[f]; i++) { take(fl[f, i], side, where); closure(fl[f, i], side, where) } }
+        function wrote(nm, st) { if (nm in watch) print "a statement between the call of bash_gate and the EXIT trap that writes " nm ", which the body'"'"'s arming tests read after the gate'"'"'s test: " st }
+        {
+            raw = $0
+            if (inq) { if (gsub(q, q, raw) % 2) inq = 0; next }
+            if (fn != "") { if ($0 ~ /^}$/) { fn = ""; next } s = strip($0); if (s !~ /^[ \t]*$/) fl[fn, ++len[fn]] = s; next }
+            if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) *\{/) {
+                fn = $0; sub(/\(.*/, "", fn)
+                if (fn in defat) twice[fn] = 1
+                defat[fn] = nt; len[fn] = len[fn] + 0; next
+            }
+            s = strip($0)
+            if (s ~ /^[ \t]*$/) next
+            top[++nt] = s
+            if (gsub(q, q, s) % 2) inq = 1                  # a single-quoted value that runs on past this line (the comment removed first, whose apostrophes are no quotes)
+            if (s ~ /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=/) {
+                nm = s; sub(/^[ \t]*(export[ \t]+)?/, "", nm); v = nm; sub(/=.*/, "", nm); sub(/^[^=]*=/, "", v)
+                if (v ~ /[$`]/) notstate[nm] = 1; else lit[nm] = 1
+            }
+        }
+        END {
+            for (nm in lit) if (!(nm in notstate)) state[nm] = 1
+            call = 0; trap = 0
+            for (i = 1; i <= nt; i++) { if (!call && top[i] == "bash_gate \"$@\"") call = i; if (call && !trap && top[i] ~ /^trap /) trap = i }
+            if (!call) { print "the call of bash_gate: none"; exit }
+            if (!trap) { print "the EXIT trap line after the call of bash_gate: none"; exit }
+            nsteps = 0; nsl = 0
+            for (i = trap + 1; i <= nt; i++) {
+                isstep = 0
+                for (f in len) if (has(top[i], f)) {
+                    isstep = 1
+                    if ((f in stepdone)) continue
+                    stepdone[f] = 1; nsteps++
+                    split("", loc); locals(f)
+                    for (k = 1; k <= len[f] && !has(fl[f, k], "return"); k++) ;
+                    if (k > len[f]) { stepline[++nsl] = "a step with no early return, run whatever either scan: " f; continue }
+                    for (m = 1; m <= k; m++) { take(fl[f, m], "body", f); closure(fl[f, m], "body", f) }
+                }
+                if (!isstep) { split("", loc); take(top[i], "verdict", "the top level after the trap: " top[i]) }
+            }
+            if (!nsteps) stepline[++nsl] = "the steps after the EXIT trap: none"
+            if (!len["bash_gate"]) { print "the definition of bash_gate: none"; exit }
+            split("", loc); locals("bash_gate")
+            for (k = 1; k <= len["bash_gate"] && fl["bash_gate", k] !~ /^[ \t]*fi$/; k++) ;
+            for (m = k + 1; m <= len["bash_gate"] && fl["bash_gate", m] !~ /^[ \t]*exit 0$/; m++) ;
+            if (m > len["bash_gate"]) { print "the exit 0 of the gate'"'"'s no-op: none"; exit }
+            for (i = k + 1; i <= m; i++) { take(fl["bash_gate", i], "gate", "bash_gate"); closure(fl["bash_gate", i], "gate", "bash_gate") }
+            watch["PATH"] = 1; watch["IFS"] = 1
+            for (i = 1; i <= nbody; i++) if (border[i] ~ /^variable /) { nm = border[i]; sub(/^variable /, "", nm); watch[nm] = 1 }
+            for (i = call + 1; i < trap; i++) {       # the statements the gate no-op does not run, and what the allowed ones change
+                st = top[i]
+                t = st; gsub(q "[^" q "]*" q, "", t)
+                u = t; gsub(/>&[0-9-]/, "", u)
+                if (u ~ /\$\(|`|>|<\(/) print "a statement between the call of bash_gate and the EXIT trap that runs a command substitution or writes a file, which the gate'"'"'s no-op does not: " st
+                u = t
+                while (match(u, /\$\{[A-Za-z_][A-Za-z0-9_]*:?=/)) { nm = substr(u, RSTART + 2, RLENGTH - 2); u = substr(u, RSTART + RLENGTH); sub(/:?=$/, "", nm); wrote(nm, st) }
+                n = split(t, seg, /;|&&|\|\||\|/)
+                for (j = 1; j <= n; j++) {
+                    w = seg[j]
+                    sub(/^[ \t!({]+/, "", w)
+                    while (w ~ /^(if|while|until|elif|then|do|else)([ \t]|$)/) { sub(/^[a-z]+[ \t]*/, "", w); sub(/^[ \t!({]+/, "", w) }
+                    na = 0
+                    while (match(w, /^[A-Za-z_][A-Za-z0-9_]*=[^ \t]*([ \t]|$)/)) { a = substr(w, 1, RLENGTH); sub(/=.*/, "", a); asg[++na] = a; w = substr(w, RLENGTH + 1); sub(/^[ \t]+/, "", w) }
+                    nw = split(w, ww, /[ \t]+/)
+                    if (ww[1] == "") { for (a = 1; a <= na; a++) wrote(asg[a], st); continue }
+                    if (ww[1] ~ /^(set|shopt)$/) { print "a shell option set between the call of bash_gate and the EXIT trap, which the body'"'"'s arming tests run under and the gate'"'"'s test does not: " st; continue }
+                    if (ww[1] ~ /^(export|unset|read)$/) { for (a = 2; a <= nw; a++) { v = ww[a]; if (v ~ /^-/) continue; sub(/=.*/, "", v); if (v ~ /^[A-Za-z_][A-Za-z0-9_]*$/) wrote(v, st) } continue }
+                    if (ww[1] !~ /^(trap|\[|test|:|true|done|fi)$/) print "a statement between the call of bash_gate and the EXIT trap that the gate'"'"'s no-op does not run: " st
+                }
+            }
+            for (f in twice) print "a function defined twice, so the gate'"'"'s test and the body can run different texts under one name: " f
+            for (f in len) if (defat[f] >= call && ((("gate", f) in seen))) print "a function defined after the call of bash_gate that the gate'"'"'s test calls: " f
+            for (i = 1; i <= nbody; i++) if (border[i] ~ /^lookup /) { nm = border[i]; sub(/.* /, "", nm); if ((nm in defat) && defat[nm] >= call) print "a function defined after the call of bash_gate that the body'"'"'s arming tests look up and the gate'"'"'s test cannot see: " nm }
+            for (i = 1; i <= nsl; i++) print stepline[i]
+            for (i = 1; i <= nbody; i++) if (!(border[i] in gate)) print "an arming input of the body the gate'"'"'s test does not read: " border[i] " (" body[border[i]] ")"
+            for (i = 1; i <= nbst; i++) if (!(bstorder[i] in bassign)) print "a name of the hook'"'"'s own state that the body'"'"'s arming tests read and none of them assigns: " bstorder[i] " (" bstate[bstorder[i]] ")"
+            for (i = 1; i <= ngate; i++) if (!(gorder[i] in body)) print "an input the gate'"'"'s no-op reads that the body'"'"'s arming tests do not, which can turn the gate off where the body stays armed: " gorder[i] " (" gate[gorder[i]] ")"
+        }' "$1"
+}
+
+@test "the gate's armed test (2026-09-30, 13:37Z, the arming inputs, under every bash): arming_inputs finds every input the body's arming tests read (the steps after the EXIT trap, each up to its early return, and the functions they call) among those the gate's no-op reads, and none the no-op reads that the body's do not; a statement between the gate's call and the trap that runs nothing but set, export, unset, read, trap, test and assignments, none of which writes an input of the body's arming tests, PATH or IFS, runs a command substitution or writes a file; every step with an early return and a verdict that reads the hook's own state alone; and for the hook it prints one line, naming set -euo pipefail as the shell option the body's arming tests run under (the case on the armed test's answers runs them under it); a copy whose credential_scan_armed also reads a variable, whose scan_identifiers arms on one more, that adds a step with a predicate of its own, whose gitleaks_binary looks the scanner up with type -P, that prints between the gate's call and the trap, that adds a step with no early return, or whose replace-ref step loses its arming line (its next return then reads the listing) is each named; since the gate audit's GATE-2, so is a copy that exports PATH with a directory added between the gate's call and the trap (M9), that sets one more shell option there, that unsets ROMP_NO_GITLEAKS, assigns IFS, sets ROMP_GITLEAKS by an assignment expansion or writes the denylist's file there, whose gate's test also skips on a variable the body does not read (M8), whose scan_identifiers arms on a name of the hook's own state, that defines identifier_scan_armed again after the trap, or that defines a function named gitleaks after the trap (until GATE-2 the helper printed nothing for M8 and M9, and the whole file passed with either); and a copy whose private_strings_file reads one more variable, which the gate's test reads through the same function, is not (a property, not a spelling)" {
+    local plant opt
+    opt="a shell option set between the call of bash_gate and the EXIT trap, which the body's arming tests run under and the gate's test does not: set -euo pipefail"
+    run arming_inputs "$HOOK"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$opt" ]
+    # the plants, each a copy of the hook with one change, the change landing once
+    plant="$TEST_DIR/arm-credential-var"
+    sed 's/^    \[ -z "\${ROMP_NO_GITLEAKS:-}" \] && \[ -n "\$(gitleaks_binary)" \]$/    [ -z "${ROMP_NO_GITLEAKS:-}" ] \&\& [ -n "$(gitleaks_binary)" ] || [ -n "${ROMP_FORCE_CREDS:-}" ]/' "$HOOK" > "$plant"
+    [ "$(grep -c 'ROMP_FORCE_CREDS' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"an arming input of the body the gate's test does not read: variable ROMP_FORCE_CREDS (refuse_replace_refs > credential_scan_armed)" ]
+    plant="$TEST_DIR/arm-identifier-step"
+    sed 's/^    identifier_scan_armed || return 0$/    identifier_scan_armed || [ -n "${ROMP_IDS_ANYWAY:-}" ] || return 0/' "$HOOK" > "$plant"
+    [ "$(grep -c 'ROMP_IDS_ANYWAY' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"an arming input of the body the gate's test does not read: variable ROMP_IDS_ANYWAY (scan_identifiers)" ]
+    plant="$TEST_DIR/arm-new-step"
+    awk '$0 == "scan_credentials" { print; print "scan_extra"; next } $0 == "refuse_replace_refs" && !d { print "scan_extra() {"; print "    [ -n \"${ROMP_EXTRA_SCAN:-}\" ] || return 0"; print "}"; d = 1 } { print }' "$HOOK" > "$plant"
+    [ "$(grep -c '^scan_extra$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"an arming input of the body the gate's test does not read: variable ROMP_EXTRA_SCAN (scan_extra)" ]
+    plant="$TEST_DIR/arm-type-lookup"
+    sed 's/^    gl=\$(gitleaks_resolved)$/    gl=$(gitleaks_resolved); [ -n "$gl" ] || gl=$(type -P gitleaks || true)/' "$HOOK" > "$plant"
+    [ "$(grep -c 'type -P gitleaks' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"an arming input of the body the gate's test does not read: lookup type -P gitleaks (refuse_replace_refs > credential_scan_armed > gitleaks_binary)" ]
+    plant="$TEST_DIR/arm-prologue-print"
+    sed 's/^export GIT_NO_REPLACE_OBJECTS=1$/export GIT_NO_REPLACE_OBJECTS=1; echo "romp pre-push: zzprologue" >\&2/' "$HOOK" > "$plant"
+    [ "$(grep -c 'zzprologue' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a statement between the call of bash_gate and the EXIT trap that the gate's no-op does not run: export GIT_NO_REPLACE_OBJECTS=1; echo \"romp pre-push: zzprologue\" >&2" ]
+    plant="$TEST_DIR/arm-step-no-return"
+    awk '$0 == "scan_credentials" { print; print "scan_extra"; next } $0 == "refuse_replace_refs" && !d { print "scan_extra() {"; print "    echo \"romp pre-push: extra\" >&2"; print "}"; d = 1 } { print }' "$HOOK" > "$plant"
+    [ "$(grep -c '^scan_extra$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a step with no early return, run whatever either scan: scan_extra" ]
+    plant="$TEST_DIR/arm-replace-ref-line-gone"
+    sed 's/^    identifier_scan_armed || credential_scan_armed || return 0$/    : armed or not/' "$HOOK" > "$plant"
+    [ "$(grep -c '^    : armed or not$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "${lines[0]}" = "$opt" ]
+    [ "${#lines[@]}" -gt 1 ]
+    [ "$(grep -c '^an arming input of the body the gate'"'"'s test does not read: .* (refuse_replace_refs' <<< "$output")" -eq $(( ${#lines[@]} - 1 )) ]   # its early return is now the listing's, and what that reads is named
+    # The gate audit's GATE-2: what a statement between the call and the trap changes, and an input read by the gate
+    # alone. Each plant is a line of its own after export GIT_NO_REPLACE_OBJECTS=1 (or set -euo pipefail), after the
+    # trap's line, or in scans_armed or scan_identifiers.
+    plant="$TEST_DIR/arm-prologue-path"                                  # the audit's M9
+    awk '{ print } $0 == "export GIT_NO_REPLACE_OBJECTS=1" { print "export PATH=\"$HOME/.local/bin:$PATH\"" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^export PATH="\$HOME/\.local/bin:\$PATH"$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a statement between the call of bash_gate and the EXIT trap that writes PATH, which the body's arming tests read after the gate's test: export PATH=\"\$HOME/.local/bin:\$PATH\"" ]
+    plant="$TEST_DIR/arm-prologue-shopt"
+    awk '{ print } $0 == "set -euo pipefail" { print "shopt -s nullglob" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^shopt -s nullglob$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a shell option set between the call of bash_gate and the EXIT trap, which the body's arming tests run under and the gate's test does not: shopt -s nullglob" ]
+    plant="$TEST_DIR/arm-prologue-unset"
+    awk '{ print } $0 == "export GIT_NO_REPLACE_OBJECTS=1" { print "unset ROMP_NO_GITLEAKS" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^unset ROMP_NO_GITLEAKS$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a statement between the call of bash_gate and the EXIT trap that writes ROMP_NO_GITLEAKS, which the body's arming tests read after the gate's test: unset ROMP_NO_GITLEAKS" ]
+    plant="$TEST_DIR/arm-prologue-ifs"
+    awk '{ print } $0 == "export GIT_NO_REPLACE_OBJECTS=1" { print "IFS=:" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^IFS=:$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a statement between the call of bash_gate and the EXIT trap that writes IFS, which the body's arming tests read after the gate's test: IFS=:" ]
+    plant="$TEST_DIR/arm-prologue-assignment-expansion"
+    awk '{ print } $0 == "export GIT_NO_REPLACE_OBJECTS=1" { print ": \"${ROMP_GITLEAKS:=/usr/local/bin/gitleaks}\"" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^: "\${ROMP_GITLEAKS:=/usr/local/bin/gitleaks}"$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a statement between the call of bash_gate and the EXIT trap that writes ROMP_GITLEAKS, which the body's arming tests read after the gate's test: : \"\${ROMP_GITLEAKS:=/usr/local/bin/gitleaks}\"" ]
+    plant="$TEST_DIR/arm-prologue-writes-file"
+    awk '{ print } $0 == "export GIT_NO_REPLACE_OBJECTS=1" { print ": > \"$HOME/.config/romp/private-strings.txt\"" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^: > "\$HOME/\.config/romp/private-strings\.txt"$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a statement between the call of bash_gate and the EXIT trap that runs a command substitution or writes a file, which the gate's no-op does not: : > \"\$HOME/.config/romp/private-strings.txt\"" ]
+    plant="$TEST_DIR/arm-gate-extra-disarm"                              # the audit's M8
+    sed 's/^    \[ -z "\${ROMP_NO_GITLEAKS:-}" \] || return 1$/    [ -z "${ROMP_NO_GITLEAKS:-}${ROMP_QUIET:-}" ] || return 1/' "$HOOK" > "$plant"
+    [ "$(grep -c 'ROMP_QUIET' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"an input the gate's no-op reads that the body's arming tests do not, which can turn the gate off where the body stays armed: variable ROMP_QUIET (bash_gate > scans_armed)" ]
+    plant="$TEST_DIR/arm-state-read"
+    sed 's/^    identifier_scan_armed || return 0$/    identifier_scan_armed || [ "$zero" = 0000000000000000000000000000000000000000 ] || return 0/' "$HOOK" > "$plant"
+    [ "$(grep -c '|| \[ "\$zero" = 0000000000000000000000000000000000000000 \] ||' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a name of the hook's own state that the body's arming tests read and none of them assigns: zero (scan_identifiers)" ]
+    plant="$TEST_DIR/arm-redefined"
+    awk '{ print } /^trap .exit_trap/ { print "identifier_scan_armed() {"; print "    return 0"; print "}" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^identifier_scan_armed() ' "$plant")" -eq 2 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a function defined twice, so the gate's test and the body can run different texts under one name: identifier_scan_armed"$'\n'"a function defined after the call of bash_gate that the gate's test calls: identifier_scan_armed" ]
+    plant="$TEST_DIR/arm-function-looked-up"
+    awk '{ print } /^trap .exit_trap/ { print "gitleaks() {"; print "    :"; print "}" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^gitleaks() {$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "$opt"$'\n'"a function defined after the call of bash_gate that the gate's test calls: gitleaks"$'\n'"a function defined after the call of bash_gate that the body's arming tests look up and the gate's test cannot see: gitleaks" ]
+    plant="$TEST_DIR/arm-shared-var"
+    sed 's/^    printf .%s. "\${ROMP_PRIVATE_STRINGS:-\${XDG_CONFIG_HOME:-\${HOME-\\\$HOME}\/.config}\/romp\/private-strings.txt}"$/    printf '"'"'%s'"'"' "${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-${ROMP_CONFIG_HOME:-${HOME-\\$HOME}\/.config}}\/romp\/private-strings.txt}"/' "$HOOK" > "$plant"
+    [ "$(grep -c 'ROMP_CONFIG_HOME' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$opt" ]
+}
+
+# ── the work tree's .gitleaks.toml told absent from cannot-tell (2026-09-30, the gate audit's S1, ruled at 13:37Z) ──
+# gitleaks_config tested the work tree's .gitleaks.toml with [ -f ] alone until the ruling, so a config the hook could
+# not resolve (a symlink into a directory it cannot search, a dangling symlink, a directory at the path) read as absent
+# and the scan ran under GITLEAKS_CONFIG or gitleaks' default, the repository's own rules dropped, with nothing
+# printed. The path is now read by denylist_state, N1's rule: a regular file is the config, absent keeps the choice
+# gitleaks makes with none, and any other answer refuses the push naming the path and the reason. These cases push for
+# real with the real scanner (skipped where none is installed), the identifier scan off, under every bash (under a bash
+# older than 5.1 the gate re-runs the hook under NEWER_BASH first).
+s1_refused() {   # <reason, as denylist_state prints it>: the push just made was refused by the line naming the work tree's .gitleaks.toml and the reason, neither scanner run made, the remote at its base; r11a_refused_by_reader's checks, each [[ ]] ending in || false, since bash before 4.1 does not end a case on a failed [[ ]] that is not its last command (the S1 audit's S1-A2; r11a_refused_by_reader's own lines are the tests-only follow-up's)
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the gitleaks config .gitleaks.toml (the work tree's) $1, so whether the repository's own rules are there is unknown; make the path name a readable regular file and push again; no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"scanned ~"* ]] || false
+    [[ "$output" == *"gitleaks could not scan"* ]] || false
+    at_base
+}
+s1_rule_config() { printf '[extend]\nuseDefault = true\n\n%s\n' "$R11A_BUILD_RULE"; }   # the repository's config in these cases: gitleaks' default rules and one only the build token meets
+
+@test "the work tree's .gitleaks.toml (2026-09-30, S1, a config the hook cannot resolve): a .gitleaks.toml that is a symlink to the repository's config in a directory the hook cannot search, with a commit adding a credential only that config's rule catches, is refused naming the path and the reason, the remote at its base (until the ruling it read as absent, gitleaks' default rules ran and the push published the credential); a dangling symlink and a directory at the path are refused the same way, each naming its reason" {
+    local sealed="$TEST_DIR/sealed"
+    r11a_base
+    mkdir -p "$sealed"
+    s1_rule_config > "$sealed/gitleaks.toml"
+    ln -s "$sealed/gitleaks.toml" "$REPO/.gitleaks.toml"
+    r11a_build_token > "$REPO/build.txt"
+    git -C "$REPO" add build.txt
+    git -C "$REPO" commit -qm "the repository's rule's credential"
+    chmod 600 "$sealed"
+    [ ! -e "$REPO/.gitleaks.toml" ]                                     # the plant landed: the link's target is there, beyond a directory this user cannot search (root searches any, so the case cannot run as root)
+    push_main_through_hook_with_shim
+    chmod 700 "$sealed"
+    s1_refused "is a symlink that does not lead to a regular file the hook can reach"
+    rm "$REPO/.gitleaks.toml"
+    ln -s "$TEST_DIR/no-such-config.toml" "$REPO/.gitleaks.toml"
+    [ -L "$REPO/.gitleaks.toml" ]                                       # the plant landed: a link that names nothing
+    [ ! -e "$REPO/.gitleaks.toml" ]
+    push_main_through_hook_with_shim
+    s1_refused "is a symlink that does not lead to a regular file the hook can reach"
+    rm "$REPO/.gitleaks.toml"
+    mkdir "$REPO/.gitleaks.toml"
+    push_main_through_hook_with_shim
+    s1_refused "is not a regular file"
+}
+
+@test "the work tree's .gitleaks.toml (2026-09-30, S1, the controls): a .gitleaks.toml that is a symlink to a readable config is that config (a credential only its rule catches is refused, naming the rule, and no line names the path); with nothing at the path the file GITLEAKS_CONFIG names is the config (the same credential refused the same way); and with neither, gitleaks' default rules run and the push passes with the reader silent" {
+    local sha
+    r11a_base
+    mkdir -p "$TEST_DIR/cfg"
+    s1_rule_config > "$TEST_DIR/cfg/gitleaks.toml"
+    ln -s "$TEST_DIR/cfg/gitleaks.toml" "$REPO/.gitleaks.toml"
+    r11a_build_token > "$REPO/build.txt"
+    git -C "$REPO" add build.txt
+    git -C "$REPO" commit -qm "the repository's rule's credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (r11a-build-rule) in: build.txt"* ]] || false
+    [[ "$output" != *"the gitleaks config .gitleaks.toml"* ]] || false
+    at_base
+    rm "$REPO/.gitleaks.toml"
+    export GITLEAKS_CONFIG="$TEST_DIR/cfg/gitleaks.toml"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (r11a-build-rule) in: build.txt"* ]] || false
+    [[ "$output" != *"the gitleaks config .gitleaks.toml"* ]] || false
+    at_base
+    unset GITLEAKS_CONFIG
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+# ── the gate audit of build 2 (2026-09-30): HOME unset, and the environment's gitleaks config beside S1 ──
+# GATE-1: the XDG default read $HOME bare, so with HOME unset the body, under set -u, ended the hook on its expansion
+# with bash's line alone, and the gate's test, which runs before set -u, read /.config/romp/private-strings.txt as
+# absent: under bash 3.2.57 the gate took the no-op and a push adding a banned string published. identifier_scan_armed
+# now answers that the path cannot be formed, a cannot-tell answer that arms the scan, and the scan's refusal names the
+# path as the default spells it. S1-A1: nothing set GITLEAKS_CONFIG or GITLEAKS_CONFIG_TOML beside a .gitleaks.toml the
+# hook cannot resolve, so a copy that let the environment's config stand in for the refusal passed every case.
+push_main_through_hook_home_unset() {   # push_main_through_hook_with_shim, with HOME unset in the hook's environment (the wrapper unsets it before it runs the hook; git runs with HOME set)
+    mkdir -p "$TEST_DIR/hooks"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'export PATH=%q:"$PATH"\n' "$TEST_DIR/shim"
+        printf 'unset HOME\n'
+        printf 'exec %q "$@"\n' "$HOOK"
+    } > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run git -C "$REPO" push origin main
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+}
+
+@test "the DENYLIST path (2026-09-30, the gate audit's GATE-1, HOME unset): with ROMP_PRIVATE_STRINGS and XDG_CONFIG_HOME unset and a denylist at the XDG default under the usual HOME, a real push of a commit adding one of its strings is refused as an identifier with HOME set (the control), and with HOME unset in the hook's environment is refused naming the path as the default spells it, \$HOME/.config/romp/private-strings.txt, the reason, the default cannot be formed, and only the remedies that apply to a path that names no file (set HOME, set XDG_CONFIG_HOME, or name the path with ROMP_PRIVATE_STRINGS), with no line of bash's and the remote at its base, under every bash (under a bash older than 5.1 the gate re-runs the hook under NEWER_BASH first); under a bash older than 5.1 with no newer bash listed, the gate refuses it (until GATE-1 the body ended the hook on HOME's expansion with bash's line alone, and under bash 3.2.57 the gate took the no-op and the push published; until the recheck's RC-1 the refusal also told the pusher to make that path a readable regular file or leave nothing there)" {
+    leak_in_middle_commit_after_base
+    unset ROMP_PRIVATE_STRINGS XDG_CONFIG_HOME
+    mkdir -p "$HOME/.config/romp"
+    cp "$STRINGS" "$HOME/.config/romp/private-strings.txt"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"ADDS a personal identifier"* ]] || false          # the control: the XDG default arms the scan while HOME is set
+    push_main_through_hook_home_unset
+    [ "$status" -ne 0 ]
+    at_base
+    denylist_refused '$HOME/.config/romp/private-strings.txt' "is the XDG default, which cannot be formed with HOME unset" "set HOME, set XDG_CONFIG_HOME, or name the path with ROMP_PRIVATE_STRINGS, and push again"
+    [[ "$output" != *"leave nothing there"* ]] || false                 # the remedy for a path that can be looked at is not given for one that names no file
+    [[ "$output" != *"unbound variable"* ]] || false
+    [[ "$output" != *"ADDS a personal identifier"* ]] || false          # refused on the path, not by a scan of a denylist the hook could not name
+    if at_least_51 "$HOOK_BASH_VERSION"; then return 0; fi              # the gate's side, below, runs where the bash first on PATH is older than 5.1 (the macOS cell's 3.2)
+    export ROMP_HOOK_BASHES=""
+    push_main_through_hook_home_unset
+    [ "$status" -ne 0 ]
+    gate_refused "the paths ROMP_HOOK_BASHES names (none)"
+    at_base
+}
+
+@test "the work tree's .gitleaks.toml (2026-09-30, S1, the environment's config does not stand in; the S1 audit's S1-A1): a .gitleaks.toml that is a dangling symlink, with GITLEAKS_CONFIG naming a readable config of gitleaks' default rules alone, and again with GITLEAKS_CONFIG_TOML holding that text, and a commit adding a credential only the repository's rule catches, is refused naming the path and the reason, the remote at its base; with nothing at the path the same GITLEAKS_CONFIG is the config and the push passes, its rules missing the credential, which is what a copy whose refusal stands aside when either variable holds a value publishes with the symlink there (red under that copy; the shipped order, the refusal ahead of GITLEAKS_CONFIG, is what the case pins)" {
+    r11a_base
+    printf '[extend]\nuseDefault = true\n' > "$TEST_DIR/default-only.toml"
+    r11a_build_token > "$REPO/build.txt"
+    git -C "$REPO" add build.txt
+    git -C "$REPO" commit -qm "the repository's rule's credential"
+    ln -s "$TEST_DIR/no-such-config.toml" "$REPO/.gitleaks.toml"
+    [ -L "$REPO/.gitleaks.toml" ]                                       # the plant landed: a link that names nothing
+    [ ! -e "$REPO/.gitleaks.toml" ]
+    export GITLEAKS_CONFIG="$TEST_DIR/default-only.toml"
+    push_main_through_hook_with_shim
+    s1_refused "is a symlink that does not lead to a regular file the hook can reach"
+    unset GITLEAKS_CONFIG
+    GITLEAKS_CONFIG_TOML=$(cat "$TEST_DIR/default-only.toml")
+    export GITLEAKS_CONFIG_TOML
+    push_main_through_hook_with_shim
+    s1_refused "is a symlink that does not lead to a regular file the hook can reach"
+    unset GITLEAKS_CONFIG_TOML
+    rm "$REPO/.gitleaks.toml"
+    export GITLEAKS_CONFIG="$TEST_DIR/default-only.toml"
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]] || false
+    at_remote_main                                                      # the witness: the environment's config misses the repository's credential
 }
