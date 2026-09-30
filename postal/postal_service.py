@@ -1336,20 +1336,26 @@ def _agent_rows(sessions):
 
 def local_agents_checked(threads=False):
     """(local_agents rows, answered) — the honesty-arm variant for consumers whose REFUSALS ride the
-    listing (the inbound relay's bounces, the presence producer): 'answered' distinguishes a kernel
-    that said "no sessions" from one that couldn't answer at all (mid-restart), the same bit the
-    sending resolver has carried since the answered-but-absent round (2026-08-31).
+    listing (the inbound relay's bounces, the presence producer, quarantine_decide's approve and its check
+    that a decision's session is this machine's): 'answered' distinguishes a kernel that said "no
+    sessions" from one that couldn't answer at all (mid-restart), the same bit the sending resolver
+    has carried since the answered-but-absent round (2026-08-31).
 
     The read is also RECORDED, as (answered, the sids the rows own), for the deadness mirror's one release
     (_LOCAL_LISTING, read by _local_listing_owned; round 3 of fork PR #897, the reviewer's ruling): a heartbeat
     row whose sid the local kernel's ANSWERED listing owns is dropped at the mirror's next write, since rules 1
     and 2 of the judge's ladder own a sid the local kernel lists. The record is the latest word any
     local_agents_checked consumer read (the recorder at every beat, the presence producer at every exchange, the
-    autostop gate at every poll, the inbound relay's bounces); a read that did not answer is recorded as such,
+    autostop gate at every poll, the inbound relay at every message whose mid it has not seen, and quarantine_decide
+    at every approve of a held message and, when it reads no hold for the message and the decision names a
+    session, in its check that the session is this machine's); a read that did not answer is recorded as such,
     and releases nothing. A read without thread rows owns no comment thread's sid (the seam filters as the route
-    does), so a thread's row is released by the recorder's read, which asks for them: the recorder hands the sid that
+    does), so a thread's row is released only after a read that asks for them: the recorder's, the inbound
+    relay's or quarantine_decide's check. The recorder's alone is keyed to its write: the recorder hands the sid that
     read owns to the write it triggers (_write_remote_sids' `released`; round 4 of fork PR #897, the thirty-fourth
-    commit), so a thread-less read landing before that write takes the lock does not keep the row."""
+    commit), so a thread-less read landing before that write takes the lock does not keep the row. The relay's
+    and the check's reads are recorded like any other, and a thread-less read landing before the next write
+    replaces them."""
     rows, answered = _kernel_sessions_checked(threads=threads)
     _LOCAL_LISTING[0] = (bool(answered), frozenset(str(r.get("id")) for r in rows
                                                     if isinstance(r, dict) and r.get("id")))
@@ -1526,10 +1532,10 @@ def _record_heartbeat(sid, name):
     thirty-fourth commit): when it answers local, the sid it owns is handed to that write as `released`, which
     the writer unions with the last read under _REMOTE_SIDS_LOCK, so a beat that meets such a listing is neither
     recorded nor kept whatever read lands between this one and the write. Until that commit the write read the
-    last read alone, and a thread-less read in that window (the autostop gate's, the presence producer's) owned
-    no comment thread's sid, so a thread's blink row and entry stayed while its loop, told local, beat no more.
-    A listing that did not answer releases nothing, so a beat filed during a blink stays, heard, until one
-    answers."""
+    last read alone, and a thread-less read in that window (the autostop gate's, the presence producer's,
+    quarantine_decide's approve) owned no comment thread's sid, so a thread's blink row and entry stayed while
+    its loop, told local, beat no more. A listing that did not answer releases nothing, so a beat filed during a
+    blink stays, heard, until one answers."""
     local = False
     if sid and _safe_id(sid):
         rows, answered = local_agents_checked(threads=True)
@@ -4778,12 +4784,14 @@ def _local_listing_owned():
     """The sids the local kernel's listing owns, for the deadness mirror's one release (round 3 of fork PR #897,
     the reviewer's ruling, the seventeenth commit): the listing as this bus LAST read it through
     local_agents_checked (_LOCAL_LISTING: the recorder at every beat, the presence producer at every exchange,
-    the autostop gate at every poll, the inbound relay's bounces) when that read ANSWERED; an empty set when it
-    did not answer, or none has been read in this process. A listing that did not answer releases nothing: its
-    rows are [] (the fetch collapsed), and the last answered rows the presence producer serves through a blink
-    are a cache, not the listing's word at this write, so they are never read here; a beat filed during the
-    blink stays until a listing answers. Nothing here asks the kernel: the release rides the reads the bus
-    already makes, so a write costs the kernel nothing more."""
+    the autostop gate at every poll, the inbound relay at every message whose mid it has not seen, and
+    quarantine_decide at every approve of a held message and, when it reads no hold for the message and the
+    decision names a session, in its check that the session is this machine's) when that read ANSWERED; an empty
+    set when it did not answer, or none has been read in this process. A listing that did not answer releases
+    nothing: its rows are [] (the fetch collapsed), and the last answered rows the presence producer serves
+    through a blink are a cache, not the listing's word at this write, so they are never read here; a beat filed
+    during the blink stays until a listing answers. Nothing here asks the kernel: the release rides the reads the
+    bus already makes, so a write costs the kernel nothing more."""
     last = _LOCAL_LISTING[0]
     return last[1] if last and last[0] else frozenset()
 
@@ -5738,10 +5746,13 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     kernel lists, its transcript being local, so the row said nothing the ladder needed and would otherwise have
     stood for the file's life (in peer mode every beat that reaches HEARTBEATS is such a session's, filed during
     a blink). The event is the listing's word, read by the recorder at every beat, by the presence producer at
-    every exchange and by the autostop gate at every poll (_monitor_tick reads before it writes); a listing that
-    did not answer releases nothing, and the last answered rows the presence producer serves through a blink are
-    a cache, never read here. A read without thread rows does not own a comment thread's sid (the seam and the
-    route filter alike), so a thread's blink beat waits for the recorder's read, which asks for them. The release
+    every exchange, by the autostop gate at every poll (_monitor_tick reads before it writes), by the inbound
+    relay at every message whose mid it has not seen, and by quarantine_decide at every approve of a held message and
+    in its check of the session a decision names when it reads no hold; a listing that did not answer releases
+    nothing, and the last answered rows the presence producer serves through a blink are a cache, never read here. A
+    read without thread rows does not own a comment thread's sid (the seam and the route filter alike), so a thread's
+    blink beat waits for a read that asks for them: the recorder's, which hands the sid it owns to its own write, or
+    the inbound relay's or quarantine_decide's check, if no thread-less read lands before the next write. The release
     reaches HEARTBEAT rows alone, in memory and in the carry: a heard peer row or via row naming an owned sid
     beside another is written whole, and the legacy list, a peer row or a via row doing so is carried whole, since
     its other sids are that source's word: a drop of such a row for the owned sid would leave them in no row, and a
@@ -6020,8 +6031,8 @@ def _write_remote_sids(released=()):
     _record_heartbeat passes when its own answered read answers local, and the write unions it with
     _local_listing_owned() under _REMOTE_SIDS_LOCK. Until that commit the write read the last read alone, and a
     thread-less read landing between the recorder's read and this lock (the autostop gate's, the presence
-    producer's) owned no comment thread's sid, so the thread's blink row and entry both stayed while its loop,
-    told local, beat no more (the witness: tests/test_postal_remote_sids_mirror.py
+    producer's, quarantine_decide's approve) owned no comment thread's sid, so the thread's blink row and entry
+    both stayed while its loop, told local, beat no more (the witness: tests/test_postal_remote_sids_mirror.py
     test_the_recorders_release_is_keyed_on_its_own_read_whatever_read_lands_before_its_write, the window held
     open by this lock and an event).
     FORGETTING THE ENTRY REACHES PAST THE MIRROR, and that is the design (round 4 of fork PR #897, the reviewer's
