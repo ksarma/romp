@@ -2325,18 +2325,20 @@ class RealpathFailureIsAFault(_Walk):
     - M0, both calls as the code before this change made them, unstrict with their raise unread (both tries removed and
       strict=True dropped at each): the sibling case on 3.10 to 3.12 alone; the own-tree case, the candidate case, both
       boundaries where a path goes away, FaultOnTheWalksOwnRead's (8) control and tests/test_record_cache_agent_end.py
-      AgentEnd's resolution residual, on every interpreter;
+      AgentEnd's resolution residual in both its forms, a root's and a candidate's, on every interpreter;
     - M1, the root's try removed: the own-tree case (OSError out of _subagent_file) and the sibling case (None with no
-      fault: the project listing's ENOENT clause takes the raise), the held-root boundary and FaultOnTheWalksOwnRead's
-      (8) control (each a raise out of _subagent_file), on every interpreter;
+      fault: the project listing's ENOENT clause takes the raise), the held-root boundary, FaultOnTheWalksOwnRead's (8)
+      control and AgentEnd's resolution residual in its root form (each a raise out of _subagent_file), on every
+      interpreter;
     - M2, the candidate's try removed: the candidate case and the removed-candidate boundary (each a raise out of
-      _subagent_file), and AgentEnd's resolution residual, on every interpreter;
+      _subagent_file), and AgentEnd's resolution residual in its candidate form, on every interpreter;
     - M3, the candidate's call unstrict again: the removed-candidate boundary (the gone file answered and memoized) and
-      AgentEnd's resolution residual, on every interpreter, and the candidate case on 3.13 and later (the miss
-      memoized; on 3.10 to 3.12 the try reads the unstrict raise, and that case is green);
-    - M4, the root's call unstrict again: the held-root boundary (a miss memoized in the removal's scope) and
-      FaultOnTheWalksOwnRead's (8) control (the root's realpath raising nothing), on every interpreter, and the own-tree
-      case on 3.13 and later, where the fault is then the candidate's and the place noted is not the root;
+      AgentEnd's resolution residual in its candidate form, on every interpreter, and the candidate case on 3.13 and
+      later (the miss memoized; on 3.10 to 3.12 the try reads the unstrict raise, and that case is green);
+    - M4, the root's call unstrict again: the held-root boundary (a miss memoized in the removal's scope),
+      FaultOnTheWalksOwnRead's (8) control and AgentEnd's resolution residual in its root form (the root's realpath
+      raising nothing in each), on every interpreter, and the own-tree case on 3.13 and later, where the fault is then
+      the candidate's and the place noted is not the root;
     - M5, the return for a tree with no directory removed: both absence boundaries (the strict call's FileNotFoundError
       on the absent root read as a fault where a miss is due), the held-root boundary on its next scope's miss (the same
       raise), ViewerUnderAnUnreadableTree's two cases on their removed-tree premise, and the absent-place cases

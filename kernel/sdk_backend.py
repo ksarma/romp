@@ -4271,11 +4271,11 @@ def _bg_row_may_be_agent(row) -> bool:
     its 1024-key bound and is cleared (_subagent_file). A lookup that could not be made (a place the walk needed could
     not be read, for a reason other than absence) is neither a resolution nor memoized: nothing is released, the end is
     remembered, and it is looked up again at the first cycle at which one of the places its walk could not read reads
-    again or the walk no longer reaches it, each such place read once per cycle until then with no walk, and for a place
-    whose read fails the session's transcript path, and for one in a subagents tree the directories from the subagents
-    directory down to it, too (_release_ended_agents, _unread_place_reads). So a fault adds to the drain one lookup, at
-    the cycle after the fault clears, not one per cycle while it lasts, except for the two faults that read does not see,
-    a listing that fails past its first entry and a real-path resolution of the place that fails while its lstat answers
+    again or the walk no longer reaches it, or at a later one when more such ends are due, since a cycle makes at most
+    _AGENT_FAULTED_LOOKUPS_MAX (one) such lookups, each such place read once per cycle until then with no walk
+    (_release_ended_agents; the reads: _unread_place_reads' docstring). So a fault adds to the drain one lookup, at a
+    cycle after the fault clears, not one per cycle while it lasts, except for the two faults that read does not see, a
+    listing that fails past its first entry and a real-path resolution of the place that fails while its lstat answers
     (_unread_place_reads)."""
     return isinstance(row, dict) and _bg_type_discriminant(row.get("type")) in ("local_agent", "")
 

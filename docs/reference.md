@@ -3217,18 +3217,55 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   restart with several such ends pays the first walk and a later walk for
   each further one. An end whose resolution could not be made (below) adds
   no walk while its fault lasts, only one read of each place the walk
-  could not read per cycle (and, for a place whose read fails, the
+  could not read per cycle, one read for all the ends of a session
+  waiting on that place (and, for a place whose read fails, the
   session's transcript, resolved once per cycle, then, for a place in a
   subagents tree in that transcript's project directory, an lstat of each
   directory from the subagents directory down to the place's parent,
   stopping at the first that does not read as a real directory, with,
   first, a stat of a sibling session directory when the place's read
-  failed with ELOOP or EBADF), and is resolved once, at the first cycle
-  after one of those places reads again or the walk no longer reaches it,
-  where it is one such end; the two faults that read cannot see, a listing
-  that fails past its first entry and a resolution of the place's real
-  path that fails while its lstat answers, each have their end resolved at
-  each cycle while they last. No end is
+  failed with ELOOP or EBADF), and is resolved once, after one of those
+  places reads again or the walk no longer reaches it: at the first cycle
+  after, or, when more such ends are due, at a later one, since a cycle
+  resolves at most one of them, oldest first
+  (`_AGENT_FAULTED_LOOKUPS_MAX`), so each is one such end; the two faults
+  that read cannot see, a listing that fails past its first entry and a
+  resolution of the place's real path that fails while its lstat answers,
+  each have their end resolved at each cycle while they last, in turn with
+  the other ends due. For a session with no transcript the end keeps
+  waiting, since the kernel cannot tell a transcript that is gone from one
+  that a fault on its project directory hides (below): keeping the end fails
+  safe, so it waits until one of its places reads and is then resolved, or
+  until the table's bound gives it up, counted in `releaseLost`, and the
+  wait never drops it uncounted while none of its places reads (a start of
+  the agent drops it, the file live again, and a later end of the agent is
+  resolved as a new end is, which with no transcript drops it uncounted, as
+  below); when resolving the transcript raises, the end keeps waiting too,
+  and is given up, counted, if resolving still raises once a place reads.
+  The wait watches only for one of those places reading again or leaving the
+  walk's way: a file of the agent's that appears under a tree the walk
+  already read (copied or restored there by hand, or written after its end
+  was drained) while every place the walk could not read still fails is not
+  resolved until one of them reads or the bound gives its end up (a
+  residual). Measured on 2026-09-30 with 4096 such ends of one session, the
+  most the kernel keeps, waiting on one place in a project directory of two
+  entries: a cycle while they wait took 1.1 to 3.4 ms, where a read of each
+  end's own places took 53 to 67 ms with one place an end and 232 to 259 ms
+  with two; ends of several sessions cost one read for each session, so a
+  table whose ends are each of their own session costs at least as much as
+  those reads of each end's own places (4096 ends of 4096 sessions waiting
+  on one place took 40 to 42 ms at a lighter load, a lower bound
+  since the fixture stubbed the transcript's resolution, where the ends of
+  one session took 1.1 to 1.9 ms), and, by the same reading, more than the
+  bound with two places an end; the cycle in which the place reads again
+  took 1.1 to 1.9 ms for its one resolution, where resolving all 4096 took
+  631 to 728 ms; and the table emptied in 4096 cycles, one resolution each,
+  which takes at least 4096 s, about 68 minutes, since the pusher starts at
+  most one cycle a second (`PUSH_MIN_INTERVAL_S`, at its default), longer
+  when a cycle runs past half a second and no event wakes the pusher after
+  it, and sooner when a watched tab's live-tail wake runs a cycle inside
+  that second or a cycle raises, since its first retry starts half a second
+  later (`PUSHER_FAIL_BACKOFF_S`). No end is
   queued for an agent none of
   those names: a Workflow run's agents when the object holds no roster for
   the run (one the report retires before any progress frame, or one that
@@ -3258,10 +3295,20 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   it (a place outside the project directory the session's transcript now
   lies in, or, in a subagents tree, a link, a file or nothing at or below
   the subagents directory on its way there, or a sibling session directory
-  the walk does not take for a directory), each read once per cycle until
+  the walk does not take for a directory), or at a later one when more
+  such ends are due (one a cycle, above), each read once per cycle until
   then with no walk (`_release_ended_agents` in `kernel/kernel.py`), so
   its records are released once the fault clears, with their checkpoint
-  document, unless a cycle drains the agent's start first; the two roads
+  document, unless a cycle drains the agent's start first or more such
+  ends wait than the kernel keeps (`_AGENT_RELEASED_MAX`, 4096): the
+  oldest is then given up, counted in `releaseLost`, its records left to
+  the cache's own bounds; a fault on the project directory of the
+  session's transcript can be taken for a session with no transcript (a
+  failed listing of that directory reads as one with no transcript in it,
+  and an SDK session's refused stat of its transcript as none yet), and
+  the end then releases nothing and is neither remembered nor counted, its
+  records left to the cache's own bounds, a residual that predates this
+  change and is not reached by it; the two roads
   that release a remembered file with no resolution, an end remembered
   while nothing was held, for an agent with no end
   waiting on a fault (an end that waits on a fault forgets the remembered
@@ -3298,14 +3345,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `releaseLost` (releases given up, the entry left to the cache's own
   eviction, the count cap or the byte budget, or a later quiescent drop,
   counted once per path per cycle where the release names a path (an end
-  given up past the bound of the ends the backend keeps, or one whose file
-  never resolved before its resolution raised, counts one each): no
+  given up past the bound of the ends the backend keeps or of the ends
+  waiting on a fault, or one whose file never resolved before its
+  resolution raised, counts one each): no
   document could be written, as with
   `ROMP_CKPT_CONVERGE_MS=0` or `ROMP_CKPT_CONVERGE_MB=0` or when the check
   whether a write was due raised; an owed release was dropped past its
   bound; an agent's end was dropped past the queue's bound and then past the
   bound of the ends the backend keeps (an end kept is released at the drain
-  like any other); or resolving or paying one raised. With the drop writes
+  like any other); an end whose file resolution could not be made was
+  given up past the bound of the ends waiting on a fault, the oldest
+  first; or resolving or paying one raised. With the drop writes
   off, an agent whose two ends, its stop and its task's end, reach two cycles
   counts two. Each cause is said once on stderr in a summary line, and a
   release that raises also writes its own line with the traceback at every
