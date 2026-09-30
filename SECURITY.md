@@ -349,8 +349,14 @@ those by an assignment, a walrus, an unpacking or a `from ... import`, resolved
 by binding), is refused by name on every version, since the change reaches the
 real object; the check reads the spelling anywhere in the function, called or
 not, so a name merely spelled like a primitive is refused too, its reason naming
-the form the census cannot follow rather than a frame reached; code the function
-runs that the census does not read (a helper it calls as a statement, a method
+the form the census cannot follow rather than a frame reached; a change to those
+locals at run time through a frame object, exec or eval reached in any other
+spelling (a frame primitive as an attribute on a receiver, or exec or eval
+reached other than as one of the names above) is the stated precondition,
+outside what the census reads, and passes silently (its witnesses: a frame
+primitive reached as an attribute on a receiver, an exec, and an eval); code the
+function runs that the census does not read (a helper it calls as a statement, a
+method
 on self, a context manager it enters), reaching the caller's frame to change
 such a container, is a stated limit instead, the census reading no such code's
 body for its frame reach as the call limit reads none for what a callee does
@@ -498,32 +504,38 @@ parameter's, is text such a base holds. A local container (a name a function the
 pass reads binds whole to a list, dict or set literal or comprehension, or one
 it changes, directly, through an item of it or an expression holding it, or
 through a name bound to it, to an item of it or to a new object holding one) is
-read whole only where the census proves every change to it: the function's own
-body binds it once, by one plain single-name assignment of a list, dict, set or
-tuple literal or of a call whose return the census reads as a value slot (an
-import's, one of the seven builtins a page may name, a parameter's or a method's
-on one of those), and no parameter or nested scope binds it; each change is a
-store by a str or int constant key as the one target of a plain assignment, or
-an append or extend of one plain argument, in the function's own body; no method
-but a read method (get, keys, values, items, index, count, copy) is called on it
-and no attribute of it is read but as a method's callee; nothing is changed
-through an item of it, an expression holding it or a name bound to it or to an
-item of it; and neither it nor such a name is stored into another object, bound
-as a name in a class body, handed as a default, matched, called or held where
-the census does not read it. Any
-other local container, one a nested function, lambda, class body or
-comprehension changes and a parameter the function changes among them, is
-refused by name wherever it is read, the reason naming the first condition it
-fails (the first parameter of a method or a route handler is not read so: every
-attribute read and method call on it is refused already); one handed to a call
-as an argument is under the call limit, what the callee does with it not read,
-as is a container the page changes through a call's return that holds it (a
-class from `type()`, a mapping from `dict()`, a bound method from
-`functools.partial`) or one it reaches through the heap with no name and no
-frame (`gc.get_objects`, `ctypes`), the census reading neither the callee, the
-return, nor the heap (its witnesses: a local dict a module function it is handed
-stores a fetch into, a list a `type()` call's returned class attribute aliases,
-and one found on the heap by identity and changed).
+read whole only where every occurrence of its name, resolved by binding, is one
+of the proven forms: its one binding (a plain single-name assignment to a list,
+dict, set or tuple literal or to a call whose return the census reads as a value
+slot, an import's, one of the seven builtins a page may name, a parameter's or a
+method's on one of those); the base of a subscript store by a str or int
+constant key as the one target of a plain assignment, whose stored value the
+census reads; the receiver of an append or extend of one plain argument the
+census reads; and a read inside an expression the census itself reads as the
+page's value (through a name it binds to a read of it, whose own occurrences are
+proven the same way, or through a new object holding it, a change to which is
+none). Any other occurrence refuses the container by the rule, its reason naming
+the role it fails: bound to another name whose uses are not all proven, to a
+name the function declares global or nonlocal, or into an attribute or another
+object; a second binding (an augmented assignment, a for, with or unpacking
+target); a delete; a method other than a read method (get, keys, values, items,
+index, count, copy) or a bare-callee attribute; a store by a key that is no
+constant; an append or extend of other than one plain argument; or any
+occurrence in a function or lambda nested in it, or a class body it defines,
+whose code the census does not read (a closure capture) or which makes a class
+attribute; a comprehension is read where it stands, so a read there and an
+append or subscript store of a read value there pass, and only a change the
+census cannot fold refuses. The first parameter of a
+method or a route handler is not read so: every attribute read and method call
+on it is refused already. One handed to a call as an argument is under the call
+limit, what the callee does with it not read, as is a container the page changes
+through a call's return that holds it (a class from `type()`, a mapping from
+`dict()`, a bound method from `functools.partial`) or one it reaches through the
+heap with no name and no frame (`gc.get_objects`, `ctypes`), the census reading
+neither the callee, the return, nor the heap (its witnesses: a local dict a
+module function it is handed stores a fetch into, a list a `type()` call's
+returned class attribute aliases, and one found on the heap by identity and
+changed).
 An attribute read in a page position, as a value or anywhere on the
 path of a receiver or a container (but never inside the index of a subscript
 over a container whose text the pass does not read: below), is refused by name
