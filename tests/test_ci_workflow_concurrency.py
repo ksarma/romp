@@ -2,7 +2,7 @@
 """When CI runs, and which of its runs cancel which (.github/workflows/ci.yml, 2026-09-08 and 2026-09-27).
 
 Triggers (2026-09-27): the workflow runs on a push to a batch branch (`batch/**`), by hand
-(workflow_dispatch) and on its weekly schedule, and on nothing else. A member PR runs no CI of its own:
+(workflow_dispatch) and on its weekly schedule, and on nothing else. A member PR runs no ci.yml of its own:
 the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate (scripts/batch.py
 verify and land read it), and GitHub's full matrix runs once on the batch branch, whose PR is expected to
 show that push run's checks on its head (the first batch confirms it). A merge to main runs none: batch.py
@@ -163,7 +163,7 @@ class CiTriggers(unittest.TestCase):
     def test_no_pull_request_trigger(self):
         # a PR event would run the full matrix on every member push again: the cost the local gate removes
         for event in ("pull_request", "pull_request_target"):
-            self.assertNotIn(event, self.events, "ci.yml runs on %s again; member PRs run no CI (the local sweep gates them)" % event)
+            self.assertNotIn(event, self.events, "ci.yml runs on %s again; member PRs run no ci.yml (the local sweep gates them)" % event)
 
     def test_push_filters_by_branch_only(self):
         self.assertIsNotNone(self.filters, "no push: trigger in ci.yml; re-anchor this pin")

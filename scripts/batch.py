@@ -56,7 +56,7 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     for the batch head's full sha, one that marks a leg not owed for having no vscode-extension/package.json
     while the head's tree holds one, or the ledger not owed for having no scripts/upstream-ledger.py while the
     head's tree holds that script (plan and --repin refuse the same at a member's head), and a batch head
-    that does not contain main as origin has it now (CI does not run on the merge to main, so the tree that
+    that does not contain main as origin has it now (ci.yml does not run on the merge to main, so the tree that
     lands must be the tree the sweep and the batch branch's CI ran on); a result that marks deps, a webview
     leg, pdf-smoke or the served leg not owed for any other reason reads invalid, whatever the diff (every head
     owes the webview legs, pdf-smoke and the served leg), and so does one that marks the ledger not owed for any
@@ -1548,7 +1548,7 @@ def main_on_origin(root):
 
 
 def check_contains_main(root, name, head, lines):
-    """The batch head must contain main as origin has it NOW. CI does not run on the merge to main: a
+    """The batch head must contain main as origin has it NOW. ci.yml does not run on the merge to main: a
     batch lands with a merge commit whose tree is the batch head's only when main is already in the
     head, and that tree is the one the sweep and the batch branch's CI ran on. Returns the main sha it
     compared with when the head contains it, else None."""
@@ -1744,7 +1744,7 @@ def read_first_reasons(m, resolved, contained_by=None):
     resolution, when it was already contained by an earlier member (no merge of its own, so a
     missing `Depends-on`), when its tier is `feature` or unlabeled, when it touches kernel/,
     .github/, .githooks/, install.sh or uninstall.sh, or when its trailer is missing. A member PR
-    runs no CI of its own (the sweep at the batch head gates it), so there is no CI reason."""
+    runs no ci.yml of its own (the sweep at the batch head gates it), so there is no CI reason."""
     reasons = []
     if resolved:
         reasons.append(resolution_reason(resolved))
@@ -1895,13 +1895,13 @@ def render_body(state, inputs, cap=BODY_CAP):
     if v.get("ok") and v.get("head") == head:
         ledger = {"clean": "ledger check clean", "pre-migration": "ledger: pre-migration, not checked", "failed": "ledger check FAILED"}.get(state.get("ledger"), "ledger: not checked")
         # The main verify saw, named: "contained" is true at verify time only, and a merge by the button or
-        # `gh pr merge` after main moved lands a tree no sweep or CI run tested (none runs on main).
+        # `gh pr merge` after main moved lands a tree no sweep or ci.yml run tested (none runs on main).
         seen = short(v["main"]) if v.get("main") else "its head then"
         # Round 1, extra7-5: that the push run's checks show on the batch PR's head is an expectation the first batch
         # confirms (docs/batching.md, "Checked on the first batch"), so the body says so rather than stating it.
         verified = ("%s Verified at %s: %s; provenance clean; main at %s contained at verify time; %s. CI on this PR: the run "
-                    "of the push to %s, expected among the checks on its head (the first batch confirms that). No CI runs "
-                    "on the merge to main, so if main has moved past %s, do not merge with the button or `gh pr merge`: the "
+                    "of the push to %s, expected among the checks on its head (the first batch confirms that). No ci.yml "
+                    "run follows the merge to main, so if main has moved past %s, do not merge with the button or `gh pr merge`: the "
                     "batch needs main merged in, a new sweep and verify first."
                     % (land_line(name), short(head), sweep_phrase(sw), seen, ledger, branch_of(name), seen))
     else:
@@ -2668,7 +2668,7 @@ def cmd_finish(args):
     # Pre-round item 4: the merge commit's first parent must be the main verify read. land reads main once more right
     # before the merge call, but GitHub's merge pins the head, not the base, and the button or `gh pr merge` reads
     # nothing; a first parent that is another commit means main moved before the merge, so the tree on main is not the
-    # batch head's tree and no sweep or CI run tested it (none runs on main). Read here and reported loudly at the end,
+    # batch head's tree and no sweep or ci.yml run tested it (none runs on main). Read here and reported loudly at the end,
     # after the cleanup, which does not depend on it.
     merge_parents = parents_of(merge_sha, root) if merge_sha else []
     first_parent = {"merge": merge_sha, "first_parent": (merge_parents or [None])[0],
@@ -2774,7 +2774,7 @@ def cmd_finish(args):
         git("branch", "-D", branch_of(args.name), cwd=root)
     orphans = _run([os.path.join(root, "scripts", "pr-orphans.sh")], cwd=root, check=False)
     report["orphans"] = {"exit": orphans.returncode, "out": (orphans.stdout + orphans.stderr).strip()}
-    # CI does not run on the merge to main: the run that tested the batch head's tree is ci.yml's run of the push to
+    # ci.yml does not run on the merge to main: the run that tested the batch head's tree is ci.yml's run of the push to
     # the batch branch at the head that landed, read with batch_ci_run, the filtered read land gated on (the push
     # event, batch/<name>, ci.yml by its name, the sha checked on every row), so a manual or scheduled run at the same
     # commit never stands in for it. The merge has happened, so a read that fails is reported as unread, not raised.
@@ -2813,7 +2813,7 @@ def cmd_finish(args):
     report["landed_head"] = landed
     state["finished"] = {"at": now(), "report": report}
     save_state(root, state)
-    print("batch #%d landed, %d member(s) marked merged; no CI runs on the merge to %s; the batch head's CI run: %s"
+    print("batch #%d landed, %d member(s) marked merged; no ci.yml run follows the merge to %s; the batch head's CI run: %s"
           % (b, len(report["merged"]), MAIN, ci_text))
     if report["open"]:
         print("STILL OPEN (told on the PR): %s" % ", ".join("#%d" % n for n in report["open"]))
@@ -2973,7 +2973,7 @@ def main(argv=None):
                                    "commit or a merge of %s, and every merge equals the clean merge of its parents unless it "
                                    "carries a recorded resolution (then only the resolution's files may differ). Every member's "
                                    "live head still equals the pinned SHA, is OPEN, and has its base in the batch or in %s. "
-                                   "The batch head contains %s as %s has it now (CI does not run on the merge, so the tree that "
+                                   "The batch head contains %s as %s has it now (ci.yml does not run on the merge, so the tree that "
                                    "lands must be the tree the sweep and the batch branch's CI ran on); `assemble --merge-main` "
                                    "catches it up. The ledger check runs on the branch's tree. The sweep result that "
                                    "`scripts/sweep.py run` wrote for the batch head's full sha must be a pass; a missing, stale, "
@@ -3041,8 +3041,8 @@ def main(argv=None):
                                    "branches and `batch/<name>`, remove the worktree, run scripts/pr-orphans.sh, and report one "
                                    "line naming the batch head's CI run (the push run land gated on, and its case). Then it "
                                    "checks that the merge commit's first parent is the %s verify read, and its second parent "
-                                   "the batch head verify read (a commit pushed after verify and merged by the button): no CI "
-                                   "runs on the merge to %s, so a batch merged after %s moved, or with a head the sweep did not "
+                                   "the batch head verify read (a commit pushed after verify and merged by the button): no ci.yml "
+                                   "run follows the merge to %s, so a batch merged after %s moved, or with a head the sweep did not "
                                    "read, lands a tree nothing tested, and finish cannot undo that; it exits 1 naming both shas "
                                    "and the sweep at the merge commit that is owed. It exits 1 too when it cannot tell: no "
                                    "merge commit reported, or no %s or head recorded by verify. Safe to re-run: what it "

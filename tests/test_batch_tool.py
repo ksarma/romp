@@ -419,7 +419,7 @@ class Plan(_Base):
         self.assertIsNone(m["106"]["trailer"])
         self.assertIsNone(m["106"]["tier"])
         self.assertIn("kernel/kernel.py", m["101"]["touches"])
-        self.assertNotIn("ci", m["101"], "a member runs no CI of its own, so plan records none")
+        self.assertNotIn("ci", m["101"], "a member runs no ci.yml of its own, so plan records none")
         self.assertEqual(st["base"], fx.bare_rev("main"))
 
     def test_docs_and_tests_only_are_tiers_a_member_can_carry(self):
@@ -2220,7 +2220,7 @@ class PythonRemedy(unittest.TestCase):
 
 
 class VerifyBehind(_Base):
-    """CI does not run on the merge to main (2026-09-27), so a batch should land only when its head contains main
+    """ci.yml does not run on the merge to main (2026-09-27), so a batch should land only when its head contains main
     as origin has it at that moment: then the merge commit's tree is the batch head's, the tree the sweep and the
     batch branch's CI ran on. verify refuses a batch head that does not contain main, reading main with ls-remote,
     so a stale tracking ref (land --no-fetch) cannot hide a move; land, which re-runs verify, refuses before it
@@ -3123,7 +3123,7 @@ class LandAndFinish(_Base):
         self.assertNotEqual(fx.bare_rev("m"), "", "the dependent's branch stays")
         self.assertFalse(os.path.exists(fx.wt("b1")))
         self.assertEqual(fx.dev_git("rev-parse", "--verify", "--quiet", "batch/b1", check=False), "")
-        self.assertIn("batch #900 landed, 2 member(s) marked merged; no CI runs on the merge to main; "
+        self.assertIn("batch #900 landed, 2 member(s) marked merged; no ci.yml run follows the merge to main; "
                       "the batch head's CI run: green, https://example.invalid/actions/runs/1", p.stdout)
         # Round 1, correctness-7: finish reads the run with land's own filtered read (batch_ci_run), not the newest run of
         # any event at the commit.
@@ -3617,7 +3617,7 @@ class Body(unittest.TestCase):
                       "bats rc 0 (1 ok, 0 not ok), manager rc 0, tools rc 0, ledger rc 0; not owed: deps, typecheck, npm-test, "
                       "pdf-smoke, build, served; "
                       "provenance clean; main at %s contained at verify time; ledger check clean. " % (st["name"], "e" * 10), body)
-        self.assertIn("No CI runs on the merge to main, so if main has moved past %s, do not merge with the button or "
+        self.assertIn("No ci.yml run follows the merge to main, so if main has moved past %s, do not merge with the button or "
                       "`gh pr merge`: the batch needs main merged in, a new sweep and verify first." % ("e" * 10), body)
         # round 1, extra7-5: the push run's checks on the PR's head are an expectation the first batch confirms
         self.assertIn("CI on this PR: the run of the push to batch/%s, expected among the checks on its head (the first batch "
@@ -3626,7 +3626,7 @@ class Body(unittest.TestCase):
         self.assertNotIn("sweep not recorded", body)
         self.assertIn("- none: every member is labeled, carries a trailer, touches no sensitive path and merged clean; "
                       "the batch adds no commit of its own.", body)
-        self.assertNotIn("own CI", body, "a member runs no CI of its own, so the none line claims none")
+        self.assertNotIn("own CI", body, "a member runs no ci.yml of its own, so the none line claims none")
 
     def test_a_record_from_before_the_result_file_shows_its_text(self):
         # a batch verified by an older batch.py recorded the batcher's free text; the body shows it as written
@@ -3655,7 +3655,7 @@ class Body(unittest.TestCase):
         self.assertEqual(r(self.member(12, tier="tests-only"), None), [])
         self.assertEqual(r(self.member(6, trailer=None), None), ["trailer not stated"])
         self.assertEqual(r(dict(self.member(7), ci="none (was conflicting)", mergeable="CONFLICTING"), None), [],
-                         "a member runs no CI of its own: an older plan's CI word gives no reason")
+                         "a member runs no ci.yml of its own: an older plan's CI word gives no reason")
         self.assertEqual(r(self.member(8), {"files": ["a.py", "b.py"], "how": "x", "hunks": 3, "review": "one round by a subagent: ok"}),
                          ["conflict resolved in a.py, b.py (3 hunks); one review round: one round by a subagent: ok. [diff from the clean merge below]"])
         self.assertEqual(r(self.member(9), {"files": ["a.py"], "how": "x", "hunks": 1, "review": None}),

@@ -238,30 +238,50 @@ so there is no list to write. **gitleaks** covers them, in two places:
   clean report could be false; the remedy is `git replace -d <object>`, or a
   push from a clone that carries none. This is the same hook as the identifier
   scan and both report before it refuses, so one push tells you about both.
-- **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
-  tag the checkout brings, on every push to a batch branch (`batch/**`), on
-  the weekly schedule and on a manual run, from a pinned, checksummed binary.
-  It needs `fetch-depth: 0`: a default checkout scans one commit and reports
-  clean. Its history scan carries `--text` too, so a committed `-diff`
-  attribute cannot hide a path's credential from it: a plain patch stream
-  prints no hunk for such a path, and the job's tree scan reads `HEAD` alone,
-  where a removed file is gone (the road was verified 2026-09-21 on the pinned
-  scanner and closed by the fork's PR 890; the tree's one `.gitattributes` sets
-  `-text`, not `-diff`, so no commit here was hidden). Since 2026-09-27 CI
-  scans neither a PR push nor a merge to `main` (see the publish step below):
-  between batches the pre-push hook is the only scan. Five kinds of push go
-  unscanned until the next batch push, the weekly run or a manual run: a push
-  from a machine without gitleaks, a push with `ROMP_NO_GITLEAKS=1` (the hook
-  skips its credential scan), a push with `git push --no-verify` (no hook
-  runs), a push from a clone where `install.sh` never linked the hook into
-  git's hooks directory (no hook runs at all), and a commit GitHub makes itself
-  (a web edit or suggestion, the Update branch button). What the hook's scan
+- **CI's secret scan** runs on a push to the fork, of a branch or a tag, whose
+  commit carries `.github/workflows/secret-scan.yml`: that workflow runs it on
+  each such push, with no run cancelled by a later one (2026-09-30), and
+  `ci.yml`'s `Secret scan (gitleaks)` job runs the same job on a batch push,
+  the weekly schedule and a manual run (`tests/test_ci_secret_scan.py` holds
+  the two copies equal but for the job's name). Each run scans all of history
+  from a pinned, checksummed binary: the commit its push put on its ref, and
+  every branch and tag the checkout brings. When the ref has moved on or been
+  deleted before the run, the checkout fetches that commit by its sha, so a
+  commit force-pushed over is still scanned. It needs `fetch-depth: 0`: a
+  default checkout scans one commit and reports clean. Its history scan
+  carries `--text` too, so a committed `-diff` attribute cannot hide a path's
+  credential from it: a plain patch stream prints no hunk for such a path, and
+  the job's tree scan reads `HEAD` alone, where a removed file is gone (the
+  road was verified 2026-09-21 on the pinned scanner and closed by the fork's
+  PR 890; the tree's one `.gitattributes` sets `-text`, not `-diff`, so no
+  commit here was hidden). GitHub reads a push's workflows from the commit the
+  push puts on its ref, so a push whose commit lacks the file starts no run of
+  the scan: a branch cut from `main` before the file landed, or cut from the
+  project, until it merges `main`, and a tag on such a commit. A push that
+  edits the file runs its edited copy, and one that deletes it runs none. Nor
+  does GitHub start a run for a push whose commit message carries a skip
+  instruction (`[skip ci]` and the like), for the tags of a push of more than
+  three tags at once, or for a push of more than 5,000 branches at once. A
+  commit only such a push carries is scanned by the next run whose checkout
+  reaches it, and by none if it leaves every branch and tag first. A pull
+  request from another repository starts no run here: its pushes go to that
+  repository, and its commits are scanned once a branch here holds them. The
+  hook does not scan six kinds of push or commit, and CI scans each in the run
+  of the push when the push starts one: a push where no gitleaks resolves
+  (none installed, or `ROMP_GITLEAKS` naming a non-executable), a push with
+  `ROMP_NO_GITLEAKS=1` (the hook skips its credential scan), a push with `git
+  push --no-verify` (no hook runs), a push from a clone where `install.sh`
+  never linked the hook into git's hooks directory (no hook runs at all), a
+  commit any of the clone's remote-tracking refs reaches, which the hook does
+  not read (another remote's ref, or a stale ref of the pushed-to remote whose
+  commit that remote has since dropped), and a commit GitHub makes itself (a
+  web edit or suggestion, the Update branch button). What the hook's scan
   passes inside a push it does scan, and CI's git-mode history scan reports,
-  waits for the same runs: the residuals the hook's header states (a path
-  allowlist with an AND condition keyed on the hook's own copy names, a
-  repository rule anchored at the start of the text on a hunk led by a file
-  signature, and a change that only removes lines from a text `.p12` or `.pfx`
-  file).
+  is reported by the run of the same push when it starts one: the residuals
+  the hook's header states (a path allowlist with an AND condition keyed on
+  the hook's own copy names, a repository rule anchored at the start of the
+  text on a hunk led by a file signature, and a change that only removes lines
+  from a text `.p12` or `.pfx` file).
 
 Three things follow for anyone touching this:
 - **A hit means rotate, not amend.** A credential that reached a commit is
@@ -354,9 +374,11 @@ broad `git add` will sweep up your work). Conventions:
      must land alone lands as a one-member batch (`scripts/batch.py plan --only N`) on the
      user's word; `scripts/land.sh` runs `scripts/batch.py land`. Opening a PR against the upstream
      project is a separate decision only the user makes.
-  A fork PR runs no CI of its own (2026-09-27): its Checks tab shows the tier-label check (next
+  A fork PR runs no `ci.yml` of its own (2026-09-27): its Checks tab shows the secret scan's
+  run of each push whose commit carries `secret-scan.yml` (2026-09-30; the credentials section
+  above says which pushes start none), the tier-label check (next
   bullet) after the PR opens or reopens or its labels change, and Tier policy's skipped rows,
-  which evaluate nothing on the fork. GitHub's CI runs once
+  which evaluate nothing on the fork. GitHub's CI (`ci.yml`) runs once
   per batch, on the push to `batch/<name>`, and not on the merge to `main`. The landing
   gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
   sha `scripts/batch.py verify` and `land` read. `land` also requires that batch push's CI
@@ -403,7 +425,7 @@ broad `git add` will sweep up your work). Conventions:
   copy of the second check (`.github/workflows/tier-policy.yml`) is gated to the
   upstream repository by its job-level `if:` (the header comment there says why), so on
   the fork it evaluates nothing and posts no Tier policy verdict; a fork PR is judged by
-  the label check alone, and runs no CI workflow (the publish step above says what gates
+  the label check alone, and runs no `ci.yml` (the publish step above says what gates
   it). The fork's label check also runs on fewer events than upstream's: when a PR opens
   or reopens and when its labels change, not on a push or an edit, so a push leaves the
   new head without it until the next label event (the second divergence in its header).

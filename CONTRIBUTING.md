@@ -62,7 +62,7 @@ catches or settles `inBrowser`'s rejection, so the rejection fails its test; it 
 end its own process, from a test, a hook or a timer; no condition the runner can leave unmet stands
 between a browser test and its `inBrowser` call; it skips and marks todo nothing). The reviewer of any PR
 that adds a roster line or changes a rostered leg's source or `inBrowser` checks the rule; the step does
-not. Nothing in the tree reads a leg's source for the rule, so the step can read green a rostered leg that
+not. Nothing checks the whole rule for every rostered leg, so the step can read green a rostered leg that
 breaks it. Examples, not the whole set: a rostered leg that launches its own browser and swallows a failed
 launch without skipping; a rostered module that launches nothing; a leg that drives a browser from a child
 process and tolerates the child's failure; a todo test that passes beside a real pass; a leg that catches
@@ -107,8 +107,11 @@ hook refuses a push that has something to scan and names the version it found.
 On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
 each batch head, and GitHub's CI runs once per batch, on the push of the batch
 branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux; member PRs
-and merges to main run none (`docs/batching.md`). The macOS cells run on the
-weekly schedule and on demand from the Actions tab, not on a batch push.
+and merges to main run none of it (`docs/batching.md`). The macOS cells run on the
+weekly schedule and on demand from the Actions tab, not on a batch push. CI's
+secret scan alone runs on every push of a branch or a tag whose commit carries
+`.github/workflows/secret-scan.yml`; a branch cut from main before that file
+landed starts no run of it until it merges main.
 
 ## Measuring dashboard pane performance
 

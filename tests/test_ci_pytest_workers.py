@@ -12,9 +12,10 @@ cap. The step's command sets the count through an expression on matrix.os: 2 for
 documented runner (4 CPUs, 16 GB) the four-CPU measurement was sized to, and 0 (xdist's in-process run) for any other
 label, so a runner the matrix adds later runs serially too. The pins hold the ubuntu-latest command to one count, 2, and
 every other runner's to none or 0, and require a step before Run pytest that installs pytest-xdist, without which pytest
-refuses -n, 0 included. The job's cap and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130 as merged:
-their figures and run ids are romp-on/romp's Actions runs of its serial suite, and with two workers the measurement puts
-this fork's Linux cells at about half their serial time, well inside that cap. Source pins, as
+refuses -n, 0 included. The job's cap and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130 as merged,
+but for the Linux figure: the runs before 2026-09-30 they cite are romp-on/romp's Actions runs of its serial suite. With
+two workers the measurement put this fork's Linux cells at about half their serial time; the suite has grown since, and
+the Linux cap of 40 is sized from this fork's own two-worker run 36664031774 (the job's comment in ci.yml). Source pins, as
 tests/test_ci_bats_bound.py: the workflow text read by line shape, with no YAML library in the test deps."""
 import os
 import re

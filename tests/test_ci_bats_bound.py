@@ -54,14 +54,18 @@ class PythonJobCeiling(unittest.TestCase):
     42 to 43 minutes; the rule (the suite plus the 600 s per-test timeout plus setup) gives 53 to 54, the floor is 54
     and the ceiling 60, so a revert to 40 goes red. Linux 25 to 35 the same day by the same rule: the 3.10
     Linux cell took 19 min 34 s on the dispatch of 2026-09-24 03:48 UTC (run 35952964334), under six minutes short of
-    the cap where about 20 plus 10 plus setup is about 31; its floor is 30 and its ceiling 45."""
+    the cap where about 20 plus 10 plus setup is about 31. Linux 35 to 40 on 2026-09-30 by the same rule (the PR's narrow
+    landing delta, ruling 6): on this fork's dispatch run 36664031774, with two workers, the Linux cells' pytest steps
+    took 1326 to 1572 s and their other steps at most 30 s, so the 3.10 cell's 1572 s plus the 600 s per-test timeout
+    plus 30 s of setup is 2202 s, about 36 min 42 s; the floor is 37, so a revert to 35 goes red, and the ceiling
+    stays 45."""
     def setUp(self):
         src = open(WF).read()
         m = re.search(r"^  python:\n((?:    .*\n|\n)+?)    strategy:\n", src, re.M)
         self.assertTrue(m, "the python job's head moved: re-anchor this pin")
         self.head = m.group(1)
 
-    def test_macos_cells_get_sixty_minutes_and_linux_thirty_five_and_neither_reverts_below_its_floor(self):
+    def test_macos_cells_get_sixty_minutes_and_linux_forty_and_neither_reverts_below_its_floor(self):
         m = re.search(r"^    timeout-minutes: \$\{\{ matrix\.os == 'macos-latest' && (\d+) \|\| (\d+) \}\}$", self.head, re.M)
         self.assertTrue(m, "the python job's timeout-minutes is not the per-cell expression (macos-latest && N || M)")
         macos, linux = int(m.group(1)), int(m.group(2))
@@ -70,10 +74,11 @@ class PythonJobCeiling(unittest.TestCase):
                                 "into its pytest step, so its suite sits near 42 to 43 minutes; that plus the 600 s per-test timeout "
                                 "plus setup is 53 to 54, so a cap below 54 cuts a green run")
         self.assertLessEqual(macos, 60, "past an hour a hung macOS cell eats the dispatch")
-        self.assertGreaterEqual(linux, 30, "the Linux cells need the margin: the 3.10 Linux cell took 19 min 34 s on run 35952964334 "
-                                "(2026-09-24) under a 25-minute cap; about 20 minutes of suite plus the 600 s per-test timeout plus "
-                                "setup is about 31, so a cap below 30 cuts a green run")
-        self.assertLessEqual(linux, 45, "a hung Linux cell past 45 minutes holds every PR's required check for nothing")
+        self.assertGreaterEqual(linux, 37, "the Linux cells need the margin: on this fork's run 36664031774 (2026-09-30) the 3.10 "
+                                "Linux cell's pytest step took 1572 s with two workers and its other steps 30 s; that plus the 600 s "
+                                "per-test timeout is 2202 s, about 36 min 42 s, so a cap below 37 kills a stall that begins late in "
+                                "the run before the per-test timeout names it")
+        self.assertLessEqual(linux, 45, "a hung Linux cell past 45 minutes delays its run's verdict, a batch push's among them, for nothing")
 
 
 class ExtensionJobCeiling(unittest.TestCase):

@@ -18,8 +18,10 @@ inherited value, and a leg log's header shows each variable by its name only.
 
 The legs run in private checkouts of the exact sha, never in the batcher's tree, one checkout per CI job (below): a
 private repository under <state dir>/sweeps/trees that reads the batcher's objects through its alternates, as
-`git clone --shared` does, holds no branch or tag of theirs and names no remote (shallow when their repository is),
-checked out at the sha with hooks off (make_checkout),
+`git clone --shared` does, holds no branch or tag of theirs and names no remote (shallow where their repository was
+when the run started: the runner reads its shallow file once, before the first leg, and every checkout gets that
+copy, so a leg that writes the file changes no later job's checkout), checked out at the sha with hooks off
+(make_checkout),
 every runner git call made with GIT_* removed, git's global and system configuration off and refs/replace ignored. It
 copies none of the batcher's repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or
 replace refs, so the legs see the sha's tree plus the tool installs, and
@@ -49,13 +51,16 @@ removed when its job's legs end, and TMPDIR (the run's, and the running leg's) a
 every exit path: SIGTERM, SIGHUP and SIGINT (Ctrl-C) stop each leg's process group, the runner exiting 128 plus the signal's
 number, except that SIGHUP or SIGINT the runner was started with ignored (nohup, a shell's background job) stays ignored,
 since its caller chose not to have the run stopped by it, while SIGTERM always stops it (round 2, the owner's build
-question 5; each leg still starts with both at their default action), and on Linux the runner is a child subreaper that kills whatever a leg left
-running, a descendant that left the group included. A stop signal that arrives during that cleanup does not cut it
+question 5; each leg still starts with both at their default action), and on Linux the runner is a child subreaper that kills whatever of
+its own process tree a leg left running (reap_descendants), a descendant that left the group included (a prctl that
+fails refuses the run before any leg; off Linux the runner is not one, and each run records that with the reason:
+runner.subreaper and runner.subreaper_why; the narrow landing delta's ruling 5; the processes that escape the reap are
+in the stated outside, below). A stop signal that arrives during that cleanup does not cut it
 short: the step it interrupted runs again from its start and the steps after it run too (round 2, correctness-3; a
 venv whose tree changed is still retired), and one that arrives while a checkout is being made removes what was made
 of it, its marker included (extra5-2). Each checkout records its sha beside it, and every run
-removes the checkouts of runs that are no longer running. Every orphaned descendant of a leg, in its process group
-or not, is reparented to the runner and reaped as soon as it exits while the leg runs, so it does not stay in the
+removes the checkouts of runs that are no longer running. On Linux every orphaned descendant of a leg, in its process
+group or not, is reparented to the runner and reaped as soon as it exits while the leg runs, so it does not stay in the
 leg's group as a defunct process.
 
 The legs (LEGS) are pytest (all of tests/, below), deps (`npm ci` from the sha's lockfile), bats, manager and tools
@@ -119,9 +124,11 @@ with the venv's bin, and the leg gets ROMP_SDK_REQUIRE=1 as CI's Run pytest step
 the pin test fails where the SDK does not import.
 
 The served leg mirrors CI's served step (SERVED_STEP, read by its name in whichever job of the swept sha's ci.yml holds
-it; read_served_step). It runs the files the globs on that step's pytest line select, in one pytest process, as CI's
-served step runs them (SERVED_FLAGS, which CiParity compares with the step, with the globs' expansion in their place,
-and PYTEST_ISOLATION; no -n). It runs in a venv the runner builds for it (served_environment), never in the pytest
+it; read_served_step). It runs the files the globs on that step's pytest line select (a module the line names by file
+is read as a glob that matches itself: since fork PR 860 the line names tests/test_relay_dial_declares_held_pair.py
+beside its two globs), in one pytest process, as CI's served step runs them (SERVED_FLAGS, which CiParity compares
+with the step, with the globs' expansion in their place, and PYTEST_ISOLATION; no -n). It runs in a venv the runner
+builds for it (served_environment), never in the pytest
 leg's: `python -m venv` from --served-python (default --python) under <state dir>/sweeps/served/<key>, then the served
 step's own pip lines as ci.yml writes them, each with the venv's python in place of `python`, and nothing else. So the
 venv holds no SDK, as CI's served step installs none, while a served test's kernel takes the SDK backend wherever the
@@ -133,25 +140,29 @@ check before each use and after the leg, the shared and exclusive locks and the 
 pytest leg's venv's (_venv_environment). A built venv is refused too when its directory does not hold python3 as the
 same file as its python: the served tests' kernels are started as bin/romp-kernel (#!/usr/bin/env python3), so they
 run the first python3 on the leg's PATH, which leads with the venv's directory. The leg's environment is the
-allowlist's plus the served step's own env: block as ci.yml writes it at the swept sha (ROMP_SERVED_TESTS_REQUIRE,
-which turns a skip in those files into a failure, and ROMP_SERVED_TESTS_ENGINES), read and never restated here; a
-served step the runner does not read in full (a value holding an expression, a name the runner sets itself, an env:
-on its job or the workflow, a line of its run text other than a pip install and the one pytest line, a python-version:
+allowlist's plus the served step's own env: block as ci.yml writes it at the swept sha, read and never restated here
+(when fork PR 860 landed: ROMP_SERVED_TESTS_REQUIRE, under which tests/conftest.py turns a skip in the files the two
+globs select into a failure, while the module named by file turns only its own precondition skips into failures;
+ROMP_SERVED_TESTS_ENGINES; and ROMP_CORNER_TWO_HOSTS, which runs the two-host lab); a served step the runner does not
+read in full (a value holding an expression, a name the runner sets itself, an env: on its job or the workflow, a line
+of its run text other than a pip install and the one pytest line, a python-version:
 other than a quoted MAJOR.MINOR) is refused by name. The result records the step's job, env, globs, pip lines and
 Python version, and the venv's key, path, interpreter and version, every distribution in it with its version, and the
 pytest plugins they declare, which pytest loads on its own (runner.served).
 
 The served leg also runs, with the deps present, the tests outside the served globs that the pytest leg skipped for
 want of the extension's node_modules or a browser (DEPS_SKIP). Neither of CI's jobs runs them (the Python cells have
-neither; the served step runs only the globs), and the sweep before the served rulings ran them in its pytest leg,
-after npm ci, so every test the rule selects still runs with the deps. They are derived at run time, not listed: the
+neither; the served step runs only the files its pytest line names), and the sweep before the served rulings ran
+them in its pytest leg, after npm ci, so every test the rule selects still runs with the deps. They are derived at run
+time, not listed: the
 pytest leg prints every skip with its node id and reason (-rfEs --no-fold-skipped), and deps_skipped reads, from its
 log's short summary, each SKIPPED line and each SUBSKIPPED line (pytest 9's subtests; the line names the test the
 subtest belongs to, which the served leg runs whole) outside the served globs whose reason DEPS_SKIP matches; the node
 ids join the served leg's command after the globs' files, and both legs' records name them. The reader is closed
 (round 2, Class C): a pytest leg whose log has no closing summary line, or whose short summary holds a line the reader
 does not read (a line shaped like a kind that is none of pytest's kinds, a skip line that does not name exactly one
-test, a non-blank line before any kind line), leaves the set unknown, and the served leg is then red naming why and the
+test, a non-blank line before any kind line, a non-blank line after a line starting with "=" or shaped like pytest's
+closing summary line and before the next kind line: the narrow landing delta's ruling 9), leaves the set unknown, and the served leg is then red naming why and the
 lines, never run without it. The count when the served rulings' condition was measured: 1 test in 1 file when
 measured on 2026-09-28 (tests/test_landing_bundles_built.py, whose build guard needs the extension's deps). The claim
 covers what the rule selects in a summary the reader reads. These summaries, each one pytest writes correctly, leave
@@ -163,17 +174,23 @@ parametrize id whose own brackets do not (such as "a[") is refused; a SUBSKIPPED
 than one place is refused, which a "] tests/" or ") tests/" in the subtest's description or in the skip's reason can
 make it, and so is one whose node id holds " tests/"; a log that holds more than one short-summary header line (a
 skip reason or a failure message that quotes one) is refused, since which one opens pytest's own summary is not known;
-and a reason or message that runs on to a line starting with an upper-case word that is none of pytest's kinds, an
+a warnings summary pytest prints after the short summary (pytest 9.1.1 does so for a warning that a
+pytest_terminal_summary hook of a conftest or a plugin emits) is refused, since its lines follow its header, a line
+starting with "=", before the closing summary line; and a reason or message that runs on to a line starting with an upper-case word that is none of pytest's kinds, an
 optional description and then "tests" before a slash, a space or the line's end (such as "ALL tests of this file need
 node_modules") is read as a kind the reader does not read. Under pytest 8 a subtest's skip prints as a SKIPPED line of
-its whole test, the same node id. One summary pytest writes correctly is read wrong without a refusal: a reason or
-message that runs on to a line of a kind the reader does read is read as that kind. That has two consequences. A skip
+its whole test, the same node id. Two summaries pytest writes correctly are read wrong without a refusal. The first: a
+reason or message that runs on to a line of a kind the reader does read is read as that kind. That has two consequences. A skip
 line there (a failure message or a skip reason quoting an inner pytest's SKIPPED line, say) adds its node id to the set
 when DEPS_SKIP matches its reason, and the served leg's pytest then exits 4 unless a test has exactly that id, which it
 then runs again. And a skip whose reason runs on to such a line (a FAILED, ERROR or SKIPPED line, say) has its reason
 cut there, so words of the reason after that line are not read: when only they would match DEPS_SKIP, the skip is
 dropped with no refusal, and the record lists it, with its reason up to that line, among the other skips
-(deps_skipped.unselected), so it can be seen. And three cases fall outside the claim. A skip for want of the deps whose reason DEPS_SKIP does not match runs in no leg; the
+(deps_skipped.unselected), so it can be seen. The second: a reason or message that runs on to a line starting with "="
+or shaped like pytest's closing summary line (a quoted header or closing line of an inner pytest's output, say) ends
+there, and that line's own words are not read; a non-blank line after it and before the next kind line leaves the set
+unknown, but when the lines after it up to the next kind line are blank, a skip whose words DEPS_SKIP matches only on
+that line is dropped with no refusal, listed among the other skips the same way. And three cases fall outside the claim. A skip for want of the deps whose reason DEPS_SKIP does not match runs in no leg; the
 pytest leg's record lists every other skip outside the served globs with its reason (deps_skipped.unselected), so such
 a miss can be seen. A test that does not skip without node_modules but takes another road runs there on that road
 only: two real-tree pins, in tests/test_lab_dist.py and tests/test_kernel_bundle_staleness.py, read esbuild.js under tests/lab_dist_stub.py's stand-in for a missing package,
@@ -228,7 +245,9 @@ legs start from a fresh clone verified against the sha's tree: no file in the cl
 info/exclude, config, a ref or refs/replace, packed-refs, objects/info/alternates) and no ignored file (bytecode,
 node_modules, dist). Nor does a branch or tag a leg writes into the batcher's repository, which it can find through
 its clone's alternates: each clone holds the sha alone, no branch and no tag of that repository (make_checkout), as
-CI's checkout fetches the pushed sha alone, and names no remote, so a plain `git fetch` in a later job copies none. Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
+CI's checkout fetches the pushed sha alone, and names no remote, so a plain `git fetch` in a later job copies none. Nor
+does a shallow file a leg writes there: each clone gets the one the runner read before the first leg (shallow_snapshot;
+the narrow landing delta's ruling 8). Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
 each leg makes the run invalid when it finds one of the changes it checks for (above); anything else a leg leaves in
 that checkout (a hook or an attributes file in the clone's .git, a replace ref, an ignored file other than one the
 deps leg adds outside vscode-extension/node_modules) reaches the later legs of its job, as it would reach CI's later
@@ -237,13 +256,33 @@ each TMPDIR, /dev/shm, /run/user/<uid>, the shared npm and Playwright caches, th
 password database names, which is not HOME and which a leg can write to), tmux's socket directory (tmux ignores
 TMPDIR), --python's directory, which leads the PATH of every leg outside the two venvs, and the batcher's repository's
 object store, which every clone reads (a rewritten object of the sha fails the next job's verification). A leg can leave a
-file in any of these that a later leg reads.
+file in any of these that a later leg reads. The stated outside also holds four kinds of process that outlive their
+leg. The runner reaps its own process tree: when a leg ends, reap_descendants kills the runner's children again and
+again until none is left or 30 s pass, and on Linux, where the subreaper reparents each orphaned descendant of a leg
+to the runner (a setsid child, a double-forked grandchild), that is everything the leg left running in the runner's
+tree. The four escape that reap, so each can still be running after its leg ends and write into a checkout (its own
+job's or a later job's) or anywhere else the batcher's user can write. (1) A process started at a leg's request by a
+process already running outside the runner's tree, which the runner neither waits for nor reaps: a unit of the user
+service manager (systemd-run --user, systemctl --user start; the allowlist passes no XDG_RUNTIME_DIR, but a leg can
+set it to /run/user/<uid> and reach that manager), a window of a tmux server already running, an at or cron job, or a
+service that D-Bus activates. (2) A leg run under a --wrap that hands it to a service manager (systemd-run --user
+without --scope): the runner waits for the wrap's own process, and the leg and what it starts run outside the runner's
+tree. A wrap must keep the leg in the runner's tree, which the runner does not check. (3) Every orphaned descendant of
+a leg, and so everything the leg leaves running, when the runner is not a child subreaper: off Linux, where nothing is
+reparented to the runner. On Linux a prctl that fails refuses the run instead, and each run records which case it was
+(runner.subreaper). (4) A descendant still alive when reap_descendants' 30 s bound runs out: it stays the runner's
+child and runs on into the next leg, until the next reap. A write by one of these makes the run invalid only when the
+re-read after a leg, or a later checkout's verification, checks the path it wrote, and the invalid mark then names the
+leg after which, or the checkout in which, the change was found, which need not be the leg that started the process;
+any other write leaves the run valid.
 
 The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
 the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
 switch, so a Chromium that fails to launch there skips instead of failing), the Python versions other than --python's,
-and macOS run only in the batch's CI. CI's free-threaded cell also runs pytest with PYTHON_GIL=0, which the
-runner does not set, so a free-threaded --python runs with its own default.
+and macOS run only in GitHub's CI: the Linux jobs in every run of ci.yml (a batch push, a manual run, the weekly
+schedule), and the macOS cells only in a manual run (workflow_dispatch) or the weekly schedule. CI's free-threaded
+cell also runs pytest with PYTHON_GIL=0, which the runner does not set, so a free-threaded --python runs with its own
+default.
 
 The result is append-only (schema 2): `runs` keeps every run at the sha, oldest first, and a run is never
 rewritten once it has finished. Every run records the private checkout it ran in (runner.checkout); a reader
@@ -287,7 +326,9 @@ blocked, when it also failed, are that invalid run's failures, which count. A --
 tests the newest pytest leg at the sha skipped for want of the deps.
 
 The runner calls no nice, ionice, systemd-run, flock or slot script itself: a machine that runs legs
-under such wrappers passes them with --wrap. It imports nothing beyond the standard library.
+under such wrappers passes them with --wrap, which must keep the leg in the runner's process tree (systemd-run
+--scope does; a systemd-run that starts a service does not; the stated outside, above). It imports nothing beyond
+the standard library.
 """
 import argparse
 import datetime as _dt
@@ -465,11 +506,13 @@ PYTEST_VALUE_OPTIONS = ("-p", "-n", "-c", "-k", "-m", "-o", "-r", "-W", "--rootd
                         "--ignore", "--ignore-glob", "--deselect", "--durations", "--timeout", "--timeout-method",
                         "--maxfail", "--dist")
 # A glob on the served step's pytest line: a relative pattern for .py files directly under tests/, the form the step
-# writes; anything else there is refused rather than read.
+# writes (a module the line names by file is one, a pattern that matches itself); anything else there is refused rather
+# than read.
 _SERVED_GLOB = re.compile(r"tests/[A-Za-z0-9_.*?\[\]-]+\.py")
 # The tests outside the served globs that skip without the extension's node_modules or a browser run in neither of CI's
-# jobs: CI's Python cells have neither, and CI's served step runs only the globs. The sweep before the served ruling ran
-# them, in its pytest leg after npm ci, so the served leg runs them now, with the deps present (the served ruling's
+# jobs: CI's Python cells have neither, and CI's served step runs only the files its pytest line names. The sweep before
+# the served ruling ran them, in its pytest leg after npm ci, so the served leg runs them now, with the deps present
+# (the served ruling's
 # condition, 2026-09-28; the module docstring names what falls outside it). They are derived at run time from the
 # pytest leg's own log: every skip its short summary prints (`SKIPPED <node id> - <reason>`, or for a subtest
 # `SUBSKIPPED<description> <node id> - <reason>`, naming the test it belongs to; PYTEST_FLAGS' -rfEs --no-fold-skipped)
@@ -1146,15 +1189,44 @@ def _random_tail(n=8):
     return "".join(rng.choice(string.ascii_lowercase + string.digits) for _ in range(n))
 
 
-def make_checkout(tree, sha):
+def common_dir(tree):
+    """The batcher's repository's common dir (`git rev-parse --git-common-dir`), absolute: the objects every checkout
+    reads through its alternates, and the shallow file (shallow_snapshot)."""
+    common = git(tree, "rev-parse", "--git-common-dir")
+    return common if os.path.isabs(common) else os.path.abspath(os.path.join(tree, common))
+
+
+def shallow_snapshot(tree):
+    """The bytes of the batcher's repository's shallow file (<common dir>/shallow) as it stands now, or None when it has
+    none. The runner reads it once, before the first leg, and gives that snapshot to every job's checkout
+    (make_checkout), never the live file: a leg can find the batcher's repository through its clone's alternates and
+    write that file, and a checkout that re-read it would then be shallow at the leg's boundary, so what the leg wrote
+    would reach every later job (the narrow landing delta's ruling 8). A shallow file that exists and cannot be read
+    refuses the run, naming it."""
+    path = os.path.join(common_dir(tree), "shallow")
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise Refused("the shallow file of the repository at %s cannot be read (%s: %s)" % (tree, path, e))
+
+
+def make_checkout(tree, sha, shallow):
     """(path, marker, seconds): a private repository at <state dir>/sweeps/trees/<sha12>-<random> that reads the
     batcher's objects (their common dir's objects, named in its objects/info/alternates, as `git clone --shared` names
     them) and holds none of their refs, with no remote, then `checkout -q --detach <sha>` there with hooks off: the sha
-    alone, with no branch and no tag, as CI's checkout fetches the pushed sha alone, so a branch or tag a leg writes
+    alone among refs, with no branch and no tag, as CI's checkout fetches the pushed sha alone (its history is the
+    batcher's repository's, not CI's depth 1: whole through the alternates, or cut at the shallow file below), so a
+    branch or tag a leg writes
     into the batcher's repository reaches no later job's checkout (the focused re-check's ruling 4: a clone copied every
     branch and tag, and such refs crossed to every later job; and its land check, finding 1: an `origin` naming their
-    common dir let a plain `git fetch` copy them). When the batcher's repository is shallow its shallow file is copied,
-    so the checkout is shallow as a `git clone --shared` of it would be (the land check, finding 2). It copies none of the batcher's
+    common dir let a plain `git fetch` copy them). `shallow` is the batcher's shallow file as shallow_snapshot read it
+    before the first leg (None: their repository was not shallow then); when it is not None it becomes the checkout's
+    shallow file, so the checkout is shallow as a `git clone --shared` of their repository would have been when the run
+    started (the land check, finding 2), and a shallow file a leg writes there later reaches no job's checkout (the
+    narrow landing delta's ruling 8). It copies none of the batcher's
     repository config, info/attributes, info/exclude, hooks, sparse patterns, index flags or refs/replace either, and a
     leg's git writes land in it. The marker beside it, written first, holds the full sha,
     so a later run can tell whether that sha's lock is held (sweep_stale_checkouts). Any exception between the marker's
@@ -1162,8 +1234,7 @@ def make_checkout(tree, sha):
     marker before it propagates (round 2, extra5-2)."""
     parent = trees_dir()
     os.makedirs(parent, mode=0o700, exist_ok=True)
-    common = git(tree, "rev-parse", "--git-common-dir")
-    common = common if os.path.isabs(common) else os.path.abspath(os.path.join(tree, common))
+    common = common_dir(tree)
     t0 = time.monotonic()
     path = marker = None
     try:
@@ -1194,9 +1265,11 @@ def make_checkout(tree, sha):
                 f.write(os.path.join(common, "objects") + "\n")
             # a shallow batcher's repository gives a shallow checkout, as `git clone --shared` of one does (the land
             # check of ruling 4, its finding 2: without its shallow file a checkout reading history failed on an
-            # absent parent)
-            if os.path.isfile(os.path.join(common, "shallow")):
-                shutil.copyfile(os.path.join(common, "shallow"), os.path.join(path, ".git", "shallow"))
+            # absent parent), from the snapshot read before the first leg, never the live file, which a leg can write
+            # (the narrow landing delta's ruling 8)
+            if shallow is not None:
+                with open(os.path.join(path, ".git", "shallow"), "wb") as f:
+                    f.write(shallow)
         if p.returncode == 0:
             p = git(path, "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
         if p.returncode != 0:
@@ -1569,14 +1642,20 @@ def _on_stop(signum, _frame):
     raise Stopped(signum)
 
 
-# Whether install_stop_handlers made this process a child subreaper; wait_leg reads it.
+# Whether install_stop_handlers made this process a child subreaper; wait_leg reads it, and each run records it
+# (runner.subreaper; the narrow landing delta's ruling 5).
 _subreaper = False
+# Why this process is not a child subreaper, when it is not; each run records it beside runner.subreaper
+# (runner.subreaper_why). install_stop_handlers sets it off Linux; on Linux a prctl that fails refuses the run instead.
+_subreaper_why = "install_stop_handlers did not run"
+# prctl's option that makes the calling process a child subreaper (linux/prctl.h).
+PR_SET_CHILD_SUBREAPER = 36
 # The stop signals install_stop_handlers left ignored, as the runner's caller started it (IGNORE_INHERITED); run_leg
 # reads it.
 _kept_ignored = ()
 
 
-def install_stop_handlers():
+def install_stop_handlers(platform=None):
     """SIGTERM, SIGHUP and SIGINT (STOP_SIGNALS) raise Stopped, so every exit path runs the cleanup; but SIGHUP or SIGINT
     that the runner's caller started it with ignored (IGNORE_INHERITED: nohup ignores SIGHUP, a non-interactive shell's
     background job SIGINT) is left ignored, since the caller chose not to have the run stopped by it (round 2, the
@@ -1585,15 +1664,20 @@ def install_stop_handlers():
     action (run_leg), as they start when the runner catches the two and as CI's steps start, so a leg's tests run the
     same however the runner was started. SIGCHLD gets its default action; and on Linux the runner becomes a child
     subreaper (PR_SET_CHILD_SUBREAPER), so every orphaned descendant of a leg, in its process group or not (setsid:
-    Playwright's browsers, the kernel's session scopes), is reparented to the runner instead of to init: the runner
-    reaps it as soon as it exits while the leg runs (wait_leg), so it does not stay in the leg's group as a defunct
-    process, and kills it if it is still running when the leg ends (reap_descendants).
+    Playwright's browsers, the kernel's session scopes), is reparented to the runner instead of to the nearest
+    subreaper above it (a user service manager, or init): the runner reaps it as soon as it exits while the leg runs
+    (wait_leg), so it does not stay in the leg's group as a defunct process, and kills it if it is still running when
+    the leg ends (reap_descendants; what escapes that is in the module docstring's stated outside). On Linux a prctl
+    that fails refuses the run, naming it, before any checkout or leg (the narrow landing delta's ruling 5: fail
+    closed, since the legs would otherwise run with what they leave running neither reaped nor killed); off Linux
+    (`platform`, default sys.platform) the runner runs and is not a subreaper, and each run records that with the
+    reason (runner.subreaper false, runner.subreaper_why).
 
     An ignored SIGCHLD survives exec, so a parent that ignores it hands the runner a disposition under which the kernel
     reaps every child itself: every exit status, the leg's and each subprocess.run's, would read 0, and wait_leg, which
     blocks until some child is waitable, would wait until the runner had no child left (a leg's daemon kept it waiting
     until it exited). The default action is set here, before the runner starts any child, and the legs inherit it."""
-    global _subreaper, _kept_ignored
+    global _subreaper, _subreaper_why, _kept_ignored
     signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     kept = []
     for s in STOP_SIGNALS:
@@ -1602,12 +1686,33 @@ def install_stop_handlers():
             continue
         signal.signal(s, _on_stop)
     _kept_ignored = tuple(kept)
-    if sys.platform.startswith("linux"):
-        try:
-            import ctypes
-            _subreaper = ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
-        except (OSError, AttributeError):
-            pass
+    platform = sys.platform if platform is None else platform
+    if platform.startswith("linux"):
+        _become_subreaper()
+        _subreaper, _subreaper_why = True, None
+    else:
+        _subreaper = False
+        _subreaper_why = ("the runner runs on %s, and only Linux lets a process become a child subreaper (prctl "
+                          "PR_SET_CHILD_SUBREAPER), so an orphaned descendant of a leg is not reparented to the runner and "
+                          "is neither reaped nor killed when its leg ends" % platform)
+
+
+def _become_subreaper():
+    """Make this process a child subreaper (prctl PR_SET_CHILD_SUBREAPER), or refuse the run naming why (the narrow
+    landing delta's ruling 5): Linux only, called by install_stop_handlers before the runner starts any child."""
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        rc = libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
+        err = ctypes.get_errno()
+    except (OSError, AttributeError) as e:
+        raise Refused("the runner could not make itself a child subreaper: prctl PR_SET_CHILD_SUBREAPER could not be "
+                      "called (%s), so what a leg leaves running would be neither reaped nor killed; nothing was run or "
+                      "recorded" % e)
+    if rc != 0:
+        raise Refused("the runner could not make itself a child subreaper: prctl PR_SET_CHILD_SUBREAPER returned %s (%s), "
+                      "so what a leg leaves running would be neither reaped nor killed; nothing was run or recorded"
+                      % (rc, os.strerror(err) if err else "no errno"))
 
 
 def _default_kept_signals():
@@ -1814,11 +1919,14 @@ def _tokenized(name, leg, value, ctx):
 # Round 2, decision 15: the leg environment the hash names changed with round 2's fixes (each leg's own TMPDIR, HOME and
 # state root, Class B; one fresh checkout per ci.yml job, decision 13), so the hash names both, and no result written by
 # a runner before them, which shared one HOME, state root, TMPDIR and checkout across the legs, reads as recorded under
-# the same leg environment (body item 9's rule: a leg-environment change changes the hash).
+# the same leg environment (body item 9's rule: a leg-environment change changes the hash). LEG_CHECKOUT's text moved it
+# again at the focused re-check's ruling 4 (the sha alone, no branch, tag or remote, and the batcher's shallow file) and
+# at the narrow landing delta's ruling 8 (that shallow file as it stood when the run started, since a leg's write to it
+# no longer reaches a later job): each is a change in what a job's checkout holds.
 LEG_SCRATCH = "each leg: a fresh TMPDIR of its own, HOME and XDG_STATE_HOME under it, removed when the leg ends"
 LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone of the sha alone, no branch, no "
-                "tag and no remote, shallow where the batcher's repository is, in the job's step order, npm ci where the "
-                "job runs it; each job's legs their own")
+                "tag and no remote, shallow where the batcher's repository was when the run started, in the job's step "
+                "order, npm ci where the job runs it; each job's legs their own")
 
 
 def leg_env_doc(ctx):
@@ -2470,8 +2578,9 @@ def read_served_step(checkout, sha):
     """The served leg's step in the swept sha's ci.yml (SERVED_STEP), found by its name in whichever job holds it and
     read from the checkout: {"job", "step", "env", "globs", "requirements", "install", "python"}. env is the step's env:
     block, {NAME: value}, each value as YAML reads it (_env_value); globs are the file patterns on its one pytest line, in
-    order; requirements the distributions its pip install lines name, and install those lines as argvs (each starting
-    `python`, CI's name for the step's interpreter, which the served venv's build replaces with the venv's); python the
+    order (a module the line names by file among them, a pattern that matches itself); requirements the distributions
+    its pip install lines name, and install those lines as argvs (each starting `python`, CI's name for the step's
+    interpreter, which the served venv's build replaces with the venv's); python the
     MAJOR.MINOR the nearest actions/setup-python step before it in its job sets up (its with: python-version:, a quoted
     version, _PYTHON_VERSION), the interpreter the served venv is built from. Refused, naming the file and the step,
     when that step or its python-version: is missing or not in that form; when ci.yml cannot be read; has
@@ -3255,10 +3364,13 @@ def deps_skipped(path, served_files, others=None):
     one, and which one opens pytest's own summary is then not known: read from the last, a quoted header followed by a
     quoted skip line dropped every skip before it with no refusal); or its short summary holds a line this reader does
     not read, each named in why. The reader is closed: a line shaped like a kind that is none of the kinds, a skip line
-    that does not name exactly one test (_skip_line), and a non-blank line before any kind line are not read. A line of
-    no kind's shape after a kind line runs its reason or message on; a reason or message that runs on to a line of a
-    kind the reader reads is read as that kind, and a skip's reason is cut there, so words after that line are not
-    matched (the module docstring discloses both)."""
+    that does not name exactly one test (_skip_line), a non-blank line before any kind line, and a non-blank line after
+    a line starting with "=" or shaped like pytest's closing line and before the next kind line (the narrow landing
+    delta's ruling 9: such a line ends a reason or message, and before that ruling the lines after it were dropped with
+    no refusal) are not read. A line of no kind's shape after a kind line runs its reason or message on; a reason or
+    message that runs on to a line of a kind the reader reads is read as that kind, and a skip's reason is cut there, so
+    words after that line are not matched; and one that runs on to a line starting with "=" or shaped like the closing
+    line is cut there too, that line's own words not read (the module docstring discloses all three)."""
     data = _read_log(path) if path else None
     if data is None:
         return None, "the pytest leg's log cannot be read"
@@ -3272,7 +3384,8 @@ def deps_skipped(path, served_files, others=None):
                       "message can quote one, so which opens pytest's own short summary, and the tests it skipped for want "
                       "of the extension's node_modules or a browser, are not known"
                       % (len(heads), ", ".join(str(i + 1) for i in heads[:5]) + (", ..." if len(heads) > 5 else "")))
-    skips, cur, seen, unread = [], None, False, []
+    # ended: a line starting with "=" or shaped like the closing line came after the last kind line (ruling 9)
+    skips, cur, seen, unread, ended = [], None, False, [], False
     for line in lines[heads[-1] + 1:] if heads else ():
         if _SKIP_KIND.match(line):
             nodeid, reason, why = _skip_line(line)
@@ -3283,12 +3396,14 @@ def deps_skipped(path, served_files, others=None):
             else:
                 unread.append((why, line))
                 cur = None
+            ended = False
         elif _SUMMARY_WORD.match(line):
-            cur, seen = None, True
+            cur, seen, ended = None, True, False
         elif line.startswith("=") or PYTEST_SUMMARY.fullmatch(line):
-            cur = None
-        elif line.strip() and (_KIND_SHAPED.match(line) or not seen):
-            unread.append(("a kind this reader does not read" if _KIND_SHAPED.match(line) else "a line before any kind line",
+            cur, ended = None, True
+        elif line.strip() and (_KIND_SHAPED.match(line) or not seen or ended):
+            unread.append(("a kind this reader does not read" if _KIND_SHAPED.match(line) else "a line before any kind line"
+                           if not seen else "a line after a line starting with '=' or shaped like the closing summary line",
                            line))
             cur = None
         elif cur is not None:
@@ -3708,8 +3823,11 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
     if history and history["dead"]:
         raise Refused("no run at %s can pass: %s; fix it and sweep the new head" % (short(sha), history["dead"]))
     run = {"kind": "leg" if only else "full", "sha": sha, "branch": branch, "tree": tree, "started": now(), "finished": None,
-           "flakes": flakes, "runner": {"script_blob": script_blob(), "python": python, "python_version": ""},
+           "flakes": flakes, "runner": {"script_blob": script_blob(), "python": python, "python_version": "",
+                                        "subreaper": _subreaper},
            "legs": {}, "verdict": "running", "red": [], "invalid": None}
+    if not _subreaper:
+        run["runner"]["subreaper_why"] = _subreaper_why
     base_legs = {}
     if only:
         rec, why = effective(data)
@@ -3828,7 +3946,10 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             raise stopped[0]
 
     try:
-        checkout, marker, create_s = make_checkout(tree, sha)
+        # The batcher's shallow file, read once, before the first leg: every job's checkout gets this snapshot, so a
+        # shallow file a leg writes into the batcher's repository reaches no later job (the narrow landing delta's ruling 8).
+        shallow = shallow_snapshot(tree)
+        checkout, marker, create_s = make_checkout(tree, sha, shallow)
         _plant_for_tests(checkout)
         t0 = time.monotonic()
         entries = tree_entries(checkout, sha)
@@ -3942,7 +4063,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                 # rewrote an object of the sha in the batcher's repository, whose objects the clone reads) makes the run
                 # invalid rather than refusing it.
                 try:
-                    checkout, marker, create_s = make_checkout(tree, sha)
+                    checkout, marker, create_s = make_checkout(tree, sha, shallow)
                     t0 = time.monotonic()
                     faults = verify_checkout(checkout, sha, entries)
                     if faults:
@@ -4138,7 +4259,9 @@ def main(argv=None):
                    help="a command prefix for that leg's argv (shlex-split); * means every leg, and a leg's own prefix "
                         "replaces * for it; the recorded rc is the wrapper's. The prefix runs with this runner's "
                         "environment and the leg's allowlisted environment applies after it, so nothing it sets reaches "
-                        "the leg")
+                        "the leg. The prefix must keep the leg in this runner's process tree (systemd-run --scope "
+                        "does; a systemd-run that starts a service does not): what a leg outside the tree leaves "
+                        "running is not reaped, and the runner does not check this")
     p.add_argument("--leg", action="append", metavar="NAME",
                    help="re-run only this leg at the same sha, after the result's newest run failed it on a known flake "
                         "(needs --flake; once per leg; the re-run is appended to the result's runs, which keep the failed "

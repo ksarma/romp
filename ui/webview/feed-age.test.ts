@@ -202,6 +202,8 @@ test("feed.ts reads the clock only through nowSec(), stamps every age and durati
   // "hidden" is the paint gate's decision over its two measures (paint-gate.ts: the tab's visibility and the
   // observer's word on #feed-list), not a second probe of the pane's viewport; both release events catch up
   assert.match(FEED, /const live = liveRefresher\(\{ hidden: \(\) => paintHeld\(document\.hidden, feedIntersecting, true\), pass: livePass \}\);\nsetInterval\(live\.tick, 15000\);\ndocument\.addEventListener\("visibilitychange", live\.catchUp\);\n/);
-  assert.match(FEED, /feedIntersecting = entries\.some\(\(e\) => e\.isIntersecting\);\n\s*releasePaint\(\);\n\s*live\.catchUp\(\);/);
+  // the observer's callback records its word, spends the show override and drops a parked jump on a hide after a show (feed-hidden-paint.test.ts,
+  // review round 2 of the lazy panes, 2026-09-19) before the release and the catch-up
+  assert.match(FEED, /feedIntersecting = entries\.some\(\(e\) => e\.isIntersecting\);\n\s*revealShown = false;[^\n]*\n\s*if \(was === true && !feedIntersecting\) pendingRevealKey = null;[^\n]*\n\s*releasePaint\(\);\n\s*live\.catchUp\(\);/);
   assert.doesNotMatch(FEED, /window\.innerWidth === 0 \|\| window\.innerHeight === 0/, "no zero-viewport probe beside the gate");
 });

@@ -5,14 +5,24 @@ name: CI
 # extension build; and scan the whole history for credentials (the secrets job).
 #
 # LINUX runs on every push to a batch branch (batch/**), on the weekly schedule and by hand; it is
-# free on a public repo, with no minute cap. Member PRs and merges to main run none (2026-09-27):
+# free on a public repo, with no minute cap. Member PRs and merges to main run none of it (2026-09-27;
+# a copy of the secrets job runs on each push whose commit carries secret-scan.yml, whose header says
+# why and which pushes start no run of it):
 # the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate, and
 # scripts/batch.py land refuses a batch whose head does not contain main, reading main again right
 # before the merge, so the merge commit's tree is the batch head's tree, the one this workflow tested
 # on the batch push; a move of main after that last read is not stopped, and batch.py finish reports
-# it loudly from the merge commit's first parent (docs/batching.md). A private repository spends its
-# minutes on each batch push, on each manual run and on the weekly schedule, whose macOS cells bill at
-# ten times the Linux rate there: the schedule is the larger cost.
+# it loudly from the merge commit's first parent (docs/batching.md). A private repository is billed
+# for each run by the job-minute, each job rounded up to a whole minute. Run 36664031774 ran on the
+# public runner (4 CPUs; the private one has 2, and no run has been measured there); by that rule
+# its Linux jobs come to 211 minutes, all of this workflow a batch push runs; the same push also runs
+# secret-scan.yml's copy of the secrets job, about 2 more (this run's secrets job took 107 s). A
+# manual run or the weekly schedule adds the macOS cells: 138 runner minutes in that run, billed at
+# about ten times the Linux rate, so about 1,380 Linux minutes' worth, and a floor: two of those cells
+# were cancelled at their 60-minute cap, and the bats cell failed 15 s into its test step without
+# running a test (bats could not gather the tests: macOS's bash 3.2 rejects the file-scope
+# `declare -gA` in tests/pre-push-hook.bats), where a working run of the suite takes about 16
+# minutes (below).
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (the bats
 # suite alone is about 16 minutes) and the runners are scarcer, so they do NOT run
@@ -32,7 +42,7 @@ name: CI
 
 on:
   push:
-    # Pushes to a batch branch, nothing else (2026-09-27). A member PR runs no CI of its own: the
+    # Pushes to a batch branch, nothing else (2026-09-27). A member PR runs none of this workflow: the
     # local sweep (scripts/sweep.py) at the batch head is the landing gate, and this workflow runs
     # once on the batch branch, whose PR is expected to show that run's checks on its head (the first
     # batch confirms it: docs/batching.md, "Checked on the first batch"). A merge to main runs none
@@ -87,13 +97,15 @@ jobs:
     # dispatch five hours later (run 35976250043) the 3.13 cell finished green in 38 min 52 s while
     # the 3.10 cell was cancelled at 40 min 20 s by the 40-minute cap with no failure in its log,
     # having reached 90 percent 36 min 40 s into its pytest step; the 3.13 cell's pytest step ended
-    # about 5.5 minutes after its own 90 percent, so the 3.10 suite sits near 42 to 43 minutes and
-    # the rule gives 53 to 54. macOS gets 60, the pin's ceiling (past an hour a hung cell eats the
-    # dispatch). Linux gets 35 by the same rule: the 3.10 Linux cell took 19 min 34 s on the
-    # dispatch of 2026-09-24 03:48 UTC (run 35952964334) and the Linux cells 14 to 17 minutes on
-    # the release dispatch, so 25 left under six minutes where about 20 plus 10 plus setup is
-    # about 31.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 35 }}
+    # about 5.5 minutes after its own 90 percent, so the 3.10 suite sat near 42 to 43 minutes and
+    # the rule gave 53 to 54. macOS gets 60, the pin's ceiling (past an hour a hung cell eats the
+    # dispatch); on the dispatch of 2026-09-30 (run 36664031774) the macOS 3.10 and 3.13 cells were
+    # both cancelled at this cap, 3555 s and 3598 s into their pytest steps, so the macOS suite now
+    # runs longer than the ceiling allows. Linux gets 40 by the same rule: on that dispatch the
+    # Linux cells' pytest steps took 1326 to 1572 s with two workers (the 3.10 cell the longest)
+    # and their other steps at most 30 s, so the rule gives 1572 + 600 + 30 = 2202 s, about
+    # 36 min 42 s, past the 35 minutes the cap had, and 40 leaves about 3 min 18 s.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 40 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -352,9 +364,10 @@ jobs:
         # GitHub substitutes the expression into this line before the shell runs it. -n 0 is
         # xdist's in-process run, and pytest refuses -n without xdist, so every cell installs it.
         # The job cap above and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130
-        # as merged: their figures and run ids are romp-on/romp's Actions runs of its serial
-        # suite. With two workers the measurement above puts this fork's Linux cells at about
-        # half their serial time, well inside that cap.
+        # as merged, but for the Linux figure: the runs before 2026-09-30 they cite are
+        # romp-on/romp's Actions runs of its serial suite. With two workers the measurement above
+        # put this fork's Linux cells at about half their serial time; the suite has grown since,
+        # and the Linux cap of 40 is sized from this fork's own two-worker run 36664031774.
         # Under the Linux cells' workers a timeout ends the worker process running the hung test:
         # xdist fails that test by name ("worker 'gw0' crashed while running '<test id>'") and the
         # other tests run on. The thread dump pytest-timeout writes goes to that worker's stdout,
@@ -429,8 +442,10 @@ jobs:
         # repo's scanning rules (.gitleaks.toml: the value-anchored allowlist, the merge-commit scan)
         # would be checked nowhere; ROMP_GITLEAKS_REQUIRE=1 on the Run bats step below turns that
         # skip into a red job, so a broken install cannot ship as green skips. The same pinned,
-        # checksummed release the secrets job installs; bump the two version/sha pairs together.
-        # Linux only: the macOS cell is manual (see the header), and one arbiter is enough.
+        # checksummed release the secrets job installs; bump the version/sha pairs together (this
+        # one, the secrets job's and its copy in secret-scan.yml).
+        # Linux only: the macOS cell runs only in a manual run or the weekly schedule (see the header), and one
+        # arbiter is enough.
         if: runner.os == 'Linux'
         timeout-minutes: 5
         env:
@@ -472,8 +487,16 @@ jobs:
         run: node --test tests/manager-*.test.js
 
   secrets:
+    # The same job runs as secret-scan.yml's secrets job on each push, of a branch or a tag, whose
+    # commit carries that file (its header names the pushes that start no run), since this workflow
+    # runs only on a batch push, by hand and on the schedule (2026-09-30).
+    # tests/test_ci_secret_scan.py holds the two copies equal, every key but the name, so a change
+    # here is made there too; the reasons for the steps are written here only.
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    # The job reads the repository and writes nothing.
+    permissions:
+      contents: read
     # About a minute in practice (a full-history checkout, then two scans); the cap exists so a
     # wedged download cannot burn the 6h default.
     timeout-minutes: 10
@@ -490,7 +513,8 @@ jobs:
         # (gitleaks_<version>_checksums.txt), rather than the marketplace action: a step that exists
         # to keep secrets out of the repo should not hand a token to a third-party action, and
         # gitleaks-action needs a licence key for organisation-owned repos. To bump, change both
-        # lines together (here and in the shell job above), or the checksum check fails loudly.
+        # lines together (here, in secret-scan.yml's copy of this job and in the shell job above), or
+        # the checksum check fails loudly.
         timeout-minutes: 5
         env:
           GITLEAKS_VERSION: 8.28.0
@@ -706,7 +730,7 @@ jobs:
         # but the one node gave it; it does not end its own process, from a test, a hook or a timer; no condition the
         # runner can leave unmet stands between a browser test and its inBrowser call; it skips and marks todo
         # nothing). The reviewer of any PR that adds a roster line or changes a rostered leg's source or inBrowser
-        # checks the rule; the step does not. Nothing in the tree reads a leg's source for the rule, so the step can
+        # checks the rule; the step does not. Nothing checks the whole rule for every rostered leg, so the step can
         # read green a rostered leg that breaks it. Examples, not the whole set: a rostered leg that launches its own
         # browser and swallows a failed launch without skipping; a rostered module that launches nothing; a leg that
         # drives a browser from a child process and tolerates the child's failure; a todo test that passes beside a
@@ -735,11 +759,15 @@ jobs:
         # other files on; a leg's own { timeout } does not end the process, since a live browser handle keeps it up
         # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in
         # the batch push's CI run, or in a workflow_dispatch of the PR's branch (which also runs the macOS cells), since
-        # the PR's own sweep does not run this step (scripts/sweep.py's docstring: it runs only in the batch's CI), and
-        # raises the step's timeout-minutes when the total needs it, and the job's cap with it when the new bound does
-        # not fit the margin (the job comment above), and node's --test-timeout when one leg's own bound or its
-        # whole-file seconds need it. Step seconds, job minutes and the job's cap:
-        # (measured on the runner at 6dd80a6e7, the fork's main after batch 932, in main's run 36555049532, the first run on main after the served-page tests moved to a job of their own, one leg rostered, the launcher's own switch test: 2 s for this step (node's own duration 2.36 s) in a job of 4 min 45 s, under the 17-minute cap, a margin of 735 s. The step's and the job's times are the jobs API's, in whole seconds. A later commit is read against the files this step runs: the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts); one that changes none of them leaves the step as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds and the job's length, which moves with the suite, are re-read from CI at each pushed head in the PR's body. tools/ci-browser-legs.test.mjs holds the job time here against the cap and the step's own bound, and the cap's figure to the job's timeout-minutes line; of its other figures it checks only that one spelled N s is present, and reads the step's seconds, the stated margin, the sha and the run not at all. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; each PR that adds a leg states its own leg's numbers in its body, read from the batch push's CI run or from a workflow_dispatch of its branch, since a PR runs no CI of its own.)
+        # the PR's own sweep does not run this step (scripts/sweep.py's docstring: it runs only in GitHub's CI, in every
+        # run of this workflow: a batch push, a manual run, the weekly schedule), and raises the step's timeout-minutes
+        # when the total needs it, and the job's cap with it when the new bound does not fit the margin (the job
+        # comment above), and node's --test-timeout when one leg's own bound or its whole-file seconds need it. Step
+        # seconds, job minutes and the job's cap:
+        # (measured on the runner at 6dd80a6e7, the fork's main after batch 932, in main's run 36555049532, the first run on main after the served-page tests moved to a job of their own, one leg rostered, the launcher's own switch test: 2 s for this step (node's own duration 2.36 s) in a job of 4 min 45 s, under the 17-minute cap, a margin of 735 s. The step's and the job's times are the jobs API's, in whole seconds. A later commit is read against the files this step runs: the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts); one that changes none of them leaves the step as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds are read from the batch push's CI run or a workflow_dispatch of the branch, since a PR push does not run this workflow. tools/ci-browser-legs.test.mjs holds the job time here against the cap and the step's own bound, and the cap's figure to the job's timeout-minutes line; of its other figures it checks only that one spelled N s is present, and reads the step's seconds, the stated margin, the sha and the run not at all. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; each PR that adds a leg states its own leg's numbers in its body, read from the batch push's CI run or from a workflow_dispatch of its branch, since a PR push does not run this workflow.)
+        # The rostered leg's source named in that parenthesis is the measured head's own: the roster also holds
+        # ui/webview/gear-sub-focus-browser.test.ts since fork PR 860 added its line, and that PR's body states the leg's
+        # whole-file seconds.
         timeout-minutes: 5
         env:
           ROMP_BROWSER_LEGS_REQUIRE: "1"
@@ -851,7 +879,15 @@ jobs:
         # this step does not run; see the install step above). The matrix jobs are unchanged: still no
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
         # the job's one long phase (1930 s at the fork's main 1d591384e, against the job's cap above),
-        # and every served lab added grows it, so the next growth should be visible by name.
+        # and every served lab added grows it, so the next growth should be visible by name. Two additions on 2026-09-20
+        # (the maintainer's round 1 of the wsBytesByHost review), both pinned by tests/test_served_labs_under_ci.py: the pytest line
+        # names tests/test_relay_dial_declares_held_pair.py by file, a raw-socket kernel leg that needs the dist
+        # tests/lab_dist.py builds and no browser, so no glob names it and it ran in no job (its filename is plain on
+        # purpose, so the conftest's REQUIRE rule does not read it; the module itself turns its precondition
+        # skips, no built dist or a kernel that never served, into failures under the switch, and its gen-key
+        # skip alone stays a skip here); and ROMP_CORNER_TWO_HOSTS
+        # runs the two-host lab (TwoHostsBytesByHost in the corners module: three kernels and Chromium),
+        # whose knob keeps every other runner unchanged.
         # -p no:anyio, as on every pytest invocation in this file (tests/test_ci_sdk_pin.py's population
         # check holds the flag on each, with no exemption): this interpreter has no anyio today (the pip
         # line below installs pip, pytest, pytest-timeout and cryptography, none of which depends on it;
@@ -861,14 +897,15 @@ jobs:
         # ROMP_SDK_REQUIRE: the switch declares that the interpreter running pytest has the SDK the Python
         # job's install step put there, and this job installs none, so setting it would declare something
         # untrue; the population check lists this step for the switch with that reason and checks its
-        # premises (no SDK install in this job's run blocks; no file the two globs collect, and no helper
-        # module under tests/ they could import, conftest included, spells the switch's name), so the day a
+        # premises (no SDK install in this job's run blocks; none of the files the pytest line names, and no
+        # helper module under tests/ they could import, conftest included, spells the switch's name), so the day a
         # served module spells the switch's name the listing goes red (keyed on the spelling in the file's
         # text: a reader that spells the name indirectly is outside that read).
         working-directory: ${{ github.workspace }}
         env:
           ROMP_SERVED_TESTS_REQUIRE: "1"
           ROMP_SERVED_TESTS_ENGINES: chromium
+          ROMP_CORNER_TWO_HOSTS: "1"
         run: |
           python -m pip install --upgrade pip pytest pytest-timeout cryptography
-          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider -p no:anyio --durations=20 --timeout=600 --timeout-method=thread
+          python -m pytest tests/test_*_browser.py tests/test_*_served.py tests/test_relay_dial_declares_held_pair.py -q -rs -p no:cacheprovider -p no:anyio --durations=20 --timeout=600 --timeout-method=thread

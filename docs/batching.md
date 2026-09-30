@@ -8,11 +8,16 @@ member PR merged on its own, because a PR counts as merged when its head becomes
 base branch through another merge. No PR is merged into another PR's branch, and no batch is
 squashed or rebased.
 
-GitHub's CI runs once per batch, on the push of the batch branch. Member PRs run no CI of their
-own, and neither does the merge to main, so a batch should land only when its head contains main:
+GitHub's CI (`ci.yml`) runs once per batch, on the push of the batch branch. Member PRs run none
+of it, and neither does the merge to main, so a batch should land only when its head contains main:
 then the merged tree is the tree the sweep and CI tested. `scripts/batch.py land` reads main again
 right before the merge and refuses if the batch head no longer contains it; a move after that read
-is not stopped, and `finish` reports it loudly (maintainer step 6).
+is not stopped, and `finish` reports it loudly (maintainer step 6). One job of `ci.yml`, the secret
+scan, also runs in a workflow of its own (`.github/workflows/secret-scan.yml`) on every push of a
+branch or a tag whose commit carries that file, a member PR's and the merge to main included. GitHub
+reads a push's workflows from the commit the push puts on its ref, so a branch cut from main before
+the file landed starts no run of it until it merges main (CLAUDE.md, "Credentials", says what the
+scan reads and which pushes start no run). Nothing in the landing reads that workflow's runs.
 
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
 `land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps the commit a
@@ -61,10 +66,12 @@ reached main (`finish` runs it, and it also runs on every push to main).
    (kind: coordinate); it re-pins your head and rebuilds. A push after the cut leaves your PR open
    after the batch merges, and `finish` reports that rather than hiding it.
 8. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
-9. Expect no CI on your PR. Its Checks tab shows the tier-label check after the PR opens or
-   reopens or its labels change, not after a push, and Tier policy's skipped rows, which evaluate
-   nothing on the fork. The tests run in your own sweep at your head (item 3), in the batch's sweep
-   at the batch head, and in the one CI run on the batch branch.
+9. Expect no `ci.yml` run on your PR. Its Checks tab shows the secret scan's run of each push whose
+   commit carries `.github/workflows/secret-scan.yml` (`Secret scan on push (gitleaks)`; a branch cut
+   from main before that file landed shows none until it merges main), the tier-label check after
+   the PR opens or reopens or its labels change, not after a push, and Tier policy's skipped rows,
+   which evaluate nothing on the fork. The tests run in your own sweep at your head (item 3), in the
+   batch's sweep at the batch head, and in the one CI run on the batch branch.
 
 ## If you are the maintainer
 
@@ -74,14 +81,17 @@ on, admin bypass) is optional and comes after the first batch has shown the chec
 to require are the job checks a batch push reports: `Python <version> (ubuntu-latest)` for each
 Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t), `Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
 `Vendored tooling (node --test, ubuntu-latest)`, `vscode-extension (typecheck + test + build)` and
-`Served pages (pytest, ubuntu-latest)`. Do not require `Exactly one tier
+`Served pages (pytest, ubuntu-latest)`. A batch push also reports `Secret scan on push
+(gitleaks)`, from `.github/workflows/secret-scan.yml`, the same scan as `Secret scan (gitleaks)`
+under a name of its own, since a required check is matched by job name whatever the workflow;
+requiring `Secret scan (gitleaks)` already covers the scan. Do not require `Exactly one tier
 label` on the fork: its copy runs only when a PR opens or reopens or its labels change, never on a
 push, so a batch head pushed after the last label event has no run of it, and a ruleset requiring
 it would hold that batch. On a batch PR a required CI check is expected to be met by the run of the
 push to its branch, attached to the batch head; the first batch confirms that ("Checked on the
 first batch", below). Strict mode ("require branches to be up to date") makes GitHub itself refuse a batch PR that is
 behind main, which is the case the no-CI-on-main rule cannot allow; without it only `scripts/batch.py
-land` checks. A member PR has no CI checks and never merges by itself: a single PR lands as a
+land` checks. A member PR has no `ci.yml` checks and never merges by itself: a single PR lands as a
 one-member batch, and `scripts/land.sh` runs `scripts/batch.py land`.
 
 Auto-merge (`gh pr merge --auto`) needs two things: the repository's "Allow auto-merge" setting
@@ -119,7 +129,7 @@ Per batch, in order:
    merge is the one move it cannot stop; `finish`, which land runs next, then fails loudly: the
    merge commit's first parent is not the main verify read, so the tree on main was never swept or
    tested, and it names the sweep at the merge commit that is owed. The button and `gh pr merge <B>
-   --merge --match-head-commit <sha>` check neither CI nor main. No CI runs on the merge to main, so
+   --merge --match-head-commit <sha>` check neither CI nor main. No `ci.yml` run follows the merge to main, so
    use either only while the batch PR's checks on its head are green, main is still at the SHA the
    first block names as contained, and the batch PR's head is still the SHA the first block names as
    verified (the button merges whatever the branch holds then); if main has moved, ask the batcher
@@ -199,7 +209,9 @@ subject; `verify` refuses the branch otherwise.
    `working-directory:` on an install step, an `env:` or `defaults:` on the job or the workflow, or
    a step the runner does not read, named or not); change the runner with it. `--wrap LEG=PREFIX` runs a leg
    under this machine's slot or scope wrapper (the wrap keeps your environment; the leg does not
-   see what it sets). The legs run in private clones of the batch
+   see what it sets). The wrap must keep the leg in the sweep's process tree, as `systemd-run
+   --scope` does and a `systemd-run` that starts a service does not; nothing checks this, and
+   what a leg outside the tree leaves running is not reaped (below). The legs run in private clones of the batch
    head's exact sha under the state dir, one per CI job, each verified against the sha's tree before
    its first leg, never in the batch worktree: the worktree need not be clean, and its uncommitted
    edits are not swept (the runner prints how many there are). The legs run as CI's jobs run them:
@@ -223,9 +235,12 @@ subject; `verify` refuses the branch otherwise.
    also read files outside `kernel/kernel.py`, `ui/` and `vscode-extension/`. The served leg runs
    what CI's served step runs. The runner finds that step by its name, "Browser-backed served-page
    tests (pytest)", in whichever job of the head's `ci.yml` holds it. It runs the files the step's
-   globs select (`tests/test_*_browser.py` and `tests/test_*_served.py` today) with the step's own
-   `env:` block: `ROMP_SERVED_TESTS_REQUIRE`, which turns a skip in those files into a failure, and
-   `ROMP_SERVED_TESTS_ENGINES`. It runs them in one pytest process, as CI does, in a venv of their
+   pytest line names (today the globs `tests/test_*_browser.py` and `tests/test_*_served.py`, and
+   `tests/test_relay_dial_declares_held_pair.py` by file) with the step's own `env:` block, read
+   from `ci.yml` (today `ROMP_SERVED_TESTS_REQUIRE`, under which a skip in the files the two globs
+   select is a failure, while the module named by file turns only its own precondition skips into
+   failures; `ROMP_SERVED_TESTS_ENGINES`; and `ROMP_CORNER_TWO_HOSTS`, which runs the two-host
+   lab). It runs them in one pytest process, as CI does, in a venv of their
    own under `<state dir>/sweeps/served/`, built from the step's own pip line on the Python version
    the step's job sets up (3.12 today) and holding nothing else, so without the SDK, as CI runs them.
    That venv is reused, checked and rebuilt as the pytest leg's is. The served leg also runs the
@@ -237,8 +252,10 @@ subject; `verify` refuses the branch otherwise.
    the `SKIPPED` and `SUBSKIPPED` lines of that log's short summary (a subtest's skip, under
    pytest 9, names the test it belongs to, and the served leg runs that test whole; under pytest 8
    the same skip prints as a `SKIPPED` line of that test). The read is closed: a summary line of a
-   kind pytest does not write, a skip line that does not name exactly one test, or a line before
-   any kind line leaves the set unknown, and the served leg is then red naming the lines. These
+   kind pytest does not write, a skip line that does not name exactly one test, a line before
+   any kind line, or a non-blank line after one that starts with `=` (or is shaped like pytest's
+   closing line) and before the next kind line leaves the set unknown, and the served leg is then red
+   naming the lines. These
    summaries pytest writes correctly end that way too, loudly and never with a skip dropped: a
    subtest message holding a newline, which splits its line; a parametrize id holding ` - `, read
    short at the first one (refused when that leaves a bracket open; an id holding `] - ` is read
@@ -247,17 +264,23 @@ subject; `verify` refuses the branch otherwise.
    node id could start at more than one place, which `] tests/` or `) tests/` in its subtest's
    description or in its skip's reason can make it, or whose node id holds ` tests/`; a log that
    holds more than one short-summary header line (a skip reason or a failure message that quotes
-   one), since which one opens pytest's own summary is then not known; and a reason or message
+   one), since which one opens pytest's own summary is then not known; a warnings summary pytest
+   prints after the short summary (it does for a warning a `pytest_terminal_summary` hook emits),
+   whose lines follow its `=` header; and a reason or message
    running on to a line that starts with an upper-case word that is none of pytest's kinds and
    then `tests` before a slash, a space or the line's end (such as `ALL tests of this file ...`),
-   which the reader takes for a line of a kind pytest does not write. One summary pytest writes
-   correctly is read wrong with no refusal: a reason or message running on to a line of a kind
-   the reader reads is read as that kind. So a `SKIPPED` line there (a failure message or a skip
+   which the reader takes for a line of a kind pytest does not write. Two summaries pytest writes
+   correctly are read wrong with no refusal. The first: a reason or message running on to a line
+   of a kind the reader reads is read as that kind. So a `SKIPPED` line there (a failure message or a skip
    reason quoting an inner pytest's output, say) adds its test to the set when the rule reads its
    reason, and the served leg's pytest then exits 4 unless a test has exactly that id, which it
    then runs again. And a skip reason that runs on to such a line is cut there, so its words
    after that line are not read: when only they would match the rule, the skip is dropped with no
-   refusal (the pytest leg's record lists it among the other skips, so it can be seen). That
+   refusal (the pytest leg's record lists it among the other skips, so it can be seen). The
+   second: a reason running on to a line that starts with `=` (or is shaped like pytest's closing
+   line) ends there, and that line's own words are not read, so a skip whose words the rule would
+   match only there is dropped the same way when the lines after it up to the next kind line are
+   blank (a non-blank one leaves the set unknown). That
    covers the skips whose reasons
    the runner's rule reads, and three cases fall outside it: a skip for want of the deps in other words runs in no leg (the pytest leg's record lists
    every other skip outside the served files with its reason, so it can be seen); two real-tree pins in
@@ -272,7 +295,9 @@ subject; `verify` refuses the branch otherwise.
    (`tests/ui-bench.test.mjs`), the Browser legs step (its roster checks, and the rostered browser
    tests with `ROMP_BROWSER_LEGS_REQUIRE=1`; the sweep's `npm test` runs those tests without the
    switch, so a Chromium that fails to launch there skips instead of failing), the other Python
-   versions and macOS run only in the batch's CI. CI's free-threaded cell runs pytest with
+   versions and macOS run only in GitHub's CI: the Linux jobs in every run of `ci.yml` (a batch
+   push, a manual run, the weekly schedule), and the macOS cells only in a manual run
+   (`workflow_dispatch`) or the weekly schedule. CI's free-threaded cell runs pytest with
    `PYTHON_GIL=0`, which the sweep does not set, so a free-threaded `--python` runs with its own
    default. Each
    leg gets an allowlisted environment: a TMPDIR of its own, made when the leg starts and removed
@@ -294,8 +319,10 @@ subject; `verify` refuses the branch otherwise.
    replace ref) and no ignored file (bytecode, `node_modules`). Nor does a branch or tag a leg
    writes into your repository: each job's clone holds the sha alone, with no branch and no tag of
    yours, as CI's checkout fetches the pushed sha alone, and names no remote, so a `git fetch` in
-   a later job copies nothing. When your repository is shallow, each clone is shallow the same
-   way. The legs of one job share its
+   a later job copies nothing. When your repository is shallow as the sweep starts, each clone is
+   shallow the same way: the sweep reads your shallow file once, before the first leg, and gives
+   every clone that copy, so a leg that writes the file changes no later job's clone. The legs of
+   one job share its
    checkout, as CI's steps do. The machine itself stays shared, and a leg can leave a file there
    that a later leg reads: `/tmp` outside each TMPDIR, `/dev/shm`, `/run/user/<uid>`, the npm and
    Playwright caches, your passwd home, tmux's socket directory (tmux ignores TMPDIR), `--python`'s
@@ -303,7 +330,26 @@ subject; `verify` refuses the branch otherwise.
    checkout (a tracked file; a file no rule of a
    tracked `.gitignore` covers, whatever the clone's own git state says; after `npm ci`, any
    ignored file outside `vscode-extension/node_modules` that `npm ci` added or changed) makes the
-   run invalid, and so does a job's fresh checkout that is not the sha's tree. It writes every run to
+   run invalid, and so does a job's fresh checkout that is not the sha's tree. A leg can also leave
+   a process running. The sweep reaps its own process tree: when a leg ends, it kills its children
+   again and again until none is left or 30 s pass, and on Linux, where the sweep is a child
+   subreaper and so adopts each orphaned descendant of a leg (a `setsid` child, a double-forked
+   grandchild), that is everything the leg left running in the tree. Four kinds of process escape
+   that reap, so each can still be running after its leg ends and write into a checkout, its own
+   job's or a later job's, or anywhere else your user can write: a process started at a leg's
+   request by one already running outside the sweep's tree, which the sweep neither waits for nor
+   reaps (a unit of your user service manager, which a leg reaches by setting `XDG_RUNTIME_DIR` to
+   `/run/user/<uid>`; a window of a tmux server already running; an `at` or `cron` job; a service
+   D-Bus activates); a leg run under a `--wrap` that hands it to a service manager, since the sweep
+   waits for the wrap's own process and the leg runs outside its tree; every orphaned descendant of
+   a leg, and so everything the leg leaves running, where the sweep is not a child subreaper, which
+   is the case off Linux (on Linux a `prctl` that fails refuses the run, and each run records which
+   case it was, as `runner.subreaper`); and a descendant still alive when the reap's 30 s timeout
+   runs out, which runs on into the next leg until the next reap. A write by one of these makes the
+   run invalid only when the re-read after a leg, or the check of a later job's fresh checkout,
+   reads the path it wrote, and the run then names the leg after which, or the checkout in which,
+   the change was found, which need not be the leg that started the process. The sweep writes every
+   run to
    `<state dir>/sweeps/<full sha>.json`, which keeps every run at that sha. The state dir is
    `$ROMP_STATE_DIR`, else `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and
    `batch.py` with the same environment. When one leg fails on a known flake,
@@ -352,7 +398,7 @@ subject; `verify` refuses the branch otherwise.
    batcher's own tree, is, and so is a result with a run that records no private checkout). A missing result names the directory verify read and the variable it
    came from (`ROMP_STATE_DIR`, `XDG_STATE_HOME` or `HOME`): a sweep run with another environment
    wrote its result somewhere else. It also fails as "behind" when the batch head does not contain
-   main as origin has it now: CI does not run on the merge to main, so a batch should land only when
+   main as origin has it now: `ci.yml` does not run on the merge to main, so a batch should land only when
    the tree that lands is the tree the sweep and the batch's CI ran on; run step 7, then steps 3 and
    4 again. If an earlier `assemble` died part-way, `verify` fails with "assembly incomplete"; run
    `assemble` again first.
@@ -360,7 +406,7 @@ subject; `verify` refuses the branch otherwise.
    batch/<name>`; `pull` pushes that way itself). If the pre-push hook refuses the push: it scans
    each pushed commit's tree, so a batch tip that inherits a pre-scrub string trips it although the
    new commits are merges; read what tripped and fix the member or ask. Never bypass the hook. Then
-   `scripts/batch.py summarize <name>` and watch the one CI run: the push to `batch/<name>` starts
+   `scripts/batch.py summarize <name>` and watch the one `ci.yml` run: the push to `batch/<name>` starts
    it. The batch PR is expected to show its checks on its head, and a newer push to the branch to
    cancel the older run; the first batch confirms both ("Checked on the first batch", below). The
    batch PR carries the `batch` label and no tier; the fork's copy of the `PR tier` check counts

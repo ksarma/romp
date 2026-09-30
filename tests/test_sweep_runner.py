@@ -247,6 +247,11 @@ if ctl.get("fetch_all") and root:
 # the refs this leg's checkout holds, when the test asks (the focused re-check's ruling 4: each clone holds none)
 refs = (sorted(subprocess.run(["git", "-C", root, "for-each-ref", "--format=%%(refname)"], stdout=subprocess.PIPE, text=True,
                               check=True).stdout.split()) if ctl.get("record_refs") and root else None)
+# whether this leg's checkout is shallow and how many commits its history reads, when the test asks (the narrow landing
+# delta's ruling 8: a shallow file a leg writes into the batcher's repository reaches no later job's checkout)
+history = ([subprocess.run(["git", "-C", root, *a], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+            for a in (["rev-parse", "--is-shallow-repository"], ["rev-list", "--count", "HEAD"])]
+           if ctl.get("record_history") and root else None)
 # Round 2, Class B: the TMPDIR of every leg that ran before this one (read from the calls already recorded) that still
 # exists now: each leg's own is removed when it ends, so none should.
 earlier = [json.loads(line)["values"].get("TMPDIR") for line in open(LOG)] if os.path.exists(LOG) else []
@@ -274,7 +279,7 @@ with open(LOG, "a") as f:
                         "ignored": sorted(n for n in ("SIGHUP", "SIGINT") if signal.getsignal(getattr(signal, n)) == signal.SIG_IGN),
                         # and the runner's: its pid (this leg's parent, since env execs the command) and what it ignores
                         "parent": os.getppid(), "parent_ignored": parent_ignored(),
-                        "state": state, "refs": refs,
+                        "state": state, "refs": refs, "history": history,
                         # the remotes this leg's checkout names, when the test asks for its refs
                         "remotes": (subprocess.run(["git", "-C", root, "remote"], stdout=subprocess.PIPE, text=True,
                                                    check=True).stdout.split() if ctl.get("record_refs") and root else None)}) + "\n")
@@ -367,6 +372,12 @@ elif act == "refs":                              # a tag and a branch written in
     head = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
     for ref in ("refs/tags/leaked-tag", "refs/heads/leaked-branch"):
         subprocess.run(["git", "--git-dir", common, "update-ref", ref, head], check=True)
+elif act == "shallow":                           # the BATCHER's shallow file written at the sha, found from the clone
+    with open(os.path.join(root, ".git", "objects", "info", "alternates")) as fh:
+        common = os.path.dirname(fh.read().split("\n")[0].rstrip("/"))
+    head = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+    with open(os.path.join(common, "shallow"), "w") as f:
+        f.write(head + "\n")
 elif act == "home":
     with open(os.path.join(home, ".leftover"), "w") as f:
         f.write("a test that wrote into HOME\n")
@@ -2112,6 +2123,51 @@ class Checkout(_Base):
         for c in calls:
             self.assertEqual(c["remotes"], [], "%s's checkout names no remote" % c["leg"])
 
+    def test_a_shallow_file_a_leg_writes_into_the_batchers_repository_reaches_no_later_job(self):
+        """The narrow landing delta's ruling 8: the pytest leg, the first job's, finds the batcher's repository through its
+        clone's objects/info/alternates and writes its shallow file there, at the sha, so the batcher's repository is then
+        shallow and its history, read from there, is one commit. Every leg of every later job still reads the checkout its
+        job had when the run started, not shallow, with the head's two commits: the runner read that file once, before the
+        first leg, and gave each checkout that snapshot. At the landing head each job's checkout copied the live file, so
+        every later job's checkout was shallow at the leg's boundary and read one commit."""
+        w = self.w
+        w.change({"README.md": "# notes-api, a second commit\n"})
+        w.ctl({"action": {PYTEST_LEG: "shallow"}, "record_history": True})
+        p = w.run(check=0)
+        self.assertEqual(w.git("rev-parse", "--is-shallow-repository"), "true",
+                         "premise: the leg wrote the batcher's shallow file: %s" % (p.stdout + p.stderr))
+        calls = w.calls()
+        first = [c["root"] for c in calls if c["leg"] == PYTEST_LEG][0]
+        later = [c for c in calls if c["root"] != first]
+        self.assertTrue(later, "legs of later jobs ran, in checkouts of their own")
+        self.assertEqual([c["history"] for c in calls if c["leg"] == PYTEST_LEG], [["false", "2"]],
+                         "premise: the first job's checkout was not shallow before the leg wrote the file")
+        for c in later:
+            self.assertEqual(c["history"], ["false", "2"],
+                             "%s's checkout is the one its job had when the run started" % c["leg"])
+
+    def test_a_shallow_file_that_cannot_be_read_refuses_the_run_before_any_leg(self):
+        """The narrow landing delta's ruling 8, its refusal: the batcher's repository is shallow at its first commit and
+        its shallow file cannot be read (mode 0). The runner reads that file once, before the first leg, and refuses the
+        run: exit 2, naming the repository and the file, no leg run, nothing recorded, no checkout left under the state
+        dir. At the landing head make_checkout copied the live file with shutil.copyfile, the copy's PermissionError left
+        the runner as a traceback, and the run exited 1, the runner's exit for a red sweep."""
+        w = self.w
+        w.change({"README.md": "# notes-api, a second commit\n"})
+        tree = os.path.realpath(w.tree)
+        path = os.path.join(tree, ".git", "shallow")
+        with open(path, "w") as f:
+            f.write(w.git("rev-parse", "HEAD~1") + "\n")
+        os.chmod(path, 0)
+        self.addCleanup(os.chmod, path, 0o644)
+        with self.assertRaises(OSError, msg="premise: the shallow file cannot be read (a test run as root reads it)"):
+            open(path, "rb").close()
+        p = w.run(check=2)
+        self.assertIn("the shallow file of the repository at %s cannot be read (%s: " % (tree, path), p.stderr)
+        self.assertEqual(w.calls(), [], "no leg ran")
+        self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
+        self.assertEqual(os.listdir(self.trees()) if os.path.isdir(self.trees()) else [], [], "no checkout left")
+
     def test_a_stop_during_the_checkout_or_between_its_marker_and_the_clone_leaves_nothing_under_trees(self):
         """Round 2, extra5-2, keyed on events: the runner is stopped while its first clone waits, once after the real
         clone made the checkout's directory (during make_checkout), once before it (the marker made, the clone not
@@ -3115,6 +3171,89 @@ def child_launchers(source):
     return sorted(imported & THREAD_MODULES), launchers
 
 
+# Runs scripts/sweep.py's main with the rest of its argv, as the runner does, after one change the test asks for (argv[1]):
+# "prctl-fails", a libc whose prctl fails with EPERM (a stand-in for a kernel or a seccomp policy that refuses
+# PR_SET_CHILD_SUBREAPER); "not-linux", install_stop_handlers told the platform is darwin, as the runner is there.
+SUBREAPER_DRIVER = r"""
+import ctypes, importlib.util, sys
+mode, path, argv = sys.argv[1], sys.argv[2], sys.argv[3:]
+spec = importlib.util.spec_from_file_location("sweep_runner", path)
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+if mode == "prctl-fails":
+    class Libc:
+        def prctl(self, *args):
+            ctypes.set_errno(1)
+            return -1
+    ctypes.CDLL = lambda *a, **k: Libc()
+elif mode == "not-linux":
+    real = sweep.install_stop_handlers
+    sweep.install_stop_handlers = lambda: real(platform="darwin")
+sys.exit(sweep.main(argv))
+"""
+
+
+class Subreaper(_Base):
+    """The narrow landing delta's ruling 5: each run records whether the runner is a child subreaper (runner.subreaper),
+    with the reason when it is not (runner.subreaper_why). On Linux a prctl that fails refuses the run, naming it, before
+    any leg: the legs would otherwise run with what they leave running neither reaped nor killed, and a pass from such a
+    runner would read as one from a runner that reaps. Off Linux the runner runs and records false with the reason."""
+
+    def drive(self, mode):
+        w = self.w
+        return subprocess.run([sys.executable, "-c", SUBREAPER_DRIVER, mode, str(SWEEP), "run", "--tree", w.tree,
+                               "--python", w.python, "--workers", "2"], env=w.env, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=300)
+
+    def test_a_run_on_linux_records_that_the_runner_is_a_child_subreaper(self):
+        if not sys.platform.startswith("linux"):
+            self.skipTest("the subreaper is Linux's")
+        w = self.w
+        w.run(check=0)
+        runner = w.result()["runner"]
+        self.assertIs(runner.get("subreaper"), True, "the result records runner.subreaper")
+        self.assertNotIn("subreaper_why", runner)
+
+    def test_a_prctl_that_fails_refuses_the_run_by_name_before_any_leg(self):
+        """A libc whose prctl fails: the runner exits 2 naming prctl PR_SET_CHILD_SUBREAPER and the errno's text, no leg
+        runs and nothing is recorded. At the landing head the runner kept the failure to itself (_subreaper false) and
+        ran every leg, which passed."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("the subreaper is Linux's")
+        w = self.w
+        p = self.drive("prctl-fails")
+        said = p.stdout + p.stderr
+        self.assertEqual(w.legs_called(), [], "no leg ran: %s" % said)
+        self.assertEqual(p.returncode, 2, said)
+        self.assertIn("could not make itself a child subreaper: prctl PR_SET_CHILD_SUBREAPER returned -1 (%s)"
+                      % os.strerror(1), p.stderr)
+        self.assertFalse(os.path.exists(w.result_path()), "nothing was recorded")
+
+    def test_off_linux_the_runner_runs_and_records_false_with_the_reason(self):
+        w = self.w
+        p = self.drive("not-linux")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(w.legs_called(), SEED_ORDER, "every leg ran")
+        runner = w.result()["runner"]
+        self.assertIs(runner.get("subreaper"), False)
+        self.assertIn("the runner runs on darwin, and only Linux lets a process become a child subreaper (prctl "
+                      "PR_SET_CHILD_SUBREAPER)", runner.get("subreaper_why") or "")
+
+    def test_a_result_without_the_field_reads_as_before(self):
+        """The field is recorded only: the reader (assess, which scripts/batch.py's verify, plan and --repin call) reads
+        no verdict from it, so a result written before it, which has none, reads as it did."""
+        w = self.w
+        w.run(check=0)
+        data = w.data()
+        for run in data["runs"]:
+            run["runner"].pop("subreaper", None)
+            run["runner"].pop("subreaper_why", None)
+        with open(w.result_path(), "w") as f:
+            json.dump(data, f)
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "pass", a["line"])
+
+
 class ReapWhileLegRuns(unittest.TestCase):
     """Round 1, A5, and the runner's own sweep: the runner is a child subreaper, so a leg's orphaned descendants are
     reparented to it. One that exits while its leg runs is reaped then (wait_leg), not left a zombie in the leg's
@@ -3469,12 +3608,16 @@ class CheckoutRoads(unittest.TestCase):
 
 
 class ShallowBatcher(unittest.TestCase):
-    """The land check of ruling 4, its finding 2: a batcher's repository that is shallow (a depth-limited fetch wrote its
-    shallow file, and the parents of the commits it names are absent) gives each job's checkout the same shallow view,
-    so a leg that reads history reads what CI's depth-1 checkout gives it (a test that skips in a shallow checkout
-    skips). The checkout is made with git init and alternates, which copy no shallow file, so before the fix the
-    checkout did not know it was shallow and `git log` there failed on the absent parent (rc 128), where the
-    `git clone --shared` of the head before ruling 4 made a shallow clone and walked one commit."""
+    """The land check of ruling 4, its finding 2: each job's checkout has the batcher's repository's history, read
+    through its alternates: the whole history when that repository is not shallow, and the history cut at its shallow
+    boundary when it is (a depth-limited fetch wrote its shallow file, and the parents of the commits it names are
+    absent), from the snapshot of that file the runner read before the first leg (the narrow landing delta's ruling 8).
+    So only a depth-1 batcher's repository gives a leg the history CI's depth-1 checkout gives it; over a deeper or a
+    full one a leg that reads history reads more, as it did under the `git clone --shared` before ruling 4. "The sha
+    alone" in make_checkout's docstring is about refs (no branch and no tag of the batcher's), not history. The
+    checkout is made with git init and alternates, which copy no shallow file, so before the fix the checkout did not
+    know it was shallow and `git log` there failed on the absent parent (rc 128), where the `git clone --shared` of the
+    head before ruling 4 made a shallow clone and walked one commit."""
 
     def test_a_shallow_batchers_repository_gives_a_shallow_checkout_whose_history_reads(self):
         tmp = tempfile.mkdtemp(prefix="sweepshallow-")
@@ -3501,13 +3644,20 @@ class ShallowBatcher(unittest.TestCase):
                          "premise: the batcher's repository is shallow")
         self.assertNotEqual(g("cat-file", "-e", sha + "^", cwd=tree, check=False).returncode, 0,
                             "premise: the parent's object is absent from it")
-        path, marker, _s = sweep.make_checkout(tree, sha)
+        path, marker, _s = sweep.make_checkout(tree, sha, sweep.shallow_snapshot(tree))
         self.addCleanup(sweep.remove_checkout, path, marker)
         log = g("log", "--format=%H", cwd=path, check=False)
         self.assertEqual((log.returncode, log.stdout.split()), (0, [sha]),
                          "the checkout's history reads, one commit: %s" % log.stderr.strip())
         self.assertEqual(g("rev-parse", "--is-shallow-repository", cwd=path).stdout.strip(), "true",
                          "the checkout knows it is shallow")
+        # the other side: over the batcher's repository that is not shallow, the checkout reads its whole history
+        self.assertIsNone(sweep.shallow_snapshot(full), "premise: that repository has no shallow file")
+        path2, marker2, _s = sweep.make_checkout(full, sha, sweep.shallow_snapshot(full))
+        self.addCleanup(sweep.remove_checkout, path2, marker2)
+        whole = g("log", "--format=%H", cwd=path2, check=False)
+        self.assertEqual((whole.returncode, len(whole.stdout.split())), (0, 2), "the checkout reads the whole history")
+        self.assertEqual(g("rev-parse", "--is-shallow-repository", cwd=path2).stdout.strip(), "false")
 
 
 # The keys of leg_context, with placeholder values: leg_sets' NAMES do not depend on them.
@@ -3773,8 +3923,12 @@ class LegEnvironment(_Base):
         before = {k: v for k, v in doc.items() if k not in ("scratch", "checkout")}
         self.assertNotEqual(hashlib.sha256(json.dumps(before, sort_keys=True).encode("utf-8")).hexdigest(), sweep.policy_hash(),
                             "the two entries are hashed")
-        old = self.PRE_ROUND_2_HASH
-        self.assertNotEqual(old, sweep.policy_hash(), "this runner's hash is not the one the runner before round 2 recorded")
+        self.assert_reads_as_another(self.PRE_ROUND_2_HASH, "the runner before round 2")
+
+    def assert_reads_as_another(self, old, whose):
+        """A result whose newest run records the leg environment hash `old` (the one `whose` runner recorded) reads as
+        recorded under another leg environment: the reader reads it invalid, and a --leg re-run over it is refused."""
+        self.assertNotEqual(old, sweep.policy_hash(), "this runner's hash is not the one %s recorded" % whose)
         w = self.w
         w.ctl({"rc": {"bats": 1}})
         w.run(check=1)
@@ -3788,6 +3942,31 @@ class LegEnvironment(_Base):
         w.ctl({})
         p = w.run("--leg", "bats", "--flake", Runner.FLAKE, check=2)
         self.assertIn("was recorded under another leg environment (hash %s" % old[:12], p.stderr)
+
+    # The leg environment hash the runner at the round-2 fix head recorded, read from the owner's result at that head (its
+    # sweep on 2026-09-29; the one result at that head in any of the owner's state dirs). The focused re-check's ruling 4
+    # moved it: LEG_CHECKOUT then named the sha alone, no branch, tag or remote, and the batcher's shallow file.
+    FIX_HEAD_HASH = "1bbdf80e32cda4c2f23a9cbceb6a367fcde943e7dc2055d24b842610b8f38edb"
+
+    def test_a_result_recorded_under_the_fix_heads_leg_environment_reads_as_another(self):
+        """The narrow landing delta's ruling 4 (and the landing head's ruling 1): the focused re-check's ruling 4 changed
+        what a job's checkout holds, a leg-environment change under decision 15, so the hash moved at the landing: a
+        result recorded under the round-2 fix head's hash, the literal FIX_HEAD_HASH, reads as recorded under another leg
+        environment, as the round-2 one does. Red under the fix head's LEG_CHECKOUT text, which gives that hash again."""
+        self.assert_reads_as_another(self.FIX_HEAD_HASH, "the runner at the round-2 fix head")
+
+    # The leg environment hash the runner at the landing head recorded, read from the owner's result at that head (its
+    # sweep on 2026-09-30). The narrow landing delta's ruling 8 moved it: LEG_CHECKOUT now names the batcher's shallow
+    # file as it stood when the run started, which each job's checkout gets.
+    LANDING_HEAD_HASH = "41998d73e8f64f2028301a2ba598d2b3a2c0c2ef74e8236b20120f01b950e728"
+
+    def test_a_result_recorded_under_the_landing_heads_leg_environment_reads_as_another(self):
+        """The narrow landing delta's ruling 8 changed what a later job's checkout holds when a leg wrote the batcher's
+        shallow file (the snapshot read before the first leg, not the live file), a leg-environment change under decision
+        15, so the hash moved: a result recorded under the landing head's hash, the literal LANDING_HEAD_HASH, reads as
+        recorded under another leg environment, as the round-2 one does. Red under the landing head's LEG_CHECKOUT text,
+        which gives that hash again."""
+        self.assert_reads_as_another(self.LANDING_HEAD_HASH, "the runner at the landing head")
 
     def test_the_hash_names_the_pdf_smoke_leg(self):
         """The owner's build question 4 added the pdf-smoke leg, and the leg environment hash names every leg's set values
@@ -5233,8 +5412,9 @@ class ShortSummaryReader(unittest.TestCase):
     not read makes the set not known, naming the line, and the served leg is then red rather than run with a set read
     wrong: a line shaped like a kind that is none of pytest's kinds, a skip line whose node id it cannot find, a
     SUBSKIPPED line whose node id could start at more than one place (decision 5), a node id whose brackets do not
-    balance, a non-blank line before any kind line, and a log holding more than one short-summary header line (the
-    focused re-check's ruling 3). The SUBSKIPPED forms are copied from real pytest 9.1.1 output;
+    balance, a non-blank line before any kind line, a log holding more than one short-summary header line (the
+    focused re-check's ruling 3), and a non-blank line after a line starting with "=" or shaped like the closing summary
+    line and before the next kind line (the narrow landing delta's ruling 9). The SUBSKIPPED forms are copied from real pytest 9.1.1 output;
     every other summary here is written as pytest writes one. Synthetic data only."""
 
     def log(self, *lines, close="3 passed, 2 skipped in 0.01s"):
@@ -5339,6 +5519,61 @@ class ShortSummaryReader(unittest.TestCase):
                         "SKIPPED tests/test_b.py::test_b - Skipped: macOS only",
                         close="1 failed, 1 passed, 1 skipped in 0.01s")
         self.assertEqual(sweep.deps_skipped(path, []), (["tests/test_ghost.py::test_g"], None))
+
+    def test_a_line_after_an_equals_line_before_the_next_kind_line_makes_the_set_not_known(self):
+        """The narrow landing delta's ruling 9: a skip reason that runs on to a line starting with "=" (an inner pytest's
+        section header, quoted) ends there, and the lines after it up to the next kind line were dropped with no refusal,
+        so a skip whose words DEPS_SKIP matches only after that line was dropped. Now a non-blank line there makes the set
+        not known, naming it; so does one after a line shaped like the closing summary line with no "=" around it. Before
+        the ruling both gave ([], None), the skip listed among the unselected ones with its reason cut at that line."""
+        for stop in ("==== inner ====", "1 passed in 0.10s"):
+            with self.subTest(stop=stop):
+                path = self.log("SKIPPED tests/test_a.py::test_eq - Skipped: inner run said:", stop, "npm ci not run here",
+                                "SKIPPED tests/test_b.py::test_b - Skipped: macOS only")
+                self.assertNotKnown(path, "a line after a line starting with '=' or shaped like the closing summary line",
+                                    "'npm ci not run here'")
+
+    def test_an_equals_line_followed_by_a_kind_line_or_a_blank_is_read(self):
+        """The rule's other side, the disclosed residual (the module docstring's second summary read wrong without a
+        refusal): an "=" line followed by a blank line and then a kind line refuses nothing, and that line's own words are
+        not read, so a skip whose words DEPS_SKIP matches only there is listed among the unselected skips with its
+        reason up to that line. A kind line, a skip's or a failure's, ends the rule's reach: the lines running on after
+        it are read as its reason or message again."""
+        path = self.log("SKIPPED tests/test_a.py::test_eq - Skipped: inner run said:", "==== npm ci not run ====", "",
+                        "SKIPPED tests/test_b.py::test_b - Skipped: macOS only", "on both runners", "==== inner ====",
+                        "FAILED tests/test_c.py::test_c - AssertionError: first line", "second line of the message",
+                        close="1 failed, 1 passed, 2 skipped in 0.01s")
+        others = []
+        self.assertEqual(sweep.deps_skipped(path, [], others), ([], None))
+        self.assertEqual(others, [["tests/test_a.py::test_eq", "Skipped: inner run said:"],
+                                  ["tests/test_b.py::test_b", "Skipped: macOS only\non both runners"]])
+
+    def test_a_warnings_summary_after_the_short_summary_makes_the_set_not_known(self):
+        """The disclosed loud case the rule brings (the module docstring's list): pytest 9.1.1 prints a warnings summary
+        after the short summary for a warning a pytest_terminal_summary hook emits, its lines after its "=" header and
+        before the closing summary line, so the set is not known. The lines are pytest's own shape, from a synthetic
+        tree."""
+        path = self.log("SKIPPED tests/test_w.py::test_skip - Skipped: npm ci not run here",
+                        "=============================== warnings summary ===============================",
+                        "tests/conftest.py:5",
+                        "  /nonexistent/tests/conftest.py:5: UserWarning: a warning in a terminal summary hook",
+                        "", "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html",
+                        close="1 passed, 1 skipped, 1 warning in 0.00s")
+        self.assertNotKnown(path, "'tests/conftest.py:5'")
+
+    def test_a_skip_reason_that_runs_on_to_a_failed_line_is_cut_there(self):
+        """The disclosed cut, its witness (the module docstring's first summary read wrong without a refusal, its second
+        consequence): a skip whose reason runs on to a line of a kind the reader reads, a FAILED line here, has its reason
+        cut there, so the words after that line, which DEPS_SKIP matches, are not read: the skip is dropped with no
+        refusal, and the record lists it among the unselected skips with its reason up to that line. Red under the no-cut
+        mutant (a kind line that keeps the skip's reason open), which selects the skip."""
+        path = self.log("SKIPPED tests/test_x.py::test_x - Skipped: inner run said:",
+                        "FAILED tests/test_inner.py::t - boom",
+                        "npm ci not run here",
+                        close="1 failed, 1 skipped in 0.01s")
+        others = []
+        self.assertEqual(sweep.deps_skipped(path, [], others), ([], None))
+        self.assertEqual(others, [["tests/test_x.py::test_x", "Skipped: inner run said:"]])
 
     def test_a_summary_line_of_a_kind_the_reader_does_not_read_makes_the_set_not_known(self):
         """A line shaped like a kind (an upper-case word, a description as a subtest word has, a node id) that is none of
@@ -5476,12 +5711,12 @@ class DepsSkipRule(unittest.TestCase):
 
     def test_the_measured_set_is_in_this_tree_outside_the_served_globs(self):
         m = sweep.MEASURED_DEPS_SKIPS
-        served = expand_globs(str(ROOT), ("tests/test_*_browser.py", "tests/test_*_served.py"))
+        served = ci_served_files()
         self.assertGreaterEqual(m["tests"], len(m["files"]))
         for f in m["files"]:
             with self.subTest(file=f):
                 self.assertTrue((ROOT / f).is_file(), "a measured file this tree no longer holds: measure again")
-                self.assertNotIn(f, served, "outside the served globs")
+                self.assertNotIn(f, served, "outside the files the served step runs")
                 text = (ROOT / f).read_text(encoding="utf-8")
                 self.assertTrue(any(sweep.DEPS_SKIP.search(r) for r in re.findall(r"SkipTest\(\s*\"([^\"]*)\"", text)),
                                 "the file still skips for want of the deps, in words the rule reads")
@@ -5490,13 +5725,17 @@ class DepsSkipRule(unittest.TestCase):
 
     def test_the_measured_files_are_the_trees_census_of_deps_skips_outside_the_served_globs(self):
         """MEASURED_DEPS_SKIPS names its files by hand; this derives them. The census: every tests/test_*.py outside the
-        served globs with a skip call (SKIP_CALLS, by name or attribute) one of whose arguments holds a string DEPS_SKIP
+        files the served step runs (ci_served_files: its globs and the module its pytest line names by file, read from
+        ci.yml, the population deps_skipped leaves out of the served leg's extra tests, which the served leg runs whole)
+        with a skip call (SKIP_CALLS, by name or attribute) one of whose arguments holds a string DEPS_SKIP
         matches, a literal (an f-string's literal parts among them) or a module-level name bound to one. A new test that
         skips for want of the deps in words the rule reads changes the census, so this reds until the measurement is
         taken again and every text names the new count (test_every_text_names_the_measured_count). A skip whose reason
-        is built any other way is outside the census, as it is outside the rule's reach until its log is read."""
-        served = set(expand_globs(str(ROOT), ("tests/test_*_browser.py", "tests/test_*_served.py")))
-        self.assertTrue(served, "the served globs select files here")
+        is built any other way is outside the census, as it is outside the rule's reach until its log is read. The
+        served files are read from ci.yml, not written here: with the two globs written by hand, the module fork PR 860
+        named on the pytest line by file, whose stub skip's reason names esbuild, was counted outside them."""
+        served = set(ci_served_files())
+        self.assertTrue(served, "the served step's pytest line selects files here")
         census = []
         for path in sorted((ROOT / "tests").glob("test_*.py")):
             rel = path.relative_to(ROOT).as_posix()
@@ -5525,7 +5764,7 @@ class DepsSkipRule(unittest.TestCase):
                     break
         self.assertTrue(census, "the census found no deps skip at all: it cannot be reading the tree")
         self.assertEqual(tuple(census), tuple(sweep.MEASURED_DEPS_SKIPS["files"]),
-                         "the files outside the served globs that skip for want of the deps are not the measured ones: "
+                         "the files outside the served step's files that skip for want of the deps are not the measured ones: "
                          "measure again and update MEASURED_DEPS_SKIPS and every text that names the count")
 
     def test_every_text_names_the_measured_count(self):
@@ -5727,7 +5966,8 @@ PDF_LABEL = "PDF renderer dependency smoke test (node --test)"
 
 def served_pytest_line(run):
     """(the words of the one `python -m pytest` line of the served step's run text, its globs: the words after
-    `python -m pytest` that name files under tests/). Read here on its own, not through the runner's read_served_step."""
+    `python -m pytest` that name files under tests/, a module the line names by file among them, as a glob that matches
+    itself; fork PR 860 put one there). Read here on its own, not through the runner's read_served_step."""
     lines = [line.strip() for line in run.splitlines() if line.strip().startswith("python -m pytest")]
     if len(lines) != 1:
         raise AssertionError("the served step has %d pytest lines: re-anchor CiParity" % len(lines))
@@ -5743,6 +5983,17 @@ def expand_globs(root, globs):
     for g in globs:
         out += sorted(os.path.relpath(p, root) for p in glob.glob(os.path.join(root, g)))
     return out
+
+
+def ci_served_files(src=None):
+    """The files CI's served step runs in this tree: its pytest line's globs (served_pytest_line, a module it names by
+    file among them) as bash expands them here, the step found by its name in whichever job of ci.yml holds it. Read
+    here on its own (ci_jobs, ci_steps), not through the runner's read_served_step and expand."""
+    src = CI_YML.read_text(encoding="utf-8") if src is None else src
+    runs = [ci_steps(j, src)[SERVED_LABEL][1] for j in ci_jobs(src) if SERVED_LABEL in ci_steps(j, src)]
+    if len(runs) != 1:
+        raise AssertionError("ci.yml holds %d steps named %r: re-anchor ci_served_files" % (len(runs), SERVED_LABEL))
+    return expand_globs(str(ROOT), served_pytest_line(runs[0])[1])
 
 
 def served_python_version(src, job):
@@ -5940,6 +6191,20 @@ class CiParity(unittest.TestCase):
         """The globs on the served step's pytest line (CiParity's own read)."""
         return served_pytest_line(self.step(SERVED_LABEL)[2])[1]
 
+    def world_seed(self):
+        """SEED with this ci.yml and kernel/session_host.py, for a World run over this workflow, and a stand-in module for
+        each file the served step's pytest line names by file (a word with no glob character; fork PR 860 put
+        tests/test_relay_dial_declares_held_pair.py there). SEED holds files for the globs alone, and the runner's served
+        leg is red on a named file the tree lacks ("no files matched"), as CI's pytest would be on a missing path."""
+        real = {".github/workflows/ci.yml": self.text,
+                "kernel/session_host.py": (ROOT / "kernel" / "session_host.py").read_text(encoding="utf-8")}
+        real.update({f: "def test_named():\n    pass\n" for f in self.served_named()})
+        return dict(SEED, **real)
+
+    def served_named(self):
+        """The files the served step's pytest line names by file, in the line's order (no *, ? or [ in the word)."""
+        return [g for g in self.served_globs() if not re.search(r"[*?\[]", g)]
+
     def test_the_tree_holds_nothing_the_pytest_legs_two_differences_would_hide(self):
         """Two of the pytest leg's named differences hold only while the tree keeps three properties, read here from
         the tree the leg itself runs in (so a change that breaks one turns the leg red). CI's Run pytest collects from
@@ -6042,7 +6307,8 @@ class CiParity(unittest.TestCase):
                                                   if line.strip().startswith("python -m pip install")])
         self.assertEqual(len(self.served["install"]), 1, "the step's one pip line")
         self.assertEqual(self.served["python"], served_python_version(self.text, job), "the version its job sets up")
-        self.assertEqual(env.get("ROMP_SERVED_TESTS_REQUIRE"), "1", "the switch that turns a skip in the served files into a failure")
+        self.assertEqual(env.get("ROMP_SERVED_TESTS_REQUIRE"), "1",
+                         "the switch under which tests/conftest.py fails a skip in the files the two globs select")
         self.assertIn("ROMP_SERVED_TESTS_ENGINES", env, "the engines the step's job installs")
         ctx = sweep.leg_context(os.path.join(os.sep + "nonexistent", "sweep-000000"), os.path.join(os.sep + "nonexistent", "base", "python"),
                                 env={"PATH": ""}, pytest_python=os.path.join(os.sep + "nonexistent", "venv", "bin", "python"),
@@ -6078,24 +6344,24 @@ class CiParity(unittest.TestCase):
         self.assertFalse(any(u[0] == "-n" for u in our_units), "no -n on the served leg")
 
     def test_the_served_leg_runs_the_served_steps_files_in_its_env_in_its_own_venv(self):
-        """Run: the runner over a world holding this ci.yml and kernel/session_host.py, FAKE standing in for every
-        tool and answering as the version the served job sets up. The served leg runs the files the served step's globs
-        select in that world (CiParity's own expansion), in one process, with every variable of the step's env: block at
+        """Run: the runner over a world holding this ci.yml and kernel/session_host.py (world_seed, with a stand-in for
+        each file the served step's pytest line names by file), FAKE standing in for every tool and answering as the
+        version the served job sets up. The served leg runs the files the served step's pytest line selects in that world
+        (CiParity's own expansion), in one process, with every variable of the step's env: block at
         its value, in a venv built from the step's pip line (CiParity's own read) and nothing else, so without the SDK,
         whose directory leads its PATH; the pytest leg collects those files too, in its own venv, and carries none of
         those variables."""
-        real = {".github/workflows/ci.yml": self.text,
-                "kernel/session_host.py": (ROOT / "kernel" / "session_host.py").read_text(encoding="utf-8")}
-        w = World(dict(SEED, **real))
+        w = World(self.world_seed())
         self.addCleanup(w.close)
         job, env, run = self.step(SERVED_LABEL)
         w.ctl({"probe_version": served_python_version(self.text, job) + ".0"})
         w.run(check=0)
         files = expand_globs(w.tree, self.served_globs())
-        self.assertEqual(files, SEED_SERVED_FILES)
+        self.assertEqual(files, SEED_SERVED_FILES + self.served_named(), "the seed's files for the globs, then each file the "
+                                                                         "line names by file (after the globs on the line)")
         calls = {c["leg"]: c for c in w.calls()}
         served, pytest_call = calls[sweep.SERVED_LEG], calls[PYTEST_LEG]
-        self.assertEqual([a for a in served["argv"] if a.startswith("tests/")], files, "the files the step's globs select")
+        self.assertEqual([a for a in served["argv"] if a.startswith("tests/")], files, "the files the step's pytest line selects")
         self.assertNotIn("-n", served["argv"], "one process")
         self.assertEqual([a for a in pytest_call["argv"] if a.startswith("--ignore=")],
                          ["--ignore=%s" % p for p in sorted(sweep.PYTEST_IGNORED)], "the pytest leg collects them too")
@@ -6203,9 +6469,7 @@ class CiParity(unittest.TestCase):
         """Run: the runner over a world holding this ci.yml and kernel/session_host.py, FAKE standing in for
         pip. The venv the pytest leg runs in holds every requirement the python job's install steps name, the SDK at
         the pin the SDK step reads, and nothing else; the population is read from ci.yml here, not from the runner."""
-        real = {".github/workflows/ci.yml": self.text,
-                "kernel/session_host.py": (ROOT / "kernel" / "session_host.py").read_text(encoding="utf-8")}
-        w = World(dict(SEED, **real))
+        w = World(self.world_seed())
         self.addCleanup(w.close)
         # FAKE answers as the version the served job sets up, which the served leg's venv is built from
         w.ctl({"probe_version": served_python_version(self.text, self.step(SERVED_LABEL)[0]) + ".0"})
