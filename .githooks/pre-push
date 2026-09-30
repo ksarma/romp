@@ -1744,6 +1744,15 @@
 # GITLEAKS_CONFIG and GITLEAKS_CONFIG_TOML are read, as gitleaks reads them,
 # when the work tree holds no .gitleaks.toml.
 # Bypass a false positive from either scan with `git push --no-verify`.
+#
+# The hook runs under the bash first on PATH, a stock mac's /bin/bash (3.2.57)
+# among them. Every array expansion with no operator is written
+# ${a[@]+"${a[@]}"}, since bash before 4.4 calls an array with no element
+# unbound under set -u (a count, ${#a[@]}, and a substring, ${a[@]:1}, are safe
+# there and left as they are), and the EXIT trap below refuses a push that bash
+# ends before the verdict while reporting success, as bash 3.2.57 ended it on
+# such an error (the trap's comment; tests/pre-push-hook.bats pins both, its
+# bash 3.2 cases).
 set -euo pipefail
 # Replacement off for every git below (the header's premise): the scans read
 # the objects the push transfers, never a substitute.
@@ -1793,6 +1802,7 @@ hidden_prior=0          # a subset of hidden_paths: a changed file whose previou
 scratch=""              # a directory for the added-lines capture (scan_identifiers), the NUL-delimited listings the binary-verdict check reads (refuse_hidden_paths) and the credential feed (scan_credentials); made on first use (make_scratch), removed by the EXIT trap below
 read_rc=0               # judged_read's two answers for the read just made: its status, and its output when no file took it
 read_out=""
+hook_verdict=""         # set by the verdict's two exits at the end of the hook and by nothing else, so the EXIT trap can tell the hook's own end from bash ending it; no function declares the name, since a local of that name would stand in for it in the trap when bash ends the hook inside that function
 # The scratch directory is removed from here, on EXIT, by its exact minted
 # path and never a glob (the header's scratch paragraph): a clean pass, a
 # refused push and a bash line ending the hook under set -e (a scratch
@@ -1800,7 +1810,44 @@ read_out=""
 # where the removal at the end of the identifier scan ran on the roads that
 # reached it and a hook ended by bash left the directory behind (the round 7
 # refuter, 2026-09-23).
-trap '[ -z "$scratch" ] || rm -rf -- "$scratch"' EXIT
+# The same trap (exit_trap) refuses a push when bash ends the hook before its
+# verdict and reports success: hook_verdict still empty and the status 0.
+# Under bash 3.2.57, a stock mac's /bin/bash, with set -e on, an error that
+# set -u raises (an unset name, or an empty array, which bash before 4.4
+# calls unbound) ends the hook, and this trap then reads $? as 0: the hook
+# exits with status 0 unless the trap exits, and git published the push with
+# bash's line and no romp line (tests/pre-push-hook.bats, the short case of
+# the RENAME CANDIDATES read, found when that file first ran under bash
+# 3.2.57, 2026-09-30). A pipeline stage that bash forks for a simple command
+# also runs this trap when such an error ends it (under bash 5.2 too, with
+# status 1), and under bash 3.2.57 its status was 0, so the pipeline read as
+# a success with the stage's output missing; the trap now ends such a stage
+# with status 1, pipefail fails the pipeline, and its caller judges that
+# status and refuses the push. The stage's run of the trap also removes the
+# scratch directory, under both bashes and before this change as well. That
+# does no harm: the stage's status fails its pipeline, and the caller's
+# refusal stands whatever the removal breaks after it (a later write there by
+# a simple command ends the hook under set -e; under bash 3.2.57 a loop or a
+# { } group whose redirection fails is skipped and the hook goes on, the
+# ledger entry's open item). Any other status is kept as bash set it (the
+# verdict's exit 1, a failed write under set -e, a signal), so under bash 5.2,
+# which ends the hook on such an error with status 1, the trap changes nothing.
+# Its refusal takes the form of the hook's other BLOCKED blocks, the verdict's
+# bypass line last, since the verdict is not reached; a stage's refusal comes
+# ahead of its caller's, and the bypass line prints again if the hook reaches
+# its verdict after it.
+# shellcheck disable=SC2317  # run by the EXIT trap below, which shellcheck does not follow
+exit_trap() {   # <the status bash is ending the hook, or a pipeline stage, with>
+    [ -z "$scratch" ] || rm -rf -- "$scratch"
+    if [ -z "$hook_verdict" ] && [ "$1" -eq 0 ]; then
+        echo "" >&2
+        echo "romp pre-push: BLOCKED. bash $BASH_VERSION ended the hook, or a stage of one of its pipelines, on the error above before its verdict, and reported success." >&2
+        echo "  The push is refused rather than published unscanned. The error above is in the hook, not in the push: report it, or put bash 4.4 or later first on PATH, where an array with no element raises no such error." >&2
+        echo "  To bypass for one push (you are sure it is fine): git push --no-verify" >&2
+        exit 1
+    fi
+}
+trap 'exit_trap "$?"' EXIT
 
 # The commits THIS push publishes for one ref: what no remote already has.
 # "Already has" means reachable from the remote ref's current value or from ANY
@@ -2771,7 +2818,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             if [ -n "$empty_tree" ]; then
                 tpaths=()
                 while IFS= read -r -d '' path; do tpaths+=(":(literal)$path"); done < "$scratch/tpaths"
-                numstat_rows "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat against the empty tree exited {rc})" "$scratch/rows3" --no-renames "$empty_tree" "$rev" -- "${tpaths[@]}" || numstat_ok=0
+                numstat_rows "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat against the empty tree exited {rc})" "$scratch/rows3" --no-renames "$empty_tree" "$rev" -- ${tpaths[@]+"${tpaths[@]}"} || numstat_ok=0
             fi
         fi
         rc=0; as_lines "the LISTINGS of commit ${rev:0:10} could not be rewritten for the BINARY VERDICT check" "$scratch/post" "$scratch/gone" "$scratch/rows" "$scratch/rows2" "$scratch/links" "$scratch/tpaths" "$scratch/rows3" "$scratch/listed" || rc=$?
@@ -3128,7 +3175,7 @@ object_type() {   # <local_ref> <sha>
 message_hit_lines() {   # <subject: "the MESSAGE of commit <sha>" or "the MESSAGE of tag <ref> (<sha>)"> <message>
     local hit
     lines=""
-    judged_read gate="the MESSAGE grep" 0,1 "$1 could not be grepped (grep exited {rc})" -- grep -in -a -F "${grep_args[@]}" <<< "$2" || return 1
+    judged_read gate="the MESSAGE grep" 0,1 "$1 could not be grepped (grep exited {rc})" -- grep -in -a -F ${grep_args[@]+"${grep_args[@]}"} <<< "$2" || return 1
     [ "$read_rc" -eq 0 ] || return 1
     if [ -z "$read_out" ]; then
         unscanned "$1 was grepped with no hit line listed (grep exited 0, a match, and printed no line), so the answer is short"
@@ -3475,13 +3522,27 @@ scan_identifiers() {
     # and the line in hand, and a plain `while read` dropped it: the entry on
     # that line was scanned for by nothing, and a one-entry file so written armed
     # no scan at all, nothing printed either way (found by execution, 2026-09-21).
+    # The file is opened once, to descriptor 7, before the loop reads it
+    # (gitleaks_config's shape), and a file that exists but cannot be opened is
+    # refused naming it, bash's own line for the failed open ahead of the
+    # refusal. The loop read it through done < file until 2026-09-30: bash
+    # 3.2.57, a stock mac's /bin/bash, skips a loop whose redirection fails and
+    # goes on under set -e, so a denylist with no read permission read as
+    # empty, the return below turned the whole identifier scan off, and the
+    # push published with bash's line alone (bash 5.2 ended the hook with
+    # status 1 and no romp line; found by execution).
     grep_args=()
-    while IFS= read -r line || [ -n "$line" ]; do
+    { exec 7< "$strings_file"; } || {
+        unscanned "the DENYLIST $strings_file could not be opened for reading, so which strings the identifier scan greps for is unknown; make it readable and push again"
+        return 0
+    }
+    while IFS= read -r -u 7 line || [ -n "$line" ]; do
         line="${line%%#*}"
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
         [ -n "$line" ] && grep_args+=(-e "$line")
-    done < "$strings_file"
+    done
+    exec 7<&-
     [ ${#grep_args[@]} -gt 0 ] || return 0
     chosen_emails                  # the same for every commit in the push: read once, in the shell (it sets chosen and chosen_unread)
 
@@ -3515,7 +3576,7 @@ scan_identifiers() {
         # is a match, so a match that printed no hit line is a short answer,
         # refused as unscanned.
         peeled=""; peeled_read=0
-        judged_read gate="the CONTENT grep of the tip" 0,1 "the CONTENT of the tip of $local_ref (${local_sha:0:10}) could not be fully scanned (git grep exited {rc})" -e -- git grep --no-color -i -I -l -F "${grep_args[@]}" "$local_sha" -- || :
+        judged_read gate="the CONTENT grep of the tip" 0,1 "the CONTENT of the tip of $local_ref (${local_sha:0:10}) could not be fully scanned (git grep exited {rc})" -e -- git grep --no-color -i -I -l -F ${grep_args[@]+"${grep_args[@]}"} "$local_sha" -- || :
         rc=$read_rc; hits=""; errs=""
         while IFS= read -r line; do
             case "$line" in
@@ -3664,7 +3725,7 @@ scan_identifiers() {
             # given it, without its trailing newlines; the grep's status is read
             # (0 a hit, 1 none, anything else refused as unscanned naming the read).
             while [ "${target%$'\n'}" != "$target" ]; do target=${target%$'\n'}; done
-            if judged_read own="the SYMLINK TARGET grep" 0,1 "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "$target" && [ "$read_rc" -eq 0 ]; then
+            if judged_read own="the SYMLINK TARGET grep" 0,1 "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) could not be grepped (grep exited {rc})" -- grep -qi -F ${grep_args[@]+"${grep_args[@]}"} <<< "$target" && [ "$read_rc" -eq 0 ]; then
                 echo "romp pre-push: the tip of $local_ref (${local_sha:0:10}) would publish a personal identifier" >&2
                 echo "  in the SYMLINK TARGET of $link_path -> $target" >&2
                 blocked_ids=1
@@ -3776,7 +3837,7 @@ scan_identifiers() {
                 # and sorted unique for the report, the sort's answer judged against
                 # the lines it was given.
                 hits=""
-                if judged_read gate="the ADDED LINES grep" 0,1 "the ADDED LINES of commit ${rev:0:10} could not be grepped (grep exited {rc})" -o "$scratch/hits" -- grep -a -i -F "${grep_args[@]}" "$scratch/added" && [ "$read_rc" -eq 0 ]; then
+                if judged_read gate="the ADDED LINES grep" 0,1 "the ADDED LINES of commit ${rev:0:10} could not be grepped (grep exited {rc})" -o "$scratch/hits" -- grep -a -i -F ${grep_args[@]+"${grep_args[@]}"} "$scratch/added" && [ "$read_rc" -eq 0 ]; then
                     if [ ! -s "$scratch/hits" ]; then
                         unscanned "the ADDED LINES of commit ${rev:0:10} were grepped with no hit line listed (grep exited 0, a match, and printed no line), so the answer is short"
                     else
@@ -3855,7 +3916,7 @@ scan_identifiers() {
             while IFS=$'\t' read -r -u 7 role email; do
                 [ -n "$email" ] || continue
                 is_chosen "$email" "$chosen" && continue
-                if judged_read own="the ADDRESS DOMAIN grep" 0,1 "the ADDRESS <$email> of commit ${rev:0:10} could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
+                if judged_read own="the ADDRESS DOMAIN grep" 0,1 "the ADDRESS <$email> of commit ${rev:0:10} could not be grepped (grep exited {rc})" -- grep -qi -F ${grep_args[@]+"${grep_args[@]}"} <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
                     # The cause that leads is the one the reads established: with
                     # the chosen-addresses read failed (chosen_unread, refused
                     # above), whether the clone chose the address is unknown, and
@@ -3993,7 +4054,7 @@ scan_identifiers() {
             email=""
             case "$tagger" in *"<"*">"*) email="${tagger#*<}"; email="${email%%>*}";; esac
             if [ -n "$email" ] && ! is_chosen "$email" "$chosen" \
-                && judged_read own="the ADDRESS DOMAIN grep" 0,1 "the TAGGER ADDRESS <$email> of tag $local_ref (${obj:0:10}) could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
+                && judged_read own="the ADDRESS DOMAIN grep" 0,1 "the TAGGER ADDRESS <$email> of tag $local_ref (${obj:0:10}) could not be grepped (grep exited {rc})" -- grep -qi -F ${grep_args[@]+"${grep_args[@]}"} <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
                 if [ "$chosen_unread" -ne 0 ]; then
                     echo "romp pre-push: tag $local_ref (${obj:0:10}) is tagged as <$email>: whether this clone is configured to use that address could not be read (git config --get-all user.email exited $chosen_unread, refused above), and its domain carries a personal identifier" >&2
                 else
@@ -5630,7 +5691,7 @@ tl_file() {   # <the file's name, for its lines>: parses the current file's line
             case "$tl_rest" in ''|'#'*) ;; *) tl_what="more after a table header on its line"; return 1 ;; esac
             tl_rule_end "$1"
             tl_al_end
-            hdr=""; for s in "${tl_segs[@]}"; do hdr="$hdr${hdr:+.}$s"; done
+            hdr=""; for s in ${tl_segs[@]+"${tl_segs[@]}"}; do hdr="$hdr${hdr:+.}$s"; done
             case "$hk$hdr" in
                 '[extend') ctx=extend ;;
                 '[rules'|'[[rules') ctx=rule; rid=""; rpath=0; rpv=""; rpk="" ;;
@@ -5652,7 +5713,7 @@ tl_file() {   # <the file's name, for its lines>: parses the current file's line
         fi
         kln=$tl_ln
         tl_key || return 1
-        segs=("${tl_segs[@]}")
+        segs=(${tl_segs[@]+"${tl_segs[@]}"})
         tl_note "$km" "$kln" 0 "${#segs[@]}" L || return 1
         tl_ws
         case "$tl_rest" in '='*) tl_rest=${tl_rest:1} ;; *) tl_what="a line that is no key and value, table header or comment"; return 1 ;; esac
@@ -5850,7 +5911,7 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
     # sends them there, restored after.
     case "$mode" in probe|canary) exec 8>&2 2>/dev/null ;; esac
     # outside judged_read: the scanner's own exit, judged with its log against the bytes the feed wrote.
-    ( cd "$dir" && umask 077 && { [ "$trace" -eq 0 ] || export NO_COLOR=1; } && "$gl" "${GL_ARGS[@]}" < /dev/null 1>&2 2> "$logf" ) || rc=$?
+    ( cd "$dir" && umask 077 && { [ "$trace" -eq 0 ] || export NO_COLOR=1; } && "$gl" ${GL_ARGS[@]+"${GL_ARGS[@]}"} < /dev/null 1>&2 2> "$logf" ) || rc=$?
     case "$mode" in probe|canary) exec 2>&8 8>&- ;; esac
     # The log as shown, read by the shell alone: every line, but in record
     # mode only a line whose level field is one of the five above, and in
@@ -6319,7 +6380,7 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
 merge_fp_reads() {   # <count of merges the PARENT COUNTS read listed>
     local want="$1" frec="" fdone="" fnw="" fp="" fb="" fpb="" rest="" n="" fsha=""
     : > "$scratch/creds.frecord"
-    if ! judged_read gate="the FIRST-PARENT DIFF of the pushed merges" 0 "the FIRST-PARENT DIFF of the pushed merges could not be read for the credential scan (a stage of git diff-tree, tr and awk exited {rc})" -- merge_fp_pieces "$scratch/creds.merges" "$scratch/creds.frecord" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$rpieces" "${feed_opts[@]}"; then
+    if ! judged_read gate="the FIRST-PARENT DIFF of the pushed merges" 0 "the FIRST-PARENT DIFF of the pushed merges could not be read for the credential scan (a stage of git diff-tree, tr and awk exited {rc})" -- merge_fp_pieces "$scratch/creds.merges" "$scratch/creds.frecord" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$rpieces" ${feed_opts[@]+"${feed_opts[@]}"}; then
         failed_creds=1; rbytes=""; rpbytes=""; return 0
     fi
     { IFS= read -r frec || :; } < "$scratch/creds.frecord"
@@ -6363,7 +6424,7 @@ name_reads() {   # sets rlisted, the caller's
     local nrec="" ndone="" npaths="" rest="" n="" fsha=""
     rlisted=""
     : > "$scratch/creds.nrecord"
-    if ! judged_read gate="the NAME LISTING of the pushed commits" 0 "the NAME LISTING of the pushed commits could not be read for the credential scan (a stage of git diff-tree and awk exited {rc}), so which paths git log diffs, and so which a driver's textconv renders, is unknown" -- name_listing "$scratch/creds.list" "$scratch/creds.nrecord" "$scratch/creds.paths" "${feed_opts[@]}"; then
+    if ! judged_read gate="the NAME LISTING of the pushed commits" 0 "the NAME LISTING of the pushed commits could not be read for the credential scan (a stage of git diff-tree and awk exited {rc}), so which paths git log diffs, and so which a driver's textconv renders, is unknown" -- name_listing "$scratch/creds.list" "$scratch/creds.nrecord" "$scratch/creds.paths" ${feed_opts[@]+"${feed_opts[@]}"}; then
         failed_creds=1; return 1
     fi
     { IFS= read -r nrec || :; } < "$scratch/creds.nrecord"
@@ -6599,7 +6660,7 @@ scan_credentials() {
             rbytes=0; rpbytes=0
         elif ! diff_settings; then
             failed_creds=1
-        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$scratch/creds.binary" "${feed_opts[@]}"; then
+        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$scratch/creds.binary" ${feed_opts[@]+"${feed_opts[@]}"}; then
             record=""
             { IFS= read -r record || :; } < "$scratch/creds.record"
             case "$record" in
@@ -6766,9 +6827,9 @@ scan_credentials() {
                 pdirs+=("$scratch/creds.p/$piece" "$scratch/creds.q/$piece")
             done 6< "$scratch/creds.pindex"
             dmade=0
-            if judged_read gate="the DIRECTORIES of the path-scoped copies" 0 "the DIRECTORIES of the path-scoped copies could not be made (xargs, running mkdir, exited {rc}, given ${#pdirs[@]} directories, creds.p/<piece> and creds.q/<piece> for each selected piece, under $scratch), so neither the additive run nor the probe run can read its copies; free space or inodes where TMPDIR points, or point TMPDIR at a writable directory, or set ROMP_NO_GITLEAKS=1 for one push" -- piece_dirs "${pdirs[@]}"; then
+            if judged_read gate="the DIRECTORIES of the path-scoped copies" 0 "the DIRECTORIES of the path-scoped copies could not be made (xargs, running mkdir, exited {rc}, given ${#pdirs[@]} directories, creds.p/<piece> and creds.q/<piece> for each selected piece, under $scratch), so neither the additive run nor the probe run can read its copies; free space or inodes where TMPDIR points, or point TMPDIR at a writable directory, or set ROMP_NO_GITLEAKS=1 for one push" -- piece_dirs ${pdirs[@]+"${pdirs[@]}"}; then
                 dmiss=0; dfirst=""
-                for d in "${pdirs[@]}"; do
+                for d in ${pdirs[@]+"${pdirs[@]}"}; do
                     [ -d "$d" ] || { dmiss=$((dmiss + 1)); [ -n "$dfirst" ] || dfirst=$d; }
                 done
                 if [ "$dmiss" -eq 0 ]; then
@@ -6888,9 +6949,12 @@ refuse_replace_refs
 scan_identifiers
 scan_credentials
 
-# Both scans have reported; one bypass line, then the verdict.
+# Both scans have reported; one bypass line, then the verdict. hook_verdict
+# tells the EXIT trap the hook reached it (the trap's comment).
 if [ "$blocked_ids" -ne 0 ] || [ "$blocked_creds" -ne 0 ] || [ "$failed_scan" -ne 0 ]; then
     echo "  To bypass for one push (you are sure it is fine): git push --no-verify" >&2
+    hook_verdict=refused
     exit 1
 fi
+hook_verdict=passed
 exit 0

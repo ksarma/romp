@@ -4998,8 +4998,34 @@ census_records() {   # <bash file> <mode: tools, vars or calls> [<word regex, fo
 # keeps every byte's place), unit-separated. mode tools keeps a record with a reading tool's word in its raw words, each
 # word tested unquoted (a copy with its quote and backslash characters removed, so a word whose quoting or escaping
 # splits the tool's name, gi\t, g''it or "g"it, is kept), not T; vars one with a $ in its raw words or ending at a
-# substitution, not P, A, R or T; calls one with a tool's word (tested the same way) or a word matching names.
+# substitution, not P, A, R, T or W; calls one with a tool's word (tested the same way) or a word matching names.
+# W: a } that the segment before it touches closes a ${ } word, not a brace group, and the record after it holds the rest
+# of the simple command that } split. It is flagged W when that simple command's command word lies ahead of the }, the
+# ${ } word itself or a word before it, so the record holds arguments alone (the bash 3.2 guard form ${a[@]+"${a[@]}"}
+# ahead of an argument that begins with an expansion, whose first word vars mode read as a command word; 2026-09-30).
+# When every word ahead of the } is one census_command passes over (a keyword or a command prefix with its option words,
+# an assignment, a redirection and its operand: x=${y} $cmd, 2>${log} $cmd, < ${in} "$runner"), the record's first word
+# can be the command word, and the record is not W (prewords, each word classed as census_word_kind classes it; the
+# audit of 2026-09-30, T1, found vars mode blind to those command words when W was set after every such }).
 BEGIN { US = sprintf("%c", 31); toolre = "(^|[^A-Za-z0-9_.-])(" tools ")([^A-Za-z0-9_.-]|$)"; SPLITSET = "\\$(<>|&;`){}" sprintf("%c", 1); SPLITRE = "[\\\\$(<>|&;`){}" sprintf("%c", 1) "]" }
+function prewords(s,   n, w, k, p, o) {   # 1 when every word of s is one census_command passes over before a command word, else 0
+    n = split(s, w, /[ \t]+/); k = 1
+    while (k <= n) {
+        if (w[k] == "") { k++; continue }
+        if (w[k] ~ prefixre) {
+            p = w[k]; k++
+            if (p == "case" || p == "for" || p == "select") return 0
+            if (p == "command" && w[k] ~ /^-[pvV]*[vV][pvV]*$/) return 0
+            while (k <= n && w[k] ~ /^-/) { o = w[k]; k++; if ((p == "nice" && o == "-n") || (p == "env" && o == "-u")) k++ }
+            continue
+        }
+        if (w[k] ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=/) { k++; continue }
+        if (w[k] ~ /^([0-9]*(<|>|>>|<<<|<<-?|<>|>\||<&|>&)|&>>?)$/) { k += 2; continue }
+        if (w[k] ~ /^[0-9]*[<>]/ || w[k] ~ /^&>/) { k++; continue }
+        return 0
+    }
+    return 1
+}
 function top() { return sp > 0 ? stk[sp] : "" }
 function ctxflag(   t) { t = top(); return (t == "A" || t == "a") ? "A" : (t == "R" ? "R" : "") }
 function subflag(   k) { if (bq) return "S"; for (k = 1; k <= xsp; k++) if (xs[k] == "C") return "S"; return "" }
@@ -5022,13 +5048,13 @@ function emit(k,   s, L, ms, rs, j, ws, w, x, y, out, tool, dol, fn, touch) {
         if (names != "" && x ~ names) fn = 1
     }
     if (mode == "tools" && (index(sfl[k], "T") || !tool)) return
-    if (mode == "vars" && (sfl[k] ~ /[APRT]/ || (!dol && stok[k] != "$(" && stok[k] != "`"))) return
+    if (mode == "vars" && (sfl[k] ~ /[APRTW]/ || (!dol && stok[k] != "$(" && stok[k] != "`"))) return
     if (mode == "calls" && !tool && !fn) return
     printf "%d%s%d%s%s%s%s%s%d%s\n", NR, US, s, US, sfl[k], US, stok[k], US, touch, out
 }
 {
     m = $0; r = ""; if ((getline r < rawf) <= 0) r = ""
-    n = length(m); ns = 0; sp = 0; start = 1; cur = subflag(); jd = 0
+    n = length(m); ns = 0; sp = 0; start = 1; cur = subflag(); jd = 0; lastw = 0; lastpre = 1; fresh = 1
     if (m ~ /(^|[ \t!&|;(])judged_read[ \t]/) jd = index(m, " -- ")
     i = 1
     while (i <= n) {
@@ -5037,7 +5063,7 @@ function emit(k,   s, L, ms, rs, j, ws, w, x, y, out, tool, dol, fn, touch) {
         # 12q, the cost round: the same records, in fewer steps)
         if (i != jd && !index(SPLITSET, c)) { skipto = match(substr(m, i + 1), SPLITRE); skipto = skipto ? i + skipto : n + 1; if (jd > i && jd < skipto) skipto = jd; i = skipto; continue }
         c2 = substr(m, i, 2); L = 0
-        if (jd && i == jd) { endseg(i, "--"); i += 4; start = i; cur = ctxflag() "T" subflag(); continue }
+        if (jd && i == jd) { endseg(i, "--"); i += 4; start = i; cur = ctxflag() "T" subflag(); fresh = 1; lastw = 0; lastpre = 1; continue }
         if (c == "\\") { i += 2; continue }
         if (substr(m, i, 3) == "$((") { tok = "$(("; L = 3; stk[++sp] = "A"; xs[++xsp] = "o" }
         else if (c2 == "((") { tok = c2; L = 2; stk[++sp] = "A"; xs[++xsp] = "o" }
@@ -5049,7 +5075,21 @@ function emit(k,   s, L, ms, rs, j, ws, w, x, y, out, tool, dol, fn, touch) {
         else if (c == ")") { tok = c; L = 1; if (top() == "A" && substr(m, i + 1, 1) == ")") L = 2; if (sp > 0) sp--; if (xsp > 0) xsp-- }
         else if (c == "\001") { tok = "pat"; L = 1 }
         else if ((c == "{" || c == "}") && substr(m, i - 1, 1) != "$") { tok = c; L = 1 }
-        if (L) { endseg(i, tok); i += L; start = i; cur = ctxflag() subflag(); continue }
+        if (L) {
+            tw = (tok == "}" && i > start && substr(m, i - 1, 1) !~ /[ \t]/)
+            wpre = 1
+            if (tw) {                                           # is every word of the simple command ahead of this } one census_command passes over?
+                seg = substr(m, start, i - start)
+                if (fresh) wpre = prewords(seg)                 # the segment starts the simple command
+                else if (lastw) {                               # it follows such a } in the same simple command: the words ahead are the chain's
+                    if (substr(seg, 1, 1) !~ /[ \t]/) sub(/^[^ \t]*/, "", seg)   # its first word continues the ${ } word before it, already classed
+                    wpre = lastpre && prewords(seg)
+                }                                               # after a substitution's ) or closing backtick the words ahead are not read here: not W, so vars mode reads the record
+            }
+            fresh = !(tw || tok == ")" || (tok == "`" && !bq))  # the next segment starts a simple command, or continues one
+            endseg(i, tok); i += L; start = i; cur = ctxflag() subflag() ((tw && !wpre) ? "W" : ""); lastw = tw; lastpre = wpre
+            continue
+        }
         i++
     }
     endseg(n + 1, "eol")
@@ -5058,12 +5098,12 @@ function emit(k,   s, L, ms, rs, j, ws, w, x, y, out, tool, dol, fn, touch) {
 AWK
     fi
     if [ -n "${4:-}" ]; then                                    # the masked text in hand (round 12q, the cost round): masked once per census
-        LC_ALL=C awk -v rawf="$1" -v tools="$CENSUS_TOOLS" -v mode="$2" -v names="${3:-}" -f "$TEST_DIR/split.awk" "$4"
+        LC_ALL=C awk -v rawf="$1" -v tools="$CENSUS_TOOLS" -v prefixre="$CENSUS_PREFIX" -v mode="$2" -v names="${3:-}" -f "$TEST_DIR/split.awk" "$4"
         return 0
     fi
     tmp=$(mktemp "$TEST_DIR/census.XXXXXX")
     masked_text "$1" > "$tmp"
-    LC_ALL=C awk -v rawf="$1" -v tools="$CENSUS_TOOLS" -v mode="$2" -v names="${3:-}" -f "$TEST_DIR/split.awk" "$tmp"
+    LC_ALL=C awk -v rawf="$1" -v tools="$CENSUS_TOOLS" -v prefixre="$CENSUS_PREFIX" -v mode="$2" -v names="${3:-}" -f "$TEST_DIR/split.awk" "$tmp"
     rm -f "$tmp"
 }
 census_rec() {   # <record fields...>: sets ln, fl, et, touch, mw and rw (the words masked and raw), the caller's
@@ -6463,8 +6503,9 @@ descriptor_loops() {   # <bash file>: the count of while-read loops that read th
     # round 10a the loop over a merge's binary paths, merge_binary_reads, whose reads are judged_read calls), and
     # since round 9d four loops of the credential scan that run no tool but read on a descriptor all the same (the
     # index read into arrays, the two passes over the path-scoped index, the report's findings), and since round 11a
-    # a fifth, gitleaks_config's read of a config file's lines on descriptor 7: twelve
-    [ "$(descriptor_loops "$HOOK")" -eq 12 ]
+    # a fifth, gitleaks_config's read of a config file's lines on descriptor 7, and since 2026-09-30 a sixth, the
+    # denylist's read of its lines on descriptor 7, the file opened ahead of the loop so a failed open is refused: thirteen
+    [ "$(descriptor_loops "$HOOK")" -eq 13 ]
     { sed -n '1p' "$HOOK"; printf '%s\n' 'while read -r x; do' '    git cat-file -t "$x"' 'done <<< "$refs"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/loop-a.sh"
     run stdin_loops_running_tools "$TEST_DIR/loop-a.sh"
     [ "$output" = "2-4: git" ]
@@ -8752,7 +8793,10 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     push_main_through_hook_with_shim
     fired_short rename-candidates 'in gone) print'
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${merge:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for b.txt, a path the merge changes)"* ]]
+    # || false (2026-09-30): bash before 4.1 does not end a test on a failed [[ ]] that is not its last command, and
+    # this line is the case's bash 3.2 witness for the guard on the numstat's pathspec in refuse_hidden_paths: with that
+    # guard stripped, bash 3.2.57 ends the hook there, the EXIT trap refuses the push, and the status check stays green
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${merge:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for b.txt, a path the merge changes)"* ]] || false
     at_base
 }
 
@@ -13057,6 +13101,29 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     [ "$output" = $'2:g=/usr/bin/git\n3:"$g" rev-parse HEAD' ]
     run undeclared_reads "$TEST_DIR/plant-r9b-g.sh"
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
+    # the splitter's W flag (2026-09-30, the bash 3.2 guard): a command word held in a variable after a ${ } word that is
+    # an assignment's value or a redirection's operand is still the command word, each line pinned once (each passed the
+    # pin while W was set after every ${ } word's }, the audit of 2026-09-30, T1); the guard ahead of an argument that
+    # begins with an expansion, after a command word or after another guard, and the guard as the command word, are
+    # read as the census reads them: the argument no command word, the guard as the command word pinned
+    local -a w_plants=(
+        'x=${y} $cmd arg'
+        'x=${y} "$runner" arg'
+        'GIT_DIR=${d:-.git} LC_ALL=C $tool arg'
+        'out=$(x=${y} $cmd arg)'
+        '2>${log} $cmd arg'
+        '< ${in:-/dev/null} "$runner" arg'
+        'x=${a}${b} $cmd arg'
+        'env -i x=${y} $cmd arg'
+        'f ${a[@]+"${a[@]}"} "$x"'
+        'f ${a[@]+"${a[@]}"} ${b[@]+"${b[@]}"} "$x"'
+        'x=${y} f ${a[@]+"${a[@]}"} "$x"'
+        '${a[@]+"${a[@]}"} "$x"'
+    )
+    { sed -n '1p' "$HOOK"; printf '%s\n' "${w_plants[@]}"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-w.sh"
+    run census_unread_shapes "$TEST_DIR/plant-w.sh"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(for k in 0 1 2 3 4 5 6 7 11; do printf '%s\n' "$((k + 2)):${w_plants[k]}"; done)" ]
     # a here-doc: its operator pinned, whatever its body holds
     { sed -n '1p' "$HOOK"; printf '%s\n' ": <<'EOF'" 'no read here' 'EOF'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-r9b-h.sh"
     run census_unread_shapes "$TEST_DIR/plant-r9b-h.sh"
@@ -13100,7 +13167,7 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     sed 's/^scanner_run() {/scanner_run_renamed() {/' "$HOOK" > "$TEST_DIR/plant-r10c-sr.sh"
     run census_unread_shapes "$TEST_DIR/plant-r10c-sr.sh"
     [ "${lines[0]}" = "0:the extent of scanner_run, which an exception of the bound is keyed on, is missing" ]
-    [[ "$output" == *$'\n'*':    ( cd "$dir" && umask 077 && { [ "$trace" -eq 0 ] || export NO_COLOR=1; } && "$gl" "${GL_ARGS[@]}" < /dev/null 1>&2 2> "$logf" ) || rc=$?'* ]]
+    [[ "$output" == *$'\n'*':    ( cd "$dir" && umask 077 && { [ "$trace" -eq 0 ] || export NO_COLOR=1; } && "$gl" ${GL_ARGS[@]+"${GL_ARGS[@]}"} < /dev/null 1>&2 2> "$logf" ) || rc=$?'* ]]
 }
 
 # ── round 12b3: the skip canary (romp-manager's ruling, 2026-09-26 20:08Z) ──
@@ -16723,4 +16790,385 @@ r12t_feed_advice() {   # the push just made was refused as unscanned with failed
     [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^-l2$')" -eq 1 ]
     push_main_through_hook_with_shim
     r10a_passes
+}
+
+# The bash 3.2 guard (2026-09-30). bash before 4.4 calls an array with no element unbound under set -u, so under a
+# stock mac's /bin/bash (3.2.57) "${a[@]}" over an empty array is an error that ends the hook; bash 4.4 and later expand
+# it to no word. The hook's form for every such expansion is ${a[@]+"${a[@]}"} (${a[*]+"${a[*]}"} for the other
+# subscript), which expands to no word when the array has no element and to "${a[@]}" when it has one, under bash
+# 3.2.57 and 5.2.21 alike while IFS holds a character (bash 3.2.57 joins the elements into one word under an empty IFS,
+# so the census names an IFS set anywhere but ahead of a read). array_census reads a bash file quote-aware and prints one
+# record per array expansion and per shape it cannot read; the case after it pins the hook with it. It proves no array
+# non-empty: every ${name[@]} or ${name[*]} with no operator counts as one that can be empty, so every one carries the
+# guard, whether or not a road empties it (the census of the roads is in the ledger entry's item 40). What it does not
+# read: an expansion built at run time (eval, which the census above pins absent; an indirect ${!name}, which this one
+# names as unread) and a here-doc's body (named as unread too). The same scan checks the EXIT trap's premise: the trap
+# reads hook_verdict and scratch after bash has ended the hook, and a function's local of either name would stand in
+# for the global when bash ends the hook inside that function, so no declaration names them, and hook_verdict is
+# assigned only outside functions, first ahead of the trap line. The cases below end each [[ ]] assertion with
+# || false: bash before 4.1 does not end a test on a failed [[ ]] under set -e (bats' documented gotcha), and these
+# cases are the witnesses a bash 3.2 run reads.
+array_census() {   # <bash file>: one record per line, tab-separated: the line, the kind, a name and a detail (the awk's header)
+    if [ ! -f "$TEST_DIR/arrays.awk" ]; then
+        cat > "$TEST_DIR/arrays.awk" <<'AWK'
+# One record per line of output, tab-separated: the line, the kind, a name and a detail.
+#   plain    ${n[@]} or ${n[*]} with no operator; detail "guarded" when it sits in the word of a ${n[@]+...} or
+#            ${n[*]+...} of the same name (bash expands that word only when n has an element), else "bare"
+#   op       ${n[@]} or ${n[*]} with an operator (${n[@]:0}, ${n[@]#x}, ${n[@]+w} and the rest); detail the operator
+#   count    ${#n[@]}, and keys, ${!n[@]}
+#   ifs      IFS given a value, declared or unset any way but as an assignment ahead of a read on the same simple
+#            command: an assignment, a word naming IFS (the operand of a declaration, unset, read, printf -v or for), a
+#            quoted word naming it ("IFS", 'IFS=x'), an option word naming it (-vIFS), or ${IFS=x} or ${IFS:=x}
+#   shadow   a declaration (local, declare, typeset, readonly, export) or an unset that names scratch or hook_verdict
+#   verdict  an assignment of hook_verdict; detail "top", or the function it is inside
+#   unread   what this scan cannot read: an indirect expansion ${!n}, a here-doc operator, or a quote or expansion still
+#            open at the end of the file
+# The text is read quote-aware, in the C locale: comments and the text of '...' and $'...' are passed over; "...", $( ),
+# backquotes, arithmetic and the word of a ${ } are read for the expansions inside them. A function is a line
+# name() { at column 0 through the next line that is } alone.
+function emit(ln, kind, name, detail) { printf "%d\t%s\t%s\t%s\n", ln, kind, name, detail }
+function guarded(name,   k) {
+    for (k = pd; k >= 1; k--) if (pname[k] == name && psub[k] ~ /^[@*]$/ && pop[k] == "+") return 1
+    return 0
+}
+function wordend(j,   d) {   # the index just past the shell word that starts at j
+    while (j <= n) {
+        d = substr(t, j, 1)
+        if (d ~ /[ \t\n;&|()<>]/) break
+        if (d == "\\") { j += 2; continue }
+        if (substr(t, j, 2) == "$'") { j += 2; while (j <= n && substr(t, j, 1) != "'") { if (substr(t, j, 1) == "\\") j++; j++ } j++; continue }
+        if (d == "'") { j++; while (j <= n && substr(t, j, 1) != "'") j++; j++; continue }
+        if (d == "\"") { j++; while (j <= n && substr(t, j, 1) != "\"") { if (substr(t, j, 1) == "\\") j++; j++ } j++; continue }
+        j++
+    }
+    return j
+}
+function blanks(j) { while (j <= n && substr(t, j, 1) ~ /[ \t]/) j++; return j }
+function atword(j, w) { return substr(t, j, length(w)) == w && substr(t, j + length(w), 1) ~ /[ \t\n;&|()<>]/ }
+function statement_word(i,   j, e, w, nm) {   # at a word's start in code: the IFS, declaration and hook_verdict checks
+    w = substr(t, i, 40)
+    if (w ~ /^(IFS|[A-Za-z_][A-Za-z0-9_]*)\+?=/) {                      # assignments ahead of a command word
+        j = i; nm = 0
+        while (j <= n && substr(t, j, 40) ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=/) {
+            if (substr(t, j, 4) == "IFS=" || substr(t, j, 5) == "IFS+=") nm = 1
+            if (substr(t, j, 13) == "hook_verdict=") emit(ln, "verdict", "hook_verdict", fname == "" ? "top" : fname)
+            j = blanks(wordend(j))
+        }
+        if (nm && !atword(j, "read")) emit(ln, "ifs", "IFS", "an assignment that is no prefix of a read")
+        return
+    }
+    if (w ~ /^IFS([^A-Za-z0-9_]|$)/) emit(ln, "ifs", "IFS", "a word naming IFS, no assignment ahead of a read")   # a declaration's, unset's, read's, printf -v's or for's operand
+    if (atword(i, "local") || atword(i, "declare") || atword(i, "typeset") || atword(i, "readonly") || atword(i, "export") || atword(i, "unset")) {
+        j = i
+        while (j <= n) {
+            j = blanks(wordend(j))
+            if (j > n || substr(t, j, 1) ~ /[\n;&|()]/) break
+            e = wordend(j); w = substr(t, j, e - j); sub(/[+]?=.*/, "", w)
+            if (w == "scratch" || w == "hook_verdict") emit(ln, "shadow", w, fname == "" ? "top" : fname)
+            if (substr(t, j, 13) == "hook_verdict=" && substr(t, i, 5) != "local") emit(ln, "verdict", "hook_verdict", fname == "" ? "top" : fname)
+        }
+    }
+}
+BEGIN { RS = "\001" }
+{
+    t = $0; n = length(t); i = 1; ln = 1; split(t, L, "\n")
+    depth = 0; st[0] = "code"; prev = "\n"; pd = 0; fname = ""; oneline = 0
+    while (i <= n) {
+        c = substr(t, i, 1); c2 = substr(t, i, 2); s = st[depth]
+        if (prev == "\n" && depth == 0) {                                  # a line's start at the top: a function's extent
+            if (oneline) { fname = ""; oneline = 0 }
+            line = L[ln]
+            if (fname == "" && line ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) *\{/) { fname = substr(line, 1, index(line, "(") - 1); if (line ~ /\}[ \t]*$/) oneline = 1 }
+            else if (fname != "" && line == "}") fname = ""
+        }
+        if (c == "\n") ln++
+        if (s == "sq") { if (c == "'") depth--; prev = c; i++; continue }
+        if (s == "ansi") { if (c == "\\") { if (substr(t, i + 1, 1) == "\n") ln++; i += 2; continue } if (c == "'") depth--; prev = c; i++; continue }
+        if (c == "\\") { if (substr(t, i + 1, 1) == "\n") ln++; prev = "x"; i += 2; continue }
+        if (s == "code" || s == "bq" || s == "pew" || s == "pewq") {
+            if (s != "pew" && s != "pewq" && prev ~ /[ \t\n;&|(`{]/) {
+                if (c == "#") { while (i <= n && substr(t, i, 1) != "\n") i++; continue }
+                if (c ~ /[A-Za-z_]/) statement_word(i)
+                else if ((c == "\"" || c == "'") && substr(t, i + 1, 3) == "IFS" && index("\"'=+[", substr(t, i + 4, 1)) > 0) emit(ln, "ifs", "IFS", "a quoted word naming IFS")
+                else if (c == "-" && substr(t, i, wordend(i) - i) ~ /^-[A-Za-z]+IFS$/) emit(ln, "ifs", "IFS", "an option word naming IFS")
+            }
+            if (c == "'" && s != "pewq") { depth++; st[depth] = "sq"; prev = c; i++; continue }
+            if (c2 == "$'" && s != "pewq") { depth++; st[depth] = "ansi"; prev = c; i += 2; continue }
+            if (c == "\"") { depth++; st[depth] = "dq"; prev = c; i++; continue }
+            if (c == "`") { if (s == "bq") depth--; else { depth++; st[depth] = "bq"; par[depth] = 0 } prev = c; i++; continue }
+            if (s != "pew" && s != "pewq" && c2 == "<<") {
+                if (substr(t, i + 2, 1) == "<") { prev = c; i += 3; continue }
+                emit(ln, "unread", "-", "a here-doc operator"); prev = c; i += 2; continue
+            }
+            if (c == "(") { par[depth]++; prev = c; i++; continue }
+            if (c == ")") { if (par[depth] > 0) par[depth]--; else if (s == "code" && depth > 0) depth--; prev = c; i++; continue }
+            if ((s == "pew" || s == "pewq") && c == "}") { depth--; pd--; prev = c; i++; continue }
+        } else if (s == "dq") {
+            if (c == "\"") { depth--; prev = c; i++; continue }
+            if (c == "`") { depth++; st[depth] = "bq"; par[depth] = 0; prev = c; i++; continue }
+        }
+        if (c2 == "$(") { depth++; st[depth] = "code"; par[depth] = 0; prev = "("; i += 2; continue }
+        if (c2 == "${") {
+            j = i + 2; pre = ""
+            d = substr(t, j, 1)
+            if ((d == "#" || d == "!") && substr(t, j + 1, 1) ~ /[A-Za-z_]/) { pre = d; j++ }
+            name = ""
+            while (j <= n && substr(t, j, 1) ~ /[A-Za-z0-9_]/) { name = name substr(t, j, 1); j++ }
+            if (name == "") { name = substr(t, j, 1); j++ }                 # a special parameter: $@, $*, $#, $1 and the rest
+            sb = ""
+            if (substr(t, j, 1) == "[") {
+                b = 1; k = j + 1
+                while (k <= n && b > 0) { d = substr(t, k, 1); if (d == "[") b++; else if (d == "]") b--; if (b > 0) sb = sb d; k++ }
+                j = k
+            }
+            op = substr(t, j, 1)
+            if (op == ":" && substr(t, j + 1, 1) ~ /[-=+?]/) op = substr(t, j, 2)
+            else if ((op == "#" || op == "%" || op == "/" || op == "^" || op == ",") && substr(t, j + 1, 1) == op) op = op op
+            if (sb == "@" || sb == "*") {
+                if (pre == "#") emit(ln, "count", name, "")
+                else if (pre == "!") emit(ln, "keys", name, "")
+                else if (op == "}") emit(ln, "plain", name, (guarded(name) ? "guarded" : "bare") " [" sb "]")
+                else emit(ln, "op", name, op)
+            } else if (pre == "!" && (op == "}" || op !~ /^[*@]/)) emit(ln, "unread", name, "an indirect expansion")
+            else if (name == "IFS" && pre == "" && sb == "" && (op == "=" || op == ":=")) emit(ln, "ifs", "IFS", "an assigning expansion")
+            if (op == "}") { prev = "}"; i = j + 1; continue }
+            pd++; pname[pd] = name; psub[pd] = sb; pop[pd] = op             # the word: read to its matching }
+            depth++; st[depth] = (s == "dq" || s == "pewq") ? "pewq" : "pew"; par[depth] = 0
+            i = j + length(op); prev = "x"; continue
+        }
+        prev = c; i++
+    }
+    if (depth != 0) emit(ln, "unread", "-", "a quote or an expansion open at the end of the file (" st[depth] ")")
+}
+AWK
+    fi
+    LC_ALL=C awk -f "$TEST_DIR/arrays.awk" "$1"
+}
+
+@test "bash 3.2 (2026-09-30, the guard's census): every array expansion with no operator in the hook carries the guard, since bash before 4.4 calls an array with no element unbound under set -u; array_census names the line of a bare one, of a shape it cannot read, of an IFS set outside a read's prefix and of a name that would stand in for the EXIT trap's; each guard stripped in a copy of the hook is the line named; and a probe text reads as the committed list under each awk" {
+    local out bare other trapln first k n ln kind name detail sb esc copy probe="$TEST_DIR/arrays-probe.sh" want="$TEST_DIR/arrays-want" a d
+    run array_census "$HOOK"
+    [ "$status" -eq 0 ]
+    out=$output
+    # the scan read the hook: its guarded expansions are there, so an empty census cannot pass the checks below
+    n=$(awk -F'\t' '$2 == "plain"' <<< "$out" | wc -l)
+    [ "$n" -ge 1 ]
+    bare=$(awk -F'\t' '$2 == "plain" && $4 !~ /^guarded/ { print "line " $1 ": an expansion of " $3 " with no guard" }' <<< "$out")
+    other=$(awk -F'\t' '$2 == "unread" || $2 == "ifs" || $2 == "shadow" || ($2 == "verdict" && $4 != "top") { print "line " $1 ": " $2 " " $3 " (" $4 ")" }' <<< "$out")
+    printf '%s\n' "$bare" "$other" | sed '/^$/d'
+    [ -z "$bare" ]
+    [ -z "$other" ]
+    # hook_verdict is first assigned ahead of the line that arms the trap
+    trapln=$(grep -n -x -F "trap 'exit_trap \"\$?\"' EXIT" "$HOOK" | cut -d: -f1)
+    [ -n "$trapln" ]
+    first=$(awk -F'\t' '$2 == "verdict" { print $1; exit }' <<< "$out")
+    [ -n "$first" ]
+    [ "$first" -lt "$trapln" ]
+    # each guard, stripped in a copy of its own, is the one line the census names
+    k=0
+    while IFS=$'\t' read -r ln kind name detail; do
+        [ "$kind" = plain ] || continue
+        k=$((k + 1)); copy="$TEST_DIR/hook-bare-$k"
+        sb=${detail#*[}; sb=${sb%]}; esc=@
+        if [ "$sb" = '*' ]; then esc='\*'; fi
+        sed "${ln}s/\${$name\\[$esc\\]+\"\${$name\\[$esc\\]}\"}/\"\${$name[$sb]}\"/" "$HOOK" > "$copy"
+        [ "$(cmp -l "$HOOK" "$copy" 2>/dev/null | wc -l)" -gt 0 ]           # the strip landed
+        run array_census "$copy"
+        [ "$(awk -F'\t' '$2 == "plain" && $4 !~ /^guarded/ { print $1 }' <<< "$output")" = "$ln" ]
+    done <<< "$out"
+    [ "$k" -eq "$n" ]
+    # the probe text: each form the census reads, and each it cannot, against the committed list
+    cat > "$probe" <<'SH'
+f "${a[@]}"
+f ${a[@]}
+f "${a[*]}"
+f ${a[@]+"${a[@]}"}
+f ${b[@]+"${a[@]}"}
+f ${a[@]:+"${a[@]}"}
+x=$(g "${a[@]}")
+echo "pre ${a[@]} post"
+# "${a[@]}"
+echo '${a[@]}'
+echo ${!ref}
+IFS=: ; f
+local IFS
+IFS=$'\t' read -r x
+LC_ALL=C IFS= read -r -d '' y
+f() { local scratch; }
+g() {
+    hook_verdict=x
+}
+echo "${x:-"${a[@]}"}"
+echo "${x:-'${a[@]}'}"
+echo ${x:-'${a[@]}'}
+for s in "${a[@]}"; do :; done
+declare -a arr; arr=("${a[@]}")
+export IFS=x
+IFS+=x
+unset IFS
+while IFS= read -r l; do :; done < f
+k=${#a[@]}; j=("${!a[@]}"); m=("${a[@]:1}")
+h() { local -a q; q=(${a[@]+"${a[@]}"}); }
+hook_verdict=""
+read -r IFS
+printf -v IFS '%s' x
+for IFS in a b; do :; done
+: "${IFS:=x}" ${IFS=y}
+read -rd '' "IFS"
+declare 'IFS=x'
+printf -vIFS x
+echo "$IFS" ${IFS} "${IFS:-x}" "IFS is" IFS_SAVED=1
+cat <<EOT
+SH
+    cat > "$want" <<'WANT'
+1	plain	a	bare [@]
+2	plain	a	bare [@]
+3	plain	a	bare [*]
+4	op	a	+
+4	plain	a	guarded [@]
+5	op	b	+
+5	plain	a	bare [@]
+6	op	a	:+
+6	plain	a	bare [@]
+7	plain	a	bare [@]
+8	plain	a	bare [@]
+11	unread	ref	an indirect expansion
+12	ifs	IFS	an assignment that is no prefix of a read
+13	ifs	IFS	a word naming IFS, no assignment ahead of a read
+16	shadow	scratch	f
+18	verdict	hook_verdict	g
+20	plain	a	bare [@]
+21	plain	a	bare [@]
+23	plain	a	bare [@]
+24	plain	a	bare [@]
+25	ifs	IFS	an assignment that is no prefix of a read
+26	ifs	IFS	an assignment that is no prefix of a read
+27	ifs	IFS	a word naming IFS, no assignment ahead of a read
+29	count	a	
+29	keys	a	
+29	op	a	:
+30	op	a	+
+30	plain	a	guarded [@]
+31	verdict	hook_verdict	top
+32	ifs	IFS	a word naming IFS, no assignment ahead of a read
+33	ifs	IFS	a word naming IFS, no assignment ahead of a read
+34	ifs	IFS	a word naming IFS, no assignment ahead of a read
+35	ifs	IFS	an assigning expansion
+35	ifs	IFS	an assigning expansion
+36	ifs	IFS	a quoted word naming IFS
+37	ifs	IFS	a quoted word naming IFS
+38	ifs	IFS	an option word naming IFS
+40	unread	-	a here-doc operator
+WANT
+    for a in awk gawk mawk; do
+        if [ "$a" = awk ]; then
+            d=""
+        elif command -v "$a" > /dev/null 2>&1; then
+            d="$TEST_DIR/arrays-$a"; mkdir -p "$d"; ln -sf "$(command -v "$a")" "$d/awk"
+        else
+            echo "array census: $a is not on PATH, so the census was not run under it"
+            continue
+        fi
+        rm -f "$TEST_DIR/arrays.awk"
+        ( if [ -n "$d" ]; then PATH="$d:$PATH"; fi; array_census "$probe" ) > "$TEST_DIR/arrays-got-$a"
+        diff -u "$want" "$TEST_DIR/arrays-got-$a"
+    done
+}
+
+exit_trap_refused() {   # the push just made printed the EXIT trap's refusal whole, in the form of the hook's other BLOCKED blocks: a blank line, the BLOCKED line naming a bash, the refusal with its remedy, and the verdict's bypass line, in that order
+    [[ "$output" == *$'\n\nromp pre-push: BLOCKED. bash '*$' ended the hook, or a stage of one of its pipelines, on the error above before its verdict, and reported success.\n  The push is refused rather than published unscanned. The error above is in the hook, not in the push: report it, or put bash 4.4 or later first on PATH, where an array with no element raises no such error.\n  To bypass for one push (you are sure it is fine): git push --no-verify'* ]]
+}
+
+@test "bash 3.2 (2026-09-30, the EXIT trap): a copy of the hook that ends with status 0 after the identifier scan, ahead of its verdict, is refused by the trap's line naming bash, and the remote stays at its base; the same copy under the trap line the hook carried before, the scratch directory's removal alone, publishes the push, as bash 3.2.57 ended the hook with status 0 on an unbound name" {
+    local plant="$TEST_DIR/hook-exit0" before="$TEST_DIR/hook-exit0-before"
+    leak_in_middle_commit_after_base
+    awk '$0 == "scan_credentials" { print "exit 0" } { print }' "$HOOK" > "$plant"
+    [ "$(grep -c -x 'exit 0' "$plant")" -eq 2 ]                          # the plant landed, ahead of the verdict's own exit 0
+    chmod 755 "$plant"
+    HOOK=$plant push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${leak:0:10} ADDS a personal identifier in:"* ]] || false    # the scan ran; the plant ended the hook after it
+    exit_trap_refused
+    [ "$(grep -c -F 'To bypass for one push' <<< "$output")" -eq 1 ]       # the trap's bypass line alone: the verdict, which prints its own, was never reached
+    at_base
+    awk -v old="trap 'exit_trap \"\$?\"' EXIT" -v new="trap '[ -z \"\$scratch\" ] || rm -rf -- \"\$scratch\"' EXIT" '$0 == old { print new; next } { print }' "$plant" > "$before"
+    [ "$(grep -c -x -F "trap '[ -z \"\$scratch\" ] || rm -rf -- \"\$scratch\"' EXIT" "$before")" -eq 1 ]
+    chmod 755 "$before"
+    HOOK=$before push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp pre-push: commit ${leak:0:10} ADDS a personal identifier in:"* ]] || false
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse main)" ]
+}
+
+@test "bash 3.2 (2026-09-30, the positions the EXIT trap covers): an unbound name planted in the merge's rename-candidate helper, once in the hook's own shell (the helper judged_read runs with -o, in an || list) and once in its awk (a pipeline stage bash forks for a simple command), with an identifier at the tip, is refused under every bash and the remote stays at its base; under a bash before 4, the trap's line is among the refusal's lines" {
+    local plant hookbash
+    third_path_merge "nothing to see" pushed
+    third_path_committed
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak at the tip"
+    hookbash=$(bash -c 'echo "${BASH_VERSINFO[0]}"')
+    for plant in shell stage; do
+        case "$plant" in
+            shell) awk '{ print } /^merge_rename_candidates\(\) \{/ { print "    : \"$3\"" }' "$HOOK" > "$TEST_DIR/hook-$plant" ;;
+            stage) awk '/^merge_rename_candidates\(\) \{/ { f = 1 } f && /"\$1" "\$2" \| tr/ { sub(/"\$1" "\$2" \| tr/, "\"$1\" \"$2\" \"$3\" | tr"); f = 0 } { print }' "$HOOK" > "$TEST_DIR/hook-$plant" ;;
+        esac
+        [ "$(cmp -l "$HOOK" "$TEST_DIR/hook-$plant" 2>/dev/null | wc -l)" -gt 0 ]     # the plant landed
+        [ "$(grep -c -F '"$3"' "$TEST_DIR/hook-$plant")" -eq "$(( $(grep -c -F '"$3"' "$HOOK") + 1 ))" ]
+        chmod 755 "$TEST_DIR/hook-$plant"
+        HOOK=$TEST_DIR/hook-$plant push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"\$3: unbound variable"* ]] || false
+        [ "$plant" = shell ] || [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${merge:0:10} could not be read (the rename candidates' awk or tr exited 1)"* ]] || false
+        if [ "$hookbash" -lt 4 ]; then
+            exit_trap_refused
+        fi
+    done
+}
+
+@test "bash 3.2 (2026-09-30, the path-scoped copies' directories): an awk that cuts the terminator off every record of the credential feed's path-scoped index leaves no directory to make, and a push of a main.tf credential only the additive run names is refused by the byte figures of both runs, not by bash ending the hook, with the remote at its base; with either guard on pdirs in scan_credentials stripped, bash 3.2.57 ends the hook there instead" {
+    local real_awk pcut
+    r9d_base
+    r9d_witness hashicorp-tf-password
+    git -C "$REPO" add -- "$wfile"
+    git -C "$REPO" commit -qm "a file the path-scoped rule names"
+    real_awk="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ -n "${ROMP_PATH_INDEX_FILE:-}" ] && [ -n "${ROMP_LIST_FILE:-}" ]; then\n'   # the credential feed's awk, the one given both files
+        printf '    %q "$@"; s=$?\n' "$real_awk"
+        printf '    if [ -s "$ROMP_PATH_INDEX_FILE" ]; then %q %q "$ROMP_PATH_INDEX_FILE" > "$ROMP_PATH_INDEX_FILE.cut"; cat "$ROMP_PATH_INDEX_FILE.cut" > "$ROMP_PATH_INDEX_FILE"; rm -f "$ROMP_PATH_INDEX_FILE.cut"; %q %q "$ROMP_PATH_INDEX_FILE" >> %q; fi\n' \
+            "$real_awk" '{ sub(/\t\.$/, "") } { print }' "$real_awk" '/\t\.$/ { n++ } END { print NR, n + 0 }' "$TEST_DIR/calls.pcut"
+        printf '    exit "$s"\n'
+        printf 'fi\n'
+        printf 'exec %q "$@"\n' "$real_awk"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    push_main_through_hook_with_shim
+    pcut=$(cat "$TEST_DIR/calls.pcut")                                   # the plant landed: once, every record of the index (one or more) cut
+    [ "${pcut#* }" = 0 ]
+    [ "${pcut% *}" -ge 1 ]
+    [ "$status" -ne 0 ]
+    at_base
+    # || false on each: bash before 4.1 does not end a test on a failed [[ ]] that is not its last command, and these
+    # lines are the case's bash 3.2 witness (with a guard stripped, the EXIT trap's refusal alone keeps the status red)
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan under the path-scoped rules read 0 of the 69 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: the PROBE run of the path-scoped copies read 0 of the 69 bytes written for it (its probes and the second copies of the added lines); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"unbound variable"* ]] || false
+    [[ "$output" != *"ended the hook, or a stage of one of its pipelines"* ]] || false
+}
+
+@test "bash 3.2 (2026-09-30, the DENYLIST read): a private-strings file that exists and cannot be read (mode 000), through a real push of a commit adding one of its strings, is refused naming the file under every bash, with the remote at its base; under bash 3.2.57 the loop that read it through done < file was skipped on its failed redirection, the denylist read as empty, the identifier scan turned off and the push published, and bash 5.2 ended the hook with no romp line" {
+    local strings="$TEST_DIR/private-strings-unreadable.txt"
+    leak_in_middle_commit_after_base
+    printf '# synthetic\nzzsynthuser\n' > "$strings"
+    chmod 000 "$strings"
+    [ ! -r "$strings" ]                                                   # the plant landed: the file is unreadable to this user (root reads any file, so the case cannot run as root)
+    export ROMP_PRIVATE_STRINGS="$strings"
+    push_main_through_hook_with_shim
+    chmod 600 "$strings"
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the DENYLIST $strings could not be opened for reading, so which strings the identifier scan greps for is unknown; make it readable and push again; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"  To bypass for one push (you are sure it is fine): git push --no-verify"* ]] || false   # the verdict's own refusal
+    [[ "$output" != *"ended the hook, or a stage of one of its pipelines"* ]] || false
 }
