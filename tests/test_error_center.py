@@ -80,6 +80,7 @@ const BODY = new Set(['po-chat', 'po-feed', 'po-timeline']);   // fleet pane hid
 const WL = {};
 global.window = {
   addEventListener: (k, f) => { (WL[k] = WL[k] || []).push(f); },
+  __rompPaneSourceOk: () => true,   // the shell's source check (kernel.py _LANDING_BOOT_JS, run by tests/test_shell_source_check.py): this stub's posts stand for a pane's postMessage to the shell.
   __rompPaneToggle: (k, to) => { TOGGLES.push(k + ':' + to); SEQ.push('toggle:' + k + ':' + to); },
   __rompMobileTab: (t) => { SEQ.push('tab:' + t); STORE['romp-mobile-tab'] = t; },   // the mobile script's show(): on the phone the pane's tab comes forward (pass 3, extra9-1); it persists the remembered tab whatever the layout, which is why the Log row gates the call (pass 4)
   __rompMobileOn: () => MOBILE_ON,   // the layout probe the Log row's gate reads (review round 4, correctness-3 and regression-3)

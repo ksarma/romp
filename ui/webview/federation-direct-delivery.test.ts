@@ -293,7 +293,7 @@ test("a view-order storage event re-emits all three merged frames to the registe
     assert.equal(typeof win.__rompFed.onFrame, "function", "the registration is published on the window slot");
     const got: any[] = [];
     const h = (e: MessageEvent) => got.push(e.data);
-    listenForFrames(h);   // the pane's install: window AND the registry, one function
+    listenForFrames(h);   // the pane's install: h in the registry, and on window a wrapper that calls h after the foreign-sender check (window-sender.ts)
     fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }] });
     fm.inbound("", feedFrame([ask("a1", U)], 1));
     fm.inbound("", laneData([U]));
@@ -312,7 +312,7 @@ test("a view-order storage event re-emits all three merged frames to the registe
 
 // ── frame-listener.ts: the pane's install ──
 
-test("listenForFrames installs the one handler on window and in the registry; without a registry, on window only; an older slot without onFrame does not throw", () => {
+test("listenForFrames registers the handler in the registry and installs on window a wrapper that calls it; without a registry, on window only; an older slot without onFrame does not throw", () => {
   const g: any = globalThis;
   const hadWindow = "window" in g, prevWindow = g.window;
   try {
@@ -325,7 +325,7 @@ test("listenForFrames installs the one handler on window and in the registry; wi
     assert.equal(listenForFrames(h), h);
     assert.deepEqual(subs, [h], "the SAME function is registered — the perf wrapper included, so the brackets nest on both paths");
     win.dispatchEvent(new MessageEvent("message", { data: { romp: "paneFocus" } }));
-    assert.deepEqual(seen, [{ romp: "paneFocus" }], "…and it is on window for the shell's posts");
+    assert.deepEqual(seen, [{ romp: "paneFocus" }], "…and the window holds a wrapper that calls it after the foreign-sender check, which hears this dispatch (no source, no origin: the page's own)");
     // no federation.js on the page (a VS Code webview)
     const bare: any = new EventTarget();
     g.window = bare;
@@ -352,8 +352,14 @@ test("feed, Outline, Waiting, chat and the VS Code timeline install their frame 
     assert.match(src, /import \{ listenForFrames(?:, \w+)* \} from "\.\/frame-listener";/, `${file}: imports the helper`);   // the chat also imports the manager-missing check (2026-09-10)
   }
   const helper = fs.readFileSync(path.join(UI, "frame-listener.ts"), "utf8");
-  assert.doesNotMatch(helper, /^import /m, "the helper stays import-free: importing federation.ts would boot a second manager in the pane bundle");
-  assert.ok(helper.indexOf('window.addEventListener("message", handler)') < helper.indexOf("fed.onFrame(handler)"), "window first, the registry after");
+  // the helper stays free of federation.ts, which would boot a second manager in the pane bundle: its one import is the
+  // sender check, and that module imports nothing, so nothing can reach federation.ts through it
+  assert.deepEqual(helper.match(/^import .*$/gm), ['import { windowSender } from "./window-sender";'],
+    "the helper's only import is window-sender.ts");
+  assert.doesNotMatch(fs.readFileSync(path.join(UI, "window-sender.ts"), "utf8"), /^import /m, "window-sender.ts imports nothing");
+  const onWindow = helper.indexOf('window.addEventListener("message", (e: MessageEvent) => { if (windowSender(e) === "foreign") return; handler(e); });');
+  assert.ok(onWindow > 0, "the window install hands the handler every message but a foreign sender's (executed in foreign-sender-listeners.test.ts)");
+  assert.ok(onWindow < helper.indexOf("fed.onFrame(handler)"), "window first, the registry after (their order in the source; the listenForFrames test above runs both installs)");
 });
 
 test("the three merged emissions go through emit and no other dispatch does", () => {

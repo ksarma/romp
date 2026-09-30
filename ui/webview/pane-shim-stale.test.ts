@@ -30,6 +30,8 @@ import * as vm from "node:vm";
 import { hideEdges } from "../test-dom-shim";
 
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+// the page's location.origin, the origin of its URL: the shim compares a message's origin with it (fromShell)
+const ORIGIN = "http://TESTHOST:29855";
 
 function shimJs(app: string, caps = "", noStale = false, core = ""): string {
   const def = KERNEL.indexOf("def _shim(app, v=0, caps=\"\", no_stale=False):");
@@ -117,7 +119,7 @@ class Harness {
       },
       // opts.store: the gear's store, for the kill switch the shim reads (romp:settings perfMute); empty by default
       localStorage: { getItem: (k: string) => (opts.store && opts.store.has(k) ? opts.store.get(k)! : null), setItem: (k: string, v: string) => { opts.store?.set(k, String(v)); } },
-      location: { protocol: "http:", host: "TESTHOST:29855", search: "", pathname: opts.pathname || "/chat" },
+      location: { protocol: "http:", host: "TESTHOST:29855", origin: ORIGIN, search: "", pathname: opts.pathname || "/chat" },
       URLSearchParams: class { get() { return ""; } },
       WebSocket: FakeWS, Date: FakeDate, JSON, console,
       encodeURIComponent,
@@ -144,8 +146,11 @@ class Harness {
    *  page fires them. One slot held only the LAST interval armed, so once D3 added the backstop, tick() ran it alone and
    *  the watchdog never abandoned a silent socket (three cases red, 2026-09-18) */
   tick() { assert.ok(this.intervals.length, "the watchdog is armed"); for (const f of this.intervals) f(); }
-  /** the shell's panes word, carrying the link (D3): the shell re-tells it on its socket's open, close and abandon */
-  panes(link: "up" | "down") { for (const f of this.messages) f({ data: { romp: "panes", on: {}, avail: {}, link } }); }
+  /** the shell's panes word, carrying the link (D3): the shell re-tells it on its socket's open, close and abandon. Posted as
+   *  the shell posts it, from this pane's parent window on the page's location.origin: the shim hears the word from the shell alone
+   *  (kernel.py _shim fromShell, 2026-09-25) and drops a message with any other source; tests/test_pane_shim_return.py runs
+   *  the refusals */
+  panes(link: "up" | "down") { for (const f of this.messages) f({ source: this.win.parent, origin: ORIGIN, data: { romp: "panes", on: {}, avail: {}, link } }); }
   stale() { return this.posted.filter((m) => m.romp === "wsStale" && !m.build).length; }
   fresh() { return this.posted.filter((m) => m.romp === "wsFresh").length; }
   builds() { return this.reloads.filter((r) => r.reason === "build"); }   // the dv raises the shim handed the fake core (every entry, since noteDv is the one road)

@@ -27,6 +27,7 @@ import io
 import hashlib
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -34,6 +35,7 @@ import unittest
 from http.client import HTTPMessage
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
+from tests.document_navigations import NAVIGATIONS, credential, navigation_path   # the navigations each opener-policy shape is served under
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -450,6 +452,8 @@ class ResponseHardeningHeaders(unittest.TestCase):
         self.assertIn('"X-Frame-Options", "SAMEORIGIN"', src)
         self.assertIn("frame-ancestors 'self'", src)
         self.assertIn('"Referrer-Policy", "same-origin"', src)   # executed by TokenLeavesTheUrl below
+        self.assertIn('"Cross-Origin-Opener-Policy", "same-origin"', src,
+                      "where the opener policy is written, in _send; OpenerIsolation below reads it off the wire on every page")
 
     def test_remote_relay_derives_its_own_mime_and_discards_the_remotes(self):
         # the /remote/<host>/file relay must decide the Content-Type from the requested extension
@@ -553,6 +557,370 @@ class TokenLeavesTheUrl(unittest.TestCase):
                 status, sent, _ = _serve_get_full(path, headers={"X-Romp-Token": TOK})
                 self.assertEqual(status, 200)
                 self.assertEqual(sent.get("Referrer-Policy"), "same-origin")
+
+
+def _wire_get(port, path, headers=None, method="GET"):
+    """GET `path` (or another `method`) from a live kernel on `port` over a real socket: (status, the response's header
+    message, body bytes). The headers are read off the wire, every copy of each (message.get_all, which matches names
+    without regard to case), whatever wrote them: _send, a route's own send_header calls, or an override of
+    send_response, end_headers or send_error."""
+    import http.client
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+    try:
+        conn.request(method, path, headers=dict(headers or {}))
+        r = conn.getresponse()
+        return r.status, r.msg, r.read()
+    finally:
+        conn.close()
+
+
+def _wire_raw(port, request):
+    """Send `request`, bytes exactly as written, to a live kernel on `port` over a plain socket and read until it closes:
+    (the status code, or None for a reply with no status line; the header message, read as _wire_get reads it, or None;
+    the body bytes). For requests http.client would not send as written (a space in the path) or that are refused while
+    their headers are still being read (a header line over 65536 bytes, more than 100 headers), and for a reply in
+    HTTP/0.9's shape, which has no status line and no headers for http.client to parse."""
+    import http.client
+    s = socket.create_connection(("127.0.0.1", port), timeout=15)
+    try:
+        s.sendall(request)
+        data = b""
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        s.close()
+    if not data.startswith(b"HTTP/"):
+        return None, None, data
+    head, _sep, body = data.partition(b"\r\n\r\n")
+    status, _sep, fields = head.partition(b"\r\n")
+    return int(status.split()[1]), http.client.parse_headers(io.BytesIO(fields + b"\r\n\r\n")), body
+
+
+class OpenerIsolation(unittest.TestCase):
+    """Every document the kernel serves a browser declares Cross-Origin-Opener-Policy: same-origin (2026-09-25), so a page
+    on another origin that opens a dashboard page gets no live handle to it, and a handle is what a window message
+    needs. It rides _send, and http.server's own refusals, which it writes outside _send, carry it through Handler's
+    send_error override (the 414 a page on another origin can open with a long URL, both 431s, the 501 and two 400s:
+    test_each_refusal_http_server_writes_itself_carries_it_once). So every page served to a request line a browser sends
+    carries it, and so do the dashboard's own tabs: a /file image or PDF it opens with window.open is a same-origin
+    document with the same policy, so window.open still returns a handle (ui/webview/preview.ts openFileTab reads only
+    that). Executed on the shell, every pane page, the sign-in page (on / and on /login), a static asset, and each
+    document shape the /file route builds: an image, every shape that hands _send extra headers of its own (an SVG, with
+    its sandbox policy; a PDF, with its name; a text file, with its mtimes; a 404, with its reason), the 413 page a
+    PDF's own tab shows, and both 415 refusals (a file no view shows, a text-named file that is not text). Each shape is
+    served once per entry of NAVIGATIONS (tests/document_navigations.py): bare, and with the headers a browser sends on
+    a navigation typed, opened by the dashboard, and opened by another origin, which is where a browser reads the
+    policy, signed in by the session cookie as a browser's navigation is, a /file shape with the cap its URL carries.
+    Read off a live socket (_wire_get), so a header written anywhere, a send_response or end_headers override included,
+    is seen, and each carries it exactly once: a second copy, even of the same value, leaves a browser with a header it
+    cannot parse and so with no policy. The /remote/<host>/file relay's shapes are
+    tests/test_kernel_remote_file_relay.py's, read the same way. The one reply without it is one in HTTP/0.9's shape,
+    with no status line and no headers at all, and only a request line no browser sends, of at most 65536 bytes with its
+    line terminator, gets one. On Python 3.10 to 3.12, and on 3.13 and 3.14 before 3.13.15 and 3.14.7, every reply to a
+    line whose version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later has that shape. From 3.13.15 and
+    3.14.7 (CPython's gh-54930), http.server's 400 or 505 refusing such a line has a status line and the policy once, and
+    the shape is left to a line of two words whose first is GET and one of three whose version is HTTP/0.9 itself. The
+    test judges each reply by the shape it has, never by the interpreter's version
+    (test_a_request_line_no_browser_sends_gets_no_headers_at_all_or_the_policy_once). A longer line gets the full 414
+    with the policy whatever its version (test_a_request_line_over_65536_bytes_gets_the_full_414_whatever_its_version)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.sess = km._mint_session()                 # the session a signed-in browser's cookie holds
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def _coop(self, path, want_status, signed_in=True):
+        """GET `path` once per NAVIGATIONS entry, with that entry's credential when `signed_in` (a navigation's session
+        cookie and, on /file, the cap its URL carries; a bare request's header: credential, navigation_path); assert the
+        status and exactly one Cross-Origin-Opener-Policy header, same-origin, each time. Returns {entry: (header
+        message, body)}."""
+        seen = {}
+        for how, nav in NAVIGATIONS:
+            asked, cred = path, {}
+            if signed_in:
+                asked = navigation_path(nav, path, lambda host, p, sid: km._file_cap(self.sess, host, p, sid))
+                cred = credential(nav, TOK, _session_cookie(self.sess))
+            status, msg, body = _wire_get(self.port, asked, dict(nav, **cred))
+            self.assertEqual(status, want_status, "%s, %s: %r" % (path[:60], how, body[:120]))
+            self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
+                             "%s, %s: one header, same-origin" % (path[:60], how))
+            seen[how] = (msg, body)
+        return seen
+
+    def test_every_page_the_kernel_serves_carries_coop_same_origin(self):
+        self._coop("/?token=" + TOK, 200, signed_in=False)   # the shell's bootstrap: the token rides the URL
+        for path in ("/chat", "/feed", "/fleet", "/waiting", "/files", "/timeline", "/settings",
+                     "/media/romp-swirl-glyph.svg"):
+            with self.subTest(path=path):
+                self._coop(path, 200)
+
+    def test_the_sign_in_page_carries_it_too(self):
+        # an unauthorized browser load of the shell gets the token sign-in page: a top-level document as well, and so is
+        # /login, the same page, served with no credential to a tab the page-key script sends there
+        for path in ("/", "/login"):
+            for how, (_msg, body) in self._coop(path, 200, signed_in=False).items():
+                self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, path + ", " + how + ": no credential, the sign-in "
+                                 "page, not the dashboard")
+
+    def test_each_refusal_http_server_writes_itself_carries_it_once(self):
+        # http.server writes these with send_error, outside _send; Handler's send_error override adds the policy. The 414
+        # is one a page on another origin can open as a top-level document (a URL past 65536 bytes is enough), and in
+        # principle so is the 431 for a Cookie line past 65536 bytes, since a page on another loopback port can set the
+        # kernel host's cookies. The 414 is refused before any header is read, so a navigation's headers would change
+        # nothing and it is sent bare.
+        host = "Host: 127.0.0.1:%d\r\n" % self.port
+        refusals = (
+            ("a request line over 65536 bytes", 414, lambda: _wire_get(self.port, "/chat?x=" + "a" * 70000)),
+            ("a method no route takes", 501, lambda: _wire_get(self.port, "/", method="PUT")),
+            ("a header line over 65536 bytes", 431,
+             lambda: _wire_raw(self.port, ("GET / HTTP/1.1\r\n%sX-Big: %s\r\n\r\n" % (host, "b" * 70000)).encode())),
+            ("more than 100 headers", 431,
+             lambda: _wire_raw(self.port, ("GET / HTTP/1.1\r\n%s%s\r\n" % (host, "".join("X-H%d: v\r\n" % i for i in range(120)))).encode())),
+            ("a request line that ends in a version but has a word too many", 400,
+             lambda: _wire_raw(self.port, ("GET /a b HTTP/1.1\r\n%s\r\n" % host).encode())),
+            ("the same, ending in HTTP/0.5, a version below HTTP/2.0 other than HTTP/0.9 itself", 400,
+             lambda: _wire_raw(self.port, ("GET /a b HTTP/0.5\r\n%s\r\n" % host).encode())))
+        for what, code, send in refusals:
+            with self.subTest(what=what):
+                status, msg, body = send()
+                self.assertIsNotNone(msg, what + ": a reply with headers: %r" % body[:80])
+                self.assertEqual(status, code, what)
+                self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], what + ": one header, same-origin")
+
+    def test_a_refusal_whose_request_clears_the_legacy_cookie_carries_the_clear_and_the_policy_once(self):
+        # Handler.end_headers writes two headers of its own: the legacy cookie's clear, on every response whose request
+        # carries this kernel's token as romp_token beside a valid session cookie, and the opener policy, while
+        # send_error runs. The one refusal http.server writes after reading a request's cookies is the 501 (the 414, the
+        # 431s and the 400s are refused before its headers are parsed), and a navigation never sends PUT or DELETE, so
+        # this is a request a script sends. Such a response carries both, the clear and then the policy, each exactly
+        # once, read off the wire.
+        cookie = "%s; romp_token=%s" % (_session_cookie(self.sess), TOK)
+        for method in ("PUT", "DELETE"):
+            with self.subTest(method=method):
+                status, msg, _body = _wire_get(self.port, "/", method=method, headers={"Cookie": cookie})
+                self.assertEqual(status, 501, method + ": http.server's refusal of a method no route takes")
+                self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
+                                 method + ": a refusal that also clears the legacy cookie still carries the policy, once")
+                clears = [v for v in (msg.get_all("Set-Cookie") or []) if v.startswith("romp_token=") and "Max-Age=0" in v]
+                self.assertEqual(len(clears), 1, method + ": and the legacy cookie's clear, once")
+                names = [k.lower() for k, _v in msg.items()]
+                at_clear = [i for i, (k, v) in enumerate(msg.items()) if k.lower() == "set-cookie" and v.startswith("romp_token=")]
+                self.assertLess(at_clear[0], names.index("cross-origin-opener-policy"), method + ": the clear, then the policy")
+
+    def test_a_request_line_no_browser_sends_gets_no_headers_at_all_or_the_policy_once(self):
+        # The one reply without the policy (Handler.send_error's comment names it) is a reply in HTTP/0.9's shape, the body
+        # alone, with no status line and no headers, so no header can ride it. Which of these request lines, none of which a
+        # browser sends, get one depends on the interpreter's http.server. On Python 3.10 to 3.12, and on 3.13 and 3.14
+        # before 3.13.15 and 3.14.7, every case in the table gets every reply in that shape (each is a line of at most 65536 bytes,
+        # its line terminator included, whose version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later). 3.13.15
+        # and 3.14.7, the first 3.13 and 3.14 releases with CPython's gh-54930, answer such a line's own refusal, its 400 or
+        # 505 (the first six cases), with a status line and headers, and the send_error override puts the policy among
+        # them. The other cases, a line of two words whose first is GET or of three whose version is HTTP/0.9 itself, get
+        # replies in HTTP/0.9's shape on all of them. So each case takes the branch its reply's shape decides, never the
+        # interpreter's version, since a patch release of any branch can change the shape: with no status line, _wire_raw
+        # hands back the whole reply as the body, and it must be the body the case names from its first byte, so a header
+        # written ahead of it fails; with a status line, the status must be the one that body goes with and
+        # Cross-Origin-Opener-Policy must be there exactly once. Anything else fails. The bodies: http.server's error page
+        # with the case's code (this interpreter's own error_message_format, up to the message), the sign-in page for a
+        # bare `GET /`, the page itself, as _send writes it, for an authorized GET, and the gate's refusal for `GET /chat`
+        # with no credential. /login and /healthz, which the gate exempts, answer a GET with no credential with their own
+        # bodies, the sign-in page and `ok`, so only a gated path gets the gate's refusal. The last three cases are
+        # http.server's 431 and 501 and the kernel's own reply to a POST, each on a line ending in HTTP/0.9 itself, whose
+        # headers http.server reads, so the 431 is written; after a line of two words, 3.13.10, 3.14.1 and later (CPython's
+        # gh-70765) read no headers. The last subtests read the gated and exempt paths on HTTP/0.5, a version below HTTP/2.0
+        # other than HTTP/0.9, which gets a full reply, through the same check, so the status each of those bodies goes with
+        # is read off the wire, not assumed.
+        # the chat page as _send writes it, before the scripts it puts after <head>: the stamp _send writes on a text/html 200
+        # whose body carries an <html> tag (kernel.py _stamp_served_html), ` data-romp-served=200` after its first `<html`
+        chat = re.sub(r"(<html)(?=[\s>])", r"\1 data-romp-served=200", km._chat_page(), count=1, flags=re.I)
+        head = chat.index("<head>") + len("<head>")
+        fmt = km.Handler.error_message_format
+        up_to_message = fmt[:fmt.index("%", fmt.index("%") + 1)]      # the error page up to its message; its one % is the code
+        statuses = {"sign-in": 200, "page": 200, "gate": 403, "ok": 200}
+
+        def check(what, reply, want):
+            status, msg, body = reply
+            if status is not None:
+                self.assertEqual(status, statuses.get(want, want), what + ": a status line, so the status its body goes with")
+                self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
+                                 what + ": a status line, so the policy once, same-origin")
+            shape = "after its headers" if status is not None else "alone, with no status line and no headers"
+            text = body.decode("utf-8")
+            if want == "sign-in":
+                self.assertEqual(text, km._TOKEN_LOGIN_HTML, what + ": the sign-in page, " + shape)
+            elif want == "page":
+                self.assertTrue(text.startswith(chat[:head]) and text.endswith(chat[head:]) and km._PAGE_KEY_JS in text,
+                                what + ": the chat page as _send writes it, %s: %r" % (shape, body[:60]))
+            elif want == "gate":
+                self.assertTrue(body.startswith(b"forbidden: token required"),
+                                what + ": the gate's refusal, %s: %r" % (shape, body[:60]))
+            elif want == "ok":
+                self.assertEqual(body, b"ok", what + ": the liveness probe's body, " + shape)
+            else:
+                self.assertTrue(body.startswith((up_to_message % {"code": want}).encode("utf-8")),
+                                what + ": http.server's %d page, %s: %r" % (want, shape, body[:60]))
+
+        def line(text):
+            return (text + "\r\n\r\n").encode()
+        for what, request, want in (
+                ("a word after the version", line("GET /chat HTTP/1.1 extra"), 400),
+                ("a malformed version", line("GET / HTTP/x.y"), 400), ("HTTP/2.0", line("GET / HTTP/2.0"), 505),
+                ("four words, the last HTTP/0.9 itself", line("GET /a b HTTP/0.9"), 400),
+                ("two words, not a GET", line("PUT /"), 400), ("one word", line("GET"), 400),
+                ("a bare GET", line("GET /"), "sign-in"), ("a GET with HTTP/0.9 itself", line("GET / HTTP/0.9"), "sign-in"),
+                ("a bare GET's line of 65536 bytes, its CRLF included", line("GET /?x=" + "a" * (65534 - len("GET /?x="))),
+                 "sign-in"),
+                ("an authorized GET", line("GET /chat?token=" + TOK), "page"),
+                ("an authorized GET with HTTP/0.9 itself", line("GET /chat?token=%s HTTP/0.9" % TOK), "page"),
+                ("GET /chat with no credential, a gated path", line("GET /chat"), "gate"),
+                ("GET /login with no credential, a path the gate exempts", line("GET /login"), "sign-in"),
+                ("GET /healthz with no credential, a path the gate exempts", line("GET /healthz"), "ok"),
+                ("a 431 to a header line over 65536 bytes, on HTTP/0.9 itself",
+                 b"GET / HTTP/0.9\r\nX-Big: " + b"b" * 70000 + b"\r\n\r\n", 431),
+                ("a 501 to a method no do_ handler takes, on HTTP/0.9 itself", line("FOO / HTTP/0.9"), 501),
+                ("the kernel's own reply to a POST on HTTP/0.9 itself", line("POST /nope HTTP/0.9"), "gate")):
+            with self.subTest(what=what):
+                check(what, _wire_raw(self.port, request), want)
+        for what, request, want in (
+                ("a bare GET's path", "GET / HTTP/0.5", "sign-in"),
+                ("an authorized GET's path", "GET /chat?token=%s HTTP/0.5" % TOK, "page"),
+                ("GET /chat with no credential", "GET /chat HTTP/0.5", "gate"),
+                ("GET /login with no credential", "GET /login HTTP/0.5", "sign-in"),
+                ("GET /healthz with no credential", "GET /healthz HTTP/0.5", "ok"),
+                ("a POST with no credential", "POST /nope HTTP/0.5", "gate")):
+            with self.subTest(what="HTTP/0.5, another version below HTTP/2.0: " + what):
+                reply = _wire_raw(self.port, line(request))
+                self.assertIsNotNone(reply[0], what + ", on HTTP/0.5: a full reply, with a status line: %r" % reply[2][:60])
+                check(what + ", on HTTP/0.5", reply, want)
+
+    def test_a_request_line_over_65536_bytes_gets_the_full_414_whatever_its_version(self):
+        # http.server reads at most 65537 bytes of the request line and refuses a line over 65536 bytes, its line terminator
+        # included, before it parses the line, so the version the line names never shapes the reply: each form the test
+        # above sends, which on a shorter line gets replies in HTTP/0.9's shape on every interpreter or on some (that test's
+        # comment says which), gets the full 414 here, with the policy once, as a line ending in HTTP/1.1 does. The first
+        # case is the shortest line ending in CRLF that is refused: 65535 bytes of text and its CRLF, 65537 bytes in all,
+        # one more than the test above's line of 65534 bytes of text and its CRLF, which gets the sign-in page
+        long = "GET /chat?x=" + "a" * 70000
+        edge = "GET /chat?x=" + "a" * (65535 - len("GET /chat?x="))
+        for what, line in (("no version, 65535 bytes of text and its CRLF", edge), ("no version", long),
+                           ("HTTP/0.9 itself", long + " HTTP/0.9"), ("HTTP/2.0", long + " HTTP/2.0"),
+                           ("a word after the version", long + " HTTP/1.1 extra"), ("a malformed version", long + " HTTP/x.y"),
+                           ("one word", "G" * 70000), ("HTTP/1.1", long + " HTTP/1.1")):
+            with self.subTest(what=what):
+                status, msg, body = _wire_raw(self.port, (line + "\r\n\r\n").encode())
+                self.assertIsNotNone(msg, what + ": a reply with headers: %r" % body[:80])
+                self.assertEqual(status, 414, what)
+                self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], what + ": one header, same-origin")
+
+    def _file_coop(self, name, data, want_status, cap=None):
+        """Serve `data`, written to a file called `name`, through /file once per NAVIGATIONS entry (_coop). Returns
+        {entry: (header message, body)}."""
+        from unittest import mock
+        from urllib.parse import quote
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, name)
+            if data is not None:
+                with open(p, "wb") as f:
+                    f.write(data)
+            with mock.patch.object(km, "_MEDIA_MAX_BYTES", cap if cap is not None else km._MEDIA_MAX_BYTES):
+                return self._coop("/file?path=" + quote(p), want_status)
+
+    def test_a_file_the_dashboard_opens_in_its_own_tab_carries_the_same_policy(self):
+        png = bytes.fromhex(
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+            "0000000d49444154789c626001000000ffff03000006000557bfabd40000000049454e44ae426082")
+        for how, (msg, _body) in self._file_coop("plot.png", png, 200).items():
+            self.assertEqual(msg.get("Content-Type"), "image/png", how)
+
+    def test_an_svg_file_carries_it_once_beside_its_sandbox_policy(self):
+        # _media_policy_headers hands _send `Content-Security-Policy: sandbox` for an SVG
+        for how, (msg, _body) in self._file_coop("fig.svg", b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>', 200).items():
+            self.assertEqual(msg.get("Content-Type"), "image/svg+xml", how)
+            self.assertIn("sandbox", msg.get_all("Content-Security-Policy"), how + ": the SVG's own extra header is sent")
+
+    def test_a_pdf_file_carries_it_once_beside_its_name(self):
+        for how, (msg, _body) in self._file_coop("paper.pdf", b"%PDF-1.4\n%%EOF\n", 200).items():
+            self.assertEqual(msg.get("Content-Type"), "application/pdf", how)
+            self.assertEqual(msg.get("Content-Disposition"), 'inline; filename="paper.pdf"', how)
+
+    def test_a_text_file_carries_it_once_beside_its_mtimes(self):
+        for how, (msg, body) in self._file_coop("notes.md", b"# notes-api\n", 200).items():
+            self.assertTrue((msg.get("Content-Type") or "").startswith("text/plain"), how)
+            self.assertEqual(msg.get("X-Romp-Text-Utf8"), "1", how + ": the text shape's extra headers are sent")
+            self.assertEqual(body, b"# notes-api\n", how)
+
+    def test_the_page_an_oversize_pdfs_own_tab_shows_carries_it_once(self):
+        # past the cap: a navigation gets the 413 page (_too_large_page), a bare request the plain refusal it parses
+        for how, (msg, body) in self._file_coop("paper.pdf", b"%PDF-1.4\n%%EOF\n", 413, cap=4).items():
+            if how == "a bare request":
+                self.assertTrue((msg.get("Content-Type") or "").startswith("text/plain"), how + ": the plain refusal")
+            else:
+                self.assertTrue((msg.get("Content-Type") or "").startswith("text/html"), how + ": the way-out page, a document")
+                self.assertIn(b"too large to show", body, how)
+
+    def test_a_missing_file_carries_it_once_beside_its_reason(self):
+        for how, (msg, _body) in self._file_coop("gone.png", None, 404).items():
+            self.assertEqual(msg.get(km._FILE_404_REASON_HDR), "missing", how + ": the 404's extra header is sent")
+
+    def test_a_file_no_view_shows_carries_it_once_on_its_415(self):
+        # a file on neither view allowlist: its own status, the one that offers the download instead
+        for how, (_msg, body) in self._file_coop("bundle.zip", b"PK\x03\x04 not really a zip", 415).items():
+            self.assertIn(b"not viewable in the browser", body, how)
+
+    def test_a_text_named_file_that_is_not_text_carries_it_once_on_its_415(self):
+        for how, (_msg, body) in self._file_coop("notes.md", b"# notes-api\x00\x00\x00", 415).items():
+            self.assertIn(b"not a text file", body, how)
+
+
+class _DoublingHandler(km.Handler):
+    """The kernel's handler with a second Cross-Origin-Opener-Policy header written where a recorder of the handler's
+    send_header calls before end_headers never looked: in send_response, or in end_headers, chosen per request by the
+    X-Test-Double header. OpenerIsolationWireWitness serves through it."""
+
+    def send_response(self, code, message=None):
+        super().send_response(code, message)
+        if self.headers.get("X-Test-Double") == "send_response":
+            self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+
+    def end_headers(self):
+        if self.headers.get("X-Test-Double") == "end_headers":
+            self.send_header("cross-origin-opener-policy", "same-origin")
+        super().end_headers()
+
+
+class OpenerIsolationWireWitness(unittest.TestCase):
+    """OpenerIsolation reads the headers off the socket, so a second copy is seen wherever it was written. Witnessed here
+    on a handler that writes one in send_response or in end_headers (_DoublingHandler): the read shows both copies, and
+    without the doubling one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), _DoublingHandler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def test_the_wire_shows_a_header_written_twice_as_two_wherever_it_was_written(self):
+        for where, want in (("send_response", ["same-origin", "same-origin"]), ("end_headers", ["same-origin", "same-origin"]),
+                            ("nowhere", ["same-origin"])):
+            with self.subTest(where=where):
+                status, msg, _ = _wire_get(self.port, "/chat", {"X-Romp-Token": TOK, "X-Test-Double": where})
+                self.assertEqual(status, 200)
+                self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), want)
 
 
 class _DrainSpy:

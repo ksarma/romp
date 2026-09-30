@@ -31,6 +31,7 @@
 import { closeFileView, openFileClick } from "./file-view";
 import { fileUrl } from "./preview";
 import { openContextMenu, closeContextMenu, CtxItem } from "./ctx-menu";   // the one menu builder (the v0.16.0 tidy): the row menu's card, dismissal and keys
+import { windowSender } from "./window-sender";   // initFileBrowse's window listener hears no foreign sender
 
 type DirEntry = {
   name: string; isDir: boolean; isLink: boolean;
@@ -450,9 +451,13 @@ export function initFileBrowse(poster: (m: Record<string, unknown>) => void, hos
   post = poster;
   shellRestore = host.shellRestore !== false;
   openPick = host.openFile ?? null;
+  // Every sender of these messages is this document (the viewer's directory link), its embedder (the shell's relay), the
+  // VS Code webview host (a window on this page's location.origin) or its own dispatch of a kernel reply; a message from
+  // a foreign sender (window-sender.ts) lists no directory and paints no listing.
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;
+    if (windowSender(e) === "foreign") return;
     if (m.romp === "browseFiles" && typeof m.path === "string") {
       if (host.onRelay) { host.onRelay({ path: m.path, sid: m.sid, identity: m.identity }); return; }   // this document's own contract takes the ask whole
       openFileBrowse(m.path || ".", typeof m.sid === "string" ? m.sid : null);

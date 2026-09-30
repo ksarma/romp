@@ -18,8 +18,10 @@ The shim's decision code runs here for REAL: km._shim_core_js() returns the IIFE
 MessageChannel and the timers — the same pattern test_view_deltas.py uses for the delta reassembler, minus the
 regex. Synthetic data only: no real session content, TESTHOST as the host.
 """
+import ast
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -51,16 +53,17 @@ var parentLinkVal=undefined;
 // D2: the fake shell's layout probe (window.parent.__rompMobileOn), parentMobileVal its answer; undefined by default so every
 // pre-D2 test runs off a shell that parks nothing
 var parentMobileVal=undefined;
-var window={innerWidth:800,innerHeight:600,
+var window={innerWidth:800,innerHeight:600,opener:null,   // a pane is a frame of the shell: no window opened it, and a browser says so with null
 parent:{postMessage:function(m){parentPosts.push(m);},get __rompLink(){return parentLinkVal===undefined?undefined:function(){return parentLinkVal;};},
 get __rompMobileOn(){return parentMobileVal===undefined?undefined:function(){return parentMobileVal;};}},
 addEventListener:function(t,f){(winL[t]=winL[t]||[]).push(f);},
 dispatchEvent:function(e){winEvents.push(e.type);return true;},sessionStorage:{getItem:function(){return "";}},
 __rompFed:{inbound:function(h,m){delivered.push(m);}}};
-function fireWin(t,data){(winL[t]||[]).forEach(function(f){f({data:data});});}   // D3: hand the pane a window message (the shell's panes word)
+function fireFrom(source,origin,t,data){(winL[t]||[]).forEach(function(f){f({data:data,source:source,origin:origin});});}   // a window message from any sender
+function fireWin(t,data){fireFrom(window.parent,location.origin,t,data);}   // D3: hand the pane a window message from the shell, its parent (the shell's panes word)
 function word(on,link){fireWin("message",{romp:"panes",on:on,avail:{files:false},link:link||"up"});}   // D2: the shell's panes word (on[k] per pane, the link)
 function states(){return parentPosts.filter(function(p){return p.romp==="wsState";}).map(function(p){return p.state;});}   // the wsState words this pane told the shell, in order
-var location={protocol:"http:",host:"TESTHOST",search:""};
+var location={protocol:"http:",host:"TESTHOST",search:"",origin:"http://TESTHOST"};
 var localStorage={getItem:function(){return null;},setItem:function(){}};
 var sockets=[];function WebSocket(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}
 WebSocket.prototype.send=function(s){this.sent.push(s);};WebSocket.prototype.close=function(){this.readyState=3;};
@@ -89,7 +92,9 @@ def _run(scenario, pre="", app="test", before="", **shim_kw):
     feed exemption and the chat pane's fresh hold are keyed on APP, so a test names the pane it builds; the Files pane's
     no_stale rides shim_kw). The default, "test", keeps every earlier scenario's core byte for byte. `before` runs after
     the harness and BEFORE the core (the seam _run_linked has): a write to the harness's stubs the core reads at its load
-    (parentMobileVal for the phone dial's probe; `pre` runs ahead of the harness, whose own declarations reset it)."""
+    (parentMobileVal for the phone dial's probe; `pre` runs ahead of the harness, whose own declarations reset it), or a
+    scenario that changes the stand-in browser before the shim boots in it (HEARD_WINDOWS); empty by default, so every
+    other scenario's script is unchanged."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
@@ -1534,6 +1539,389 @@ out({atPark:atPark,afterLink:afterLink,atTap:{sockets:sockets.length,parked:park
         self.assertIn("function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn===\"function\")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}", js,
                       "the shell is present when its probe is a function, as parentLink() reads the link (the ruling of 2026-09-18)")
 
+
+class ShellWordsFromTheShellOnly(unittest.TestCase):
+    """The shell's two words to a pane (the panes word and the link word, _LANDING_COLLAPSE_JS tell) are heard from the
+    shell alone (2026-09-25): the pane's parent, posting on the page's location.origin, the one window that posts them.
+    fromShell gates both listeners, so the link word ends a return's wait and the panes word moves the on-screen flag
+    (and un-parks) only when the shell says so; a pane page open on its own (its parent is itself) hears neither word
+    from anyone. The refused senders include the frames in the pane's tab (inside it and beside it, sandboxed and on its
+    location.origin) and the windows it opened, over the edges a browser gives them (top, frames, parent, opener)."""
+
+    # [source, origin] of every sender that is not the shell: a page on another origin that opened this pane page, a
+    # sandboxed frame (origin "null"), a window on this page's location.origin that is not the parent (a popup, a
+    # sibling pane), this page itself, this page's own dispatch (no source, no origin), the parent speaking from another
+    # origin; a sourceless post that names an origin (a frame removed right after it posted can leave its message with
+    # no source): another origin, the opaque origin, and this page's location.origin, none of them the shell's window;
+    # the parent with the opaque origin; and the pane's own window.opener as the source, which in a frame is null (the
+    # harness's window has opener null, as a browser's frame does), on this page's location.origin and on the opaque
+    # one: a check that admitted e.source===window.opener would admit a sourceless post there. Then the windows in the
+    # pane's tab and the ones it opened, over the edges a browser gives them (the prelude's first two lines): the pane's
+    # top is the shell, its parent, and the shell is its own parent and top; window.frames is the window itself, whose
+    # length and indexes list the frames inside it. A frame inside the pane, sandboxed and on its location.origin (its
+    # parent the pane, its top the shell, listed in its frames); a frame beside it in the shell, sandboxed and on its
+    # location.origin (its parent and its top the shell); a window this page opened (window.open), on another origin and
+    # on this page's location.origin (its opener is this window). A check that took any of those edges for the shell's
+    # would hear one of them
+    FOREIGN = r"""
+window.top=window.parent;window.parent.top=window.parent;window.parent.parent=window.parent;window.frames=window;
+var KID={parent:window,top:window.parent},OWN_KID={parent:window,top:window.parent};window.length=2;window[0]=KID;window[1]=OWN_KID;
+var OTHER="https://elsewhere.example",FOREIGN={opener:[{},OTHER],sandboxed:[{},"null"],sameOriginStranger:[{},location.origin],
+itself:[window,location.origin],dispatch:[null,""],parentOtherOrigin:[window.parent,OTHER],
+sourcelessOtherOrigin:[null,OTHER],sourcelessOpaque:[null,"null"],sourcelessSameOrigin:[null,location.origin],
+parentOpaque:[window.parent,"null"],theOpener:[window.opener,location.origin],theOpenerOpaque:[window.opener,"null"],
+frameInsideSandboxed:[KID,"null"],frameInsideSameOrigin:[OWN_KID,location.origin],
+siblingSandboxed:[{parent:window.parent,top:window.parent},"null"],siblingSameOrigin:[{parent:window.parent,top:window.parent},location.origin],
+popupOtherOrigin:[{opener:window},OTHER],popupSameOrigin:[{opener:window},location.origin]};
+function fromEach(t,data){Object.keys(FOREIGN).forEach(function(k){fireFrom(FOREIGN[k][0],FOREIGN[k][1],t,data);});}
+"""
+
+    def test_the_foreign_windows_carry_the_edges_a_browser_gives_them(self):
+        # the edges the FOREIGN senders are refused over, read as the shim's check would read them: so a check that took a
+        # window in this page's frames, one sharing its top, one whose parent is this page or one it opened for the shell,
+        # or that heard its top without the origin check, hears one of the senders above. (Its top is its parent here, as
+        # for every pane the shell tells: a check that took the top for the parent and kept the origin check would hear
+        # the same senders, so no row here tells the two apart.) The shell is the top of its tab, its own parent and top,
+        # so a check that heard its parent's parent without the origin check hears the parent posting from another origin
+        # (parentOtherOrigin: a harness row, since the kernel's frame-ancestors 'self' rules that post out in a browser)
+        r = _run(self.FOREIGN + r"""
+var inF=function(x){return Array.prototype.indexOf.call(window.frames,x)>=0;};
+out({topIsTheShell:window.top===window.parent,shellIsItsOwnParentAndTop:window.parent.parent===window.parent&&window.parent.top===window.parent,
+framesListTheTwo:window.length===2&&inF(FOREIGN.frameInsideSandboxed[0])&&inF(FOREIGN.frameInsideSameOrigin[0]),
+framesInsideShareTheTop:[FOREIGN.frameInsideSandboxed[0],FOREIGN.frameInsideSameOrigin[0]].every(function(x){return x.parent===window&&x.top===window.top;}),
+siblingsShareTheTop:[FOREIGN.siblingSandboxed[0],FOREIGN.siblingSameOrigin[0]].every(function(x){return x.parent===window.parent&&x.top===window.top&&!inF(x);}),
+popupsItOpened:FOREIGN.popupOtherOrigin[0].opener===window&&FOREIGN.popupSameOrigin[0].opener===window});""")
+        self.assertEqual(r, {"topIsTheShell": True, "shellIsItsOwnParentAndTop": True, "framesListTheTwo": True,
+                             "framesInsideShareTheTop": True, "siblingsShareTheTop": True, "popupsItOpened": True})
+
+    def test_a_link_word_from_anyone_but_the_shell_neither_ends_the_wait_nor_dials(self):
+        for word in ('{romp:"link",link:"up"}', '{romp:"panes",on:{},avail:{files:false},link:"up"}'):
+            with self.subTest(word=word):
+                r = _run(self.FOREIGN + r"""
+open();recv({type:"ka"});hide();NOW+=46000;
+parentLinkVal={up:false,connT:NOW};show();
+var atReturn={sockets:sockets.length,awaiting:awaitLink};
+NOW+=300;parentLinkVal={up:true,connT:NOW};
+fromEach("message",WORD);
+var afterForeign={sockets:sockets.length,awaiting:awaitLink};
+fireWin("message",WORD);
+out({atReturn:atReturn,afterForeign:afterForeign,afterShell:{sockets:sockets.length,awaiting:awaitLink}});""".replace("WORD", word))
+                self.assertEqual(r["atReturn"], {"sockets": 1, "awaiting": True}, "the return waits for the shell's link")
+                self.assertEqual(r["afterForeign"], {"sockets": 1, "awaiting": True},
+                                 "no sender but the shell ends the wait: nothing dialed")
+                self.assertEqual(r["afterShell"], {"sockets": 2, "awaiting": False}, "the shell's own word dials once")
+
+    def test_a_panes_word_from_anyone_but_the_shell_neither_unparks_nor_moves_the_on_screen_flag(self):
+        r = _run(self.FOREIGN + r"""
+parentMobileVal=true;parentLinkVal={up:true,connT:NOW};open();recv({type:"ka"});word({test:false},"up");
+hide();NOW+=46000;sock().readyState=3;show();
+var atPark={sockets:sockets.length,parked:parked,onScreen:onScreen};
+NOW+=1000;fromEach("message",{romp:"panes",on:{test:true},avail:{files:false},link:"up"});
+var afterForeign={sockets:sockets.length,parked:parked,onScreen:onScreen};
+word({test:true},"up");
+out({atPark:atPark,afterForeign:afterForeign,afterShell:{sockets:sockets.length,parked:parked,onScreen:onScreen}});""")
+        self.assertEqual(r["atPark"], {"sockets": 1, "parked": True, "onScreen": False})
+        self.assertEqual(r["afterForeign"], {"sockets": 1, "parked": True, "onScreen": False},
+                         "a word from any other sender is not the shell's: the pane stays parked and its flag stands")
+        self.assertEqual(r["afterShell"], {"sockets": 2, "parked": False, "onScreen": True}, "the shell's tap dials once")
+
+    def test_a_pane_page_open_on_its_own_hears_neither_word_even_from_itself(self):
+        # a standalone pane page's parent is itself, and so is its top: a word "from the parent" (or from the top) is then a
+        # word from the page, not a shell's
+        r = _run(r"""
+window.parent=window;window.top=window;
+fireFrom(window,location.origin,"message",{romp:"panes",on:{test:true},avail:{files:false},link:"up"});
+out({onScreen:onScreen===undefined?"unset":onScreen});""")
+        self.assertEqual(r["onScreen"], "unset", "no shell, so no panes word is heard")
+
+    def test_a_pane_page_open_on_its_own_hears_neither_word_from_the_window_that_opened_it(self):
+        # a pane page another page opened in a tab of its own (window.open): its parent and its top are itself, and
+        # window.opener is the page that opened it, the top of its own tab. On a plain-http address a browser applies no
+        # Cross-Origin-Opener-Policy (Handler._send says so), so a page on another origin keeps that handle, and a page
+        # on this origin keeps it under the policy as well. That window is not the shell whatever origin its post names
+        # (another origin, this page's location.origin, the opaque "null"), so neither word is heard from it: the
+        # on-screen flag stays unset, the next return's row carries no parked field (a standalone row's shape) and
+        # nothing dials. The flag and the row are what a check that heard the opener would change: in a standalone page
+        # no shell publishes a link, so a return never awaits one and the link word dials nothing either way
+        for origin in ('"https://elsewhere.example"', "location.origin", '"null"'):
+            with self.subTest(origin=origin):
+                r = _run(r"""
+window.parent=window;window.top=window;
+var OPENER={};OPENER.parent=OPENER;OPENER.top=OPENER;window.opener=OPENER;
+open();recv({type:"ka"});
+fireFrom(OPENER,ORIGIN,"message",{romp:"panes",on:{test:true},avail:{files:false},link:"up"});
+fireFrom(OPENER,ORIGIN,"message",{romp:"link",link:"up"});
+hide();NOW+=1000;show();
+out({edges:{ownParentAndTop:window.parent===window&&window.top===window,openedByAnotherTab:window.opener===OPENER&&OPENER.top===OPENER&&OPENER!==window},
+onScreen:onScreen===undefined?"unset":onScreen,sockets:sockets.length,awaiting:awaitLink,
+returns:rows(sockets[0],"return").map(function(m){return {decision:m.data.decision,parkedField:"parked" in m.data};})});""".replace("ORIGIN", origin))
+                self.assertEqual(r["edges"], {"ownParentAndTop": True, "openedByAnotherTab": True})
+                self.assertEqual(r["onScreen"], "unset",
+                                 "the window that opened this page is not the shell: no panes word is heard")
+                self.assertEqual(r["returns"], [{"decision": "keep", "parkedField": False}],
+                                 "a standalone row: no word was heard, so the return's row says nothing of parking")
+                self.assertEqual((r["sockets"], r["awaiting"]), (1, False), "nothing dialed and nothing awaits a link")
+
+    # Ways later code in the shim could try to put a laxer check in fromShell's place, each spelled so that no text pin
+    # reads the name (a string an eval builds at run time): an assignment, at the check's own scope, from a function inside
+    # that scope, and from a listener's body when its event fires (a freeze listener, the road a mutant took, 2026-09-26);
+    # and an eval that declares the name again, as a var or as a function. The scenario runs where the shim's core runs
+    # (_run: the core's scope), after the core, as later code in the shim would.
+    REBINDS = (
+        ("an eval'd assignment at the check's scope", 'eval("from"+"Shell=function(e){return !!e;};");'),
+        ("an eval'd assignment from a function inside that scope", '(function(){eval("from"+"Shell=function(e){return !!e;};");})();'),
+        ("an eval'd assignment in a listener, on its event",
+         'document.addEventListener("freeze",function(){eval("from"+"Shell=function(e){return !!e;};");});fire("freeze");'),
+        ("an eval'd var declaration", 'eval("var from"+"Shell=function(e){return !!e;};");'),
+        ("an eval'd function declaration", 'eval("function from"+"Shell(e){return !!e;}");'),
+    )
+
+    def test_no_later_code_can_put_a_laxer_check_in_its_place(self):
+        # fromShell is a const: each attempt throws (a TypeError for the assignment, a SyntaxError for the declaration),
+        # and after it a link word from every sender but the shell still neither ends the wait nor dials, while the
+        # shell's own word still dials once. Declared as a function, each attempt replaced the check and a word from
+        # another origin dialed
+        for what, attempt in self.REBINDS:
+            with self.subTest(attempt=what):
+                r = _run(self.FOREIGN + r"""
+var threw="nothing";try{ATTEMPT}catch(x){threw=x&&x.name;}
+open();recv({type:"ka"});hide();NOW+=46000;
+parentLinkVal={up:false,connT:NOW};show();
+NOW+=300;parentLinkVal={up:true,connT:NOW};
+fromEach("message",{romp:"link",link:"up"});
+var afterForeign={sockets:sockets.length,awaiting:awaitLink};
+fireWin("message",{romp:"link",link:"up"});
+out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,awaiting:awaitLink}});""".replace("ATTEMPT", attempt))
+                self.assertEqual(r["afterForeign"], {"sockets": 1, "awaiting": True},
+                                 "the check stands: no sender but the shell ends the wait")
+                self.assertEqual(r["afterShell"], {"sockets": 2, "awaiting": False}, "and the shell's own word still dials once")
+                self.assertIn(r["threw"], ("TypeError", "SyntaxError"), "the attempt itself fails, threw " + str(r["threw"]))
+
+    # a message listener in any spelling text can show (the method named or by a computed member, the event type, a message
+    # or a messageerror, in any quotes), and every onmessage or onmessageerror assignment in the shim, whatever its
+    # receiver: the receiver is the dotted chain before .onmessage or ['onmessage'] with its spaces taken out ("" for a bare
+    # name, the window's own handler; None for a chain the census cannot read, one after a call, an index or another
+    # member), and each must be one of the shim's own sockets and channel, counted in SHIM_ONMESSAGE_RECEIVERS: park's and
+    # abandon's detaches of a dead socket (`var d=ws;`, d.onopen=d.onmessage=...=null), the socket's own handler
+    # (ws.onmessage=function(ev){) and the dispatch channel's (ch.port1.onmessage=flush). The shim's writes are also held
+    # to a subset of tests/test_shell_source_check.py's ONMESSAGE_RECEIVERS, read from that module's source
+    # (_shell_onmessage_receivers), which counts every such assignment in kernel.py's code; every page the kernel serves
+    # is held there to those receivers by name, not by count. Like that table, this one counts receivers by name, not by
+    # binding: a listed name rebound to a window passes it, and only the executed test below catches that, on the roads its
+    # stand-in drives
+    MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message(?:error)?\2")
+    ONMESSAGE_ANY = re.compile(r"(?:(?<![\w$])(onmessage(?:error)?)|\[\s*(['\"`])(onmessage(?:error)?)\2\s*\])\s*=(?!=)")
+    CHAIN_BEFORE = re.compile(r"(?<![\w$.)\]])((?:[\w$]+\s*\.\s*)*[\w$]+)\s*$")
+    SHIM_ONMESSAGE_RECEIVERS = {"d": 2, "ws": 1, "ch.port1": 1}
+    SHELL_HEAD = 'function(e){if(!fromShell(e))return;'
+
+    # every mention of the name fromShell in code: its one declaration, a const, and the two listeners' reads. A second
+    # binding (a function declaration, a var, let or const, a parameter, a destructured name) or a write to it is a
+    # mention of another kind, and so is a mention in a /* */ comment or at the end of a code line; a line that is a //
+    # comment is text, not code. The pin reads spellings, so it first decodes every \uXXXX and \u{...} escape:
+    # JavaScript reads an escaped letter in an identifier as the letter, so `var \u0066romShell=...` binds fromShell a
+    # second time. Decoding one inside a string literal can only add a mention the pin refuses, never hide one. A write or
+    # a declaration that spells no name (an eval of a string built at run time) is no mention; the const is what stops
+    # it, executed by test_no_later_code_can_put_a_laxer_check_in_its_place. What neither covers: a change to the check's
+    # own text or to a listener's head, which test_source_both_listeners_open_with_the_shell_check holds as spelled and
+    # the FOREIGN legs above catch only for the senders they drive; and code in this page that replaces what the check
+    # reads (window.parent is a replaceable attribute of the window, so a script's assignment shadows it), which no pin
+    # here reads and no leg drives
+    FROM_SHELL = re.compile(r"(?<![\w$])fromShell(?![\w$])")
+    UNICODE_ESCAPE = re.compile(r"\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})")
+    FROM_SHELL_DECL = "const fromShell=function(e){"
+    FROM_SHELL_READ = "if(!fromShell(e))return;"
+
+    @staticmethod
+    def _shell_onmessage_receivers():
+        """tests/test_shell_source_check.py's ONMESSAGE_RECEIVERS, read from that module's syntax tree: importing it would
+        run its import-time setup (a fresh state root in this process's environment)."""
+        with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "test_shell_source_check.py")) as f:
+            tree = ast.parse(f.read())
+        found = [ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+                 and [getattr(t, "id", None) for t in n.targets] == ["ONMESSAGE_RECEIVERS"]]
+        assert len(found) == 1, "tests/test_shell_source_check.py assigns ONMESSAGE_RECEIVERS once at its top level: %r" % found
+        return found[0]
+
+    def _onmessage_writes(self, js):
+        """{receiver or "receiver (onmessageerror)": count} for every onmessage or onmessageerror assignment in `js`."""
+        got = {}
+        for m in self.ONMESSAGE_ANY.finditer(js):
+            handler = m.group(1) or m.group(3)
+            before = js[max(0, m.start() - 160):m.start()].rstrip()
+            if m.group(1) and not before.endswith("."):
+                r = ""
+            else:
+                c = self.CHAIN_BEFORE.search(before[:-1] if m.group(1) else before)
+                r = re.sub(r"\s+", "", c.group(1)) if c else None
+            key = r if handler == "onmessage" else "%s (%s)" % (r, handler)
+            got[key] = got.get(key, 0) + 1
+        return got
+
+    def _from_shell_mentions(self, js):
+        """The kind of each mention of fromShell in `js` outside a // comment line, in order: declaration, read, other."""
+        js = self.UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1) or m.group(2), 16)), js)
+        kinds = []
+        for m in self.FROM_SHELL.finditer(js):
+            line = js[js.rfind("\n", 0, m.start()) + 1:m.start()]
+            if line.lstrip().startswith("//"):
+                continue
+            if js.startswith(self.FROM_SHELL_DECL, m.start() - len("const ")):
+                kinds.append("declaration")
+            elif js.startswith(self.FROM_SHELL_READ, m.start() - len("if(!")):
+                kinds.append("read")
+            else:
+                kinds.append("other: " + js[max(0, m.start() - 40):m.end() + 40])
+        return kinds
+
+    def test_source_from_shell_is_bound_once_and_only_read(self):
+        # the two listeners read the one declaration, a const: nothing in the shim spells another binding of the name or a
+        # write to it, for the shim as four apps build it (a write spelled no way, an eval's, is the executed test's below)
+        for app, kw in (("feed", {}), ("chat", {}), ("files", {"no_stale": True}), ("settings", {"no_stale": True})):
+            with self.subTest(app=app):
+                self.assertEqual(self._from_shell_mentions(km._shim(app, 3, **kw)), ["declaration", "read", "read"],
+                                 "fromShell is declared once, a const, and only read (its spelling; "
+                                 "test_no_later_code_can_put_a_laxer_check_in_its_place runs the attempts to replace it)")
+
+    def test_the_binding_census_reads_what_it_claims(self):
+        base = ("const fromShell=function(e){return !!e;};\n// fromShell, described in a comment line\n"
+                "a(function(e){if(!fromShell(e))return;});b(function(e){if(!fromShell(e))return;});\n")
+        self.assertEqual(self._from_shell_mentions(base), ["declaration", "read", "read"])
+        for extra in ("function fromShell(e){return true;}", "var fromShell=function(e){return true;};", "fromShell=function(){return true;};",
+                      "let fromShell=1;", "function f(fromShell){return fromShell;}", "var {fromShell}=o;", "x(); // fromShell=g",
+                      "/* fromShell */", "var \\u0066romShell=function(e){return true;};", "var from\\u{53}hell=function(e){return true;};",
+                      "\\u0066romShell=function(){return true;};"):
+            with self.subTest(extra=extra):
+                kinds = self._from_shell_mentions(base + extra + "\n")
+                self.assertNotEqual(kinds, ["declaration", "read", "read"], "refused")
+        # the check declared as a function, which a later assignment (an eval's included) can replace, is no declaration
+        # the pin accepts, nor a var holding it
+        for decl in ("function fromShell(e){return !!e;}\n", "var fromShell=function(e){return !!e;};\n", "let fromShell=function(e){return !!e;};\n"):
+            with self.subTest(decl=decl):
+                self.assertNotEqual(self._from_shell_mentions(base.replace("const fromShell=function(e){return !!e;};\n", decl)),
+                                    ["declaration", "read", "read"], "refused")
+
+    def test_source_both_listeners_open_with_the_shell_check(self):
+        js = km._shim("feed", 3)
+        self.assertIn('const fromShell=function(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;};', js,
+                      "the check's text: the parent, posting on this page's location.origin (its spelling; the tests above run "
+                      "it against every sender it refuses)")
+        self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
+                      'if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;', js, "the link listener opens with the check (its "
+                      "spelling; test_a_link_word_from_anyone_but_the_shell_neither_ends_the_wait_nor_dials runs it)")
+        self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
+                      'if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];', js, "the on-screen listener opens with the "
+                      "check (its spelling; test_a_panes_word_from_anyone_but_the_shell_neither_unparks_nor_moves_the_on_screen_"
+                      "flag runs it)")
+        # in every spelling the text shows, for the shim as four apps build it (with and without no_stale): these two
+        # and no third (a third decides its senders here), and no onmessage assignment but on the shim's own sockets and
+        # channel (SHIM_ONMESSAGE_RECEIVERS). Each served page, its shim included, is also tests/test_shell_source_check.py's
+        # KernelListenerCensus and ServedPagesExecuted
+        for app, kw in (("feed", {}), ("chat", {}), ("files", {"no_stale": True}), ("settings", {"no_stale": True})):
+            with self.subTest(app=app):
+                js = km._shim(app, 3, **kw)
+                heads = [js[m.start():m.start() + 80] for m in self.MESSAGE_LISTEN.finditer(js)]
+                self.assertEqual(len(heads), 2, "the shim's window message listeners are these two (as spelled; "
+                                 "test_run_the_shim_registers_exactly_these_two_and_sets_no_handler_on_a_window counts them run): %r" % heads)
+                for h in heads:
+                    self.assertTrue(h.startswith('addEventListener("message",' + self.SHELL_HEAD),
+                                    "each opens with the shell check (its spelling; the run test below reads the heads run): " + h)
+                self.assertEqual(self._onmessage_writes(js), self.SHIM_ONMESSAGE_RECEIVERS,
+                                 "an onmessage assignment in the shim on a receiver SHIM_ONMESSAGE_RECEIVERS does not list, or a listed one gone")
+                shell = self._shell_onmessage_receivers()
+                over = {r: n for r, n in self._onmessage_writes(js).items() if n > shell.get(r, 0)}
+                self.assertEqual(over, {}, "the shim's onmessage writes are a subset of tests/test_shell_source_check.py's "
+                                 "ONMESSAGE_RECEIVERS %r: a receiver it does not list, or more writes than it counts (their "
+                                 "spelling; test_run_the_shim_registers_exactly_these_two_and_sets_no_handler_on_a_window "
+                                 "runs the shim)" % shell)
+
+    def test_the_census_reads_each_spelling(self):
+        for src in ('window.addEventListener("message",f)', "window.addEventListener('message',f)",
+                    "addEventListener(`message`,f)", "window['addEventListener']('message',f)", 'self [ "addEventListener" ] ( "message" ,f)'):
+            with self.subTest(src=src):
+                self.assertEqual(len(self.MESSAGE_LISTEN.findall(src)), 1)
+        self.assertEqual(len(self.MESSAGE_LISTEN.findall("window.addEventListener('messageerror',f)")), 1, "a messageerror listener")
+        # every onmessage assignment, with its receiver: one the table does not list (the window by each name, a frame, a
+        # document's window, the body element, a chain the census cannot read, any onmessageerror handler) is a count the
+        # table does not hold
+        for src, key in (("window.onmessage=f", "window"), ("window['onmessage']=f", "window"), ("self.onmessage = f", "self"),
+                         (";onmessage=f", ""), ("frames.onmessage=f", "frames"), ("window.frames.onmessage=f", "window.frames"),
+                         ("self.frames.onmessage=f", "self.frames"), ("document.defaultView.onmessage=f", "document.defaultView"),
+                         ("document.body.onmessage=f", "document.body"), ("var w0=window;w0.onmessage=f", "w0"), ("top.onmessage=f", "top"),
+                         ("document.querySelector('body').onmessage=f", None), ("window[0].onmessage=f", None),
+                         ("ws.onmessageerror=f", "ws (onmessageerror)"), ("ws.onmessage=f", "ws"), ("d.onopen=d.onmessage=null", "d"),
+                         ("ch.port1.onmessage=flush", "ch.port1")):
+            with self.subTest(src=src):
+                self.assertEqual(self._onmessage_writes(src), {key: 1})
+        for src in ("window.addEventListener('resize',f)", "removeEventListener('message',f)", "if(window.onmessage===f)go()"):
+            with self.subTest(src=src):
+                self.assertEqual(self.MESSAGE_LISTEN.findall(src), [])
+                self.assertEqual(self._onmessage_writes(src), {})
+
+    # The stand-in browser the executed census below boots the shim in, set up before the core runs: an onmessage or
+    # onmessageerror handler written, by a set or a define, on one of these objects is heard: the pane's window by the
+    # names the harness gives it (window and document.defaultView as bare names, and self and frames, which in a browser
+    # is the window itself, as bare names and as the window's members), the shell above it (window.parent, top), and
+    # document.body, whose handler is its window's. Not heard here: a write through globalThis, the bare global or the
+    # file's top-level this, since the harness's window is a var and not node's global (the receiver census above reads
+    # such a write when it spells onmessage, and tests/test_shell_source_check.py ServedPagesExecuted, which runs every
+    # served page with the window as the global, hears a write through globalThis there); and a body reached by a query
+    # (the harness's document has no querySelector; the receiver census above reads that spelling)
+    HEARD_WINDOWS = r"""
+var HEARD=[];
+function heardHandlers(o){return new Proxy(o,{set:function(t,k,v){if(k==="onmessage"||k==="onmessageerror")HEARD.push(String(k));t[k]=v;return true;},
+defineProperty:function(t,k,d){if(k==="onmessage"||k==="onmessageerror")HEARD.push(String(k));return Reflect.defineProperty(t,k,d);}});}
+window.parent=heardHandlers(window.parent);window=heardHandlers(window);
+var self=window,frames=window,top=window.parent;window.self=window;window.frames=window;window.top=window.parent;
+document.defaultView=window;document.body=heardHandlers({});
+"""
+
+    def _run_heard(self, scenario, plant=""):
+        """The shim run over HEARD_WINDOWS, with `plant` after it and ahead of the core: the one call the executed census
+        and its self-test both make, so the stand-in the self-test's plants are heard on is the one the census runs over."""
+        return _run(scenario, before=self.HEARD_WINDOWS + plant + "\n")
+
+    def test_run_the_shim_registers_exactly_these_two_and_sets_no_handler_on_a_window(self):
+        # executed, so a listener in any spelling that reaches the window's addEventListener counts, and a handler written
+        # on any road HEARD_WINDOWS hears, whether it happens at boot or on a road a pane's life drives (an open, a frame, a
+        # hide and a return, a watchdog tick, the timers, the dispatch flush, the shell's words). Last, after both
+        # readings, the run writes a handler on the window, the shell above it and the body, and counts what HEARD took:
+        # the census ran over a stand-in that hears
+        r = self._run_heard(r"""
+function listeners(){return {n:(winL.message||[]).length,heads:(winL.message||[]).map(function(f){return String(f).slice(0,HEADLEN);}),
+messageerror:(winL.messageerror||[]).length,onmessage:typeof window.onmessage,heard:HEARD.slice()};}
+var atBoot=listeners();
+open();recv({type:"ka"});caps();word({test:true},"up");fireWin("message",{romp:"link",link:"up"});
+hide();NOW+=46000;show();tick();fireTimers();runFlushes();sock().readyState=3;sock().onclose&&sock().onclose({});fireTimers();tick();
+var afterLife=listeners();
+var armed=(function(){var n=HEARD.length;window.onmessage=null;top.onmessageerror=null;document.body.onmessage=null;return HEARD.length-n;})();
+out({atBoot:atBoot,afterLife:afterLife,armed:armed});""".replace("HEADLEN", str(len(self.SHELL_HEAD))))
+        self.assertEqual(r["armed"], 3, "the stand-in this census ran over heard a handler written on the window, on the shell "
+                                        "above it and on the body (HEARD_WINDOWS armed)")
+        for when in ("atBoot", "afterLife"):
+            with self.subTest(when=when):
+                self.assertEqual(r[when]["n"], 2, "the shim's window message listeners are these two")
+                self.assertEqual(r[when]["heads"], [self.SHELL_HEAD] * 2, "each opens with the shell check")
+                self.assertEqual(r[when]["messageerror"], 0, "no messageerror listener on the window")
+                self.assertEqual(r[when]["onmessage"], "undefined", "no onmessage handler on the window")
+                self.assertEqual(r[when]["heard"], [], "no onmessage or onmessageerror handler written on the window by the names "
+                                                        "the stand-in hears, on the shell above it or on document.body")
+
+    def test_the_executed_census_hears_a_handler_on_every_road_its_stand_in_drives(self):
+        # each write planted ahead of the shim's core: the stand-in hears it (so the test above reds on it), and hears
+        # nothing unplanted
+        for plant in ("frames.onmessage=function(e){};", "window.frames.onmessage=function(e){};", "self.frames.onmessage=function(e){};",
+                      "document.defaultView.onmessage=function(e){};", "document.body.onmessage=function(e){};",
+                      "frames['on'+'message']=function(e){};", "document.defaultView['on'+'message']=function(e){};",
+                      "document.body['on'+'message']=function(e){};", "var w0=window;w0.onmessage=function(e){};",
+                      "top.onmessage=function(e){};", "var dv=document.defaultView;dv['on'+'message']=function(e){};",
+                      "Object.defineProperty(document.body,'on'+'message',{value:function(e){}});",
+                      "Object.defineProperty(window,'on'+'message',{value:function(e){}});",
+                      "window.parent['onmessage'+'error']=function(e){};"):
+            with self.subTest(plant=plant):
+                r = self._run_heard("out({heard:HEARD.slice()});", plant)
+                self.assertNotEqual(r["heard"], [], "the stand-in heard the handler")
+        self.assertEqual(self._run_heard("out({heard:HEARD.slice()});")["heard"], [], "and nothing unplanted")
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,18 +5,30 @@
 // federation.js emits its MERGED frames (`feed`, `tabOrder`, `data`, `bars`) by direct call to the handlers
 // registered with it and dispatches on window only when none is registered (federation.ts emit): a "message"
 // listener in another JavaScript world (a browser extension's content script) that reads event.data forces a
-// structured clone of the frame on every window dispatch, tens of milliseconds for a large board. So the pane
-// installs the SAME handler on window and in the registry; federation picks one path per frame, so each frame
-// arrives exactly once, and the perf brackets (perf-telemetry.ts) nest the same way on either path.
+// structured clone of the frame on every window dispatch, tens of milliseconds for a large board. So the pane puts
+// its handler in the registry and, on window, a wrapper that calls that handler after the foreign-sender check below.
+// Federation picks one path per frame, so each frame arrives exactly once, and the perf brackets (perf-telemetry.ts)
+// nest the same way on either path, since the wrapper calls the perf-wrapped handler; on the window path the check
+// runs outside the bracket.
 //
-// Kept import-free: federation.ts must never be imported by a pane bundle (federation-single-instance.test.ts),
+// The window path hears every window that can post to the page, not only romp's own, so the window listener hands
+// the handler only a message whose sender windowSender (window-sender.ts) does not name foreign: this document, its
+// embedder (the romp shell), a window on this page's location.origin, the origin of its URL (a second column, the
+// VS Code webview host), or this document's own dispatch of a kernel frame (the pane shim's and federation.js's, with
+// no source and no origin). The registry path needs no check: only federation.js calls it, with a MessageEvent it
+// built itself.
+//
+// Kept free of federation.ts: federation.ts must never be imported by a pane bundle (federation-single-instance.test.ts),
 // so the registry is reached through the window slot federation.js publishes before the bundle loads. Without
-// the slot (a VS Code webview, an older federation.js) the window listener carries every frame, as before.
+// the slot (a VS Code webview, an older federation.js) the window listener carries every frame, as before. The one
+// import, window-sender.ts, imports nothing.
+import { windowSender } from "./window-sender";
 
-/** Install `handler` as the pane's frame listener on window and, when the page's federation manager is present,
- *  in its direct-delivery registry. Returns the handler. */
+/** Install `handler` as the pane's frame listener on window, behind the foreign-sender check, and, when the page's
+ *  federation manager is present, in its direct-delivery registry. Returns the handler (the registry holds it as it
+ *  is; the window holds a wrapper). */
 export function listenForFrames(handler: (e: MessageEvent) => void): (e: MessageEvent) => void {
-  window.addEventListener("message", handler);
+  window.addEventListener("message", (e: MessageEvent) => { if (windowSender(e) === "foreign") return; handler(e); });
   // no registry on this page (a VS Code webview, an older federation.js): the window path carries every frame
   const fed = (window as any).__rompFed;
   if (fed && typeof fed.onFrame === "function") fed.onFrame(handler);

@@ -16,6 +16,7 @@
 // it (loopback included), and a webview's cross-origin fetch has no sign-in.
 import { kernelUrl } from "./media";
 import { durLabel } from "./duration";
+import { windowSender } from "./window-sender";   // initStrip's window listener hears no foreign sender
 
 export type UsageWindow = {
   key: string;
@@ -366,9 +367,12 @@ export function initStrip(openSettings: () => void, post?: (m: Record<string, un
     fit();
   }
 
+  // the VS Code extension host posts these from its own window on the webview's origin (window-sender.ts: a peer); a
+  // foreign sender repaints nothing
   window.addEventListener("message", (ev: MessageEvent) => {
     const m = ev.data;
     if (!m) return;
+    if (windowSender(ev) === "foreign") return;
     if (m.type === "usage") render(m.usage || null);                      // live: host-relayed timeline forwards
     else if (m.type === "stripShow") strip.style.display = m.show ? "" : "none";  // feed-over-chat rule
     else if (m.type === "stripPanes") renderPanes(m.hidden || {});        // which quick-opens to offer

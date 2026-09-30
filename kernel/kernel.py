@@ -68237,7 +68237,16 @@ if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // 2026-09-18: before this the word reached the six pane frames alone, and the others ended their await on the 5 s
 // backstop poll below). Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending
 // return-fresh.
-try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;
+// [fork] Both of the shell's words are heard from the shell alone (2026-09-25): fromShell admits a message only when its
+// source is this frame's parent and its origin is this page's location.origin (the origin of the page's URL): the
+// shell, the one window that posts them (_LANDING_COLLAPSE_JS tell). A window that opened this page, a frame inside
+// it, a sandboxed frame (origin "null") and a pane page open on its own (its parent is itself) are not the shell, and
+// their words are ignored. tests/test_pane_shim_return.py runs both.
+// A const, so nothing later in this scope can put a laxer check in its place (2026-09-26): an assignment to it throws,
+// even one an eval builds from a computed name, so does an eval that declares the name again, and a second declaration
+// written in this scope is a syntax error.
+const fromShell=function(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;};
+try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;
 if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();}});}catch(e){}
 // the link backstop: re-read the shell's link every 5 s while awaiting with no socket. An `up` we missed the word for
 // dials; a link whose loop-alive stamp (connT: the later of the shell's last dial and its watchdog's last tick with a
@@ -68261,7 +68270,7 @@ if(L.connT&&Date.now()-L.connT>25000){awaitLink=false;if(returnAt&&linkUpMs<0)li
 // return-fresh that follows says parked) and dials once through D3's link rule: now if the link is up or unknown (an older
 // shell), else on the link-up word (awaitLink; the listener and the backstop above end it). A layout no longer the phone's
 // (a rotation, a resize across the breakpoint) ends a park too: the desktop keeps its background redial.
-try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];
+try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];
 if(parked&&(onScreen===true||parentMobile()!==true)){parked=false;foregroundedAt=Date.now();eagerDial=true;returnAt=foregroundedAt;returnBytes=0;returnRedialed=false;returnRow=null;awaitLink=false;linkUpMs=-1;
 try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e2){}
 var L=parentLink();if(L===undefined||L.up){if(L!==undefined)linkUpMs=Date.now()-foregroundedAt;connect();}else{awaitLink=true;}}});}catch(e){}
@@ -68912,6 +68921,18 @@ if(!P.createDiv)P.createDiv=function(o){return this.createEl('div',o);};
 if(!P.createSpan)P.createSpan=function(o){return this.createEl('span',o);};})();
 (function(){var api=window.acquireVsCodeApi(),panel=null;
 function post(m){api.postMessage(m);}
+// [fork] (2026-09-25) a window message counts only from the senders ui/webview/window-sender.ts's windowSender hears: this
+// page's own dispatch (the shim's and federation.js's frames, a MessageEvent with no source and no origin), this window,
+// its parent (the shell), or a window on this page's location.origin (the origin of the page's URL). Any other sender
+// is foreign and its message is dropped at the window listener below, ahead of the performance collector, so it is
+// neither drawn nor counted: a page on another origin that opened this one, a sandboxed frame (origin "null").
+// tests/test_timeline_boot_shim.py runs it, and
+// ui/webview/timeline-boot-senders.test.ts runs this boot against windowSender itself over every window, sender and
+// origin, with and without a collector.
+function heardSender(e){if(!e)return false;var s=e.source;
+if(s===null||s===undefined){if(e.origin===undefined||e.origin===null||e.origin==="")return true;}
+else{if(s===window)return true;if(window.parent&&window.parent!==window&&s===window.parent)return true;}
+var o=window.location&&window.location.origin;return typeof o==="string"&&o!=="null"&&e.origin===o;}
 // the frame listener, wrapped like every pane's through the page's performance collector when there is one
 // (ui/webview/perf-telemetry.ts, published on window.__rompPerf by federation.js, which loads before this boot),
 // so each frame's handling is timed by type; without a collector the plain listener
@@ -68932,9 +68953,12 @@ else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
 else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);};
 var frameListener=(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)?window.__rompPerf.wrapFrameHandler(onFrame):onFrame;
-window.addEventListener("message",frameListener);
+// [fork] the window path hears every window that can post to this page, so it hands the listener only a heard sender's
+// message, the sender check outside the collector's wrapper, as frame-listener.ts's listenForFrames installs every pane's
+window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});
 // the merged data/bars frames come by direct call from federation.js once the listener is registered with it (federation.ts
-// onFrame/emit; the pane bundles register through frame-listener.ts) — without the registry the window dispatch carries them
+// onFrame/emit; the pane bundles register through frame-listener.ts) — without the registry the window dispatch carries them.
+// Only federation.js calls that path, with a MessageEvent it built itself, so the registry holds the listener as it is
 if(window.__rompFed&&window.__rompFed.onFrame)window.__rompFed.onFrame(frameListener);
 window.__rompTimelineOpenExternal=function(url){try{var u=new URL(url);if(u.protocol==="vscode:"){var q=u.searchParams;
 post({type:"deepLink",session:q.get("session"),anchor:q.get("anchor")||undefined,anchorT:Number(q.get("anchorT"))||undefined,anchorKind:q.get("anchorKind")||undefined,compose:q.get("compose")==="1"});
@@ -69159,7 +69183,7 @@ try{f.contentWindow.postMessage({romp:'paneFocus',dir:dir||'',from:'shell'},'*')
 // The chat pane's active tab, handed to the feed pane on this page (T416): the chat posts {romp:'activeTab',id} to its
 // parent on every switch, and the feed's current-session section moves on it at once, ahead of the kernel's relay of
 // the same post over the sockets, which then reconciles. From a child frame of this page only (a chat column).
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='activeTab'||!e.source||e.source===window||e.origin!==location.origin)return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m||m.romp!=='activeTab')return;
 var ff=document.getElementById('f-feed');try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'activeChat',id:(typeof m.id==='string'?m.id:null),nonce:(typeof m.nonce==='number'?m.nonce:null),gesture:!!m.gesture},'*');}catch(x){}});
 function moveFocus(dir){
   if(curFocus===TL){                                   // in the timeline band: only Alt-Up leaves it, to the last chat pane worked in (a bottom pane too), else the last column
@@ -69211,7 +69235,7 @@ setFocus('f-chat');})();   // default: the chat section is ringed on open
 # REVEAL the chat pane (so the opened session is visible), NOT hide Fleet. to:'fleet' explicitly shows the
 # Fleet pane; no `to` flips it. The shell's pane controller exposes window.__rompPaneToggle(key,to?).
 _LANDING_FLEET_JS = """
-(function(){window.addEventListener('message',function(e){var m=e.data;if(!m||m.romp!=='toggleFleet')return;
+(function(){window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(!m||m.romp!=='toggleFleet')return;
 if(!window.__rompPaneToggle)return;
 if(m.to==='chat')window.__rompPaneToggle('chat',true);
 else if(m.to==='fleet')window.__rompPaneToggle('fleet',true);
@@ -69222,11 +69246,41 @@ else window.__rompPaneToggle('fleet');});})();
 # Boot splash dismissal (the user 2026-06-26): fade #romp-boot the moment ANY pane signals first content
 # ({romp:'ready'}) — the timeline lanes render first (no parse), so the splash clears fast — with a 5s
 # backstop so a slow/closed pane can never trap the user behind it. Removed from the DOM after the fade.
+#
+# [fork] THE SHELL'S SOURCE CHECK (2026-09-25): window.__rompPaneSourceOk, the three lines that open the string below,
+# is ADOPTED from the romp project's repository, github.com/romp-on/romp, at commit
+# f4a57200894ede72a4d4469570490aa64fbf9e94, where the same three lines open this same constant (kernel/kernel.py
+# there, lines 65382-65384). They are that commit's text byte for byte: tests/test_shell_source_check.py pins them by
+# sha256, and every fork adjustment sits outside them. A later fold of the project's shell resolves them as IDENTICAL
+# (take the project's side of this constant; it carries these lines under six comment lines of its own, left out
+# here because they name a plan and a test file the fork does not have). The check: a message counts only when its
+# IMMEDIATE source is an iframe of this document and its origin is this page's location.origin (the origin of the
+# page's URL), so the shell's own window, a window this document does
+# not hold (a page on another origin that opened the dashboard, a popup), a sandboxed frame (origin "null") and a
+# frame nested inside a pane all fail. Its data-protocol=none clause refuses nothing here, since no iframe on the fork
+# carries that attribute. Defined by this script, which runs ahead of every shell
+# listener; each inline listener reads it FAIL-CLOSED as its first statement (no check, no message), spelled as the
+# project spells it, and tests/test_shell_source_check.py takes their census. The shell's bundled palette
+# (palette-main.js, from ui/webview/palette-main.ts) reads it the same way, fail-closed, at the head of its two
+# window listeners, through paneSourceOk (ui/webview/pane-source.ts, adopted from the same commit), and
+# ui/webview/foreign-sender-listeners.test.ts takes their census and runs them. The service worker's own channel
+# (_LANDING_REVEAL_JS) is the one exception: no window can post on it.
+# [fork] THE LOCK (2026-09-26): the fourth line, right after the adopted three, is the fork's own, not the project's.
+# It makes the check read-only and non-configurable once it is defined, so no later script (another inline script, a
+# bundle, a callback, a listener's arm) can replace, redefine or delete it, under any spelling: a sloppy-mode write
+# is ignored and a strict-mode one throws, so every listener's read reaches the adopted function. The try/catch keeps
+# the boot running if the property cannot be locked. FOLD NOTE: a fold that takes the project's side of this constant
+# must keep this line, directly after the project's definition. tests/test_shell_source_check.py CheckLocked reads
+# the property's descriptor after boot (writable false, configurable false), and it fails without this line.
 _LANDING_BOOT_JS = """
+window.__rompPaneSourceOk=function(e){try{if(!e||!e.source||e.source===window||e.origin!==location.origin)return false;
+var fs=document.querySelectorAll('iframe');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source)return fs[i].getAttribute('data-protocol')!=='none';}
+return false;}catch(x){return false;}};
+try{Object.defineProperty(window,'__rompPaneSourceOk',{writable:false,configurable:false});}catch(x){}
 (function(){var boot=document.getElementById('romp-boot');if(!boot)return;var done=false;
 function hide(){if(done)return;done=true;boot.classList.add('gone');
 setTimeout(function(){if(boot.parentNode)boot.parentNode.removeChild(boot);},450);}
-window.addEventListener('message',function(e){if(e&&e.data&&e.data.romp==='ready')hide();});
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;if(e&&e.data&&e.data.romp==='ready')hide();});
 setTimeout(hide,5000);})();
 """
 
@@ -69300,7 +69354,7 @@ tell(n);if(!back.hidden)renderList();}
 // before) — told on every repaint and on the panel's own query.
 function tell(n){var f=document.getElementById('f-settings');
 try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'logUnseen',n:(n===undefined?unseen():n)},'*');}catch(e){}}
-window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='logUnseenQuery')tell();});
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(m&&m.romp==='logUnseenQuery')tell();});
 // each entry leads with the chip its card wears in the feed, so the vocabulary matches across surfaces
 var KINDS=['conn','limit','judge','warn','stalled','nudge','retry','apierror','sdk','sync','locate','cleared','refused','undelivered'];
 var KINDLBL={conn:'offline',limit:'limit',judge:'judge',warn:'warning',stalled:'stalled',
@@ -69393,7 +69447,7 @@ save();paint();};
 // pane iframes can feed the center too; sid/itemId ride along as the entry's jump target. An entry naming a CARD
 // (itemId: the feed's badge mirror, a card still loaded in a pane hidden mid-page) is not this browser's while its
 // Feed pane is off (feedHere above); an entry naming only a session, or nothing, lands as ever.
-window.addEventListener('message',function(e){var m=e&&e.data;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;
 if(m&&m.romp==='notify'&&m.text){if(m.itemId&&!feedHere())return;
 window.__rompNotify(m.kind||'error',m.text,
 (m.sid||m.itemId)?{sid:String(m.sid||''),itemId:String(m.itemId||'')}:null);}});
@@ -69408,7 +69462,7 @@ function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}fo
 window.__rompColGone=function(c){delete stc[String(c)];paint();};   // a closed column takes its state with it
 var PN=""" + json.dumps(dict(_PANE_ORDER)) + """;   // key → rail label, from _PANE_ORDER (one list with the rail, the tabs and the drop row); timeline key stays internal — the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
 function paneLabel(k){k=String(k||'');return PN[k]||(k?k.charAt(0).toUpperCase()+k.slice(1):k);}   // the page's copy of _pane_label: the rail's word, else the key capitalised for a sentence (Settings), never a raw key (the 1715 lows, low 4)
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsState')return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';   // a split column reports under its own key (the sender frame says which)
 if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;
 if(sc==='down'&&pc!=='down'&&shown('chat'))window.__rompNotify('conn','Kernel connection lost: chat split '+col+' (reconnecting)');else paint();return;}
@@ -70294,7 +70348,7 @@ pull(false);                                     // fill on load, independent of
 // (The old vertical-fit degrade ladder (fitRail/data-ruc, the user 2026-06-27/07-01) is gone: it shrank the
 // VERTICAL bars when the left rail ran out of height. The bars are HORIZONTAL in the bottom bar now and only
 // ~text-height tall, so they always fit — nothing to degrade.)
-window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='usage')render(m.usage);});})();
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(m&&m.romp==='usage')render(m.usage);});})();
 """
 
 
@@ -70838,7 +70892,7 @@ open();};
 try{if(location.hash.indexOf('#settings')===0){var sh=location.hash.slice(9);if(sh.charAt(0)==='=')sh=sh.slice(1);
 try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}
 var so=function(){window.__rompOpenSettings(sh||undefined);};if(document.readyState==='complete')setTimeout(so,0);else window.addEventListener('load',so);}}catch(e){}   // a harness without a location object runs the rest
-window.addEventListener('message',function(e){var m=e.data;if(!m)return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(!m)return;
 if(m.romp==='settings'){document.body.classList.toggle('settings-open',!!m.on);
 // closing hides the iframe that held the keyboard, which drops focus onto the shell body; put it back in the
 // chat (the dashboard's default focus, _LANDING_FOCUS_JS rings it) so the next keystroke lands in a pane — the
@@ -71093,7 +71147,7 @@ var _pendPair={},_pairs=null,_pairsBusy=false,_lastArgs=null,_lastUp=0;
 // Retired by the pane's own first payload from that host (its next post drops the name) — no timer.
 var _pend={};
 function pendingIn(h){for(var k in _pend){if(_pend[k].indexOf(h)>=0)return true;}return false;}
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='hostsPending')return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m||m.romp!=='hostsPending')return;
 _pend[m.app||'?']=(m.hosts||[]).filter(function(h){return typeof h==='string';});
 if(!back.hidden&&_lastArgs)render.apply(null,_lastArgs);});
 // ITS CONNECTIONS (the user 2026-08-11): every up host's row expands into THAT machine's own
@@ -71981,7 +72035,7 @@ restart:function(){try{window.__rompRestart&&window.__rompRestart();}catch(e){}}
 errs:function(){try{window.__rompOpenErrs&&window.__rompOpenErrs();}catch(e){}}};
 Array.prototype.forEach.call(bar.querySelectorAll('button[data-act]'),function(b){
 b.addEventListener('click',function(){var f=A[b.getAttribute('data-act')];if(f)f();});});
-window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
 if(m.romp==='toggleFleet')userSwitch(m.to==='chat'?'chat':'fleet');});
 var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart signal — the shell asks /version whose kernel answered
 // [fork] D3 (2026-09-18): the shell socket is the page's ONE link probe. It gets the shim's liveness rules (one attempt
@@ -72308,7 +72362,7 @@ function revealCard(itemId,sid){if(window.__rompPaneEnabled&&!window.__rompPaneE
 if(!feedReady){pendingCard={itemId:itemId,sid:sid};return;}
 var f=document.getElementById('f-feed');
 try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'revealCard',itemId:itemId,sid:sid,gesture:true},'*');}catch(e){}}
-window.addEventListener('message',function(e){var m=e&&e.data;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;
 if(m&&m.romp==='wsState'&&m.app==='chat'&&m.state==='up')chatUp=true;   // the chat pane's shim, on its socket's open: from here a tap is delivered live
 if(!(m&&m.romp==='ready'&&m.app==='feed'))return;
 feedReady=true;if(pendingCard){var c=pendingCard;pendingCard=null;revealCard(c.itemId,c.sid);}});
@@ -72513,7 +72567,7 @@ _STALE_JS = (
     # connection prompt is moot and retires itself; the user saw it on nearly every dashboard open, offering
     # a reload for a staleness that had already healed in the background. A latched BUILD prompt survives
     # (and re-asserts its wording): a resync delivers state, never new code, so only a reload answers it.
-    "window.addEventListener('message',function(e){var m=e&&e.data;"
+    "window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;"
     "if(m&&m.romp==='wsStale'){if(m.build){if(RL)RL.checkBoot();else buildStale=true;}else connStale=true;paint();}"
     "else if(m&&m.romp==='wsFresh'){connStale=false;paint();}});"
     # T132 (the user 2026-08-27): the banner is DRAGGABLE — movable out of the way so it can STAY up
@@ -72950,7 +73004,7 @@ if(c.pid===last&&!alone){var e=zone(p,'col-drop-edge',null,function(sid){if(e.ge
 e.style.width=edgeWidth(p.getBoundingClientRect().width)+'px';e.style.top=(c.n===from?drag.stripH:0)+'px';if(!canSplit())e.setAttribute('data-refused','1');}
 if(!belowOf(c.n)&&!fromBelow&&!(c.n===from&&colSize(from)===1)){var bz=zone(p,'col-drop-bottom',c.n,function(sid){if(bz.getAttribute('data-refused'))refusePane();else moveTab(sid,'down',c.n);});   // the bottom zone: split THIS column, the dragged tab to the new bottom pane. Suppressed where moveTab would refuse the drop: a target already split (belowOf), a bottom-pane source (fromBelow), or the source's OWN lone column (nothing to split off), matching the edge's !alone. A split adds a PANE, so a refused (capped) drop says refusePane
 bz.style.height=edgeWidth(p.getBoundingClientRect().height)+'px';if(!canSplit())bz.setAttribute('data-refused','1');}});}
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m)return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m)return;
 if(m.romp==='tabDrag'){if(!m.on){drag=null;unmountZones();return;}   // the page's dragend: the zones go, whatever ended the drag
 if(!frameOfWin(e.source)||mobile()||typeof m.sid!=='string'||!m.sid)return;   // a chat column's dragstart, on the desktop
 drag={sid:m.sid,name:typeof m.name==='string'?m.name:'',from:Number(colOf(e.source))||1,stripH:Math.max(0,Number(m.stripH)||0)};mountZones();return;}
@@ -75245,6 +75299,7 @@ def _static_route(p):
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    _in_send_error = False   # True only while send_error below runs: end_headers adds the opener policy then
 
     def log_message(self, *a):
         pass
@@ -75286,12 +75341,40 @@ class Handler(BaseHTTPRequestHandler):
         return bool(getattr(self, "_legacy_ours", False)
                     and (getattr(self, "_legacy_signed_in", False) or getattr(self, "_set_cookie", None)))
 
+    # http.server writes its own refusals with send_error, outside _send: a request line over 65536 bytes, its line
+    # terminator included (414), a header line over 65536 bytes or more than 100 headers (431), a method no do_ handler
+    # takes (501), and a request line of four or more words whose last is a well-formed version below HTTP/2.0 other than
+    # HTTP/0.9 itself (400); from Python 3.13.15 and 3.14.7, the first 3.13 and 3.14 releases with CPython's gh-54930,
+    # also the 400 or 505 for any other request line it refuses as malformed. A page on another origin can open the 414
+    # as a top-level document (a long URL is enough), so these carry the opener policy _send's comment describes.
+    # send_error writes its headers in end_headers, so the header is added there, and only while send_error runs: _send
+    # writes its own copy, and a second copy leaves a browser with no policy. http.server writes the 414 before it parses
+    # the request line, so a line that long gets the full 414 with the policy whatever version it names. A reply in
+    # HTTP/0.9's shape, a body with no status line and no headers, can carry no policy, and only a shorter request line
+    # no browser sends gets one. On Python 3.10 to 3.12, and on 3.13 and 3.14 before 3.13.15 and 3.14.7, a line whose
+    # version is missing, malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later gets
+    # every reply in that shape: http.server's refusals (its 400 and 505 for the line, and its 431s and 501 for a line
+    # that gets past those) and the kernel's own reply to the request alike. From 3.13.15 and 3.14.7, the 400 and 505 for
+    # the line have a status line and the policy, and the shape is left to a line of two words whose first is GET and a
+    # line of three whose version is HTTP/0.9 itself. On all of them, then, an authorized GET (`GET /chat?token=<token>`,
+    # say) gets the page itself, a bare `GET /` the sign-in page, and `GET /chat` with no credential the gate's refusal,
+    # each with no headers, and the 431s and the 501 carry the policy only on a request line whose version is below
+    # HTTP/2.0 and not HTTP/0.9, which gets a full reply (HTTP/0.5, say).
+    def send_error(self, code, message=None, explain=None):
+        self._in_send_error = True
+        try:
+            super().send_error(code, message, explain)
+        finally:
+            self._in_send_error = False
+
     def end_headers(self):
         # the one place every response's headers end, so the legacy cookie's clear reaches each response
         # _clears_legacy_cookie names (the socket relay writes the 101 head it rebuilds without this, and
         # adds the clear to that head's lines itself)
         if self._clears_legacy_cookie():
             self.send_header("Set-Cookie", _LEGACY_COOKIE_CLEAR)
+        if self._in_send_error:
+            self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         super().end_headers()
 
     def _send(self, code, body, ctype, cache=None, headers=None):
@@ -75333,6 +75416,19 @@ class Handler(BaseHTTPRequestHandler):
         # Phone and tailnet frame the kernel's own origin, which 'self' permits.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
+        # Opener isolation (2026-09-25): a page on another origin that opens a dashboard page with window.open keeps
+        # a handle to it, and a handle is what lets that page post window messages to it. same-origin puts a
+        # top-level document in a browsing context group of its own: an opener on another origin gets a closed handle
+        # and the page gets no opener. It rides every response _send builds, and http.server's own refusals through
+        # the send_error override above, so every document this origin serves carries it once, except a reply in
+        # HTTP/0.9's shape, which carries no headers at all (that override's comment names the request lines that
+        # get one; no browser sends them). The dashboard's own tabs (a /file image or PDF it opens
+        # with window.open) are documents on this origin carrying the same policy, so window.open still returns a
+        # handle and the in-app view does not take over (preview.ts openFileTab reads only whether it got one).
+        # Browsers enforce it only on secure contexts (https, localhost); on a plain-http tailnet address it is
+        # ignored, and the sender checks in the pages' own listeners are the defence everywhere. Browsers read it on
+        # document navigations only, so it is inert on JSON, assets and sockets.
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         # Referrer policy: a document's URL is what its requests send as Referer, and a page's URL holds
         # `?token=` (or `?c=`) on the load that signs a browser in. The sign-in seed, which this method puts
         # first in the head of the page a sign-in response serves (above), drops token= and c= from the

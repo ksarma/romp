@@ -328,9 +328,20 @@ test("wrapFrameHandler hands the event through and times by its data", () => {
   const h = harness();
   const p = createPerfTelemetry("waiting", h.deps);
   const seen: any[] = [];
-  const wrapped = p.wrapFrameHandler((e) => { seen.push(e.data); h.clock.t += 2; });
-  wrapped({ data: { type: "feed" } } as MessageEvent);
-  wrapped({ data: { type: "warn", text: "x" } } as MessageEvent);
+  const events: unknown[] = [];
+  const wrapped = p.wrapFrameHandler((e) => { seen.push(e.data); events.push(e); h.clock.t += 2; });
+  // the handler gets the event itself, not a copy of its data: a handler that reads the sender (the chat's head check,
+  // windowSender over e.source and e.origin) must see the post's own sender, and a copy with neither would read as this
+  // document's own dispatch
+  const sender = { name: "a sandboxed frame" };
+  const feed = { data: { type: "feed" }, source: sender, origin: "null" } as unknown as MessageEvent;
+  const warn = { data: { type: "warn", text: "x" } } as MessageEvent;
+  wrapped(feed);
+  wrapped(warn);
+  assert.equal(events.length, 2);
+  assert.ok(events[0] === feed && events[1] === warn, "the handler is handed each event object itself");
+  assert.equal((events[0] as any).source, sender, "...with its source");
+  assert.equal((events[0] as any).origin, "null", "...and its origin");
   assert.deepEqual(seen.map((m) => m.type), ["feed", "warn"]);
   const s: any = p.snapshot();
   assert.equal(s.frames.feed.n, 1);
@@ -976,9 +987,10 @@ const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const readUi = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
 
 test("each pane bundle's one frame listener is installed through listenForFrames, wrapped by perfFrameHandler under its own app name", () => {
-  // the pane hands ONE handler to frame-listener.ts, which puts it on window and in federation's registry; a bare
-  // window listener beside that call would be a second delivery path, and an unwrapped one a frame the collector
-  // never sees (the import line has no paren, so the call is the only match for the count)
+  // the pane hands ONE handler to frame-listener.ts, which puts it in federation's registry and, on window, a wrapper
+  // that calls it after the foreign-sender check; a bare window listener beside that call would be a second delivery
+  // path, and an unwrapped one a frame the collector never sees (the import line has no paren, so the call is the only
+  // match for the count)
   const panes: Array<[string, string]> = [["render.ts", "chat"], ["feed.ts", "feed"], ["fleet.ts", "fleet"], ["timeline-main.ts", "timeline"]];
   for (const [file, app] of panes) {
     const src = readUi(file);
@@ -991,10 +1003,14 @@ test("each pane bundle's one frame listener is installed through listenForFrames
     assert.ok(src.includes('listenForFrames(perfFrameHandler("' + app + '", '),
       file + " installs it through perfFrameHandler as app " + app);
   }
-  // the one window install every pane shares, and the registry registration of the same handler beside it
+  // the one window install every pane shares, and the registry registration of the same handler beside it (the window
+  // path calls the handler behind the foreign-sender check, the perf wrapper included, so a frame the collector times
+  // is one from a sender the pane hears (the collector also times frames the handler then ignores);
+  // foreign-sender-listeners.test.ts executes the check)
   const fl = readUi("frame-listener.ts");
   assert.equal((fl.match(/window\.addEventListener\("message", /g) || []).length, 1, "frame-listener.ts owns the one window install");
-  assert.match(fl, /window\.addEventListener\("message", handler\);/);
+  assert.match(fl, /window\.addEventListener\("message", \(e: MessageEvent\) => \{ if \(windowSender\(e\) === "foreign"\) return; handler\(e\); \}\);/,
+    "the window install calls the handler only after the foreign-sender check (its spelling; foreign-sender-listeners.test.ts runs listenForFrames against every sender)");
   assert.match(fl, /fed\.onFrame\(handler\);/);
 });
 

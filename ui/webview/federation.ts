@@ -1175,9 +1175,11 @@ export class FederationManager {
   private frameSubs: FrameHandler[] = [];
 
   /** Register a handler for the merged frames this manager emits (`feed`, `tabOrder`, `data`, `bars`); returns
-   *  the unsubscribe. The pane registers the SAME wrapped handler it installs on window (frame-listener.ts), so
-   *  the perf brackets nest as before and every frame reaches it exactly once: federation picks one path per
-   *  frame (emit). Every other frame — the passthrough, `closed`, `hostUp`, `warn`, the shell's `romp:` posts —
+   *  the unsubscribe. The pane registers here the perf-wrapped handler it hands listenForFrames (frame-listener.ts),
+   *  and installs on window a wrapper that calls that same handler after the foreign-sender check (window-sender.ts).
+   *  Every frame reaches the handler exactly once, since federation picks one path per frame (emit), and the perf
+   *  brackets nest as before, since the wrapper calls the perf-wrapped handler (on the window path the check runs
+   *  outside the bracket). Every other frame (the passthrough, `closed`, `hostUp`, `warn`, the shell's `romp:` posts)
    *  still arrives through the window listener. */
   onFrame(handler: FrameHandler): () => void {
     this.frameSubs.push(handler);

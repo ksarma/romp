@@ -132,6 +132,7 @@ import { isReplyReady, placeMark, placeWindowed, readyChips, replyLine, chipLabe
 import { dragSlotIndex } from "./dragslot";
 import { acceptDragEnter } from "./drag-accept";
 import { perfFrameHandler } from "./perf-telemetry";
+import { windowSender } from "./window-sender";
 import { linkifyPrRefs, senderPrRepo, postalSenderHost } from "./pr-links";
 import { linkifyUrls, urlChip } from "./url-links";   // a URL in a todo's or a note's text is a link, and a todo's own `link` is a chip (the user 2026-09-08)
 import { SETTLE_MS, SETTLE_FIRST_PAINT_MS, SETTLE_ROW_VIEWPORT_CAP, settleStep, settleRowFields, reachableOffset, gestureEvidence, scrollerGrab, writerIsReader, type SettleSample } from "./landing-settle";   // a deep-link landing settles before its row is filed (T386 stage 1)
@@ -20870,6 +20871,7 @@ const fedMissing = federationMissing(window as any);
 listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
+  if (windowSender(e) === "foreign") return;   // a message from any window but this one, its embedder or one on this page's location.origin is ignored (window-sender.ts)
   // the shell's palette: "Fork this session…" → the fork modal for the ACTIVE session, from the tip
   if (m.romp === "forkSession") {
     if (activeId && !isProvisionalId(activeId) && sessions.get(activeId)) showForkPrompt(activeId, "");

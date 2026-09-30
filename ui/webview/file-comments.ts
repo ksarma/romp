@@ -102,6 +102,7 @@ import {
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
 import { layoutCards, CARD_GAP, type LayoutItem, type PlacedItem } from "./card-layout";   // the margin layout's pure half (the 2026-09-07 follow-on)
+import { windowSender } from "./window-sender";   // the module's window listener hears no foreign sender
 
 const POLL_MS = 2500;
 // The refusals a fresh status and one retry answer: a moved fence (the panel's copy is stale), and `busy` (another
@@ -1181,9 +1182,12 @@ export function droppedRequestText(text: unknown): string | null {
 function ensureListener(): void {
   if (listening) return;
   listening = true;
+  // the replies are the kernel's, dispatched in this document or forwarded by the VS Code webview host (a window on this
+  // page's location.origin); a message from a foreign sender (window-sender.ts) settles and fails nothing
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m || !live) return;
+    if (windowSender(e) === "foreign") return;
     if (m.type === "fileCommentsResult" || m.type === "fileCommentsSent") live.settle(m, true);
     else if (m.type === "fileCommentsFailed" || m.type === "fileCommentsSendFailed") live.settle(m, false);
     else if (m.type === "warn") live.failAll(droppedRequestText(m.text));

@@ -5065,7 +5065,12 @@ frames it received is measured in the panes themselves, by
   `romp` field and no `type`) as `shell`, and `other` for a frame with
   neither, a `type` that is not a short identifier, or any type past the 32
   distinct types a minute the pane tracks; frames the handler ignores count
-  too. The federation layer, which every kernel page loads, times its
+  too, when a sender the pane hears sent them. A window message from a sender
+  that `ui/webview/window-sender.ts` names foreign is dropped by
+  `listenForFrames` (`ui/webview/frame-listener.ts`) before the collector and
+  is never counted; on the kernel's `/timeline` page the boot's `heardSender`
+  drops the same senders before its collector. The federation layer, which
+  every kernel page loads, times its
   own prefixing, delta application and merge of each frame as `fed:<type>`,
   nested outside the pane's handler; each level records its own time, so
   `fed:feed` and `feed` add up to the frame's cost. The federation layer hands

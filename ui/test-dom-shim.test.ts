@@ -483,11 +483,13 @@ const ALLOWLIST_MAX = 0;
 // lowers it.
 const NON_DOM_EDGES: Array<[string, string, number]> = [   // [file, why its edge-named key is no DOM edge, edge-initialising lines the detector reads]
   ["webview/card-subgoals.test.ts", "a goal fixture's children array holds ids (strings): a data tree the card renders, not a DOM", 1],
+  ["webview/chat-foreign-frame.test.ts", "stub receiving windows, bound as the lifted handler's window and handed to windowSender to name a sender: one whose parent and top are a stub shell ({ name }) and whose frames are itself, listing two frames inside it, a VS Code frame whose parent is the frame itself and one whose parent is deleted (undefined); and sending frames: two sandboxed ones whose parent is the same stub shell (one also with the shell as its top), and the two frames inside the first receiving window, whose parent is that window and whose top is the shell; no assertion compares the objects, only call counts and render.ts's text (the file has a counterpart in the patch prepared for upstream, whose tree has no shim)", 7],
   ["webview/composer-placeholder.test.ts", "phParts's placeholder record names the far host's prefix under a `host` key (a string or null): the composer's words, not a DOM edge (upstream's T355 test)", 7],
   ["webview/feed-viewer-focus-browser.test.ts", "a feed frame's card carries its goal tree, whose one node has an empty children array: the card model the feed renders, not a DOM", 1],
   ["webview/tab-snapshot-view.test.ts", "a list model's children are plain rows of an id and a text with no edge back, so a dump is the rows", 1],
+  ["webview/window-sender.test.ts", "stub windows whose parent is a stub shell or the window itself (a top-level page, and VS Code's webview frame, built in two tests: the host's own origin, and another webview's), one of them also with a top (the stub shell) and a self (itself) for the no-argument call, a stub shell whose parent is a stub grandparent, and a stub child frame whose parent is the receiving window, and, for the frames in one tab, a stub shell page that is its own parent and top, a pane framed in it (the shell its parent and top) whose frames are itself, listing two frames whose parent is the pane and whose top is the shell, and a sibling frame whose parent and top are the shell, handed to windowSender; every assertion compares the sender class it returns, a string, never the objects (the file has a counterpart in the patch prepared for upstream, whose tree has no shim)", 14],
 ];
-const NON_DOM_EDGES_MAX = 4;
+const NON_DOM_EDGES_MAX = 6;
 const NON_DOM = NON_DOM_EDGES.map(([f]) => f);
 // SWITCHED: the sixteen files whose own copies of the node factory the shared module REPLACED (2026-09-10): the fifteen
 // near-copies (fourteen ui/timeline-*.test.ts siblings, the fold's timeline-tag-chips among them, and

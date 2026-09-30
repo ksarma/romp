@@ -321,7 +321,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3302,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3303,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -343,13 +343,21 @@ COUNTS = {
     #                                _file_cap, _one_file_term_each, _ws_head_allowlist, _peer_header_value_ok, _static_route and,
     #                                on Handler, handle_one_request, parse_request, _clears_legacy_cookie, end_headers, _cookie,
     #                                _browser_session and _need to kernel/kernel.py, and removes Handler._cookie_token; no lambda
-    #                                and no other entry moved; and at fork PR #821's merge of main 1d591384e as 3283: fork PR #821
+    #                                and no other entry moved; and as 3279 at fork PR #923's merge of main 1d591384e (batch
+    #                                2026-09-27a) into its branch at ea943413e: the branch adds Handler.send_error and
+    #                                Handler.end_headers to kernel/kernel.py (the opener policy on http.server's own refusals, 3261
+    #                                to 3263 on the branch), and its Handler.end_headers is the one fork PR #919 adds, both sides'
+    #                                lines in one method, so the merge counts main's 3278 plus send_error; no lambda and no other
+    #                                entry moved; and at fork PR #821's merge of main 1d591384e as 3283: fork PR #821
     #                                adds _stamp_served_html, _watched_set, _watched_flag, _watched_tab and _watched_records to
     #                                kernel/kernel.py; no lambda and no other entry moved; then at fold 3's merge of fork main at
     #                                batch 925 as 3297, the fold's 19 and the batch's 17 over 3261, the census's own derivation on
     #                                the merged tree; no other entry moved; and at fork PR #821's merge of main at batch
     #                                2026-09-29b as 3302, both sides' functions kept (PR #821's 5 and fold 3's 19 over 3278), the
-    #                                census's own derivation on the merged tree; no other entry moved
+    #                                census's own derivation on the merged tree; no other entry moved; and as 3303 at fork PR
+    #                                #923's merge of fork main 15d0f29d2 (batch 2026-09-29c) into its branch at 984f56d6e: main's
+    #                                3302 plus the branch's Handler.send_error, the census's own derivation on the merged tree; no
+    #                                other entry moved
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and

@@ -265,7 +265,9 @@ class ActiveChatRelay(unittest.TestCase):
         """The dashboard's shell relays {romp:'activeTab'} from a chat column into #f-feed as {romp:'activeChat'} (T416):
         the feed's section moves on it ahead of this module's socket relay, which then reconciles."""
         js = km._LANDING_FOCUS_JS   # the shell's cross-pane script, where the paneFocus relay lives too
-        self.assertIn("if(!m||m.romp!=='activeTab'||!e.source||e.source===window||e.origin!==location.origin)return;", js)
+        self.assertIn("if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m||m.romp!=='activeTab')return;", js,
+                      "the shell's one source check, fail-closed (kernel.py _LANDING_BOOT_JS, run by tests/test_shell_source_check.py): "
+                      "a frame of this document, posting on this page's location.origin")
         self.assertIn("ff.contentWindow.postMessage({romp:'activeChat',id:(typeof m.id==='string'?m.id:null),nonce:(typeof m.nonce==='number'?m.nonce:null),gesture:!!m.gesture},'*')", js)
 
     def test_12_the_chats_announcement_number_rides_the_relayed_frame_so_every_announcement_goes(self):

@@ -1745,7 +1745,7 @@ var document = { getElementById: function (id) { return id === "rstale" ? box : 
 var RL = { offer: null, held: null, announce: function () {}, offered: function () { return null; },
            noteVersion: function (v) { CALLS.push(["noteVersion", v.dist_ver]); }, checkBoot: function () { CALLS.push(["checkBoot"]); },
            accept: function () { CALLS.push(["accept"]); }, dismiss: function () { CALLS.push(["dismiss"]); } };
-var window = { addEventListener: function (t, f) { (LISTEN[t] = LISTEN[t] || []).push(f); }, __rompNotify: function (k, t) { CALLS.push(["notify", k, t]); }, __rompReload: RL, innerWidth: 800, innerHeight: 600 };
+var window = { addEventListener: function (t, f) { (LISTEN[t] = LISTEN[t] || []).push(f); }, __rompPaneSourceOk: function () { return true; }, __rompNotify: function (k, t) { CALLS.push(["notify", k, t]); }, __rompReload: RL, innerWidth: 800, innerHeight: 600 };
 var location = { reload: function () { RELOADS++; } };
 function fetch() { return { then: function () { return { then: function () { return { "catch": function () {} }; } }; } }; }   /* the poll never answers here */
 function setInterval() {}

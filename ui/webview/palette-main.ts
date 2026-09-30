@@ -14,6 +14,12 @@ import { hostPrefix } from "./host-prefix";   // pure display helper — safe he
 import { installMenuEcho } from "./tag-menu";   // model deps only (tag-lens/session-views) — no manager, no DOM cost
 import { loadSettings, OPTIONAL_PANES, type PaneSet } from "./settings";   // the gear's store, read at every palette open (no side effects at import)
 import { hotkeyCommandId, loadTabKeys, rememberTabKey, forgetTabKey, tabChord, unboundTabKeys, TABKEYS_KEY } from "./tab-keys";   // per-tab hot keys (2026-09-10)
+// [fork] The two window listeners below take the project's gate at f4a572008 (pane-source.ts says what it adopts). The
+// openKeys line is the project's line byte for byte, so a fold resolves it as identical. This import carries a
+// trailing comment of the fork's own and the hotkeyConfigure gate none, where the project's two lines carry their own
+// (the import's names a plan the fork does not have), so a fold resolves those two lines by hand, and by hand too the
+// fork's two comment lines above the openKeys gate, which the project's side does not have.
+import { paneSourceOk } from "./pane-source";   // the shell's source check, fail-closed: only a pane of this shell is heard below
 
 type SessionRow = { id: string; name: string; dir: string; bg: string };
 
@@ -280,7 +286,9 @@ installMenuEcho();
   registerCommand({ id: "keys.open", title: "Keyboard shortcuts", run: () => keys.open() });
   w.__rompKeysOpen = () => keys.open();
   w.__rompKeysClose = () => keys.close();   // false when not open — the Escape chain moves on
-  window.addEventListener("message", (e) => { if (e.data && e.data.romp === "openKeys") keys.open(); });
+  // the ask comes from a pane of this shell, the gear's shortcuts button in the settings frame (gear.js); paneSourceOk
+  // hears only an iframe of this document on its location.origin, so no other window opens the dialog
+  window.addEventListener("message", (e) => { if (!paneSourceOk(e)) return; if (e.data && e.data.romp === "openKeys") keys.open(); });
   // Sessions in the set with no chord bound leave it — never while the dialog is up (the one being recorded
   // has none yet), so the solo dialog's own close runs it too.
   function pruneUnboundHotkeys(): void {
@@ -301,7 +309,10 @@ installMenuEcho();
       try { back!.focus(); back!.postMessage({ type: "focusComposer" }, "*"); } catch (e) { /* the asking pane is gone */ }
     });
   }
+  // the ask comes from a chat column's tab menu (render.ts), an iframe of this document: the chat pane or a split
+  // column; paneSourceOk hears only such a pane, so no other window binds a hot key or is handed the focus back
   window.addEventListener("message", (e) => {
+    if (!paneSourceOk(e)) return;
     const m = e.data;
     if (!m || m.romp !== "hotkeyConfigure" || typeof m.sid !== "string" || !m.sid) return;
     configureHotkey(m.sid, typeof m.name === "string" ? m.name : "", (e.source as Window | null) || null);
