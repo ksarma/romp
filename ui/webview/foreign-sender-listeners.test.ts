@@ -43,8 +43,9 @@
 // assigned to this page's own window, the receiver decided by the road census's window rule (the binder's identity with
 // window, self, globalThis or frames, and a module-local ambient shadow of one that the build drops, read as the raw
 // global; a chain of member reads and initialisers the checker follows, this page's document.defaultView and a local
-// initialised to or destructured from one among them; global `this`; the bare global), must take the event
-// as its one parameter, with no default, have the check (the pane check in palette-main.ts, the shell's bundle, and
+// initialised to or destructured from one among them, a binding whose initialiser is not its value at every use read
+// fail-closed as the first kind any of its declarations binds; global `this`; the bare global), must take the event as
+// its one parameter, with no default, have the check (the pane check in palette-main.ts, the shell's bundle, and
 // windowSender's in every other file), preceded by nothing but reads of the message and early returns whose condition
 // the census judges to run no code, none holding a destructuring default or a computed key (headCheck's docstring lists
 // the forms), judged by form, not by what runs, and be one of the gated sites below, each with an executed leg here. A
@@ -56,18 +57,19 @@
 // import (gear.js: windowSender's require), bound once and never written, so a local helper of the same name that lets
 // one more sender through cannot stand in for it. The first census reads the listeners the source spells, so two more
 // hold the source to spellings it can read: a third holds that every addEventListener in ui/ is a call the first can
-// read, and a fourth refuses the roads that spell neither (a method of the window, of the body element or of a
-// prototype read by a computed name, a function run with the window as its `this`, an onmessage handler set other than
-// by an assignment the fourth accepts (one on this page's own window, one that sets no handler, or one on a socket the
-// fourth proves through TypeScript's checker), a handler or a message listener on a window other than this page's own,
-// code run from a string (a module imported from a data: URL or from a URL built at run time among it, and a timer, a
-// callee named setTimeout or setInterval on any receiver, handed a string literal, a template, a + expression, an array
-// or object literal or a variable whose initialiser is one, or used as a template's tag), a test or types file imported
-// as a module, a module specifier holding a ? or a # or ending in / or /. (which esbuild rewrites before it resolves),
-// a require() whose specifier is no string literal (which esbuild bundles as every file its pattern can match), a
-// `with` statement, and the name WebSocket anywhere but as the constructor a `new` calls, or in a type). A test of its
-// own holds the repo root to no package.json, tsconfig.json or jsconfig.json, which esbuild would read to resolve a ui/
-// module's specifier. What those cannot see is disclosed at the fourth.
+// read, and a fourth refuses the roads that spell neither (a method of the window, of the body element, of a document
+// the census cannot tell is this page's or of a prototype read by a computed name, a function run with the window as
+// its `this`, an onmessage handler set other than by an assignment the fourth accepts (one on this page's own window,
+// one that sets no handler, or one on a socket the fourth proves through TypeScript's checker), a handler or a message
+// listener on a window other than this page's own, code run from a string (a module imported from a data: URL or from a
+// URL built at run time among it, and a timer, a callee named setTimeout or setInterval on any receiver, handed a
+// string literal, a template, a + expression, an array or object literal or a variable whose initialiser is one, or
+// used as a template's tag), a test or types file imported as a module, a module specifier holding a ? or a # or ending
+// in / or /. (which esbuild rewrites before it resolves), a require() whose specifier is no string literal (which
+// esbuild bundles as every file its pattern can match), a `with` statement, and the name WebSocket anywhere but as the
+// constructor a `new` calls, or in a type). A test of its own holds the repo root to no package.json, tsconfig.json or
+// jsconfig.json, which esbuild would read to resolve a ui/ module's specifier. What those cannot see is disclosed at
+// the fourth.
 // Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -360,8 +362,8 @@ const parsed = new Map<string, Site[]>();
  *  nothing at run time and is the raw global window, which refKind reads as one. A shadow the source binds at run time
  *  that the release minifier drops from statically dead code is the raw global too, but the census models only the
  *  ambient and declaration-file drop (bindsNothingAtRuntime) and reads such a shadow through its declaration, a value
- *  outside the rule it discloses (the road census comment's "cannot see" list). A receiver the rule reads as a window other than this page's own, or does not read as a
- *  window, is no census site.
+ *  outside the rule it discloses (the road census comment's "cannot see" list). A receiver the rule reads as a window
+ *  other than this page's own, or does not read as a window, is no census site.
  *  The road census refuses a handler assigned on another window whatever its value, and one assigned on any other
  *  receiver the rule does not read as this page's own window (the body element and a document among them) unless the
  *  value sets no handler (null, an unshadowed undefined) or the receiver is a name socketRefusal proves, through the
@@ -1471,33 +1473,51 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //       or var declaration (const w = window) or, for a name destructured in such a declaration, through its object
 //       pattern's keys, which cost no step, each key read as the member read or index it names would be (keyKind: const
 //       { parent: p } = window, const { ["self"]: w } = window, const { 0: f } = window); a parameter, a catch clause's
-//       binding and an import have no such declaration and are not followed. A name the checker gives more than one
-//       declaration (a redeclared var, or a JavaScript file's top-level name that a top-level expression statement
-//       assigns a member of by a plain = assignment, a[k] = f; or a chained or comma assignment, not one in parentheses,
-//       under void, in a block or a compound assignment (a[k] ||= f, +=, ??=), which the checker records a second,
-//       expando declaration for) takes one kind, since any of the
-//       initialisers can be the last to run: the first, in the order this page's window, another window, the body
-//       element, this page's document, another document, that any of its declarations binds that way (var w = 0; var w
-//       = window is this page's window). The other kinds are dropped, so a member that only a dropped kind has reads as
-//       nothing (var x = window; var x = document; x.body is not read as the body);
+//       binding and an import have no such declaration and are not followed. The rule decides a binding by its
+//       initialiser only where that initialiser is the binding's value at every use (initIsValue): the checker gives
+//       the name one declaration, a let, const or var declaration's own with an initialiser, the name plain or
+//       destructured, so no parameter, catch clause's binding or second declaration of the name (a JavaScript expando,
+//       the declaration the checker records for a top-level member write such as a[k] = f, writes a member of the
+//       value, not the name, and is not counted); the name is no namespace's export and no var of a script's top-level
+//       scope, each of which code can set as a property (N.x = w, Reflect.set(window, "x", w)) before or after the
+//       initialiser runs; and the language service finds no write to it but the initialiser (an assignment of any
+//       operator, ++ or --, a destructuring target, a for...in or for...of head), in a closure or a nested function
+//       too. A use that runs before the initialiser then finds a let or const in its temporal dead zone, which throws,
+//       or a var still undefined, never another value, unless the release minifier drops the declaration as dead code
+//       (disclosed below). Any other binding the rule does not decide: one of more than one declaration (a redeclared
+//       var; a parameter a var of the name redeclares, function h(x) { x[k] = f; var x = document }, where the write
+//       runs before the var's initialiser and x still holds the argument), and one written other than by its
+//       initialiser (var x = document; x = window). Which value such a binding holds at a use is outside the rule,
+//       which reads it fail-closed: as the first, in the order this page's window, another window, the body element, a
+//       document the census cannot tell is this page's, that any of its declarations binds, this page's own window read
+//       as a window whose document the census cannot tell is this page's and this page's own document as a document the
+//       census cannot tell is this page's (var w = 0; var w = window is this page's window; var d = document; d = w is
+//       such a document). Each of those kinds refuses a computed member, and a handler on the first is a census site.
+//       The other kinds are dropped, so a member that only a dropped kind has reads as nothing (var x = window; var x =
+//       document; x.body is not read as the body);
 //   (c) as `this` where the census's global-this test (thisIsGlobal) reads it as the global object, by position:
 //       walking out from it past any arrow functions, it reaches a plain function (a function declaration or expression
 //       that is not an object literal's property) or the file before any class, method, constructor, accessor, static
-//       block or property declaration.
+//       block or property declaration. The file's own `this`, with no function but an arrow function between, is this
+//       page's window; a plain function's depends on the call (o.m() runs m with o as its `this`), so the rule reads it
+//       fail-closed, as this page's window whose document the census cannot tell is this page's.
 // A window value reached any other way is outside the census: this rule discloses every such value, and the list of
-// what the rules cannot see, below, gives examples. The census states the rule instead of deciding by the checker's
-// types: a type-based form, refusing a computed access on any receiver typed any, unknown, object, Window or typeof
-// globalThis (or a union or intersection holding one) or typed by a type parameter bounded by object, would refuse 201
-// of the 1,686 computed accesses live in ui/ (measured at b3eb94f8a): 198 of them through any (129 in JavaScript files,
-// 69 in TypeScript) and 3 through a type parameter bounded by object, in two helpers of one file. Adding every other
-// type a Window can be assigned to ({}, Record<string, any> and the like) would refuse 91 more, 292 in all (289 by
-// assignability alone, plus the same 3 bounded type parameters, to which the checker assigns no Window). What the rule
-// reads as each kind:
-//   - this page's own window: window, self, globalThis and frames (which a browser answers with the window itself);
-//     any of them reached through another (window.self, window.frames); this page's document's defaultView
-//     (document, or this window's document, or a local initialised to one); a local initialised to any of
-//     these or destructured from one (const { defaultView } = document); and `this` where (c) reads it as the global
-//     object;
+// what the rules cannot see, below, gives examples. A binding or `this` the rule reads fail-closed it decides no
+// further than that reading: which value it holds is outside the rule. The census states the rule instead of deciding
+// by the checker's types: a type-based form, refusing a computed access on any receiver typed any, unknown, object,
+// Window or typeof globalThis (or a union or intersection holding one) or typed by a type parameter bounded by object,
+// would refuse 201 of the 1,686 computed accesses live in ui/ (measured at b3eb94f8a): 198 of them through any (129 in
+// JavaScript files, 69 in TypeScript) and 3 through a type parameter bounded by object, in two helpers of one file.
+// Adding every other type a Window can be assigned to ({}, Record<string, any> and the like) would refuse 91 more, 292
+// in all (289 by assignability alone, plus the same 3 bounded type parameters, to which the checker assigns no Window).
+// What the rule reads as each kind:
+//   - this page's own window: window, self, globalThis and frames (which a browser answers with the window itself); any
+//     of them reached through another (window.self, window.frames); this page's document's defaultView (document, or
+//     this window's document, or a local initialised to one); a local initialised to any of these or destructured from
+//     one (const { defaultView } = document), where the rule decides the local by its initialiser; and the file's own
+//     `this`. Read fail-closed as this page's window whose document the census cannot tell is this page's: a binding
+//     the rule does not decide that one of its declarations binds to this page's window, a plain function's `this`
+//     where (c) reads it as the global object, and either of those reached through another (w.self);
 //   - a window other than this page's own: top, parent and opener; any of those reached through a window
 //     (window.parent, parent.top); another window's own names for itself (parent.self, top.window, parent.frames) and
 //     its document's defaultView (top.document.defaultView); an indexed window (frames[0], window[0], parent.frames[0]);
@@ -1509,33 +1529,42 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     document (const { body } = document).
 //   - a document the census cannot tell is this page's (otherDocument): any ownerDocument or contentDocument, whatever
 //     holds it (memberKind reads the member name, since an ordinary object can hold a window under it); a document
-//     reached through a window other than this page's own (top.document); and a local initialised to one or destructured
-//     from a window (const { document: d } = parent). This page's own document (window.document, the bare document) is a
-//     document the census DOES trust, and a computed member on it is not refused (its onmessage is not the window's).
+//     reached through a window other than this page's own (top.document) or through this page's window read fail-closed
+//     (w.document, for a w the rule does not decide); this page's own document in a binding the rule does not decide,
+//     read fail-closed (var d = document; d = w); and a local initialised to one or destructured from another window
+//     (const { document: d } = parent);
+//   - this page's own document: the bare document, this page's window's document (window.document, self.document) and a
+//     local the rule decides initialised to one or destructured from this page's window (const d = document, const {
+//     document: d } = window). It is the one kind whose computed member the census does not refuse, since the
+//     document's own handlers are not the window's; what such a member holds (its body or its defaultView:
+//     document[k1][k2] = f sets the window's handler) is outside the rule, disclosed below.
 // Refused:
 //   - a method of a window (this page's or another), of a document the census cannot tell is this page's, of the body
-//     element or of a prototype read by a name computed at run time. A document the census cannot tell is this page's is
-//     read fail-closed, as a window is: an ordinary object holds a window under a property named ownerDocument or
-//     contentDocument, so memberKind reads that member as such a document whatever the base, and at run time the receiver
-//     can be the window (holdsWindowMethods; this page's own document, reached by identity, is trusted and left). A
-//     prototype holds the same methods (protoRef): every DOM interface's chain ends at
-//     EventTarget.prototype, which holds addEventListener, so X.prototype for any X, any __proto__, and what
-//     Object.getPrototypeOf or Reflect.getPrototypeOf returns count with the window. Refused on any of them: a member
-//     read by a computed name (window["add" + "EventListener"], a template with a substitution, a variable key),
-//     whether called, assigned or read; Reflect.get, Reflect.getOwnPropertyDescriptor or
+//     element or of a prototype read by a name computed at run time. A document the census cannot tell is this page's
+//     is read fail-closed, as a window is: an ordinary object holds a window under a property named ownerDocument or
+//     contentDocument, so memberKind reads that member as such a document whatever the base, and a binding the rule
+//     does not decide can hold any value, so at run time the receiver can be the window (holdsWindowMethods; this
+//     page's own document, as the rule decides it, is trusted and left). A prototype holds the same methods (protoRef):
+//     every DOM interface's chain ends at EventTarget.prototype, which holds addEventListener, so X.prototype for any
+//     X, any __proto__, and what Object.getPrototypeOf or Reflect.getPrototypeOf returns count with the window. Refused
+//     on any of them: a member read by a computed name (window["add" + "EventListener"], a template with a
+//     substitution, a variable key), whether called, assigned or read; Reflect.get, Reflect.getOwnPropertyDescriptor or
 //     Object.getOwnPropertyDescriptor with a key that is not a literal, and Object.getOwnPropertyDescriptors, which
 //     hands on every member under its name; a destructuring pattern with a key computed at run time (const { [k]: add }
 //     = window); and a reflective write whose key or keys are computed (Reflect.set, Reflect.defineProperty,
 //     Object.defineProperty or __defineSetter__ with a key that is not a literal; Object.assign or
 //     Object.defineProperties from an object literal with a computed key or a spread; a new prototype for the window).
 //     A string or numeric literal key, quoted, in brackets or under a cast (window[("self")], const { ["self"]: w } =
-//     window), is no computed name: it is a literal name (or index), read by rule (b). A bigint is refused as a computed
-//     key where isLiteralKey gates the refusal (an element access written to, window[0n] = f; a key in brackets, const {
-//     [0n]: w } = window), since isLiteralKey takes no bigint; a bare bigint pattern key (const { 0n: w } = window) and a
-//     bigint index (window[0n]) are read as an index by keyKind, rule (b). A literal key naming addEventListener or
-//     onmessage under parentheses or a cast (window[("addEventListener")], window[("onmessage")] = f) is a spelling the
-//     head censuses do not read: the addEventListener form is refused by the addEventListener census, and
-//     window[("onmessage")] = f by this census's handler arm, not resolved by rule (b);
+//     window), is no computed name: it is a literal name (or index), read by rule (b). A bigint key is refused as a
+//     computed key wherever isLiteralKey gates the refusal, since isLiteralKey takes no bigint: an element access on
+//     any of these receivers, read, called or written (window[0n], window[0n].focus(), window[0n] = f), a key in
+//     brackets in a pattern (const { [0n]: w } = window) and a reflective key (Reflect.get(window, 0n),
+//     __defineSetter__(0n, f)). keyKind reads a bigint as an index only where refKind resolves a receiver through it
+//     (window[0n].onmessage = f is another window's handler, refused as that too) and in a bare pattern key (const {
+//     0n: w } = window, a frame's window, rule (b)). A literal key naming addEventListener or onmessage under
+//     parentheses or a cast (window[("addEventListener")], window[("onmessage")] = f) is a spelling the head censuses
+//     do not read: the addEventListener form is refused by the addEventListener census, and window[("onmessage")] = f
+//     by this census's handler arm, not resolved by rule (b);
 //   - a function run with a window as its `this`, however the function was reached: .call, .apply or .bind with the
 //     window named as the first argument (or the second, on a .call or .apply of .call or .apply), and Reflect.apply with
 //     the window as its second. A method of any other EventTarget (an element, the document) read by a computed name
@@ -1607,32 +1636,45 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //   - a window value the window rule above does not decide, however the source reaches it. The rule is the census's
 //     whole reading of which receivers are a window, so this entry covers every value outside it, and each value named
 //     here is an example: a window held in a parameter, a catch clause's binding or a for...of head; in a let or var
-//     assigned later; behind a comma, conditional, || or ?? expression; in a Proxy; in an object or array it was put in
-//     (a namespace's exported member among them), or taken out of an array by an array pattern; as a destructuring
-//     default (const { x: w = window } = {}, whose key alone the rule reads); returned by a function (Object(window)
-//     among them); imported from another module (refKind does not follow an import); reached in more steps than the
-//     rule's chain takes (const a = window; a.self.self.self.self); held by a name whose window initialiser the checker
-//     split into a symbol of its own (var w = window beside function w in a JavaScript script, where the use resolves
-//     to the function symbol) or whose window is a call's result (var w = 0; var w = getWin()); a member only a kind
-//     the rule dropped has, on a name of more than one declaration, which takes its first kind alone (var x = window;
-//     var x = document; x.body, the body at run time); and a `this` the global-this test reads as not the global
-//     object, such as that of an object literal's function or method called without a receiver, which runs with the
-//     window as its `this` when the function is defined as sloppy code (every ui/ source but romp-timeline-view.js has no
-//     `use strict` directive, so a function defined at its top level is sloppy; a function defined in a class body is
-//     strict in any file, so its `this` called with no receiver is undefined, not the window; the definition site decides,
-//     not where the call is). An onmessage handler set on such a receiver is refused (the census resolves it to nothing); a method read
-//     off it, or a member written on it, under a computed key is not;
-//   - a window or document name the source shadows with a declaration esbuild's release minifier drops as statically
-//     dead code: a var, let, const, function or class whose only declaration sits in a branch the minifier proves
-//     unreachable (if (false) { var frames = 0 }, an if (true) {} else, a statement after a return or throw, an empty
-//     try's catch), where a use of the name outside the dead code is the raw global at run time. The census reads the
-//     name through the declaration the checker resolves it to (its initialiser, so refKind answers null, or the document
-//     a document-valued initialiser names, so refKind answers that document), so it does not refuse a computed member
-//     written on the name and reads a handler on it as the declared value's, not this page's window. It models only the
-//     ambient and declaration-file drop (bindsNothingAtRuntime), not the minifier's dead-code elimination of a live
-//     declaration, which the release build performs (vscode-extension/esbuild.js's --production, the vscode:prepublish
-//     path). Witnessed by the unseen rows zz-deadvar-null-drop (a null initialiser) and zz-deadvar-document-drop (a
-//     document initialiser) below;
+//     assigned later whose declarations bind none of the rule's kinds (let w; w = window); behind a comma, conditional,
+//     || or ?? expression; in a Proxy; in an object or array it was put in (a namespace's exported member among them),
+//     or taken out of an array by an array pattern; as a destructuring default (const { x: w = window } = {}, whose key
+//     alone the rule reads); returned by a function (Object(window) among them); imported from another module (refKind
+//     does not follow an import); reached in more steps than the rule's chain takes (const a = window;
+//     a.self.self.self.self); read off this page's own document by a computed key (document[k1][k2] = f, through its
+//     body or its defaultView); held by a name whose window initialiser the checker split into a symbol of its own (var
+//     w = window beside function w in a JavaScript script, where the use resolves to the function symbol) or whose
+//     window is a call's result (var w = 0; var w = getWin()); a member only a kind the rule dropped has, on a name it
+//     reads fail-closed, which takes its first kind alone (var x = window; var x = document; x.body, the body at run
+//     time), and a member of a value it reads fail-closed that the kind it takes does not reach (var d = document; d =
+//     o; d.self, the window when o holds one there); and a `this` the global-this test reads as not the global object,
+//     such as that of an object literal's function or method called without a receiver, which runs with the window as
+//     its `this` when the function is defined as sloppy code (every ui/ source but romp-timeline-view.js has no `use
+//     strict` directive, so a function defined at its top level is sloppy; a function defined in a class body is strict
+//     in any file, so its `this` called with no receiver is undefined, not the window; the definition site decides, not
+//     where the call is). An onmessage handler set on such a receiver is refused (a receiver the census cannot resolve
+//     to this page's window or to a socket). A method read off it, or a member written on it, under a computed key is
+//     not, unless the rule reads the receiver as a kind whose computed member it refuses: a window held under a
+//     property named ownerDocument or contentDocument, read as a document the census cannot tell is this page's, and a
+//     binding the rule does not decide one of whose declarations binds a window, the body element or a document, read
+//     fail-closed (function h(x) { x[k] = f; var x = document });
+//   - a window or document name the source shadows with a declaration esbuild's minifier drops as statically dead code,
+//     where a use of the name is the raw global at run time. Measured with the page's own build options
+//     (vscode-extension/esbuild.js's webview), the declarations it drops are a var at a module's top level whose only
+//     declaration sits in if (false) { ... } or in the else of an if (true), dropped by the release build
+//     (--production, the vscode:prepublish path), or in an empty try's catch, dropped by the default build too; and a
+//     let, const or class after a return in a function, dropped by the release build, so that a use before it in that
+//     function reads the global instead of throwing in its temporal dead zone. esbuild keeps a dead var inside a
+//     function (in a dead branch, or after a return or a throw), a let, const or class after a throw, and a function
+//     declaration after a return; a let, const or class in a dead braced branch is block-scoped, so a use outside it is
+//     the global in every build, which the census reads, refusing a computed member written on it. The census reads the
+//     name through the declaration the checker resolves it to (its initialiser, so refKind answers null, or the
+//     document a document-valued initialiser names, so refKind answers that document), so it does not refuse a computed
+//     member written on the name and reads a handler on it as the declared value's, not this page's window. It models
+//     only the ambient and declaration-file drop (bindsNothingAtRuntime), not the minifier's dead-code elimination of a
+//     live declaration. Witnessed by the unseen rows below: zz-deadvar-null-drop (an initialiser refKind reads as
+//     nothing, var frames = 0), zz-deadvar-document-drop (a document initialiser), zz-deadtry-catch-drop (an empty
+//     try's catch) and zz-deadlet-return-drop (a let after a return);
 //   - the body element reached other than as the window rule reads it (a document's body), for example by a query for
 //     it, a frameset or document.documentElement.lastElementChild. A member written on it under a computed key sets its
 //     window's handler;
@@ -1641,12 +1683,13 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //   - a method of another EventTarget (an element, the document) read by a computed name and called with no receiver:
 //     WebIDL runs an operation called with no `this` on the global object, so `const add = document.documentElement[k];
 //     add("message", f)` registers on the window; and such a method run on `this` where `this` is the window;
-//   - a reflective function reached any way but by its Reflect. or Object. spelling (globalName takes only a leading
-//     window., self. or globalThis. off): under another name (const R = Reflect; R.get(window, k)); through frames (this
-//     page's own window), another window or a comma expression (frames.Reflect.set(window, k, f), (0, Reflect.set)(window,
-//     k, f)); or run with the window among its arguments through .call, .apply or Reflect.apply (Reflect.set.call(null,
-//     window, k, f), Reflect.apply(Reflect.set, null, [window, k, f])); and a Function.prototype.call reached any way but
-//     by name;
+//   - a reflective or prototype function reached any way but by its Reflect. or Object. spelling (globalName takes only
+//     a leading window., self. or globalThis. off): under another name (const R = Reflect; R.get(window, k)); through
+//     frames (this page's own window), another window or a comma expression (frames.Reflect.set(window, k, f),
+//     parent.Reflect.set(window, k, f), (0, Reflect.set)(window, k, f), and a prototype read the same way,
+//     frames.Object.getPrototypeOf(window)[k] = f); or run with the window among its arguments through .call, .apply or
+//     Reflect.apply (Reflect.set.call(null, window, k, f), Reflect.apply(Reflect.set, null, [window, k, f])); and a
+//     Function.prototype.call reached any way but by name;
 //   - an object built elsewhere with a computed key and copied onto the window (Object.assign(window, make()) is read as
 //     its call only), which can also replace the global WebSocket, so a socket the census accepts is the window (the
 //     road census's test holds such rows accepted, in its `unseen` rows); and a key computed in another module and
@@ -1700,13 +1743,20 @@ const memberName = (n: any): string | null => ts.isPropertyAccessExpression(n) ?
  *  page's own (or one the census cannot tell from another), this page's document, a document the census cannot tell is
  *  this page's, or a document's body element, which reflects its window's event handlers. */
 type RefKind = "window" | "otherWindow" | "document" | "otherDocument" | "body";
-/** The kind of member `key` of something of kind `from` (null: resolved to nothing), or null. */
-function memberKind(from: RefKind | null, key: string): RefKind | null {
+/** What the rule reads a receiver as while it walks a chain (ruleKind): a RefKind, or this page's own window read
+ *  fail-closed (failClosedWindow), from a value the rule does not decide: a binding whose initialiser is not its value
+ *  at every use, and `this` in a plain function, which a call can give another value. refKind answers it as this page's
+ *  own window, so a computed member of it is refused and a handler on it is a census site, but its document is one the
+ *  census cannot tell is this page's (memberKind), since the value can be an object that holds a window there. */
+type RuleKind = RefKind | "failClosedWindow";
+/** The kind of member `key` of something of kind `from` (null: resolved to nothing), or null. A window read fail-closed
+ *  has a window's members, but its document is one the census cannot tell is this page's. */
+function memberKind(from: RuleKind | null, key: string): RuleKind | null {
   if (WINDOW_MEMBERS.has(key)) return key === "defaultView" && from === "document" ? "window" : "otherWindow";
   // read fail-closed whatever the base: an ordinary object can hold a window under either name, so a computed member on
   // the result is refused (holdsWindowMethods reads otherDocument as it does a window)
   if (key === "ownerDocument" || key === "contentDocument") return "otherDocument";
-  if (from === "window" || from === "otherWindow") {
+  if (from === "window" || from === "failClosedWindow" || from === "otherWindow") {
     if (WINDOW_NAMES.has(key)) return from;
     if (OTHER_WINDOW_NAMES.has(key)) return "otherWindow";
     if (key === "document") return from === "window" ? "document" : "otherDocument";
@@ -1724,8 +1774,8 @@ const isIndexKey = (k: any): boolean => {
  *  a frame's window, another; a literal name (keyName) by memberKind; any other key null. An element access's key and a
  *  destructuring pattern's key (patternKind) are both read here, so a key reads the same written plain, quoted, in
  *  brackets or under a cast (window.self, window[("self")], const { ["self"]: w } = window). */
-function keyKind(from: RefKind | null, k: any): RefKind | null {
-  if (isIndexKey(k)) return from === "window" || from === "otherWindow" ? "otherWindow" : null;
+function keyKind(from: RuleKind | null, k: any): RuleKind | null {
+  if (isIndexKey(k)) return from === "window" || from === "failClosedWindow" || from === "otherWindow" ? "otherWindow" : null;
   const name = keyName(k);
   return name === null ? null : memberKind(from, name);
 }
@@ -1747,17 +1797,44 @@ function thisIsGlobal(n: any): boolean {
   }
   return false;
 }
-/** The kind a name of more than one declaration takes when its declarations bind different kinds (refKind), the first
- *  of these any of them binds: a window or the body before a document, so a computed member of the name is refused
- *  wherever any declaration makes it a window or the body, and this page's own before another's, so a handler on it is
- *  a census site. The kinds after the first are dropped: a member only one of them has reads as nothing (var x =
- *  window; var x = document; x.body), a window value outside the rule that the road census discloses by it. */
-const MULTI_ORDER: RefKind[] = ["window", "otherWindow", "body", "document", "otherDocument"];
+/** Whether `this` at `n` is the file's own, the one `this` rule (c) decides: walking out from `n` past any arrow
+ *  functions, the file is reached before any function, class or static block. A plain function's `this`, which
+ *  thisIsGlobal also reads as the global object, depends on the call (o.m() runs m with o as its `this`), so the rule
+ *  reads it fail-closed (failClosedWindow). */
+function thisOfFile(n: any): boolean {
+  for (let s = n.parent; s; s = s.parent) {
+    if (ts.isArrowFunction(s)) continue;
+    if (ts.isSourceFile(s)) return true;
+    if (ts.isFunctionLike(s) || ts.isClassLike(s) || ts.isClassStaticBlockDeclaration(s)) return false;
+  }
+  return false;
+}
+/** How the rule reads a binding it does not decide by its initialiser (ruleKind): each declaration's kind read
+ *  fail-closed (failClosed), and the first of these that any declaration binds: this page's window read fail-closed,
+ *  another window, the body element, a document the census cannot tell is this page's. Each refuses a computed member,
+ *  and this page's own window comes first, so a handler on a name any declaration makes this page's window is a census
+ *  site. The kinds after the first are dropped: a member only one of them has reads as nothing (var x = window; var x =
+ *  document; x.body), a window value outside the rule that the road census discloses by it. */
+const MULTI_ORDER: RuleKind[] = ["failClosedWindow", "otherWindow", "body", "otherDocument"];
+/** A kind read fail-closed, for a value the rule does not decide: this page's own window as a window read fail-closed,
+ *  and this page's own document as a document the census cannot tell is this page's; each other kind already refuses a
+ *  computed member and stays as it is. */
+const failClosed = (k: RuleKind | null): RuleKind | null => k === "window" ? "failClosedWindow" : k === "document" ? "otherDocument" : k;
+/** Whether the declaration `d` is a JavaScript expando: the name in a top-level member assignment (a.x = v, a[k] = v),
+ *  which TypeScript records as a declaration of the name's symbol though it writes a member of the value. */
+const isExpandoDecl = (d: any): boolean => ts.isIdentifier(d) && (ts.isPropertyAccessExpression(d.parent) || ts.isElementAccessExpression(d.parent))
+  && d.parent.expression === d;
+/** The kind `n` has by the road census's window rule (ruleKind), or null, a window read fail-closed answered as this
+ *  page's own window. */
+function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
+  const k = ruleKind(n, res, depth, noThis);
+  return k === "failClosedWindow" ? "window" : k;
+}
 /** The kind `n` has by the road census's window rule, or null. This function is the rule, stated in the road census's
  *  comment; a window value it answers null for is outside the census and disclosed by the rule there:
  *  (a) identity: a name whose checker symbol IS the global window, self, globalThis or frames is this page's own
  *      window; top, parent or opener another; document this page's document (res.windowKind, by identity, so an
- *      augmented window global still counts, and refKind records the augmentation for looseRoads to refuse). A window
+ *      augmented window global still counts, and ruleKind records the augmentation for looseRoads to refuse). A window
  *      name whose symbol is a shadow the source added but that binds nothing at run time (its every declaration
  *      ambient, a module-local `declare var window` esbuild drops, or in a declaration file) is the raw global at run
  *      time, read as this page's own window or another by name. A shadow the source binds at run time that the release
@@ -1770,26 +1847,35 @@ const MULTI_ORDER: RefKind[] = ["window", "otherWindow", "body", "document", "ot
  *      resolves the name to, read by declKind: through the initialiser of its let, const or var declaration (const w =
  *      window hops to window) or, for a name destructured in one, through its object pattern's keys (patternKind, each
  *      key by keyKind as the element access with that key reads: const { ["self"]: w } = window; the keys cost no
- *      step). A name the checker gives more than one declaration takes the first kind in MULTI_ORDER that any of its
- *      declarations binds by declKind (var w = window; var w = window; var w = 0; var w = window; and in a JavaScript
- *      file, const { self: a } = window or const b = document.body beside the expando declaration the checker records
- *      for a top-level a[k] = f), since at run time one of the initialisers runs last, and drops the rest (var x =
- *      window; var x = document; x.body is null); that includes a parameter a var of the name redeclares with a window
- *      initialiser;
- *  (c) `this`, where thisIsGlobal reads it as the global object (and never under noThis).
+ *      step). It decides a binding by its initialiser only where that initialiser is the binding's value at every use
+ *      (res.initIsValue): the checker gives the name one declaration (a JavaScript expando aside), a let, const or var
+ *      declaration's own with an initialiser, the name plain or destructured, so no parameter, catch clause's binding
+ *      or other declaration beside it; it is no namespace's export and no var of a script's top-level scope, either of
+ *      which code can set as a property; and nothing writes the name but that initialiser. A use that runs before the
+ *      initialiser then finds a let or const in its temporal dead zone, which throws, or a var undefined, never another
+ *      value (the release minifier's drop of a dead declaration aside, disclosed in the road census). Any other binding
+ *      the rule does not decide (a parameter a var redeclares, function h(x) { x[k] = f; var x = document }; a var
+ *      written later, var x = document; x = window): it reads the kind each declaration binds fail-closed and takes the
+ *      first in MULTI_ORDER any of them binds, and drops the rest (var x = window; var x = document; x.body is null);
+ *  (c) `this`, where thisIsGlobal reads it as the global object (and never under noThis): the file's own `this`
+ *      (thisOfFile) is this page's window, and a plain function's, which a call can give another value, is a window
+ *      read fail-closed.
+ *  A value the rule does not decide is read fail-closed, so no road from it reaches a kind the census trusts: this
+ *  page's window as a window whose document the census cannot tell is this page's (failClosedWindow, which refKind
+ *  answers as this page's own window), and this page's document as a document the census cannot tell is this page's.
  *  Anything else is null, for example: an import (not followed), a parameter, a catch clause's binding, a call's
  *  result, a name none of whose declarations binds one of these kinds, a window a declaration the checker split off
  *  holds (var w = window beside function w in a JavaScript script, the variable a symbol of its own), and a name the
  *  checker cannot resolve. */
-function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
+function ruleKind(n: any, res: Res, depth = 0, noThis = false): RuleKind | null {
   n = unwrap(n);
   if (depth > 4) return null;
-  if (n.kind === ts.SyntaxKind.ThisKeyword) return !noThis && thisIsGlobal(n) ? "window" : null;
+  if (n.kind === ts.SyntaxKind.ThisKeyword) return noThis || !thisIsGlobal(n) ? null : thisOfFile(n) ? "window" : "failClosedWindow";
   // a member read by a literal key or an index (frames[0], a frame's window; window[("self")]), by keyKind
   if (ts.isElementAccessExpression(n) && (isIndexKey(n.argumentExpression) || keyName(n.argumentExpression) !== null)) {
-    return keyKind(refKind(n.expression, res, depth + 1, noThis), n.argumentExpression);
+    return keyKind(ruleKind(n.expression, res, depth + 1, noThis), n.argumentExpression);
   }
-  if (ts.isPropertyAccessExpression(n)) return memberKind(refKind(n.expression, res, depth + 1, noThis), n.name.text);
+  if (ts.isPropertyAccessExpression(n)) return memberKind(ruleKind(n.expression, res, depth + 1, noThis), n.name.text);
   if (!ts.isIdentifier(n)) return null;
   const s = res.symAt(n);
   if (!s) return null;
@@ -1813,45 +1899,54 @@ function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
   }
   if (s.flags & ts.SymbolFlags.Alias) return null;   // an import: a window imported from another module is unseen
   const ds = s.declarations || [];
-  if (ds.length === 1) return declKind(ds[0], n.text, res, depth, noThis);
-  // more than one declaration (a redeclared var w = window; var w = window; a decoy beside a window, var w = 0; var w =
-  // window; and a JavaScript file's top-level name that a top-level expression statement assigns a member of, which the checker
-  // records a second, expando declaration for: const b = document.body; b[k] = f, and const { self: a } = window; a[k]
-  // = f): the name takes the first kind that any of its declarations binds by declKind, since at run time any one of
-  // them can be the initialiser that runs last; a window first, then another window, the body element, this page's
-  // document and another document (MULTI_ORDER), and the kinds after the first are dropped (var x = window; var x =
-  // document; x.body reads null, a value outside the rule). declKind reads each declaration as the single-declaration
-  // case does, a destructured name included, so a second declaration the checker adds cannot hide the kind the other
-  // binds. A name none of whose declarations binds one of these (a socket beside a socket, var ws = new WebSocket; var
-  // ws = new WebSocket) is left unresolved for the socket proof; a decoy that only fails to bind a window (var ws = new
-  // WebSocket; var ws = window) is read as the window it becomes at run time. A declaration whose initialiser binds
-  // another value shows nothing on its own, and so does one declKind reads as null (var w; with no initialiser, a
-  // parameter, a function, the expando itself). 0 live.
-  const kinds: Array<RefKind | null> = ds.map((d: any) => declKind(d, n.text, res, depth, noThis));
-  return MULTI_ORDER.find((k) => kinds.includes(k)) || null;
+  const kinds: Array<RuleKind | null> = ds.map((d: any) => declKind(d, n.text, res, depth, noThis));
+  // a kind the census trusts (this page's own window, whose handler is a census site, or this page's own document,
+  // whose computed member is left) is read through the initialiser only where that is the binding's value at every use;
+  // every other kind already refuses, read the same either way, so the write search runs only where it can change the
+  // answer
+  const trusted = kinds.some((k) => k === "window" || k === "document");
+  if (!trusted && ds.length === 1) return kinds[0];
+  if (trusted && res.initIsValue(s)) return kinds[ds.findIndex((d: any) => !isExpandoDecl(d))];
+  // any other binding: more than one declaration (a redeclared var w = window; var w = window; a decoy beside a window,
+  // var w = 0; var w = window; a parameter a var of the name redeclares; and a JavaScript file's top-level name that a
+  // top-level expression statement assigns a member of, which the checker records a second, expando declaration for:
+  // const b = document.body; b[k] = f), or one whose initialiser is not its value at every use (written elsewhere, a
+  // namespace's export, a var of a script's top-level scope). The rule does not decide which value it holds, so it
+  // reads each declaration's kind fail-closed and takes the first of MULTI_ORDER that any of them binds, since at run
+  // time any of them can be the value at a use: this page's window read fail-closed first, then another window, the
+  // body element and a document the census cannot tell is this page's (this page's own document read so), and drops the
+  // rest (var x = window; var x = document; x.body reads null, a value outside the rule). declKind reads each
+  // declaration as the single-declaration case does, a destructured name included, so a second declaration the checker
+  // adds cannot hide the kind the other binds. A name none of whose declarations binds one of these (a socket beside a
+  // socket, var ws = new WebSocket; var ws = new WebSocket) is left unresolved for the socket proof; a decoy that only
+  // fails to bind a window (var ws = new WebSocket; var ws = window) is read as the window it can be at run time. A
+  // declaration whose initialiser binds another value shows nothing on its own, and so does one declKind reads as null
+  // (var w; with no initialiser, a parameter, a function, the expando itself). 0 live.
+  const fc = kinds.map(failClosed);
+  return MULTI_ORDER.find((k) => fc.includes(k)) || null;
 }
 /** The kind one declaration `d` binds the name `name` to, rule (b) of the road census's window rule: a let, const or
- *  var declaration's initialiser, read by refKind one step deeper (const w = window); a name destructured in such a
+ *  var declaration's initialiser, read by ruleKind one step deeper (const w = window); a name destructured in such a
  *  declaration, through its object pattern's keys (patternKind: const { parent: p } = window); any other declaration
  *  null (a parameter, a catch clause's binding, a for...of or for...in head's, a function, a class, an import, a
- *  JavaScript expando). */
-function declKind(d: any, name: string, res: Res, depth: number, noThis: boolean): RefKind | null {
+ *  JavaScript expando). Whether the rule reads the binding through it is ruleKind's call (res.initIsValue). */
+function declKind(d: any, name: string, res: Res, depth: number, noThis: boolean): RuleKind | null {
   if (ts.isBindingElement(d)) {   // destructured: const { frames: w } = window
     let r: any = d;
     while (ts.isBindingElement(r) || ts.isObjectBindingPattern(r) || ts.isArrayBindingPattern(r)) r = r.parent;
     if (!ts.isVariableDeclaration(r) || !r.initializer) return null;
-    return patternKind(r.name, name, refKind(r.initializer, res, depth + 1, noThis));
+    return patternKind(r.name, name, ruleKind(r.initializer, res, depth + 1, noThis));
   }
   if (!ts.isVariableDeclaration(d) || !d.initializer) return null;
-  return refKind(d.initializer, res, depth + 1, noThis);
+  return ruleKind(d.initializer, res, depth + 1, noThis);
 }
 /** The kind destructuring `pattern` from something of kind `from` binds `name` to, at any depth: an identifier key or a
  *  shorthand by memberKind, and a string, a number or a key in brackets by keyKind, as the element access with that key
  *  reads (const { parent: p } = window; const { document: { body } } = window; const { ["self"]: w } = window; const {
  *  0: f } = window, a frame's window). An array pattern, a rest element and a key computed at run time read as null
- *  (looseRoads refuses the last off a window, the body element or a prototype); a default is not read, the key alone
- *  deciding (const { x: w = window } = {}: null). */
-function patternKind(pattern: any, name: string, from: RefKind | null): RefKind | null {
+ *  (looseRoads refuses the last off a window, the body element, a document the census cannot tell is this page's or a
+ *  prototype); a default is not read, the key alone deciding (const { x: w = window } = {}: null). */
+function patternKind(pattern: any, name: string, from: RuleKind | null): RuleKind | null {
   if (!ts.isObjectBindingPattern(pattern)) return null;
   for (const e of pattern.elements) {
     // the key: a shorthand's or an identifier's name by memberKind; a string, a number or a key in brackets by keyKind,
@@ -1879,10 +1974,11 @@ const otherWindowRef = (n: any, res: Res): boolean => refKind(n, res) === "other
 /** Whether `n` is a document's body element by the window rule (refKind), which reflects its window's handlers. */
 const bodyRef = (n: any, res: Res): boolean => refKind(n, res) === "body";
 /** Whether `n` is a document the window rule (refKind) cannot tell is this page's (otherDocument): a member named
- *  ownerDocument or contentDocument on any holder, a foreign window's document, or a local read from one. Read
- *  fail-closed for computed accesses (holdsWindowMethods), since an ordinary object can hold a window under either name,
- *  so at run time the receiver can be the window; this page's own document (kind "document"), reached by identity, is
- *  trusted and not read here. */
+ *  ownerDocument or contentDocument on any holder, the document of a window other than this page's own or of a window
+ *  the rule reads fail-closed, this page's own document in a binding the rule does not decide, or a local read from
+ *  one. Read fail-closed for computed accesses (holdsWindowMethods), since an ordinary object can hold a window under
+ *  either name and a binding the rule does not decide can hold any value, so at run time the receiver can be the
+ *  window; this page's own document as the rule decides it (kind "document") is trusted and not read here. */
 const otherDocumentRef = (n: any, res: Res): boolean => refKind(n, res) === "otherDocument";
 /** The dotted name of a callee (Reflect.set, setTimeout, window.setTimeout, Reflect["get"]), or "". */
 const calleeName = (c: any): string => {
@@ -1906,9 +2002,9 @@ function protoRef(n: any): boolean {
 }
 /** Whether a member read off `n` can be a window's method or its handler: `n` is a window, the body element (whose
  *  onmessage is its window's) or a document the census cannot tell is this page's (otherDocumentRef, read fail-closed
- *  because an object can hold a window under an ownerDocument or contentDocument name) by the window rule, or a prototype
- *  (protoRef). A window value the rule does not decide is not read here: a computed member of it is outside the census,
- *  disclosed by the rule. */
+ *  because an object can hold a window under an ownerDocument or contentDocument name and a binding the rule does not
+ *  decide can hold any value) by the window rule, or a prototype (protoRef). A window value the rule does not decide is
+ *  not read here: a computed member of it is outside the census, disclosed by the rule. */
 const holdsWindowMethods = (n: any, res: Res): boolean => windowRef(n, res) || protoRef(n) || bodyRef(n, res) || otherDocumentRef(n, res);
 const isLiteralKey = (k: any): boolean => !!k && (ts.isStringLiteralLike(unwrap(k)) || ts.isNumericLiteral(unwrap(k)));
 /** Whether a destructuring pattern (a binding pattern, or an object literal an assignment destructures into) names a key
@@ -2109,14 +2205,14 @@ function fixtureChecked(file: string, src: string): Checked {
 // setInterval on any receiver, eval, Function and require, each read the same whether the name is the global or a local
 // of that name. Reading a local of the name as the global errs on the refusing side. Reading only the spelling also
 // misses a reflective or prototype arm reached another way than its bare Reflect. or Object. spelling: through frames
-// (this page's own window), another window, or a comma expression (frames.Reflect.set(window, k, f), (0, Reflect.get)(window,
-// k), frames.Object.getPrototypeOf(window)[k]), or run with the window among its arguments through .call, .apply or
-// Reflect.apply (Reflect.set.call(null, window, k, f), Reflect.apply(Reflect.set, null, [window, k, f])); each direct
-// spelling is refused. Those err on the accepting side and are disclosed in the "cannot see" list ("a reflective function
-// reached any way but by its Reflect. or Object. spelling", whose examples cover the frames, other-window, comma and
-// run-with-the-window-among-its-arguments forms). A resolver holds the program the census reads the file in
-// (censusProgram for a ui/ file, fixtureChecked for a test row), maps a node of the census's own parse to that program
-// by span, and answers three questions:
+// (this page's own window), another window, or a comma expression (frames.Reflect.set(window, k, f), (0,
+// Reflect.get)(window, k), frames.Object.getPrototypeOf(window)[k]), or run with the window among its arguments through
+// .call, .apply or Reflect.apply (Reflect.set.call(null, window, k, f), Reflect.apply(Reflect.set, null, [window, k,
+// f])); each direct spelling is refused. Those err on the accepting side and are disclosed in the "cannot see" list ("a
+// reflective or prototype function reached any way but by its Reflect. or Object. spelling", whose examples cover the
+// frames, other-window, comma, prototype-read and run-with-the-window-among-its-arguments forms). A resolver holds the
+// program the census reads the file in (censusProgram for a ui/ file, fixtureChecked for a test row), maps a node of
+// the census's own parse to that program by span, and answers four questions:
 //   - windowKind(symbol, name): the name is the page's own window when the symbol the checker resolves the identifier to
 //     IS the global table's symbol for that name (checker.resolveName over the program's globals), for window, self,
 //     globalThis or frames; another window for top, parent or opener; this page's document for document. Deciding by
@@ -2140,6 +2236,20 @@ function fixtureChecked(file: string, src: string): Checked {
 //     else the declaration, a binding element climbed to its variable declaration's root. The listener, event-name, timer and
 //     detach-value arms read it (sitesIn's listenerOf, eventTypes and listOf, the timer arm, and setsNoHandler's undefined
 //     check); an ambient const in a .ts file resolves to nothing here, so its value is no event name.
+//   - initIsValue(symbol): whether the window rule's clause (b) decides the binding by its initialiser, which it does
+//     only where that initialiser is the binding's value at every use: the checker gives the name one declaration (a
+//     JavaScript expando, which writes a member, aside), a let, const or var declaration's own (plain or destructured)
+//     with an initialiser; it is no namespace's export (esbuild reads that as a property of the namespace object, which
+//     code can set under any spelling) and no var of a script's top-level scope (a property of the global object, which
+//     a call can set under a string key, Reflect.set(window, "x", w), before or after the initialiser runs); and
+//     nothing writes it but its initialiser. The writes are found as the socket proof finds them: the language
+//     service's findReferences on the declaration, in every file of the program, with its isWriteAccess (an assignment
+//     of any operator, ++ or --, a destructuring target, a for...in or for...of head), and a walk over every identifier
+//     of the name in the declaring file, each resolved by the checker, must agree (one it resolves to the declaration
+//     that the service does not list makes the binding one the rule does not decide). A let or const of a script's
+//     top-level scope is shared with every classic script of the page: a write in another ui/ file is found in the
+//     census's program, and one in a script the census does not read is outside it. ruleKind asks only where the answer
+//     can change the kind: a binding whose initialiser reads as this page's own window or document.
 type Res = {
   checked: () => Checked;
   toProg: (n: any) => any;
@@ -2148,6 +2258,7 @@ type Res = {
   extraDecl: (s: any) => boolean;
   firstNonLib: (s: any) => any;
   declC: (n: any) => any;
+  initIsValue: (s: any) => boolean;
   augmented: Array<{ name: string; node: any; sym: any }>;
 };
 /** A resolver over the program `checked` returns, mapping a node of `localSf` (the census's own parse) to it by span. */
@@ -2211,7 +2322,53 @@ function resolver(localSf: any, checked: () => Checked): Res {
     while (ts.isBindingElement(d) || ts.isObjectBindingPattern(d) || ts.isArrayBindingPattern(d)) d = d.parent;
     return d;
   };
-  return { checked, toProg, symAt, windowKind, extraDecl, firstNonLib, declC, augmented: [] };
+  // whether a var declaration list's scope is the file's own: walking out, the file is reached before any function,
+  // static block or namespace body (a var in a block at the file's top level included)
+  const varScopeIsFile = (list: any): boolean => {
+    for (let s = list.parent; s; s = s.parent) {
+      if (ts.isSourceFile(s)) return true;
+      if (ts.isFunctionLike(s) || ts.isClassStaticBlockDeclaration(s) || ts.isModuleBlock(s)) return false;
+    }
+    return false;
+  };
+  const valueCache = new Map<any, boolean>();
+  const initIsValueOf = (s: any): boolean => {
+    const ds = (s.declarations || []).filter((x: any) => !isExpandoDecl(x));
+    if (ds.length !== 1 || !ds[0].name || !ts.isIdentifier(ds[0].name)) return false;
+    const d = ds[0];
+    let root: any = d;
+    while (ts.isBindingElement(root) || ts.isObjectBindingPattern(root) || ts.isArrayBindingPattern(root)) root = root.parent;
+    if (!ts.isVariableDeclaration(root) || !root.initializer || !ts.isVariableDeclarationList(root.parent)) return false;
+    const list = root.parent, stmt = list.parent, dsf = d.getSourceFile();
+    if (ts.isVariableStatement(stmt) && isNamespaceExport(stmt)) return false;
+    if ((list.flags & ts.NodeFlags.BlockScoped) === 0 && !ts.isExternalModule(dsf) && varScopeIsFile(list)) return false;
+    const { service, checker } = prog();
+    const key = (file: string, start: number): string => file + ":" + start;
+    const at = d.name.getStart(dsf);
+    const listed = new Map<string, any>();
+    for (const r of service.findReferences(dsf.fileName, at) || []) for (const e of r.references) listed.set(key(e.fileName, e.textSpan.start), e);
+    listed.delete(key(dsf.fileName, at));
+    for (const e of listed.values()) if (e.isWriteAccess) return false;
+    let unlisted = false;
+    const walk = (n: any): void => {
+      if (unlisted) return;
+      if (ts.isIdentifier(n) && n.text === d.name.text && n !== d.name) {
+        const p = n.parent;
+        const r = ts.isShorthandPropertyAssignment(p) && p.name === n ? checker.getShorthandAssignmentValueSymbol(p)
+          : ts.isExportSpecifier(p) && (p.propertyName || p.name) === n ? checker.getExportSpecifierLocalTargetSymbol(p)
+          : checker.getSymbolAtLocation(n);
+        if (r && (r.declarations || []).includes(d) && !listed.has(key(dsf.fileName, n.getStart(dsf)))) unlisted = true;
+      }
+      ts.forEachChild(n, walk);
+    };
+    walk(dsf);
+    return !unlisted;
+  };
+  const initIsValue = (s: any): boolean => {
+    if (!valueCache.has(s)) valueCache.set(s, initIsValueOf(s));
+    return valueCache.get(s) as boolean;
+  };
+  return { checked, toProg, symAt, windowKind, extraDecl, firstNonLib, declC, initIsValue, augmented: [] };
 }
 
 // ── the socket proof ──
@@ -2751,6 +2908,13 @@ test("the road census reads what it claims: every road around the spelled regist
     ["window.require(\"./d/\" + x); const r = require; r(\"./d/\" + x);", "webview/probe.js"],
     ["import \"./ok\"; require(\"./ok2\"); import \"../x/y\"; import \"./a.b\";"],
     ["setTimeout(() => go(), 0); req.setTimeout(1000); w.setTimeout(fn, 0);", "webview/probe.js"],
+    // this page's own document, whose computed member the census leaves, reached through a binding the window rule
+    // decides by its initialiser (a script's top-level const, a name destructured from this page's window, a module's
+    // var, a function's let, a JavaScript file's const that a member write gives an expando declaration) and through
+    // the file's own this; a rule that read every binding fail-closed would refuse each
+    ["const d = document; d[k] = f; const { document: e } = window; e[k] = f; window.document[k] = f;"],
+    ["export {}; var d: any = document; d[k] = f;"],
+    ["function g() { let d = document; d[k] = f; } g(); const e = document; e.title = \"x\"; e[k] = f; this.document[k] = f;", "webview/probe.js"],
   ];
   for (const [src, file] of accepted) assert.deepEqual(roads(src, file), [], "accepted: " + src);
   // an onmessage or onmessageerror handler is accepted on this page's own window (a census site the census above
@@ -2849,16 +3013,18 @@ test("the road census reads what it claims: every road around the spelled regist
     if (n !== sites) missed.push("onmessage census sites " + n + ", not " + sites + ": " + src);
   }
   // roads on the list of what the rules cannot see, held accepted as that list's witnesses (a census that comes to see
-  // one turns its row red, and the list's entry goes with it). The first four are ways a socket the census accepts is the
-  // window at run time: a global WebSocket replaced through an object built with a computed key and copied onto the
+  // one turns its row red, and the list's entry goes with it). The first four are ways a socket the census accepts is
+  // the window at run time: a global WebSocket replaced through an object built with a computed key and copied onto the
   // window, and a classic script's top-level var rebound through the global object by a call, Reflect.set's and
-  // Object.assign's. The next two are the minifier-dead-code drop: a window name shadowed by a var whose only declaration
-  // sits in a statically-dead branch, which the release build's --production minifier drops, leaving the name the raw
-  // global window at run time. The census reads the shadow through its declaration (an initialiser refKind reads as
-  // nothing, var frames = 0, so refKind is null; a document initialiser, so refKind is that document), so it does not
-  // refuse the computed handler write. It
-  // models only the ambient and declaration-file drop (bindsNothingAtRuntime), not the minifier's dead-code elimination
-  // of a live declaration, so these land window.onmessage in the shipped bundle and the census accepts them
+  // Object.assign's. The next four are the minifier-dead-code drop: a window name shadowed by a var at a module's top
+  // level whose only declaration sits in a statically-dead branch (if (false) {}, an empty try's catch), or by a let
+  // after a return in a function, which esbuild's minifier drops (the release build's --production, and the default
+  // build too for the empty try's catch), leaving the name the raw global window at run time. The census reads the
+  // shadow through its declaration (an initialiser refKind reads as nothing, var frames = 0, so refKind is null; a
+  // document initialiser, so refKind is that document), so it does not refuse the computed handler write. It models
+  // only the ambient and declaration-file drop (bindsNothingAtRuntime), not the minifier's dead-code elimination of a
+  // live declaration, so these land window.onmessage in the shipped bundle and the census accepts them. The last five
+  // reach a reflective or prototype function another way than its Reflect. or Object. spelling
   const unseen: Array<[string, string?]> = [
     ["const o: any = {}; o[[\"Web\", \"Socket\"].join(\"\")] = function () { return window; }; Object.assign(window, o); const ws = new WebSocket(u); ws.onmessage = f;"],
     ["Object.assign(window, make()); const ws = new WebSocket(u); ws.onmessage = f;"],
@@ -2868,11 +3034,18 @@ test("the road census reads what it claims: every road around the spelled regist
     ["if (false) { var frames = 0; } var k = [\"on\", \"message\"].join(\"\"); function h(e){ void e; } frames[k] = h;", "webview/probe.mjs"],
     // zz-deadvar-document-drop: a document-initialised shadow the minifier drops, refKind document
     ["if (false) { var frames = document; } var k = [\"on\", \"message\"].join(\"\"); function h(e){ void e; } frames[k] = h;", "webview/probe.mjs"],
+    // zz-deadtry-catch-drop: a shadow declared only in an empty try's catch, which the default build drops too
+    ["try {} catch { var frames = 0; } var k = [\"on\", \"message\"].join(\"\"); function h(e){ void e; } frames[k] = h;", "webview/probe.mjs"],
+    // zz-deadlet-return-drop: a let after a return, which the release build drops, so the use before it is the global
+    ["var k = [\"on\", \"message\"].join(\"\"); function h(e){ void e; } function g() { frames[k] = h; return; let frames = 0; } g();", "webview/probe.mjs"],
     // a reflective write onto the window reaching Reflect.set another way than its Reflect. or Object. spelling, which
     // globalName does not strip: through frames (this page's own window), a comma expression, or Function.prototype.call
     ["frames.Reflect.set(window, k, f);"],
     ["(0, Reflect.set)(window, k, f);"],
     ["Reflect.set.call(null, window, k, f);"],
+    // through another window, and a prototype read through frames
+    ["parent.Reflect.set(window, k, f);"],
+    ["frames.Object.getPrototypeOf(window)[k] = f;"],
   ];
   for (const [src, file] of unseen) {
     const got = roads(src, file);
@@ -3224,7 +3397,8 @@ test("the road census reads what it claims: every road around the spelled regist
       ["Object.assign(window, { WebSocket: X }); const ws = new WebSocket(u); ws.onmessage = f;"],
       ["const W = WebSocket; const ws = new W(u);"], ["if (x instanceof WebSocket) go();"],
     ]],
-    // a member of an indexed window, of the body element or of an event's window member, by a computed name
+    // a member read by a computed name off a receiver the window rule reads as a window, the body element or a document
+    // the census cannot tell is this page's; the rows are examples of the ways the rule reads one
     [COMPUTED, false, [
       ["frames[0][k] = f;"], ["Reflect.set(frames[0], k, f);"], ["Object.assign(window[0], { [k]: f });"],
       ["Object.defineProperty(parent.frames[0], k, { value: f });"], ["Object.getOwnPropertyDescriptor(frames[0], k).set.call(frames[0], f);"],
@@ -3350,6 +3524,40 @@ test("the road census reads what it claims: every road around the spelled regist
       ["const { ownerDocument } = { ownerDocument: window } as any; ownerDocument[[\"on\", \"message\"].join(\"\")] = function (e: unknown) { void e; }; export {};"],
       ["var { contentDocument: x } = { contentDocument: window }; x[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
       ["const { a: { contentDocument: x } } = { a: { contentDocument: window } } as any; x[[\"on\", \"messageerror\"].join(\"\")] = function (e: unknown) { void e; }; export {};"],
+      // PR 923: a binding the window rule does not decide by its initialiser, whose initialiser names this page's
+      // document: a parameter a var redeclares, the write running before the var's initialiser while x still holds the
+      // argument (function h(x) { x[k] = f; var x = document } h(window)), in TypeScript and JavaScript; a var or let
+      // written after its initialiser (an assignment, through Reflect.set too; a closure's assignment; an array
+      // pattern; a for...of head; a shorthand pattern target; a logical assignment); a var of a classic script's
+      // top-level scope that a call sets through the global object, before the initialiser runs or after it; a
+      // namespace's export set through the namespace object; and a name declared twice, as this page's document and as
+      // a document the census cannot tell is this page's. 984f56d6e read each through its initialiser as this page's
+      // document, which it trusts with a computed member, and accepted the write; at run time the receiver is the
+      // window (the classic-script rows when the file runs as one, which esbuild's bundle does not do). The rule now
+      // decides a binding by its initialiser only where that initialiser is its value at every use (initIsValue) and
+      // reads any other fail-closed, this page's document as a document the census cannot tell is this page's
+      ["export {};\nfunction h(x: any) { x[[\"on\", \"message\"].join(\"\")] = function (e: unknown) { void e; }; var x: any = document; }\nh(window);"],
+      ["function h(x) { x[[\"on\", \"message\"].join(\"\")] = function (e) { void e; }; var x = document; }\nh(window);", "webview/probe.js"],
+      ["var x: any = document; x = window; Reflect.set(x, [\"on\", \"message\"].join(\"\"), function (e: unknown) { void e; }); export {};"],
+      ["var x = document; x = window; x[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["let d = document; function g() { d = window; } g(); d[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["let d = document; [d] = [window]; d[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["let d = document; for (d of [window]) {} d[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["let { document: d } = window; ({ d } = { d: window }); d[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["let d = document; d &&= window; d[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["Reflect.set(window, \"x\", window); x[[\"on\", \"message\"].join(\"\")] = function (e) { void e; }; var x = document;", "webview/probe.js"],
+      ["var x = document; Object.assign(window, { x: window }); x[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["namespace N { export var d: any = document; export function g() { d[[\"on\", \"message\"].join(\"\")] = function (e: unknown) { void e; }; } }\n(N as any).d = window;\nN.g();"],
+      ["var o = { contentDocument: window };\nvar d = document;\nvar d = o.contentDocument;\nd[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["export {};\nconst o: any = { ownerDocument: window };\nvar d: any = document;\nvar d: any = o.ownerDocument;\nd[[\"on\", \"message\"].join(\"\")] = function (e: unknown) { void e; };"],
+      // PR 923: this page's window read fail-closed, from a binding the rule does not decide (written after its
+      // initialiser, or declared twice) or from a plain function's `this`, which a call can give another value (o.m()):
+      // its document is one the census cannot tell is this page's, since the value can be an object that holds the
+      // window under that name. 984f56d6e read it as this page's own window, whose document it trusts, and accepted the
+      // computed write on that document; at run time the write lands on the window
+      ["var w = window; w = { document: window }; w.document[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["function g() { var w = window; var w = { document: window }; var d = w.document; d[[\"on\", \"message\"].join(\"\")] = function (e) { void e; }; } g();", "webview/probe.js"],
+      ["function m() { this.document[[\"on\", \"message\"].join(\"\")] = function (e) { void e; }; }\nvar o = { document: window, m: m };\no.m();", "webview/probe.js"],
     ]],
     // a window-name global the source augmented with a declaration outside the default lib (an expando, a `declare
     // global`): the census resolves the name to the window by IDENTITY (so a computed write on it is still seen) and
@@ -3497,6 +3705,23 @@ test("the socket proof refuses a reference the checker resolves to the declarati
   const silent = { ...c, service: { findReferences: () => [] } };
   assert.deepEqual(looseRoads("webview/probe.ts", src, () => silent).loose.map((l) => l.why),
     ["an onmessage handler on a receiver the census cannot resolve to this page's window or to a socket: ws at :2 is its declaration's symbol to the checker and no reference to the language service"]);
+});
+
+test("the window rule decides a binding by its initialiser only where the language service lists every reference the checker resolves to it, and finds no write: a reference it does not list, or a write, leaves this page's document to the fail-closed reading", () => {
+  // initIsValue's agreement, as the socket proof's: the two read the same checker, so on every real file they agree; a
+  // service that lists no reference stands for one that parts from the checker, and the rule reads the binding
+  // fail-closed rather than trust the writes it lists. With the real service the binding is decided, this page's
+  // document, whose computed member the census leaves; a write anywhere but the initialiser (here in a closure the
+  // service finds) makes it one the rule does not decide
+  const src = "const d = document;\nd[k] = f;";
+  const c = fixtureChecked("webview/probe.ts", src);
+  assert.deepEqual(looseRoads("webview/probe.ts", src, () => c).loose, [], "the real service lists the reference, and d is this page's document");
+  const silent = { ...c, service: { findReferences: () => [] } };
+  assert.deepEqual(looseRoads("webview/probe.ts", src, () => silent).loose.map((l) => l.why),
+    ["a member of a window, a document the census cannot tell is this page's, the body element or a prototype reached by a computed name, which the censuses cannot read"]);
+  const written = "let d = document;\nconst g = () => { d = window; };\nd[k] = f;";
+  assert.deepEqual(looseRoads("webview/probe.ts", written).loose.map((l) => l.why),
+    ["a member of a window, a document the census cannot tell is this page's, the body element or a prototype reached by a computed name, which the censuses cannot read"]);
 });
 
 test("the socket proof refuses a constructor or a new X.WebSocket base a project .d.ts declares (B1, B2, which bd5cf71fd accepts), and a computed write on a window or on globalThis a JavaScript expando augments (the window write bd5cf71fd refuses for its computed name too, and b1bae88f7 added the augmentation refusal; the globalThis write, which b1bae88f7's declaration-count identity let through, b1bae88f7 accepted and 1d9a9d631 refuses by name identity)", () => {
