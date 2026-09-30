@@ -5146,9 +5146,9 @@ for _name, _lic in LICENSED_MODULE_LEVEL_WRITES.items():
 # (a call named in its LOAD_CALLS, whatever it loads, or an import of the kernel, postal or cli package; this module is
 # one, for its scratch conftest copies), so their licences rest on the value check of every write. The names only the
 # floor modules write (FLOOR_ONLY_FILE: one "NAME module" line per writer module) are committed the same way, every name
-# but the five leak names, which _leak_writers holds to none but the floor's client-only "1" (fork PR #875 adds that line
-# to tests/conftest.py, and it is passed there whichever of the two lands first). The rest of the census's table is not
-# committed (module_level_env_census says what is compared and what is not).
+# but the five leak names, which _leak_writers holds to none but the floor's client-only "1" (tests/conftest.py carries
+# that line since the merge of main that brought fork PR #875, and the check passes it there). The rest of the census's
+# table is not committed (module_level_env_census says what is compared and what is not).
 
 WRITER_SETS_DIR = os.path.join(HERE, "fixtures", "module-level-env-writers")
 WRITER_SET_FILES = {"ROMP_SERVE_TOKEN": "ROMP_SERVE_TOKEN.txt", "ROMP_KERNEL_NO_OPEN": "ROMP_KERNEL_NO_OPEN.txt"}
@@ -10008,10 +10008,10 @@ LEAK_NAMES = ("ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT", "ROMP_POSTAL_CLIENT_ONLY"
 #   pin's per-name check against every writer, a floor module included (_leak_writers)
 FLOOR_LEAK_WRITES = {"ROMP_POSTAL_CLIENT_ONLY": "'1'"}
 #   the one module-level write of a leak name a floor module may make, as ast.unparse spells its resolved value:
-#   client-only "1", upstream's floor line (their PR 1848, which fork PR #875 folds), under which no in-process kernel of
-#   the run starts a bus by an ensure or a revive. A floor module's write of any other leak name, or of client-only with
-#   any other value, is the leak a test module's write is: a port in the floor names the run's own port to every child
-#   of every test (the bind the fixed-port refusal then licenses), peers in the floor reaches every module on every
+#   client-only "1", upstream's floor line (their PR 1848, which fork PR #875 folded), under which no in-process kernel
+#   of the run starts a bus by an ensure or a revive. A floor module's write of any other leak name, or of client-only
+#   with any other value, is the leak a test module's write is: a port in the floor names the run's own port to every
+#   child of every test (the bind the fixed-port refusal then licenses), peers in the floor reaches every module on every
 #   xdist worker, the sessions-file seam in the floor keeps a bus from autostopping.
 
 
@@ -10465,8 +10465,10 @@ def _plant_at(src, node, text, where, col=None):
 
 
 def _conftest_with_the_client_only_floor():
-    """tests/conftest.py's text with upstream's client-only floor line right after the hermetic marker, where their PR
-    1848 puts it (fork PR #875 folds it). Loud when the marker is not there once."""
+    """tests/conftest.py's text with upstream's client-only floor line inserted right after the hermetic marker, where
+    their PR 1848 puts it. Since the merge of main that brought fork PR #875, which folded that PR, tests/conftest.py
+    has the line of its own there, so the copy has it twice in a row; the per-name check splices it in only for a
+    conftest without it. Loud when the marker is not there once."""
     src = open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read()
     if src.count(_HERMETIC_MARKER) != 1:
         raise AssertionError("the hermetic marker %r is in tests/conftest.py %d times, not once" % (_HERMETIC_MARKER, src.count(_HERMETIC_MARKER)))
@@ -10562,7 +10564,7 @@ _REVIVE_PROBE = textwrap.dedent("""
     # probe's own calls the revive road, km._ensure_postal_bus, after the trio's setUp and reports the recorder, what
     # the cleanups return and which checks fired in them, and whether the road is the import-time function again after
     # them. It calls the road itself and not km._revive_postal_bus, whose client-only gate (upstream's PR 1848, which
-    # fork PR #875 folds) can return before the road, so what it reports does not depend on that gate.
+    # fork PR #875 folded) can return before the road, so what it reports does not depend on that gate.
     import json, os, shutil, sys
     here = sys.argv[1]
     sys.path.insert(0, here)
@@ -12241,11 +12243,13 @@ class HermeticKernelPostal(unittest.TestCase):
 
     def test_the_per_name_check_passes_the_floors_client_only_and_faults_every_other_leak_write(self):
         """The census pin's per-name check (_leak_writers) passes one floor write, upstream's client-only line
-        (os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1", their PR 1848, which fork PR #875 folds; the reviewer's ruling of
+        (os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1", their PR 1848, which fork PR #875 folded; the reviewer's ruling of
         round 1 on fork PR #894), and reads every other record of the five leak names. Run over the walker's own
-        records: that line spliced into the real tests/conftest.py beside the hermetic marker, and the same line as the
-        unittest twin's (tests/__init__.py), leave no writer; the same line planted at module level in a test module (the
-        tunnels module, where client-only stood until 2026-09-22) is a writer, named, beside the floor's; so is a floor
+        records: the real tests/conftest.py's own floor line, right after the hermetic marker since the merge of main
+        that brought fork PR #875 (the line is spliced in beside the marker only for a conftest without it), and the
+        same line as the unittest twin's (tests/__init__.py), leave no writer; the same line planted at module level in
+        a test module (the tunnels module, where client-only stood until 2026-09-22) is a writer, named, beside the
+        floor's; so is a floor
         module's client-only of another value, and a floor module's write of each of the other four names (the round's
         first commit skipped every floor record, and the verifier's plant of the sessions-file seam in tests/__init__.py
         passed the census pin); and a conftest.py or __init__.py below tests/ is not a floor module (FLOOR_MODULES names
@@ -12263,9 +12267,11 @@ class HermeticKernelPostal(unittest.TestCase):
         leg, line = "ROMP_POSTAL_CLIENT_ONLY", _CLIENT_ONLY_FLOOR
         self.assertEqual(FLOOR_LEAK_WRITES, {leg: "'1'"}, "the one floor write the check passes")
         floor = records_of(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read(), "conftest.py")
-        if not floor[leg]:                  # a conftest that floors client-only already (fork PR #875's) is read as it stands
+        if not floor[leg]:                  # tests/conftest.py floors client-only itself, so it is read as it stands
             floor = records_of(_conftest_with_the_client_only_floor(), "conftest.py")
-        self.assertEqual([r.module for r in floor[leg]], ["conftest.py"], "the walker reads the spliced floor line as conftest's write")
+        self.assertEqual([r.module for r in floor[leg]], ["conftest.py"],
+                         "the walker reads the conftest's own floor line (spliced in only for a conftest without it) as "
+                         "conftest's write")
         twin = records_of("import os\n" + line, "__init__.py")
         self.assertEqual([r.module for r in twin[leg]], ["__init__.py"])
         self.assertEqual(_leak_writers({leg: floor[leg] + twin[leg]}, leg), [], "the floor's client-only of 1 is the runner's own")
@@ -17330,7 +17336,8 @@ class HermeticKernelPostal(unittest.TestCase):
         why the leak's child could bind it), so the probe is known to see the leaks it guards against (review rounds 1
         and 2, 2026-09-18; the port 2026-09-22). Client-only is planted as "on", a value no floor module sets, since the
         probe compares it with the floor's value: planted as "1" it would be invisible under a conftest that floors "1"
-        (upstream's PR 1848, which fork PR #875 folds). A module-level write of the floor's own value changes nothing
+        (upstream's PR 1848, which fork PR #875 folded; tests/conftest.py floors it since the merge of main that brought
+        that PR). A module-level write of the floor's own value changes nothing
         the probe can read; the census pin reads that write statically. The comparison itself is run over a planted
         client-only write alone, under the real conftest and under a copy carrying the floor line: the check the two
         probe tests above share must red on it at the import, which it cannot if its floor value is read after the
@@ -18467,7 +18474,8 @@ class HermeticKernelPostal(unittest.TestCase):
         every loaded romp_kernel* module DEAD_BUS_PORT for each test and points every loaded romp_postal* module's BASE at
         it, and the tests whose notify is refused stub _revive_postal_bus. The spy is shown live where it must be: the
         test process records its dials to the dead port. The spawn half holds under this
-        kernel and under fork PR #875's, whose floor skips the revive and not the connect. What the spy does not read: a
+        kernel, which carries fork PR #875's client-only gate since the merge of main that brought that PR: the gate
+        skips the revive and not the connect. What the spy does not read: a
         process that is not Python, or is started with -S or -I or an environment without this PYTHONPATH (none loads
         the sitecustomize), a connect below socket.socket, and a spawn outside subprocess.Popen whose child is not a
         Python process that loads the spy (os.system, os.exec*, os.posix_spawn called directly). At the round-1 head
@@ -18781,7 +18789,8 @@ class HermeticKernelPostal(unittest.TestCase):
         unset (the port aside) in setUp and pops it in tearDown (the postal modules' shape) runs from that clean shell and
         from a shell carrying all six. Both runs find the floor and are green, neither check naming anything: the shell
         changes nothing the checks read. The floor is read rather than assumed unset, so a conftest that floors
-        client-only "1" (upstream's PR 1848, which fork PR #875 folds) holds too. Before round 2's seventh commit on fork
+        client-only "1" (upstream's PR 1848, which fork PR #875 folded; tests/conftest.py floors it since the merge of
+        main that brought that PR) holds too. Before round 2's seventh commit on fork
         PR #894 the run from the carrying shell was red: the module named for the five names and the test for the three
         seams the per-test check watches."""
         from tests import conftest
