@@ -1524,6 +1524,7 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal.test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads",
     "HermeticKernelPostal.test_a_name_is_read_through_its_first_binding_alone_and_a_later_binding_or_a_parameter_makes_it_loud",
     "HermeticKernelPostal.test_a_name_of_the_conftests_module_scope_is_unproven_whatever_code_rebinds_it",
+    "HermeticKernelPostal.test_a_star_import_beside_a_declaration_may_bind_the_name_at_the_read",
     "HermeticKernelPostal.test_a_starred_value_is_a_licence_fault_naming_its_line_and_every_other_value_shape_round_trips",
     "HermeticKernelPostal.test_a_tracked_dict_is_read_only_through_the_allowed_reads_and_any_other_reference_is_loud",
     "HermeticKernelPostal.test_an_augmented_assignment_to_a_name_folds_its_composed_value",
@@ -1537,6 +1538,7 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal.test_the_direct_import_positive_allowlist_refuses_a_false_proof_no_list_holds",
     "HermeticKernelPostal.test_the_fail_closed_anyio_rule_admits_a_key_only_where_it_proves_one_fixed_string_and_refuses_the_rest",
     "HermeticKernelPostal.test_the_fixture_spelling_scan_follows_an_alias_chain_to_the_pass_that_adds_nothing",
+    "HermeticKernelPostal.test_the_fold_evaluates_a_name_read_once_per_set_of_names_it_is_folding",
     "HermeticKernelPostal.test_the_licence_check_reds_on_a_new_name_on_each_fixed_leak_put_back_and_on_a_value_outside_its_licence",
     "HermeticKernelPostal.test_the_module_imports_no_copy_and_deep_copies_no_node",
     "HermeticKernelPostal.test_the_module_road_refuses_every_fixture_it_cannot_read_and_names_why",
@@ -6799,26 +6801,56 @@ def _anyio_resolution(bindings, name_node):
     apply to it (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 2, built here and not in
     ast_bindings.Scope, which other censuses share). A read that may take no binding is also one whose declarations
     stand in the module's scope, or in such a class body and the module's, and whose name is a BUILTIN'S (one the
-    builtins module of the interpreter reading the text binds): Python reads the module's namespace and then the
-    builtins, so where the module's binding has not run (a del, a branch not taken, a read ahead of it) the read takes
-    the builtin, as a read in a class body does (the verification of the hundred and eighteenth round-2 commit of fork
-    PR #894 found vars bound and deleted, or bound in a branch not taken, at the module's level admitted while the read
-    of vars(sys) took the builtin, and the same for globals; the hundred and nineteenth carries ruled item 2's "no
-    binding" to them). A def's, a lambda's or a comprehension's own binding is left out: a read there takes the local
-    or raises, and never reads the builtin. A fold reads such a read as the empty string, open, beside the values its
-    declarations give (through, in _anyio_option_reads), as it reads a name no declaration binds: the module may bind
-    the name by no declaration (a star import) to a str the rule does not read, so from _ih import * and then 'an' +
-    lineage + 'yio' in a class body whose later lineage = 'zz' names anyio, as its module-scope twin does. `scope` is
-    the scope resolve names (the class's, for such a read; None where no scope binds the name); `unbound` is whether the
-    read may take no binding: no declaration binds it, it is such a class-body read and the module binds none, or its
-    declarations stand in the module's scope (or such a class body's) and it names a builtin. An AssertionError from
-    scope_of (a node of another tree) propagates."""
+    builtins module of the interpreter reading the text binds), or whose text holds a STAR IMPORT anywhere
+    (_anyio_star_imported): Python reads the module's namespace and then the builtins, so where the module's binding
+    has not run (a del, a branch not taken, a read ahead of it) the read takes the builtin, as a read in a class body
+    does, and a star import binds names in the module's namespace that no declaration records, so the read may take
+    the star import's binding and no declaration's, the star import running after the declarations or they not having
+    run (the verification of the hundred and eighteenth round-2 commit of fork PR #894 found vars bound and deleted, or
+    bound in a branch not taken, at the module's level admitted while the read of vars(sys) took the builtin, and the
+    same for globals, and the hundred and nineteenth carries ruled item 2's "no binding" to them; the re-verification
+    of the hundred and nineteenth found from _ih import * beside the module's own lineage = 'zz', ahead of the read,
+    before the star import, in a branch not taken, or beside a class body's own later lineage = 'zz' as well, and then
+    'an' + lineage + 'yio' admitted while Python bound anyio, the same for PYTEST_ADDOPTS, and sys.path read where the
+    star import binds sys beside sys = None, each since the star import's binding was read only where no declaration
+    binds the name, and the hundred and twentieth reads it wherever the module's declarations do). A def's, a lambda's
+    or a comprehension's own binding is left out: a read there takes the local or raises, and never reads the builtin
+    or a star import's binding. A fold reads such a read as the empty string, open, beside the values its declarations
+    give (through, in _anyio_option_reads), as it reads a name no declaration binds: a star import may bind the name
+    to a str the rule does not read, so from _ih import * and then 'an' + lineage + 'yio' names anyio whether the text
+    declares lineage in the module's scope or a class body's or nowhere. `scope` is the scope resolve names (the
+    class's, for such a read; None where no scope binds the name); `unbound` is whether the read may take no binding:
+    no declaration binds it, it is such a class-body read and the module binds none, or its declarations stand in the
+    module's scope (or such a class body's) and it names a builtin or its text holds a star import. An AssertionError
+    from scope_of (a node of another tree) propagates."""
     decls, where = bindings.scope_of(name_node).resolve(name_node.id)
     builtin = name_node.id in vars(builtins)
+    star = _anyio_star_imported(bindings)
     if where is None or where.kind != "class":
-        return decls, where, not decls or (where is not None and where.kind == "module" and builtin)
+        return decls, where, not decls or (where is not None and where.kind == "module" and (builtin or star))
     more = list(where.module().names.get(name_node.id, ()))
-    return decls + more, where, not more or builtin
+    return decls + more, where, not more or builtin or star
+
+
+_ANYIO_STAR_IMPORTS = weakref.WeakKeyDictionary()
+#   {ast_bindings.Bindings: whether the text it was built over holds a star import}, filled by _anyio_star_imported on
+#   its first read of each text, so _anyio_resolution, which the rule calls for every name read it resolves, walks a
+#   text once; weak, so an entry goes with its bindings
+
+
+def _anyio_star_imported(bindings):
+    """Whether the text `bindings` was built over holds a STAR IMPORT (from m import *) anywhere. A star import binds, in
+    the module's namespace, names no declaration of the text records (ast_bindings records none for it), whatever the
+    text declares for them there; Python compiles one at the module's level alone, so reading the whole text errs only
+    toward reading more. Read once per text (_ANYIO_STAR_IMPORTS). _anyio_resolution reads a read whose declarations
+    stand in the module's scope (or in a class body's and the module's) as one that may take no binding where this
+    holds (the re-verification of the hundred and nineteenth round-2 commit of fork PR #894, carried out by the hundred
+    and twentieth)."""
+    got = _ANYIO_STAR_IMPORTS.get(bindings)
+    if got is None:
+        got = any(isinstance(s, ast.ImportFrom) and any(a.name == "*" for a in s.names) for s in ast.walk(bindings.tree))
+        _ANYIO_STAR_IMPORTS[bindings] = got
+    return got
 
 
 def _anyio_fold_sites(n, declared):
@@ -7071,19 +7103,26 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     alone, and a fold, the checks of vars, globals and locals, the check of sys.path, and the direct-import check's walk
     to a def of the module and its matching of a class of the module each read the wrong binding). No binding is read
     as it is for a name no declaration binds: the checks of vars, globals and locals apply, and a fold reads the empty
-    string, open, beside the declarations' values (through), since the module may bind the name by no declaration (a
-    star import) to a str the rule does not read (the verification of the hundred and eighteenth found from _ih import
-    * and then, in a class body, 'an' + lineage + 'yio' ahead of the class's lineage = 'zz' admitted while Python bound
-    anyio, the fold then reading the declarations alone; the hundred and nineteenth closes it). A read whose
-    declarations stand in the MODULE'S SCOPE (or in such a class body and the module's scope), and whose name is a
-    BUILTIN'S (one the builtins module of the interpreter reading the text binds), resolves to no binding as well,
-    since where the module's binding has not run (a del, a branch not taken, a read ahead of it) Python reads the
-    builtin (the same verification found vars bound and deleted, or bound in a branch not taken, at the module's level
-    and then vars(sys) read by a key the rule does not prove, and the same for globals().update, each admitted while
-    the read took the builtin); a def's, a lambda's or a comprehension's own binding is left out, since a read there
-    takes the local or raises. A call that reads by a name handed it (_ANYIO_BY_NAME) is known by the name it is called
-    through, and one of those that reads an attribute (_ANYIO_ATTRIBUTE_READERS) is admitted only as the callee of a
-    call whose names THE PROOF proves, so one bound to another name is refused where it is read (the fifth clause):
+    string, open, beside the declarations' values (through), since a star import may bind the name to a str the rule
+    does not read (the verification of the hundred and eighteenth found from _ih import * and then, in a class body,
+    'an' + lineage + 'yio' ahead of the class's lineage = 'zz' admitted while Python bound anyio, the fold then reading
+    the declarations alone; the hundred and nineteenth closes it). A read whose declarations stand in the MODULE'S
+    SCOPE (or in such a class body and the module's scope) resolves to no binding as well where its name is a
+    BUILTIN'S (one the builtins module of the interpreter reading the text binds), since where the module's binding
+    has not run (a del, a branch not taken, a read ahead of it) Python reads the builtin (the same verification found
+    vars bound and deleted, or bound in a branch not taken, at the module's level and then vars(sys) read by a key the
+    rule does not prove, and the same for globals().update, each admitted while the read took the builtin), and where
+    its text holds a STAR IMPORT (_anyio_star_imported), since the star import binds the name in the module's
+    namespace by no declaration, after the declarations run or before they do (the re-verification of the hundred and
+    nineteenth round-2 commit found from _ih import * beside the module's own lineage = 'zz', ahead of the read, before
+    the star import, in a branch not taken, or beside a class body's own later lineage = 'zz' as well, and then 'an' +
+    lineage + 'yio' admitted while Python bound anyio, the same for PYTEST_ADDOPTS, and sys.path read where the star
+    import binds sys beside sys = None or a sys bound in a branch not taken, the star import's binding then read only
+    where no declaration binds the name; the hundred and twentieth closes them); a def's, a lambda's or a
+    comprehension's own binding is left out, since a read there takes the local or raises. A call that reads by a name
+    handed it (_ANYIO_BY_NAME) is known by the name it is called through, and one of those that reads an attribute
+    (_ANYIO_ATTRIBUTE_READERS) is admitted only as the callee of a call whose names THE PROOF proves, so one bound to
+    another name is refused where it is read (the fifth clause):
     - A VALUE NAMING anyio, PYTEST_ADDOPTS or mainargv (_ANYIO_WORDS), case folded: every str or bytes literal, every
       value the rule folds from literals by +, % or *, or by an f-string, and every value an augmented assignment to a
       name binds, folded at its own statement (_anyio_fold_sites: K = 'an' and then K += 'yio' names anyio there, where
@@ -7091,11 +7130,21 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
       operation or f-string read K), through names, each name resolved by its scope to the declarations that bind it
       (ast_bindings, through _anyio_resolution) and folded to every value they give it: a plain or annotated assignment
       or a walrus, an augmented assignment, and a for or comprehension over a tuple, list or set display or a name that
-      folds to one. An operand the rule cannot fold (a parameter, an import, a call, a subscript, a name no declaration
-      binds, a star import's say) is read as the empty string beside the values it can, and so is a name read that may
-      take no binding, beside its declarations' values (a class body's read whose module binds none, a builtin's name
-      the module's scope binds: HOW IT FOLLOWS A ROAD), so "an" + x + "yio" names anyio, and a fold past
-      _ANYIO_FOLD_CAP values is refused. So has_plugin, is_blocked or get_plugin asked about anyio, "no:anyio" sought
+      folds to one. An operand the rule cannot fold (a parameter, an import, a call, a subscript, an attribute, a name
+      no declaration binds, a star import's say) is read as the empty string beside the values it can, and so is a
+      name read that may take no binding, beside its declarations' values (a class body's read whose module binds
+      none, a builtin's name the module's scope binds, a name the module's scope binds in a text that holds a star
+      import: HOW IT FOLLOWS A ROAD), so "an" + x + "yio" names anyio, and a fold past _ANYIO_FOLD_CAP values is
+      refused. The fold reads no order among a scope's declarations: a name folds to the values each of them gives
+      it, and an augmented assignment's composed value reads the name through the others in turn, in every order, so
+      a few augmented assignments of one name can fold past the cap and be refused, whatever they name (msg = '' and
+      then msg += 'w0' to msg += 'w3' passes the cap and is refused, though nothing reads msg, since the walk folds
+      each at its statement; three are admitted); the fold
+      evaluates a name read once for each set of names it is folding at that moment (through's memo), so the
+      evaluations k augmented assignments of one name cost grow as 2 to the k times a power of k, where until the
+      hundred and twentieth round-2 commit of fork PR #894 they grew as k factorial (the re-verification of the
+      hundred and nineteenth found nine int counters beside a literal key taking about half a minute). So has_plugin,
+      is_blocked or get_plugin asked about anyio, "no:anyio" sought
       in sys.argv, in the invocation params or in -p's list, "anyio" in sys.modules, os.environ.get("PYTEST_ADDOPTS")
       and config.workerinput's "mainargv" (a helper's .get(key) or [key] called with it, key="mainargv" as a default,
       a class attribute or a closure holding it, a tuple of keys) are each refused, whichever names hold the key.
@@ -7223,9 +7272,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
       its import (one named like a file the check reads, or like a module outside the repository, is a line of WHAT IT
       DOES NOT READ). And a read in the text of sys.path, sys.meta_path, sys.path_hooks or sys.path_importer_cache
       (_ANYIO_IMPORT_PATHS), which decide where an import finds its module, is refused, as an attribute of a name an
-      import or an assignment binds to sys, of sys where no declaration binds it, or of an attribute named sys (os.sys),
-      or imported from sys by its name, since a module the text imports may then be taken from a directory ahead of the
-      file the check reads.
+      import or an assignment binds to sys, of sys where it may take no binding (no declaration binds it, a class
+      body's read whose module binds none, or a star import can bind it beside the declarations: HOW IT FOLLOWS A
+      ROAD), or of an attribute named sys (os.sys), or imported from sys by its name, since a module the text imports
+      may then be taken from a directory ahead of the file the check reads.
     LIVE: tests/conftest.py has none. Its two keyed reads of the plugin manager, get_plugin("terminalreporter") in
     _say_at_run_end and getplugin("capturemanager") in _guard_failure_to_stderr, are by literals naming other plugins;
     each getattr it calls is handed a literal name (its
@@ -7251,8 +7301,9 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     the proof does not prove are no keyed read: THE ENVIRONMENT, in WHAT IT DOES NOT READ). It calls no getoption,
     getvalue or getvalueorskip, so the refusal of an option string refuses nothing of it, and no argument parser's
     parse, nor does tests/__init__.py, and neither names addini, so the refusal of an ini registration refuses nothing
-    of them. No class body of either reads a name its class binds, and neither binds a builtin's name in its module's
-    scope, so the resolution's no binding for such reads (HOW IT FOLLOWS A ROAD) changes no reading of them; the six
+    of them. No class body of either reads a name its class binds, neither binds a builtin's name in its module's
+    scope, and neither holds a star import, so the resolution's no binding for such reads (HOW IT FOLLOWS A ROAD)
+    changes no reading of them; the six
     augmented assignments to a name tests/conftest.py makes and the one tests/__init__.py makes, which the first clause
     folds at their statements, fold to no word and within the cap. The
     direct-import check reads tests/__init__.py, which the conftest imports as _tests and, in a def, as `from tests
@@ -7447,19 +7498,30 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     object of tests/__init__.py to such a def), escape-only, witness
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[dunder-through-a-handed-object], whose plant reads,
     through _g, the command line a def of the module left in its namespace. A key naming anyio that the rule cannot fold
-    (built by a call or a subscript, or brought from outside the module's text: a module outside the repository or
+    (built by a call or a subscript; built through an ATTRIBUTE, a class's or the module's, whose value an augmented or
+    a later assignment composes, _O.K = 'an' and then _O.K += 'yio' or _O.K = _O.K + 'yio', or read on a class that
+    binds it, class _O with K = 'an' and then _O.K + 'yio', since the first clause reads an attribute as the empty
+    string and folds an augmented assignment at its statement only where its target is a name; through a name of the
+    module's scope REBOUND THROUGH THE MODULE OBJECT, which no declaration records, stem = 'zz' and then
+    sys.modules[__name__].stem = '', setattr(sys.modules[__name__], 'stem', ''), __import__(__name__).stem = '' or
+    sys.modules[__name__].__dict__['stem'] = '', and then 'an' + stem + 'yio', which the rule folds from the
+    declaration's 'zz' alone; or brought from outside the module's text: a module outside the repository or
     imported only transitively, the environment, a file, or a module of the repository the text imports directly,
     whose binding an import brings into the text, from _ih import lineage or from _ih import * and then lineage +
     'yio' where the module binds lineage = 'an', since the first clause reads a name an import binds, or a star import
-    brings, as the empty string), or one that matches anyio or the flag without naming anyio (a prefix, "any" or
-    "no:a", say), handed to a read that is no carrier and no keyed read (sys.modules, a fixture's name); no live site
-    (each lookup of sys.modules in tests/conftest.py is by a literal name, and the tests it makes of the names there,
-    the prefixes romp_kernel and romp_postal and the word credentials, match neither anyio nor the flag), escape-only,
-    witness test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[unfoldable-key], whose plants (a key built by
-    a call, a prefix, and a key split across a direct import, by a from import and by a star import, which the
-    verification of the hundred and eighteenth round-2 commit found) are not run, since the road reads the plugins the
-    run loaded and not the command line. Code outside the conftest's text and the modules it imports directly (a test
-    module, a plugin, another conftest), which the rule does not read, can still falsify a read by a literal key
+    may bring, as the empty string beside any value a declaration gives it), or one that matches anyio or the flag
+    without naming anyio (a prefix, "any" or "no:a", say), handed to a read that is no carrier and no keyed read
+    (sys.modules, a fixture's name); no live site (each lookup of sys.modules in tests/conftest.py is by a literal
+    name, and the tests it makes of the names there, the prefixes romp_kernel and romp_postal and the word
+    credentials, match neither anyio nor the flag), escape-only, witness
+    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[unfoldable-key], whose plants (a key built by a call,
+    a prefix, and a key split across a direct import, by a from import and by a star import, which the verification
+    of the hundred and eighteenth round-2 commit found; and a key built through an attribute, composed by an augmented
+    and by a later assignment or read on a class, and one through a name rebound through the module object, in each of
+    the four spellings above, which the re-verification of the hundred and nineteenth found) are not run, since the
+    road reads the plugins the run loaded and not the command line. Code outside the conftest's text and the modules
+    it imports directly (a test module, a plugin, another conftest), which the rule does not read, can still falsify a
+    read by a literal key
     through WRITES TO OBJECTS AT RUN TIME, among them the hook's code object rewritten (its __code__ replaced, so the
     read is handed another literal), a plugin that copies
     config.option.plugins into another option the conftest reads by a literal key, and a plugin that wraps
@@ -7483,6 +7545,7 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
         for c in ast.iter_child_nodes(n):
             parent[c] = n
     out, busy, opened = [], set(), (frozenset([""]), True, False)   # what the rule cannot fold: the empty string, open
+    folded = {}     # through's memo, {(how, id(name read), the ids busy then): the fold's triple}, for this walk alone
 
     def _tokens(node):
         """The tokens `node` spells that _ANYIO_DEFEATERS may hold (_anyio_channels reads _ANYIO_INTROSPECTION's): a
@@ -7526,7 +7589,8 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     def unbound(name_node):
         """Whether `name_node` (a Name read) may take no binding (_anyio_resolution): no declaration binds it, it is
         read in a class body whose class binds it and whose module does not, or its declarations stand in the module's
-        scope (or such a class body's) and it names a builtin, where Python reads the builtin."""
+        scope (or such a class body's) and it names a builtin, where Python reads the builtin, or the text holds a star
+        import, which can bind it by no declaration."""
         try:
             return _anyio_resolution(bindings, name_node)[2]
         except AssertionError:
@@ -7540,29 +7604,44 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
                 return loop.iter
         return None
 
-    def through(name_node, each):
+    def through(name_node, each, how):
         """The union of `each` over the declarations `name_node` resolves to, a name met again while folding read as
-        open; a read that may take no binding (unbound: a class body's whose module binds none, or a builtin's name
-        its module binds) also gives the empty string, open, what the rule reads for no binding, since the module may
-        bind the name by no declaration (a star import) to a str it does not read (the reviewer's ruling of
-        2026-09-30 12:50Z on round 2 of fork PR #894, item 2, whose "no binding" the hundred and eighteenth applied to
-        the checks of vars, globals and locals alone)."""
+        open; a read that may take no binding (unbound: a class body's whose module binds none, a builtin's name its
+        module binds, or a name its module binds in a text that holds a star import) also gives the empty string,
+        open, what the rule reads for no binding, since a star import may bind the name to a str the rule does not
+        read (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 2, whose "no binding" the
+        hundred and eighteenth applied to the checks of vars, globals and locals alone). `how` names `each` ("value"
+        for by_declaration, "elements" for a for's reading of a declaration) for the MEMO (`folded`): the result is a
+        function of the name read, `how` and the names being folded at that moment (`busy`), which decide where a name
+        met again is cut, so it is computed once for each of those and kept for the rest of the walk. Without the
+        memo, k augmented assignments of one name in one scope, whose composed values each read the name through the
+        others, were evaluated once per order of them, on the order of k factorial times; with it, once per set of
+        them (the re-verification of the hundred and nineteenth round-2 commit, a note carried out by the hundred and
+        twentieth, the result unchanged)."""
         decls = declared(name_node)
         key = id(name_node)
         if decls is None or key in busy:
             return opened
+        memo = (how, key, frozenset(busy))
+        if memo in folded:
+            return folded[memo]
         busy.add(key)
         try:
+            got_all = None
             values, is_open = (set(opened[0]), True) if unbound(name_node) else (set(), False)
             for d in decls:
                 got = each(d)
                 if got[2]:
-                    return frozenset(), True, True
+                    got_all = (frozenset(), True, True)
+                    break
                 values |= got[0]
                 is_open = is_open or got[1]
-            return capped(values, is_open)
+            if got_all is None:
+                got_all = capped(values, is_open)
         finally:
             busy.discard(key)
+        folded[memo] = got_all
+        return got_all
 
     def by_declaration(d):
         if d.kind in ("assign", "augassign", "unpack") and d.value is not None:
@@ -7577,7 +7656,7 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
         if isinstance(n, ast.Constant):
             return frozenset([n.value]), False, False
         if isinstance(n, ast.Name):
-            return through(n, by_declaration)
+            return through(n, by_declaration, "value")
         if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Mult, ast.Mod)):
             left = fold(n.left)
             if isinstance(n.op, ast.Mod) and isinstance(n.right, ast.Tuple):
@@ -7640,7 +7719,8 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
                 is_open = is_open or got[1]
             return capped(values, is_open)
         if isinstance(n, ast.Name):
-            return through(n, lambda d: elements(d.value) if d.kind == "assign" and d.value is not None else opened)
+            return through(n, lambda d: elements(d.value) if d.kind == "assign" and d.value is not None else opened,
+                           "elements")
         return opened
 
     def words(values):
@@ -7718,7 +7798,8 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     def is_namespace(e):
         """Whether `e` is a namespace read whole: vars(x), globals(), locals(), vars() that may take no binding
         (unbound: no declaration binds it, a class body's read that may take the builtin, or a read whose declarations
-        stand in the module's scope, which takes the builtin where they have not run), or x.__dict__."""
+        stand in the module's scope, which takes the builtin where they have not run, or a star import's binding where
+        the text holds one), or x.__dict__."""
         if isinstance(e, ast.Attribute) and e.attr == "__dict__":
             return True
         return (isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id in ("vars", "globals", "locals")
@@ -8057,8 +8138,8 @@ def _anyio_import_reads(tree, where, bindings, parent):
 
     def loose(name_node):
         """Whether the name `name_node` may take no binding (_anyio_resolution: no declaration binds it, a class-body
-        read of a name its class binds and its module does not, or a builtin's name the module's scope binds, which sys
-        is not)."""
+        read of a name its class binds and its module does not, a builtin's name the module's scope binds, which sys
+        is not, or a name the module's scope binds in a text that holds a star import, which sys can be)."""
         try:
             return _anyio_resolution(bindings, name_node)[2]
         except AssertionError:
@@ -8120,8 +8201,10 @@ def _anyio_import_reads(tree, where, bindings, parent):
     def is_sys(expr, seen):
         """Whether `expr` reads the module sys by binding: a name bound by an import of sys under any name (or of an
         attribute named sys, from os import sys) or by an assignment of a name or an attribute that reads it, the name
-        sys where it may take no binding (loose: no declaration binds it, or a class-body read whose module binds
-        none, where a star import can bind it), or an attribute named sys (os.sys)."""
+        sys where it may take no binding (loose: no declaration binds it, a class-body read whose module binds none,
+        or a read whose declarations stand in the module's scope in a text that holds a star import, where the star
+        import can bind it: sys = None or a sys bound in a branch not taken beside from _ih import *, whose module
+        imports sys), or an attribute named sys (os.sys)."""
         if isinstance(expr, ast.Attribute):
             return expr.attr == "sys"
         if not isinstance(expr, ast.Name):
@@ -8395,6 +8478,11 @@ _ESCAPE_ONLY_FLAG = ("-p", "no:planted")
 _ESCAPE_ONLY_READ = "\n\n\ndef pytest_configure(config):\n    if 'no:planted' in %s:\n        config.getoption('verbose')\n"
 #   a READ plant's hook, given the expression that reaches the carrier: a keyed read by a literal key, which THE PROOF
 #   proves, keyed in turn on a carrier reached a way the rule does not read
+_ESCAPE_ONLY_SOUGHT = ("\n\n\ndef pytest_configure(config):\n    if %s in sys.modules:\n"
+                       "        config.getoption('verbose')\n")
+#   an unfoldable key's hook, given the expression that holds the key: a keyed read by a literal key, keyed in turn on
+#   the key sought in sys.modules, which holds the module of each plugin the run loaded (the unfoldable keys' plants
+#   are not run)
 _ESCAPE_ONLY_MOD = ("import _ih\n\nKZ = 'verbose'\n\n\ndef pytest_configure(config):\n"
                     "    _ih.remove_made_dirs(pytest_configure)\n    config.getoption(KZ)\n")
 _ESCAPE_ONLY_PREFIX = ("import _ih\n\nprefix = 'verbose'\n\n\ndef pytest_configure(config):\n"
@@ -8567,7 +8655,26 @@ _ESCAPE_ONLY_KINDS = (
          "    if NAME in sys.modules:\n        config.getoption('verbose')\n", {"_ih": "lineage = 'an'\n"}, None),
         ("a key split across a direct import, its part brought by a star import, sought in sys.modules",
          "import sys\n\nfrom _ih import *\n\nNAME = lineage + 'yio'\n\n\ndef pytest_configure(config):\n"
-         "    if NAME in sys.modules:\n        config.getoption('verbose')\n", {"_ih": "lineage = 'an'\n"}, None))),
+         "    if NAME in sys.modules:\n        config.getoption('verbose')\n", {"_ih": "lineage = 'an'\n"}, None),
+        ("a key built through a class's attribute that an augmented assignment composes, _O.K += 'yio'",
+         "import sys\n\n\nclass _O:\n    pass\n\n\n_O.K = 'an'\n_O.K += 'yio'" + _ESCAPE_ONLY_SOUGHT % "_O.K", {}, None),
+        ("a key built through a class's attribute that a later assignment composes, _O.K = _O.K + 'yio'",
+         "import sys\n\n\nclass _O:\n    pass\n\n\n_O.K = 'an'\n_O.K = _O.K + 'yio'" + _ESCAPE_ONLY_SOUGHT % "_O.K", {},
+         None),
+        ("a key built from an attribute read on a class that binds it, _O.K + 'yio'",
+         "import sys\n\n\nclass _O:\n    K = 'an'\n\n\nNAME = _O.K + 'yio'" + _ESCAPE_ONLY_SOUGHT % "NAME", {}, None),
+        ("a key through a name rebound through the module object, sys.modules[__name__].stem = ''",
+         "import sys\n\nstem = 'zz'\nsys.modules[__name__].stem = ''" + _ESCAPE_ONLY_SOUGHT % "'an' + stem + 'yio'", {},
+         None),
+        ("a key through a name rebound through the module object, setattr(sys.modules[__name__], 'stem', '')",
+         "import sys\n\nstem = 'zz'\nsetattr(sys.modules[__name__], 'stem', '')"
+         + _ESCAPE_ONLY_SOUGHT % "'an' + stem + 'yio'", {}, None),
+        ("a key through a name rebound through the module object, __import__(__name__).stem = ''",
+         "import sys\n\nstem = 'zz'\n__import__(__name__).stem = ''" + _ESCAPE_ONLY_SOUGHT % "'an' + stem + 'yio'", {},
+         None),
+        ("a key through a name rebound through the module object, sys.modules[__name__].__dict__['stem'] = ''",
+         "import sys\n\nstem = 'zz'\nsys.modules[__name__].__dict__['stem'] = ''"
+         + _ESCAPE_ONLY_SOUGHT % "'an' + stem + 'yio'", {}, None))),
     ("code-outside-the-text", (
         ("a module outside the conftest's text replaces the hook's code, beside a literal key",
          _ESCAPE_ONLY_HOOK.lstrip("\n"), {"_outside": _ESCAPE_ONLY_OUTSIDE}, "outside"),
@@ -9291,6 +9398,82 @@ def _augmented_assignment_roads():
         ("control: an augmented assignment that names no word, beside a literal key", "admitted",
          {"conftest": "K = 'ab'\nK += 'cd'\n\n\ndef pytest_configure(config):\n    config.getoption('verbose')\n"},
          None, "conftest.K", "'abcd'")]
+
+
+def _star_import_roads():
+    """THE STAR-IMPORT ROADS (the re-verification of the hundred and nineteenth round-2 commit of fork PR #894, carried
+    out by the hundred and twentieth: _anyio_resolution read a star import's binding only where no declaration binds
+    the name, as a read that may take no binding, so a star import BESIDE A DECLARATION of the same name was read as the
+    declarations alone, while Python reads the star import's binding wherever it ran after them or they have not run),
+    [(label, how, {path under the plant's directory, no .py: text}, the reason its refusal names or None for a control
+    the rule admits, an expression _class_body_value evaluates, the repr it prints)], for
+    test_a_star_import_beside_a_declaration_may_bind_the_name_at_the_read. `how` is "plant" for a road the rule
+    admitted until the hundred and twentieth (_anyio_star_imported read as False, the hundred and nineteenth's
+    resolution), "kept" for a control refused either way and "admitted" for one admitted either way. The plants, the
+    re-verification's D1 to D5, G1 and G2: the direct import's lineage the empty string (a name THE POSITIVE ALLOWLIST
+    holds) and the module's own lineage = 'zz' after the read, before the star import, or in a branch not taken with the
+    read in the hook, or a class body's read ahead of the class's lineage = 'zz' with the module's lineage = 'qq' after
+    the class, each folding 'an' + lineage + 'yio'; the same split of PYTEST_ADDOPTS; and sys.path read where the star
+    import binds sys (the direct import's import sys) beside sys = None above it or a sys bound in a branch not taken.
+    The controls: a from import (a declaration of kind import, read as the empty string either way), the star import
+    alone (no declaration), each refused either way; and, admitted either way, a def's own binding of the name beside a
+    star import (a def's local never takes the star import's) and a star import beside a declaration whose fold names
+    no word, beside a literal key. Synthetic: every name invented, the direct import's text named only by identifiers
+    tests/__init__.py holds (THE POSITIVE ALLOWLIST)."""
+    hook = "\n\n\ndef pytest_configure(config):\n    if %s:\n        config.getoption('verbose')\n"
+    literal = "\n\n\ndef pytest_configure(config):\n    config.getoption('verbose')\n"
+    star = {"_ih": "lineage = ''\n"}
+    has_sys = {"_ih": "import sys\n"}
+    return [
+        ("D1: from _ih import *, then 'an' + lineage + 'yio' ahead of the module's lineage = 'zz'", "plant",
+         dict(star, conftest="import sys\n\nfrom _ih import *\n\nNAME = 'an' + lineage + 'yio'\nlineage = 'zz'"
+                             + hook % "NAME in sys.modules"), "a value naming anyio", "conftest.NAME", "'anyio'"),
+        ("D2: lineage = 'zz', then from _ih import *, then 'an' + lineage + 'yio'", "plant",
+         dict(star, conftest="import sys\n\nlineage = 'zz'\n\nfrom _ih import *\n\nNAME = 'an' + lineage + 'yio'"
+                             + hook % "NAME in sys.modules"), "a value naming anyio", "conftest.NAME", "'anyio'"),
+        ("D3: from _ih import *, lineage = 'zz' in a branch not taken, the hook's 'an' + lineage + 'yio'", "plant",
+         dict(star, conftest="import sys\n\nfrom _ih import *\n\nif False:\n    lineage = 'zz'"
+                             + hook % "'an' + lineage + 'yio' in sys.modules"),
+         "a value naming anyio", "'an' + conftest.lineage + 'yio'", "'anyio'"),
+        ("D4: from _ih import *, a class body's 'an' + lineage + 'yio' ahead of its lineage = 'zz', the module's "
+         "lineage = 'qq' after the class", "plant",
+         dict(star, conftest="import sys\n\nfrom _ih import *\n\n\nclass _P:\n    NAME = 'an' + lineage + 'yio'\n"
+                             "    lineage = 'zz'\n\n\nlineage = 'qq'" + hook % "_P.NAME in sys.modules"),
+         "a value naming anyio", "conftest._P.NAME", "'anyio'"),
+        ("D5: from _ih import *, then 'PYTEST_' + lineage + 'ADDOPTS' ahead of the module's lineage = 'zz'", "plant",
+         dict(star, conftest="import os\n\nfrom _ih import *\n\nK = 'PYTEST_' + lineage + 'ADDOPTS'\nlineage = 'zz'"
+                             + hook % "'no:planted' in (os.environ.get(K) or '')"),
+         "a value naming PYTEST_ADDOPTS", "conftest.K", "'PYTEST_ADDOPTS'"),
+        ("G1: sys = None, then from _ih import * (whose module imports sys), then sys.path.insert(0, 'alt')", "plant",
+         dict(has_sys, conftest="sys = None\n\nfrom _ih import *\n\nsys.path.insert(0, 'alt')\n"),
+         "a read of sys.path", "sys.path[0]", "'alt'"),
+        ("G2: from _ih import * (whose module imports sys), sys = None in a branch not taken, then "
+         "sys.path.insert(0, 'alt')", "plant",
+         dict(has_sys, conftest="from _ih import *\n\nif False:\n    sys = None\n\nsys.path.insert(0, 'alt')\n"),
+         "a read of sys.path", "sys.path[0]", "'alt'"),
+        ("control: from _ih import lineage (a declaration of kind import), then 'an' + lineage + 'yio' ahead of the "
+         "module's lineage = 'zz'", "kept",
+         dict(star, conftest="import sys\n\nfrom _ih import lineage\n\nNAME = 'an' + lineage + 'yio'\nlineage = 'zz'"
+                             + hook % "NAME in sys.modules"), "a value naming anyio", "conftest.NAME", "'anyio'"),
+        ("control: from _ih import * alone, no declaration, then 'an' + lineage + 'yio'", "kept",
+         dict(star, conftest="import sys\n\nfrom _ih import *\n\nNAME = 'an' + lineage + 'yio'"
+                             + hook % "NAME in sys.modules"), "a value naming anyio", "conftest.NAME", "'anyio'"),
+        ("control: from _ih import * alone (whose module imports sys), then sys.path.insert(0, 'alt')", "kept",
+         dict(has_sys, conftest="from _ih import *\n\nsys.path.insert(0, 'alt')\n"),
+         "a read of sys.path", "sys.path[0]", "'alt'"),
+        ("control: a def's own lineage = 'zz' beside from _ih import *, 'an' + lineage + 'yio' in that def", "admitted",
+         dict(star, conftest="import sys\n\nfrom _ih import *\n\n\ndef _key():\n    lineage = 'zz'\n"
+                             "    return 'an' + lineage + 'yio'" + literal), None, "conftest._key()", "'anzzyio'"),
+        ("control: from _ih import * beside lineage = 'zz', 'ab' + lineage naming no word, beside a literal key",
+         "admitted", dict(star, conftest="from _ih import *\n\nlineage = 'zz'\nNAME = 'ab' + lineage" + literal),
+         None, "conftest.NAME", "'abzz'")]
+
+
+_FOLD_MEMO_RESOLUTIONS = 20000
+#   the most times THE ANYIO RULE may resolve a name (_anyio_resolution) over n = 0 and then eight n += of distinct ints
+#   beside a literal key, for test_the_fold_evaluates_a_name_read_once_per_set_of_names_it_is_folding: with through's
+#   memo the rule resolves them 9233 times, and the hundred and nineteenth round-2 commit of fork PR #894, whose walk
+#   had no memo, resolved them 986417 times, so the bound sits a factor of two above the one and fifty below the other
 
 
 def _registration_refusals(tree, candidates, real, where=None):
@@ -16133,6 +16316,100 @@ class HermeticKernelPostal(unittest.TestCase):
                         self.assertTrue(any(why in w for _l, w in before), "%s: refused at 298df9982 too: %s"
                                         % (label, before))
                 self.assertEqual(_class_body_value(d, expr), value, "%s: what Python binds, %s" % (label, expr))
+
+    def test_a_star_import_beside_a_declaration_may_bind_the_name_at_the_read(self):
+        """THE STAR IMPORT BESIDE A DECLARATION (the re-verification of the hundred and nineteenth round-2 commit of
+        fork PR #894, whose finding the hundred and twentieth closes): a star import binds names in the module's
+        namespace that no declaration records, and _anyio_resolution read that binding (the empty string, open, in a
+        fold; the checks of vars, globals and locals; sys where a star import can bind it) only where no declaration
+        binds the name, so from _ih import * beside the module's own lineage = 'zz' was read as the declaration alone,
+        and 'an' + lineage + 'yio' was admitted while Python bound anyio; the first clause, HOW IT FOLLOWS A ROAD and the
+        unfoldable-key line said the star import's binding was read. A read whose declarations stand in the module's
+        scope (or in a class body's and the module's) now may take no binding wherever the text holds a star import
+        (_anyio_star_imported). Over _star_import_roads, each road written to a directory of its own: each PLANT is
+        REFUSED at the fix, its refusal naming the fold's word or the read of sys.path, and ADMITTED with
+        _anyio_star_imported read as False (the hundred and nineteenth's resolution); each KEPT control is refused
+        either way and each ADMITTED control admitted either way; for each road a child interpreter shows what Python
+        binds (_class_body_value: 'anyio', 'PYTEST_ADDOPTS', 'alt' put first on sys.path, and the controls' values).
+        0 LIVE: neither tests/conftest.py nor tests/__init__.py holds a star import, so _anyio_star_imported is False
+        for both and the resolution changes no reading of either (THE LIVE WITNESS asserts 0 reads over both)."""
+        from unittest import mock
+        mod = sys.modules[__name__]
+        where = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, where, True)
+        roads = _star_import_roads()
+        self.assertEqual(sorted({how for _l, how, *_r in roads}), ["admitted", "kept", "plant"])
+        for name in ("conftest.py", "__init__.py"):
+            with open(os.path.join(HERE, name), encoding="utf-8") as f:
+                live = ast_bindings.Bindings.of(ast.parse(f.read()))
+            star = _anyio_star_imported(live)
+            live.release()      # its tree and scopes go by reference count before the assertion (the module end's pins)
+            del live
+            self.assertFalse(star, "tests/%s holds no star import, so the resolution changes no reading of it" % name)
+        for i, (label, how, files, why, expr, value) in enumerate(roads):
+            with self.subTest(road=label):
+                d = os.path.join(where, "s%02d" % i)
+                os.makedirs(d)
+                for name, text in files.items():
+                    with open(os.path.join(d, name + ".py"), "w", encoding="utf-8") as f:
+                        f.write(text)
+                conf = files["conftest"]
+                reads = _anyio_option_reads(ast.parse(conf), where=d)
+                with mock.patch.object(mod, "_anyio_star_imported", lambda bindings: False):
+                    before = _anyio_option_reads(ast.parse(conf), where=d)
+                if how == "admitted":
+                    self.assertEqual((reads, before), ([], []), "%s: admitted at the fix and without it" % label)
+                else:
+                    self.assertTrue(any(why in w for _l, w in reads),
+                                    "%s: refused at the fix, naming %r: %s" % (label, why, reads))
+                    if how == "plant":
+                        self.assertEqual(before, [], "%s: admitted with _anyio_star_imported read as False (the hundred "
+                                                     "and nineteenth's resolution)" % label)
+                    else:
+                        self.assertTrue(any(why in w for _l, w in before), "%s: refused without the fix too: %s"
+                                        % (label, before))
+                self.assertEqual(_class_body_value(d, expr), value, "%s: what Python binds, %s" % (label, expr))
+
+    def test_the_fold_evaluates_a_name_read_once_per_set_of_names_it_is_folding(self):
+        """THE FOLD'S MEMO (a note of the re-verification of the hundred and nineteenth round-2 commit of fork PR #894,
+        carried out by the hundred and twentieth): since the hundred and nineteenth folds an augmented assignment to a
+        name at its statement, and the composed value of each reads the name through the scope's other declarations,
+        k augmented assignments of one name were evaluated once per order of them, on the order of k factorial times
+        (nine int counters beside a literal key took about half a minute). through's memo (`folded`, in
+        _anyio_option_reads) keeps the result for each name read, reading and set of names being folded, which is all
+        the result depends on. Over n = 0 and then eight n += of distinct ints beside a literal key: ADMITTED, and the
+        rule resolves names (_anyio_resolution, called twice for each evaluation through makes) at most
+        _FOLD_MEMO_RESOLUTIONS times, where without the memo it resolved them close to a million times (the constant's
+        comment gives both counts). The counting stand-in keeps no argument, so no node or Bindings outlives the walk
+        for the module end's pins. And the fold's cap stands, as the first clause says: msg = '' and then four msg +=
+        of distinct literals, which nothing reads, are REFUSED as a value the rule cannot fold within _ANYIO_FOLD_CAP
+        values, the fold reading every order of the four, and three are admitted. 0 LIVE: THE LIVE WITNESS asserts 0
+        reads over tests/conftest.py and tests/__init__.py, whose augmented assignments fold within the cap."""
+        from unittest import mock
+        mod = sys.modules[__name__]
+        literal = "\n\n\ndef pytest_configure(config):\n    config.getoption('verbose')\n"
+        counters = "n = 0\n" + "".join("n += %d\n" % (i + 1) for i in range(8)) + literal
+        real, calls = _anyio_resolution, [0]
+
+        def counted(bindings, name_node):
+            """_anyio_resolution, counted; it keeps no argument, so no node or Bindings outlives the rule's walk."""
+            calls[0] += 1
+            return real(bindings, name_node)
+        with mock.patch.object(mod, "_anyio_resolution", counted):
+            reads = _anyio_option_reads(ast.parse(counters))
+        self.assertEqual(reads, [], "eight int counters beside a literal key: admitted")
+        self.assertLessEqual(calls[0], _FOLD_MEMO_RESOLUTIONS,
+                             "eight augmented assignments of one name: the names resolved at most %d times (through's "
+                             "memo), not once per order of them: %d" % (_FOLD_MEMO_RESOLUTIONS, calls[0]))
+        for k, refused in ((3, False), (4, True)):
+            text = "msg = ''\n" + "".join("msg += 'w%d'\n" % i for i in range(k)) + literal
+            got = _anyio_option_reads(ast.parse(text))
+            if refused:
+                self.assertTrue(got and all("a value the rule cannot fold within %d values" % _ANYIO_FOLD_CAP in w
+                                            for _l, w in got),
+                                "%d augmented assignments of distinct literals: refused past the cap: %s" % (k, got))
+            else:
+                self.assertEqual(got, [], "%d augmented assignments of distinct literals: within the cap" % k)
 
     def test_a_name_of_the_conftests_module_scope_is_unproven_whatever_code_rebinds_it(self):
         """THE MODULE'S SCOPE (the hundred and ninth round-2 commit of fork PR #894, on the verification of the hundred
