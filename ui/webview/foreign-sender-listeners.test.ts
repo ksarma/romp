@@ -359,13 +359,13 @@ const parsed = new Map<string, Site[]>();
  *  to anchor identity), so a local that shadows the name with a run-time binding is not the window. Neither is a
  *  declaration of the name at the top level of a script (a file TypeScript calls no module), which the checker merges
  *  with the global or resolves a use past to it: in the page bundle esbuild keeps it the file's own local, so identity
- *  decides no use in that file, the road census refuses the file outright, and the rule reads the use fail-closed. A
- *  shadow whose every declaration is ambient (a module-local `declare var window` esbuild drops) or in a declaration
- *  file binds nothing at run time and is the raw global window, which refKind reads as one. A shadow the source binds
- *  at run time in a module or a function that esbuild drops as statically dead code is the raw global too, but the
- *  census models only the ambient and declaration-file drop (bindsNothingAtRuntime) and reads such a shadow through its
- *  declaration, a value outside the rule it discloses (the road census comment's "cannot see" list). A receiver the
- *  rule reads as a window other than this page's own, or does not read as a window, is no census site.
+ *  decides no use of the name in that file, the road census refuses the file outright, and the rule reads the use
+ *  fail-closed. A shadow whose every declaration is ambient (a module-local `declare var window` esbuild drops) or in a
+ *  declaration file binds nothing at run time and is the raw global window, which refKind reads as one. A shadow the
+ *  source binds at run time in a module or a function that esbuild drops as statically dead code is the raw global too,
+ *  but the census models only the ambient and declaration-file drop (bindsNothingAtRuntime) and reads such a shadow
+ *  through its declaration, a value outside the rule it discloses (the road census comment's "cannot see" list). A
+ *  receiver the rule reads as a window other than this page's own, or does not read as a window, is no census site.
  *  The road census refuses a handler assigned on another window whatever its value, and one assigned on any other
  *  receiver the rule does not read as this page's own window (the body element and a document among them) unless the
  *  value sets no handler (null, an unshadowed undefined) or the receiver is a name socketRefusal proves, through the
@@ -1504,20 +1504,20 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //       library gives it no declaration to anchor identity. A local that shadows the name with a run-time binding is
 //       not the global, and neither is a declaration of the name at the top level of a file TypeScript calls no module
 //       (a script), though the checker merges it with the global or resolves a use past it to the global: esbuild
-//       bundles each page into one function, where the declaration is the file's own local (renamed apart where
-//       another file of the bundle reads the global), so a use in that file holds it (var document = window;
-//       document[k] = f sets the window's handler), and where esbuild drops it as dead code the use is the raw global.
-//       Identity decides no use in such a file (topShadow reads the declaration from the binder's table for the file,
-//       SourceFile.locals, where one binds at run time): the census refuses the file outright (the refused list
-//       below), and the rule reads the use fail-closed, as (b) reads a binding it does not decide, taking the first
-//       kind in (b)'s order among the global's kind and the kinds the file's declarations of the name bind (the example
-//       is this page's window read fail-closed). A use in any other file is the global, since the declaration stays
-//       in its own file. A shadow whose every declaration is ambient, a module-local `declare var window` (or `declare
-//       var document`) esbuild drops, or in a declaration file, binds nothing at run time and is the raw global, read as
+//       bundles each page into one function, where the declaration is the file's own local (renamed apart where another
+//       file of the bundle reads the global), so a use in that file holds it (var document = window; document[k] = f
+//       sets the window's handler), and where esbuild drops it as dead code the use is the raw global. Identity decides
+//       no use of the name in such a file (topShadow reads the declaration from the binder's table for the file,
+//       SourceFile.locals, where one binds at run time): the census refuses the file outright (the refused list below),
+//       and the rule reads the use fail-closed, as (b) reads a binding it does not decide, taking the first kind in
+//       (b)'s order among the global's kind and the kinds the file's declarations of the name bind (the example is this
+//       page's window read fail-closed). A use in any other file is the global, since the declaration stays in its own
+//       file. A shadow whose every declaration is ambient, a module-local `declare var window` (or `declare var
+//       document`) esbuild drops, or in a declaration file, binds nothing at run time and is the raw global, read as
 //       one. A shadow the source binds at run time that esbuild drops as statically dead code, in a module or in a
-//       function (a script's top-level one refuses, above), binds nothing at run time too, but the census models only the
-//       ambient and declaration-file drop (bindsNothingAtRuntime) and reads such a shadow through its declaration; that
-//       value is outside this rule and disclosed below;
+//       function (a script's top-level one refuses, above), binds nothing at run time too, but the census models only
+//       the ambient and declaration-file drop (bindsNothingAtRuntime) and reads such a shadow through its declaration;
+//       that value is outside this rule and disclosed below;
 //   (b) through a chain the checker follows, of at most four steps from the receiver (five names, the window and each
 //       local counted: const a = window; a.self.self.self is read, a.self.self.self.self is not). A step is a member
 //       read by a literal name, which memberKind reads by its table (the members listed below): x.name, or x[key] with
@@ -1586,12 +1586,14 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     decide because its file declares it at its top level, where the global or one of those declarations is this
 //     page's window (var document = window in a script), a `this` (c) reads as the global object (the file's own or a
 //     plain function's), and any of those reached through another (w.self, this.window);
-//   - a window other than this page's own: top, parent and opener; any of those reached through a window
-//     (window.parent, parent.top); another window's own names for itself (parent.self, top.window, parent.frames) and
-//     its document's defaultView (top.document.defaultView); an indexed window (frames[0], window[0], parent.frames[0]);
-//     a frame's contentWindow; the defaultView of any document the census cannot tell is this page's
-//     (el.ownerDocument.defaultView); and an event's view, target, currentTarget or srcElement, each of which can hold a
-//     window; and a local initialised to any of these or destructured from one (const { parent: p } = window);
+//   - a window other than this page's own: top, parent and opener (where (a) does not decide the name, because its file
+//     declares it at its top level, it is read so unless one of those declarations binds this page's window); any of
+//     those reached through a window (window.parent, parent.top); another window's own names for itself (parent.self,
+//     top.window, parent.frames) and its document's defaultView (top.document.defaultView); an indexed window
+//     (frames[0], window[0], parent.frames[0]); a frame's contentWindow; the defaultView of any document the census
+//     cannot tell is this page's (el.ownerDocument.defaultView); and an event's view, target, currentTarget or
+//     srcElement, each of which can hold a window; and a local initialised to any of these or destructured from one
+//     (const { parent: p } = window);
 //   - the body element, whose onmessage is its window's: the body of any document (this page's, a window's, any
 //     ownerDocument or contentDocument, a local initialised to one) and a local initialised to it or destructured from a
 //     document (const { body } = document).
@@ -1908,16 +1910,16 @@ function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
  *  (a) identity: a name whose checker symbol IS the global window, self, globalThis or frames is this page's own
  *      window; top, parent or opener another; document this page's document (res.windowKind, by identity, so an
  *      augmented window global still counts, and ruleKind records the augmentation for looseRoads to refuse). Identity
- *      decides no use in a file that declares the name at its top level as a script (res.topShadow: the checker merges
- *      that declaration with the global or resolves the use past it, while esbuild keeps it the file's own local in the
- *      page bundle): looseRoads refuses the file, and this reads the use fail-closed, the first of MULTI_ORDER among
- *      the global's kind and the kinds the file's declarations of the name bind, each read fail-closed (var document =
- *      window: this page's window read fail-closed). A window name whose symbol is a shadow the source added but that
- *      binds nothing at run time (its every declaration ambient, a module-local `declare var window` esbuild drops, or
- *      in a declaration file) is the raw global at run time, read as this page's own window or another by name. A
- *      shadow the source binds at run time in a module or a function that esbuild drops as statically dead code is the
- *      raw global too, but this reads it through its declaration, not as the global: that value is outside the rule
- *      and disclosed in the road census's "cannot see" list;
+ *      decides no use of the name in a file that declares it at its top level as a script (res.topShadow: the checker
+ *      merges that declaration with the global or resolves the use past it, while esbuild keeps it the file's own local
+ *      in the page bundle): looseRoads refuses the file, and this reads the use fail-closed, the first of MULTI_ORDER
+ *      among the global's kind and the kinds the file's declarations of the name bind, each read fail-closed (var
+ *      document = window: this page's window read fail-closed). A window name whose symbol is a shadow the source added
+ *      but that binds nothing at run time (its every declaration ambient, a module-local `declare var window` esbuild
+ *      drops, or in a declaration file) is the raw global at run time, read as this page's own window or another by
+ *      name. A shadow the source binds at run time in a module or a function that esbuild drops as statically dead code
+ *      is the raw global too, but this reads it through its declaration, not as the global: that value is outside the
+ *      rule and disclosed in the road census's "cannot see" list;
  *  (b) a chain of at most four steps from `n`, each one level deeper, null at a fifth (const a = window;
  *      a.self.self.self is a window, a.self.self.self.self null): a member read by a literal name, x.name by memberKind
  *      and x[key] by keyKind (a literal key under any parentheses, casts, satisfies and non-null marks:
