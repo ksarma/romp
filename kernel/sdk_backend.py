@@ -4268,7 +4268,13 @@ def _bg_row_may_be_agent(row) -> bool:
     after a kernel restart pays the first walk for one such end and a later walk for each further one; the first walk
     comes only on the roads where this kernel never saw the agent start. So the row's end is queued rather than left as
     a residual. Each id's resolution, a miss included, is memoized until a directory it read changes or the memo passes
-    its 1024-key bound and is cleared (_subagent_file)."""
+    its 1024-key bound and is cleared (_subagent_file). A lookup that could not be made (a place the walk needed could
+    not be read, for a reason other than absence) is neither a resolution nor memoized: nothing is released, the end is
+    remembered, and it is looked up again at the first cycle at which one of the places its walk could not read reads
+    again, each such place read once per cycle until then with no walk (_release_ended_agents). So a fault adds to the
+    drain one lookup, at the cycle after the fault clears, not one per cycle while it lasts, except for the two faults
+    that read does not see, a listing that fails past its first entry and a real-path resolution of the place that fails
+    while its lstat answers (_unread_place_reads)."""
     return isinstance(row, dict) and _bg_type_discriminant(row.get("type")) in ("local_agent", "")
 
 

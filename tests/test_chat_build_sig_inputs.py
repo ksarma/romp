@@ -1725,7 +1725,7 @@ class Pusher(unittest.TestCase):
         set on the handler thread with no ownership record, so the push's except branch and the next push's
         opening close cleared nothing, and every later push and viewer frame on that connection's thread was
         served the stale samples for the connection's life (the open skips a slot already set, so the leak was
-        adopted, never replaced). The tuple takes in the two slots #882 derives from the samples and opens with
+        adopted, never replaced). The tuple takes in the two slots this change derives from the samples and opens with
         them, the stamp index and the launch folds (subagent_stamps, subagent_launches): a slot opened but not
         recorded as owned is left set by the close, and every later push on the thread is served its stale
         entries."""

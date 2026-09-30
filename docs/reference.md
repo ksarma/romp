@@ -3215,8 +3215,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the bound holds at the median for a cycle that carries at most one such
   end, and a cycle that carries two is at or over it; a first cycle after a
   restart with several such ends pays the first walk and a later walk for
-  each further one. No end is queued
-  for an agent none of
+  each further one. An end whose resolution could not be made (below) adds
+  no walk while its fault lasts, only one read of each place the walk
+  could not read per cycle, and is resolved once, at the first cycle after
+  one of those places reads again, where it is one such end; the two faults
+  that read cannot see, a listing that fails past its first entry and a
+  resolution of the place's real path that fails while its lstat answers,
+  each have their end resolved at each cycle while they last. No end is
+  queued for an agent none of
   those names: a Workflow run's agents when the object holds no roster for
   the run (one the report retires before any progress frame, or one that
   ends or loses its CLI before any), and a subagent the old kernel knew only
@@ -3237,6 +3243,20 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the file, or one dropped past the queue's bound, does not forget the
   end, and a release taken then pops the running agent's entry; only the
   first of those counts in `falseEnds`, at the next cycle);
+  an end whose file resolution could not be made (a place the walk needed
+  could not be read, for a reason other than absence, as under a session
+  directory that cannot be searched) releases nothing and is remembered,
+  and the resolution is made again at the first cycle at which one of the
+  places the walk could not read reads again, each read once per cycle
+  until then with no walk (`_release_ended_agents` in `kernel/kernel.py`),
+  so its records are released once the fault clears, with their
+  checkpoint document, unless a cycle drains the agent's start first; the
+  two roads that release a remembered file with no resolution, an end
+  remembered while nothing was held and an owed release's pay, still read
+  a fault on the file's path as the file gone and drop its records with no
+  document, a residual this change does not close (both roads, and the
+  deferral, are cases of `AgentEnd` in
+  `tests/test_record_cache_agent_end.py`);
   a whole re-read of a file after its release was taken is held whole
   until the count cap, the byte budget or a quiescent drop reaches it,
   unless a later end of the agent comes after that release: one that finds
@@ -3952,13 +3972,20 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   pusher cycle, jobs pass or connect push since 2026-09-18, the first reader
   validating or walking and every later reader of the cycle served it, so
   scoped over hit plus miss plus scoped is the share of reads that re-sampled
-  a root another reader took in the same cycle), `evict` (roots dropped because
+  a root another reader took in the same cycle; a sample that reported a
+  fault below its root, a listing, an entry's type or a child's lstat
+  failing for a reason other than absence, is not held, and the next reader
+  in the cycle walks again: `_subagent_tree`'s docstring, THE CYCLE SCOPE, in
+  `kernel/kernel.py`, and `Guards`
+  `test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is` in
+  `tests/test_subagent_tree_stamps_per_cycle.py`), `evict` (roots dropped because
   no alive session's transcript names them, on every jobs pass and, as a
   belt, after each feed build and from the tracking-off frame), `dirStats`
   (what it counts: the comment at `_SUBAGENT_TREE_STATS` in
-  `kernel/kernel.py`; the agent-file lookup's directory stats joined it on
-  2026-09-19, so a figure from before that change and one from after are not
-  one series; the cost the memo's reads pay, road by road with the case that
+  `kernel/kernel.py`; the agent-file lookup's directory stats joined it with
+  this change, so a figure from a kernel without this change and one from a
+  kernel with it are not one series; the cost the memo's reads pay, road by
+  road with the case that
   pins each term: `_subagent_tree_memo_report`'s docstring in
   `kernel/kernel.py`), `walkMs` and `validateMs` (the time in each,
   every thread), and the gauges `roots` (entries) and `dirs` (directories
@@ -3981,20 +4008,28 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   key's component; the chat build is told to read again), except that with
   no entry standing the sidecar map answers `{}` and the agent-file lookup
   answers a caller that passes no faults list `None`, so while the fault
-  lasts the viewer says the agent's transcript is missing and the Agent
-  card shows no steps (`ViewerUnderAnUnreadableTree` in
+  lasts the viewer says the agent's transcript is missing, the Agent card
+  shows no steps and a sidecar read made with no resolved path
+  (`_subagent_meta`) answers `{}` (`ViewerUnderAnUnreadableTree` in
   `tests/test_subagent_tree_memo.py`; having the viewer state the fault
-  is a follow-up fix after #882); the agent-file walk excludes that tree
+  is a follow-up fix after this change), while the release at an agent's end
+  passes one and releases nothing until the lookup can be made (the
+  `recordCache` paragraph); the agent-file walk excludes that tree
   from its search and nothing else, answering a file found under any
   other tree (`FaultExcludesItsOwnTree` in the same module), the shape
   stated once in `_subagent_tree`'s docstring in `kernel/kernel.py`, and
   a fault on the walk's read of any other place it searches (a place
   below a tree's root, a candidate file, a project-directory entry, the
-  listing) excludes that place alone (the places:
-  `_subagent_file_walk`'s docstring; `FaultOnTheWalksOwnRead`); a launch
-  fold that did not read the file, the reader's fail path, is held for the
-  one read that observed it, so that read folds it once, not once per agent
-  whose owner it was consulted for, and the next read folds it again;
+  listing, or the real-path resolution of a tree's root or of a candidate,
+  strict on every interpreter) excludes that place alone (the places:
+  `_subagent_file_walk`'s docstring; `FaultOnTheWalksOwnRead`,
+  `RealpathFailureIsAFault`); a launch
+  fold that did not read the file (the reader's fail path, or a raise) or
+  whose resolution could not be made (the shapes: the comment in
+  `_awaiting_nest` in `kernel/kernel.py`) is held for the one
+  `_awaiting_nest` call that observed it, so that call folds it once, not
+  once per agent whose owner it was consulted for, and the next call folds
+  it again;
   `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
   both stand, and on this fork while `cleared.jsonl` stands too, its stat a

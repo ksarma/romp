@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The agent-file lookup's stamp re-checks and the launch folds are held per cycle on #1822's tree scope (2026-09-19).
+"""The agent-file lookup's stamp re-checks and the launch folds are held per cycle on upstream's tree scope (2026-09-19).
 
 The walk memo (tests/test_subagent_tree_memo.py) made a read of a session's subagents tree cost one lstat per known
 directory instead of a listing. But the agent-file lookup's memo (_subagent_file) re-validates a hit by stat-ing every
@@ -15,7 +15,7 @@ kernel _dir_stamp's one os.stat was the top self frame of a 20 s py-spy profile,
 profile's reading, and another's memo counters showed 24.5 million validation lstats in 6.8 hours over 1,294
 directories (2026-09-19; the user 2026-09-05, who wanted the one-core kernel investigated).
 
-The fix keys the re-checks on the event a time window would have stood in for: the cycle. #1822 (upstream, 2026-09-18)
+The fix keys the re-checks on the event a time window would have stood in for: the cycle. romp-on/romp PR #1822 (2026-09-18)
 holds each subagents root's sample once per cycle in _live_scope.subagent_trees, which the pusher cycle, the jobs pass
 and a connect push's chat loop open and clear (the try and finally blocks of _pusher_cycle and _jobs_cycle,
 _chat_push_scopes_open and _chat_push_scopes_close): the first reader of a root on that thread validates or walks it,
@@ -67,7 +67,9 @@ slots set on its thread, each cleared in the function's finally; (3) two
 threads: a pusher cycle and a jobs pass running at once each validate once with their own scope object, never served
 by the other's; (4) the guards, each against the input it refuses and the input it accepts: a
 stamp stat that raises is answered (dir, None) and not held while one that succeeds is held; a walk with a failed
-listing is not held while a clean one is (the one store rule that differs from #1822's), and a walk that stored a racy
+listing is not held while a clean one is (the one store rule that differs from #1822's), the stamp index filled from
+the held pair alone (none from the refused walk), and on the road that rule closes an agent-file lookup in the same
+scope walks again and is told the fault (a reader that passes no faults list sampled the tree first), and a walk that stored a racy
 stamp (the real window, one directory written at the walk) is held for the cycle like a clean one, its pair and its
 stamps, and walked again by the next cycle's first read; a
 launch fold that did not read the file is folded once per read (the call-local
@@ -96,7 +98,7 @@ unrelated root's eviction as a tree-indexed stamp is (0 stats); held launch fold
 and the next scope folds every agent again and nests the command; and a fold of a file found under a sibling's tree (the
 /clear-fork shape) is served past the sibling's eviction, the own root's and the sibling tree's removal until the cycle
 ends, the next cycle's first read resolving the gone file to nothing (the command top-level there: the bound's edge).
-(6) The dependency key (#910): the key a chat build records for a subagents tree the agent-file miss walk looked
+(6) The dependency key (fork PR #910): the key a chat build records for a subagents tree the agent-file miss walk looked
 through is the served read's (mtime, size) per directory, so a file landing after the hold under a directory the served
 listing lacked leaves the recorded key behind the next signature's re-stat and the tab is rebuilt, whether the landing moved
 the root's stamp or a listed child's (the mutant, a fresh stat taken after the served listing, records the post-landing
@@ -107,7 +109,8 @@ replayed from the walk's notes (in the code before this change such a build reco
 the held fold's from the notes stored in its own entry, since the agent-file memo's entry can by then have been replaced
 by a lookup on a thread that holds no scope, whose walk reads the disk afresh, or cleared (one case for each, red under a
 kernel that replays the memo entry's notes, and the replaced case under one that does so only when the memo holds an
-entry);
+entry), once per _awaiting_nest call however many of the call's owner lookups consult the held fold (each ghost's beside
+path and each agent's file told to the build once);
 a path one build reported under two keys is recorded under a key no re-stat equals, pinned at the unit level here and on
 the live road that depends on it: a chat build that reads the sidecar map before its lookup (_stamp_agents) records the
 tree read's key first, and only the disagreement rebuilds its tab after a fault below the root clears
@@ -117,8 +120,16 @@ subagents/ whose target holds the file) is in no record, so the tab its walk bui
 the link's target included, beside the control of an absent place recorded None (under a kernel whose walk notes
 (place, None) there and replays it to every build, the re-stat through the link never equals it and the tab is rebuilt
 every cycle); and a symlinked subagents/ replaced by a real directory holding the file moves the key the walk recorded for
-the link (#910 notes a live link at a subagents path under its stat key), so the tab is rebuilt: what was the second
-residual is closed. (7) The sum over roots: three alive
+the link (fork PR #910 notes a live link at a subagents path under its stat key), so the tab is rebuilt: what was the second
+residual is closed. And the agent file's own key (HeldFoldAgentFileKey): the launch fold records it as its reader stat'd
+it and stores it in the fold entry, so a build answered a fold held earlier in the scope, before a launch the agent then
+appended, records the file under that key beside the Agent head's later one, their disagreement, and the next cycle
+rebuilds the tab and nests the command, through the real _push too (the fold the feed took before the chat loop); the
+control, the build's own fold first, records one key and is served; a build with no Agent head (a Workflow agent)
+records the key its own fold read, so a launch appended after it rebuilds the tab; such a tab is rebuilt at each
+cycle the file grew by any record and served at a cycle it did not; and while the file is there but cannot be read, the
+fold records it under None and the tab is rebuilt at each cycle, with no Agent head and with one, until the first cycle
+after the file reads again. (7) The sum over roots: three alive
 sessions with trees of unequal size and unequal agent counts, read in one pusher cycle and in one jobs pass with the reads
 interleaved, cost the sum over their roots of D_r lstats (each root its own D_r), 0 stats and one fold per agent (the sum
 over the sessions of A_s), so the total directories decide the cycle's cost and not their split over roots (the derived
@@ -138,7 +149,9 @@ raises under a real EACCES (the own root's count beside the unreadable tree's ow
 by the step per agent) and an absent or dangling-link own root, beside the boundary where the stamp's stat succeeds (an
 EIO on a root's lstat alone, a file or a live link in the own root's place: held once per cycle), and a place with no
 tree costs one lstat per _subagent_tree call and, with a link or a file in it, one os.stat per dependency note and
-one os.lstat more for the walk's note of a file or a live link, never held (all in MissPathRoads); a sibling tree the
+one os.lstat more for the walk's note of a file or a live link, never held, and a sibling's place holding a file or a
+live link costs each walk its tree read's lstat, its note's stat and lstat and no realpath, G x (1, 1, 1, 0) cold and
+none steady, beside the place's own stamp, held once per cycle (all in MissPathRoads); a sibling tree the
 walk reads is read once per cycle and
 costs a candidate lstat per directory per walk, and on a steady cycle one own stat per directory, shared (both in
 MissPathRoads, with a command row whose owner is read from the agents' transcripts before the tree is read, which
@@ -149,8 +162,9 @@ and a failed validation's and the walk after it {lstat: 2D, scandir: D + 1} for 
 validation's D - 1 in dirStats (Guards); an
 unreadable session directory resolves every agent again on every read, {lstat: CALLS x (3A + 1), stat: CALLS x A x
 (D + 2)} under the tree, with no counter moved but the project directory's one stamp stat (Guards); and the chat
-signature of a tab whose build walked S sibling trees re-stats its D + 1 + S x D + K recorded paths every cycle, and a
-directory created under any sibling directory rebuilds the tab (DependencyKey). (10) The walks that find the file, each
+signature of a tab whose build walked S sibling trees re-stats its D + 1 + S x D + K + A recorded paths every cycle (A
+the awaited agents' own files, each recorded by its launch fold), and a directory created under any sibling directory
+rebuilds the tab (DependencyKey). (10) The walks that find the file, each
 priced per walk through the real _pusher_cycle, each walk's calls recorded apart and keyed
 on that walk alone: a nested file found at k, {lstat: W + 1 + (k + 1) + R} under the tree with no listing of the
 project directory and no entry stat, at two or more values of k, one landing in a workflow directory walking every
@@ -160,8 +174,8 @@ candidates up to the found directory in its tree (FoundRoads).
 
 Named mutants, each applied alone at this head and red on the cases named (each run is recorded outside the repo with its
 command, interpreter and head):
-- the fix reverted (kernel/kernel.py of the code before this change: fork main, #1822 and the dependency-key fix): the
-  bound's pusher case, on its os.stat count on the tree's directories (CALLS x A x D);
+- the fix reverted (kernel/kernel.py of the code before this change: fork main, with romp-on/romp PR #1822 and fork
+  PR #910's dependency-key fix): the bound's pusher case, on its os.stat count on the tree's directories (CALLS x A x D);
 - a sticky slot, _pusher_cycle's try reopening one map carried across cycles: (2) for each slot, the samples at the
   case where a directory and an agent land between cycles, the stamp index at the stamps' release case (by identity)
   and the launch folds at the appended-launch case;
@@ -171,7 +185,10 @@ command, interpreter and head):
   census and Guards' held-root lag case (its read after the removal);
 - a held fault, a stamp whose stat raised held as (dir, None): Guards' raising-stamp case and MissPathRoads'
   absent-sibling case;
-- a held unclean walk (#1822's store rule, any answer with a directory held): Guards' failed-listing case;
+- a held unclean walk (#1822's store rule, any answer with a directory held): Guards' failed-listing case, and its
+  composed case beside it, on the same-scope lookup answered None with no fault and the miss served after the fault;
+- the stamp index filled from every sample, the stored or not (the fill loop moved out of the store's guard): Guards'
+  failed-listing case, on the index after the walk that was not held;
 - a launch fold's fault re-folded per owner lookup, and one held for the cycle: Guards' faulted-fold case, each;
 - the fault producer's `on` append deleted, and its except branch's: Guards' producer case, each;
 - own stamps keyed per agent and directory (the lookup's agent id read from the stack, since _dir_stamp is given none),
@@ -184,17 +201,31 @@ command, interpreter and head):
   listed-child case, each, and the fresh stat its sibling-root case too;
 - a memo hit that replays nothing, a held fold that replays nothing, a held fold that replays the agent-file memo entry's
   notes (the cleared-memo case and the case where a lookup on a thread that holds no scope replaced the entry), and a
-  path reported under two keys that keeps the first: DependencyKey, each; and a held fold that replays the memo entry's
+  path reported under two keys that keeps the first: DependencyKey, each; a held fold that replays at every consult
+  (`if k not in reported:` taken as always true): DependencyKey's once-per-call case, on the times each pair is told;
+  and a held fold that replays the memo entry's
   notes only when the memo holds an entry, else its own: the replaced-entry case, on its record and on the next cycle's
   signature, with the cleared-memo case green;
+- the agent file's key reported to the fold's build and not stored in the fold entry: HeldFoldAgentFileKey's held-fold
+  case and push case, and DependencyKey's once-per-call case (on the times each found agent's file key is told); and
+  stored and not reported to the fold's own build: its no-Agent-head case, its cost case and its two unreadable-file
+  cases, and DependencyKey's signature count case (D + 1 + S x D + K);
 - under a symlinked subagents/, a fault on the own place read as absence, and the own flat place excluded at the flat
   check: DependencyKey's symlinked-subagents fault cases, each;
 - dirStats not counting _dir_stamp's stats: the outside-a-cycle case, the two-row case and MissPathRoads' command-row
   case;
+- the walk's sibling loop re-reading the place after its note (a second _chat_stat_key(sd) and a _lstat_or_none(sd)):
+  MissPathRoads' sibling-place case, on the note's stats and the place's lstats;
 - a flat walk that records the own tree's directories among its stamps, the A x D form: the outside-a-cycle flat case,
   on its re-check stats and dirStats;
 - the miss-walk unit, a walk that goes on past the file it found through the rest of the own tree, the project directory
   and every sibling before answering it: FoundRoads, each case, on its per-walk census or its project-directory calls;
+- _find_agent_file's return for a tree with no directory removed, so its strict realpath of an absent root raises
+  FileNotFoundError and the walk reads it as a fault: MissPathRoads' absent-sibling, absent-or-dangling own-root and
+  no-tree cases, the outside-a-cycle case whose agent is found nowhere, three ScopedInvalidation cached-file and fold
+  cases and DependencyKey's signature count case, each on an absent place faulted where a miss is due (the memo module's
+  RealpathFailureIsAFault boundaries too), and MissPathRoads' sibling-place case, on the strict realpath's lstats of a
+  place with no tree;
 - a derived slot's line removed from any one of its five open and clear sites (SlotSites.SITES): SlotSites, on the
   {function: count} equality (a tree slot's line removed reds its premise); and either derived slot's opening line
   removed from _chat_push_scopes_open: the connect-push case too, on its census (the stamp index) or its fold count (the
@@ -1029,7 +1060,7 @@ class BoundPerCycleAndPerPass(_World):
         _subagent_tree_memo_report's docstring) holds nothing and pays per call: the tree's validation and, per agent, the
         file memo's re-check of one stamp per directory its walk read, which for this world's nested agents is the whole
         tree, D each. dirStats counts the validation's D - 1 lstats and the re-check's stats (_dir_stamp's, counted since
-        2026-09-19). The flat and the found-nowhere agents' re-checks are the two cases after this one."""
+        this change). The flat and the found-nowhere agents' re-checks are the two cases after this one."""
         self.assertIsNone(_scope(), "no scope is open on this thread outside a cycle")
         b = self._stats()
         with self._spy() as sp:
@@ -1046,8 +1077,8 @@ class BoundPerCycleAndPerPass(_World):
                                          "validated hit)" % d["scoped"])
         self.assertEqual(d["dirStats"], (D - 1) + A * D,
                          "dirStats %d; expected (D - 1) + A x D = %d: the validation's lstats AND the stamp re-checks' stats, both "
-                         "counted since 2026-09-19 (_dir_stamp counts each os.stat it takes); the lstat half alone, D - 1 = %d, "
-                         "was the count before" % (d["dirStats"], (D - 1) + A * D, D - 1))
+                         "counted by a kernel with this change (_dir_stamp counts each os.stat it takes); the lstat half alone, "
+                         "D - 1 = %d, is the count of a kernel without it" % (d["dirStats"], (D - 1) + A * D, D - 1))
 
     def test_outside_a_cycle_a_flat_agents_hit_re_checks_the_one_directory_its_walk_read(self):
         """The re-check's unit is the agent's own walk, not the tree (not A_s x D_s per read). A flat agent's walk reads
@@ -1220,18 +1251,18 @@ class BoundPerCycleAndPerPass(_World):
 class MissPathRoads(_World):
     """(9) The agent-file lookup's roads the cost home names beside the bound, each derived here from the world's sizes
     and pinned through the real _pusher_cycle (the home is _subagent_tree_memo_report's docstring, and each of its
-    entries names the case that pins it): an absent sibling
-    root, a sibling tree the agent-file walk reads, and a command row whose owner is read from the agents' transcripts
-    before the tree is read; and every population of a (place, None) stamp an
-    agent's memo holds (a sibling root and the own root whose stat raises, an absent or dangling-link own root) with the
-    boundary where the stamp's stat succeeds (an EIO on a root's lstat alone, a file or a live link in the own root's
-    place), and the read of a place with no tree. G live rows name an agent whose file exists nowhere, or lies at the top
-    of a readable sibling's tree (the ghosts); each cycle makes CALLS _session_awaiting reads and then looks each ghost
-    up M more times, as the chat build's Agent head (_stamp_agents) and an open viewer (_subagent_frame_cached,
-    build_subagent) look an agent up. A ghost's first cycle is cold (its walk runs, memoizing its answer), the next
-    steady (each lookup a memo hit re-checking the walk's stamps). Every count is derived in the case from D, A, CALLS,
-    G, K, S, M and the interpreter's realpath, counted by running it (the absent-or-dangling own-root case also runs the
-    walk's one os.lstat of the own subagents directory's type, read in a try as the walk reads it)."""
+    entries names the case that pins it): an absent sibling root, a sibling tree the agent-file walk reads, and a
+    command row whose owner is read from the agents' transcripts before the tree is read; and every population of a
+    (place, None) stamp an agent's memo holds (a sibling root and the own root whose stat raises, an absent or
+    dangling-link own root) with the boundary where the stamp's stat succeeds (an EIO on a root's lstat alone, a file or
+    a live link in the own root's place), and the read of a place with no tree, the own one and a sibling's. G live rows
+    name an agent whose file exists nowhere, or lies at the top of a readable sibling's tree (the ghosts); each cycle
+    makes CALLS _session_awaiting reads and then looks each ghost up M more times, as the chat build's Agent head
+    (_stamp_agents) and an open viewer (_subagent_frame_cached, build_subagent) look an agent up. A ghost's first cycle
+    is cold (its walk runs, memoizing its answer), the next steady (each lookup a memo hit re-checking the walk's
+    stamps). Every count is derived in the case from D, A, CALLS, G, K, S, M and the interpreter's realpath, counted by
+    running it (the absent-or-dangling own-root case also runs the walk's one os.lstat of the own subagents directory's
+    type, read in a try as the walk reads it)."""
 
     M = 2   # a ghost's lookups per cycle beyond the one _awaiting_nest makes (its held launch fold answers the rest)
 
@@ -1361,15 +1392,21 @@ class MissPathRoads(_World):
         and every memo hit's re-check of the stamps the walk took, which hold (place, None): G x K x (1 + M) per cycle,
         cold or steady. The stat raises, and a stat that raises is never held (_dir_stamp) and counts in no counter, so
         dirStats stays at (D - 1) + 1, the validation and the project directory's stamp, whatever G and K. The cold walk
-        also lstats each place twice over, _subagent_tree's root lstat (answered ((), ()), not held) and _find_agent_file's
-        realpath (its lstat count on the place taken by running it, W_abs): G x K x (1 + W_abs), none in the steady
-        cycle. A boundary pin, green by design (the per-lookup failing stat is the cost the home states) and red under a
-        kernel that holds an absent stamp for the cycle, which pays K per cycle whatever G and M."""
+        also lstats each place once, _subagent_tree's root lstat (answered ((), ()), not held), and takes no realpath of
+        it: _find_agent_file resolves the root only for a tree read that found a directory, so W_abs, the realpath's
+        lstats of an absent place, is 0 in the walk: G x K cold, none in the steady cycle. A kernel that resolves the
+        root of every tree it reads (the code before this change) pays G x K x (1 + R_abs) instead, R_abs the lstat count
+        of os.path.realpath on the place, taken by running it and asserted non-zero as a premise so the two counts stay
+        apart. A boundary pin, green by design (the per-lookup failing stat is the cost the home states) and red under a
+        kernel that holds an absent stamp for the cycle, which pays K per cycle whatever G and M; its lstat half is red
+        under a kernel that resolves an absent root."""
         K = 2
         absent = self._absent_roots(K)
         with _PathCalls() as pc0:
             os.path.realpath(absent[0])
-        w_abs = pc0.count("lstat", absent[:1])
+        r_abs = pc0.count("lstat", absent[:1])
+        self.assertGreater(r_abs, 0, "premise: os.path.realpath of an absent place lstats it, so a walk that took it would pay more")
+        w_abs = 0                                         # the walk's realpath lstats of a place with no tree: none taken
         for G in (1, 2, 3):
             with self.subTest(G=G):
                 ghosts = self._ghosts(G, 0x7d00 + 0x10 * G)
@@ -1384,8 +1421,9 @@ class MissPathRoads(_World):
                     lst = pc.count("lstat", absent)
                     self.assertEqual(lst, G * K * (1 + w_abs) if phase == "cold" else 0,
                                      "os.lstat on the absent places over %s: %d; keyed on G x K x (1 + W_abs) = %d x %d x (1 + %d) in "
-                                     "the cold cycle (each walk's root lstat and realpath) and 0 in the steady one (no walk)"
-                                     % (what, lst, G, K, w_abs))
+                                     "the cold cycle (each walk's root lstat, and no realpath of a place with no tree; a walk that "
+                                     "resolved it would pay G x K x (1 + %d)) and 0 in the steady one (no walk)"
+                                     % (what, lst, G, K, w_abs, r_abs))
                     self.assertEqual((d["dirStats"], d["hit"], d["miss"], d["evict"]), (D, 1, 0, 0),
                                      "(dirStats, hit, miss, evict) over %s: %r; keyed on ((D - 1) + 1, 1, 0, 0): the validation and "
                                      "the project directory's one stamp stat, the failed stats counted nowhere"
@@ -1510,11 +1548,14 @@ class MissPathRoads(_World):
         """The (place, None) entry's own-place population: nothing at the own root's place (the
         session directory kept), or a dangling link in it, and G agents whose file is nowhere. Each walk stamps the place
         (place, None), so every lookup of each such agent, the walk's own and every memo hit's re-check, pays one failing
-        os.stat of it by _dir_stamp: G x (1 + M) per cycle, cold and steady; each cold walk pays W + 1 lstats of the place
-        (the walk's one os.lstat of the own subagents directory's type, whose error it reads, and realpath's, counted by
-        running them, and the tree read's, never held), G x (W + 1), and 0 steady; dirStats moves by the project directory's
-        one stamp stat alone ((dirStats, hit, miss, scoped, evict) == (1, 0, 0, 0, 0)). Red under a kernel that holds an
-        absent stamp for the cycle (1 stat per cycle)."""
+        os.stat of it by _dir_stamp: G x (1 + M) per cycle, cold and steady; each cold walk pays T + 1 lstats of the place
+        (T the walk's one os.lstat of the own subagents directory's type, whose error it reads, counted by running it,
+        and the tree read's, never held), G x (T + 1), and 0 steady: no realpath, which _find_agent_file takes only for a
+        tree read that found a directory, where a kernel that resolves the root of every tree it reads (the code before
+        this change) pays R more per walk, R the lstat count of os.path.realpath on the place, taken by running it and
+        asserted non-zero as a premise; dirStats moves by the project directory's one stamp stat alone ((dirStats, hit,
+        miss, scoped, evict) == (1, 0, 0, 0, 0)). Red under a kernel that holds an absent stamp for the cycle (1 stat per
+        cycle), and its lstat term red under a kernel that resolves an absent or dangling root."""
         for n, shape in enumerate(("absent", "dangling")):
             own = self._no_tree_in_the_own_place(shape)
             with _PathCalls() as pc0:
@@ -1522,24 +1563,29 @@ class MissPathRoads(_World):
                     os.lstat(own)
                 except OSError:                           # absent, or a dangling link's own lstat succeeds: either way one call
                     pass
-                os.path.realpath(own)
             w = pc0.count("lstat", [own])
+            with _PathCalls() as pc1:
+                os.path.realpath(own)
+            r = pc1.count("lstat", [own])
+            self.assertGreater(r, 0, "premise, %s own root: os.path.realpath of the place lstats it, so a walk that took it "
+                                     "would pay more" % shape)
             for G in (1, 2, 3):
                 with self.subTest(shape=shape, G=G):
                     ghosts = self._ghosts(G, 0x7e00 + 0x40 * n + 0x10 * G)
                     for phase in ("cold", "steady"):
-                        what = "the %s cycle, %s own root, G = %d, M = %d, W = %d" % (phase, shape, G, self.M, w)
+                        what = "the %s cycle, %s own root, G = %d, M = %d, T = %d" % (phase, shape, G, self.M, w)
                         pc, d = self._cycle(ghosts, what, count=1 + G, within=("_dir_stamp",))
                         got = (pc.count("stat", [own], within="_dir_stamp"), pc.count("lstat", [own], walk=True),
                                tuple(d[k] for k in ("dirStats", "hit", "miss", "scoped", "evict")))
                         want = (G * (1 + self.M), G * (w + 1) if phase == "cold" else 0, (1, 0, 0, 0, 0))
                         self.assertEqual(got, want,
                                          "(_dir_stamp's os.stat of the own root's place, the walk's os.lstat of it, (dirStats, hit, "
-                                         "miss, scoped, evict)) over %s: %r; keyed on (G x (1 + M), G x (W + 1) cold and 0 steady, "
+                                         "miss, scoped, evict)) over %s: %r; keyed on (G x (1 + M), G x (T + 1) cold and 0 steady, "
                                          "(1, 0, 0, 0, 0)) = %r: one failing stamp stat per lookup, never held (a kernel that holds "
-                                         "the absent stamp pays 1), the cold walks' lstats of the own subagents directory's type, "
-                                         "realpath's and the tree read's, and only the project directory's stamp in dirStats"
-                                         % (what, got, want))
+                                         "the absent stamp pays 1), the cold walks' lstats of the own subagents directory's type "
+                                         "and the tree read's, with no realpath of a place with no tree (a walk that took it would "
+                                         "pay G x %d more), and only the project directory's stamp in dirStats"
+                                         % (what, got, want, r))
 
     def test_boundary_a_file_or_a_live_link_in_the_own_roots_place_is_stat_once_per_cycle_and_held(self):
         """The boundary of the own-place population: a file, or a link
@@ -1617,6 +1663,64 @@ class MissPathRoads(_World):
                                      "kernel that holds the not-a-tree answer for the cycle pays one lstat and moves scoped), and the "
                                      "walk's note re-checks a place its stat found (a note that does not pays no lstat)"
                                      % (what, got, want))
+
+    def test_a_siblings_place_holding_a_file_or_a_live_link_costs_each_walk_its_read_and_its_note_and_one_own_stamp_per_cycle(self):
+        """The no-tree entry's sibling term: a sibling session directory whose subagents place holds a regular file or a
+        link to a directory elsewhere (no tree), and G agents whose file is nowhere. Each ghost's walk reads the place
+        once through _subagent_tree (one lstat, answered no tree, never held), notes it through _subagent_walk_dep_note
+        (_chat_stat_key's os.stat of it, and the lstat that checks the place did not change after the read) and pays
+        none of the W' realpath lstats a sibling tree's walk pays (_find_agent_file resolves no place with no tree),
+        counted per path inside each of those functions: G x (1, 1, 1, 0) in the cold cycle, where each ghost's walk
+        runs, and 0 in the steady one, where each lookup is a memo hit. The place's stamp is real, so it is an own stamp
+        held once per scope: 1 os.stat inside _dir_stamp and dirStats (D - 1) + 1 + 1 (the validation, the project
+        directory's stamp and the place's) in the cold cycle and the steady one alike. The place's lstats and stats over
+        the cycle, from every caller, are keyed too: 2G lstats and G + 1 stats cold, none and 1 steady. R',
+        os.path.realpath's lstats of the place, is taken by running it and asserted non-zero as a premise, so a walk
+        that resolved the place would show here (G x R' more lstats inside _find_agent_file). Red under a kernel that
+        re-stats and re-lstats the place after the note in the walk's sibling loop (a second _chat_stat_key(sd) and a
+        _lstat_or_none(sd) there), on the note's stats and the place's lstats; and red under a walk that takes the
+        root's realpath of every tree it read (_find_agent_file's return for a tree with no directory removed), on the
+        lstats inside _find_agent_file."""
+        proj = Path(self.path).parent
+        within = ("_subagent_tree", "_chat_stat_key", "_subagent_walk_dep_note", "_find_agent_file", "_dir_stamp")
+        for n, shape in enumerate(("file", "live")):
+            sess = proj / ("11111111-2222-3333-4444-7c7c7c7c%04x" % (0xd000 + n))
+            sess.mkdir()
+            place = sess / "subagents"
+            if shape == "file":
+                place.write_text("")
+            else:
+                elsewhere = Path(self.td.name) / ("elsewhere-%d" % n)
+                elsewhere.mkdir()
+                place.symlink_to(elsewhere)
+            sp = str(place)
+            with _PathCalls() as pc0:
+                os.path.realpath(sp)
+            r_place = pc0.count("lstat", [sp])
+            self.assertGreater(r_place, 0, "premise: os.path.realpath of the place lstats it, so a walk that took it would pay more")
+            for G in (1, 2):
+                ghosts = self._ghosts(G, 0x7a00 + 0x40 * n + 0x10 * G)
+                for phase in ("cold", "steady"):
+                    with self.subTest(shape=shape, G=G, phase=phase):
+                        what = "the %s cycle, a sibling's place holding a %s, G = %d" % (
+                            phase, "link to a directory" if shape == "live" else "file", G)
+                        pc, d = self._cycle(ghosts, what, within=within)
+                        per = (pc.count("lstat", [sp], within="_subagent_tree"), pc.count("stat", [sp], within="_chat_stat_key"),
+                               pc.count("lstat", [sp], within="_subagent_walk_dep_note"),
+                               pc.count("lstat", [sp], within="_find_agent_file"))
+                        walks = G if phase == "cold" else 0
+                        got = (per, pc.count("stat", [sp], within="_dir_stamp"), pc.count("lstat", [sp]), pc.count("stat", [sp]),
+                               tuple(d[k] for k in ("dirStats", "hit", "miss", "evict")))
+                        want = ((walks, walks, walks, 0), 1, 2 * walks, walks + 1, (D + 1, 1, 0, 0))
+                        self.assertEqual(got, want,
+                                         "((the place's lstat inside _subagent_tree, its os.stat inside _chat_stat_key, its lstat inside "
+                                         "_subagent_walk_dep_note, its lstats inside _find_agent_file), its os.stat inside _dir_stamp, "
+                                         "its lstats and its stats from every caller, (dirStats, hit, miss, evict)) over %s: %r; keyed "
+                                         "on %r: G x (1, 1, 1, 0) in the cold cycle and nothing in the steady one, the place's own "
+                                         "stamp held once per cycle, (D - 1) + 1 + 1 in dirStats (a walk that resolved the place pays "
+                                         "G x R' = G x %d more lstats inside _find_agent_file; one that re-reads it after the note pays a "
+                                         "stat and an lstat more per walk)" % (what, got, want, r_place))
+            shutil.rmtree(str(sess))
 
     def test_a_sibling_tree_the_walk_reads_is_read_once_per_cycle_and_costs_a_candidate_lstat_per_directory_per_walk(self):
         """The sibling-tree term: S sibling sessions with subagents trees of DSIB directories each, G agents whose file is
@@ -2295,7 +2399,12 @@ class Guards(_World):
         same scope walks again and finds the D directories, and that clean walk is held and served to the read after it at
         no lstat, keyed on identity. Red under upstream's store rule: the truncated pair is held, and the second read is
         served it with no fault reported to that reader, so the agent-file walk served it would take workflows/'s children
-        for read and memoize a miss under them."""
+        for read and memoize a miss under them (what that road does to a lookup in the same scope: the case after this
+        one). The stamp index's fill rule rides on the same two reads: the index is filled from a pair the scope stores
+        and from nothing else (kernel.py, THE STAMP INDEX), so it holds no stamp after the unheld walk and exactly the held
+        pair's (directory, st_mtime_ns) after the clean one, each asserted before any _dir_stamp call; red under a kernel
+        whose fill runs for every sample, the stored or not (the fill loop moved out of the store's guard), on the stamps
+        of the walk that was not held."""
         km._SUBAGENT_TREES.pop(str(self.sub), None)     # the next read walks
         sc = self._open()
         real_scandir = os.scandir
@@ -2312,11 +2421,20 @@ class Guards(_World):
         self.assertEqual(self._delta(b)["miss"], 1)
         self.assertLess(len(dirs1), D, "the failed listing lost the directories under workflows/")
         self.assertNotIn(str(self.sub), sc["trees"], "refused: a walk whose listing failed (a fault, EMFILE) is not held in subagent_trees")
+        self.assertEqual(sc["stamps"], {},
+                         "the stamp index after the walk that was not held, before any _dir_stamp call: %r; keyed on {}: the index is "
+                         "filled from a pair the scope stores and from nothing else (the fill rule, not the per-cycle bound), so a "
+                         "sample the scope refused gives it no stamp" % (sc["stamps"],))
         dirs2, _s2 = km._subagent_tree(str(self.sub))     # the next call this cycle walks again (an unvouched entry never hits)
         self.assertEqual(self._delta(b)["miss"], 2, "the next call re-walked instead of being served the unclean pair")
         self.assertEqual(len(dirs2), D)
         self.assertIn(str(self.sub), sc["trees"], "accepted: the clean walk is held")
         held = sc["trees"][str(self.sub)]
+        want = {sd: (sd, st.st_mtime_ns) for sd, st in zip(*held)}
+        self.assertEqual(sc["stamps"], want,
+                         "the stamp index after the clean walk was held, before any _dir_stamp call: %d stamps; keyed on equality with "
+                         "the held pair's %d, each (directory, st_mtime_ns) from the stat the pair carries: the fill rule, the index "
+                         "filled from the stored pair alone" % (len(sc["stamps"]), len(want)))
         with self._spy() as sp:
             out3 = km._subagent_tree(str(self.sub))
         self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the read after the held clean walk: %d; keyed on 0"
@@ -2324,6 +2442,50 @@ class Guards(_World):
         self.assertIs(out3, held, "that read was answered the pair the clean walk left in the scope (served), keyed on identity")
         self.assertEqual(self._delta(b)["miss"], 2)
         self.assertEqual(out3[0], dirs2)
+
+    def test_a_walk_with_a_failed_listing_by_a_reader_that_passes_no_faults_list_leaves_a_lookup_in_that_scope_told_of_the_fault(self):
+        """The road the store rule above closes, composed (that case pins the store alone): a reader that passes no faults
+        list (_subagent_meta_map reads the tree so) samples the tree while workflows/'s listing fails with EMFILE, so
+        the sample reports a fault below the root and is not held; in the same scope a nested agent's lookup, its
+        resolution forgotten, walks, its own tree read meets the failing listing, and the lookup answers None with the
+        fault, memoizing nothing. The scope closed and the fault cleared, the next scope's lookup and a lookup on a
+        thread with no scope find the file. Red under upstream's store rule (a sample with a directory held whatever it
+        reported: `if scope is not None and out[0]:` in _subagent_tree): the truncated pair is held and served to the
+        lookup, which is told of no fault, takes workflows/'s children for read, answers None with no fault and memoizes
+        the miss on stamps the fault never moved, so both later lookups answer None too. That mutant is its red; the code
+        before this change reports no fault below a root at all, so a red there says nothing about the store rule."""
+        aid = self.aids[0]
+        key = (self.path, aid)
+        found = self.wfroot / ("wf_%016x" % 0) / ("agent-%s.jsonl" % aid)
+        km._SUBAGENT_TREES.pop(str(self.sub), None)       # the reader's read walks
+        km._SUBAGENT_FILE_CACHE.pop(key, None)             # and the lookup walks too
+        sc = self._open()
+        real_scandir = os.scandir
+
+        def failing(p, *a, **k):
+            if not isinstance(p, int) and os.fsdecode(p) == self.dirs[1]:   # workflows/: its listing fails while the block lasts
+                raise OSError(errno.EMFILE, "synthetic EMFILE")
+            return real_scandir(p, *a, **k)
+        with mock.patch.object(os, "scandir", failing):
+            km._subagent_tree(str(self.sub))                # the sidecar map's read: no faults list
+            held = str(self.sub) in sc["trees"]
+            faults = []
+            got = km._subagent_file(self.path, aid, faults)
+            memo = km._SUBAGENT_FILE_CACHE.get(key)
+        _scope_close()
+        seen = (got, faults, memo and ("a memo entry answering", memo[1]))
+        self.assertEqual(seen, (None, ["OSError"], None),
+                         "the lookup in the reader's scope: (answer, faults, memo entry) = %r, the reader's sample held: %r; keyed on "
+                         "(None, the fault, nothing memoized): its own tree read met the failing listing; a pair held from the "
+                         "reader's sample reports no fault, and the lookup answers None with no fault and memoizes the miss"
+                         % (seen, held))
+        self._open()                                       # the next scope, the fault gone
+        nxt = km._subagent_file(self.path, aid)
+        _scope_close()
+        free = km._subagent_file(self.path, aid)           # a lookup on a thread with no scope
+        self.assertEqual((nxt, free), (found, found),
+                         "the next scope's lookup and a lookup with no scope, the fault cleared: %r; keyed on the file both times (a "
+                         "miss memoized under the fault is served to both)" % ((nxt, free),))
 
     def test_a_racy_tree_is_held_for_the_cycle_it_was_walked_in_and_walked_again_next_cycle(self):
         """The racy hold with the REAL window (setUp closes the window for every other case, so without this one no walk
@@ -3125,12 +3287,12 @@ class ScopedInvalidation(_World):
 
 class DependencyKey(_World):
     """(6) The key a chat build records for a subagents tree the agent-file miss walk looked through is the served read's
-    stamp (#910). Two sessions share a project directory (a /clear fork's, the case the sibling scan exists for);
+    stamp (fork PR #910). Two sessions share a project directory (a /clear fork's, the case the sibling scan exists for);
     an agent row of this session names a file that exists nowhere yet; earlier in the cycle a build read the sibling's tree,
     so the scope holds it; then the file lands under the sibling's root in a directory the held listing lacks; then this
     session's chat build resolves the agent, is answered the held listing, finds the file nowhere and shows it missing. The
     tab is cached under the dependencies the build recorded (_chat_build_deps) and rebuilt when the next cycle's signature
-    re-stats one of them to a different key (_chat_sig_deps). What #910 fixed: a walk that records the sibling's root
+    re-stats one of them to a different key (_chat_sig_deps). What fork PR #910 fixed: a walk that records the sibling's root
     under a FRESH os.stat taken after the served listing records the post-landing key, equal to every later re-stat, so the
     tab stays stale until something else moves, and a note of the root alone misses a landing under a listed child. Every
     directory of the tree is recorded under the (mtime, size) of the stat the served read was taken with (the shape
@@ -3140,7 +3302,8 @@ class DependencyKey(_World):
     (_subagent_file_notes_replay), where the code before this change recorded nothing for the sibling's tree, the held
     fold from its
     own entry's notes, which two cases pin against a memo entry replaced by a lookup on a thread that holds no scope and
-    one cleared whole; a path one build reported under two keys is recorded as
+    one cleared whole, and once per _awaiting_nest call however many of the call's owner lookups consult it; a path one
+    build reported under two keys is recorded as
     their disagreement (_chat_build_deps), which no re-stat equals, a rule pinned at the unit level and on the live
     road tests/test_subagent_tree_memo.py FaultBelowTheRoot pins; the project
     directory stays out of every record, the residual two cases here witness, one
@@ -3148,7 +3311,7 @@ class DependencyKey(_World):
     refuses is noted nothing, so a tab over it is served from its first build on, as is an
     own place whose lstat faults, so a tab over a file found past that fault is served once it clears; and a
     symlinked subagents/ replaced by a real directory holding the file moves the key the walk recorded for the link
-    (#910 notes a live link at a subagents path under its stat key: _subagent_walk_dep_note), so the tab is rebuilt.
+    (fork PR #910 notes a live link at a subagents path under its stat key: _subagent_walk_dep_note), so the tab is rebuilt.
     Driven through the real _pusher_cycle, with the build's record shape (build_session's literal) open around the real
     _session_awaiting."""
 
@@ -3396,6 +3559,56 @@ class DependencyKey(_World):
         self.assertNotEqual(restat, recorded,
                             "the next signature's re-stat of the root, %r, against the recorded key %r: keyed on a difference, the tab "
                             "is rebuilt" % (restat, recorded))
+
+    def test_a_held_fold_replays_its_pairs_once_per_call_however_many_owner_lookups_consult_it(self):
+        """The held fold's replay, once per _awaiting_nest call (its `reported` set): two live agents whose files are
+        nowhere (the ghosts) beside the A agents, whose owner lookups each consult every other agent's launches. The
+        first _session_awaiting in the scope folds every agent into the launch-fold slot; the second, with a chat
+        record open, is answered by the held folds alone. Premise, executed as a count: in that call each ghost's held
+        fold is consulted A times and each agent's A - 1 times (the slot's get counted per key), more than once each.
+        Keyed on the pairs the build is told, in the call's task_outs as reported: each ghost's absent beside path, the
+        pair its walk noted, exactly once, and each agent's own file, the key its fold recorded, exactly once. Red under
+        a kernel that replays at every consult (`if k not in reported:` taken as always true), which tells the build a
+        ghost's beside path A times and an agent's file A - 1 times: one call, one build, one report per fold. Under a
+        fold that records no key for the agent file, and under one whose key is reported to its own build and not stored
+        in the fold entry (HeldFoldAgentFileKey's named mutants), the ghosts' half is green and each agent's file is
+        told 0 times."""
+        ghosts = ["a%016x" % (0x7cf8 + i) for i in range(2)]
+        self.live_aids.extend(ghosts)
+        self._open()
+        first = km._session_awaiting(SID, self.path, True)   # no record open: every agent resolved and its fold held
+        keys = [(self.path, a) for a in self.aids + ghosts]
+        self.assertEqual(((first or {}).get("count"), [k in km._live_scope.subagent_launches for k in keys]),
+                         (A + 2, [True] * (A + 2)), "premise: the first read saw every row and the slot holds every agent's fold")
+
+        class CountingGets(dict):                         # the slot, its reads counted per key
+            gets = None
+
+            def get(self, k, default=None):
+                self.gets[k] = self.gets.get(k, 0) + 1
+                return super().get(k, default)
+        slot = CountingGets(km._live_scope.subagent_launches)
+        slot.gets = {}
+        km._live_scope.subagent_launches = slot
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}   # build_session's record for this build
+        self.addCleanup(setattr, km._chat_dep_scope, "deps", None)
+        try:
+            second = km._session_awaiting(SID, self.path, True)
+            touts = list(km._chat_dep_scope.deps["task_outs"])
+        finally:
+            km._chat_dep_scope.deps = None
+        self.assertEqual((second or {}).get("count"), A + 2, "premise: the second read saw every row")
+        consults = [slot.gets.get((self.path, g), 0) for g in ghosts] + [slot.gets.get((self.path, a), 0) for a in self.aids]
+        self.assertEqual(consults, [A] * 2 + [A - 1] * A,
+                         "premise: the held folds consulted in the call, the ghosts' then the agents': %r; keyed on A for a ghost and "
+                         "A - 1 for an agent, each A-agent owner lookup consulting every other agent's fold, so each fold is consulted "
+                         "more than once and a replay per consult would show" % (consults,))
+        beside = [str(self.sub / ("agent-%s.jsonl" % g)) for g in ghosts]
+        files = [str(self.wfroot / ("wf_%016x" % i) / ("agent-%s.jsonl" % a)) for i, a in enumerate(self.aids)]
+        told = [sum(1 for p, _k in touts if p == x) for x in beside + files]
+        self.assertEqual(told, [1] * (2 + A),
+                         "the times the call told its build each ghost's beside path, then each agent's file: %r; keyed on once each, "
+                         "one replay per fold per call; a replay at every consult tells the build %r" % (told, [A] * 2 + [A - 1] * A))
 
     def _held_fold_behind_a_changed_memo(self, change):
         """The held-fold road when the agent-file memo's entry is no longer the fold's, in one
@@ -3723,11 +3936,15 @@ class DependencyKey(_World):
         sibling trees of D directories each, beside K session directories with no subagents/, records one key per path, and
         each later pusher cycle's signature of that cached tab (_chat_sig_deps, inside _chat_build_sig) re-stats every one,
         counted in memos.chatSig stats: D for the own tree (the sidecar map's note and the walk's, one key per directory),
-        1 for the absent beside-path, S x D for the sibling trees and K for the absent sibling places, noted None. Keyed on
-        the stats a signature scope counts over the record's evaluation, D + 1 + S x D + K; a kernel that records one key per
-        sibling root (the base's form) records and re-stats D + 1 + S + K, and a landing under a sibling's workflow directory
-        moves no key it recorded. The intended half, pinned beside the count: a directory created under any sibling
-        directory moves that directory's re-stat against the recorded key, so the tab is rebuilt."""
+        1 for the absent beside-path, S x D for the sibling trees and K for the absent sibling places, noted None, and A for
+        the awaited agents' own files, each under the key its launch fold's reader stat'd (the build has no Agent head, so
+        no _agent_steps stat records a Workflow agent's file: the fold's key is its one record). Keyed on the stats a
+        signature scope counts over the record's evaluation, D + 1 + S x D + K + A, and on each agent file recorded under
+        its stat key; a kernel whose launch fold records no key for the agent file records and re-stats D + 1 + S x D + K,
+        one that records one key per sibling root (the base's form of the sibling notes) D + 1 + S + K + A, and a landing
+        under a sibling's workflow directory moves no key the second recorded. The intended half, pinned beside the count: a
+        directory created under any sibling directory moves that directory's re-stat against the recorded key, so the tab is
+        rebuilt."""
         S, K = 2, 1
         proj = Path(self.path).parent
         sib_dirs = []
@@ -3769,11 +3986,17 @@ class DependencyKey(_World):
         with km._chat_sig_scope():
             touts = km._chat_sig_deps(SID, deps)[0]
         n = km._chat_sig_stats_report()["stats"] - b
-        want = D + 1 + S * D + K
+        want = D + 1 + S * D + K + A
         self.assertEqual((n, len(recorded)), (want, want),
                          "memos.chatSig stats over one evaluation of the tab's record, and the paths it recorded: %r; keyed on D + 1 + "
-                         "S x D + K = %d + 1 + %d x %d + %d = %d each, one re-stat per recorded path every cycle; one key per sibling "
-                         "root, the base's form, is D + 1 + S + K = %d" % ((n, len(recorded)), D, S, D, K, want, D + 1 + S + K))
+                         "S x D + K + A = %d + 1 + %d x %d + %d + %d = %d each, one re-stat per recorded path every cycle, A being the "
+                         "awaited agents' own files, each recorded by its launch fold; a fold that records no key for the agent file "
+                         "gives D + 1 + S x D + K = %d, and one key per sibling root, the base's form, D + 1 + S + K + A = %d"
+                         % ((n, len(recorded)), D, S, D, K, A, want, D + 1 + S * D + K, D + 1 + S + K + A))
+        files = [str(self.wfroot / ("wf_%016x" % i) / ("agent-%s.jsonl" % a)) for i, a in enumerate(self.aids)]
+        self.assertEqual({os.path.basename(f): recorded.get(f, "unrecorded") for f in files},
+                         {os.path.basename(f): km._chat_stat_key(f) for f in files},
+                         "each awaited agent's own file is among them, under its stat key: the key its launch fold's reader stat'd")
         for dirs in sib_dirs:
             self.assertEqual([p for p in dirs if p not in recorded], [], "every directory of each sibling tree is among them")
         self.assertEqual(touts, tuple(deps["task_outs"]), "premise: nothing moved since the build, so the re-stat equals the record")
@@ -3940,7 +4163,7 @@ class DependencyKey(_World):
         self.assertEqual(got, [None] * len(tab["builds"]), "each build's key for the absent own place: %r" % (got,))
 
     def test_a_symlinked_subagents_directory_replaced_by_a_real_directory_holding_the_file_moves_the_links_recorded_key_and_rebuilds_the_tab(self):
-        """A symlinked subagents/ replaced by a real directory, recorded since the dependency-key fix (#910): the
+        """A symlinked subagents/ replaced by a real directory, recorded since the dependency-key fix (fork PR #910): the
         agent-file walk notes a live link at a subagents path under the path's stat key (_subagent_walk_dep_note), the
         link's target's (st_mtime, st_size), so the own subagents/ that is a link is in the tab's record. Once the link is
         replaced by a real directory holding the agent's file, that recorded key, and no other, moves against the next
@@ -4084,6 +4307,362 @@ class DependencyKey(_World):
     def test_a_symlinked_subagents_directory_whose_own_place_raises_eio_notes_nothing_so_the_tab_is_served_after_it_clears(self):
         """_assert_a_fault_under_a_symlinked_subagents_directory_notes_nothing, an EIO on both calls for the own place."""
         self._assert_a_fault_under_a_symlinked_subagents_directory_notes_nothing("eio")
+
+
+class HeldFoldAgentFileKey(_World):
+    """(6) The agent file's own key: _awaiting_nest's launch fold records the key of the agent's file as the fold's own
+    reader stat'd it before its read (the reader's entry for the read, em._LAST_ENTRY, so the key costs no stat of its
+    own), reports it to the build the fold runs in and stores it in the fold entry, so every build the held fold answers
+    records it too. The launch fold is held in the launch-fold slot for the scope, and a chat build can be answered a
+    fold taken earlier in it (a pusher push derives the feed, which folds the session, before its chat loop:
+    _feed_first); a launch the agent appended between that fold and the build is then missing from the nest the build
+    shows. Under a fold that records no key for the file, such a build records the file only under the Agent head's
+    later _agent_steps stat, which already holds the launch: the next signature equals the record and the tab keeps the
+    stale nest until another recorded key moves. With the key the build records the file under two keys, the fold's and
+    the head's, and so their disagreement (_chat_build_deps), and the next cycle rebuilds the tab and nests the command:
+    the one-cycle lag the slot accepts, and no more. A build that folds the file and makes no _agent_steps stat of it
+    (an agent with no Agent event in the parent transcript: a Workflow agent, or an agent a subagent launched) records
+    the file's key through its own fold, where the code before this change recorded none, so a launch appended after
+    such a build never rebuilt its tab until another recorded key moved. The key is the file's (mtime, size), so such a
+    tab is also rebuilt at each cycle the file grew by any record, a launch or not: the cost case pins that term of the
+    cost home. A fold on the reader's fail path (the file there and its open refused) records the file under None, which
+    no re-stat that answers equals, so the tab is rebuilt at each cycle while the file cannot be read and settles at the
+    first cycle after: the two unreadable-file cases pin that term, with no Agent head and with one. The world: _World's
+    A Workflow agents, the first agent's own file gaining a background Bash launch (or, in the cost and unreadable-file
+    cases, a record pair that launches nothing), and one command row for that launch whose owner the launch ledger does
+    not name, so only the agent's own file attributes it. Named mutants, each run at this head: the key reported to the
+    fold's build and not stored in the fold entry reds the held-fold case and the push case (and DependencyKey's
+    once-per-call case); the key stored and not reported to the fold's own build reds the no-steps case, the cost case
+    and the two unreadable-file cases (and DependencyKey's signature count case)."""
+
+    LAUNCH = "toolu_stamps_bg_0001"   # the first agent's background Bash: the command row it owns
+
+    def setUp(self):
+        super().setUp()
+        self.aid = self.aids[0]
+        self.af = str(self.wfroot / ("wf_%016x" % 0) / ("agent-%s.jsonl" % self.aid))
+        rows = [{"tid": self.LAUNCH, "desc": "run the note tests", "t": NOW - 3, "type": "local_bash"}]   # no ledger agentId
+        km._bg_live_norm = lambda sid, path, live=None: [dict(r) for r in rows] if sid == SID else []
+        self.addCleanup(setattr, km._chat_dep_scope, "deps", None)
+        self.assertTrue(os.path.isfile(self.af), "premise: the first agent's own file is where the world put it")
+
+    def _launch(self):
+        """The first agent's own file gains its background Bash launch (a tool_use block with the command row's id), its
+        stat key moved (the sleep keeps a coarse mtime from hiding the append; the size moves in any case)."""
+        before = km._chat_stat_key(self.af)
+        time.sleep(0.02)
+        rec = {"type": "assistant", "timestamp": "2026-06-11T00:00:05.000Z", "message": {"content": [
+            {"type": "tool_use", "id": self.LAUNCH, "name": "Bash",
+             "input": {"run_in_background": True, "command": "uv run pytest tests/test_notes.py -q",
+                       "description": "run the note tests"}}]}}
+        with open(self.af, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+        self.assertNotEqual(km._chat_stat_key(self.af), before, "premise: the launch moved the agent file's stat key")
+        return before
+
+    def _where(self, aw):
+        """Where the command row sits in an awaiting answer: "top" at the top level, the agent id of the row whose waits
+        hold it, or None when it is absent."""
+        for it in (aw or {}).get("items") or []:
+            if it.get("id") == self.LAUNCH:
+                return "top"
+            if any(w.get("id") == self.LAUNCH for w in it.get("waits") or []):
+                return it.get("agentId")
+        return None
+
+    def _head_reads(self):
+        """build_session's two reads of the agent's file, in its order, for a transcript whose Agent tool event names the
+        first agent: the real Agent head (_stamp_agents, whose _agent_steps stats the file), then the real _session_awaiting.
+        Returns what _session_awaiting answered."""
+        km._stamp_agents({"toolu_stamps_head": {"name": "Agent", "agentId": self.aid}}, self.path, None, {})
+        return km._session_awaiting(SID, self.path, True)
+
+    def _head_build(self):
+        """A chat build: _head_reads with build_session's record open. Returns (what _session_awaiting answered, the
+        record)."""
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}   # build_session's literal for this build
+        try:
+            aw = self._head_reads()
+            return aw, km._chat_build_deps(SID, {"events": []})
+        finally:
+            km._chat_dep_scope.deps = None
+
+    def _workflow_build(self):
+        """A chat build with no Agent head (a Workflow agent has no Agent event in the parent transcript): the real
+        _session_awaiting alone with the record open, the agent's file read by the launch fold and by no _agent_steps call.
+        Returns (what _session_awaiting answered, the record, the files _agent_steps was called on)."""
+        steps, real = [], km._agent_steps
+
+        def counting(agent_path, *a, **k):
+            steps.append(str(agent_path))
+            return real(agent_path, *a, **k)
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}
+        try:
+            with mock.patch.object(km, "_agent_steps", counting):
+                aw = km._session_awaiting(SID, self.path, True)
+            return aw, km._chat_build_deps(SID, {"events": []}), steps
+        finally:
+            km._chat_dep_scope.deps = None
+
+    def _next_cycle_nests(self):
+        """The next scope's first read, in a scope of its own: where it puts the command row."""
+        _scope_open()
+        try:
+            return self._where(km._session_awaiting(SID, self.path, True))
+        finally:
+            _scope_close()
+
+    def test_a_fold_held_earlier_in_the_scope_records_the_agent_files_key_as_it_read_it_so_a_launch_appended_before_the_build_re_arms_the_tab(self):
+        """The held-fold road, in one scope: a read with no record open (the feed's) folds every agent's file and the scope
+        holds the folds; the first agent's launch lands; then a chat build in build_session's order is answered the held
+        fold for the nest and stats the file afresh in its Agent head. Premises: the earlier fold put the command at the top
+        level, the build did too (served the held fold: the lag), and a fold made now nests it. Keys on the build's record
+        of the agent file, _CHAT_DEP_KEYS_DIFFER (the fold's key from before the launch beside the head's from after it),
+        on the next signature missing the record, and on the next scope's fold nesting the command. Red under a fold that
+        records no key for the file, and under one whose key is reported to its own build and not stored in the fold
+        entry, on the record (the head's post-launch key, equal to every later re-stat)."""
+        self._open()
+        aw0 = km._session_awaiting(SID, self.path, True)          # the earlier fold in the scope, no record open (the feed's)
+        held = (self.path, self.aid) in _scope()["launches"]
+        before = self._launch()                                   # the launch lands between that fold and the tab's build
+        aw1, rec = self._head_build()
+        _scope_close()
+        after = km._chat_stat_key(self.af)
+        self.assertEqual((self._where(aw0), held), ("top", True),
+                         "premise: the earlier fold saw the agent's file before the launch (the command at the top level) and the "
+                         "scope holds the fold")
+        self.assertEqual(self._where(aw1), "top", "premise: the build was answered the held fold, so the command stays at the top "
+                                                  "level for this cycle (the lag)")
+        self.assertEqual(self._where(km._session_awaiting(SID, self.path, True)), self.aid,
+                         "premise: a fold made now (no scope: a call-local fold) nests the command under the first agent")
+        recorded = dict(rec["task_outs"]).get(self.af, "unrecorded")
+        self.assertEqual(recorded, km._CHAT_DEP_KEYS_DIFFER,
+                         "the build's record of the agent file: %r; keyed on the disagreement, the file reported under the fold's key "
+                         "from before the launch, %r, and the Agent head's from after it, %r, which no re-stat equals; the head's key "
+                         "alone is a fold that records no key for the file, and the tab keeps the stale nest" % (recorded, before, after))
+        self.assertNotEqual(km._chat_sig_deps(SID, rec)[0], rec["at_build"][0],
+                            "so the next cycle's signature misses the record and the tab is rebuilt: the one-cycle lag")
+        self.assertEqual(self._next_cycle_nests(), self.aid, "and the next scope's fold nests the command under the first agent")
+
+    def test_control_the_builds_own_fold_first_records_the_agent_file_under_one_key_and_the_tab_is_served(self):
+        """The control, in build_session's order with no earlier fold: the launch lands, then the chat build's own fold is the
+        scope's first. The fold and the Agent head read the same file, so the build records it under one key, the file's,
+        and the next signature equals the record: the fix adds no rebuild on this road."""
+        self._open()
+        self._launch()
+        aw1, rec = self._head_build()
+        _scope_close()
+        self.assertEqual(self._where(aw1), self.aid, "premise: the build's own fold nests the command under the first agent")
+        self.assertEqual(dict(rec["task_outs"]).get(self.af, "unrecorded"), km._chat_stat_key(self.af),
+                         "the build's record of the agent file: one key, the file's")
+        self.assertEqual(km._chat_sig_deps(SID, rec)[0], rec["at_build"][0], "the next signature equals the record: no rebuild")
+
+    def test_a_build_whose_own_fold_reads_the_agent_file_records_its_key_with_no_agent_steps_stat_so_a_launch_appended_after_it_re_arms_the_tab(self):
+        """The half of the fix the held fold's cases leave open: a build that makes no _agent_steps stat of the agent's
+        file (a Workflow agent: no Agent event in the parent transcript), its own fold the scope's first, then the launch
+        lands after the build. Keys on the build's record of the agent file, the key the fold read (the file before the
+        launch), on the next signature missing the record, and on the next scope's fold nesting the command. Red under the
+        code before this change (no key for the file on this road: the record held none, so the next signature equalled
+        it and the tab was never rebuilt until another recorded key moved) and under a fold whose key is stored in the fold
+        entry and not reported to its own build, on the record ("unrecorded")."""
+        self._open()
+        aw1, rec, steps = self._workflow_build()
+        _scope_close()
+        before = self._launch()                                   # the launch lands after the build
+        self.assertEqual((self._where(aw1), steps), ("top", []),
+                         "premise: the build's fold saw the file before the launch (the command at the top level) and the build "
+                         "made no _agent_steps call: %r" % (steps,))
+        recorded = dict(rec["task_outs"]).get(self.af, "unrecorded")
+        self.assertEqual(recorded, before,
+                         "the build's record of the agent file: %r; keyed on the key its own fold read, %r (the file before the "
+                         "launch); \"unrecorded\" is a build that records no key for the file it folded, whose tab no launch "
+                         "appended after it rebuilds" % (recorded, before))
+        self.assertNotEqual(km._chat_sig_deps(SID, rec)[0], rec["at_build"][0],
+                            "so the next cycle's signature misses the record and the tab is rebuilt")
+        self.assertEqual(self._next_cycle_nests(), self.aid, "and the next scope's fold nests the command under the first agent")
+
+    def _grow(self, n):
+        """The first agent's own file gains one tool call and its result, a record pair that launches nothing."""
+        use = "toolu_stamps_step_%04d" % n
+        with open(self.af, "a") as f:
+            f.write(json.dumps({"type": "assistant", "timestamp": "2026-06-11T00:01:00.000Z", "message": {"content": [
+                {"type": "tool_use", "id": use, "name": "Read", "input": {"file_path": "notes/index.md"}}]}}) + "\n")
+            f.write(json.dumps({"type": "user", "timestamp": "2026-06-11T00:01:01.000Z", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": use, "content": "# Notes"}]}}) + "\n")
+
+    def test_a_workflow_tab_whose_fold_read_an_agents_file_is_rebuilt_at_each_cycle_the_file_grew_by_any_record(self):
+        """The cost the agent file's key adds (the dependency-note signature entry of the cost home,
+        _subagent_tree_memo_report's docstring): the key is the file's (mtime, size), so a tab whose build folded the file
+        is rebuilt at each cycle the file grew, by a record that launches nothing too, and served at a cycle it did not.
+        Four pusher cycles of one cached Workflow tab (no Agent head) under the chat-build cache's rule (rebuilt when the
+        record's re-evaluation differs from what the build embedded), the first agent's file gaining a tool call and its
+        result before the second and the third cycles and nothing before the fourth, the live row unchanged throughout (the
+        fixture's). Keys on the verdicts per cycle, [cold build, rebuilt, rebuilt, served], and on the command at the top
+        level in every build (no launch landed). Under the code before this change the verdicts are [cold build, served,
+        served, served]: the record held no key for the file."""
+        verdicts, builds = [], []
+        for c in range(4):
+            if c in (1, 2):
+                self._grow(c)
+
+            def job(now, live_map, **kw):
+                deps = builds[-1][1] if builds else None
+                if deps is not None and km._chat_sig_deps(SID, deps) == deps["at_build"]:
+                    verdicts.append("served")
+                    return
+                verdicts.append("cold build" if deps is None else "rebuilt")
+                aw, rec, _steps = self._workflow_build()
+                builds.append((self._where(aw), rec))
+            km._turn_notify_tick = job
+            km._pusher_cycle()
+        self.assertEqual(len(verdicts), 4, "each cycle's job ran to its end: %r" % (verdicts,))
+        self.assertEqual([w for w, _rec in builds], ["top"] * len(builds), "premise: no build nests the command (no launch landed)")
+        self.assertEqual(verdicts, ["cold build", "rebuilt", "rebuilt", "served"],
+                         "the tab's verdict per cycle: %r; keyed on a rebuild at each of the two cycles the agent's file grew by a "
+                         "record that launches nothing, and the tab served at the cycle it did not; a record with no key for the "
+                         "file serves the tab at every cycle" % (verdicts,))
+
+    def _unreadable_cycles(self, build):
+        """Five pusher cycles of one cached tab under the chat-build cache's rule, each build made by `build` (answering
+        the awaiting answer and the record first), the first agent's own file holding a record pair (the reader never
+        opens an empty file) and at mode 000 for the first three cycles, readable for the last two. Returns (the verdicts,
+        the key each build recorded for the file). The mode is restored inside the call, before _World's cleanup removes
+        the tree; skipped as root, whom permission bits do not bind."""
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        self._grow(0)
+        verdicts, recs = [], []
+        self.addCleanup(os.chmod, self.af, 0o644)
+        os.chmod(self.af, 0o000)
+        try:
+            with self.assertRaises(PermissionError, msg="premise: the real fault, on the file's open"):
+                open(self.af, "rb").close()
+            self.assertIsNotNone(km._chat_stat_key(self.af), "premise: the file's stat answers under the fault, so a re-stat "
+                                                             "never equals a None key")
+            for c in range(5):
+                if c == 3:
+                    os.chmod(self.af, 0o644)                      # the fault ends before the fourth cycle
+
+                def job(now, live_map, **kw):
+                    deps = recs[-1] if recs else None
+                    if deps is not None and km._chat_sig_deps(SID, deps) == deps["at_build"]:
+                        verdicts.append("served")
+                        return
+                    verdicts.append("cold build" if deps is None else "rebuilt")
+                    recs.append(build()[1])
+                km._turn_notify_tick = job
+                km._pusher_cycle()
+        finally:
+            os.chmod(self.af, 0o644)
+        return verdicts, [dict(rec["task_outs"]).get(self.af, "unrecorded") for rec in recs]
+
+    def test_a_tab_whose_fold_cannot_read_an_agents_file_is_rebuilt_at_each_cycle_until_the_first_cycle_after_it_reads_again(self):
+        """The cost of the None key a fold on the reader's fail path records (the dependency-note signature entry of the
+        cost home, and the comment at _awaiting_nest's fold map): the first agent's file is there and its open raises
+        EACCES, so its Workflow tab's fold (no Agent head) records the file under None, which the next re-stat never
+        equals. Keys on the verdicts per cycle, [cold build, rebuilt, rebuilt, rebuilt, served] (the tab rebuilt at each
+        cycle after an unreadable one, and served from the second cycle after the file reads again), and on the keys the
+        builds recorded, None three times and then the file's. Under the code before this change the verdicts are [cold
+        build, served, served, served, served]: the record held no key for the file. Red under the key stored and not
+        reported to the fold's own build, on the keys ("unrecorded")."""
+        verdicts, keys = self._unreadable_cycles(self._workflow_build)
+        self.assertEqual(len(verdicts), 5, "each cycle's job ran to its end: %r" % (verdicts,))
+        real = km._chat_stat_key(self.af)
+        self.assertEqual(keys, [None, None, None, real],
+                         "the key each build recorded for the file: %r; keyed on None while the file cannot be read (the reader's "
+                         "fail path) and the file's own key, %r, at the first build after" % (keys, real))
+        self.assertEqual(verdicts, ["cold build", "rebuilt", "rebuilt", "rebuilt", "served"],
+                         "the tab's verdict per cycle: %r; keyed on a rebuild at each cycle after one whose build recorded None, and "
+                         "the tab served once a build recorded the file's key; a record with no key for the file serves the tab at "
+                         "every cycle" % (verdicts,))
+
+    def test_with_an_agent_head_a_tab_whose_fold_cannot_read_the_agents_file_is_rebuilt_at_each_cycle_until_it_reads_again(self):
+        """The same road with an Agent head (the chat build in build_session's order: _stamp_agents, whose _agent_steps
+        stats the file, then _session_awaiting): the head records the file's stat key and the fold None, so the build
+        records their disagreement, which no re-stat equals. Keys on the recorded keys, _CHAT_DEP_KEYS_DIFFER three times
+        and then the file's key (the head and the fold agree once the file reads), and on the same verdicts. Under the code
+        before this change the head's key alone is recorded and the tab is served at every cycle after the first. Red under
+        the key stored and not reported to the fold's own build, on the keys (the head's alone)."""
+        verdicts, keys = self._unreadable_cycles(self._head_build)
+        self.assertEqual(len(verdicts), 5, "each cycle's job ran to its end: %r" % (verdicts,))
+        real = km._chat_stat_key(self.af)
+        self.assertEqual(keys, [km._CHAT_DEP_KEYS_DIFFER] * 3 + [real],
+                         "the key each build recorded for the file: %r; keyed on the disagreement of the head's key and the fold's "
+                         "None while the file cannot be read, and one key, the file's, %r, at the first build after" % (keys, real))
+        self.assertEqual(verdicts, ["cold build", "rebuilt", "rebuilt", "rebuilt", "served"],
+                         "the tab's verdict per cycle: %r" % (verdicts,))
+
+    def _push_cycle(self, clients):
+        """One pusher push under a pusher cycle's scope: the snapshot and the three slots opened as _pusher_cycle opens them,
+        the real _push over `clients`, then its chat scopes closed and the slots cleared."""
+        live_map = km._live_map()
+        km._live_scope.snapshot = live_map
+        _scope_open()
+        try:
+            km._push(clients, live_map=live_map)
+        finally:
+            km._chat_push_scopes_close()
+            _scope_close()
+            km._live_scope.snapshot = None
+
+    def test_the_tab_built_from_a_fold_that_predates_a_launch_is_rebuilt_at_the_next_cycle_and_nests_the_command(self):
+        """The held-fold road through the real _push: one feed client and one chat client, so _feed_first derives the feed
+        before the chat loop. The feed is a stub that reads the session as _feed_session_entry does (the fold, held for
+        the scope) and during whose first read the first agent appends its launch; the chat build is a stub making
+        build_session's two reads in its order (the Agent head, then _session_awaiting). Three pushes, the agent's file
+        unchanged after the first. Keys on the builds: the first push's build shows the command at the top level (the
+        lag), the tab is rebuilt once, at the second push, and served after, and the cached tab nests the command. Red
+        under a fold that records no key for the file, and under one whose key is not stored in the fold entry: the tab is
+        built once and served stale."""
+        builds, state = [], {"appended": False}
+
+        def cached_feed(now, live_map, sig, connect=False):
+            km._session_awaiting(SID, self.path, True)            # _feed_session_entry's read of the session: the folds held
+            if not state["appended"]:
+                self._launch()                                    # the launch lands between the feed's fold and the chat build
+                state["appended"] = True
+            return {"type": "feed", "asks": [], "working": [], "awaiting": []}
+
+        def build(sid, now, live_map=None, **kw):
+            km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}   # build_session opens its record; _push takes it
+            aw = self._head_reads()
+            builds.append(self._where(aw))
+            return {"type": "session", "id": sid, "name": "web", "events": [{"kind": "assistant", "uuid": "u1", "md": "m1"}],
+                    "status": {"state": "idle", "sinceEpoch": None}, "ledger": None, "awaitingItems": (aw or {}).get("items")}
+        for name, value in (("_chat_tab_sessions", lambda now, live_map: [{"sid": SID, "name": "web", "path": self.path,
+                                                                          "anchor": SID}]),
+                            ("_cached_feed", cached_feed), ("build_session", build),
+                            ("_comments_frame", lambda sid, live_map: None),
+                            ("_push_subagents", lambda clients, now, live_map: None), ("_feed_wire", None)):
+            p = mock.patch.object(km, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        marks = mock.patch.dict(km._BOOT_MARKS, {"firstServe": 1.0})
+        marks.start()
+        self.addCleanup(marks.stop)
+        saved_feed = list(km._built_feed)
+        self.addCleanup(km._built_feed.__setitem__, slice(None), saved_feed)
+        self.addCleanup(km._built_chat.clear)
+        km._built_chat.clear()
+        km._built_feed[:] = [None, None, 0.0, 0.0]
+
+        def client(app):
+            c = {"app": app, "alive": True, "sent": {}}
+            c["send"] = lambda s: None
+            return c
+        clients = [client("feed"), client("chat")]
+        self._push_cycle(clients)                                 # push 1: the feed's fold, the launch, the tab's build
+        km._built_feed[1] = {"type": "feed", "asks": [], "working": [], "awaiting": []}   # the feed is built: the warm order next
+        self._push_cycle(clients)
+        self._push_cycle(clients)
+        self.assertTrue(state["appended"], "premise: the launch landed during the first push's feed")
+        self.assertEqual(builds[:1], ["top"], "premise: the first push's build was answered the held fold (the lag): %r" % (builds,))
+        hit = km._built_chat.get(SID)
+        served = self._where({"items": hit[1].get("awaitingItems")}) if hit else None
+        self.assertEqual((len(builds), served), (2, self.aid),
+                         "(the builds over three pushes, where the cached tab puts the command): %r; keyed on (2, the first agent): "
+                         "rebuilt once, at the second push, and served after, the cached tab nesting the command; 1 build is a tab "
+                         "built from the stale fold and never rebuilt: builds %r" % ((len(builds), served), builds))
 
 
 class SumOverRoots(_World):
