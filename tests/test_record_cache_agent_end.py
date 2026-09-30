@@ -1873,8 +1873,11 @@ class AgentEnd(unittest.TestCase):
     # error deferring the release) turns them red and replaces them. A release either road takes there with the file
     # present forgets the agent's faulted end too, since it covered the agent's file, and one that is the residual's pop
     # with no document keeps it, so the end's lookup after the fault remembers the agent as unheld (the cases after
-    # them). The file present is a second read after the release's own, and a fault's edge between the two is a residual
-    # _release_ended_agents' docstring states, with no case here.
+    # them), and a release on the unheld road that finds nothing held, is lost, raises or races a read keeps it too, in
+    # its place in the table (the cases after those). The file present is a second read after the release's own, and a
+    # fault's edge between the two is a residual _release_ended_agents' docstring states, with no case here; the same
+    # held em.release_entry follow-up closes that residual too: release_entry reports whether its own read found the
+    # file, and the forgetting of the faulted end keys on that answer, in place of the second read.
 
     def test_residual_an_unheld_end_paid_under_an_unreadable_tree_pops_the_records_without_their_document(self):
         self._end_before_any_read()
@@ -2184,6 +2187,144 @@ class AgentEnd(unittest.TestCase):
             self._held_unwritten_nothing(self.wf_agent, size, "under the fault")
         km._begin_checkpoint_cycle()
         self._released_with_its_document(self.wf_agent, size)
+
+    def _unheld_release_beside_a_faulted_end(self, first_cycle):
+        """The rows of the unheld road's release of the own agent's file beside that agent's faulted end, in the state
+        test_an_unheld_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too seeds, with a third agent's
+        end behind: the workflow agent's faulted end, the own agent's and then the third agent's, each remembered with the
+        own subagents directory, which reads (the fault has cleared) and holds the third agent's file, and the own agent
+        remembered as unheld too, its file held by a whole read. The third agent's end, the youngest, is there to show
+        whether the own agent's end keeps its place in the table, oldest first, or is moved behind it. `first_cycle` runs
+        the first cycle and shapes what that release returns; under the cap (one lookup a cycle) the first cycle looks the
+        workflow agent's end up (one walk; nothing is held for its file, so it is remembered as unheld), and the second
+        cycle, run as it is, looks up the oldest end still in the table. The rows, one after each cycle: (cycle, walks,
+        the faulted ends, the unheld ends, each table oldest first, releases, releaseLost, the own file's weight, its
+        document, the own agent's release). Returns the file's size before the first cycle and the rows."""
+        own = os.path.dirname(self.agent)
+        _append(os.path.join(own, "agent-%s.jsonl" % AID3), _agent_lines(AID3, 0, 40))
+        km._remember_faulted_end((SID, WF_AID), ((own, "tree"),))       # an end due ahead of the own agent's
+        km._remember_faulted_end((SID, AID), ((own, "tree"),))          # the own agent's faulted end
+        km._remember_faulted_end((SID, AID3), ((own, "tree"),))         # an end due behind it
+        km._remember_unheld_end((SID, AID), self.agent)                 # and the own agent's unheld end beside it
+        km._agent_steps(self.agent)                                      # a read holds the file whole, a fold with it
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        rows, self.maxDiff = [], None                                    # the whole rows in a red's message
+        for n, cycle in ((1, first_cycle), (2, km._begin_checkpoint_cycle)):
+            with self._recording() as got:
+                cycle()
+            rec = km._AGENT_RELEASED.get((SID, AID))
+            rows.append((n, got["walks"], [aid for _sid, aid in km._AGENT_ENDED_FAULTED],
+                         [aid for _sid, aid in km._AGENT_ENDED_UNHELD], self._stat("released")["agentEnded"]["count"],
+                         self._stat("releaseLost"), self._weight(self.agent), em._ckpt_file(self.agent).exists(),
+                         None if rec is None else "taken" if rec[1] else "owed"))
+        return size, rows
+
+    def test_an_unheld_release_that_is_lost_keeps_the_agents_faulted_end(self):
+        """A loss on the unheld road keeps the agent's faulted end in its place, and that end then carries the agent's
+        release (_release_ended_agents, the unheld road's keep list). The drop writes are off for the first cycle, so the
+        unheld release of the own agent's file is lost (counted in releaseLost) and the records stay, and the own agent's
+        faulted end stays in the table, ahead of the third agent's, while the workflow agent's end takes the cycle's
+        lookup. At the second cycle, the writes on, the own agent's end is looked up before the third agent's (one walk)
+        and the file released with its document. Red when a lost release forgets the faulted end: nothing looks the file
+        up after the loss, so the second cycle looks the third agent's end up and the records stay held with no document
+        (the rows then: (1, 1, [AID3], [WF_AID], 0, 1, <size>, False, None), (2, 1, [], [WF_AID, AID3], 0, 1, <size>,
+        False, None)). Red too when the loss moves the faulted end behind the third agent's: the second cycle looks the
+        third agent's end up first, and the own agent's file waits another cycle held with no document (the rows then:
+        (1, 1, [AID3, AID], [WF_AID], 0, 1, <size>, False, None), (2, 1, [AID], [WF_AID, AID3], 0, 1, <size>, False,
+        None))."""
+        def first_cycle():
+            km.CKPT_CONVERGE_MS = 0                                      # the drop writes off: the unheld release is lost
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    km._begin_checkpoint_cycle()
+            finally:
+                km.CKPT_CONVERGE_MS = 150.0
+        size, rows = self._unheld_release_beside_a_faulted_end(first_cycle)
+        self.assertEqual(rows, [(1, 1, [AID, AID3], [WF_AID], 0, 1, size, False, None),
+                                (2, 1, [AID3], [WF_AID], 1, 1, None, True, "taken")],
+                         "(cycle, walks, the faulted ends, the unheld ends, releases, releaseLost, the own file's "
+                         "weight, its document, the own agent's release): the loss keeps the own agent's faulted end "
+                         "in its place, and its lookup at the second cycle releases the file with its document")
+
+    def test_an_unheld_release_that_raises_keeps_the_agents_faulted_end(self):
+        """A raise on the unheld road keeps the agent's faulted end in its place, and that end then carries the agent's
+        release, as after a loss (the case above). em.release_entry raises for the own agent's file at the first cycle (a
+        synthetic RuntimeError: given up, counted in releaseLost and written to stderr), so the records stay, and the own
+        agent's faulted end stays in the table, ahead of the third agent's, while the workflow agent's end takes the
+        cycle's lookup. At the second cycle, the release no longer raising, the own agent's end is looked up before the
+        third agent's (one walk) and the file released with its document. Red when a raise forgets the faulted end:
+        nothing looks the file up after the raise, so the second cycle looks the third agent's end up and the records
+        stay held with no document (the rows then: (1, 1, [AID3], [WF_AID], 0, 1, <size>, False, None), (2, 1, [],
+        [WF_AID, AID3], 0, 1, <size>, False, None)). Red too when the raise moves the faulted end behind the third
+        agent's: the second cycle looks the third agent's end up first, and the own agent's file waits another cycle held
+        with no document (the rows then: (1, 1, [AID3, AID], [WF_AID], 0, 1, <size>, False, None), (2, 1, [AID], [WF_AID,
+        AID3], 0, 1, <size>, False, None))."""
+        real, err = em.release_entry, io.StringIO()
+
+        def release(key, reason):
+            if key == self.agent:
+                raise RuntimeError("synthetic")
+            return real(key, reason)
+
+        def first_cycle():
+            em.release_entry = release
+            try:
+                with contextlib.redirect_stderr(err):
+                    km._begin_checkpoint_cycle()
+            finally:
+                em.release_entry = real
+        size, rows = self._unheld_release_beside_a_faulted_end(first_cycle)
+        self._assert_raise_line(err.getvalue(), (SID, AID, self.agent))
+        self.assertEqual(rows, [(1, 1, [AID, AID3], [WF_AID], 0, 1, size, False, None),
+                                (2, 1, [AID3], [WF_AID], 1, 1, None, True, "taken")],
+                         "(cycle, walks, the faulted ends, the unheld ends, releases, releaseLost, the own file's "
+                         "weight, its document, the own agent's release): the raise keeps the own agent's faulted end "
+                         "in its place, and its lookup at the second cycle releases the file with its document")
+
+    def test_an_unheld_release_that_races_a_read_keeps_the_agents_faulted_end(self):
+        """A race on the unheld road keeps the agent's faulted end in its place, since a release that is only owed covers
+        nothing yet. At the first cycle a read of the grown file replaces the entry between the unheld release's document
+        write and its pop (the race test_a_release_racing_a_read_is_owed_not_lost drives), so the release is owed and the
+        grown records stay, and the own agent's faulted end stays in the table, ahead of the third agent's, while the
+        workflow agent's end takes the cycle's lookup. At the second cycle the pay takes the owed release with its
+        document and forgets the faulted end, as
+        test_an_owed_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too pins, and the third agent's
+        end takes the cycle's lookup (one walk; nothing is held for its file, so it is remembered as unheld). Red when a
+        race forgets the faulted end: the first cycle's faulted table holds the third agent's end alone (the first row
+        then: (1, 1, [AID3], [WF_AID], 0, 0, <grown size>, True, 'owed')). Red too when the race moves the faulted end
+        behind the third agent's (the first row then: (1, 1, [AID3, AID], [WF_AID], 0, 0, <grown size>, True, 'owed')).
+        Only the first cycle's table shows either: the pay forgets the end at the second cycle either way, so the final
+        state is the same, and the first row is asserted on its own."""
+        real, fired = em.checkpoint_write, []
+
+        def racing_write(path, *a, **k):                                 # between the document write and the pop, a read of the
+            out = real(path, *a, **k)                                    #  grown file replaces the entry
+            if str(path) == self.agent and not fired:
+                fired.append(1)
+                _append(self.agent, _agent_lines(AID, 40, 2))
+                em._read_jsonl_incremental(self.agent)
+            return out
+
+        def first_cycle():
+            em.checkpoint_write = racing_write
+            try:
+                km._begin_checkpoint_cycle()
+            finally:
+                em.checkpoint_write = real
+        size, rows = self._unheld_release_beside_a_faulted_end(first_cycle)
+        self.assertTrue(fired, "precondition: the unheld release wrote the agent's document and a read raced its pop")
+        grown = os.path.getsize(self.agent)
+        self.assertGreater(grown, size, "precondition: the racing read grew the file")
+        self.assertEqual(rows[0], (1, 1, [AID, AID3], [WF_AID], 0, 0, grown, True, "owed"),
+                         "(cycle, walks, the faulted ends, the unheld ends, releases, releaseLost, the own file's "
+                         "weight, its document, the own agent's release) after the first cycle: the race keeps the own "
+                         "agent's faulted end in its place (the only cycle that shows it, since the pay forgets the end "
+                         "at the second cycle either way)")
+        self.assertEqual(rows[1], (2, 1, [], [WF_AID, AID3], 1, 0, None, True, "taken"),
+                         "the same row after the second cycle: the pay takes the owed release with its document and "
+                         "forgets the faulted end, and the third agent's end takes the cycle's lookup")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": grown}}, "the grown file released")
 
     # ---- an agent's later end after its earlier release was taken (PR 913 round 1, the texts' account of two ends) ----
     # An agent reports two ends (its stop and its task's end, or its workflow slot's done state), and the second can reach a

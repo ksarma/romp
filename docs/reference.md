@@ -3308,8 +3308,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   transcript can be taken for a session with no transcript (a refused
   listing of that directory, or a refused stat of the transcript in it,
   reads as a directory with no transcript in it when the kernel's session
-  discovery walks the project directories again while the fault lasts: after
-  a session is added or renamed, a new transcript lands in a session's
+  discovery walks the project directories again while the fault lasts,
+  which it does whenever its change check moves: among others after a
+  session is added or renamed, a new transcript lands in a session's
   project directory, or the kernel starts, and at once when the fault
   refuses the stat of the project directory itself, as a parent directory
   that cannot be searched or an I/O error does, since discovery's change
@@ -3336,13 +3337,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `AgentEnd` in `tests/test_record_cache_agent_end.py`); whether the file is
   there is a second check made after the release returns, not the check the
   release itself made, and a fault that begins or clears between the two, a
-  window that holds the release's own document write and drop (and, at the
-  pay, the owed releases paid after it), is a residual of this change: one
-  that clears there follows a drop with no document and ends the waiting end,
-  so the next whole read of the file is held until the cache's own
-  bounds reach it, and one that begins there keeps the waiting end after a
-  release that covered the file, so its resolution after the fault
-  remembers the agent as above;
+  window that holds the release's own work after its read (its document
+  write when it saw the file, and the drop) and, at the pay, the owed
+  releases paid after it, is a residual of this change: one that clears
+  there follows a drop with no document and ends the waiting end, so the
+  next whole read of the file is held until the cache's own bounds reach
+  it, and one that begins there keeps the waiting end after a release that
+  covered the file, so its resolution after the fault remembers the agent
+  as above; a follow-up fix after this change closes that window:
+  `release_entry` in `kernel/event_model.py` would report whether its own
+  read found the file, and both roads would decide from that answer whether
+  the waiting end ends, in place of the second check;
   a whole re-read of a file after its release was taken is held whole
   until the count cap, the byte budget or a quiescent drop reaches it,
   unless a later end of the agent comes after that release: one that finds

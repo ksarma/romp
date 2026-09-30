@@ -15981,7 +15981,9 @@ _AGENT_ENDED_FAULTED = {}           # (sid, agent id) -> ((place, kind), ...) fo
 #                                     made with no lookup (its remembered unheld end's, or its owed release at the pay) is
 #                                     taken while the file is there to it (it covered the file; that is a second read after
 #                                     the release's own, and the window between the two is a residual _release_ended_agents'
-#                                     docstring states), or the resolution or the release raises. The pusher thread's alone
+#                                     docstring states, which the held em.release_entry follow-up closes: release_entry reports
+#                                     whether its own read found the file, and the pops key on that), or the resolution or the
+#                                     release raises. The pusher thread's alone
 _AGENT_FAULTED_LOOKUPS_MAX = 1      # the faulted ends _release_ended_agents looks up again in one cycle, a count and not a time:
 #                                     the oldest whose place reads again, the rest read again and looked up at the next cycles
 #                                     (a lookup forgets its end or remembers it again as the newest, so the ends waiting take
@@ -15996,7 +15998,9 @@ _AGENT_FAULTED_LOOKUPS_MAX = 1      # the faulted ends _release_ended_agents loo
 #                                     agent meanwhile, with the file there to it, forgets the faulted end too, since it
 #                                     covered the agent's file (_release_ended_agents' docstring; whether the file is
 #                                     there is a second os.path.exists after the release's own read, and a fault's edge
-#                                     between the two is a residual it states)
+#                                     between the two is a residual it states, which the held em.release_entry follow-up
+#                                     closes: release_entry reports whether its own read found the file, and the pops key
+#                                     on that)
 
 
 def _remember_faulted_end(pair, places):
@@ -16323,8 +16327,10 @@ def _release_ended_agents():
     next fold's whole read stays held until the cache's own bounds reach it (the case the kept end exists for); a fault
     that begins there keeps the faulted end after a release that saw the file and covered it, so the end's lookup after
     the fault finds nothing held and remembers the agent as unheld again (the case the forgetting exists for). No case
-    in the suite places a fault's edge between the two reads; having em.release_entry report whether its own read found
-    the file, and keying the forgetting on that, would close the window.
+    in the suite places a fault's edge between the two reads. The window is folded into the same held follow-up of
+    em.release_entry (the one above that reads only ENOENT and ENOTDIR as the file gone), which closes it too:
+    release_entry reports whether its own read found the file, and the pops key on that, in place of the second
+    os.path.exists.
     An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
     written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
     (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters
@@ -16365,7 +16371,10 @@ def _release_ended_agents():
                     _AGENT_ENDED_FAULTED.pop(pair, None)   # and, as on the unheld road below, it saw the file and
                     #                                        covered it: the agent's faulted end is over too (a read
                     #                                        after the release's own: a fault's edge between the two
-                    #                                        is a residual the docstring states)
+                    #                                        is a residual the docstring states, which the held
+                    #                                        em.release_entry follow-up closes: release_entry reports
+                    #                                        whether its own read found the file, and the pops key
+                    #                                        on that)
             elif rec[0] not in owed:
                 _AGENT_RELEASED.pop(pair, None)        # not taken and no longer owed: no entry was popped for this end
                 if got == "absent":
@@ -16398,7 +16407,10 @@ def _release_ended_agents():
                     #                                        it, so its lookup after the fault remembers the agent as
                     #                                        unheld and the first whole re-read is released (this read
                     #                                        comes after the release's own: a fault's edge between the
-                    #                                        two is a residual the docstring states)
+                    #                                        two is a residual the docstring states, which the held
+                    #                                        em.release_entry follow-up closes: release_entry reports
+                    #                                        whether its own read found the file, and the pops key
+                    #                                        on that)
     reads, looked = {}, 0                              # (place, kind, sid) -> _unread_place_reads' answer, this cycle's: the
     #                                                    ends waiting on one place cost one read of it per cycle, not one
     #                                                    each; and the faulted ends looked up below, at most
