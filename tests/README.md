@@ -265,7 +265,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   parameter, a default, a name of the conftest's module scope and a name an
   import binds alike, since code outside the conftest's text can falsify what
   the text binds a name to. The reviewer's rulings withdrew the three proofs
-  of a name the rule once had, each after verifications found a way to
+  of a key's name the rule once had, each after verifications found a way to
   falsify it at run time (for the import and module-scope proofs, an honest
   one): a key reached through an import (a stub in
   `sys.modules`, a directory ahead on the import path, another module
@@ -284,7 +284,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   conftest declares as `--plugins`, or with `dest="plugins"`, takes the dest of
   `-p`. An argument parser's parse is admitted only when handed a list or tuple
   written out at the call, since a name handed to it can be rebound to `None`
-  from outside the conftest's text, and the parse then reads `sys.argv`. The
+  from outside the conftest's text, and the parse then reads `sys.argv`; this
+  withdrew a fourth proof of a name, of one every binding of which is a list,
+  on the principle that withdrew the other three. The
   rule states the trades this makes:
   `getattr(config, "workerinput", {})` is refused, and
   `hasattr(config, "workerinput")` is admitted;
