@@ -7527,9 +7527,8 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     interpreter reading the text binds it, folds it from the module's declaration alone: builtins.lineage = '' beside
     the module's lineage = 'zz', and then 'an' + lineage + 'yio', which the rule folds to 'anzzyio' where Python binds
     anyio (a class body's read of such a name ahead of its class's own binding, the module binding it by no
-    declaration, is read as no binding (the empty string beside the class's values: HOW IT FOLLOWS A ROAD), so it is
-    refused only where that empty string completes a word naming anyio; a value other than the empty string written
-    into the builtins module is not read, and passes); no live site (neither tests/conftest.py nor tests/__init__.py
+    declaration, is read as no binding, the empty string beside the class's values (HOW IT FOLLOWS A ROAD), and the
+    value written into the builtins module is not read); no live site (neither tests/conftest.py nor tests/__init__.py
     names builtins or __builtins__, so neither writes into the builtins module), escape-only, witness
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[builtins-written], whose four plants (B1 and B4,
     builtins.lineage = '' and __builtins__['lineage'] = '' beside the module's lineage = 'zz' in a branch not taken,
