@@ -1369,7 +1369,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "census reads is a run-time form, below), a module's own `__setattr__` or `__delattr__` method, a listed name, attrgetter or "
                 "methodcaller imported from a module other than its own, a name built at run time, gc or ctypes among them, and through "
                 "a module reached by a tuple or list unpacking, an inline walrus, `sys.modules.__getitem__`, a for-loop target, a "
-                "parameter default or a starred argument) is outside the list and not seen, and a module name or a builtin so rewritten is read as the file's text binds it; nor does it see a scalar local or parameter a function rebinds at run time through its own frame (the frame's locals, which Python 3.13 and later write through to the function, reached by `sys._getframe()`, `inspect.currentframe()` or `inspect.getargvalues()` among other calls): a page's text, and a content type that is a string constant or a name bound once to one, so rebound the census reads as the function's text binds it, a stated limit on Python 3.13 and later (its witnesses: a handler that binds its content type to `application/json` and one that binds its page to `<p>ok</p>`, each rebinding that local through its frame, so that those versions serve a fetch as a page). A container a function binds and reads whole, changed through that same frame's local mapping, reached or run as code in the function's own body (one of the seven bare names `locals`, `vars`, `exec`, `eval`, `_getframe`, `currentframe`, `getargvalues`, one of the four attributes `_getframe`, `currentframe`, `getargvalues` or `f_locals` on any receiver, or a name that a top-level statement of the module or of the function's own body, outside any def, class or lambda it nests, binds to one of those primitives by a plain assignment, a walrus, an equal-length unpacking of a list or tuple literal into plain names, or a `from ... import`, and any name so bound in turn, resolved among those statements), is refused by name on every version, since the change reaches the real object; the check reads the spelling anywhere in the function, called or not, so a name merely spelled like a primitive is refused too, its reason naming the form the census cannot follow rather than a frame reached; a change to those locals at run time through a frame object, exec or eval reached in any other spelling (the name `locals` or `vars` as an attribute on a receiver, exec or eval reached as an attribute, `f_locals` as a bare name, a starred or nested unpacking target, or a `from ... import` a def, class or lambda nested in the function makes or a module-level def's binding the resolution does not reach) is the stated precondition, outside what the census reads, and passes silently (its witnesses: `locals` reached as an attribute on a receiver, an exec, and an eval), while a name a nested scope binds to a primitive by an assignment carries the spelling in the function's subtree and refuses; code the function runs that the census does not read (a helper it calls as a statement, a method on self, a context manager it enters), reaching the caller's frame to change such a container, is a stated limit instead, the census reading no such code's body for its frame reach as the call limit reads none for what a callee does with a container it is handed; a content type the census reads other than as a string constant or a name bound once to one is refused by name too, on every version, so no frame can rewrite an intermediate the census had read. A `_send` definition in a class that a function defines, a page function that a function encloses, a `_send` call inside a lambda's body, and a Content-Type write inside one that is no `_send` definition's own write fail the run by name: the census does not read the enclosing function's or lambda's scope, so it would take a name that scope binds (a builtin or a module name it shadows) for the module's. A `_send` definition's own Content-Type writes (each write whose innermost def is the definition, or a def in it itself named `_send`) are typed at each call. A call fails the run by name where one of them names a parameter whose argument the census reads as the type and the definition binds that name other than as that parameter anywhere in its body (in its own scope or in a lambda, a comprehension, a nested def or a class body in it) and in any form (an assignment, augmented or annotated, or an annotation; a loop, with, walrus or match target; an except name; a del; an import; a def or class statement; a global or nonlocal declaration; a parameter, a comprehension's target, a type statement or a type parameter): the census reads that write's type from the call's argument, which such a binding may replace. "
+                "parameter default or a starred argument) is outside the list and not seen, and a module name or a builtin so rewritten is read as the file's text binds it; nor does it see a scalar local or parameter a function rebinds at run time through its own frame (the frame's locals, which Python 3.13 and later write through to the function, reached by `sys._getframe()`, `inspect.currentframe()` or `inspect.getargvalues()` among other calls): a page's text, and a content type that is a string constant or a name bound once to one, so rebound the census reads as the function's text binds it, a stated limit on Python 3.13 and later (its witnesses: a handler that binds its content type to `application/json` and one that binds its page to `<p>ok</p>`, each rebinding that local through its frame, so that those versions serve a fetch as a page). A container a function binds and reads whole, changed through that same frame's local mapping, reached or run as code in the function's own body (one of the seven bare names `locals`, `vars`, `exec`, `eval`, `_getframe`, `currentframe`, `getargvalues`, one of the four attributes `_getframe`, `currentframe`, `getargvalues` or `f_locals` on any receiver, or a name that a statement of the module's or the function's own body, outside every def, class or lambda statement it nests (header and body alike), binds to one of those primitives, its bound value the primitive's own bare name or attribute, by a plain or annotated assignment, a walrus, an equal-length unpacking of a list or tuple literal into plain names, or a `from ... import` of one of the seven names, and any name such a statement binds to a name so bound, resolved among those statements), is refused by name on every version, since the change reaches the real object; the check reads the spelling anywhere in the function, called or not, so a name merely spelled like a primitive is refused too, its reason naming the form the census cannot follow rather than a frame reached; a change to those locals at run time through a frame object, exec or eval reached in any other spelling (the name `locals` or `vars` as an attribute on a receiver; exec or eval reached as an attribute; `f_locals` as a bare name; and any binding of a name to a primitive that the resolution above does not read, a starred or nested unpacking target, an alias whose bound value is any other expression (an if-expression, a call), and a binding in the header or the body of a def, class or lambda statement among them) is the stated precondition, outside what the census reads, and passes silently (its witnesses, one for each road named: `locals` reached as an attribute on a receiver; `builtins.exec`; `builtins.eval`; `f_locals` called as a bare name; a starred and a nested unpacking target; a module alias bound to an if-expression and one bound to a call's return; a walrus in a module-level def's default, a `from ... import` in a def nested in the function, and an assignment inside a module-level def's body), while a name a nested scope binds to a primitive by an assignment carries the spelling in the function's subtree and refuses; code the function runs that the census does not read (a helper it calls as a statement, a method on self, a context manager it enters), reaching the caller's frame to change such a container, is a stated limit instead, the census reading no such code's body for its frame reach as the call limit reads none for what a callee does with a container it is handed; a content type the census reads other than as a string constant or a name bound once to one is refused by name too, on every version, so no frame can rewrite an intermediate the census had read. A `_send` definition in a class that a function defines, a page function that a function encloses, a `_send` call inside a lambda's body, and a Content-Type write inside one that is no `_send` definition's own write fail the run by name: the census does not read the enclosing function's or lambda's scope, so it would take a name that scope binds (a builtin or a module name it shadows) for the module's. A `_send` definition's own Content-Type writes (each write whose innermost def is the definition, or a def in it itself named `_send`) are typed at each call. A call fails the run by name where one of them names a parameter whose argument the census reads as the type and the definition binds that name other than as that parameter anywhere in its body (in its own scope or in a lambda, a comprehension, a nested def or a class body in it) and in any form (an assignment, augmented or annotated, or an annotation; a loop, with, walrus or match target; an except name; a del; an import; a def or class statement; a global or nonlocal declaration; a parameter, a comprehension's target, a type statement or a type parameter): the census reads that write's type from the call's argument, which such a binding may replace. "
                 "The page function of each script-running route is followed to the text it returns or inlines, and a "
                 "parameter a followed call omits is read from its default value as that argument would be, in the scope the def statement runs "
                 "in (a default the pass cannot read is refused by name, one that holds a lambda among them). A "
@@ -1389,8 +1389,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 " reads a BoolOp's operands, a method call's receiver and a subscript's container when they name a module constant (a name one "
                 "plain single-name assignment binds as a top-level statement and nothing else binds at module level, in a module with no "
                 "star import that writes no name of its module namespace through a computed name and may not rewrite it at run time, as "
-                "listed below) or a local, a method call's receiver only for a method whose return is drawn from the receiver's text (strip, lstrip, rstrip, removeprefix, removesuffix, split, rsplit, splitlines, partition, rpartition, a match's group, and the read methods get, keys, values, items, index, count and copy), any other method on a receiver whose text the pass reads refused by name, the receiver of `.encode` or `.format_map` whatever it is (but the name str, bytes or bytearray before `.format_map`, and either one in a shape the census does not compute, each refused below), a loop, unpacking or with target from its source, and a local container's "
-                "stored or appended values where the census proves every change to it (below); it passes over a base whose own text it does not "
+                "listed below) or a local, a method call's receiver only for a method whose return is drawn from the receiver's text (strip, lstrip, rstrip, removeprefix, removesuffix, split, rsplit, splitlines, partition, rpartition, a match's group, and the read methods get, keys, values, items, index, count and copy), any other method on a receiver whose text the pass reads refused by name, the receiver of `.encode` or `.format_map` whatever it is (but the name str, bytes or bytearray before `.format_map`, and either one in a shape the census does not compute, each refused below), a loop, unpacking or with target from its source, and a local container's stored or appended values where every occurrence of its name is one of the proven forms (below); it passes over a base whose own text it does not "
                 "read (in a "
                 "module that holds no star import, a top-level import statement that is its name's one module-level binding and is not rebound, "
                 "or one of the seven builtins a page may name, each for what its result is (str, its argument's text or a value's printed form, a call of it with more than one positional argument, a starred argument or a keyword other than `object`, any of which may be an encoding or an errors argument that decodes its first, refused by name, an honest decode of bytes failing closed with it; int and float, a number, which carries no host, so a call of either that is the builtin is a leaf whose argument the pass does not read, save where the call is the base of a receiver, a container or an attribute, where the argument is read as any call's is (the leaf rests on the builtin's return, which the census does not read: an `__int__` or an `__index__` returning an int subclass, or a `__float__` returning a float subclass, whose `__str__` or `__format__` is overridden is the escape shape that could put text there, the stated limit, and the interpreters the census runs on copy such a return to an exact int or float, so its witness serves digits), and a call of either bound any other way is refused by name; dict, a mapping of its arguments' keys and values; max, one of its arguments (a call of it handed one iterable or a starred argument, which returns an element its argument holds, whose join with the text beside the call the census does not compute, is refused by name); getattr, an attribute of its first argument; and chr, the character a code point names: getattr and chr give text their arguments do not hold, so each falls under the call limit below, as its witness) that no module-level binding shadows and that is not rebound, any other builtin refused by name, and a call of super() refused by name as well, its methods being a base class's (the names the import system binds in every module, `__doc__`, "
@@ -1404,7 +1403,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "sibling module defines and the page imports, and a class reached through an import's attribute (its witness: a class that a "
                 "sibling module defines, read as an attribute of that module, which the page imports by name) or through a call's return, under "
                 "the call limit; code behind a name on self is not followed at all, since every method called on self is refused by name "
-                "(below), and an item of self, a parameter's, is text such a base holds. A local container (a name a function the pass reads binds whole to a list, dict or set literal or comprehension, or one it changes, directly, through an item of it or an expression holding it, or through a name bound to it, to an item of it or to a new object holding one) is read whole only where every occurrence of its name, resolved by binding, is one of the proven forms: its one binding (a plain single-name assignment to a list, dict, set or tuple literal or to a call whose return the census reads as a value slot, an import's, one of the seven builtins a page may name, a parameter's or a method's on one of those); the base of a subscript store by a str or int constant key as the one target of a plain assignment, whose stored value the census reads; the receiver of an append or extend of one plain argument the census reads; and the fourth form (the reviewer's 07:37Z ruling), a read that hands the container to no other code: the receiver of one of its bound type's read methods (a closed set per type, the type known from the one binding: a dict's get, keys, values and items, a list's or a tuple's index and count, a subscript load on a dict, list or tuple) or the base of a subscript load, wherever it stands, tests included. A read method's or a subscript load's result is an item the census follows by binding like any other value: a change through such an item, or its hand-off to another object's method, refuses the container. Any other occurrence refuses the container by the rule, its reason naming the role it fails: the whole container bound to another name, to a name the function declares global or nonlocal, or into an attribute or another object; a read that hands it to another object's method (an operand of a binary operator, a comparison or `in`, a subscript's index, a slice's bound, the value of an augmented assignment) or any other read (a test, a boolean operation's operand, held in a new object); a second binding (an augmented assignment, a walrus, or a for, with, except, match or unpacking target); a delete; a method other than append, extend or a read method of its type, a read method outside its type's set or a spelled-out dunder among them, or an attribute of it read other than as a method's callee; a store by a key that is no constant; an append or extend of other than one plain argument; or any occurrence in a function or lambda nested in it, or a class body it defines, whose code the census does not read (a closure capture) or which makes a class attribute; a comprehension is read where it stands, so a read there and an append of a read value there pass, and a change the census cannot fold, a comprehension target store among them, refuses. The first parameter of a method or a route handler is not read so: every attribute read and method call on it is refused already. One handed to a call as an argument is under the call limit, what the callee does with it not read (its witness: a local dict a module function it is handed stores a fetch into). An attribute read in a page "
+                "(below), and an item of self, a parameter's, is text such a base holds. A local container (a name a function the pass reads binds whole to a list, dict or set literal or comprehension, or one it changes, directly, through an item of it or an expression holding it, or through a name bound to it, to an item of it or to a new object holding one) is read whole only where every occurrence of its name, resolved by binding, is one of the proven forms: its one binding (a plain single-name assignment to a list, dict, set or tuple literal or to a call whose return the census reads as a value slot, an import's, one of the seven builtins a page may name, a parameter's or a method's on one of those); the base of a subscript store by a str or int constant key as the one target of a plain assignment, whose stored value the census reads; the receiver of an append or extend of one plain argument the census reads; and the fourth form, a read that hands the container to no other code: the receiver of one of the read methods of the type its one binding gives it, or the base of a subscript load on a type that has one, wherever it stands, tests included. The read methods are a closed set per type: a dict's get, keys, values, items and copy and a subscript load; a list's index, count and copy and a subscript load; a tuple's index and count and a subscript load; a set's copy; an index or a count only with a constant argument (with any other, Python hands each item to that argument's method, and the container refuses). Only a list, dict, set or tuple literal, or a call of parse_qs (imported from urllib.parse at the top level and bound once, a dict), gives the container a type; bound to any other call the census reads as a value slot (`dict(...)` or an import's call among them), it has no type, and a read method or a subscript load on it refuses. A read method's or a subscript load's result is an item the census follows by binding like any other value. The proof covers the container; for an item it reads the following: a change through the item (a store into it, a method that changes an object in place called on it or setattr handed it, or any method called on it as a statement), directly or through a name bound to it, refuses the container, and so does its hand-off to another object's method by an operator (an operand of a binary operation or a comparison whose other operand is no constant, a subscript's index, a slice's bound, or the value of an augmented assignment) or any use of it the census does not read (called, or stored into another object, an attribute or a name the function declares global or nonlocal); compared or combined with a constant, an item is read, since only its own type's method and the constant's run; and an item handed to a call as an argument is under the call limit, as the container is (below). Any other occurrence refuses the container by the rule, its reason naming the role it fails: the whole container bound to another name, to a name the function declares global or nonlocal, or into an attribute or another object; a read that hands it to another object's method (an operand of a binary operator, a comparison or `in`, a subscript's index, a slice's bound, the value of an augmented assignment) or any other read (a test, an identity test, a boolean operation's operand, held in a new object); a second binding (an augmented assignment, a walrus, or a for, with, except, match or unpacking target); a delete; a method other than append, extend or a read method of its type, a read method outside its type's set or a spelled-out dunder among them, or an attribute of it read other than as a method's callee; a store by a key that is no constant; an append or extend of other than one plain argument; or any occurrence in a function or lambda nested in it, or a class body it defines, whose code the census does not read (a closure capture) or which makes a class attribute; a comprehension is read where it stands, so a read there and an append of a read value there pass, and a change the census cannot fold, a comprehension target store among them, refuses. The first parameter of a method or a route handler is not read so: every attribute read and method call on it is refused already. The container, or an item of it, handed to a call as an argument is under the call limit, what the callee does with it not read (its witnesses: a local dict a module function it is handed stores a fetch into; and a list read out of a local dict of lists by a subscript load, by `.get`, or through a name bound to it, which a module function it is handed appends a fetch to). An attribute read in a page "
                 "position, as a value or anywhere on the path of a receiver or a container (but never inside the index of a subscript over a "
                 "container whose text the pass does not read: below), is refused by name unless the root its base reaches by binding is a module "
                 "constant, an import, one of the seven builtins a page may name, a value slot or a literal the pass reads (the census follows "
@@ -1603,8 +1602,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "bound to one, an if-expression's branch, a list's element, or a call's argument, one of the seven builtins' among them) is read as a value slot and not refused. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, a "
                 "store or delete of an attribute so named, or a string equal to `_send`), a content type the pass cannot read, a content type the census reads other than as a string constant or a name bound once to one, a script-running type written outside `_send`, a function that"
                 " answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time (a module "
-                "name bound to a call whose object the file changes, read other than as a call's argument, among them), a local container whose "
-                "every change the census does not prove, an attribute read on self, on any other parameter or on an except name, each judged by "
+                "name bound to a call whose object the file changes, read other than as a call's argument, among them), a local container with an occurrence of its name that is none of the proven forms, an attribute read on self, on any other parameter or on an except name, each judged by "
                 "the root its base reaches by binding (so one read on a local bound to self, or on a method's first parameter however spelled "
                 "under the conditions above, is one read on self), a class attribute (an attribute read on a class, a method called on one among "
                 "them, through the class's own name, a name the census resolves to it, a method call on or a subscript of a name whose value "
@@ -1780,7 +1778,7 @@ ROUND_FOUR_SENTENCES = (("the echo rule", ECHO_RULE), ("the served pages", SERVE
 # with the reason that names what the census found first, the route class keyed on its class statement, the refuse arm's names read
 # from every binding of a route class's body and from the attributes the file stores, and a function or class object read as a
 # value and a lambda reached through a name's value refused (the (fo) plants), so the limit for code behind a name on self retires;
-# reads a local container whole only where the census proves every change to it and makes a module container changed or let out of
+# reads a local container whole only where every occurrence of its name is a proven form and makes a module container changed or let out of
 # its sight a run-time memo, the call limit gaining two container witnesses (the (ct) plants); reads a parameter's default in a
 # lookup key and makes a starred key, an aliased getattr and a namespace mapping used outside a key position run-time forms (the
 # (ct) key plants); covers a file a page reads only where the walk scans it as browser text and proves a file read's path by
@@ -6233,7 +6231,8 @@ RT_WITNESS = (("rtwit", "a decorator the proof accepts hands the method another 
 # The eleventh round's containers (layer iv, the 04:38Z ruling: a rule over occurrences; the 04:52Z
 # ruling's proven forms unchanged): a container the served pass reads is read whole only where EVERY occurrence of its name, resolved by
 # binding, is one of the proven forms (its one binding to a literal or a value-slot call, the base of a constant-key subscript store, the
-# receiver of an append or extend, or a read the census reads as the page's value), and any other occurrence refuses it by the rule, its
+# receiver of an append or extend, or the fourth form, a read that hands the container to no other code: the receiver of a read method of
+# the type its one binding gives it, or the base of a subscript load on such a type), and any other occurrence refuses it by the rule, its
 # SERVED line naming the role it fails (_Served._containers, _CONTAINER); a module container changed through a name bound to it, through an
 # item of it, or leaving the file's sight is a run-time memo (Scan.cflows, _Served.cmemos). The (ct) plants, each page's hidden text a
 # fetch tagged with its plant, which Python serves (each checked by calling the route's do_GET on 3.10, 3.12 and 3.14t):
@@ -6255,16 +6254,19 @@ RT_WITNESS = (("rtwit", "a decorator the proof accepts hands the method another 
 #   delete (delc), an augmented assignment on the bare name (augc), an insert (insc), a read in a nested def (nerd), and a
 #   container aliased to a module global and mutated through it in a helper (gbl; its occurrence
 #   `_PROBE_GBL = d` a bind to a name the function declares global). At the reviewed head each is silent but ctpf, ctb, cto, ctv, ctk, ctf, ctw, ctr,
-#   ctg, ctca and ctel, read there (their fetch listed: the head read a stored value, or a loop's or a with's target through its source,
-#   by the spelling of its container), and ctcm, refused there as a name the function binds two ways. gbl is refused by the
-#   global/nonlocal bind rule and nerd as a read in a nested def, each read whole with no refusal where that arm is dropped (the
-#   container test's mutants M1 and M2), so neither serves its fetch unseen.
-# - the proven forms, read at both heads, each fetch listed: a dict literal stored into by a constant key and read through values()
+#   ctg, ctca, ctel, insc and nerd, read there (their fetch listed: the head read a stored value, a loop's or a with's target through its
+#   source, or the literal, by the spelling of its container), and ctcm, delc and augc, refused there as a name the function binds two ways. gbl is refused by the
+#   global/nonlocal bind rule and nerd as a read in a nested def, each read whole with no refusal in a mutant of the script that drops
+#   that arm, so neither serves its fetch unseen.
+# - the proven forms, read at the fix, each fetch listed: a dict literal stored into by a constant key and read through values()
 #   (ctk1), a list literal appended in a loop (ctk2), a value slot's call (parse_qs) stored into by a constant key and read by get
-#   (ctk3), a list literal extended by a list literal (ctk4); a new object holding the container changed, not it (ctk5), and a name
-#   that holds itself holding it (ctk7); a method other than a changer's, its return used, called on a name bound to it (ctk8) or on an
-#   item of it (ctk9); and a function the page function defines changing a local of its own of the same name (ctk6). The stated limit's witness, silent at both heads while Python serves its fetch: a container a function it is handed to
-#   changes (ctwit, the call limit).
+#   (ctk3), a list literal extended by a list literal (ctk4); a method other than a changer's, its return used, called on an item of it
+#   (ctk9); a function the page function defines changing a local of its own of the same name (ctk6); an item compared with a constant
+#   (tceq, only the item's own type's method and the constant's running there); a dict's and a list's copy (tcpd, tcpl); and a tuple's
+#   count with a constant argument (ttix). Each is read at the reviewed head too. The call limit's witnesses, silent at both heads while
+#   Python serves each fetch: a container a function it is handed to changes (ctwit), and a list read out of a dict of lists by a
+#   subscript load (ihc), by `.get` (ihg) or through a name bound to it (ihn), which a function it is handed appends a fetch to (the
+#   limit for an item handed to a call).
 # - module containers (probe_ctm.py), each page read through a module function's return, refused at the fix as a run-time memo:
 #   changed through a name a function binds to it (mm1), through a method on an item (mm2), a store through an item (mm3), a
 #   function's return its caller stores into (mm4), an item of it a function returns, its literal holding more than constants, changed
@@ -6296,6 +6298,7 @@ _CT_INDEX = "a subscript's index or a slice's bound, which Python hands to the s
 _CT_AUGV = "the value of an augmented assignment, which Python hands to its target's method"
 _CT_TEST = "read other than as a read method's receiver or a subscript load's base (a test)"
 _CT_DUN = "a method called on it other than append, extend or a read method of its type (__getitem__)"
+_CT_UNT = "read through %s where its one binding, neither a literal nor a call of parse_qs, gives it no type whose read methods the census knows"
 # (tag, the module function (its body returns the page), the refused line of that body, the expression its SERVED line shows, the
 # clause, the page's call when it is not `_probe_<tag>()`)
 _FRAME_CONTAINER = "changed through the function's frame's local mapping, which the census does not read"   # the (lc) plants: a container reached through the function's frame
@@ -6373,7 +6376,8 @@ CT_LOCAL = (
     # methods or the base of a subscript load; every other read of the container's own name refuses it. The dunder hand-off (an operand
     # of ==, +, in, a subscript's index or slice bound, an augmented assignment's value), a whole-container bind (ctal, ctwa above), a
     # method outside the type's closed set, a spelled-out dunder, and any other read (a test, a boolean operation's operand, held in a
-    # new object). Each is silent at the reviewed head (the reviewed head read every read sink) and refused at the fix
+    # new object). Each is read whole at the reviewed head, which has no container proof, its fetch (in the literal) listed, and refused
+    # at the fix
     ("eqd", 'def _probe_eqd():\n    d = [%s]\n    if d == _OTHER:\n        pass\n    return "".join(d)', 'return "".join(d)', "d", _CT_HANDED, None),
     ("radd", 'def _probe_radd():\n    d = [%s]\n    _r = d + _OTHER\n    return "".join(d)', 'return "".join(d)', "d", _CT_HANDED, None),
     ("cont", 'def _probe_cont():\n    d = [%s]\n    if d in _OTHER:\n        pass\n    return "".join(d)', 'return "".join(d)', "d", _CT_HANDED, None),
@@ -6385,21 +6389,30 @@ CT_LOCAL = (
      "a method called on it other than append, extend or a read method of its type (index)", None),
     ("dund", 'def _probe_dund():\n    d = {"a": %s}\n    return d.__getitem__("a")', 'return d.__getitem__("a")', "d.__getitem__('a')", _CT_DUN, None),
     # the 07:37Z ruling's condition 2: a read method's or a subscript load's result is an item the census follows by binding; an item
-    # handed to another object's method refuses the container by the same operand check (c2op); an item bound to a name then changed
-    # refuses as cty above does
+    # handed to another object's method by an operator whose other operand is no constant refuses the container by the same operand check
+    # (c2op), and so does a count or an index with an argument that is no constant (tcnt); an item bound to a name then changed refuses as
+    # cty above does; an item handed to a call is the call limit (ihc, ihg, ihn in CT_WITNESS)
     ("c2op", 'def _probe_c2op():\n    d = {"a": [%s]}\n    if d.get("a") == _OTHER:\n        pass\n    return "".join(d.get("a"))', 'return "".join(d.get("a"))', "d.get('a')",
      "an item of it handed to another object's method (an operand of a comparison or `in` whose other operand is no constant)", None),
-    # the 07:37Z ruling replaces pass 7's every-read-sink widening and whole-container alias follow, so five forms the reviewed head read
-    # whole now refuse: a container held in a new object (ctk5, ctk7, cltw, whose fetch reaches a class attribute or a heap object it
-    # aliases), the whole container bound to another name (ctk8), and a read as an identity test (cthp). Each read whole at the reviewed head,
-    # refused at the fix
+    # the fourth form's other refusals: a container held in a new object (ctk5, ctk7, cltw, whose fetch reaches a class attribute or a
+    # heap object it aliases), the whole container bound to another name (ctk8), and a read as an identity test (cthp). Each is read whole
+    # at the reviewed head, which has no container proof (ctk5, ctk7 and ctk8 with their fetch listed; the fetch cltw and cthp append
+    # through an alias unseen), and refused at the fix
     ("ctk5", 'def _probe_ctk5():\n    d = {"a": %s}\n    w = [d]\n    w.append("x")\n    return d["a"]', 'return d["a"]', "d['a']", _CT_NEW, None),
     ("ctk7", 'def _probe_ctk7():\n    d = {"a": %s}\n    w = [d]\n    w = w + [w]\n    return d["a"]', 'return d["a"]', "d['a']", _CT_NEW, None),
     ("ctk8", 'def _probe_ctk8():\n    d = {"a": %s}\n    e = d\n    n = e.__len__()\n    return d["a"]', 'return d["a"]', "d['a']", _CT_BND, None),
     ("cltw", 'def _probe_cltw():\n    d = ["<p>ok</p>"]\n    _Hold = type("_Hold", (), {"keep": d})\n    _Hold.keep.append(%s)\n    return "".join(d)', 'return "".join(d)', "d",
      _CT_NEW, None),
     ("cthp", 'def _probe_cthp():\n    d = ["<p>ok</p>"]\n    [o for o in gc.get_objects() if o is d][0].append(%s)\n    return "".join(d)', 'return "".join(d)', "d",
-     "read other than as a read method's receiver or a subscript load's base (an identity test)", None))
+     "read other than as a read method's receiver or a subscript load's base (an identity test)", None),
+    # the type comes only from a literal or a call of parse_qs: a container bound to any other value slot (dict(...) here, one of the
+    # seven builtins) has no type, so a subscript load (tdct) or a read method (tdcg) on it refuses; and a count with an argument that is
+    # no constant hands each item to that argument's method (tcnt); each read whole at the reviewed head, its fetch listed, and refused at
+    # the fix
+    ("tdct", 'def _probe_tdct():\n    d = dict(a="<p>ok</p>")\n    d["b"] = %s\n    return d["b"]', 'return d["b"]', "d['b']", _CT_UNT % "a subscript load", None),
+    ("tdcg", 'def _probe_tdcg():\n    d = dict(a="<p>ok</p>")\n    d["b"] = %s\n    return d.get("b")', 'return d.get("b")', "d.get('b')", _CT_UNT % ".get()", None),
+    ("tcnt", 'def _probe_tcnt():\n    d = [%s]\n    n = d.count(_OTHER)\n    return "".join(d)', 'return "".join(d)', "d",
+     "an item of it handed to another object's method (compared by .count() with an argument that is no constant)", None))
 # (tag, what it is, the module function): the proven forms, read at the fix with the fetch listed; and the call limit's witness
 CT_READ = (
     ("ctk1", "a dict literal, a store by a constant key, read through values()", 'def _probe_ctk1():\n    d = {"x": "<p>ok</p>"}\n    d["a"] = %s\n    return "".join(d.values())'),
@@ -6408,9 +6421,30 @@ CT_READ = (
     ("ctk4", "a list literal extended by a list literal", 'def _probe_ctk4():\n    d = ["<p>ok</p>"]\n    d.extend([%s])\n    return "".join(d)'),
     ("ctk9", "a read method's result, its method other than a changer's called with its return used", 'def _probe_ctk9():\n    d = {"a": [%s]}\n    n = d["a"].__len__()\n    return d["a"][0]'),
     ("ctk6", "a function it defines changing a local of its own of the same name",
-     'def _probe_ctk6():\n    d = {"a": %s}\n\n    def g():\n        d = []\n        d.append(1)\n        return d\n    g()\n    return d["a"]'))
+     'def _probe_ctk6():\n    d = {"a": %s}\n\n    def g():\n        d = []\n        d.append(1)\n        return d\n    g()\n    return d["a"]'),
+    ("tceq", "an item compared with a constant, only its own type's method and the constant's running",
+     'def _probe_tceq():\n    d = {"a": [%s]}\n    if d.get("a") == "k":\n        pass\n    return "".join(d.get("a"))'),
+    ("tcpd", "a dict's copy, a read method of its type", 'def _probe_tcpd():\n    d = {"a": %s}\n    c = d.copy()\n    return d["a"]'),
+    ("tcpl", "a list's copy, a read method of its type", 'def _probe_tcpl():\n    d = [%s]\n    c = d.copy()\n    return "".join(d)'),
+    ("ttix", "a tuple's count with a constant argument", 'def _probe_ttix():\n    d = (%s,)\n    n = d.count("x")\n    return "".join(d)'))
 CT_WITNESS = (("ctwit", "a container a function it is handed to changes (the call limit)",
-               'def _probe_ctwit_fill(x):\n    x["a"] = %s\n\n\ndef _probe_ctwit():\n    d = {"a": "<p>ok</p>"}\n    _probe_ctwit_fill(d)\n    return d["a"]'),)
+               'def _probe_ctwit_fill(x):\n    x["a"] = %s\n\n\ndef _probe_ctwit():\n    d = {"a": "<p>ok</p>"}\n    _probe_ctwit_fill(d)\n    return d["a"]'),
+              ("ihc", "an item a subscript load reads out of it, which a function it is handed to changes (the call limit)",
+               'def _probe_ihc_fill(x):\n    x.append(%s)\n\n\ndef _probe_ihc():\n    d = {"a": ["<p>ok</p>"]}\n    _probe_ihc_fill(d["a"])\n    return "".join(d.get("a"))'),
+              ("ihg", "an item .get reads out of it, which a function it is handed to changes (the call limit)",
+               'def _probe_ihg_fill(x):\n    x.append(%s)\n\n\ndef _probe_ihg():\n    d = {"a": ["<p>ok</p>"]}\n    _probe_ihg_fill(d.get("a"))\n    return "".join(d.get("a"))'),
+              ("ihn", "a name bound to an item of it, which a function it is handed to changes (the call limit)",
+               'def _probe_ihn_fill(x):\n    x.append(%s)\n\n\ndef _probe_ihn():\n    d = {"a": ["<p>ok</p>"]}\n    e = d["a"]\n    _probe_ihn_fill(e)\n    return "".join(d.get("a"))'))
+
+
+def _ct_span(tag):
+    """The first and last lines of the (ct) module that hold a plant's own functions (a helper `_probe_<tag>_...` and its page function
+    `_probe_<tag>`), up to the next top-level statement: where a SERVED line for that plant would stand."""
+    lines = CT_TEXT.split("\n")
+    starts = [i for i, ln in enumerate(lines, 1) if re.match(r"def _probe_%s(_\w+)?\(" % tag, ln)]
+    if not starts: raise AssertionError("no function of %s in the (ct) module" % tag)
+    end = next((i for i, ln in enumerate(lines[max(starts):], max(starts) + 1) if ln and not ln[0].isspace()), len(lines) + 1)
+    return min(starts), end - 1
 
 
 def _ct_body(tag, body, refused=None):
@@ -6494,13 +6528,15 @@ CT_TEXTS = dict(CT_FILES)
 # mapping (a mutation of the real object, which every CPython version serves), refused by name. A page function that reaches its frame
 # flags the module run-time (0 live: no live route function reaches its frame), so the container is a local of the route handler
 # itself, where the frame reach does not block the read; each (lc) plant reaches its frame a different way, pinning that form's place
-# in _FRAME_NAMES (locals, vars, exec, eval) or _FRAME_ATTRS (_getframe, currentframe, getargvalues, f_locals). The frame check also
-# reads a name a top-level statement of the module or the handler's own body, outside any def, class or lambda it nests, binds to a
-# primitive: a chained alias (lc2hop, `_L2 = _L1` over `_L1 = locals`), a tuple-literal unpacking (lctup, `_LT, _z = locals, 1`), and a
+# in _FRAME_NAMES (the seven bare names locals, vars, exec, eval, _getframe, currentframe, getargvalues) or _FRAME_ATTRS (_getframe,
+# currentframe, getargvalues, f_locals). The frame check also reads a name a statement of the module's or the handler's own body, outside
+# every def, class or lambda statement it nests (header and body alike), binds to a primitive, its bound value the primitive's own bare
+# name or attribute: a chained alias (lc2hop, `_L2 = _L1` over `_L1 = locals`), a tuple-literal unpacking (lctup, `_LT, _z = locals, 1`), and a
 # `from ... import` at module level (lcim) or in the handler's own body (lcih); the census matches each name's spelling against that set,
 # so exec and eval (lcex, lcev, which run code in the frame, LC_EXTRA below) and a name merely spelled like a primitive (lcsy, silent at
-# the reviewed head where there is no frame check yet and refused at the fix) are read too, while a starred or nested unpacking target, a binding
-# a nested scope makes by a from-import or a module-level def, and f_locals as a bare name are the stated precondition
+# the reviewed head where there is no frame check yet and refused at the fix) are read too, while f_locals as a bare name and any binding
+# the resolution does not read (a starred or nested unpacking target, an alias through an if-expression or a call, a binding in the
+# header or the body of a def, class or lambda statement) are the stated precondition
 LC_SPEC = (("lc1", "locals()", "", ""), ("lc2", "vars()", "", ""), ("lc3", "sys._getframe().f_locals", "import sys", ""),
            ("lc4", "inspect.getargvalues(inspect.currentframe())[3]", "import inspect", ""), ("lc5", "inspect.currentframe().f_locals", "import inspect", ""),
            # a name the MODULE binds to a frame primitive by a plain assignment (lcnm binds `locals`, lcva binds
@@ -7277,14 +7313,16 @@ FHLP_TEXT = _a_module("fhlp", A_SEND % "", head='import sys\n\n\ndef _probe_fhlp
 # (sys.modules["builtins"].locals()), frxr runs exec and frev runs eval each as an attribute (builtins.exec, builtins.eval); bfl2 uses
 # f_locals as a BARE name (f_locals is in _FRAME_ATTRS alone, not _FRAME_NAMES), the frame from a module helper the census does not
 # follow; fsst and fsnt bind a name to a frame primitive by a starred and a nested unpacking target the equal-length plain-name arm
-# skips; nstb by a `from ... import` a nested def makes (its imported spelling in the alias node, its alias name no bare Name); and tx3
-# by an assignment inside a module-level def's body, which _module_level_stmts excludes. None puts a bare frame name or a _FRAME_ATTRS
-# attribute in the handler's own subtree, so all eight share one module. nsta (FRBN_TEXT) is the REFUSED counterpart, in its own module:
+# skips; tx4 and txc by a module alias whose bound value is an if-expression (`_TX4 = locals if True else None`) and a call's return
+# (`_TXC = _ident(locals)`), which the resolution does not read; tx2 by a walrus in a module-level def's default, nstb by a `from ...
+# import` a nested def makes (its imported spelling in the alias node, its alias name no bare Name), and tx3 by an assignment inside a
+# module-level def's body, each a binding in the header or the body of a def statement, which _module_level_stmts and _own_stmts skip
+# whole. None puts a bare frame name or a _FRAME_ATTRS attribute in the handler's own subtree, so all eleven share one module. nsta (FRBN_TEXT) is the REFUSED counterpart, in its own module:
 # a nested def binds the name by an ASSIGNMENT, whose `locals` spelling stands in the handler's own subtree, so ast.walk(fn) reads it
 # and refuses the container (_FRAME_CONTAINER); the silent roads assert the precondition and nsta its boundary, as fhlp asserts the
 # caller's-frame limit
-FRB_TEXT = _a_module("frb", A_SEND % "", head='import builtins\nimport sys\n_PROBE_FRXR = "<script>fetch(\'https://example.invalid/frxr\')</script>"\n_PROBE_FREV = "<script>fetch(\'https://example.invalid/frev\')</script>"\n_PS, *_pr = locals, 1, 2\n(_PN, _pz), _py = (locals, 1), 2\nf_locals = lambda fr: fr.f_locals\n\n\ndef _get_frame():\n    return sys._getframe(1)\n\n\ndef _tx3_setup():\n    global _TX3\n    _TX3 = locals',
-                     branches=(('fratr', 'da = ["<p>ok</p>"]\n            sys.modules["builtins"].locals()["da"].append("<script>fetch(\'https://example.invalid/fratr\')</script>")\n            return self._send(200, "".join(da), "text/html")'), ('frxr', 'dx = ["<p>ok</p>"]\n            builtins.exec("dx.append(_PROBE_FRXR)")\n            return self._send(200, "".join(dx), "text/html")'), ('frev', 'dv = ["<p>ok</p>"]\n            builtins.eval("dv.append(_PROBE_FREV)")\n            return self._send(200, "".join(dv), "text/html")'), ('bfl2', 'db = ["<p>ok</p>"]\n            f_locals(_get_frame())["db"].append("<script>fetch(\'https://example.invalid/bfl2\')</script>")\n            return self._send(200, "".join(db), "text/html")'), ('fsst', 'dp = ["<p>ok</p>"]\n            _PS()["dp"].append("<script>fetch(\'https://example.invalid/fsst\')</script>")\n            return self._send(200, "".join(dp), "text/html")'), ('fsnt', 'dnt = ["<p>ok</p>"]\n            _PN()["dnt"].append("<script>fetch(\'https://example.invalid/fsnt\')</script>")\n            return self._send(200, "".join(dnt), "text/html")'), ('nstb', 'dq = ["<p>ok</p>"]\n            def _g():\n                from builtins import locals as _NB\n                return _NB\n            _NB2 = _g()\n            _NB2()["dq"].append("<script>fetch(\'https://example.invalid/nstb\')</script>")\n            return self._send(200, "".join(dq), "text/html")'), ('tx3', 'dt = ["<p>ok</p>"]\n            _tx3_setup()\n            _TX3()["dt"].append("<script>fetch(\'https://example.invalid/tx3\')</script>")\n            return self._send(200, "".join(dt), "text/html")')))
+FRB_TEXT = _a_module("frb", A_SEND % "", head='import builtins\nimport sys\n_PROBE_FRXR = "<script>fetch(\'https://example.invalid/frxr\')</script>"\n_PROBE_FREV = "<script>fetch(\'https://example.invalid/frev\')</script>"\n_PS, *_pr = locals, 1, 2\n(_PN, _pz), _py = (locals, 1), 2\nf_locals = lambda fr: fr.f_locals\n\n\ndef _get_frame():\n    return sys._getframe(1)\n\n\ndef _tx3_setup():\n    global _TX3\n    _TX3 = locals\n\n\n_TX4 = locals if True else None\n_ident = lambda v: v\n_TXC = _ident(locals)\n\n\ndef _tx2_d(x=(_TX2 := locals)):\n    return x',
+                     branches=(('fratr', 'da = ["<p>ok</p>"]\n            sys.modules["builtins"].locals()["da"].append("<script>fetch(\'https://example.invalid/fratr\')</script>")\n            return self._send(200, "".join(da), "text/html")'), ('frxr', 'dx = ["<p>ok</p>"]\n            builtins.exec("dx.append(_PROBE_FRXR)")\n            return self._send(200, "".join(dx), "text/html")'), ('frev', 'dv = ["<p>ok</p>"]\n            builtins.eval("dv.append(_PROBE_FREV)")\n            return self._send(200, "".join(dv), "text/html")'), ('bfl2', 'db = ["<p>ok</p>"]\n            f_locals(_get_frame())["db"].append("<script>fetch(\'https://example.invalid/bfl2\')</script>")\n            return self._send(200, "".join(db), "text/html")'), ('fsst', 'dp = ["<p>ok</p>"]\n            _PS()["dp"].append("<script>fetch(\'https://example.invalid/fsst\')</script>")\n            return self._send(200, "".join(dp), "text/html")'), ('fsnt', 'dnt = ["<p>ok</p>"]\n            _PN()["dnt"].append("<script>fetch(\'https://example.invalid/fsnt\')</script>")\n            return self._send(200, "".join(dnt), "text/html")'), ('nstb', 'dq = ["<p>ok</p>"]\n            def _g():\n                from builtins import locals as _NB\n                return _NB\n            _NB2 = _g()\n            _NB2()["dq"].append("<script>fetch(\'https://example.invalid/nstb\')</script>")\n            return self._send(200, "".join(dq), "text/html")'), ('tx3', 'dt = ["<p>ok</p>"]\n            _tx3_setup()\n            _TX3()["dt"].append("<script>fetch(\'https://example.invalid/tx3\')</script>")\n            return self._send(200, "".join(dt), "text/html")'), ('tx4', 'd4 = ["<p>ok</p>"]\n            _TX4()["d4"].append("<script>fetch(\'https://example.invalid/tx4\')</script>")\n            return self._send(200, "".join(d4), "text/html")'), ('txc', 'dc = ["<p>ok</p>"]\n            _TXC()["dc"].append("<script>fetch(\'https://example.invalid/txc\')</script>")\n            return self._send(200, "".join(dc), "text/html")'), ('tx2', 'd2 = ["<p>ok</p>"]\n            _TX2()["d2"].append("<script>fetch(\'https://example.invalid/tx2\')</script>")\n            return self._send(200, "".join(d2), "text/html")')))
 FRBN_TEXT = _a_module("frbn", A_SEND % "", branches=(("nsta", 'dz = ["<p>ok</p>"]\n            def _h():\n                global _NSTA\n                _NSTA = locals\n            _h()\n            _NSTA()["dz"].append("<script>fetch(\'https://example.invalid/nsta\')</script>")\n            return self._send(200, "".join(dz), "text/html")'),))
 
 
@@ -7607,7 +7645,7 @@ A_FILE_LINES.update(((_a_rel("xa"), (("xa", "self.send_response(code)"),)), (_a_
                      (_a_rel("xv"), ())))
 A_FILE_LINES[_a_rel("frw")] = (("frwt", _fgh_mark("frwt")), ("frwb", _fgh_mark("frwb")))   # the frame-local limit's witnesses, at each fetch
 A_FILE_LINES[_a_rel("fhlp")] = (("fhlp", _fgh_mark("fhlp")),)   # the followed-helper frame limit's witness, at its fetch
-A_FILE_LINES[_a_rel("frb")] = tuple((t, _fgh_mark(t)) for t in ("fratr", "frxr", "frev", "bfl2", "fsst", "fsnt", "nstb", "tx3"))   # (B) silent witnesses, at each fetch
+A_FILE_LINES[_a_rel("frb")] = tuple((t, _fgh_mark(t)) for t in ("fratr", "frxr", "frev", "bfl2", "fsst", "fsnt", "nstb", "tx3", "tx4", "txc", "tx2"))   # (B) silent witnesses, at each fetch
 A_FILE_LINES[_a_rel("frbn")] = (("nsta", '"".join(dz)'),)   # nsta refused (a nested def binds locals by an assignment): its SERVED line at the return
 # the plants whose SERVED line stands at another line than their page's fetch: the store (wats), the route's receiver (wspg, xgo,
 # xgm, xgs, xgr, xgc) and a refused default (zdc, zdu); zdf's read defaults at the line of each fetch
@@ -8880,7 +8918,7 @@ class TheServedPagesAreScanned(_Scope):
     class keyed on its class statement, the refuse arm's names read from every binding of a route class's body and from the
     attributes the file stores, and a function or class object read as a value and a lambda reached through a name's value
     refused (the (fo) plants); the route typing's receiver taken as self only by binding (the (rt) plants); a local container read
-    whole only where the census proves every change to it, a module container changed or let out of its sight a run-time memo, and
+    whole only where every occurrence of its name is a proven form, a module container changed or let out of its sight a run-time memo, and
     a parameter's default, a starred key, an aliased getattr and a namespace mapping outside a key position read in a lookup (the
     (ct) plants); a file a page reads covered only where the walk scans it as browser text and a file read's path proven by
     binding (the (fl) plants); a method the file's setter read cannot rule out refused with a reason of its own (the (rl) plants);
@@ -10865,34 +10903,42 @@ class TheServedPagesAreScanned(_Scope):
             marks = tuple(_fgh_mark(t) for t, _m, _r, _c, _w in RT_REFUSED) + (_fgh_mark("rt1c"),)
             self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
 
-    def test_a_container_is_read_whole_only_where_the_census_proves_every_change_to_it(self):
+    def test_a_container_is_read_whole_only_where_every_occurrence_of_its_name_is_a_proven_form(self):
         """The eleventh round's containers, a rule over occurrences (layer iv of the eleventh round's fail-closed census, the 04:38Z
         ruling; the reviewer's 07:37Z ruling on its fourth form; the 04:52Z ruling's binding and change forms unchanged): a container the
         served pass reads is read whole only where EVERY occurrence of its name, resolved by binding, is one of the proven forms
         (_Served._containers): its one binding in the function's own body (a plain single-name assignment of a list, dict, set or tuple
         literal or of a call whose return the census reads as a value slot); the base of a constant-key subscript store of a value the
         census reads; the receiver of an append or extend of one plain argument it reads; and the FOURTH FORM (07:37Z), a read that hands
-        the container to no other code: the receiver of one of its bound type's read methods (a closed set per type, _TYPE_READS, the type
-        from the one binding) or the base of a subscript load. A read method's or a subscript load's result is an item the census follows
-        by binding (condition 2): a change through it, or its hand-off to another object's method, refuses the container. Any other
-        occurrence refuses it by the rule, the clause naming the role it fails: the dunder hand-off (an operand of ==, +, `in`, a
-        subscript's index or slice bound, an augmented assignment's value), the whole container bound to another name, a method outside
-        the type's closed set or a spelled-out dunder, and any other read (a test, a boolean operation's operand, held in a new object).
+        the container to no other code: the receiver of one of the read methods of the type its one binding gives it, or the base of a
+        subscript load on a type that has one (the closed sets of _TYPE_READS; a type only from a literal or a call of parse_qs, so a
+        container bound to any other value slot has none and any read method or subscript load on it refuses; index and count only with
+        a constant argument). A read method's or a subscript load's result is an item the census follows by binding (condition 2): a
+        change through the item, its hand-off to another object's method by an operator whose other operand is no constant, and any use
+        of it the census does not read refuse the container; an item compared or combined with a constant is read; and an item handed to
+        a call is under the call limit (ihc, ihg, ihn). Any other occurrence refuses it by the rule, the clause naming the role it fails:
+        the dunder hand-off (an operand of ==, +, `in`, a subscript's index or slice bound, an augmented assignment's value), the whole
+        container bound to another name, a method outside the type's closed set or a spelled-out dunder, and any other read (a test, an
+        identity test, a boolean operation's operand, held in a new object).
         A module container changed through a name bound to it or through an item of it, or leaving the file's sight, is a run-time memo
         (Scan.cflows), and so is an import's object the file changes, wherever the pass takes text through it but as a call's argument
         (_Served.cmemos); and the lookup key refuses a starred argument or a ** mapping in its position (R1.5), getattr read other than
         as a call's callee (choice 3), a parameter's default spelling a listed name or holding anything but constants (extra9-3), and a
         namespace mapping used other than in a key position the census reads (choice 13). The (ct) plants (the block above CT_LOCAL
         gives each one's shape, what Python serves, and its outcome at the reviewed head): each refused plant is its SERVED line at its
-        line, each module's SERVED lines are the ones named here, the read controls are read with their fetch listed, and the witnesses of
-        the call limit (a container a function it is handed to changes, ctwit, and a module dict so handed, mmx; an import's object read
-        only as getattr's argument, mmw) have no line and their fetches are not listed, and no refused plant's hidden text
-        is a site. The fourth form's new plants, each silent at the reviewed head (which read every read sink) and refused at the fix:
-        eqd/radd/cont (an operand of ==, + and `in`), idxd/ctsl (a subscript's index, a slice's bound), iad (an augmented assignment's
-        value), ctts (a test), mcp (copy, a method outside the list's read set), dund (a spelled __getitem__), c2op (condition 2, an item
-        handed to a comparison); and five the 07:37Z ruling turned from read-whole to refused, replacing pass 7's every-read-sink widening
-        and whole-container alias follow: ctk5, ctk7, cltw (held in a new object), ctk8 (the whole container bound to another name) and
-        cthp (a read as an identity test).
+        line, each module's SERVED lines are the ones named here, the read controls are read with their fetch listed (among them tceq, an
+        item compared with a constant, tcpd and tcpl, a dict's and a list's copy, and ttix, a tuple's count with a constant argument), and
+        the witnesses of the call limit (a container a function it is handed to changes, ctwit, a list read out of a dict of lists by a
+        subscript load, by `.get` or through a name bound to it that a function it is handed appends to, ihc, ihg and ihn, and a module
+        dict so handed, mmx; an import's object read only as getattr's argument, mmw) have no line (a (ct) witness none in its own
+        functions) and their fetches are not listed, and no refused plant's hidden text is a site (the (rl) case below holds the read
+        controls and the witnesses). The fourth form's plants, each read whole at the reviewed head, which has no container proof, and
+        refused at the fix: eqd/radd/cont (an operand of ==, + and `in`), idxd/ctsl (a subscript's index, a slice's bound), iad (an
+        augmented assignment's value), ctts (a test), mcp (index on a dict, a method outside the dict's read set), dund (a spelled
+        __getitem__), tdct and tdcg (a subscript load and a .get on a container bound to dict(...), which gives no type), tcnt (a count
+        with an argument that is no constant), c2op (condition 2, an item handed to a comparison with no constant), ctk5, ctk7 and cltw
+        (held in a new object), ctk8 (the whole container bound to another name) and cthp (a read as an identity test); cltw and cthp
+        silent there, the fetch they append through an alias unseen, the others with their fetch listed.
         The reds, over mutants of the fix script, each one conjunct or arm dropped (never in the tree), each plant then silent or read
         whole unless named otherwise: the container's candidacy by a literal it is bound to whole for cte, ctq and cth, by a change for
         ctp, ctpf, cta, ctr, ctz, ctwb and ctxq; the binding's conjuncts: the parameter for ctp and ctpf, bound once for ctb, a plain
@@ -10900,11 +10946,18 @@ class TheServedPagesAreScanned(_Scope):
         one plain argument for ctg, an attribute store for cta and ctr, a store other than a plain assignment for ctt, ctf, ctw, ctu and
         ctn, a store through an expression for cts, ctwl (its walrus a whole bind under form 4) and ctbo, a method through an item for
         cti and ctig, an attribute read for ctx and ctxq, a changer handed it for ctj and ctz, and the escapes for cte, ctca, ctel and
-        the match cth. The FOURTH FORM's own arms (07:37Z): the operand check dropped reds eqd, radd, cont, idxd, ctsl and iad (each then
-        read whole); the type's closed set widened to _READ_METHODS reds mcp and dund; the subscript-load type test dropped reds mdk-shaped
-        plants; the every-read refusal (any read, not only a test) that pass 7 had is replaced, so ctts (a test), and the held-in-a-new-
-        object refusal reds ctk5, ctk7 and cltw; the whole-container-bind refusal reds ctal, ctwa, ctk8; condition 2's item check dropped
-        reds c2op; the identity-test read reds cthp; and, from the 04:38Z rule, the nested-occurrence refusal dropped reds nerd, clsa,
+        the match cth. The FOURTH FORM's own arms (07:37Z): the container's own operand roles dropped (_own_use's index, slice bound,
+        operand and augmented value) red eqd, radd, cont, idxd, ctsl and iad by their clause (eqd and cont then refused as a read, radd,
+        idxd, ctsl and iad as an item's operand), and with the item's operand arm dropped as well radd, idxd, ctsl and iad are read
+        whole; the item's operand arm alone dropped reds c2op and tcnt (read whole); every type's closed set widened to every read method and the subscript load reds mcp, tdct and tdcg; the
+        read-method check dropped reds those three and dund, insc, ctm and ctwb; the subscript load's type test dropped reds tdct; the
+        untyped binding's own reason replaced by the typed clauses reds tdct and tdcg by their clause; the test role dropped reds ctts;
+        the held-in-a-new-object role dropped reds ctk5, ctk7, cltw, ctl2 and ctlp; the whole-container bind refusal dropped reds ctal,
+        ctwa, ctwl and ctk8; the identity-test role dropped reds cthp; the item operand's constant exemption dropped reds tceq (then
+        refused) and the live listing (kernel/kernel.py's q, compared with "1"); an item handed to a call refused, the one check the
+        call limit's item face would need, reds ihc, ihg and ihn (each then refused in its own functions), the read controls ctk1, ctk3
+        and tceq, and the live listing (kernel/kernel.py's q, whose path item it hands to calls); and, from the 04:38Z rule, the
+        nested-occurrence refusal dropped reds nerd, clsa,
         clsw, ctdf, ctdg and ctq, and the global/nonlocal bind check reds gbl; delc, augc and insc refuse with no list entry of their own.
         The module side: an item's store for mm3, an attribute store for mm5 and mm9, a changer read unbound for mm6, a changer on an item
         for mm11, a dropped return for mm8, setattr for mm7, a container's own changes for mm2, mm3, mm6 and mm11, the names bound to it
@@ -10924,6 +10977,28 @@ class TheServedPagesAreScanned(_Scope):
                 if tag != "kn6": self.assertTrue(want, "the case names the module's refusals")
                 self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
 
+    def test_the_served_text_states_each_types_read_methods_as_the_script_holds_them(self):
+        """The fourth form's closed sets (the 07:37Z ruling, condition 1), stated in the served paragraph as the script holds them in
+        _TYPE_READS: each type's read methods in one fixed order, and whether a subscript load reads it, the phrase built from the
+        script's constants rather than copied from the text, so a set the script widens or narrows, or a type it adds, without the text
+        reds here; and index and count, _COMPARED, read only with a constant argument. The docstring's paragraph is one text with
+        SERVED_PAGES (TheResidualClassIsStatedAndHeld), and SECURITY.md's with it (tests/test_security_price_feed.py)."""
+        mod = script_module(ROOT)
+        order = ("get", "keys", "values", "items", "index", "count", "copy")
+        self.assertEqual(set(order), set(mod._READ_METHODS), "the phrase's order covers every read method")
+        self.assertEqual(set(mod._TYPE_READS), {"dict", "list", "tuple", "set"}, "the four types the phrase names")
+        self.assertEqual(set().union(*mod._TYPE_READS.values()) - {"[]"}, set(mod._READ_METHODS), "_READ_METHODS is the sets' union")
+        self.assertEqual(set(mod._COMPARED), {"index", "count"}, "the two read methods that compare each item with their argument")
+
+        def one(tp):
+            ms = [m for m in order if m in mod._TYPE_READS[tp]]
+            words = ms[0] if len(ms) == 1 else ", ".join(ms[:-1]) + " and " + ms[-1]
+            return "a %s's %s%s" % (tp, words, " and a subscript load" if "[]" in mod._TYPE_READS[tp] else "")
+        doc = _inventory_docstring()
+        phrase = "The read methods are a closed set per type: " + "; ".join(one(tp) for tp in ("dict", "list", "tuple", "set")) + ";"
+        self.assertIn(phrase, doc, "the served paragraph states each type's read methods as _TYPE_READS holds them")
+        self.assertIn("an index or a count only with a constant argument", doc, "and the constant argument _COMPARED requires")
+
     def test_a_container_reached_through_the_functions_frame_refuses_by_name(self):
         """The eleventh round's containers (layer iv), a further face: a container a route handler binds to a literal and reads whole, changed through the handler's
         own frame's local mapping (locals(), vars(), sys._getframe().f_locals, inspect.currentframe().f_locals or
@@ -10933,8 +11008,9 @@ class TheServedPagesAreScanned(_Scope):
         handler itself, where the frame reach does not block the read. One check at 0 live (no live route function reaches its frame). The
         check is syntactic: it matches a name's spelling against _FRAME_NAMES (locals, vars, exec, eval, _getframe, currentframe,
         getargvalues) and an attribute against _FRAME_ATTRS (_getframe, currentframe, getargvalues, f_locals), plus a set of alias names
-        _frame_alias_names builds by following bindings among the module's and the handler's own top-level statements, outside any def,
-        class or lambda they nest: a name the MODULE binds to locals or vars (or to a frame attribute) by a plain assignment (lcnm binds
+        _frame_alias_names builds by following bindings among the statements of the module's and the handler's own bodies, outside every
+        def, class or lambda statement they nest (header and body alike), each bound value a primitive's own bare name or attribute or a
+        name so bound: a name the MODULE binds to locals or vars (or to a frame attribute) by a plain assignment (lcnm binds
         `locals`, lcva binds `vars`: _frame_alias_names over _module_level_stmts), a CHAINED alias (lc2hop, `_L2 = _L1` over `_L1 =
         locals`), an EQUAL-LENGTH tuple-literal unpacking into plain names (lctup), and a `from ... import` at module level (lcim) or in the
         handler's own body (lcih, over _own_stmts(fn) seeded with the module aliases); a name a handler binds to a primitive by an
@@ -10943,13 +11019,15 @@ class TheServedPagesAreScanned(_Scope):
         too (lcsy binds `currentframe` to a string and reads an honest container, SILENT at the reviewed head where there is no frame check yet and
         refused at the fix). The seven bare names refused are exactly _FRAME_NAMES and the four attributes _FRAME_ATTRS, so f_locals, an
         attribute alone, passes as a BARE name (bfl2). The stated precondition, each road passing silently, is a change reached in any
-        other spelling: locals or vars as an attribute on a receiver, exec or eval as an attribute (fratr, frxr, frev below); f_locals as a
-        bare name (bfl2); a starred or nested unpacking target the equal-length arm skips (fsst, fsnt); a `from ... import` a def, class or
-        lambda nested in the handler makes (nstb); and an assignment inside a module-level def's body (tx3); while a binding a nested scope
+        other spelling; among its roads: locals or vars as an attribute on a receiver, exec or eval as an attribute (fratr, frxr, frev
+        below); f_locals as a bare name (bfl2); and any binding the resolution does not read: a starred or nested unpacking target the
+        equal-length arm skips (fsst, fsnt), a module alias whose bound value is an if-expression or a call's return (tx4, txc), and a
+        binding in the header or the body of a def statement, a walrus in a module-level def's default (tx2), a `from ... import` a def
+        nested in the handler makes (nstb) and an assignment inside a module-level def's body (tx3); while a binding a nested scope
         makes by an ASSIGNMENT carries the spelling in the handler's subtree and refuses (nsta). The (lc) plants (the block above LC_SPEC
         and LC_EXTRA): each is its SERVED line at its return, each module's SERVED lines are the ones named here, and no plant's hidden text
-        (the fetch it appends through the frame) is a site. Every plant but lcsy is silent at the reviewed head, its container read as its literal
-        and the appended fetch invisible. Code the handler runs that the census does not read (a helper it calls as a statement, a method on self, a
+        (the fetch it appends through the frame) is a site. Every plant is silent at the reviewed head, which has no frame check: lcsy's
+        container is honest, and each other plant's is read as its literal, the appended fetch invisible. Code the handler runs that the census does not read (a helper it calls as a statement, a method on self, a
         context manager it enters) reaching the CALLER's frame is the stated limit, not a refusal: the census reads no such code's body for
         its frame reach, as the call limit reads none for what a callee does with a container it is handed; its witness fhlp (a handler that
         calls a module helper whose `sys._getframe(1)` appends a fetch to the handler's container, a bare call statement the census does not
@@ -10977,9 +11055,10 @@ class TheServedPagesAreScanned(_Scope):
             # the 04:38Z and 07:37Z rulings B: a change to a page function's locals through a frame object, exec or eval reached other
             # than as the seven bare names and four attributes the check reads is outside what the census reads, each road passing
             # silently (no SERVED line, its fetch no site): fratr/frxr/frev (attribute/exec/eval), bfl2 (f_locals as a bare name),
-            # fsst/fsnt (a starred and a nested unpacking target), nstb (a from-import a nested def makes) and tx3 (a module-level def's
-            # binding). nsta is the refused counterpart: a nested def binds the name by an assignment, so the census reads the spelling
-            silent = ("fratr", "frxr", "frev", "bfl2", "fsst", "fsnt", "nstb", "tx3")
+            # fsst/fsnt (a starred and a nested unpacking target), tx4/txc (a module alias bound to an if-expression and to a call's
+            # return), tx2 (a walrus in a module-level def's default), nstb (a from-import a nested def makes) and tx3 (an assignment in a
+            # module-level def's body). nsta is the refused counterpart: a nested def binds the name by an assignment, so the census reads the spelling
+            silent = ("fratr", "frxr", "frev", "bfl2", "fsst", "fsnt", "nstb", "tx3", "tx4", "txc", "tx2")
             self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel("frb"))], [], "no silent witness is a SERVED line")
             served_n = [ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel("frbn"))]
             want_nsta = (_A_TEXT % (_a_rel("frbn"), "dz", (_CONTAINER % _FRAME_CONTAINER).replace("%", "%%"))) % self.at["nsta"]
@@ -11025,7 +11104,7 @@ class TheServedPagesAreScanned(_Scope):
         not read) is refused by name (_READ_CODEC), while a read that names no encoding (u7c, the stated limit, the
         locale's default) or a UTF-8 name (u7d, `encoding="utf-8"`) stays covered, no line. The reds for these, over the fix-script
         mutants (never in the tree): the codec check for u7a and u7b (each then covered, silent); the `**`-keyword arm for u7e (then
-        covered, silent, the shape the parent commit admitted); the no-encoding branch for u7c (then
+        covered, silent); the no-encoding branch for u7c (then
         refused, so it names a line); and the UTF-8-name test for u7d (then refused). The reds, over mutants of the fix script, each one conjunct or
         arm dropped (never in the tree), each plant then silent unless named otherwise: the file decision's browser-text test for pyf,
         pys and pyj (and (r1.2)'s fpc), its roots and DOM arm for pyj; the walk's record of each file's kind for pys and pyj (then a
@@ -11464,7 +11543,10 @@ class TheServedPagesAreScanned(_Scope):
                 self.assertFetchUnclassifiedAt(self.at[tag], tag, "%s: no run-time memo, its value read" % what, _a_rel("ctm"))
         for tag, what, rel in [(t, w, _a_rel("ctl")) for t, w, _b in CT_WITNESS] + [(t, w, _a_rel("ctm")) for t, w, _l, _p in CM_WITNESS]:
             with self.subTest(plant="(ct) a stated limit's witness: %s (%s)" % (what, tag)):
-                self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:%d " % (rel, self.at[tag])) or _fgh_mark(tag) in ln], [],
+                # a (ct) witness has no SERVED line anywhere in its own functions (its page's return among them, where a refusal of it
+                # would stand), and its fetch is on no line
+                at = range(_ct_span(tag)[0], _ct_span(tag)[1] + 1) if rel == _a_rel("ctl") else (self.at[tag],)
+                self.assertEqual([ln for ln in self.out.splitlines() if any(ln.startswith("SERVED %s:%d " % (rel, k)) for k in at) or _fgh_mark(tag) in ln], [],
                                  "no line: the call limit, what a call does with what it is handed not read")
         with self.subTest(plant="(ct) no refused plant's hidden text is a site"):
             marks = tuple(_fgh_mark(t) for t, _b, _r, _s, _c, _k in CT_LOCAL) + tuple(_fgh_mark(t) for t, _w, _l, _p, _s in CM_SPEC) + tuple(

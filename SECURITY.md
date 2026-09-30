@@ -345,23 +345,32 @@ serve a fetch as a page). A container a function binds and reads whole, changed 
 local mapping, reached or run as code in the function's own body (one of the
 seven bare names `locals`, `vars`, `exec`, `eval`, `_getframe`, `currentframe`,
 `getargvalues`, one of the four attributes `_getframe`, `currentframe`,
-`getargvalues` or `f_locals` on any receiver, or a name that a top-level
-statement of the module or of the function's own body, outside any def, class
-or lambda it nests, binds to one of those primitives by a plain assignment, a
-walrus, an equal-length unpacking of a list or tuple literal into plain names,
-or a `from ... import`, and any name so bound in turn, resolved among those
+`getargvalues` or `f_locals` on any receiver, or a name that a statement of the
+module's or the function's own body, outside every def, class or lambda
+statement it nests (header and body alike), binds to one of those primitives,
+its bound value the primitive's own bare name or attribute, by a plain or
+annotated assignment, a walrus, an equal-length unpacking of a list or tuple
+literal into plain names, or a `from ... import` of one of the seven names, and
+any name such a statement binds to a name so bound, resolved among those
 statements), is refused by name on every version, since the change reaches the
 real object; the check reads the spelling anywhere in the function, called or
 not, so a name merely spelled like a primitive is refused too, its reason
 naming the form the census cannot follow rather than a frame reached; a change
 to those locals at run time through a frame object, exec or eval reached in any
-other spelling (the name `locals` or `vars` as an attribute on a receiver, exec
-or eval reached as an attribute, `f_locals` as a bare name, a starred or nested
-unpacking target, or a `from ... import` a def, class or lambda nested in the
-function makes or a module-level def's binding the resolution does not reach)
-is the stated precondition, outside what the census reads, and passes silently
-(its witnesses: `locals` reached as an attribute on a receiver, an exec, and an
-eval), while a name a nested scope binds to a primitive by an assignment
+other spelling (the name `locals` or `vars` as an attribute on a receiver; exec
+or eval reached as an attribute; `f_locals` as a bare name; and any binding of a
+name to a primitive that the resolution above does not read, a starred or nested
+unpacking target, an alias whose bound value is any other expression (an
+if-expression, a call), and a binding in the header or the body of a def, class
+or lambda statement among them) is the
+stated precondition, outside what the census reads, and passes silently (its
+witnesses, one for each road named: `locals` reached as an attribute on a
+receiver; `builtins.exec`; `builtins.eval`; `f_locals` called as a bare name; a
+starred and a nested unpacking target; a module alias bound to an if-expression
+and one bound to a call's return; a walrus in a module-level def's default, a
+`from ... import` in a def nested in the function, and an assignment inside a
+module-level def's body), while a name a nested scope binds to a primitive by an
+assignment
 carries the spelling in the function's subtree and refuses; code the function
 runs that the census does not read (a helper it calls as a statement, a method
 on self, a context manager it enters), reaching the caller's frame to change
@@ -431,8 +440,9 @@ pass reads refused by name, the receiver of `.encode` or `.format_map` whatever
 it is (but the name str, bytes or bytearray before `.format_map`, and either one
 in a shape the census does not compute, each refused below), a loop, unpacking
 or with target from its
-source, and a local container's stored or appended values where the census
-proves every change to it (below); it passes over a base whose own text it
+source, and a local container's stored or appended values where every occurrence
+of its name is one of the proven forms (below); it passes over a base whose own
+text it
 does not read (in a module that holds no star import, a top-level import
 statement that is its name's one module-level binding and is not rebound, or one
 of the seven builtins a page may name, each for what its result is (str, its
@@ -517,21 +527,39 @@ whose return the census reads as a value slot, an import's, one of the seven
 builtins a page may name, a parameter's or a method's on one of those); the
 base of a subscript store by a str or int constant key as the one target of a
 plain assignment, whose stored value the census reads; the receiver of an
-append or extend of one plain argument the census reads; and the fourth form
-(the reviewer's 07:37Z ruling), a read that hands the container to no other
-code: the receiver of one of its bound type's read methods (a closed set per
-type, the type known from the one binding: a dict's get, keys, values and
-items, a list's or a tuple's index and count, a subscript load on a dict, list
-or tuple) or the base of a subscript load, wherever it stands, tests included.
-A read method's or a subscript load's result is an item the census follows by
-binding like any other value: a change through such an item, or its hand-off to
-another object's method, refuses the container. Any other occurrence refuses
-the container by the rule, its reason naming the role it fails: the whole
+append or extend of one plain argument the census reads; and the fourth form, a
+read that hands the container to no other code: the receiver of one of the read
+methods of the type its one binding gives it, or the base of a subscript load on
+a type that has one, wherever it stands, tests included. The read methods are a
+closed set per type: a dict's get, keys, values, items and copy and a subscript
+load; a list's index, count and copy and a subscript load; a tuple's index and
+count and a subscript load; a set's copy; an index or a count only with a
+constant argument (with any other, Python hands each item to that argument's
+method, and the container refuses). Only a list, dict, set or tuple
+literal, or a call of parse_qs (imported from urllib.parse at the top level and
+bound once, a dict), gives the container a type; bound to any other call the
+census reads as a value slot (`dict(...)` or an import's call among them), it
+has no type, and a read method or a subscript load on it refuses. A read
+method's or a subscript load's result is an item the census follows by binding
+like any other value. The proof covers the container; for an item it reads the
+following: a change through the item (a store into it, a method that changes an
+object in place called on it or setattr handed it, or any method called on it as
+a statement), directly or through a name bound to it, refuses the container, and
+so does its hand-off to another object's method by an operator (an operand of a
+binary operation or a comparison whose other operand is no constant, a
+subscript's index, a slice's bound, or the value of an augmented assignment) or
+any use of it the census does not read (called, or stored into another object,
+an attribute or a name the function declares global or nonlocal); compared or
+combined with a constant, an item is read, since only its own type's method and
+the constant's run; and an item handed to a call as an argument is under the
+call limit, as the container is (below). Any other occurrence refuses the
+container by the rule, its reason naming the role it fails: the whole
 container bound to another name, to a name the function declares global or
 nonlocal, or into an attribute or another object; a read that hands it to
 another object's method (an operand of a binary operator, a comparison or `in`,
 a subscript's index, a slice's bound, the value of an augmented assignment) or
-any other read (a test, a boolean operation's operand, held in a new object); a
+any other read (a test, an identity test, a boolean operation's operand, held in
+a new object); a
 second binding (an augmented assignment, a walrus, or a for, with, except,
 match or unpacking target); a delete; a method other than append, extend or a
 read method of its type, a read method outside its type's set or a spelled-out
@@ -543,9 +571,12 @@ or which makes a class attribute; a comprehension is read where it stands, so a
 read there and an append of a read value there pass, and a change the census
 cannot fold, a comprehension target store among them, refuses. The first
 parameter of a method or a route handler is not read so: every attribute read
-and method call on it is refused already. One handed to a call as an argument
-is under the call limit, what the callee does with it not read (its witness: a
-local dict a module function it is handed stores a fetch into).
+and method call on it is refused already. The container, or an item of it,
+handed to a call as an argument is under the call limit, what the callee does
+with it not read (its witnesses: a local dict a module function it is handed
+stores a fetch into; and a list read out of a local dict of lists by a subscript
+load, by `.get`, or through a name bound to it, which a module function it is
+handed appends a fetch to).
 An attribute read in a page position, as a value or anywhere on the
 path of a receiver or a container (but never inside the index of a subscript
 over a container whose text the pass does not read: below), is refused by name
@@ -929,8 +960,8 @@ a string constant or a name bound once to one, a script-running type written
 outside `_send`, a function that answers outside `_send` more often
 than it writes a Content-Type header, a container the module writes at run time
 (a module name bound to a call whose object the file changes, read other than as
-a call's argument, among them), a local container whose every change the census
-does not prove,
+a call's argument, among them), a local container with an occurrence of its name
+that is none of the proven forms,
 an attribute read on self, on any other parameter or on an except name, each
 judged by the root its base reaches by binding (so one read on a local bound to
 self, or on a method's first parameter however spelled under the conditions
