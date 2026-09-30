@@ -342,13 +342,19 @@ it, a stated limit on Python 3.13 and later (its witnesses: a handler that binds
 its content type to `application/json` and one that binds its page to
 `<p>ok</p>`, each rebinding that local through its frame, so that those versions
 serve a fetch as a page). A container a function binds and reads whole, changed
-through that same frame's local mapping reached in the function's own body (a
-call of `locals` or `vars`, of a name the module binds to one, or a read of a
-frame attribute), is refused by name on every version, since the change reaches
-the real object; a followed helper that reaches the caller's frame to change
-such a container instead is a stated limit, the census reading no callee's body
-for its frame reach as the call limit reads none for what a callee does with a
-container it is handed; a content type the census reads other
+through that same frame's local mapping, reached or run as code in the
+function's own body (the name `locals`, `vars`, `exec` or `eval`, a read of a
+frame attribute, or a name the module or the function's own body binds to one of
+those by an assignment, a walrus, an unpacking or a `from ... import`, resolved
+by binding), is refused by name on every version, since the change reaches the
+real object; the check reads the spelling anywhere in the function, called or
+not, so a name merely spelled like a primitive is refused too, its reason naming
+the form the census cannot follow rather than a frame reached; code the function
+runs that the census does not read (a helper it calls as a statement, a method
+on self, a context manager it enters), reaching the caller's frame to change
+such a container, is a stated limit instead, the census reading no such code's
+body for its frame reach as the call limit reads none for what a callee does
+with a container it is handed; a content type the census reads other
 than as a string constant or a name bound once to one is refused by name too, on
 every version, so no frame can rewrite an intermediate the census had read. A
 `_send`
@@ -510,8 +516,14 @@ comprehension changes and a parameter the function changes among them, is
 refused by name wherever it is read, the reason naming the first condition it
 fails (the first parameter of a method or a route handler is not read so: every
 attribute read and method call on it is refused already); one handed to a call
-as an argument is under the call limit, what the callee does with it not read
-(its witness: a local dict a module function it is handed stores a fetch into).
+as an argument is under the call limit, what the callee does with it not read,
+as is a container the page changes through a call's return that holds it (a
+class from `type()`, a mapping from `dict()`, a bound method from
+`functools.partial`) or one it reaches through the heap with no name and no
+frame (`gc.get_objects`, `ctypes`), the census reading neither the callee, the
+return, nor the heap (its witnesses: a local dict a module function it is handed
+stores a fetch into, a list a `type()` call's returned class attribute aliases,
+and one found on the heap by identity and changed).
 An attribute read in a page position, as a value or anywhere on the
 path of a receiver or a container (but never inside the index of a subscript
 over a container whose text the pass does not read: below), is refused by name
