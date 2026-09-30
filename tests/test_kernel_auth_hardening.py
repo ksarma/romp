@@ -27,6 +27,7 @@ import io
 import hashlib
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -739,7 +740,9 @@ class OpenerIsolation(unittest.TestCase):
         # gh-70765) read no headers. The last subtests read the gated and exempt paths on HTTP/0.5, a version below HTTP/2.0
         # other than HTTP/0.9, which gets a full reply, through the same check, so the status each of those bodies goes with
         # is read off the wire, not assumed.
-        chat = km._chat_page()
+        # the chat page as _send writes it, before the scripts it puts after <head>: the stamp _send writes on a text/html 200
+        # whose body carries an <html> tag (kernel.py _stamp_served_html), ` data-romp-served=200` after its first `<html`
+        chat = re.sub(r"(<html)(?=[\s>])", r"\1 data-romp-served=200", km._chat_page(), count=1, flags=re.I)
         head = chat.index("<head>") + len("<head>")
         fmt = km.Handler.error_message_format
         up_to_message = fmt[:fmt.index("%", fmt.index("%") + 1)]      # the error page up to its message; its one % is the code

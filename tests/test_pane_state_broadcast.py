@@ -1419,6 +1419,7 @@ const BTNS = {};
 KEYS.forEach((k) => { BTNS[k] = { hidden: false, title: '', getAttribute: (a) => (a === 'data-pane' ? k : null), classList: cls(new Set()), addEventListener() {} }; });
 const BODY_CLS = new Set(['po-chat', 'po-feed', 'po-timeline']); let TAB = null;
 global.window = global;
+window.__rompPaneSourceOk = () => true;   // the shell's source check (kernel.py _LANDING_BOOT_JS, run by tests/test_shell_source_check.py): this stub's posts stand for a pane's postMessage to the shell.
 global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0; global.scrollTo = () => {};
 global.matchMedia = (q) => ({ get matches() { return MATCHES; }, query: q, addEventListener: (ev, f) => { if (ev === 'change') MQL.push(f); } });
 global.requestAnimationFrame = (f) => 1;

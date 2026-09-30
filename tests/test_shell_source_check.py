@@ -922,7 +922,9 @@ class ServedScriptPopulation(unittest.TestCase):
     def test_each_page_is_read_as_send_writes_it(self):
         # a page of the page class (a builder the route table routes to) carries the sign-in seed and then the page-key
         # script ahead of its own scripts, as _send writes it on the response that signs a browser in; every other document
-        # is as built, since _send adds nothing outside the page class
+        # is as built but for the stamp _send writes on a text/html 200 whose body carries an <html> tag (kernel.py
+        # _stamp_served_html: ` data-romp-served=200` after the first `<html`), since _send adds nothing else outside the
+        # page class
         pages = _served_pages()
         renderers = {f.__name__ for f in km._PAGE_RENDERERS.values()}
         self.assertEqual(len(renderers), 8, "the shell, the six pane pages and the timeline")
@@ -931,7 +933,10 @@ class ServedScriptPopulation(unittest.TestCase):
             built = b(*_BUILDER_ARGS.get(builder, ())) if callable(b) else b
             with self.subTest(page=name):
                 if builder not in renderers:
-                    self.assertEqual(pages[name], built)
+                    want = built
+                    if next(iter(_typed_responses()[0][builder])).startswith("text/html"):
+                        want = re.sub(r"(<html)(?=[\s>])", r"\1 data-romp-served=200", built, count=1, flags=re.I)
+                    self.assertEqual(pages[name], want)
                     continue
                 scripts = _inline_scripts(pages[name])
                 self.assertIn(json.dumps(km._page_key(_SESSION)), scripts[0], "the seed first: it stores the page key")
