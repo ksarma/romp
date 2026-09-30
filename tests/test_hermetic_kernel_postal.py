@@ -1516,6 +1516,7 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal._the_drops_count_body",
     "HermeticKernelPostal.test_a_bare_name_is_a_call_only_as_a_decorator_or_a_metaclass_and_a_base_runs_its_init_subclass",
     "HermeticKernelPostal.test_a_call_chain_longer_than_the_cap_raises_naming_the_chain_and_a_cycle_is_cut",
+    "HermeticKernelPostal.test_a_class_body_read_takes_the_modules_binding_where_python_reads_it",
     "HermeticKernelPostal.test_a_collect_report_hook_is_admitted_by_the_shape_the_reader_proves_and_any_other_is_refused_naming_why",
     "HermeticKernelPostal.test_a_collect_report_proof_leaves_no_cycle_holding_the_modules_defs",
     "HermeticKernelPostal.test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why",
@@ -1526,6 +1527,7 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal.test_a_starred_value_is_a_licence_fault_naming_its_line_and_every_other_value_shape_round_trips",
     "HermeticKernelPostal.test_a_tracked_dict_is_read_only_through_the_allowed_reads_and_any_other_reference_is_loud",
     "HermeticKernelPostal.test_an_augmented_write_and_a_key_bound_as_a_target_are_read_with_no_value",
+    "HermeticKernelPostal.test_an_ini_alias_the_conftest_registers_is_refused_since_getini_reads_the_setting_it_aliases",
     "HermeticKernelPostal.test_every_escape_only_kind_the_anyio_rule_lists_is_admitted",
     "HermeticKernelPostal.test_every_road_the_verifications_found_through_the_withdrawn_direct_import_key_proof_is_refused",
     "HermeticKernelPostal.test_every_road_through_the_withdrawn_def_local_proof_is_refused",
@@ -6485,6 +6487,15 @@ _ANYIO_KEYED = {"getoption": ("plugins", "-p"), "getvalue": ("plugins", "-p"), "
 #   that is ANY option string (a key starting with -, as every option string does) is refused too, since _opt2dest
 #   maps it to whatever dest its declaration names, and an option a conftest declares as --plugins, or with
 #   dest='plugins', takes -p's (the hundred and fifteenth round-2 commit of fork PR #894)
+_ANYIO_INI_REGISTRARS = frozenset(("addini",))
+#   the parser's registration of an ini setting (pytest's Parser.addini), which since pytest 9 takes aliases=: getini
+#   resolves the key it is handed through the parser's _ini_aliases, so a conftest's parser.addini('addopts', ...,
+#   aliases=['cmdini']) makes getini('cmdini') read addopts, and the same for markers, the settings THE ANYIO RULE
+#   refuses getini to read by name (_ANYIO_KEYED['getini']). The rule admits one only as a call whose name is a str
+#   literal that is no key of _ANYIO_KEYED['getini'] and that passes neither aliases= nor ** keywords
+#   (_anyio_addini_refusal), and refuses it read other than as a call and a value naming it where a carrier's name is
+#   refused (getattr(parser, "addini")) (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 1;
+#   0 live, tests/conftest.py and tests/__init__.py name no addini)
 _ANYIO_BY_NAME = {"getattr": 1, "hasattr": 1, "getattr_static": 1, "__getattribute__": None, "__getattr__": None,
                   "methodcaller": 0, "attrgetter": None, "get": 0, "pop": 0, "setdefault": 0, "__getitem__": 0}
 #   the calls that read an attribute or an item by a name handed them, {function or method: the index of the argument
@@ -6741,14 +6752,84 @@ def _anyio_namespace_write(x, parent):
     return "%s() held whole (bound to a name, handed to a call, iterated or returned)" % x.id
 
 
+def _anyio_addini_refusal(attr, parent):
+    """Why THE ANYIO RULE refuses the ini registration `attr` (an attribute named addini, _ANYIO_INI_REGISTRARS;
+    `parent` maps each node of its tree to the node holding it), else None: read other than as the callee of a call;
+    a call handed keywords through **, or passing aliases=, either of which can register an alias that getini resolves
+    to the setting registered; a call whose name, its first argument or its name=, is not a str literal (a name, a
+    starred argument, none); and a call whose name is a key getini is refused to read by name (addopts, markers:
+    _ANYIO_KEYED['getini']), registered again. The aliases are keyword-only in pytest 9's Parser.addini, so a starred
+    argument after a literal name cannot pass them. The reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR
+    #894, item 1: a conftest's own parser.addini('addopts', ..., aliases=['cmdini']) made getini('cmdini') read addopts
+    while the rule proved the literal key 'cmdini'."""
+    p = parent.get(attr)
+    if not (isinstance(p, ast.Call) and p.func is attr):
+        return ("the ini registration %s read other than as a call, so the name and the aliases each call of it "
+                "registers are not in the text" % attr.attr)
+    if any(k.arg is None for k in p.keywords):
+        return ("the ini registration %s handed keywords through **, which can pass aliases=, an alias getini resolves "
+                "to the setting registered" % attr.attr)
+    if any(k.arg == "aliases" for k in p.keywords):
+        return ("the ini registration %s passing aliases=, which getini resolves to the setting registered (pytest 9: "
+                "parser.addini('addopts', ..., aliases=['cmdini']) makes getini('cmdini') read addopts), so a literal "
+                "key of getini may read a setting the rule refuses it to read by name" % attr.attr)
+    name = p.args[0] if p.args else next((k.value for k in p.keywords if k.arg == "name"), None)
+    if not (isinstance(name, ast.Constant) and isinstance(name.value, str)):
+        return ("the ini registration %s whose name is not a str literal, so the rule does not read which setting it "
+                "registers" % attr.attr)
+    if name.value in _ANYIO_KEYED["getini"]:
+        return ("the ini registration %s of %r, a setting getini is refused to read by name (the ini's addopts carries "
+                "options, its markers the markers each plugin registers), registered again" % (attr.attr, name.value))
+    return None
+
+
+def _anyio_resolution(bindings, name_node):
+    """(declarations, scope, unbound) for the Name read `name_node`, by THE ANYIO RULE's own resolution, the one every
+    site of the rule resolves a name through (_anyio_option_reads' declared, unbound and outside_a_function; the
+    direct-import check's resolved, loose and outer, and so is_sys, targets and dundered; and _anyio_imported_module's
+    reading of a name it matched): ast_bindings' scope rule (`bindings`.scope_of(name_node).resolve), except for a read
+    in a CLASS BODY of a name that class binds. Python reads a name in a class body by LOAD_NAME, the class's namespace,
+    then the module's, then the builtins, so where the class has not bound the name at that point (a read ahead of the
+    binding, after a del, or with the binding in a branch not taken) the read takes the module's binding, or the builtin
+    where the module binds none, and never an enclosing def's (for a class in a def, a name the class binds is read by
+    LOAD_NAME too); ast_bindings.Scope.resolve returns the class's declarations alone. Here such a read resolves to the
+    class's declarations PLUS the module scope's, and, where the module binds none, to no binding as well (`unbound`),
+    so the checks for a name no declaration binds (the builtins vars, globals and locals; sys where nothing binds it)
+    apply to it (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 2, built here and not in
+    ast_bindings.Scope, which other censuses share). A fold reads the declarations alone: the builtin a class-body read
+    may take is no str value it could fold. `scope` is the scope resolve names (the class's, for such a read; None where
+    no scope binds the name); `unbound` is whether the read may take no binding: no declaration binds it, or it is such a
+    class-body read and the module binds none. An AssertionError from scope_of (a node of another tree) propagates."""
+    decls, where = bindings.scope_of(name_node).resolve(name_node.id)
+    if where is None or where.kind != "class":
+        return decls, where, not decls
+    more = list(where.module().names.get(name_node.id, ()))
+    return decls + more, where, not more
+
+
+_ANYIO_BUILTIN_DEFEATER_CALLS = {
+    (None, "setattr"): "setattr", (None, "delattr"): "delattr", (None, "compile"): "compile",
+    ("builtins", "setattr"): "setattr", ("builtins", "delattr"): "delattr", ("builtins", "compile"): "compile",
+    ("builtins", "__setattr__"): "setattr", ("builtins", "__delattr__"): "delattr",
+    ("object", "__setattr__"): "setattr", ("object", "__delattr__"): "delattr"}
+#   THE BUILTIN DEFEATERS of a literal key (_anyio_builtin_defeaters), {(the name the callee is read as an attribute of,
+#   None for a bare name; the callee's name): the builtin the call reaches}: ten clauses, one per spelling. Each has its
+#   own plant in test_the_conftests_builtin_setattr_delattr_and_compile_defeat_a_literal_key, which shows the plant
+#   refused and then admitted with that one entry removed, and holds the plants' clauses equal to these keys (the
+#   reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894, "a mutant per clause", and its ruling of
+#   2026-09-30 12:50Z, item 4, which found five of the ten with no plant: builtins.delattr, builtins.compile,
+#   builtins.__setattr__, builtins.__delattr__ and object.__delattr__)
+
+
 def _anyio_builtin_defeaters(tree, proven):
     """Why the conftest's own text names a builtin that defeats a literal key: a setattr, delattr or object.__setattr__
-    call -- a BARE NAME (setattr, delattr), through builtins (builtins.setattr, builtins.__setattr__) or
-    object.__setattr__/object.__delattr__ -- whose target name (its second argument) THE PROOF does not prove, since such
-    a call can rewrite the hook's code object, and with it the literal its keyed read is handed (setattr), or remove the
-    attribute a read by a literal key resolves, so it resolves another, a base class's (delattr); and a BARE-NAME
-    compile() call (bare, or builtins.compile), which builds code the rule does not parse. "" for none (the reviewer's
-    ruling of 2026-09-29 15:08Z on round 2 of fork PR #894, its second medium; since the hundred and fourteenth round-2
+    call -- a BARE NAME (setattr, delattr), through builtins (builtins.setattr, builtins.delattr, builtins.__setattr__,
+    builtins.__delattr__) or object.__setattr__/object.__delattr__ -- whose target name (its second argument) THE PROOF
+    does not prove, since such a call can rewrite the hook's code object, and with it the literal its keyed read is
+    handed (setattr), or remove the attribute a read by a literal key resolves, so it resolves another, a base class's
+    (delattr); and a compile() call (a bare name, or builtins.compile), which builds code the rule does not parse. The
+    spellings are the ten keys of _ANYIO_BUILTIN_DEFEATER_CALLS, read from that table at each call. "" for none (the
+    reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894, its second medium; since the hundred and fourteenth round-2
     commit a literal key is the one key THE PROOF proves, so these defeat a literal key alone, the reviewer's ruling of
     2026-09-30 01:04Z keeping them for a literal key whose hook's code is rewritten). The builtin is told from an
     attribute call of the same name: re.compile and monkeypatch.setattr are attributes of a name other than builtins or
@@ -6759,18 +6840,14 @@ def _anyio_builtin_defeaters(tree, proven):
         if not isinstance(n, ast.Call):
             continue
         f = n.func
-        kind = None                          # "setattr" | "delattr" | "compile", called as the builtin
-        if isinstance(f, ast.Name) and f.id in ("setattr", "delattr", "compile"):
-            kind = f.id
-        elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
-            if f.value.id == "builtins" and f.attr in ("setattr", "delattr", "compile", "__setattr__", "__delattr__"):
-                kind = "compile" if f.attr == "compile" else "setattr" if "set" in f.attr else "delattr"
-            elif f.value.id == "object" and f.attr in ("__setattr__", "__delattr__"):
-                kind = "setattr" if "set" in f.attr else "delattr"
+        spelled = ((None, f.id) if isinstance(f, ast.Name)
+                   else (f.value.id, f.attr) if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) else None)
+        kind = _ANYIO_BUILTIN_DEFEATER_CALLS.get(spelled)   # "setattr" | "delattr" | "compile", called as the builtin
         if kind is None:
             continue
         if kind == "compile":
-            return "a bare-name compile() call, which builds code the rule does not parse, so a literal key beside it is not safe"
+            return ("a builtin compile() call (a bare name, or through builtins), which builds code the rule does not parse, "
+                    "so a literal key beside it is not safe")
         target = n.args[1] if len(n.args) >= 2 else None
         if target is None or proven(target)[0] is None:
             return ("a builtin %s() call whose target name THE PROOF does not prove, which can rewrite the hook's code "
@@ -6848,9 +6925,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     that cell to a writer that names neither, ctypes.pythonapi.PyCell_Set; or a read of f_globals, f_back or
     sys._getframe, which reach a frame and the module namespace it runs in), so a literal key is unproven wherever the
     text names one;
-    and no builtin defeater (_anyio_builtin_defeaters, the reviewer's ruling of 2026-09-29 15:08Z): a builtin setattr,
-    delattr or object.__setattr__ call -- a bare name, through builtins, or object.__setattr__ -- whose target name THE
-    PROOF does not prove, and a bare-name compile call, which can rewrite the hook's code object, so each defeats a
+    and no builtin defeater (_anyio_builtin_defeaters, the reviewer's ruling of 2026-09-29 15:08Z): a builtin setattr or
+    delattr call -- a bare name, through builtins, or object.__setattr__ and object.__delattr__ -- whose target name THE
+    PROOF does not prove, and a compile call, a bare name or through builtins (the ten spellings of
+    _ANYIO_BUILTIN_DEFEATER_CALLS), which can rewrite the hook's code object, so each defeats a
     literal key beside it (an attribute call of a name other than builtins or object -- re.compile, monkeypatch.setattr
     -- is not one, so the live conftest's own are not refused; a bare setattr whose target is a literal names one fixed
     attribute, not the key, and is no defeater). The ruling of 2026-09-30 01:04Z keeps these checks for a literal key
@@ -6951,9 +7029,16 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     is read from (sys under another name, the plugin manager bound to a name) changes nothing; a carrier read and bound
     to a name is refused where it is read, and so is a keyed read taken other than as a call (getoption bound to a name
     or handed to a helper). A name read in a value the rule folds is followed BY BINDING, by its scope to the
-    declarations that bind it (ast_bindings), not by its spelling, and a bare name spelled as a carrier or a keyed read
-    is resolved the same way to the scope that binds it (the third clause); a call that reads by a name handed it
-    (_ANYIO_BY_NAME) is known by the name it is called through, and one of those that reads an attribute
+    declarations that bind it (ast_bindings, through _anyio_resolution), not by its spelling, and a bare name spelled as
+    a carrier or a keyed read is resolved the same way to the scope that binds it (the third clause). A name read in a
+    CLASS BODY that its class binds resolves to the class's declarations PLUS the module's, and to no binding as well
+    where the module binds none, since Python reads such a name from the class's namespace, then the module's, then the
+    builtins, so a read ahead of the class's binding, after a del or with the binding in a branch not taken takes the
+    module's binding or the builtin (_anyio_resolution; the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR
+    #894, item 2: until the hundred and eighteenth round-2 commit such a read resolved to the class's declarations
+    alone, and a fold, the checks of vars, globals and locals, the check of sys.path, and the direct-import check's walk
+    to a def of the module and its matching of a class of the module each read the wrong binding). A call that reads by
+    a name handed it (_ANYIO_BY_NAME) is known by the name it is called through, and one of those that reads an attribute
     (_ANYIO_ATTRIBUTE_READERS) is admitted only as the callee of a call whose names THE PROOF proves, so one bound to
     another name is refused where it is read (the fifth clause):
     - A VALUE NAMING anyio, PYTEST_ADDOPTS or mainargv (_ANYIO_WORDS), case folded: every str or bytes literal, and
@@ -6991,7 +7076,14 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
       getoption('--plugins'), or by its own option string, as -p's list, while a key with no leading - is read as the
       dest it names (the verification of the hundred and fourteenth round-2 commit of fork PR #894 found both admitted,
       a child pytest handing the read the run's -p list; the hundred and fifteenth refuses them, at the trade WHAT IT
-      CLAIMS states); and read in no other way (a key the text does not hold); config.option,
+      CLAIMS states); and read in no other way (a key the text does not hold). Since pytest 9 an ini setting can be
+      registered under aliases, and getini reads an alias as the setting it names, so the parser's registration of an
+      ini setting (_ANYIO_INI_REGISTRARS, parser.addini) is admitted only as a call whose name is a str literal that is
+      no key getini is refused (addopts, markers) and that passes neither aliases= nor ** keywords; it is refused read
+      other than as a call, and a value naming it is refused wherever a carrier's name is (_anyio_addini_refusal; the
+      reviewer's light re-check at 298df9982 found parser.addini('addopts', ..., aliases=['cmdini']) and the same for
+      markers admitted while a child pytest handed getini('cmdini') the ini's addopts, and the reviewer's ruling of
+      2026-09-30 12:50Z on round 2 of fork PR #894, item 1, refuses them). And config.option,
       admitted only as an attribute of it the text names, none of the names above and no double-underscore name, or
       through getattr or hasattr with a key THE PROOF proves so; a namespace's item (vars(x)[k], vars(x).get(k),
       globals()[k], x.__dict__[k]), admitted only by a key THE PROOF proves, since it reads the attribute so named; and
@@ -7108,7 +7200,9 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     of any kind, which THE PROOF does not prove, or another key it does not prove (its environment lookups by a key
     the proof does not prove are no keyed read: THE ENVIRONMENT, in WHAT IT DOES NOT READ). It calls no getoption,
     getvalue or getvalueorskip, so the refusal of an option string refuses nothing of it, and no argument parser's
-    parse, nor does tests/__init__.py. The
+    parse, nor does tests/__init__.py, and neither names addini, so the refusal of an ini registration refuses nothing
+    of them. No class body of either reads a name its class binds, so the class-body resolution (HOW IT FOLLOWS A ROAD)
+    changes no reading of them. The
     direct-import check reads tests/__init__.py, which the conftest imports as _tests and, in a def, as `from tests
     import remove_made_dirs`; its one read, sys.argv in write_owner_marker, is in a def that returns nothing and has no
     decorator, so it matches none of the module's names: that def is the module's one module-level statement holding a
@@ -7137,9 +7231,9 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     hands getoption 'plugins', and where the writer is code outside the conftest's text the child imports that module
     after the conftest; a plant that reads the command line hands getoption 'verbose' under -p no:planted and nothing
     without it), or, for a plant whose writer is a plugin, in a child pytest that loads the plugin by -p, where the
-    conftest's read by a literal key is handed the run's -p list, or, for a plant whose conftest's own hook is handed
-    the plugins the run loaded, in that child pytest, where the hook sees the plugin -p loads and not the one -p
-    blocks; so a kind the rule starts refusing turns its own
+    conftest's read by a literal key is handed the run's -p list, or, for a plant whose conftest's own code is handed
+    the plugins the run loaded (a hook's parameters, or a callback it hands pluggy), in that child pytest, where that
+    code sees the plugin -p loads and not the one -p blocks; so a kind the rule starts refusing turns its own
     subtest red and this listing stays true;
     test_the_anyio_rules_listing_names_each_escape_only_witness_and_no_other holds the ids named here equal to that
     test's subtests, so a dangling id or an unlisted subtest is a red naming it. THE POSITIVE ALLOWLIST refuses a NAME,
@@ -7226,7 +7320,17 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[plugin-registered-hook], whose plant collects the
     names the hook is handed and prints them, and in a child pytest that loads the plugin _outside by -p and blocks
     the cache plugin sees _outside and not cacheprovider (the verification of the hundred and fourteenth round-2
-    commit of fork PR #894 found the kind).
+    commit of fork PR #894 found the kind). The plugins the run loaded, handed to a callback the conftest gives pluggy's
+    hook-call monitoring: config.pluginmanager.add_hookcall_monitoring(before, after) has pluggy call before, ahead of
+    every later hook call, with the hook implementations it runs, each naming its plugin (plugin_name), so the callback
+    sees each plugin that implements a hook called after it, what the rule refuses where it is read through the plugin
+    manager's get_plugins, list_name_plugin or get_hookimpls, and no read is refused (to key on anyio the callback must
+    name it, which the first two clauses refuse, spell it so the rule cannot fold it, or key on a count or on another
+    plugin); no live site (tests/conftest.py calls no add_hookcall_monitoring), escape-only, witness
+    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[hookcall-monitoring], whose plant collects the plugin
+    names its callback is handed and prints them at the session's end, and in a child pytest that loads by -p the plugin
+    _outside, which implements pytest_sessionstart, and blocks the cache plugin sees _outside and not cacheprovider (the
+    reviewer's light re-check at 298df9982 found the kind).
     CODE THE RULE DOES NOT PARSE, AND BUILTINS REACHED A WAY IT DOES NOT SEE. Code the module runs from a string (exec,
     eval), whose reads the rule does not parse as code (a string naming anyio there is still refused as a value, and
     exec or eval named in the text defeats THE PROOF of a literal key, so any keyed read beside one is refused, and
@@ -7348,12 +7452,21 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
         return (frozenset(), True, True) if len(values) > _ANYIO_FOLD_CAP else (frozenset(values), is_open, False)
 
     def declared(name_node):
-        """The declarations `name_node` (a Name read) resolves to by its scope; None where no scope binds it."""
+        """The declarations `name_node` (a Name read) resolves to by its scope (_anyio_resolution, so a class-body read
+        of a name its class binds takes the module's declarations too); None where no scope binds it."""
         try:
-            decls, _where = bindings.scope_of(name_node).resolve(name_node.id)
+            decls, _where, _unbound = _anyio_resolution(bindings, name_node)
         except AssertionError:
             return None
         return decls or None
+
+    def unbound(name_node):
+        """Whether `name_node` (a Name read) may take no binding (_anyio_resolution): no declaration binds it, or it is
+        read in a class body whose class binds it and whose module does not, where Python reads the builtin."""
+        try:
+            return _anyio_resolution(bindings, name_node)[2]
+        except AssertionError:
+            return True
 
     def iterated(decl):
         """The iterable a loop declaration of decl.name iterates, or None (a tuple target, or no loop)."""
@@ -7535,23 +7648,23 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
             text if len(text) <= 60 else text[:57] + "...")
 
     def is_namespace(e):
-        """Whether `e` is a namespace read whole: vars(x), globals(), locals(), vars() that no declaration binds, or
-        x.__dict__."""
+        """Whether `e` is a namespace read whole: vars(x), globals(), locals(), vars() that may take no binding
+        (unbound: no declaration binds it, or a class body's read that may take the builtin), or x.__dict__."""
         if isinstance(e, ast.Attribute) and e.attr == "__dict__":
             return True
         return (isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id in ("vars", "globals", "locals")
-                and declared(e.func) is None)
+                and unbound(e.func))
 
     def names_a_carrier(value):
         return isinstance(value, str) and any(part in _ANYIO_CARRIERS or part in _ANYIO_KEYED or part == "option"
                                               or part in _ANYIO_ATTRIBUTE_READERS or part in _ANYIO_PARSES
-                                              for part in value.split("."))
+                                              or part in _ANYIO_INI_REGISTRARS for part in value.split("."))
 
     def outside_a_function(name_node):
         """Whether `name_node` (a Name read) resolves outside every def, lambda and comprehension: in the module's
         scope, a class body's, or in none (a star import's binding, a builtin)."""
         try:
-            _decls, where = bindings.scope_of(name_node).resolve(name_node.id)
+            _decls, where, _unbound = _anyio_resolution(bindings, name_node)
         except AssertionError:
             return True
         return where is None or where.kind in ("module", "class")
@@ -7631,6 +7744,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
                                "parser's _opt2dest to the dest its declaration names (an option declared as --plugins, "
                                "or with dest='plugins', takes -p's dest), so only a key with no leading - is read as the "
                                "dest it names" % (n.attr, value))
+            if isinstance(n, ast.Attribute) and n.attr in _ANYIO_INI_REGISTRARS:
+                why = _anyio_addini_refusal(n, parent)
+                if why:
+                    off(n, why)
             if isinstance(n, ast.Attribute) and n.attr == "option":
                 p = parent.get(n)
                 ok = (isinstance(p, ast.Attribute) and p.value is n and not p.attr.startswith("__")
@@ -7703,7 +7820,7 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
                         off(n, "%s read by a key the rule does not prove to be one fixed string, so it may read "
                                "mainargv, the controller's command line: %s" % (_ANYIO_HOLDERS[n.attr], why))
             if (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in ("globals", "vars", "locals")
-                    and declared(n) is None):
+                    and unbound(n)):
                 p = parent.get(n)
                 bare = isinstance(p, ast.Call) and p.func is n and not p.args and not p.keywords
                 if n.id == "globals" or (bare and stands_outside_a_function(n)):
@@ -7736,7 +7853,7 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
                 off(node, why)
     finally:
         capped = declared = iterated = through = by_declaration = fold = elements = off = None   # each holds the next,
-        proven_list = proven = is_namespace = None   # or the tree, through its
+        proven_list = proven = is_namespace = unbound = None   # or the tree, through its
         stands_outside_a_function = None    # closure: a cycle only a collection frees
         bindings.release()
     return sorted(set(out))
@@ -7862,11 +7979,20 @@ def _anyio_import_reads(tree, where, bindings, parent):
         return None
 
     def resolved(name_node):
-        """The declarations the name `name_node` resolves to by its scope ([] where none binds it)."""
+        """The declarations the name `name_node` resolves to by its scope (_anyio_resolution, so a class-body read of a
+        name its class binds takes the module's declarations too; [] where none binds it)."""
         try:
-            return bindings.scope_of(name_node).resolve(name_node.id)[0]
+            return _anyio_resolution(bindings, name_node)[0]
         except AssertionError:
             return []
+
+    def loose(name_node):
+        """Whether the name `name_node` may take no binding (_anyio_resolution: no declaration binds it, or a class-body
+        read of a name its class binds and its module does not)."""
+        try:
+            return _anyio_resolution(bindings, name_node)[2]
+        except AssertionError:
+            return True
 
     def split(expr):
         """(the name an attribute chain `expr` starts from, or None, and the attributes read on it, in order)."""
@@ -7916,7 +8042,7 @@ def _anyio_import_reads(tree, where, bindings, parent):
         """Whether the name `name_node` resolves outside every def, lambda and comprehension (in the module's scope, a
         class body's, or in none), where a star import of the module can bind it whatever the text declares there."""
         try:
-            scope = bindings.scope_of(name_node).resolve(name_node.id)[1]
+            scope = _anyio_resolution(bindings, name_node)[1]
         except AssertionError:
             return True
         return scope is None or scope.kind in ("module", "class")
@@ -7924,14 +8050,15 @@ def _anyio_import_reads(tree, where, bindings, parent):
     def is_sys(expr, seen):
         """Whether `expr` reads the module sys by binding: a name bound by an import of sys under any name (or of an
         attribute named sys, from os import sys) or by an assignment of a name or an attribute that reads it, the name
-        sys where no declaration binds it, or an attribute named sys (os.sys)."""
+        sys where it may take no binding (loose: no declaration binds it, or a class-body read whose module binds
+        none, where a star import can bind it), or an attribute named sys (os.sys)."""
         if isinstance(expr, ast.Attribute):
             return expr.attr == "sys"
         if not isinstance(expr, ast.Name):
             return False
         decls = resolved(expr)
-        if not decls:
-            return expr.id == "sys"
+        if loose(expr) and expr.id == "sys":
+            return True
         for d in decls:
             if d.kind == "import" and isinstance(d.node, ast.alias) and d.node.name == "sys":
                 return True
@@ -8052,7 +8179,7 @@ def _anyio_import_reads(tree, where, bindings, parent):
                 if hit is not None:
                     out.append((top, kinds[hit[1][0]] % (hit[0], hit[1][1])))
     finally:
-        located = module = absolute = resolved = split = targets = reached = None   # each holds the next, or the tree,
+        located = module = absolute = resolved = loose = split = targets = reached = None   # each holds the next, or the tree,
         outer = is_sys = under = outside = dundered = channelled = None     # through its closure: a cycle only a
         #   collection frees
     return out
@@ -8130,11 +8257,11 @@ def _anyio_imported_module(path):
             if id(x) in reads:
                 return "what the rule refuses there (its %s)" % reads[id(x)]
             if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and x.id in matched:
-                try:
-                    scope = mbindings.scope_of(x).resolve(x.id)[1]
+                try:      # a class-body read of a name its class binds takes the module's too (_anyio_resolution)
+                    decls, scope, _unbound = _anyio_resolution(mbindings, x)
                 except AssertionError:
-                    scope = None
-                if scope is mbindings.module:
+                    decls, scope = [], None
+                if scope is mbindings.module or any(d.scope is mbindings.module for d in decls):
                     return "its %s, which the check matches there" % x.id
             todo.extend(ast.iter_child_nodes(x))
         return None
@@ -8234,6 +8361,11 @@ _ESCAPE_ONLY_PLUGIN_TEST = "def test_x():\n    pass\n"
 _ESCAPE_ONLY_SEEN_CONF = ("import json\n\n_SEEN = []\n\n\ndef pytest_plugin_registered(plugin, plugin_name, manager):\n"
                           "    _SEEN.append(plugin_name)\n\n\ndef pytest_configure(config):\n"
                           "    print(%r + json.dumps(sorted(set(map(str, _SEEN)))))\n" % _ESCAPE_ONLY_HANDED)
+_ESCAPE_ONLY_MONITOR_CONF = ("import json\n\n_SEEN = set()\n\n\ndef _before(hook_name, hook_impls, kwargs):\n"
+                             "    _SEEN.update(i.plugin_name for i in hook_impls)\n\n\ndef pytest_configure(config):\n"
+                             "    config.pluginmanager.add_hookcall_monitoring(_before, lambda *a: None)\n\n\n"
+                             "def pytest_sessionfinish(session):\n    print('\\n' + %r + json.dumps(sorted(map(str, _SEEN))))\n"
+                             % _ESCAPE_ONLY_HANDED)
 #   the defeater plants' parts: the arguments of a compile whose first constant is a hook that hands getoption
 #   'plugins', and a hook whose key is a literal; a hook whose key is a def's local bound once (a road of
 #   test_every_road_through_the_withdrawn_def_local_proof_is_refused); the modules outside the conftest's text the child
@@ -8245,8 +8377,11 @@ _ESCAPE_ONLY_SEEN_CONF = ("import json\n\n_SEEN = []\n\n\ndef pytest_plugin_regi
 #   the frame; and the PLUGIN plants' parts: a conftest whose hook prints, as one JSON line after _ESCAPE_ONLY_HANDED,
 #   what its read by the literal key 'seen' is handed (_escape_only_pytest), the head of a plugin that adds the option
 #   --seen and whose pytest_configure runs first, and a test module for the child pytest to collect; and the HOOK
-#   plant's conftest, whose own pytest_plugin_registered collects the name of each plugin it is handed and whose
-#   pytest_configure prints them, as one JSON line after _ESCAPE_ONLY_HANDED
+#   plants' conftests: one whose own pytest_plugin_registered collects the name of each plugin it is handed and whose
+#   pytest_configure prints them, as one JSON line after _ESCAPE_ONLY_HANDED, and one whose pytest_configure hands
+#   pluggy's add_hookcall_monitoring a callback that collects the plugin name of each hook implementation every later
+#   hook call is handed, and whose pytest_sessionfinish prints them the same way (after a line break, since pytest's
+#   progress dot precedes it on the line)
 _ESCAPE_ONLY_KINDS = (
     ("filled-at-import", (
         ("G1b: lines.append(sys.argv) at the module's import", "import _ih" + _ESCAPE_ONLY_READ % "_ih.lines[0]",
@@ -8290,6 +8425,10 @@ _ESCAPE_ONLY_KINDS = (
     ("plugin-registered-hook", (
         ("the conftest's own pytest_plugin_registered collects the names of the plugins the run loaded",
          _ESCAPE_ONLY_SEEN_CONF, {"_outside": "X = 1\n", "test_x": _ESCAPE_ONLY_PLUGIN_TEST}, "hook"),)),
+    ("hookcall-monitoring", (
+        ("the conftest's callback to pluggy's add_hookcall_monitoring collects the plugin of each hook implementation",
+         _ESCAPE_ONLY_MONITOR_CONF, {"_outside": "def pytest_sessionstart(session):\n    pass\n",
+                                     "test_x": _ESCAPE_ONLY_PLUGIN_TEST}, "hook"),)),
     ("code-from-a-string", (
         ("the hook defined in a string exec runs",
          "exec(\"def pytest_configure(config):\\n    import sys\\n    if 'no:planted' in sys.argv:\\n"
@@ -8364,9 +8503,10 @@ _ESCAPE_ONLY_KINDS = (
 #   'verbose', so getoption is handed 'plugins'; "outside" for a rewrite whose writer is the module _outside, which the
 #   conftest does not import and the child imports after it (code outside the conftest's text); "plugin" for one whose
 #   writer is the module _outside loaded as a plugin by -p in a child pytest (_escape_only_pytest), where the conftest's
-#   read by a literal key is handed the run's -p list; "hook" for one whose conftest's own hook is handed the plugins
-#   the run loaded, run in that child pytest, where the module _outside, a plugin that does nothing, is loaded by -p
-#   and the cache plugin is blocked, so the names the hook prints hold _outside and not cacheprovider; None for one not
+#   read by a literal key is handed the run's -p list; "hook" for one whose conftest's own code is handed the plugins
+#   the run loaded (a hook's parameters, or a callback it hands pluggy), run in that child pytest, where the module
+#   _outside, a plugin that does nothing (or implements one hook that does nothing), is loaded by -p and the cache
+#   plugin is blocked, so the names the conftest prints hold _outside and not cacheprovider; None for one not
 #   run (the unfoldable keys, whose road reads the plugins the run loaded and not the command line). Synthetic: every
 #   name invented, the direct import's text named
 #   only by identifiers tests/__init__.py holds (THE POSITIVE ALLOWLIST)
@@ -8840,6 +8980,157 @@ def _def_local_roads():
          {"conftest": trace_in + "def pytest_configure(config):\n    config.getoption('verbose')\n"}, (), None,
          ["verbose"])]
     return roads + controls
+
+
+def _ini_alias_roads():
+    """THE INI ALIAS ROADS (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 1: pytest 9's
+    getini reads an alias as the setting it names, so a conftest's parser.addini('addopts', ..., aliases=['cmdini'])
+    made getini('cmdini') read addopts while THE ANYIO RULE proved the literal key 'cmdini'), [(label, {file under the
+    plant's directory: text}, the reason its refusal names or None for a control the rule admits, None or (what a child
+    pytest shows, a test of what the conftest's getini of the alias is handed there))], for
+    test_an_ini_alias_the_conftest_registers_is_refused_since_getini_reads_the_setting_it_aliases. P1 and P2 are the
+    reviewer's two plants, each run in a child pytest (_escape_only_pytest: -p _outside and -p no:planted, the cache
+    plugin and anyio blocked): P1 under a pytest.ini whose addopts is -p no:planted, so getini('cmdini') is handed
+    ['-p', 'no:planted']; P2 beside the plugin _outside, which registers a marker, so getini('mk') is handed the
+    markers, that one among them. A1 to A6b are one plant for each refusal of _anyio_addini_refusal and of the value
+    naming addini (the one refusal each plant's own clause makes, so a mutant that drops that clause admits it); the
+    control registers a setting by a literal name, no aliases, and reads it by getini. Synthetic: every name invented."""
+    test = {"test_x.py": _ESCAPE_ONLY_PLUGIN_TEST}
+    marker = "planted: a marker the plugin _outside registers"
+
+    def add(call):
+        return "def pytest_addoption(parser):\n    %s\n" % call
+    return [
+        ("P1: addini('addopts', aliases=['cmdini']), getini('cmdini') under a pytest.ini whose addopts is -p no:planted",
+         dict(test, **{"conftest.py": "import json\n\n\n" + add("parser.addini('addopts', \"the run's options\", "
+                                                                 "type='args', aliases=['cmdini'])")
+                       + "\n\ndef pytest_configure(config):\n    print('\\n' + %r + json.dumps(config.getini('cmdini')))\n"
+                       % _ESCAPE_ONLY_HANDED,
+                       "_outside.py": "X = 1\n", "pytest.ini": "[pytest]\naddopts = -p no:planted\n"}),
+         "passing aliases=", ("getini('cmdini') is handed the ini's addopts, ['-p', 'no:planted']",
+                              lambda handed: handed == ["-p", "no:planted"])),
+        ("P2: addini('markers', aliases=['mk']), getini('mk') beside a plugin that registers a marker",
+         dict(test, **{"conftest.py": "import json\n\n\n" + add("parser.addini('markers', 'the markers', "
+                                                                 "type='linelist', aliases=['mk'])")
+                       + "\n\ndef pytest_sessionstart(session):\n"
+                         "    print('\\n' + %r + json.dumps(session.config.getini('mk')))\n" % _ESCAPE_ONLY_HANDED,
+                       "_outside.py": "def pytest_configure(config):\n    config.addinivalue_line('markers', %r)\n"
+                                      % marker}),
+         "passing aliases=", ("getini('mk') is handed the markers, the one the plugin _outside registers among them",
+                              lambda handed: isinstance(handed, list) and marker in handed)),
+        ("A1: aliases= alone, the name a literal no key of getini's entry",
+         {"conftest.py": add("parser.addini('cmdopt', 'h', type='args', aliases=['cmdini'])")}, "passing aliases=", None),
+        ("A2: ** keywords alone", {"conftest.py": add("parser.addini('cmdopt', 'h', **{'aliases': ['cmdini']})")},
+         "handed keywords through **", None),
+        ("A3: the name a name", {"conftest.py": "_NAME = 'addopts'\n\n\n" + add("parser.addini(_NAME, 'h', type='args')")},
+         "whose name is not a str literal", None),
+        ("A3b: name= a name", {"conftest.py": "_NAME = 'addopts'\n\n\n" + add("parser.addini(help='h', name=_NAME)")},
+         "whose name is not a str literal", None),
+        ("A3c: the arguments starred", {"conftest.py": "_ARGS = ('addopts', 'h', 'args')\n\n\n" + add("parser.addini(*_ARGS)")},
+         "whose name is not a str literal", None),
+        ("A4: addopts registered again, by a literal", {"conftest.py": add("parser.addini('addopts', 'h', type='args')")},
+         "a setting getini is refused to read by name", None),
+        ("A4b: markers registered again, name= a literal",
+         {"conftest.py": add("parser.addini(name='markers', help='h', type='linelist')")},
+         "a setting getini is refused to read by name", None),
+        ("A5: addini bound to a name and called",
+         {"conftest.py": add("_add = parser.addini\n    _add('addopts', 'h', type='args', aliases=['cmdini'])")},
+         "read other than as a call", None),
+        ("A6: addini read by getattr with a literal name",
+         {"conftest.py": add("getattr(parser, 'addini')('addopts', 'h', type='args', aliases=['cmdini'])")},
+         "a read of addini by its name, through getattr", None),
+        ("A6b: addini called through operator.methodcaller",
+         {"conftest.py": "import operator\n\n\n" + add("operator.methodcaller('addini', 'addopts', 'h', type='args', "
+                                                        "aliases=['cmdini'])(parser)")},
+         "a read of addini by its name, through methodcaller", None),
+        ("control: a setting registered by a literal name, no aliases, read by getini",
+         {"conftest.py": add("parser.addini('cmdopt', 'h', type='args')")
+          + "\n\ndef pytest_configure(config):\n    config.getini('cmdopt')\n"}, None, None)]
+
+
+def _class_body_value(d, expr):
+    """The repr a child interpreter, isolated (-I) and writing no byte code (-B), prints for the expression `expr` after
+    it imports the conftest in `d` (the directory first on its path): what Python binds, for the class-body roads. An
+    AssertionError naming the plant's directory, the return code and the child's output where the child fails."""
+    program = "import sys\nsys.path.insert(0, sys.argv[1])\nimport conftest\nprint(repr(%s))\n" % expr
+    r = subprocess.run([sys.executable, "-I", "-B", "-c", program, d], cwd=d, stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True, timeout=120)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise AssertionError("the plant in %s, %s: return code %d\n%s%s" % (d, expr, r.returncode, r.stdout, r.stderr))
+    return r.stdout.strip().splitlines()[-1]
+
+
+def _class_body_roads():
+    """THE CLASS-BODY ROADS (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 2: a Name read
+    in a class body resolved to the class's own binding where Python reads the module's, or the builtin), [(label, how,
+    {path under the plant's directory, no .py: text}, the reason its refusal names or None for a control the rule
+    admits, an expression _class_body_value evaluates, the repr it prints, whether the plant's hook keys a literal-key
+    read on the command line)], for test_a_class_body_read_takes_the_modules_binding_where_python_reads_it. `how` is
+    "plant" for a road the rule admitted until the hundred and eighteenth round-2 commit (the class-body resolution of
+    _anyio_resolution disabled), "kept" for a control refused either way and "admitted" for one admitted either way.
+    Each road reads a name its class binds, in one of three shapes, a read ahead of the class's binding (before), a read
+    after the class binds it and deletes it (del), and a read with the class's binding in a branch not taken (branch),
+    through each site of the rule that resolves a name: the fold (a value naming anyio or PYTEST_ADDOPTS; the class in a
+    def too, whose enclosing def's binding Python skips), the check of vars (a namespace's item by a key the rule does
+    not prove) and of globals (a write to the module's namespace), the check of sys.path (sys bound by an import, and
+    by a star import, which binds no declaration), the direct-import check's walk to a def of the module (a helper
+    that returns sys.argv) and its matching of a class of the module (one whose body reads a name of the module the
+    check matches). The controls: a class body whose binding comes first, whose fold the rule keeps, and one that binds
+    and reads its own names beside a literal key. Synthetic: every name invented, the direct import's text named only
+    by identifiers tests/__init__.py holds (THE POSITIVE ALLOWLIST)."""
+    hook = "\n\n\ndef pytest_configure(config):\n    if %s:\n        config.getoption('verbose')\n"
+    argv = hook % "'no:planted' in %s"
+    shapes = {"before": "    {use}\n    {name} = {none}\n", "del": "    {name} = {none}\n    del {name}\n    {use}\n",
+              "branch": "    if False:\n        {name} = {none}\n    {use}\n"}
+    mint = "import sys\n\n\ndef mint_root():\n    return sys.argv\n"
+    matched = "import sys\n\nlineage = sys.argv\n\n\nclass root:\n%s"
+    roads = []
+    for shape, body in shapes.items():
+        roads += [
+            ("fold, %s: K + 'yio', the module's K 'an'" % shape, "plant",
+             {"conftest": "import sys\n\nK = 'an'\n\n\nclass _P:\n" + body.format(use="NAME = K + 'yio'", name="K", none="''")
+              + hook % "_P.NAME in sys.modules"}, "a value naming anyio", "conftest._P.NAME", "'anyio'", False),
+            ("vars, %s: vars(sys)[_k('ar', 'gv')]" % shape, "plant",
+             {"conftest": "import sys\n\n\ndef _k(a, b):\n    return a + b\n\n\nclass _P:\n"
+              + body.format(use="got = vars(sys)[_k('ar', 'gv')]", name="vars", none="None") + argv % "_P.got"},
+             "a namespace's item read by a key the rule does not prove", "conftest._P.got == sys.argv", "True", True),
+            ("globals, %s: globals().update(x=1)" % shape, "plant",
+             {"conftest": "class _W:\n" + body.format(use="globals().update(x=1)", name="globals", none="None")},
+             "a write to the module's namespace", "conftest.x", "1", False),
+            ("sys.path, %s: sys bound by an import" % shape, "plant",
+             {"conftest": "import sys\n\n\nclass _W:\n" + body.format(use="sys.path.insert(0, 'alt')", name="sys",
+                                                                       none="None")},
+             "a read of sys.path", "sys.path[0]", "'alt'", False),
+            ("a def of a direct import, %s: _ih.mint_root(), which returns sys.argv" % shape, "plant",
+             {"conftest": "import _ih\n\n\nclass _C:\n" + body.format(use="got = _ih.mint_root()", name="_ih", none="None")
+              + argv % "_C.got", "_ih": mint},
+             "a def of the module _ih, which the text imports directly, that returns a value", "conftest._C.got == sys.argv",
+             "True", True),
+            ("a class of a direct import, %s: its body reads lineage, a name the check matches" % shape, "plant",
+             {"conftest": "import _ih" + argv % "_ih.root.a",
+              "_ih": matched % body.format(use="a = lineage", name="lineage", none="None")},
+             "a class of the module _ih, which the text imports directly, that reads", "conftest._ih.root.a == sys.argv",
+             "True", True)]
+    roads += [
+        ("fold, before, the class in a def: K + 'yio', the def's K 'x' skipped, the module's K 'an'", "plant",
+         {"conftest": "import sys\n\nK = 'an'\n\n\ndef _mk():\n    K = 'x'\n\n    class _P:\n        NAME = K + 'yio'\n"
+                      "        K = ''\n    return _P\n\n\n_Q = _mk()" + hook % "_Q.NAME in sys.modules"},
+         "a value naming anyio", "conftest._Q.NAME", "'anyio'", False),
+        ("fold, before: P + 'ADDOPTS', the module's P 'PYTEST_'", "plant",
+         {"conftest": "import os\n\nP = 'PYTEST_'\n\n\nclass _E:\n    NAME = P + 'ADDOPTS'\n    P = ''"
+                      + argv % "(os.environ.get(_E.NAME) or '')"},
+         "a value naming PYTEST_ADDOPTS", "conftest._E.NAME", "'PYTEST_ADDOPTS'", False),
+        ("sys.path, before: sys bound by a star import, no declaration", "plant",
+         {"conftest": "from _ih import *\n\n\nclass _W:\n    sys.path.insert(0, 'alt')\n    sys = None\n",
+          "_ih": "import sys\n"},
+         "a read of sys.path", "sys.path[0]", "'alt'", False),
+        ("control: the class's binding first, K + 'yio' folded from the class's K 'an'", "kept",
+         {"conftest": "import sys\n\n\nclass _P:\n    K = 'an'\n    NAME = K + 'yio'" + hook % "_P.NAME in sys.modules"},
+         "a value naming anyio", "conftest._P.NAME", "'anyio'", False),
+        ("control: a class body that binds and reads its own names, beside a literal key", "admitted",
+         {"conftest": "class _P:\n    K = 'x'\n    J = K + 'y'\n\n\ndef pytest_configure(config):\n"
+                      "    config.getoption('verbose')\n"}, None, "conftest._P.J", "'xy'", False)]
+    return roads
 
 
 def _registration_refusals(tree, candidates, real, where=None):
@@ -15472,38 +15763,163 @@ class HermeticKernelPostal(unittest.TestCase):
         call, and a bare setattr whose target is a literal, which THE PROOF proves) is admitted at both. The plant whose
         bare setattr is handed a name as its target stood beside a def's local until the hundred and fourteenth round-2
         commit, which withdrew the def-local proof (a keyed read by a def's local is refused with the check disabled
-        too, test_every_road_through_the_withdrawn_def_local_proof_is_refused); it stands beside a literal key since."""
+        too, test_every_road_through_the_withdrawn_def_local_proof_is_refused); it stands beside a literal key since.
+        A MUTANT PER CLAUSE (the reviewer's ruling of 2026-09-29 15:08Z, and its ruling of 2026-09-30 12:50Z, item 4,
+        on the five spellings that had no plant until the hundred and eighteenth round-2 commit: builtins.delattr,
+        builtins.compile, builtins.__setattr__, builtins.__delattr__ and object.__delattr__): each plant names the entry
+        of _ANYIO_BUILTIN_DEFEATER_CALLS it is the plant of, and is admitted with that one entry removed, every other
+        clause in place; the entries the plants name are EQUAL to the table's keys, so a spelling added to the table
+        with no plant reds here."""
         from unittest import mock
         mod = sys.modules[__name__]
         head = "import builtins\nimport re\nimport sys\n\nimport pytest\n\n\n"
         lit = "def pytest_configure(config):\n    config.getoption('verbose')\n    %s\n"
         plants = [
-            ("a bare setattr with an unproven target defeats a literal key",
+            ("a bare setattr with an unproven target defeats a literal key", (None, "setattr"),
              head + lit % "setattr(pytest_configure, '__co' + 'de__', None)"),
-            ("object.__setattr__ with an unproven target defeats a literal key",
+            ("object.__setattr__ with an unproven target defeats a literal key", ("object", "__setattr__"),
              head + lit % "object.__setattr__(pytest_configure, '__co' + 'de__', None)"),
-            ("builtins.setattr with an unproven target defeats a literal key",
+            ("builtins.setattr with an unproven target defeats a literal key", ("builtins", "setattr"),
              head + lit % "builtins.setattr(pytest_configure, '__co' + 'de__', None)"),
-            ("a bare delattr with an unproven target defeats a literal key",
+            ("a bare delattr with an unproven target defeats a literal key", (None, "delattr"),
              head + lit % "delattr(pytest_configure, '__co' + 'de__')"),
-            ("a bare compile call defeats a literal key", head + lit % "compile('x = 1', '<s>', 'single')"),
-            ("a bare setattr whose target is a name defeats a literal key",
-             head + lit % "setattr(pytest_configure, K2, None)")]
+            ("a bare compile call defeats a literal key", (None, "compile"),
+             head + lit % "compile('x = 1', '<s>', 'single')"),
+            ("a bare setattr whose target is a name defeats a literal key", (None, "setattr"),
+             head + lit % "setattr(pytest_configure, K2, None)"),
+            ("builtins.delattr with an unproven target defeats a literal key", ("builtins", "delattr"),
+             head + lit % "builtins.delattr(pytest_configure, '__co' + 'de__')"),
+            ("builtins.compile defeats a literal key", ("builtins", "compile"),
+             head + lit % "builtins.compile('x = 1', '<s>', 'single')"),
+            ("builtins.__setattr__ with an unproven target defeats a literal key", ("builtins", "__setattr__"),
+             head + lit % "builtins.__setattr__(pytest_configure, '__co' + 'de__', None)"),
+            ("builtins.__delattr__ with an unproven target defeats a literal key", ("builtins", "__delattr__"),
+             head + lit % "builtins.__delattr__(pytest_configure, '__co' + 'de__')"),
+            ("object.__delattr__ with an unproven target defeats a literal key", ("object", "__delattr__"),
+             head + lit % "object.__delattr__(pytest_configure, '__co' + 'de__')")]
+        self.assertEqual(sorted({c for _l, c, _t in plants}, key=repr), sorted(_ANYIO_BUILTIN_DEFEATER_CALLS, key=repr),
+                         "a plant for every clause of _ANYIO_BUILTIN_DEFEATER_CALLS and a clause for every plant")
         controls = [
             ("monkeypatch.setattr, an attribute call of a name other than builtins or object, is no defeater",
              head + "def _p(mp):\n    mp.setattr(sys, 'a', 1)\n\n\n" + lit % "pass"),
             ("re.compile, an attribute call, is no defeater", head + "_RE = re.compile('a')\n\n\n" + lit % "pass"),
             ("a bare setattr whose target name THE PROOF proves (a literal) is no defeater",
              head + lit % "setattr(config, 'a', 1)")]
-        for label, text in plants:
+        for label, clause, text in plants:
             with self.subTest(plant=label):
                 self.assertTrue(_anyio_option_reads(ast.parse(text)), "%s: refused at the fix" % label)
                 with mock.patch.object(mod, "_anyio_builtin_defeaters", lambda *a, **k: ""):
                     self.assertEqual(_anyio_option_reads(ast.parse(text)), [],
                                      "%s: admitted at 1cf3448b9 (the builtin-defeater check disabled)" % label)
+                with mock.patch.dict(_ANYIO_BUILTIN_DEFEATER_CALLS):
+                    del _ANYIO_BUILTIN_DEFEATER_CALLS[clause]
+                    self.assertEqual(_anyio_option_reads(ast.parse(text)), [],
+                                     "%s: admitted with its own clause %r removed, every other clause in place, so the "
+                                     "clause is what refuses it" % (label, clause))
         for label, text in controls:
             with self.subTest(control=label):
                 self.assertEqual(_anyio_option_reads(ast.parse(text)), [], "%s: admitted at both heads" % label)
+
+    def test_an_ini_alias_the_conftest_registers_is_refused_since_getini_reads_the_setting_it_aliases(self):
+        """THE INI ALIAS (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 1, on its light
+        re-check at 298df9982): since pytest 9 Parser.addini takes aliases=, and Config.getini resolves the key it is
+        handed through the parser's aliases, so a conftest's own parser.addini('addopts', ..., aliases=['cmdini']) makes
+        getini('cmdini') read addopts, and the same for markers, the two settings THE ANYIO RULE refuses getini to read
+        by name, while THE PROOF proved the literal key 'cmdini'. _anyio_addini_refusal refuses, in the text, an addini
+        call that passes aliases= or ** keywords, whose name is not a str literal or is addopts or markers, and addini
+        read other than as a call; a value naming addini is refused where a carrier's name is. Over _ini_alias_roads,
+        each road written to a directory of its own: REFUSED at the fix, its refusal naming its clause, and ADMITTED at
+        298df9982 (_ANYIO_INI_REGISTRARS emptied, so the rule reads no addini, as it did not then); the reviewer's two
+        plants run in a child pytest (_escape_only_pytest), where getini of the alias is handed the setting it aliases:
+        P1's the ini's addopts, ['-p', 'no:planted'], and P2's the markers, the one a plugin loaded by -p registers
+        among them; the control (a setting registered by a literal name, no aliases, read by getini) admitted at both.
+        0 LIVE: neither tests/conftest.py nor tests/__init__.py names addini (THE LIVE WITNESS asserts 0 reads over
+        both)."""
+        from unittest import mock
+        mod = sys.modules[__name__]
+        where = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, where, True)
+        roads = _ini_alias_roads()
+        self.assertEqual(sum(1 for _l, _f, why, _r in roads if why is None), 1, "the one control")
+        for i, (label, files, why, run) in enumerate(roads):
+            with self.subTest(road=label):
+                d = os.path.join(where, "a%02d" % i)
+                os.mkdir(d)
+                for name, text in files.items():
+                    with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                        f.write(text)
+                conf = files["conftest.py"]
+                reads = _anyio_option_reads(ast.parse(conf), where=d)
+                if why is None:
+                    self.assertEqual(reads, [], "%s: admitted at the fix" % label)
+                else:
+                    self.assertTrue(reads and all(why in w for _l, w in reads),
+                                    "%s: refused at the fix, each read naming its clause (%r): %s" % (label, why, reads))
+                with mock.patch.object(mod, "_ANYIO_INI_REGISTRARS", frozenset()):
+                    self.assertEqual(_anyio_option_reads(ast.parse(conf), where=d), [],
+                                     "%s: admitted at 298df9982 (the rule reading no addini)" % label)
+                if run is not None:
+                    shown, holds = run
+                    handed = _escape_only_pytest(d)
+                    self.assertTrue(holds(handed), "%s: in a child pytest %s: %r" % (label, shown, handed))
+
+    def test_a_class_body_read_takes_the_modules_binding_where_python_reads_it(self):
+        """THE CLASS BODY (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 2, on its light
+        re-check at 298df9982): Python reads a name in a class body from the class's namespace, then the module's, then
+        the builtins, so a read ahead of the class's binding, after a del, or with the binding in a branch not taken
+        takes the module's binding or the builtin, while ast_bindings.Scope.resolve returns the class's declarations
+        alone. THE ANYIO RULE's own resolution (_anyio_resolution, built in the rule and not in ast_bindings.Scope, which
+        other censuses share) resolves such a read to the class's declarations plus the module's, and to no binding as
+        well where the module binds none, at every site of the rule that resolves a name. Over _class_body_roads, each
+        road written to a directory of its own: each PLANT is REFUSED at the fix, its refusal naming the site's clause
+        (the fold, the check of vars, of globals, of sys.path, the direct-import check's walk to a def and its matching
+        of a class), and ADMITTED at 298df9982 (_anyio_resolution replaced by ast_bindings' scope rule alone, the
+        resolution then); the KEPT control, the class's binding first, is refused at both, and the ADMITTED control at
+        both. For each road a child interpreter shows what Python binds (_class_body_value: the fold's 'anyio' and
+        'PYTEST_ADDOPTS', the command line, the module's x written through globals(), 'alt' put first on sys.path), and
+        for each road whose hook keys a literal-key read on the command line the run hands getoption 'verbose' under -p
+        no:planted and nothing without it (_escape_only_run). 0 LIVE: no class body of tests/conftest.py or
+        tests/__init__.py reads a name its class binds, so the resolution changes no reading of either (THE LIVE WITNESS
+        asserts 0 reads over both)."""
+        from unittest import mock
+        mod = sys.modules[__name__]
+        where = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, where, True)
+
+        def plain(bindings, name_node):
+            """298df9982's resolution: ast_bindings' scope rule alone."""
+            decls, scope = bindings.scope_of(name_node).resolve(name_node.id)
+            return decls, scope, not decls
+        roads = _class_body_roads()
+        self.assertEqual(sorted({how for _l, how, *_r in roads}), ["admitted", "kept", "plant"])
+        for i, (label, how, files, why, expr, value, reads_argv) in enumerate(roads):
+            with self.subTest(road=label):
+                d = os.path.join(where, "c%02d" % i)
+                for name, text in files.items():
+                    path = os.path.join(d, name + ".py")
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(text)
+                conf = files["conftest"]
+                reads = _anyio_option_reads(ast.parse(conf), where=d)
+                with mock.patch.object(mod, "_anyio_resolution", plain):
+                    before = _anyio_option_reads(ast.parse(conf), where=d)
+                if how == "admitted":
+                    self.assertEqual((reads, before), ([], []), "%s: admitted at the fix and at 298df9982" % label)
+                else:
+                    self.assertTrue(any(why in w for _l, w in reads),
+                                    "%s: refused at the fix, naming its clause (%r): %s" % (label, why, reads))
+                    if how == "plant":
+                        self.assertEqual(before, [], "%s: admitted at 298df9982 (the class-body resolution disabled)"
+                                         % label)
+                    else:
+                        self.assertTrue(any(why in w for _l, w in before), "%s: refused at 298df9982 too: %s"
+                                        % (label, before))
+                self.assertEqual(_class_body_value(d, expr), value, "%s: what Python binds, %s" % (label, expr))
+                if reads_argv:
+                    self.assertEqual(_escape_only_run(d, _ESCAPE_ONLY_FLAG), ["verbose"],
+                                     "%s: under -p no:planted the hook reads the option" % label)
+                    self.assertEqual(_escape_only_run(d, ()), [], "%s: without it the hook does not" % label)
 
     def test_a_name_of_the_conftests_module_scope_is_unproven_whatever_code_rebinds_it(self):
         """THE MODULE'S SCOPE (the hundred and ninth round-2 commit of fork PR #894, on the verification of the hundred
@@ -15705,8 +16121,10 @@ class HermeticKernelPostal(unittest.TestCase):
         it, so the plant is a road to the command line and not a text that reads nothing; and a PLUGIN plant, whose
         writer is the module _outside loaded as a plugin by -p in a child pytest (_escape_only_pytest), hands the
         conftest's read by a literal key the run's -p list, -p no:planted among it; and a HOOK plant, whose conftest's
-        own pytest_plugin_registered collects the names of the plugins it is handed, run in that child pytest, sees
-        _outside, which the command line loads by -p, and pytest's python, and not cacheprovider, which it blocks. The
+        own code collects the names of the plugins it is handed (its pytest_plugin_registered's parameters, or the hook
+        implementations pluggy hands the callback its pytest_configure gives add_hookcall_monitoring), run in that child
+        pytest, sees _outside, which the command line loads by -p, and pytest's python, and not cacheprovider, which it
+        blocks. The
         unfoldable keys' plants are not run: their road reads the plugins the run loaded, not the command line. So a
         kind the rule starts refusing reds its own subtest, and the listing's line for it must then change;
         test_the_anyio_rules_listing_names_each_escape_only_witness_and_no_other holds the listing's ids equal to these
