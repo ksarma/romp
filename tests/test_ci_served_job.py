@@ -3,8 +3,11 @@
 
 The step "Browser-backed served-page tests (pytest)" ran last in the vscode-extension job. At the fork's main 1d591384e
 (run 36388144219) that job took 36 min 22 s of its 40-minute cap: the served step 1930 s, the steps before it 250 s. Fork
-PRs 821, 857 and 860 each add served labs (about 205 s, 90 s and 90 s): 821 with either of the others in one batch would
-have run the job past its cap, and 857 with 860 would have left it 38 s. Raising the cap was declined, since it would hide the growth; the step moved to a job of its own,
+PRs 821, 857 and 860 each add served labs (about 205 s, 90 s and 34 s; 860's figure is the own times of the three
+kernel-backed tests it adds, on a development box, and its served step took 11 s more than main's, 32 min 21 s on its run
+36519655646 against 32 min 10 s on the run above): 821 with 857 in one batch would have run the job about 77 s past its
+cap, and 821 with 860 about 21 s past it by 860's first figure (2 s under it by the second), and 857 with 860 would have
+left it 94 s. Raising the cap was declined, since it would hide the growth; the step moved to a job of its own,
 served-pages, with the setup it needs (the checkout, node with its npm cache, npm ci, the Playwright browser cache and the
 pinned Chromium, Python) and a cap sized for it alone, the vendored tooling job's structural fix (tests/test_ci_vendored_job.py)
 applied a second time. The job runs beside the vscode-extension job, so a red step there no longer skips the served labs.
@@ -25,7 +28,7 @@ equal their literals. The checks here:
    The served step's run block is a block scalar; content() keeps every line inside one, a `#` line included, since YAML
    reads it as the scalar's text.
 2. The vscode-extension job's block, read the same way, EQUALS EXPECTED_EXTENSION_JOB: the steps it kept (Install deps
-   through the Dashboard pane bench) and its cap (40), so the served step put back, or any field of any of its steps
+   through the Dashboard pane bench) and its cap (17), so the served step put back, or any field of any of its steps
    changed, is red.
 3. The served-pages job's name up to its runner label, `Served pages (pytest, `, is held by exactly one content line, in
    any case, across every *.yml and *.yaml file under .github/workflows, read from its bytes (check 6 of the other module,
@@ -51,12 +54,12 @@ The step took 1930 s at 1d591384e (1899 s on the fork's run 36425690821 of 2026-
 and the setup the job repeats took about 16 s on main's run (the checkout 6 s, node 1 s, npm ci 3 s, the cache 3 s, Chromium
 1 s, and the job's own set-up and post steps; 22 s on run 36425690821), so the job is about 32 min 30 s and half again about
 49 minutes. 50 also covers the step's other rule, the phase plus the 600 s per-test timeout plus setup (about 42 min 30 s), and
-the three PRs above together (about 385 s more, a job of about 38 min 50 s). The vscode-extension job, 40 minutes, kept: the
-job without the served step is about 4 min 12 s (the steps before it took 250 s at 1d591384e and its post steps about 2 s;
-4 min 18 s on run 36425690821), but the Browser legs step's
-comment records the job at a head where it still ran the served step, and tools/ci-browser-legs.test.mjs derives that
-step's margin from that record and this cap, so the cap is re-read once a run on main of the job without the served step
-measures it, and the literal changes with it.
+the three PRs above together (about 329 s more, a job of about 37 min 55 s). The vscode-extension job, 17 minutes: without
+the served step it took 4 min 45 s on main's run 36555049532 at 6dd80a6e7, the first run on main after the move (about
+4 min 12 s was expected from the steps before the served step at 1d591384e). The job's comment in ci.yml sizes the cap for
+a head that rosters the legs open PRs are known to add, with a Browser legs bound of about that step's time and half
+again; the Browser legs step's comment recorded the same run when the cap was sized, and tools/ci-browser-legs.test.mjs
+derives that step's margin from the step's record and this cap.
 
 Not held here: the served step's pytest invocation is also read by tests/test_ci_sdk_pin.py (the flag, the switch's
 listing and its premises, keyed on this job and the step's name) and its globs by tests/test_served_labs_under_ci.py; the
@@ -136,7 +139,7 @@ EXPECTED_EXTENSION_JOB = (
     "  vscode-extension:",
     "    name: vscode-extension (typecheck + test + build)",
     "    runs-on: ubuntu-latest",
-    "    timeout-minutes: 40",
+    "    timeout-minutes: 17",
 ) + _SETUP + (
     "      - name: Typecheck",
     "        run: npm run typecheck",
@@ -262,8 +265,8 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
         plants = (
             (check_served_job, "the served cap 50 to 51, a one-field edit", "served", "    timeout-minutes: 50",
              ["    timeout-minutes: 51"]),
-            (check_extension_job, "the extension cap 40 to 41, a one-field edit", "ext", "    timeout-minutes: 40",
-             ["    timeout-minutes: 41"]),
+            (check_extension_job, "the extension cap 17 to 18, a one-field edit", "ext", "    timeout-minutes: 17",
+             ["    timeout-minutes: 18"]),
             (check_extension_job, "the served step put back in the extension job", "ext", bench, [bench] + moved),
             (check_served_job, "a second setup-node in the served job, before the tests", "served", step,
              ["      - uses: actions/setup-node@v4", "        with:", "          node-version: '20'", step]),

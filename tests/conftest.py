@@ -773,6 +773,9 @@ os.environ.pop("ROMP_POSTAL_HOST", None)
 os.environ.pop("ROMP_SESSIONS_FILE", None)
 os.environ.pop("ROMP_SERVE_TOKEN", None)
 os.environ["ROMP_POSTAL_HERMETIC"] = "1"
+os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # no in-process kernel of the run owns a bus: its ensure and its revive start none (2026-09-18: a revive
+#                                                on a daemon thread outran a test's environment restore and left a real bus detached on the box, whose
+#                                                port record under the shared state root redirected a later module's dial); a lab sets its own trio
 os.environ["ROMP_CKPT_FIRST_DOC_KB"] = "0"   # the young-session floor is off for the suite's small fixtures (a document under 1 MB of
 #                                                pre-cut bytes is never written live); the floor's own test sets it. A plain assignment: an
 #                                                exported value in the shell (64, say) would red every checkpoint fixture (1721 round two);
@@ -952,6 +955,7 @@ def _dead_manager_port():
     os.environ["ROMP_KERNEL_PORT"] = "1"
     os.environ["ROMP_SERVE_PORT"] = "1"
     os.environ.pop("ROMP_POSTAL_PORT", None)
+    os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # re-floored per test: tests/test_postal_peers.py pops it outright (1848's floor, 2026-09-18)
     yield
 
 
