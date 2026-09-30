@@ -3494,11 +3494,11 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // mouseup other than a primary one of detail above 0 came, an order none of the three engines measured sends before a click,
 // and a pointer's click that finds a record still standing under its own pointerId, which no gesture of the viewer's own that
 // the legs drive leaves. The measured costs, each a refusal once that reveals the control, the next click opening: a press
-// whose pointer left, its two above; the refusal of a standing record's, in WebKit alone, a left click chorded into
-// a held right press; the mousedown's clear's, in the three engines, a left click with another mouse button held, the other
-// pressed before it or during it (Chromium 16 of 16, Firefox 28 of 28, WebKit 12 of 12 and its chord of a left click into a
-// held right press 4 of 4; the file review's round 19, extra7-1); and the own-chain allowlist's (the file review's
-// round 20: the rulings pass's census and the execution check's, Playwright's engines on Linux, touch emulated), the viewer's own
+// whose pointer left, its two above; the refusal of a standing record's, in WebKit alone, a left click chorded into a held
+// right press; the mousedown's clear's, in the three engines, a left click with another mouse button held, the other pressed
+// before it or during it (Chromium 16 of 16, Firefox 28 of 28, WebKit 12 of 12 and its chord of a left click into a held
+// right press 4 of 4; the file review's round 19, extra7-1); and the own-chain allowlist's (the file review's round 20:
+// the rulings pass's census and the execution check's, Playwright's engines on Linux, touch emulated), the viewer's own
 // press held across a short hide of its frame with the focus not back at the release (Chromium, 60 of 360 mouse presses and 36
 // of 72 pen presses of the check's grid), a 2,000 px block inserted above the picture during a held press and removed (WebKit, 3
 // of 3), and on a device with a mouse and a pen, a pen's press during which the mouse moves in the viewer (Chromium, pen emulated,
@@ -3510,28 +3510,27 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // pointerdown took the focus out of the viewer's window, 66 in all), and a finger's tap during which the mouse moves in the viewer
 // and a mouse click during which a finger resting on the viewer moves (Chromium, touch emulated); and by reading any event the
 // grammar does not name that a real gesture brings into a press or a tap, among them the places below where the incremental reads
-// would open, 21 families of which are measured since, and the device's gestures in Firefox and WebKit; the retired blur's rule's
-// own cost, a focus move out of the
-// viewer's window during the
-// viewer's own press or between a tap's pointerup and its compatibility mousedown, refused once, the allowlist pays the same,
-// and the retired leave's arm for no button and mouseout's clear cost nothing measured, no cell of this leg changing under them
-// (file-view.ts's gate comment states each). The read-outs (the coordinator's ruling on the allowlist's build) add no covered
-// click: each takes events out only where the viewer's own gesture puts them (the focus-leaving ones only the focus leaving
-// this window, and nothing else, between a mouse's pointerup and its mouseup, and one run of it before a finger's pointerup,
-// each in one of three orders, an element's blur, the document's or both, then the window's), where a covered chain of the
-// recorded rows carries the focus leaving the viewer's window it leaves before the covered pointerup, at the press another
-// document's element takes, and none carries the mouse's moves in a finger's contact or a finger's move in a mouse's press, so
-// of the 19,325 covered clicks of every recorded row that reach the allowlist the read-outs change no chain, and the covered grid
-// read 0 covered clicks added in each engine at 5288151dd, which brought them, and again at 180f96d2a, the landing merge of the
-// fork's main at 6dd80a6e7, whose gate is the retirement's byte for byte; they have no cell here, the outline suite's admit rows
-// and narrowness rows pinning them. That round also retired five rules with no measured effect under the allowlist (the
-// coordinator's ruling on its build): the tail, the mouseup's clear of the slot and the tap's flag, the dragstart's clear of
-// every record, the touchend's and the touchcancel's marking of every touch record and the pointercancel's clear of the slot,
-// each event they read landing in the chain of the press or the tap it acted on, which the allowlist refuses, or leaving a
-// record standing that refuses its own pointer's click, all five gone changing no click over every recorded row, the gate's own
-// listeners then on six types, and the cells here and in the engines leg that were red under a gate without one of them
-// standing as the allowlist refusing their orders. The allowlist's three measured costs above are the incremental reads' too, the
-// reads the round drafted in its place. It costs more than they do at 21 families of the viewer's own gesture measured in the
+// would open, 21 families of which are measured since, and the device's gestures in Firefox and WebKit; the retired blur's
+// rule's own cost, a focus move out of the viewer's window during the viewer's own press or between a tap's pointerup and
+// its compatibility mousedown, refused once, the allowlist pays the same, and the retired leave's arm for no button and
+// mouseout's clear cost nothing measured, no cell of this leg changing under them (file-view.ts's gate comment states each).
+// The read-outs (the coordinator's ruling on the allowlist's build) add no covered click: each takes events out only where
+// the viewer's own gesture puts them (the focus-leaving ones the focus leaving this window only as the whole of what comes
+// between a mouse's pointerup and its mouseup or as one run before a finger's pointerup, each in one of three orders, an
+// element's blur, the document's or both, then the window's), where a covered chain of the recorded rows carries the focus
+// leaving the viewer's window it leaves before the covered pointerup, at the press another document's element takes, and
+// none carries the mouse's moves in a finger's contact or a finger's move in a mouse's press, so of the 19,325 covered clicks
+// of every recorded row that reach the allowlist the read-outs change no chain, and the covered grid read 0 covered clicks
+// added in each engine at 5288151dd, which brought them, and again at 180f96d2a, the landing merge of the fork's main at
+// 6dd80a6e7, whose gate is the retirement's byte for byte; they have no cell here, the outline suite's admit rows and narrowness
+// rows pinning them. That round also retired five rules with no measured effect under the allowlist (the coordinator's ruling
+// on its build): the tail, the mouseup's clear of the slot and the tap's flag, the dragstart's clear of every record, the
+// touchend's and the touchcancel's marking of every touch record and the pointercancel's clear of the slot, each event they
+// read landing in the chain of the press or the tap it acted on, which the allowlist refuses, or leaving a record standing
+// that refuses its own pointer's click, all five gone changing no click over every recorded row, the gate's own listeners
+// then on six types, and the cells here and in the engines leg that were red under a gate without one of them standing as
+// the allowlist refusing their orders. The allowlist's three measured costs above are the incremental reads' too, the reads
+// the round drafted in its place. It costs more than they do at 21 families of the viewer's own gesture measured in the
 // browser at ff255168f by a probe of these fixes kept out of the tree (Playwright's engines on Linux, the Files pane, touch and pen
 // emulated in Chromium, five of each gesture per engine: each refused 5 of 5 in each engine named, opened 5 of 5 by bef9ff8fc's
 // gate, and opened by those reads replayed over its recorded chain), since they act on a few named events alone: the window's blur
@@ -3540,23 +3539,23 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // (Chromium), and in Chromium, Firefox and WebKit the focus leaving after a click's mouseup, between a tap's compatibility
 // mousedown and its mouseup or after a tap's mouseup, leaving and coming back at a click's release, leaving twice in a finger's
 // contact, arriving at a click's release, after its mouseup, between a tap's pointerup and its compatibility mousedown or after a
-// tap's mouseup, or moving inside the viewer at a click's release or after a tap's touchend, and an element's blur that no focus
-// follows at a click's release with the frame shown; on a device with more than one pointer (Chromium), a resting finger's touch
-// cancelled during a mouse click, as Chromium cancels a resting finger that moves far enough to scroll, a finger moving during a
-// pen's press, the mouse crossing an element's edge during a finger's tap, and a pen hovering during a mouse click or during a
-// finger's tap; and a press past the cap of 1,024 tokens (the three engines). Measured in Chromium and not costs: a resting finger
-// that leaves the viewer or crosses an element's edge within the touch slop during a mouse click, and the mouse entering or leaving
-// the viewer during a finger's tap, open under both, and a finger lifted during a mouse click opens nothing under either. By
-// reading: the device's gestures in Firefox and WebKit, WebKit's hover update between elements inside a finger's slow tap, a
-// touch-order pen's double tap's second tap, and perhaps a capture handler's focus move that no census drove (file-view.ts's gate
-// comment says why for each). At each the click or the tap opens nothing and reveals the control, the next click opening, and the
-// ruling after the focused re-check at ff255168f keeps the allowlist, leaving the choice between it and those reads to the user.
-// The frame-hide cells (the file review's round 19, extra5-1 and extra8-1), on the hybrid page's Files pane in the same shape:
-// a press on the control held while the top page hides the viewer's frame, released at once on the top page, the frame shown
-// again at once or 300 ms later, then another document's click on an element over the control that hides at that click's
-// mousedown, the mouse's click moved onto the control or a pen's still click (CDP pen). Before that click Chromium sends the
-// viewer the mouse's pointerout with no relatedTarget and no button down, each cell's precondition, which lands in the held
-// press's chain, so the allowlist refuses the click (the retired leave's arm for no button read it as a release it did not
+// tap's mouseup, or moving inside the viewer at a click's release or between a tap's touchend and its compatibility mousedown,
+// and an element's blur that no focus follows at a click's release with the frame shown; on a device with more than one
+// pointer (Chromium), a resting finger's touch cancelled during a mouse click, as Chromium cancels a resting finger that moves
+// far enough to scroll, a finger moving during a pen's press, the mouse crossing an element's edge during a finger's tap, and a pen
+// hovering during a mouse click or during a finger's tap; and a press past the cap of 1,024 tokens (the three engines). Measured in
+// Chromium and not costs: a resting finger that leaves the viewer or crosses an element's edge within the touch slop during a mouse
+// click, and the mouse entering or leaving the viewer during a finger's tap, open under both, and a finger lifted during a mouse
+// click opens nothing under either. By reading: the device's gestures in Firefox and WebKit, WebKit's hover update between elements
+// inside a finger's slow tap, a touch-order pen's double tap's second tap, and perhaps a capture handler's focus move that no
+// census drove (file-view.ts's gate comment says why for each). At each the click or the tap opens nothing and reveals the control,
+// the next click opening, and the ruling after the focused re-check at ff255168f keeps the allowlist, leaving the choice between
+// it and those reads to the user. The frame-hide cells (the file review's round 19, extra5-1 and extra8-1), on the hybrid page's
+// Files pane in the same shape: a press on the control held while the top page hides the viewer's frame, released at once on the
+// top page, the frame shown again at once or 300 ms later, then another document's click on an element over the control that hides
+// at that click's mousedown, the mouse's click moved onto the control or a pen's still click (CDP pen). Before that click Chromium
+// sends the viewer the mouse's pointerout with no relatedTarget and no button down, each cell's precondition, which lands in
+// the held press's chain, so the allowlist refuses the click (the retired leave's arm for no button read it as a release it did not
 // hear), and it opens nothing and reveals the control, and the next click opens once; red at ddb446fae, whose gate read no
 // pointerout with no button down, and, as bef9ff8fc measured them, under a gate without that arm and without the blur's rule,
 // the pen's cell also under one whose arm marks the mouse's records alone and that reads no blur, since the blur's rule refused
