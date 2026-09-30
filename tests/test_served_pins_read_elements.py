@@ -1978,11 +1978,11 @@ def served_body(text, kind):
     """The body the kernel's Handler._send writes for `text` served as a getter of `kind` on a sign-in response (the rulings at the
     merge of main's login cookie split, 2026-09-28: since that change a fetched page is no longer its getter's text). _send itself runs,
     on a stand-in request that holds an authorized page (`_page_ok`) and the session the response signs in (`_set_cookie`), and its
-    written bytes are the body: for a page document the sign-in seed and then _PAGE_KEY_JS go first in the head, in the order _send
-    assembles them; a text with no `<head>`, or served as another type, is written as it stands. Since the merge of the lazy panes
-    (fork PR 821), _send first stamps `data-romp-served=200` on the `<html>` tag of every text/html 200 whose body has one
-    (km._stamp_served_html), so a page document's root tag, and that of a headless one, carries the stamp too. A fetch on the cookie alone
-    gets the key script without the seed; the sign-in form is the wider one, and every fetched row is judged against it."""
+    written bytes are the body: a text served as text/html gets `data-romp-served=200` on its first `<html>` tag, if it has one
+    (km._stamp_served_html, since the merge of the lazy panes, fork PR 821), and then, if it has a `<head>`, the sign-in seed and then
+    _PAGE_KEY_JS first in the head, in the order _send assembles them, so a headless one with an `<html>` tag gets the stamp and
+    nothing else; a text served as another type is written as it stands. A fetch on the cookie alone gets the key script without the
+    seed; the sign-in form is the wider one, and every fetched row is judged against it."""
     written = []
 
     class _Request:
@@ -3234,8 +3234,8 @@ def _outer(path):
         # seed and the page-key script (_PAGE_KEY_JS) first in the head of every authorized page, so a fetched page is no longer its
         # getter's text, and a row judged against a text that does not carry its literal anywhere had passed in silence
         # (test_session_cookie_auth.py's `__rompPageKey` over the fetched landing, in the page-key script alone). The model is _send
-        # itself, run on a stand-in sign-in (served_body): the getter's text around what _send puts first in its head, the seed and
-        # then the key script, and a text with no head or served as a script written as it stands. A getter's texts are its render
+        # itself, run on a stand-in sign-in (served_body): the getter's text, stamped, around the seed and then the key script first
+        # in its head; a text with no head written with the stamp alone, and a script as it stands. A getter's texts are its render
         # and the string constants its returns spell (getter_renders: `_files_page` without its sheet). judge_rows fails a row whose
         # literal occurs in none of its texts, and still flags one a comment satisfies, in a render and in a served body alike.
         render = pages()["_landing"]
