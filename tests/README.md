@@ -499,9 +499,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   (`MODULE_WATCHED_ENV_NAMES`: the seams below and the postal trio): it takes its
   snapshot before the module's `setUpModule`, `setUpClass` and module- and
   class-scoped fixtures run and fails naming the module when a watched name differs
-  after the module's teardown (the port against its floor, unset, since conftest pops
-  it before every test); every other name is outside it. conftest pops every watched
-  name at import, so the developer's shell does not change what the check reads. A
+  after the module's teardown (the port and client-only against the values conftest
+  re-asserts before every test, unset and "1", listed in `MODULE_ENV_FLOORS`; the
+  other watched names against the snapshot); every other name is outside it.
+  conftest pops every watched name at import, so the developer's shell does not
+  change what the check reads. A
   write by a session- or package-scoped fixture is read by a check only when the
   fixture's setup runs after that check's snapshot. One requested by name by the
   first of the module's tests to be set up (an autouse one always is) runs before

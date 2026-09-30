@@ -761,12 +761,13 @@ os.environ.pop("ROMP_POSTAL_PORT", None)
 # back with a pop in their tearDowns rather than a restore, so from a shell carrying ROMP_POSTAL_PEERS or
 # ROMP_POSTAL_CLIENT_ONLY a run ended those modules with the name unset and went red where a clean shell's run was
 # green.
-# Popped here with the seams, every run starts every watched name unset, as CI's does, and both checks read the same run
-# whatever the shell carries (every name of MODULE_WATCHED_ENV_NAMES is popped by these lines or the port's above; the
-# hermetic module holds each watched name among this file's import-time pops and runs both checks from a shell carrying
-# every one). They come before the hermetic marker below, so upstream's floor of client-only "1" (their PR 1848, which
-# fork PR #875 folds), placed right after the marker, still sets it for the run (the hermetic module's import probe
-# under that floor reds when a pop follows the marker).
+# Popped here with the seams, every run starts each watched name where CI's run starts it, whatever the shell carries:
+# unset, but for client-only, which upstream's floor right after the hermetic marker below sets to "1" for the run (their
+# PR 1848, in this file since the merge of main that brought fork PR #875). So both checks read the same run (every name
+# of MODULE_WATCHED_ENV_NAMES is popped by these lines or the port's above; the hermetic module holds each watched name
+# among this file's import-time pops and runs both checks from a shell carrying every one). The pops come before the
+# marker, so that floor still sets client-only for the run (the hermetic module's import probe under that floor reds
+# when a pop of client-only follows the floor line).
 os.environ.pop("ROMP_POSTAL_PEERS", None)
 os.environ.pop("ROMP_POSTAL_CLIENT_ONLY", None)
 os.environ.pop("ROMP_POSTAL_HOST", None)
@@ -955,7 +956,7 @@ def _dead_manager_port():
     os.environ["ROMP_KERNEL_PORT"] = "1"
     os.environ["ROMP_SERVE_PORT"] = "1"
     os.environ.pop("ROMP_POSTAL_PORT", None)
-    os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # re-floored per test: tests/test_postal_peers.py pops it outright (1848's floor, 2026-09-18)
+    os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # re-floored per test: each test starts at "1" whatever ran before it (1848's floor, 2026-09-18)
     yield
 
 

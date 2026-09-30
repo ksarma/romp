@@ -17284,19 +17284,21 @@ class HermeticKernelPostal(unittest.TestCase):
         (peers off, client-only, a port of the test's own with BUS_PORT patched to match), after its tearDown, after its
         cleanups with a peers value a shell might have left (the three names and BUS_PORT put back), and after a
         subclass setUp that raises past the writes. Client-only is compared with the floor's value, not with unset: this
-        conftest floors none, and a conftest carrying upstream's floor line (their PR 1848, which fork PR #875 folds)
-        sets "1" for the run, which the module must neither change nor leave changed (the reviewer's ruling of round 1
-        on fork PR #894). Before 2026-09-18 the import alone wrote peers "0"; before 2026-09-22 it wrote the port and
-        client-only, the two names the real bus of fork PR #813's CI inherited; before review round 1 the raising setUp
-        left the 0 behind (the restore was a tearDown)."""
+        conftest sets "1" at its import (upstream's floor line, their PR 1848, right after the hermetic marker since the
+        merge of main that brought fork PR #875), which the module must neither change nor leave changed (the reviewer's
+        ruling of round 1 on fork PR #894). Before 2026-09-18 the import alone wrote peers "0"; before 2026-09-22 it
+        wrote the port and client-only, the two names the real bus of fork PR #813's CI inherited; before review round 1
+        the raising setUp left the 0 behind (the restore was a tearDown)."""
         self._assert_the_module_leaves_the_trio_as_the_floor_left_it(self._tunnels_probe())
 
     def test_the_import_probe_holds_under_a_conftest_that_floors_client_only(self):
-        """The probe above with tests/conftest.py replaced, in the child, by a copy carrying upstream's floor line right
-        after the hermetic marker (their PR 1848, which fork PR #875 folds): the floor modules leave client-only "1",
-        and the import, the setUp's cleanups and a raising setUp leave it "1" too. Held by execution so the probe is
-        known to hold under that conftest before fork PR #875 lands (the reviewer's ruling of round 1 on fork PR #894);
-        before round 2 the probe expected client-only unset after the import and red under it."""
+        """The probe above with tests/conftest.py replaced, in the child, by a copy with upstream's floor line (their PR
+        1848) inserted right after the hermetic marker: the floor modules leave client-only "1", and the import, the
+        setUp's cleanups and a raising setUp leave it "1" too. Written so the probe was known to hold under that floor
+        before the merge of main that brought fork PR #875 put the line in this conftest (the reviewer's ruling of round 1
+        on fork PR #894). Since that merge the real conftest has that line of its own right after the marker, so the copy
+        has it twice in a row and sets the value the real conftest sets. Before round 2 the probe expected client-only
+        unset after the import and red under it."""
         out = self._tunnels_probe(conftest_text=_conftest_with_the_client_only_floor())
         self.assertEqual(out["before_import"]["ROMP_POSTAL_CLIENT_ONLY"], "1", "the copy of conftest floors client-only for the run")
         self._assert_the_module_leaves_the_trio_as_the_floor_left_it(out)
