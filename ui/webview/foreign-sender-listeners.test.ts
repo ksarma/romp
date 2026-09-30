@@ -358,13 +358,17 @@ const parsed = new Map<string, Site[]>();
  *  augmented global still counts, by identity; globalThis by its symbol name, since the library gives it no declaration
  *  to anchor identity), so a local that shadows the name with a run-time binding is not the window. Neither is a
  *  declaration of the name at the top level of a script (a file TypeScript calls no module), which the checker merges
- *  with the global or resolves a use past to it: in the page bundle esbuild keeps it the file's own local, so identity
- *  decides no use of the name in that file, the road census refuses the file outright, and the rule reads the use
- *  fail-closed. A shadow whose every declaration is ambient (a module-local `declare var window` esbuild drops) or in a
- *  declaration file binds nothing at run time and is the raw global window, which refKind reads as one. A shadow the
- *  source binds at run time in a module or a function that esbuild drops as statically dead code is the raw global too,
- *  but the census models only the ambient and declaration-file drop (bindsNothingAtRuntime) and reads such a shadow
- *  through its declaration, a value outside the rule it discloses (the road census comment's "cannot see" list). A
+ *  with the global or resolves a use past to it (in a JavaScript file it binds as CommonJS, one with require or
+ *  module.exports for example, it resolves the use to the file's own local): in the page bundle esbuild keeps a
+ *  run-time declaration the file's own local, so where a script has a declaration of the name that is not ambient (a
+ *  type-only one, which esbuild erases, among them), identity decides no use of the name in that file, the road census
+ *  refuses the file outright, and the rule reads a use the checker resolves to the global fail-closed. A shadow whose
+ *  every declaration is ambient (a module-local `declare var window` esbuild drops) or in a declaration file binds
+ *  nothing at run time and is the raw global window, which refKind reads as one. A shadow the source binds at run time
+ *  anywhere but at a script's top level (in a module, in a function or in a block of a script, for example) that
+ *  esbuild drops as statically dead code is the raw global too, but the census models only the ambient and
+ *  declaration-file drop (bindsNothingAtRuntime) and reads such a shadow through its declaration, a value outside the
+ *  rule it discloses (the road census comment's "cannot see" list). A
  *  receiver the rule reads as a window other than this page's own, or does not read as a window, is no census site.
  *  The road census refuses a handler assigned on another window whatever its value, and one assigned on any other
  *  receiver the rule does not read as this page's own window (the body element and a document among them) unless the
@@ -1503,21 +1507,24 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //       declaration outside the default lib is refused outright; globalThis is held by its symbol name, since the
 //       library gives it no declaration to anchor identity. A local that shadows the name with a run-time binding is
 //       not the global, and neither is a declaration of the name at the top level of a file TypeScript calls no module
-//       (a script), though the checker merges it with the global or resolves a use past it to the global: esbuild
-//       bundles each page into one function, where the declaration is the file's own local (renamed apart where another
-//       file of the bundle reads the global), so a use in that file holds it (var document = window; document[k] = f
-//       sets the window's handler), and where esbuild drops it as dead code the use is the raw global. Identity decides
-//       no use of the name in such a file (topShadow reads the declaration from the binder's table for the file,
-//       SourceFile.locals, where one binds at run time): the census refuses the file outright (the refused list below),
-//       and the rule reads the use fail-closed, as (b) reads a binding it does not decide, taking the first kind in
-//       (b)'s order among the global's kind and the kinds the file's declarations of the name bind (the example is this
-//       page's window read fail-closed). A use in any other file is the global, since the declaration stays in its own
-//       file. A shadow whose every declaration is ambient, a module-local `declare var window` (or `declare var
-//       document`) esbuild drops, or in a declaration file, binds nothing at run time and is the raw global, read as
-//       one. A shadow the source binds at run time that esbuild drops as statically dead code, in a module or in a
-//       function (a script's top-level one refuses, above), binds nothing at run time too, but the census models only
-//       the ambient and declaration-file drop (bindsNothingAtRuntime) and reads such a shadow through its declaration;
-//       that value is outside this rule and disclosed below;
+//       (a script), though the checker merges it with the global or resolves a use past it to the global (in a
+//       JavaScript file it binds as CommonJS, one with require or module.exports for example, it resolves the use to the
+//       file's own local, which (b) reads): esbuild bundles each page into one function, where a run-time declaration is
+//       the file's own local (renamed apart where another file of the bundle reads the global), so a use in that file
+//       holds it (var document = window; document[k] = f sets the window's handler), and where esbuild drops it as dead
+//       code the use is the raw global. Identity decides no use of the name in a script with a declaration of the name
+//       that is not ambient (topShadow reads the file's own symbol for the name from the binder's table for the file,
+//       SourceFile.locals; a type-only declaration, which esbuild erases, counts too): the census refuses the file
+//       outright (the refused list below), and the rule reads a use the checker resolves to the global fail-closed, as
+//       (b) reads a binding it does not decide, taking the first kind in (b)'s order among the global's kind and the
+//       kinds the file's declarations of the name bind (the example is this page's window read fail-closed). A use in
+//       any other file is the global, since the declaration stays in its own file. A shadow whose every declaration is
+//       ambient, a module-local `declare var window` (or `declare var document`) esbuild drops, or in a declaration
+//       file, binds nothing at run time and is the raw global, read as one. A shadow the source binds at run time that
+//       esbuild drops as statically dead code, anywhere but at a script's top level (in a module, in a function or in a
+//       block of a script, for example; a script's top-level one refuses, above), binds nothing at run time too, but
+//       the census models only the ambient and declaration-file drop (bindsNothingAtRuntime) and reads such a shadow
+//       through its declaration; that value is outside this rule and disclosed below;
 //   (b) through a chain the checker follows, of at most four steps from the receiver (five names, the window and each
 //       local counted: const a = window; a.self.self.self is read, a.self.self.self.self is not). A step is a member
 //       read by a literal name, which memberKind reads by its table (the members listed below): x.name, or x[key] with
@@ -1564,9 +1571,11 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //       census cannot tell is this page's: a plain function's depends on the call (o.m() runs m with o as its `this`),
 //       and the file's own, with no function but an arrow function between, need not be the window either: in a page
 //       bundle esbuild rewrites a file's top-level `this` to the file's exports object, wrapping the file as CommonJS,
-//       where the file has no export statement, no import.meta, no top-level await and no .mjs or .mts suffix, whether
-//       or not it imports (this.document = window; this.document[k] = f then sets the window's handler), and to
-//       undefined in any other file, where that code throws.
+//       where the file has no ES export statement (an export of a type or an interface is one; TypeScript's export = is
+//       CommonJS, and a file whose export is one is wrapped), no import.meta and no .mjs or .mts suffix, whether or not
+//       it imports (this.document = window; this.document[k] = f then sets the window's handler), and to undefined in
+//       any other file, where that code throws; a file with a top-level await the page build (target es2020) refuses to
+//       build at all.
 // A window value reached any other way is outside the census: this rule discloses every such value, and the list of
 // what the rules cannot see, below, gives examples. A binding or `this` the rule reads fail-closed it decides no
 // further than that reading: which value it holds is outside the rule. The census states the rule instead of deciding
@@ -1707,12 +1716,17 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     holds the socket proof's precondition, that the global WebSocket is the browser's own, in the source it reads;
 //     the copied-object road listed below, which the rules cannot see, can still replace the constructor;
 //   - a file TypeScript calls no module that declares window, self, globalThis, frames, top, parent, opener or document
-//     at its top level, with a declaration that binds at run time (rule (a), topShadow): in the page bundle a use of
+//     at its top level (in the file's own scope, which a var in a block there joins; a let, const or class in a block
+//     is the block's own), with a declaration that is not ambient (rule (a), topShadow): in the page bundle a use of
 //     the name in that file holds the file's own local where esbuild keeps the declaration, and the raw global where it
 //     drops it as dead code (if (false) { var document = window } document.body[k] = f sets the window's handler
 //     through the body in the release build), and the census reads neither, so it refuses the file, one refusal per
-//     name, at the name's first declaration. A module's top-level declaration the checker keeps apart from the global,
-//     and rule (b) reads it.
+//     name, at the name's first declaration. The test reads TypeScript's isExternalModule and whether a declaration is
+//     ambient, so it also refuses files where that reason does not arise: one whose only declaration of the name is
+//     type-only (an interface, a type alias or a namespace holding only types, for example), which esbuild erases,
+//     leaving the use the raw global; and a JavaScript file TypeScript binds as CommonJS (one with require or
+//     module.exports, for example), where the checker resolves a use to the file's own local. A module's top-level
+//     declaration the checker keeps apart from the global, and rule (b) reads it.
 // ui/ has none of these today, so the rules cost nothing. What they cannot see, disclosed:
 //   - a window value the window rule above does not decide, however the source reaches it. The rule is the census's
 //     whole reading of which receivers are a window, so this entry covers every value outside it, and each value named
@@ -1739,27 +1753,31 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     property named ownerDocument or contentDocument, read as a document the census cannot tell is this page's, and a
 //     binding the rule does not decide one of whose declarations binds a window, the body element or a document, read
 //     fail-closed (function h(x) { x[k] = f; var x = document });
-//   - a window or document name the source shadows, in a module or in a function, with a declaration esbuild drops as
-//     statically dead code, where a use of the name is the raw global at run time (a script's top-level declaration of
-//     the name refuses, in the list above). Measured with the page's own build options
-//     (vscode-extension/esbuild.js's webview), the declarations it drops include, among others: a var at a module's
-//     top level whose only declaration sits in if (false) { ... } (or if (0), if (!1), if (void 0)), in the else of an
-//     if (true) or after a break out of a labelled block, dropped by the release build (--production, the
-//     vscode:prepublish path), or in the catch of a try whose block has no side effect (an empty try, try { 1; }),
-//     dropped by the default build too; and a let, const or class after a return in a function (or after if (true)
-//     return; or a nested { return; }) or after a break or continue in a loop's body, dropped by the release build, so
-//     that a use before it reads the global instead of throwing in its temporal dead zone. esbuild keeps, for example,
-//     a dead var inside a function (in a dead branch, or after a return or a throw), a let, const or class after a
-//     throw, and a function declaration after a return; a let, const or class in a dead braced branch is
-//     block-scoped, so a use outside it is the global in every build, which the census reads, refusing a computed
-//     member written on it. The census reads the name through the declaration the checker resolves it to (its
-//     initialiser, so refKind answers null, or the document a document-valued initialiser names, so refKind answers
-//     that document), so it does not refuse a computed member written on the name and reads a handler on it as the
-//     declared value's, not this page's window. It models only the ambient and declaration-file drop
-//     (bindsNothingAtRuntime), not esbuild's dead-code elimination of a live declaration. Witnessed by the unseen rows
-//     below: zz-deadvar-null-drop (an initialiser refKind reads as nothing, var frames = 0), zz-deadvar-document-drop
-//     (a document initialiser), zz-deadtry-catch-drop (an empty try's catch) and zz-deadlet-return-drop (a let after a
-//     return);
+//   - a window or document name the source shadows with a declaration esbuild drops as statically dead code, anywhere
+//     but at a script's top level (in a module, in a function or in a block of a script, for example; a script's
+//     top-level declaration of the name refuses, in the list above), where a use of the name is the raw global at run
+//     time. Measured with the page's own build options (vscode-extension/esbuild.js's webview), the declarations it
+//     drops include, among others: a var at a module's top level whose only declaration sits in if (false) { ... } (or
+//     if (0), if (!1), if (void 0)), in the else of an if (true) or after a break out of a labelled block, dropped by
+//     the release build (--production, the vscode:prepublish path), or in the catch of a try whose block has no side
+//     effect (an empty try, try { 1; }), dropped by the default build too; and a let, const or class after a return in
+//     a function (or after if (true) return; or a nested { return; }), after a break or continue in a loop's body or
+//     after a break out of a labelled block, dropped by the release build in a module or a script, so that a use before
+//     it reads the global instead of throwing in its temporal dead zone (L: { frames[k] = h; break L; let frames = 0; }
+//     in a script sets the window's handler in the release build). esbuild keeps, for example, a dead var inside a
+//     function (in a dead branch, or after a return or a throw), in a namespace body or in a class static block, a
+//     let, const or class after a throw, and a function declaration after a return; a let, const or class in a dead
+//     braced branch is block-scoped, so a use outside it is the global in every build, which the census reads,
+//     refusing a computed member written on it. The census reads the name through the declaration the checker
+//     resolves it to: a class, or an initialiser refKind reads as nothing (var frames = 0), gives null, and a
+//     document-valued initialiser gives that document, so a computed member written on the name is not refused; a
+//     window-valued initialiser gives the window, whose computed member is refused but whose body the census reads as
+//     nothing (L: { document.body[k] = h; break L; let document = window; } in a script sets the body's handler in the
+//     release build). It reads a handler on the name as the declared value's, not the raw global's. It models only the
+//     ambient and declaration-file drop (bindsNothingAtRuntime), not esbuild's dead-code elimination of a live
+//     declaration. Witnessed by the unseen rows below, each in a module: zz-deadvar-null-drop (an initialiser refKind
+//     reads as nothing, var frames = 0), zz-deadvar-document-drop (a document initialiser), zz-deadtry-catch-drop (an
+//     empty try's catch) and zz-deadlet-return-drop (a let after a return); no row there witnesses a block of a script;
 //   - the body element reached other than as the window rule reads it (a document's body), for example by a query for
 //     it, a frameset or document.documentElement.lastElementChild. A member written on it under a computed key sets its
 //     window's handler;
@@ -1910,16 +1928,19 @@ function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
  *  (a) identity: a name whose checker symbol IS the global window, self, globalThis or frames is this page's own
  *      window; top, parent or opener another; document this page's document (res.windowKind, by identity, so an
  *      augmented window global still counts, and ruleKind records the augmentation for looseRoads to refuse). Identity
- *      decides no use of the name in a file that declares it at its top level as a script (res.topShadow: the checker
- *      merges that declaration with the global or resolves the use past it, while esbuild keeps it the file's own local
- *      in the page bundle): looseRoads refuses the file, and this reads the use fail-closed, the first of MULTI_ORDER
- *      among the global's kind and the kinds the file's declarations of the name bind, each read fail-closed (var
- *      document = window: this page's window read fail-closed). A window name whose symbol is a shadow the source added
- *      but that binds nothing at run time (its every declaration ambient, a module-local `declare var window` esbuild
- *      drops, or in a declaration file) is the raw global at run time, read as this page's own window or another by
- *      name. A shadow the source binds at run time in a module or a function that esbuild drops as statically dead code
- *      is the raw global too, but this reads it through its declaration, not as the global: that value is outside the
- *      rule and disclosed in the road census's "cannot see" list;
+ *      decides no use of the name in a file that declares it at its top level as a script, with a declaration that is
+ *      not ambient, a type-only one included (res.topShadow: the checker merges that declaration with the global or
+ *      resolves the use past it, while esbuild keeps a run-time one the file's own local in the page bundle; in a
+ *      JavaScript file the checker binds as CommonJS the use resolves to the local, which (b) reads): looseRoads refuses
+ *      the file, and this reads a use that resolves to the global fail-closed, the first of MULTI_ORDER among the
+ *      global's kind and the kinds the file's declarations of the name bind, each read fail-closed (var document =
+ *      window: this page's window read fail-closed). A window name whose symbol is a shadow the source added but that
+ *      binds nothing at run time (its every declaration ambient, a module-local `declare var window` esbuild drops, or
+ *      in a declaration file) is the raw global at run time, read as this page's own window or another by name. A
+ *      shadow the source binds at run time anywhere but at a script's top level (in a module, in a function or in a
+ *      block of a script, for example) that esbuild drops as statically dead code is the raw global too, but this reads
+ *      it through its declaration, not as the global: that value is outside the rule and disclosed in the road census's
+ *      "cannot see" list;
  *  (b) a chain of at most four steps from `n`, each one level deeper, null at a fifth (const a = window;
  *      a.self.self.self is a window, a.self.self.self.self null): a member read by a literal name, x.name by memberKind
  *      and x[key] by keyKind (a literal key under any parentheses, casts, satisfies and non-null marks:
@@ -1942,8 +1963,9 @@ function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
  *  (c) `this`, where thisIsGlobal reads it as the global object (and never under noThis), is a window read fail-closed:
  *      a plain function's depends on the call (o.m() runs m with o as its `this`), and the file's own need not be the
  *      window: in a page bundle esbuild rewrites it to the file's exports object, wrapping the file as CommonJS, where
- *      the file has no export statement, no import.meta, no top-level await and no .mjs or .mts suffix, whether or not
- *      it imports, and to undefined in any other file.
+ *      the file has no ES export statement (an export of a type or an interface is one; TypeScript's export = is
+ *      CommonJS, and a file whose export is one is wrapped), no import.meta and no .mjs or .mts suffix, whether or not
+ *      it imports, and to undefined in any other file (the page build, target es2020, refuses a top-level await).
  *  A value the rule does not decide is read fail-closed, so no road from it reaches a kind the census trusts: this
  *  page's window as a window whose document the census cannot tell is this page's (failClosedWindow, which refKind
  *  answers as this page's own window), and this page's document as a document the census cannot tell is this page's.
@@ -1968,13 +1990,14 @@ function ruleKind(n: any, res: Res, depth = 0, noThis = false): RuleKind | null 
     // a window-name global with a declaration the source added, outside the default lib, is one the census cannot trust
     // is the browser's own: record it, and looseRoads refuses outright (extraDecl is 0 live)
     if (WINDOW_GLOBALS.has(n.text) && res.extraDecl(s)) res.augmented.push({ name: n.text, node: n, sym: s });
-    // a use in a file that declares the name at its top level, with a declaration that binds at run time (topShadow): in
-    // a script the checker merges that declaration with the global or resolves the use past it to the global, but
-    // esbuild bundles the file into a function of the page bundle, where the declaration is the file's own local and the
-    // use holds it (var document = window; document[k] = f sets the window's handler). Identity does not decide such a
-    // use: it is read fail-closed, as the first of MULTI_ORDER among the global's kind and the kind each of the file's
-    // declarations of the name binds, every one read fail-closed (0 live: no ui/ script declares a window name or
-    // document at its top level)
+    // a use in a file that declares the name at its top level, with a declaration that is not ambient (topShadow; a
+    // type-only one counts too): in a script the checker merges that declaration with the global or resolves the use
+    // past it to the global, which is how the use reached this branch, but esbuild bundles the file into a function of
+    // the page bundle, where a run-time declaration is the file's own local and the use holds it (var document = window;
+    // document[k] = f sets the window's handler). Identity does not decide such a use of the name: it is read
+    // fail-closed, as the first of MULTI_ORDER among the global's kind and the kind each of the file's declarations of
+    // the name binds, every one read fail-closed (0 live: no ui/ script declares a window name or document at its top
+    // level)
     const own = res.topShadow(n);
     if (!own) return fam;
     const fc = [fam, ...(own.declarations || []).map((d: any) => declKind(d, n.text, res, depth, noThis))].map(failClosed);
@@ -2328,11 +2351,13 @@ function fixtureChecked(file: string, src: string): Checked {
 //     augmentation of any of them is the source's and refuses. A JavaScript expando merges into globalThis's symbol too
 //     (held by name identity), and refuses; a `declare global { var globalThis }` does not merge (kept apart, no program
 //     error), so it adds no declaration to the global and records no augmentation.
-//   - declC(node): the declaration the checker resolves an identifier to: null for a global or a name that binds nothing at
-//     run time (bindsNothingAtRuntime: its every declaration ambient (`declare`) or in a .d.ts, both of which esbuild drops),
-//     else the declaration, a binding element climbed to its variable declaration's root. The listener, event-name, timer and
-//     detach-value arms read it (sitesIn's listenerOf, eventTypes and listOf, the timer arm, and setsNoHandler's undefined
-//     check); an ambient const in a .ts file resolves to nothing here, so its value is no event name.
+//   - declC(node): the declaration the checker resolves an identifier to: null for a global the source does not declare or
+//     a name that binds nothing at run time (bindsNothingAtRuntime: its every declaration ambient (`declare`) or in a
+//     .d.ts, both of which esbuild drops), else the symbol's first declaration (the library's, where a script's top-level
+//     var merged with a library global), a binding element climbed to its variable declaration's root. The listener,
+//     event-name, timer and detach-value arms read it (sitesIn's listenerOf, eventTypes and listOf, the timer arm, and
+//     setsNoHandler's undefined check); an ambient const in a .ts file resolves to nothing here, so its value is no event
+//     name.
 //   - initIsValue(symbol): whether the window rule's clause (b) decides the binding by its initialiser, which it does
 //     only where that initialiser is the binding's value at every use: the checker gives the name one declaration (a
 //     JavaScript expando, which writes a member, aside), a let, const or var declaration's own (plain or destructured)
@@ -2355,10 +2380,13 @@ function fixtureChecked(file: string, src: string): Checked {
 //     initialiser reads as this page's own window or document.
 //   - topShadow(node): the symbol the identifier's own file declares its name by at the file's top level, where
 //     TypeScript calls the file no module (isExternalModule, the predicate ctorRefusal reads) and a declaration of the
-//     name there binds at run time (not bindsNothingAtRuntime), read from the binder's table for the file
-//     (SourceFile.locals); else null. In such a file the checker merges the declaration with the global or resolves a
-//     use past it to the global, while esbuild keeps it the file's own local in the page bundle, so ruleKind does not
-//     decide a use there by identity and looseRoads refuses the file for each window name or document it declares so.
+//     name there is not ambient (not bindsNothingAtRuntime; a type-only one counts), read from the binder's table for
+//     the file (SourceFile.locals); else null. In such a file the checker merges the declaration with the global or
+//     resolves a use past it to the global, while esbuild keeps a run-time one the file's own local in the page bundle,
+//     so ruleKind does not decide a use of the name there by identity, and looseRoads refuses the file for each window
+//     name or document it declares so. isExternalModule also calls a JavaScript file TypeScript binds as CommonJS (one
+//     with require or module.exports, for example) no module: there the checker resolves a use to the file's own local,
+//     which ruleKind reads by clause (b), and looseRoads refuses the file all the same.
 type Res = {
   checked: () => Checked;
   toProg: (n: any) => any;
@@ -2398,10 +2426,11 @@ function resolver(localSf: any, checked: () => Checked): Res {
   // which is recognised by its symbol name (escapedName "globalThis") whatever its declarations. A MODULE-scoped local
   // of the name (const frames = [] in a module) is a different symbol with no library declaration, so it is not the
   // global; a script's top-level local is not kept apart the same way (a .ts script's use of a top-level const frames
-  // resolves to the library global, with a TS2451; a .js script's top-level var merges into the library symbol, and a
-  // let or const merges into it or yields to it, the use resolving to the library symbol), so identity alone would
-  // read the use as the global, which it is not in the page bundle, where esbuild keeps the declaration the file's own
-  // local: ruleKind asks topShadow, and a use in such a file is read fail-closed and its file refused (looseRoads). A
+  // resolves to the library global, with a TS2451; in a .js script TypeScript does not bind as CommonJS, a top-level var
+  // merges into the library symbol, and a let or const merges into it or yields to it, the use resolving to the library
+  // symbol), so identity alone would read the use as the global, which it is not in the page bundle, where esbuild
+  // keeps the declaration the file's own local: ruleKind asks topShadow, and a use of the name in such a file is read
+  // fail-closed and the file refused (looseRoads). A
   // JavaScript expando MERGES into the library symbol (globalThis's included, which stays globalThis by name), and a `declare
   // global` merges for a name the library declares (self, window) but not for globalThis (kept apart, no program
   // error), so the global stays the global and extraDecl catches the expando augmentation. globalThis by its
@@ -2422,10 +2451,12 @@ function resolver(localSf: any, checked: () => Checked): Res {
   const firstNonLib = (s: any): any => (s && s.declarations ? s.declarations.find((d: any) => !isLib(d)) : undefined) || null;
   const extraDecl = (s: any): boolean => !!firstNonLib(s);
   const declC = (n: any): any => {
-    // the declaration the checker binds the identifier to: null when the name has no run-time
-    // binding of its own (a global, or a name whose every declaration is ambient, in a .d.ts), else the declaration, a
-    // binding element climbed to its variable declaration's root. A script's top-level binding, which resolveName finds
-    // in the global scope, still has its declaration in a source file, so it is returned, not treated as a global.
+    // the declaration the checker binds the identifier to: null when the name has no run-time binding of its own (a
+    // global the source does not declare, or a name whose every declaration is ambient or in a .d.ts), else the symbol's
+    // first declaration, a binding element climbed to its variable declaration's root. A script's top-level binding,
+    // which resolveName finds in the global scope, has a declaration in a source file, so it is not treated as a global;
+    // where it merged with a library global (a .js script's top-level var document), the symbol's first declaration is
+    // the library's, and that is the one returned.
     const s = symAt(n);
     if (!s) return null;
     const ds = s.declarations || [];
@@ -2489,10 +2520,12 @@ function resolver(localSf: any, checked: () => Checked): Res {
     return valueCache.get(s) as boolean;
   };
   // the symbol the identifier's own file declares its name by at the file's top level, when TypeScript calls the file
-  // no module (isExternalModule, as ctorRefusal reads it) and a declaration of the name there binds at run time: read
-  // from the binder's table for the file (SourceFile.locals, the table the socket proof reads). Null for a module, whose
-  // top-level declaration the checker keeps apart from the global, and for a file that declares no such name at its top
-  // level or only ambient ones (bindsNothingAtRuntime)
+  // no module (isExternalModule, as ctorRefusal reads it) and a declaration of the name there is not ambient (a
+  // type-only one counts): read from the binder's table for the file (SourceFile.locals, the table the socket proof
+  // reads). Null for a module, whose top-level declaration the checker keeps apart from the global, and for a file that
+  // declares no such name at its top level or only ambient ones (bindsNothingAtRuntime). isExternalModule calls a
+  // JavaScript file TypeScript binds as CommonJS no module too, so that file's local is returned, though the checker
+  // resolves a use to it
   const topShadow = (n: any): any => {
     const p = toProg(n);
     if (!p) return null;
@@ -2897,9 +2930,11 @@ function looseRoads(file: string, src: string, checked: () => Checked = () => fi
       + "), so the census cannot tell its global is the page's own window");
   }
   // a file TypeScript calls no module that declares a window name or document at its top level, with a declaration that
-  // binds at run time (topShadow, rule (a)): in the page bundle a use of the name in the file holds the file's own local
+  // is not ambient (topShadow, rule (a)): in the page bundle a use of the name in the file holds the file's own local
   // where esbuild keeps the declaration, and the raw global where it drops it as dead code, and the census reads
-  // neither, so it refuses outright (0 live). One refusal per name, at its first declaration
+  // neither, so it refuses outright (0 live). One refusal per name, at its first declaration. The test also takes a
+  // file whose only declaration of the name is type-only and a JavaScript file TypeScript binds as CommonJS, where that
+  // reason does not arise (the refused list in the road census comment)
   const named = new Map<string, any>();
   const nameIn = (n: any): void => {
     if (ts.isIdentifier(n) && (WINDOW_GLOBALS.has(n.text) || n.text === "document") && !named.has(n.text)) named.set(n.text, n);
@@ -3085,8 +3120,10 @@ test("the road census reads what it claims: every road around the spelled regist
     // PR 923: this page's document in a file that declares no window name and no document at its top level (a
     // script's use of the global, a declaration of the name in a function), in one that declares document only
     // ambiently (declare var document, which binds nothing at run time), and a module's top-level declarations of top,
-    // frames and document, which the checker keeps apart from the global: rule (a) decides each use as before and no
-    // file refuses (the file-level refusal is for a script's top-level declaration that binds at run time)
+    // frames and document (a .ts module) and of frames (a .mjs file), which the checker keeps apart from the global:
+    // rules (a) and (b) decide each use as before (a use of the global by identity; the module's locals, and the
+    // function's, by their declarations) and no file refuses (the file-level refusal is for a script's top-level
+    // declaration that is not ambient)
     ["document[k] = f; const d = document; d[k] = f;", "webview/probe.js"],
     ["function g() { var document = window; void document; }\ng();\ndocument[k] = f;", "webview/probe.js"],
     ["declare var document: any;\ndocument[k] = f;"],
@@ -3201,8 +3238,11 @@ test("the road census reads what it claims: every road around the spelled regist
   // document initialiser, so refKind is that document), so it does not refuse the computed handler write. It models
   // only the ambient and declaration-file drop (bindsNothingAtRuntime), not esbuild's dead-code elimination of a
   // live declaration, so these land window.onmessage in the shipped bundle and the census accepts them. Each is a
-  // module (a .mjs file), since a script's top-level declaration of a window name refuses. The last five reach a
-  // reflective or prototype function another way than its Reflect. or Object. spelling
+  // module (a .mjs file): the first three declare their var at the file's top level, which in a script would refuse (a
+  // script's top-level declaration of a window name refuses), and the fourth's let is in a function, which a script
+  // would not refuse either. No row here holds a let, const or class in a block of a script, which the list's entry
+  // names too. The last five reach a reflective or prototype function another way than its Reflect. or Object.
+  // spelling
   const unseen: Array<[string, string?]> = [
     ["const o: any = {}; o[[\"Web\", \"Socket\"].join(\"\")] = function () { return window; }; Object.assign(window, o); const ws = new WebSocket(u); ws.onmessage = f;"],
     ["Object.assign(window, make()); const ws = new WebSocket(u); ws.onmessage = f;"],
@@ -3768,10 +3808,12 @@ test("the road census reads what it claims: every road around the spelled regist
       ["let d = document;\nconst k = [\"on\", \"message\"].join(\"\");\n[...d] = [window];\nd[k] = function (e) { void e; };", "webview/probe.js"],
       ["let d = document;\nconst k = [\"on\", \"message\"].join(\"\");\n({ ...d } = window);\nd[k] = function (e) { void e; };", "webview/probe.js"],
       // PR 923: the file's own this, which ab6a0585a read as this page's window, whose document it trusts: in a page
-      // bundle esbuild rewrites it to the file's exports object, wrapping the file as CommonJS, where the file has no
-      // export statement, no import.meta, no top-level await and no .mjs or .mts suffix, whether or not it imports (the
-      // last row imports and has no export), so this.document can hold the window and the computed write lands
-      // window.onmessage; in any other file it is undefined and the code throws. The rule now reads every this rule (c)
+      // bundle esbuild rewrites it to the file's exports object, wrapping the file as CommonJS, where the file has no ES
+      // export statement (an export of a type or an interface is one; TypeScript's export = is CommonJS, and a file
+      // whose export is one is wrapped), no import.meta and no .mjs or .mts suffix, whether or not it imports (the last
+      // row imports and has no export), so this.document can hold the window and the computed write lands
+      // window.onmessage; in any other file it is undefined and the code throws (the page build, target es2020, refuses
+      // a top-level await). The rule now reads every this rule (c)
       // reads as the global object fail-closed, its document one the census cannot tell is this page's
       ["var k = [\"on\", \"message\"].join(\"\"); function h(e) { void e; }\nthis.document = window; this.document[k] = h;", "webview/probe.js"],
       ["var k = [\"on\", \"message\"].join(\"\"); function h(e) { void e; }\nthis.document = window; this.document[k] = h;", "webview/probe.cjs"],
@@ -3782,15 +3824,22 @@ test("the road census reads what it claims: every road around the spelled regist
       ["import \"./side\";\nvar k = [\"on\", \"message\"].join(\"\"); function h(e: unknown) { void e; }\nthis.document = window; this.document[k] = h;"],
       // PR 923: a use of document in a file that declares document at its top level, a file TypeScript calls no module.
       // The checker merges the declaration with the global document, or resolves the use past it to the global, so
-      // rule (a) read the use as this page's document, whose computed member it trusts; esbuild keeps the declaration
-      // the file's own local in the page bundle, so document is the window when the computed write runs and it lands
-      // window.onmessage. ea4135223 accepted every one: a var, a let and a const, in JavaScript, JSX and TypeScript; for
-      // onmessage and onmessageerror; directly, through a chain (const d = document), through Reflect.set, through
-      // Object.assign and through a destructuring target; with self, globalThis or window.self on the right; the
-      // addEventListener method by a computed name; a function declaration of the name, a var in a top-level block, a
-      // var written later, and a use in a function. Identity now decides no use in such a file: the rule reads it
-      // fail-closed, this page's window first where a declaration binds one (so a window's own member, self or parent,
-      // is read too), and the global's kind, a document the census cannot tell is this page's, where none does
+      // rule (a) read the use as this page's document, whose computed member it trusts, and ea4135223 accepted every
+      // row here. esbuild keeps the declaration the file's own local in the page bundle, so where the local holds the
+      // window, document is the window when the computed write runs, and every row but one sets a handler on it: a
+      // var, a let and a const, in JavaScript, JSX and TypeScript; for onmessage and onmessageerror; directly, through a
+      // chain (const d = document), through Reflect.set, through Object.assign and through a destructuring target; with
+      // self, globalThis or window.self on the right; the addEventListener method by a computed name (a message
+      // listener on the window); a var in a top-level block, a var written later, a use in a function, and a window's
+      // own member (document.self). The row with a function declaration of the name sets no handler: esbuild keeps the
+      // function, and the write sets a member of it, so that row is held as a fail-closed reading, not as a road that
+      // lands. Identity now decides no use of the declared name in such a file: the rule reads it fail-closed, as the
+      // first, in the order this page's window, another window, the body element, a document the census cannot tell is
+      // this page's, among the global's kind and the kinds the file's declarations of the name bind. A declaration that
+      // binds this page's window makes the use that window read fail-closed (a window's own member, self or parent, is
+      // read too), and declarations that bind none of these kinds (the function declaration, and var document; written
+      // later by document = window) leave the global's kind, a document the census cannot tell is this page's; each
+      // refuses a computed member
       ["var document = window;\ndocument[[\"on\",\"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
       ["var document = window;\nconst d = document;\nd[[\"on\",\"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
       ["var document = window;\nReflect.set(document, [\"on\",\"message\"].join(\"\"), function (e) { void e; });", "webview/probe.js"],
@@ -3831,14 +3880,15 @@ test("the road census reads what it claims: every road around the spelled regist
       ["export {}; declare global { var self: Window & typeof globalThis; } const k = \"on\" + \"message\"; (self as any)[k] = function (e: unknown) { void e; };"],
     ]],
     // PR 923: a file TypeScript calls no module that declares a window name or document at its top level, with a
-    // declaration that binds at run time, is refused outright (topShadow). In the page bundle a use of the name in that
+    // declaration that is not ambient, is refused outright (topShadow). In the page bundle a use of the name in that
     // file holds the file's own local where esbuild keeps the declaration, and the raw global where esbuild drops it as
     // dead code. The release build drops a var in if (false) at a file's top level, so the first two rows set the
-    // window's handler through the raw document's body and its defaultView, which the rule's fail-closed reading of the
-    // kept declaration (this page's window, which has no body) does not read as the body. The rest: the kept
-    // declaration's body (undefined on the window, so that write throws), a class of the name, a declaration of top,
-    // self or frames that nothing uses as a window, and a handler on a document the declaration makes the window (a
-    // census site as well)
+    // window's handler through the raw document's body and its defaultView. Only this refusal refuses the first: the
+    // rule's fail-closed reading of the declaration (this page's window, which has no body) reads document.body as
+    // nothing. The second is refused by the member rule as well, since a defaultView on any holder but this page's
+    // document is read as another window, whose computed member refuses. The rest: the kept declaration's body
+    // (undefined on the window, so that write throws), a class of the name, a declaration of top, self or frames that
+    // nothing uses as a window, and a handler on a document the declaration makes the window (a census site as well)
     [/a file that is no module declares (window|self|globalThis|frames|top|parent|opener|document) at its top level/, false, [
       ["if (false) { var document = window; }\ndocument.body[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
       ["if (false) { var document = window; }\ndocument.defaultView[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
@@ -4038,11 +4088,12 @@ test("the window rule decides a binding by its initialiser only where the langua
   assert.deepEqual(looseRoads("webview/zz-plant-d.ts", own, () => alone("webview/zz-plant-d.ts")).loose, []);
 });
 
-test("the window rule decides no use by identity in a script that declares the name at its top level: it reads the use fail-closed and refuses the script, while a use in another file stays the global", () => {
-  // In a file TypeScript calls no module, the checker merges a top-level declaration of document with the global
-  // document (or resolves a use past it to the global), so identity alone would read the use as this page's document;
-  // esbuild keeps the declaration the file's own local in the page bundle, the window here, so the rule reads the use
-  // fail-closed (topShadow), this page's window as refKind answers it, and looseRoads refuses the file. A use of
+test("the window rule decides no use of the name by identity in a script that declares it at its top level: it reads the use fail-closed and refuses the script, while a use in another file stays the global", () => {
+  // In a file TypeScript calls no module and does not bind as CommonJS, the checker merges a top-level declaration of
+  // document with the global document (or resolves a use past it to the global), so identity alone would read the use
+  // as this page's document; esbuild keeps the declaration the file's own local in the page bundle, the window here, so
+  // the rule reads the use fail-closed (topShadow), this page's window as refKind answers it, and looseRoads refuses
+  // the file. A use of
   // document in another file of the same program is the global at run time, since the declaration stays in its own
   // file, and rule (a) still decides it as this page's document: a check keyed on any file's declaration would refuse
   // it. Both files are scripts, in one census program
