@@ -32,6 +32,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 import time
 import types
@@ -49,6 +50,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_apih_hover", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment spans (loads no romp code)
 sb = load_source("romp_sdk_backend_apih_hover", os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py"))
 
 SID = "88888888-aaaa-4bbb-8ccc-000000000001"     # this module's private synthetic sid
@@ -60,8 +63,12 @@ JS = km._LANDING_APIH_JS
 
 
 def _hist():
-    """The History block of the cell's script, or '' before the section exists."""
-    i, j = JS.find("// -- History"), JS.find("// full=false is the HOVER")
+    """The History block of the cell's script, between its two section comments, or '' before the section exists. The anchors are
+    COMMENTS, so they are read from the script's comment spans on purpose (the fixer pass of the author's pass 9: a find over the raw text is a pin a
+    comment satisfies, and here the comment is the point)."""
+    spans = [(s, JS[s:e]) for s, e in served_css.js_comment_spans(JS)]
+    i = next((s for s, text in spans if text.startswith("// -- History")), -1)
+    j = next((s for s, text in spans if text.startswith("// full=false is the HOVER")), -1)
     return JS[i:j] if 0 <= i < j else ""
 
 
@@ -741,9 +748,12 @@ class Docs(unittest.TestCase):
             self.assertNotIn("fleet", text.lower(), name)
         for w in ("card", "board", "goal", "column"):
             self.assertNotIn("'" + w, HIST, w)          # no quoted romp noun inside the History script
-        css = km._landing()
-        i = css.index(".ah-dot[data-dot=fine]")     # the dot rules follow #1338: keyed on the dot word, not the machine state
-        self.assertNotIn("\u2014", css[i:i + 400])
+        # the dot rules follow #1338: keyed on the dot word, not the machine state; read as parsed rules (the fixer pass of the author's pass 9: a
+        # 400-character window over the raw page stood here)
+        dots = [r for r in served_css.rules(km._landing()) if any("[data-dot=" in m for m in served_css.members(r.selector))]
+        self.assertIn(".ah-dot[data-dot=fine]", [m.strip() for r in dots for m in served_css.members(r.selector)], "the dot rules are keyed on the dot word")
+        for r in dots:
+            self.assertNotIn("\u2014", r.selector + r.declarations, r.selector)
 
 
 class Script(unittest.TestCase):
@@ -918,9 +928,12 @@ class Skin(unittest.TestCase):
         self.assertIn("#rail-api[data-dot=errors] .ah-dot,.ah-dot[data-dot=errors]{background:var(--st-blocked-bg,#e5484d);opacity:1}", self.html)
         self.assertIn("#rail-api[data-dot=quiet] .ah-dot,.ah-dot[data-dot=quiet]{background:var(--dim,#9aa4ad);opacity:.55}", self.html)
         self.assertNotIn("data-state=thrashing", self.html, "the machine's words are not colours any more")
-        rules = re.findall(r"[^{}]*\.ah-err[^{}]*\{[^}]*\}", self.html)
+        # the parsed rules, comments stripped: a regex over the page read rule text inside comments too, and the census reads this
+        # page since it reads a setUpClass's cls.html (tests/test_served_pins_read_elements.py, round 6)
+        rules = [r for r in served_css.rules(self.html) if ".ah-err" in r.selector]
+        self.assertTrue(rules, "the failure line's rules are served")
         for rule in rules:
-            self.assertNotIn("var(--accent", rule, "the failure line is never the accent: " + rule)
+            self.assertNotIn("var(--accent", rule.declarations, "the failure line is never the accent: " + rule.selector)
         self.assertIn(".ah-hword{opacity:.8}.ah-hsub{opacity:.55}.ah-boot .ah-hword{font-style:italic;opacity:.6}", self.html)
         self.assertIn(".ah-hname{margin-top:6px}.ah-err{color:#ef6b6f}.ah-wait{margin:5px 0 2px}", self.html)
         self.assertIn("body.theme-light .ah-err{color:#B02A1C}", self.html, "the light theme's error-text red")

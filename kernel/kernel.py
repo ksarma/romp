@@ -36058,11 +36058,12 @@ _SUBAGENT_FRAMES = {}           # (sid, agentId) -> (change key, frame, serializ
 SUBAGENT_EVENT_CAP = 300        # events shipped per viewer frame — a bounded TAIL, honest about the cut (the episode fold's rule)
 SUBAGENT_STEPS_CAP = 200        # tool calls shipped on the Agent head (agentSteps) — the newest; stepsTotal says the true count
 # THE WALK MEMO (2026-09-16): subagents root -> (its directories in walk order, their identities), one entry per root, shared by
-# every reader of the tree (_subagent_dirs, _subagent_meta_map, _find_agent_file, the feed key's _subagent_dirs_ident). Before
-# it every call ran os.walk over the tree (up to 330 directories, 3,600 files on the measured box), several calls per session
-# per build from the feed, timeline and chat builds and the nudge walk, and a pusher stack sample put a tenth of its push-stage
-# samples inside that walk. Bounded by ownership, not by a count: _subagent_trees_forget drops every root no alive session's
-# transcript names, on every jobs pass (_interrupt_block_tick, audience-independent) and, as a belt, after each feed build
+# every reader of the tree (_subagent_dirs, _subagent_meta_map, _find_agent_file, _subagent_file_walk, which hands its
+# read to _find_agent_file, the feed key's _subagent_dirs_ident). Before it every call ran os.walk over the tree (up
+# to 330 directories, 3,600 files on the measured box), several calls per session per build from the feed, timeline
+# and chat builds and the nudge walk, and a pusher stack sample put a tenth of its push-stage samples inside that
+# walk. Bounded by ownership, not by a count: _subagent_trees_forget drops every root no alive session's transcript
+# names, on every jobs pass (_interrupt_block_tick, audience-independent) and, as a belt, after each feed build
 # and from the tracking-off frame. And, since 2026-09-18, one sample per cycle on `_live_scope.subagent_trees`: the first
 # reader of a root in a pusher cycle (a jobs pass, a handler thread's connect push) validates or walks, and every later
 # reader of that cycle is served the same (directories, stats) with no lstat (_subagent_tree, THE CYCLE SCOPE).
@@ -36152,8 +36153,8 @@ def _subagent_tree(d):
     own memo (_subagent_meta_map's key, _subagent_file's stamps, the feed key's identities, the chat build's taskout notes)
     mismatches next cycle when the tree moved and re-derives, never a stale hit; an EMPTY answer (nothing at the root, or
     not a directory) carries no stamp and is therefore NOT scoped: _subagent_file_walk stamps the root itself with a fresh
-    _dir_stamp and reads its listing through _find_agent_file, and served an older empty sample it would memoize a nested
-    agent's miss under a stamp newer than the listing it read, a stale miss that outlives the cycle because
+    _dir_stamp and hands _find_agent_file the tree it read with _subagent_tree, and served an older empty sample it would
+    memoize a nested agent's miss under a stamp newer than the listing it read, a stale miss that outlives the cycle because
     _subagent_file's hit path re-stats and never re-walks; so such a root costs each caller its one lstat, as before. The
     `stats` list is shared by every reader of the cycle and read-only by contract, as _sessions' rows are (the readers
     zip, iterate or copy it). Outside a scope every call samples afresh, as _live_map, _sessions, _path_of and
@@ -36278,6 +36279,30 @@ def _subagent_tree_memo_report():
     return out
 
 
+def _subagent_tree_dep_note(d, dirs, stats):
+    """A tree reader's report to the running chat build (the taskout idiom, _chat_dep_note_taskout) for the subagents root
+    `d` it read as the pair (dirs, stats) _subagent_tree answered: every directory of the tree under the (st_mtime,
+    st_size) of the SAME stat result the read was taken with, the shape _chat_stat_key answers at the next cycle's
+    signature (a value derived from mtime_ns would miss by float rounding and rebuild the tab every cycle), so a sidecar
+    or agent file landing in a directory, or a directory appearing under one, moves that directory's stamp against the
+    recorded key and the tab is rebuilt. An absent root, or a dangling link in its place, notes None (what _chat_stat_key
+    re-evaluates to, so its appearance is a change too); anything else in the root's place (a live link, a file: not this
+    session's tree, never listed) notes nothing, since a None note could never match its re-stat and the target's key
+    would rebuild the tab on changes no reader shows (_subagent_meta_map's rule; _subagent_file_walk notes such a path
+    under its stat key via _subagent_walk_dep_note). The key comes from the pair the reader was answered and never from
+    a stat taken after it (2026-09-24): inside a cycle scope (_live_scope.subagent_trees: a pusher cycle, a jobs pass, a
+    connect push's chat loop) the pair may be the sample another reader took earlier in the cycle, and a fresh stat would
+    post-date the listing it vouches for, so a file landing after the sample under a directory the listing lacked would
+    be recorded under its own post-landing key, equal to every later re-stat, and the tab that showed the file missing
+    would never be rebuilt (_subagent_file_walk's note did this). Nothing is recorded outside a chat build."""
+    if not dirs:
+        if not stats or _chat_stat_key(d) is None:
+            _chat_dep_note_taskout(d, None)
+        return
+    for sd, sst in zip(dirs, stats):
+        _chat_dep_note_taskout(sd, (sst.st_mtime, sst.st_size))
+
+
 def _subagent_meta_map(path):
     """toolUseId → {agentId, agentType, description, spawnDepth, parentAgentId} for every agent-*.meta.json beside the
     transcript at `path`, the nested workflow directories included (T355: a workflow agent's sidecar sits under
@@ -36288,24 +36313,11 @@ def _subagent_meta_map(path):
     this map (_stamp_agents, _awaiting_live_rows, _awaiting_nest) and the feed key's read share the cycle's stamps."""
     d = str(_subagents_dir(path))
     dirs, stats = _subagent_tree(d)                       # the shared walk memo (2026-09-16): the directories and the stat each
-    if not dirs:                                          #  was taken under, one pass, no os.walk and no second stat per directory
+    _subagent_tree_dep_note(d, dirs, stats)               #  was taken under, one pass, no os.walk and no second stat per directory;
+    if not dirs:                                          #  the running chat build's dependency record, from that same read
         _SUBAGENT_META_CACHE.pop(d, None)
-        # a running chat build: the directory's absence is a dependency too, as os.stat's failure recorded it before the
-        # memo: nothing at the path, or a dangling link in its place, notes None (what _chat_stat_key re-evaluates to); a
-        # LIVE link (not this session's tree, never listed, {} regardless) notes nothing, as before, since a None note
-        # could never match its re-stat and the target's key would rebuild the tab on changes the map does not show
-        if not stats or _chat_stat_key(d) is None:
-            _chat_dep_note_taskout(d, None)
         return {}
-    stamps = []
-    for sd, sst in zip(dirs, stats):
-        stamps.append((sd, sst.st_mtime_ns))
-        # the running chat build's dependency record (the taskout idiom, _chat_dep_note_taskout): a sidecar landing
-        # moves its directory's mtime, which the next cycle's signature re-stats; the (st_mtime, st_size) pair from the
-        # SAME stat_result the memo validated with, the exact shape _chat_stat_key answers (a value derived from mtime_ns
-        # would miss by float rounding and rebuild the tab every cycle)
-        _chat_dep_note_taskout(sd, (sst.st_mtime, sst.st_size))
-    key = tuple(stamps)
+    key = tuple((sd, sst.st_mtime_ns) for sd, sst in zip(dirs, stats))
     hit = _SUBAGENT_META_CACHE.get(d)
     if hit is not None and hit[0] == key:
         return hit[1]
@@ -36367,11 +36379,13 @@ def _subagent_meta(path, agent_id, apath=None):
     return meta if isinstance(meta, dict) else {}
 
 
-def _find_agent_file(subdir, name, read=None):
+def _find_agent_file(subdir, name, read=None, tree=None):
     """`name` anywhere under the subagents directory `subdir`, one level or deeper (workflows/wf_<id>/agent-<id>.jsonl),
     no symlink followed or taken, and never a file reached THROUGH a symlink (its real path stays under the tree's);
-    None when absent. `read` collects the directories walked."""
-    dirs, stats = _subagent_tree(str(subdir))
+    None when absent. `read` collects the directories walked. `tree`, when the caller has read the tree already, is the
+    (directories, stats) pair _subagent_tree answered it, looked through here instead of a second read, so the caller's
+    dependency note, when it takes one, comes from the read that answered the lookup (_subagent_file_walk, 2026-09-24)."""
+    dirs, stats = tree if tree is not None else _subagent_tree(str(subdir))
     if read is not None:
         read.extend((sd, st.st_mtime_ns) for sd, st in zip(dirs, stats))   # stamped as read: each directory's stat from
         #                                                                    BEFORE its listing (the memo's own), never re-taken after
@@ -36389,9 +36403,15 @@ def _subagent_file(path, agent_id):
     missed it and the viewer said the file was missing, T355), or — when the sidecar dir has moved under a /clear
     fork's fsid — the one file of that name anywhere in the project dir, nested or not. None when missing.
     A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout;
-    re-review 2026-09-08): the absent beside-path and the identity of every sibling subagents directory the
-    fallback scanned are recorded for the running build, so the file landing in any of them moves the key
-    (a resolved file is recorded by _agent_steps when it is read)."""
+    re-review 2026-09-08): the absent beside-path and, for every sibling subagents tree the fallback looked
+    through and for the own tree when the project directory's listing reaches the session's directory, each
+    directory's identity as the read that answered the walk saw it, or the path's stat key when a live link, a
+    file or a dangling link is there in place of a tree (_subagent_walk_dep_note, 2026-09-24), are recorded for
+    the running build, so the file landing in any of them, a directory appearing for it to land in, or a tree
+    replacing the link or the file, moves the key (a resolved file is recorded by _agent_steps when it is
+    read). In a chat build _stamp_agents calls _subagent_meta_map on the same path before this lookup, and that
+    call notes the own tree from the pair its own _subagent_tree call answered (every directory of a tree; None
+    when nothing or a dangling link is there)."""
     if not path or not _AGENT_ID_RE.match(str(agent_id or "")):
         return None
     ckey = (str(path), str(agent_id))
@@ -36407,8 +36427,40 @@ def _subagent_file(path, agent_id):
     return found                                   #  sibling's tree moves that directory and re-walks
 
 
+def _subagent_walk_dep_note(d, tree):
+    """_subagent_file_walk's report to the running chat build for the subagents path `d` it looked through, read as
+    `tree` (the pair _subagent_tree answered). A tree at `d`, or nothing there, is noted by _subagent_tree_dep_note:
+    every directory under the stat of the read, or None. Anything else at `d` (a live link, a file or a dangling link:
+    never listed, so the lookup found nothing there) is noted under _chat_stat_key(d), as the walk noted every path it
+    looked through before that helper (2026-09-24): the link target's (st_mtime, st_size), the file's, or None. So a
+    real tree that replaces it moves the key against the next signature's re-stat, and the tab that showed the agent's
+    file missing is rebuilt; _subagent_meta_map notes nothing for a live link or a file (a dangling link it notes None,
+    as here). That stat is taken after the read, so its key is kept only while `d` still holds what the read saw: when
+    an lstat taken after the stat has an identity (_stat_ident) other than the read's lstat, the path changed in between
+    and None is noted instead, which no re-stat of a directory, a live link or a file equals, so a tree placed there in
+    between is never recorded under its own key. Such an answer carries no directory and is never held by a cycle scope
+    (_subagent_tree), so the read is always this walk's own."""
+    dirs, stats = tree
+    if dirs or not stats:
+        _subagent_tree_dep_note(d, dirs, stats)
+        return
+    key = _chat_stat_key(d)
+    if key is not None and _stat_ident(_lstat_or_none(d)) != _stat_ident(stats[0]):
+        key = None    # `d` changed after the read: None, which no re-stat of a directory, a live link or a file matches
+    _chat_dep_note_taskout(d, key)
+
+
 def _subagent_file_walk(path, agent_id, read=None):
-    """_subagent_file's walk itself (no memo); `read` collects every directory it looked at, the memo's stamps."""
+    """_subagent_file's walk itself (no memo); `read` collects every directory it looked at, the memo's stamps. Each tree
+    it looks through, its own and each sibling's, is read once (_subagent_tree: inside a cycle scope, possibly the sample
+    another reader took earlier in the cycle), and that read answers the lookup (_find_agent_file's `tree`); the running
+    chat build's dependency note, when the walk takes one, comes from the same read (_subagent_walk_dep_note: for a
+    tree, every directory under the stat of that read, never a stat taken after it, _subagent_tree_dep_note's docstring
+    says why; for a live link, a file or a dangling link at the path, the path's stat key, as before; 2026-09-24). On a
+    miss the walk notes each tree its project listing reaches, the own tree only when the listing reaches the session's
+    directory. In a chat build _stamp_agents calls _subagent_meta_map on the same path before the lookup, and that call
+    notes the own tree from the pair its own _subagent_tree call answered (every directory of a tree; None when nothing
+    or a dangling link is there)."""
     read = read if read is not None else []
     name = "agent-%s.jsonl" % agent_id
     own = _subagents_dir(path)
@@ -36416,7 +36468,8 @@ def _subagent_file_walk(path, agent_id, read=None):
     ap = own / name
     if not os.path.islink(own) and os.path.isfile(ap) and not os.path.islink(ap):   # this tree's own file (a symlinked
         return ap                                                                   #  subagents/ or file is not taken)
-    nested = _find_agent_file(own, name, read)
+    own_tree = _subagent_tree(str(own))
+    nested = _find_agent_file(own, name, read, tree=own_tree)
     if nested is not None:
         return nested
     # A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout): the
@@ -36427,12 +36480,15 @@ def _subagent_file_walk(path, agent_id, read=None):
         for d in sorted(Path(str(path)).parent.iterdir()):
             if d.is_dir():                                # the directory the walk below reads: a file landing in
                 sd = d / "subagents"                      # <sib>/subagents/ moves ITS mtime, not the sibling's
-                _chat_dep_note_taskout(str(sd), _chat_stat_key(str(sd)))
-                if sd != own:
-                    read.append(_dir_stamp(str(sd)))
-                    cand = _find_agent_file(sd, name, read)
-                    if cand is not None:
-                        return cand
+                if sd == own:
+                    _subagent_walk_dep_note(str(sd), own_tree)    # the own tree: the read above, looked through already
+                    continue
+                read.append(_dir_stamp(str(sd)))
+                tree = _subagent_tree(str(sd))            # the sibling's tree, once: the note and the lookup below share it
+                _subagent_walk_dep_note(str(sd), tree)
+                cand = _find_agent_file(sd, name, read, tree=tree)
+                if cand is not None:
+                    return cand
     except OSError:
         pass
     return None
@@ -71720,10 +71776,263 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // keyboards and collapsing toolbars — where height*scale keeps a mobile pinch from re-fitting too.
 // Every run recomputes from scratch — never adjusts a stored value — so a viewport that grows back
 // (keyboard gone, app back in front) can never leave a stale, shorter --app-h behind.
+// [fork] the author's pass 8 (2026-09-20): "pinch-immune in every browser" above is upstream's premise about innerHeight, left as written;
+// the fork's contrary reading of WebKit and its evidence status live in ONE place, the fit() comment below the --app-h write
+// ("TWO PREMISES rest here"), which names this paragraph as the contrary. The fine-pointer road reads the layout viewport
+// as document.documentElement.clientHeight through the fork line after the h assignment.
+// [fork] D1 (2026-09-19): the pinch road's state, the only values fit() keeps from one run to the next (the upstream sentence
+// above, every run recomputes from scratch, is about --app-h, which every run still does). lastPan is the HOLD, the pan a WRITING
+// road of fit() last stored: the measured road stores what it publishes before the clamp at use it applies under a pinch (kbPx
+// below, the reading itself under the cut) and the 0px road a zero, in a no-pan state only. The hold road writes nothing into it, so what the page is using can differ from the
+// hold until a road WRITES it (the author's pass 8, 2026-09-20; the author's pass 6, 2026-09-20: it had read "the pan last
+// published, on every road"). held says the hold was WRITTEN with a keyboard up: every measured-road write sets it to L - h > 0,
+// and the 0px road clears it with the hold. It is kept apart from the hold's value because a hold of 0 (the keyboard up at scale
+// 1 with no pan) is a hold like any other, and under a pinch the measured road writes only where none is held, so no pinch
+// reading, a drag or a continuous pinch, overwrites a standing hold (the maintainer's round 6 ruling, 2026-09-29: that write had
+// keyed on any reading past the zoom's share, so a drag one pixel past it dropped a hold of 83 to 1 and a continuous pinch
+// lowered it at every step; keyed on the hold's value instead, a hold of 0 would read as none and a drag would overwrite it).
+// gone says the held keyboard went down under the pinch: the hold road's keyboard-down run (inside the layout viewport, L - h <=
+// 0, the run whose clamp publishes 0) sets it where a hold is held, and the next keyboard-up run under the pinch bounds the hold
+// into the reading's interval [kbPx, panPx] and keeps the result in rp, apart from the hold. So a keyboard raised again with no
+// pan, or with a pan inside the zoom's share, publishes a value the reading allows and not the stale hold (round 6: a keyboard
+// raised again with no pan under a zoom of 1.003 had put the composer 81.5 px below the visible band's bottom), and a later
+// re-raise of the first field still finds the hold, since every re-raise bounds from the hold itself, which the hold road never
+// writes, and never from rp (the keyboard-down run also drops rp, which reaches only a report outside the layout viewport that
+// follows it before the next re-raise: that report takes the hold). ps and ph are the scale and h of the previous run that
+// took the measured road or the hold road, so a run can tell what changed since: h changed with a keyboard up (L - h > 0) is a
+// RAISE on the measured road (kz below), and the scale changed is a ZOOM, a zoom alone where h is unchanged. kz is the zoom of the keyboard event
+// that wrote the value in force, 0 where none did: a measured-road write with the keyboard up and h changed since the previous run
+// (a raise) sets it to the scale, and so does the re-raise that writes rp; any other measured-road write (a drag's, h unchanged)
+// sets 0, and the hold road clears it at any change of scale, h changed with it or not (the maintainer's round 6 ruling, 2026-09-29:
+// any zoom disarms the rule; while only a zoom alone cleared it, kz stood through a report that changed the scale and h together, a
+// keyboard swapped in during a pinch, h's rounding flipping by a pixel during one with the same keyboard, or the keyboard going down
+// with the visual viewport outside the layout viewport, and a later such report back at kz's zoom, no pan on its own run, took the
+// stance there and the pan rule on its refit, so --app-top moved with no new information; since the pan test was dropped, below,
+// such a report back would take the pan rule on both runs, a zoom that did not disarm it). The 0px road leaves it: the hold it
+// clears is 0, from which the pan rule and the stance publish the same value, kbPx. For a report inside the layout viewport the
+// hold road publishes the pan rule, the larger of the hold and the value in force re-bounded into the reading's interval, exactly
+// where kz is the current scale (the maintainer's round 6 ruling, 2026-09-29: the reading governs a pan of a keyboard raised at
+// this zoom, the stance a zoom and what follows it). That is the rule's one test (the same ruling, on its focused re-check: a pan
+// test the rule had also made, the scale unchanged since the previous run with a keyboard up, did no work, and it is dropped).
+// Every road that sets kz sets ps with it, and the hold road clears kz before the test when the scale changed, so kz is 0 or the
+// current scale there; a run that changed the scale reaches the rule only as a re-raise, which sets kz and where the rule and the
+// stance both publish rp; and with the keyboard down (L - h <= 0) the clamp at use publishes 0 on either arm. A keyboard of
+// another height swapped in at the zoom of the raise changes neither the scale nor kz, so the rule governs the swap's own run (the
+// same ruling: while the rule also asked for h unchanged, a swap's own run took the stance and a refit at the same report the pan
+// rule, so --app-top moved with no new information). Every one of these keys on a run fit() reads, not on a time window.
+// Nothing adjusts the hold in place: the clamp is at use (the author's pass 4, 2026-09-20).
+var lastPan=0,held=false,gone=false,rp=null,ps=0,ph=0,kz=0;
+// [fork] the author's pass 8 (2026-09-20): the ONE reading of the pan both writing roads share: the measured road stores it under the cut (at
+// or above it, it less the zoom's share, kbPx below; the author's pass 9) and the 0px road's no-pan test reads it, so an offsetTop
+// that rounds to no pixel (0.4) is no pan on both roads and one that rounds up (0.5) a pan on both. The 0px road had read the raw offsetTop, so a pan in (0, 0.5) was a standing hold there and a stored 0 here.
+function panPx(vv){return Math.round(vv.offsetTop||0);}
+// [fork] the author's pass 9 (2026-09-20): a pure ZOOM's share of that reading, in the same pixels. What panPx reads is vv.offsetTop, the visual
+// viewport's top edge in the layout viewport's coordinates, and the visual viewport lies inside the layout viewport: over a layout
+// viewport L px tall a report at scale s with no keyboard behind it has a visual viewport L/s tall whose top ranges over
+// [0, L - L/s], so a zoom alone pans by at most L(1 - 1/s), 0 at scale 1, 2.5 px at 1.003 and 8.4 px at 1.01 over 844. A keyboard
+// shortens the visual viewport further, to h/s (h the band's unzoomed height the coarse road computes below), and that shortening
+// is what lets the top sit lower than a zoom alone could put it: the part of the reading below the zoom's share is a keyboard's.
+// L is the LAYOUT viewport, read once per run below (document.documentElement.clientHeight; innerHeight stands in only where the
+// document element has no clientHeight, a node stub, a real standards-mode document always has one), never the coarse road's
+// h = round(vv.height*scale): with the keyboard up that h is the band, L less the keyboard, a height no zoom pans over, and
+// h(1 - 1/s) would understate the share by the keyboard's height times (1 - 1/s). The author's pass 8 had derived the cut below from "an 844
+// px layout viewport" while the coarse road passed its h of 460 to it, so the two roads took the cut at two heights. The
+// derivation's DOMAIN is a scale of 1 or more, the premise that the visual viewport lies inside the layout viewport; below 1 (a
+// zoom-out, or a pinch-out bounce, whether iOS reports one unverified) the visual viewport is the taller and its top can only sit at
+// or above the layout viewport's, so a pure zoom-out pans nothing downward and its share is 0, never the negative L(1 - 1/s) (the
+// fixer pass of the author's pass 9: the helper had returned the negative share and kbPx below published the reading PLUS it, 94 px
+// at scale 0.9 with no keyboard, stored as the hold).
+function zoomPx(vv,L){return Math.max(0,Math.round(L*(1-1/(vv.scale||1))));}
+// [fork] the author's pass 8 (2026-09-20): the pinch CUT, derived from the measured road's own rounding (it had been the literal 1.01, with no
+// derivation anywhere and no cell driven inside (1, 1.01)): the scale at which a zoom's own share first rounds to a pixel,
+// L(1 - 1/s) = 0.5, s = L/(L - 0.5), 1.0006 over an 844 px layout viewport, on both roads at the layout viewport (the author's pass 9). Below it
+// a pure zoom's pan stores as 0, so a reading of 0 there is a resting viewport (the 0px road clears the hold on that) and a
+// positive reading is a keyboard's whole; at or above it a zoom could put a pixel into the reading, so the report is a PINCH: the
+// 0px road leaves the hold standing, and the measured road publishes the reading less the zoom's share (kbPx below) rather than
+// standing down (the author's pass 8 had it fall to the hold road there, and with no hold standing that road publishes 0: a keyboard raised
+// under a light zoom, a scale between the cut and the old 1.01, laid the shell out at pan 0 and reopened the band; the maintainer's
+// round 5 ruling). Both engines report exactly 1 at rest (Playwright's WebKit and Chromium, eight descriptor contexts). With no
+// layout height (L 0) the cut is undefined and the report counts as pinched, so the hold stands rather than being cleared against a
+// height that is not there.
+function pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}
+// [fork] the author's pass 9 (2026-09-20): the pan a pure zoom CANNOT explain, the keyboard's: the measured pixels less the zoom's share in
+// pixels, never below 0. Below the cut the share is no pixel and this is panPx itself, the one reading the 0px road's no-pan test
+// shares (the author's pass 8); at or above it the error against the keyboard's own pan is bounded by the share (the zoom may have panned less
+// than its bound, 8 px at 1.01 over 844, where standing down cost the whole keyboard pan, about 80 px) plus the two roundings: the
+// published value is an integer from panPx and zoomPx, each at most half a pixel off, so it lies within the share plus one pixel
+// BELOW the keyboard's own pan and one pixel ABOVE it, never one-sided (the fixer pass of the author's pass 9: a reading of 86.5 at a
+// share of 2.49 publishes 85, a pixel above a keyboard pan of 84.01 when the zoom panned its whole share; a reading of 84 at a share
+// of 16.55 publishes 67, 17 below a keyboard pan of 84 when the zoom panned nothing; an engine's float32 report adds an ulp). Under a real
+// pinch a keyboard's pan of 83 lies inside the share (422 at scale 2 over 844), so kbPx is 0, the measured road does not run and the
+// hold road publishes the hold, the pan of the keyboard it was measured with; a visual viewport dragged lower under that pinch than
+// the hold plus the share publishes the excess, kbPx, and no road stores it while a hold is held, so the drag back publishes the
+// hold again and a keyboard raised again is bounded from the hold (gone, beside lastPan), not from the excess (the maintainer's
+// round 6 ruling, 2026-09-29: it had been stored, so a drag to 590 at scale 2 left a hold of 168 for the re-raise). The share's
+// bound rests on the visual viewport lying inside the layout viewport (inside below): a report it does not fit, the stale one a rotation leaves until the visual viewport re-reports, is outside the derivation
+// and takes the hold road, whose clamp binds at 0 there. inside compares the report's bottom edge ROUNDED to the pixel, the rounding
+// this road reads at: the engines hand over float32 values, and a visual viewport flush at the layout viewport's bottom (offsetTop +
+// height = L, the deep pan with the keyboard up) can sum to L plus an ulp in doubles (3e-5 over 844), which an exact test read as
+// outside and sent to the hold road, 0 with no hold where the measured road publishes 277 (the fixer pass of the author's pass 9, scale
+// 1.3856); a report whose bottom overshoots by less than the half pixel that rounds away is inside to the pixel, and the stale
+// report (232 over: offsetTop 200 plus height 422 against a layout height of 390, the harness's rotation cell asserts it) is not.
+function kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}
+function inside(vv,L){return Math.round((vv.offsetTop||0)+(vv.height||0))<=L;}
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
+// [fork] the author's pass 8 (2026-09-20): the LAYOUT viewport, read once here for every road below (the author's pass 9: the fine road's height, the cut
+// and the zoom's share on both roads, and the clamp), as document.documentElement.clientHeight (the reasoning and the engine premise
+// are in the fit() comment below the --app-h write); innerHeight stands in only where the document element has no clientHeight
+// (a node stub), a real standards-mode document always has one. On the fine road h IS the layout viewport (this line re-reads
+// upstream's innerHeight as clientHeight); on the coarse road h stays upstream's round(vv.height*scale), the visible band's
+// unzoomed height, which the keyboard shortens, so the two are the same number only with no keyboard up.
+var L=document.documentElement.clientHeight||window.innerHeight;
+if(!coarse||!vv)h=L;
 if(h)document.documentElement.style.setProperty('--app-h',h+'px');
+// [fork] D1 (2026-09-19): the visual viewport's PAN. iOS reveals a focused input by moving the visual viewport down the
+// layout viewport (offsetTop > 0; no document scroll for the scrollTo below to undo) while the layout viewport keeps its
+// height, so a body sized to vv.height sat at layout y 0..vv.height while the visible band ran offsetTop..offsetTop+vv.height,
+// and the bottom offsetTop pixels of the screen showed bare page background under the composer (the user 2026-09-18 and
+// 2026-09-19, iPhone, installed app: an empty band about 80 CSS px tall between the composer and the keyboard's accessory
+// bar). Publish the pan as --app-top; the mobile body rule (position:fixed;top:var(--app-top)) moves the shell down into the
+// visible band. Written on every run except a coarse run whose height report is refused (h 0, the validity guard at the end of
+// this comment), 0px whenever the pointer is not coarse or there is no visual viewport, whatever the visual viewport says (a fine-pointer browser has no soft keyboard to pan for). Two gates on two axes (the author's pass 2, 2026-09-19): this writer is gated on the POINTER, so any
+// coarse document publishes its pan at any width; the consumer, the fixed body rule inside the _MOBILE_MQ block, is gated
+// on the LAYOUT query, which a window at or under 820 px matches at any pointer and a coarse one up to 1024 px. So a
+// fine-pointer window at or under 820 px takes the fixed body at top 0 and lays out as before, and a coarse document wider
+// than 1024 px publishes a pan no rule consumes and keeps its body in flow (tests/test_keyboard_gap_served.py drives
+// both; test_kernel_mobile's harness turns the pointer fine from a panned state). A PINCH (pinched: a scale at or above the
+// cut L/(L - 0.5), the smallest zoom whose own pan can round to a pixel, derived beside the helper) pans
+// the visual viewport too, with no keyboard behind it, so the part of offsetTop a pure zoom can explain (its share, zoomPx,
+// derived beside it) is never published: the measured road publishes the reading less that share where anything is left
+// (kbPx; the author's pass 9, 2026-09-20: it had stood down at the cut, which with no hold standing published 0 and reopened the band under
+// a light zoom), under a pinch only where no hold is held (held, beside lastPan; the maintainer's round 6 ruling, 2026-09-29), and
+// otherwise the hold road publishes from the hold, or from the re-raise bound rp where one stands (beside lastPan). A report
+// inside the layout viewport where kz is the current scale, the value in force written at a raise or a re-raise under this zoom with
+// no change of scale between runs on the measured or hold road since (kz and ps, beside lastPan, which says why the rule needs no
+// test of a pan: a pan of a keyboard raised at this zoom, a keyboard swapped in at that zoom included, is such a report), re-bounds
+// the larger of the hold and the value in force into the reading's interval [kbPx, panPx] (the maintainer's round 6 ruling, 2026-09-29: keeping the value there left the composer 44 px below the
+// visible band's bottom for a light-zoom hold of 20 at 1.05 dragged to 0, where 0 px leaves 24, and a pan to the share after a
+// no-pan re-raise under a light zoom opened a band under the composer, 2.67 px at 1.008, 3.33 px at 1.01 and 16 px at 1.05; node
+// cells). The larger of the two, because a keyboard raised again with the visual viewport deep under the zoom leaves a re-raise
+// bound above the hold (the reading less the share), and a pan re-bounded from the hold alone published the smaller hold and
+// opened a band under the composer (the same ruling: a hold of 83 from scale 1, the keyboard down under a zoom of 2 and raised
+// again at offsetTop 590, rp 168, then a pan to 422, had published 83, a band of 85 px, and now publishes 168, the composer at the
+// band's bottom; the bands of 29 px at 1.5 and 20.82 px at 1.1 close alike; node cells, test_kernel_mobile's reraiseDeep cells).
+// Any other report inside
+// the layout viewport takes the stance: where the zoom's share is below the value, the value bounded into the reading's interval;
+// where the share reaches it, the larger of the value and kbPx, so a zoom alone never re-lays the shell there (the pinch-aware
+// note above: its share is the whole of its pan), except after a pan the rule re-bounded: the rule's value is published and not
+// stored, so a zoom alone then publishes from the value in force and the shell moves by the difference (disclosed, a design call
+// not taken here: a pan to the share at 1.05 publishes 40 px, and a zoom alone to 1.1 about the band's centre then publishes 0, a
+// band of 5 px under the composer, and the zoom back to 1.05 at the same pan 0 again, a band of 16 px; test_kernel_mobile's
+// zoomAfterPan cell pins both); and a drag past the value plus the share
+// publishes the excess, which nothing stores. Three costs of the stance, each measured in round 6: a zoom alone leaves the composer below the visible band's bottom by
+// the zoom's own magnification (12 px at 1.05 about the band's centre, served); where the rule does not apply (after a zoom
+// alone, for example, or over a value a drag wrote), a pan of the same keyboard above the value keeps it where the share reaches it, the composer below the band's bottom by
+// the drag until the keyboard goes down (a hold of 83 from scale 1, pinched to 2 and dragged to the top: 83 px published where the
+// reading allows 0, the composer 337 px below the band's bottom where 0 px leaves 254; node cells); and after a zoom alone a pan
+// of the same keyboard DOWN inside the new zoom's share keeps the value too, so a band can open under the composer, the class the
+// pan rule closes for a keyboard raised at the current zoom (a keyboard re-raised with no pan under a light zoom, the value in
+// force its re-raise bound 0, then a zoom alone about the band's top and a pan down to the new zoom's share: 30.55 px from 1.05
+// to 1.1, 19.02 px from 1.05 to 1.06, 6.59 px from 1.01 to 1.02 and 3.33 px from 1.003 to 1.01, and the same bands for a hold
+// of 83 from scale 1 re-raised so; node cells, test_kernel_mobile's zoomThenPanDown cells pin them; the pan rule governing that
+// pan where the value in force is a re-raise bound was measured and not built, the maintainer's round 6 ruling, 2026-09-29: it
+// closes these bands, but the zoom alone's own run takes the stance and its refit is a pan, so a refit with nothing new would move
+// --app-top). Everything the hold road
+// publishes, and what the measured road publishes under a pinch, is CLAMPED AT USE to the layout
+// viewport's height less h (the author's pass 2,
+// 2026-09-19; the measured road under a pinch since the maintainer's round 6 ruling, 2026-09-29, below): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
+// gone would otherwise place the body's bottom, the composer row, below the layout viewport until the zoom ended. The layout
+// height is document.documentElement.clientHeight, on this road (the author's pass 7, 2026-09-20) and on the fine-pointer road above
+// (the author's pass 8, 2026-09-20; one read for every road since the author's pass 9); both had read window.innerHeight. TWO PREMISES rest here and nowhere else in this file: the other
+// sites point here, and the upstream lines that state the contrary (the "pinch-immune in every browser" paragraph above;
+// the meta comment in _landing) stay as written. ENGINE MODEL: Chromium keeps innerHeight at the layout viewport under a
+// pinch and WebKit shrinks it to the visual viewport's height, so a clamp reading innerHeight there had innerHeight - h
+// below 0 on every zoomed run, the max term bound at 0 and the road published 0px whatever the hold, the band under the
+// composer reopened for as long as the zoom held; clientHeight is the layout viewport in both models (standards mode is
+// pinned by EXECUTION, not by an assertion on the mode: in quirks mode the root's clientHeight is the body's height, not
+// the viewport's, and the served legs' pan and pinch figures, 83 and 336 px in tests/test_keyboard_gap_served.py, flip to 0 in
+// the Chromium legs the moment the document is served without its doctype, legs CI runs with a skip counted as a failure; the
+// WebKit legs run wherever a WebKit is installed and ROMP_SERVED_TESTS_ENGINES does not exclude it, and an absent or undeclared
+// WebKit is never a failure in any configuration (its skip is optional, even where the engine is declared; the class's own skips,
+// no extension deps or a lab kernel that never served, fail every leg alike under ROMP_SERVED_TESTS_REQUIRE=1), so no enforced run
+// measures the WebKit figures without the doctype (the author's pass 9, 2026-09-20: the clause had said "pinned" and named no pin;
+// the maintainer's round 6 ruling, 2026-09-29: it had said both engines with a skip counted as a failure); the page is
+// overflow:hidden, so no scrollbar parts
+// clientHeight from innerHeight where innerHeight was right), which
+// makes the read a no-op on every road where the old value was right and a fix on any road where it was not. The model
+// holds by WebKit's source and a Chromium run; the on-device read under a pinch is the only real-engine confirmation, and
+// it is pending (headless WebKit here refuses a scale above 1). REACHABILITY: the pinch machinery here assumes a pinch is
+// reachable on iOS Safari despite the meta's user-scalable=no, unverified on device; the meta comment in _landing states
+// the contrary (that the token disables zoom). The harness drives both engine models on the pinch road and on the
+// fine-pointer road, and both signs of the clamp's difference (a rotation under a standing zoom with the visual viewport's
+// report not yet updated makes it negative). The clamp bounds what is
+// published and leaves the hold itself standing (the author's pass 4, 2026-09-20: it had written its result back, so the first time it
+// bound the held pan decayed to 0 and a keyboard raised again under the same zoom laid the shell out at pan 0 under a
+// keyboard-sized --app-h, the band reopened). The hold is the pan of the KEYBOARD it was measured with: a keyboard of a
+// different height swapped in while the zoom stands, with no keyboard-down run between (the emoji keyboard, the predictive bar
+// toggled), changes neither the scale nor kz on its own run. Where the value in force was written at a raise or a
+// re-raise under the current zoom (kz the scale), the pan rule governs it; anywhere else the stance publishes from that pan under
+// the new keyboard's own height, so a band under the composer can open for a taller keyboard and the body's bottom sit below the
+// band for a shorter one, by up to the height difference (the author's pass 5, 2026-09-20, disclosed: re-measuring under a zoom only
+// when the height changes is a design call not taken here; the harness's swapZoom and swapRefit cells drive a swap). fit() is
+// IDEMPOTENT at an unchanged report: a refit with nothing new publishes what the run before it did (the maintainer's round 6 ruling,
+// 2026-09-29), and fit() runs again on ordinary events (a visual viewport resize or scroll, a window resize, focus and focusout among
+// them). The case argument: the measured road below the cut runs there whatever the flag, so its refit takes it again; under a
+// pinch with the band not short of the layout viewport it writes no flag, so its refit takes it again too; with the band short it
+// writes the hold and the flag, so its refit
+// takes the hold road, whose pan rule and stance both publish that hold, kbPx, clamped at L - h as the measured road now publishes
+// it; a report the hold road takes, it takes again (the hold road writes no hold and no flag), and its refit takes the pan rule
+// exactly where its own run did: the rule's test reads kz and the scale after the run's own updates to kz (the clearing at a change
+// of scale, the re-raise's write), and the refit, at the same scale with no re-raise left to take, changes neither. Three kinds of
+// report had moved --app-top at a refit, each closed by that ruling.
+// While the rule also asked for h unchanged, the swap's own run had taken the stance and a refit the pan rule: a 471 px keyboard
+// raised at scale 2 with offsetTop 657.5 publishes 236, and the 508 px keyboard swapped in at offsetTop 40 had published 236 on the
+// swap's run, the composer 364 px below the band's bottom, and 40 on a refit; it now publishes 40 on both, 168 below, the zoom's
+// own magnification (test_kernel_mobile's swapRefit cells). While only a zoom alone cleared kz (beside lastPan), a report back at
+// kz's zoom after one that changed the scale and h together took the stance on its own run and the pan rule on its refit: the 508 px
+// keyboard raised at 2 with offsetTop 500 publishes 78, and after one report at 1.5 that brings in the 471 px keyboard, keeps the
+// 508 px keyboard with h rounding to 337, or puts the keyboard down at offsetTop 300, the report back to 2 with the 508 px keyboard
+// at 40 had published 78 and then 40 on its refit; a change of scale now clears kz, so it publishes 78 on both (test_kernel_mobile's
+// swapZoomBack, roundFlip and downOutside cells). And under a pinch with no hold held the measured road had published kbPx
+// unclamped while the refit, on the hold road, clamps at L - h, so where rounding put kbPx a pixel above L - h the refit published
+// a pixel less. That needs the visual viewport within half a pixel of the layout viewport's bottom and the zoom's share of the
+// band's shortfall, (L - h)(1 - 1/s), under a pixel, so a long shortfall needs a light zoom: the refit had moved at a shortfall
+// of 535 px under a zoom of 1.00178, a share of 0.95 px, and at one of 1 px under 1.9976 (node cells; test_kernel_mobile's
+// clampFace535 and clampFaceDeep cells pin both). A visual viewport 841.3459 tall at offsetTop 2.6541 under a zoom of
+// 1.00155, h 843, had published 2 px and then 1 px on its refit, and one 692.4298 tall at 151.5702 under 1.00169, h 694, 151 and
+// then 150; the measured road now clamps what it publishes under a pinch at use, as the hold road does, and still writes kbPx, so
+// they publish 1 and 150 on both runs (test_kernel_mobile's clampFace cells). Below the cut it publishes its reading unclamped as
+// before (its refit takes the measured road again and publishes the same; the clamp there would move the harness's scale-1 sweep,
+// whose visual viewport it drives past the layout viewport's bottom). The refit pin in test_kernel_mobile reads every designed
+// family with each report fired twice, these cells among them, and its seeded doubled-step fuzz, 48000 steps with no move; out of
+// the tree that fuzz's generator over 21 seeds, one weighted to return to earlier scales exactly, and one that also flips h's
+// rounding and drives small keyboards, move it at no step of 1,008,000 each (node cells). Two roads WRITE the hold and
+// each writes the value it publishes, before the clamp at use the measured road applies under a pinch: the measured road its
+// measurement less the zoom's share (kbPx, the measurement itself below
+// the cut; under a pinch only where no hold is held), and the 0px road a zero, only in a true no-pan state, one the measured road would
+// store as 0: no visual viewport, or one under the cut, taken at the layout viewport L on both roads (the author's pass 9, 2026-09-20: the
+// coarse road had taken it at its own h, the band's height with the keyboard up, so the two roads' cuts differed; pinched reads
+// the cut itself as a pinch, so the hold stands there), whose offsetTop rounds to no positive pixel (panPx, the reading the
+// measured road stores there;
+// the author's passes 6 and 8, 2026-09-20: the 0px road had read the raw offsetTop, so a pan in (0, 0.5) was no pan by this rule and a
+// kept hold by that test). A pointer that turns fine with a pan standing (the keyboard up on iOS) or under a
+// standing zoom leaves the hold for the keyboard it was measured with, so coarse again under that zoom the hold road
+// publishes the keyboard's pan and not a 0 the fine window never measured (the author's pass 4 had written the zero on every fine run,
+// and the hold road then laid the shell out at pan 0 under a keyboard-sized --app-h, the band reopened); a flip with the
+// visual viewport at rest clears it, so a zoom after that republishes no stale pan. The hold road publishes from the hold and
+// writes nothing into it (it sets gone, rp, ps, ph and kz, beside lastPan), so --app-top can differ from the hold until a road WRITES it (the
+// measured road, or the 0px road in a no-pan state; the 0px road runs without writing under a standing pan or zoom, the author's
+// pass 8, 2026-09-20). The pan is published under
+// the same validity guard as the height it belongs to (the author's pass 4, 2026-09-20,
+// as the maintainer's round 1 confirmed it): a coarse run whose height report is refused (h 0) publishes neither, so the prior pan stands
+// beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height
+// to belong to and publishes unconditionally (only its write into the hold carries the no-pan condition above). The visual
+// viewport's scroll event, where a pan lands, is already bound below, so no new listener.
+if(!coarse||!vv){if(!vv||(!pinched(vv,L)&&!(panPx(vv)>0))){lastPan=0;held=false;gone=false;rp=null;}document.documentElement.style.setProperty('--app-top','0px');}
+else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;kz=held&&h!==ph?(vv.scale||1):0;ps=vv.scale||1;ph=h;document.documentElement.style.setProperty('--app-top',(pinched(vv,L)?Math.min(Math.max(0,L-h),lastPan):lastPan)+'px');}
+else if(h){var S=vv.scale||1;if(S!==ps)kz=0;ps=S;ph=h;if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;kz=S;}}var H=rp===null?lastPan:rp;document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:kz===S?Math.max(kbPx(vv,L),Math.min(Math.max(lastPan,H),panPx(vv))):zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
 // (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.
@@ -71740,6 +72049,38 @@ barfit();}catch(e){}}
 function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}
 function barfit(){try{var bar=document.getElementById('mtabs');if(!bar)return;
 document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}
+// [fork] D1 (2026-09-19): the strip is for the bar's pixels the user can SEE. Upstream's reading (kbOpen: the visual viewport
+// far shorter than the layout viewport) misses a keyboard that shrinks the LAYOUT viewport too (an engine honouring
+// interactive-widget=resizes-content: innerHeight, vv.height and --app-h agree) while the fixed bar is still outside the
+// visible band; .col then reserved a bar-tall strip that rendered as an empty band above the keyboard. Read the geometry
+// instead of inferring it. The band is the one THIS run published, --app-top to --app-top + --app-h (the fixed body's box
+// on the phone layout; both are written above barfit's call in fit()), and the strip is the part of the bar's box inside
+// it, the overlap of the two intervals, max(0, min(bar.bottom, bandBottom) - max(bar.top, bandTop)), getBoundingClientRect
+// being layout-viewport-relative for a fixed box too: 0 for a bar whose box starts at or below the band's bottom edge or
+// ends at or above its top edge, the whole height for a bar wholly inside, and the overlap between. The author's pass 6 (2026-09-20):
+// the first form, clamp(bandBottom - bar.top, 0, offsetHeight), read the band's bottom edge only, so a band whose top sat
+// below the bar's top (the band a refused height report leaves standing after a rotation, or a short band panned deep)
+// reserved pixels above the band: the whole bar over a bar with no pixel inside it, and more than a short band holds. The author's pass 4 (2026-09-20): the reservation had been all-or-nothing on a visibility verdict, so across one bar
+// height of pan values, the bar partly inside the band, the strip stood bar-tall over a bar showing a few pixels, the very
+// band this change exists to close; the strip now follows the pixels. The PUBLISHED band rather than the live visual
+// viewport, so a pinch (whose --app-top the hold road publishes from the hold, bounded by the reading and clamped at use, and
+// whose --app-h is upstream's scale arithmetic) judges the bar against the
+// shell it laid out and the strip never flips at the pinch cut (the author's pass 4: the pinch term had handed the verdict back to
+// upstream's height reading, which disagrees with the box under a deep pan). A bar the engine keeps ABOVE the keyboard
+// (Android Chrome under resizes-content: innerHeight shrinks and fixed bottom:0 rides the shrunken bottom) is wholly inside
+// by this reading, so its strip stays reserved; the focused-field and shrunken-innerHeight readings considered instead would
+// have collapsed it there. Upstream's barfit (kbOpen's verdict: the whole height or nothing) stands only where the box or
+// the band cannot be read: no bar, no visualViewport, a style object without getPropertyValue, or a run before fit()
+// published both variables. Cost: one getBoundingClientRect per fit(), the read the author's pass 3 kbOpen already made; while a
+// pan carries the bar through the band's edge each frame writes a new --mtabs-h, which .col's padding consumes, one
+// relayout per frame, the same as the all-or-nothing strip's single flip spread across the frames it now spans. Rebound
+// rather than edited: fit() calls barfit by name.
+var barfitVV=barfit;
+barfit=function(){try{var vv=window.visualViewport,bar=document.getElementById('mtabs'),st=document.documentElement.style;
+if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||typeof st.getPropertyValue!=='function'){barfitVV();return;}
+var top=parseFloat(st.getPropertyValue('--app-top')),h=parseFloat(st.getPropertyValue('--app-h'));
+if(!(top>=0)||!(h>0)){barfitVV();return;}
+var r=bar.getBoundingClientRect().top;st.setProperty('--mtabs-h',Math.max(0,Math.min(r+(bar.offsetHeight||0),top+h)-Math.max(r,top))+'px');}catch(e){}};
 // ONE fit per animation frame, however many events a keyboard slide or a resume fires: rAF is the
 // frame the browser is about to paint, not a timer, so a burst coalesces and nothing is deferred past
 // the next paint. The boot fit below stays synchronous so the first paint is already right.
@@ -73656,6 +73997,9 @@ def _landing():
             # maximum-scale=1,user-scalable=no: the top document governs pinch-zoom for the whole visual
             # viewport (incl. iframes), so without this iOS page-zooms on a timeline pinch instead of letting
             # the timeline's own pinch handler run (the user 2026-06-16). Disables browser zoom on the mobile UI.
+            # [fork] the author's pass 8 (2026-09-20): whether iOS Safari honours user-scalable=no is a premise this file states ONCE, with its
+            # evidence status, in the fit() comment of _LANDING_MOBILE_JS ("TWO PREMISES rest here"); the line above is upstream's
+            # and stays as written.
             # NO viewport-fit=cover in the STATIC meta (the user 2026-06-17): with cover, Android Chrome reports a non-zero
             # env(safe-area-inset-bottom) even though the viewport already sits ABOVE the nav bar, so #mtabs's
             # safe-area padding-bottom became a dead slab below the Chat/Feed/Timeline labels; cover also drew
@@ -74453,6 +74797,32 @@ def _landing():
             # never scrolls (panes scroll inside their iframes).
             "html,body{height:100vh;height:var(--app-h,100dvh);overflow:hidden}"
             "body{display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)}"
+            # [fork] D1 (2026-09-19): the body is FIXED at the visual viewport's pan (--app-top, which fit() publishes from
+            # visualViewport.offsetTop). iOS pans the visual viewport down the layout viewport to reveal the focused composer
+            # while the layout viewport keeps its height; a body sized to vv.height at layout y 0 then left the bottom
+            # offsetTop pixels of the visible band showing bare background under the composer. With the pan as its top edge
+            # the body covers exactly the visible band. The height chain of the rule above; no containing-block property
+            # (transform and its longhands, filter, contain, will-change and the rest of the list tests/test_shell_viewport_fit.py
+            # scans the served CSS for) on any html or body rule, so the shell's fixed panels keep the viewport as their
+            # containing block and stay glued to the true bottom. This block only:
+            # outside _MOBILE_MQ (a fine pointer above 820 px, a coarse one above 1024 px) the body stays in flow at layout
+            # y 0; a coarse document there still publishes its pan, and nothing consumes it (the two gates, and the two
+            # populations they cover, are in the fit() comment; the served populations leg drives both).
+            "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
+            # [fork] D1, the author's pass 2 (2026-09-19): the other fixed box sized by --app-h is the new-session picker's lift
+            # (body.picker-open iframe.lifted, upstream's base rule above the media blocks: position:fixed;top:0). At layout
+            # y 0 it sat a pan above the body under the keyboard, so the band the rule above removes from the composer
+            # survived under the picker; a hand list of fixed panels once kept here had missed it, so the consumers are
+            # DERIVED (test_shell_viewport_fit scans the served CSS for every fixed rule sized by var(--app-h) and holds
+            # each to this origin) and never listed. Inside this block only (asserted: the census in
+            # tests/test_shell_viewport_fit.py refuses a --app-top origin for a member outside this block): on a coarse
+            # desktop layout (wider than the query) the body stays in flow at layout y 0, and a lift moved to the pan
+            # there would part from the pane rect render.ts placeLifted measures for the transcript backing. On this
+            # layout the lifted pane is display:contents
+            # (the id rule below outranks the base .pane.lifted block rule), its rect is empty and placeLifted takes its
+            # gone branch, so no backing arithmetic depends on the lift's origin; the served leg reads both boxes under
+            # the pan (tests/test_keyboard_gap_served.py).
+            "body.picker-open iframe.lifted{top:var(--app-top,0px)}"
             # padding-right is a DESKTOP-only strip: one pane fills the screen here, and a 3px sliver of
             # backdrop down the edge would read as a rendering fault rather than as slack. The desktop
             # rule's longhand survives this block unless it is named, so name it.

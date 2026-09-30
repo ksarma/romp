@@ -706,7 +706,7 @@ git_answering_header_only_on_cat_file_p() {   # <sha>: a git whose `cat-file -p 
 # this case, which the fixer's five D cases left out).
 git_silent_p_and_size() {   # <bash body for cat-file -s of $sha>: that git; the real git for every other command
     local real_git
-    real_git="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v git)"      # the shim directory stripped: a shim written before this one is not the real git
+    real_git="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v git)"      # the shim directory stripped: a shim written before this one is not the real git (spelled for bash 3.2: tool_silent_on in tests/pre-push-hook.bats says why)
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
