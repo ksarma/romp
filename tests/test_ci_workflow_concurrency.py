@@ -208,8 +208,9 @@ class NoJobLevelGate(unittest.TestCase):
     continue-on-error passes over a failure, so a batch head could read green with a suite that never ran.
     The triggers are the gate (CiTriggers). PR 872's check holds the python job to an allowlist of keys;
     this holds every job ci.yml defines, the python job included, to the two refusals, read from the file
-    (job_level_gates): six jobs since this branch's merge of PR 928, and a job added later is covered without a
-    change here. A guard: it passes on the base too."""
+    (job_level_gates): six jobs since this branch's merge of PR 928. A job added later is read by
+    job_level_gates as it stands; test_a_gate_on_any_job_is_read, which holds ci.yml's job set equal to JOBS,
+    then goes red asking for the new job's name in JOBS. A guard: it passes on the base too."""
 
     def test_the_six_jobs_exist(self):
         found = job_keys()
