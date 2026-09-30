@@ -3243,29 +3243,31 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   below); when resolving the transcript raises, the end keeps waiting too,
   and is given up, counted, if resolving still raises once a place reads.
   The wait watches only for one of those places reading again or leaving the
-  walk's way: a file of the agent's that appears under a tree the walk
-  already read (copied or restored there by hand, or written after its end
-  was drained) while every place the walk could not read still fails is not
-  resolved until one of them reads or the bound gives its end up (a
-  residual). Measured on 2026-09-30 with 4096 such ends of one session, the
-  most the kernel keeps, waiting on one place in a project directory of two
-  entries: a cycle while they wait took 1.1 to 3.4 ms, where a read of each
-  end's own places took 53 to 67 ms with one place an end and 232 to 259 ms
-  with two; ends of several sessions cost one read for each session, so a
-  table whose ends are each of their own session costs at least as much as
-  those reads of each end's own places (4096 ends of 4096 sessions waiting
-  on one place took 40 to 42 ms at a lighter load, a lower bound
-  since the fixture stubbed the transcript's resolution, where the ends of
-  one session took 1.1 to 1.9 ms), and, by the same reading, more than the
-  bound with two places an end; the cycle in which the place reads again
-  took 1.1 to 1.9 ms for its one resolution, where resolving all 4096 took
-  631 to 728 ms; and the table emptied in 4096 cycles, one resolution each,
-  which takes at least 4096 s, about 68 minutes, since the pusher starts at
-  most one cycle a second (`PUSH_MIN_INTERVAL_S`, at its default), longer
-  when a cycle runs past half a second and no event wakes the pusher after
-  it, and sooner when a watched tab's live-tail wake runs a cycle inside
-  that second or a cycle raises, since its first retry starts half a second
-  later (`PUSHER_FAIL_BACKOFF_S`). No end is
+  walk's way: a file of the agent's that appears under a place the walk
+  already read (a tree it searched, or the project directory it listed),
+  copied or restored there by hand or written after its end was drained,
+  is not resolved while every place the walk could not read still fails,
+  until one of them reads or the bound gives its end up (a residual).
+  Measured on 2026-09-30 with 4096 such ends of one session, the most the
+  kernel keeps, waiting on one place in a project directory of two entries:
+  a cycle while they wait took 1.1 to 3.4 ms, where a read of each end's own
+  places took 53 to 67 ms with one place an end and 232 to 259 ms with two;
+  ends of several sessions cost one read for each session, so a table whose
+  ends are each of their own session costs what those reads of each end's
+  own places cost (4096 ends of 4096 sessions waiting on one place took 40
+  to 52 ms a cycle over two runs at a load of 8 to 9, medians 41.4 and 41.6
+  ms, one cycle of fourteen past the bound, where a read of each end's own
+  places took 41 to 43 ms at that load and the ends of one session 1.1 to
+  1.9 ms; a lower bound, since the fixture stubbed the transcript's
+  resolution), and, by the same reading, more than the bound with two places
+  an end; the cycle in which the place reads again took 1.1 to 1.9 ms for
+  its one resolution, where resolving all 4096 took 631 to 728 ms; and the
+  table emptied in 4096 cycles, one resolution each, about 68 minutes at the
+  default one cycle a second (`PUSH_MIN_INTERVAL_S`), longer when a cycle
+  runs past half a second and no event wakes the pusher after it, and sooner
+  when a watched tab's live-tail wake runs a cycle inside that second or a
+  cycle raises, since its first retry starts half a second later
+  (`PUSHER_FAIL_BACKOFF_S`). No end is
   queued for an agent none of
   those names: a Workflow run's agents when the object holds no roster for
   the run (one the report retires before any progress frame, or one that
@@ -3302,24 +3304,45 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   document, unless a cycle drains the agent's start first or more such
   ends wait than the kernel keeps (`_AGENT_RELEASED_MAX`, 4096): the
   oldest is then given up, counted in `releaseLost`, its records left to
-  the cache's own bounds; a fault on the project directory of the
-  session's transcript can be taken for a session with no transcript (a
-  failed listing of that directory reads as one with no transcript in it,
-  and an SDK session's refused stat of its transcript as none yet), and
-  the end then releases nothing and is neither remembered nor counted, its
-  records left to the cache's own bounds, a residual that predates this
-  change and is not reached by it; the two roads
+  the cache's own bounds; a fault on the project directory of the session's
+  transcript can be taken for a session with no transcript (a refused
+  listing of that directory, or a refused stat of the transcript in it,
+  reads as a directory with no transcript in it when the kernel's session
+  discovery walks the project directories again while the fault lasts: after
+  a session is added or renamed, a new transcript lands in a session's
+  project directory, or the kernel starts, and at once when the fault
+  refuses the stat of the project directory itself, as a parent directory
+  that cannot be searched or an I/O error does, since discovery's change
+  check reads that stat; an SDK session's refused stat of its transcript
+  falls to that walk), and the end then releases nothing and is neither
+  remembered nor counted, its records left to the cache's own bounds, a
+  residual that predates this change and is not reached by it; the two roads
   that release a remembered file with no resolution, an end remembered
   while nothing was held, for an agent with no end
   waiting on a fault (an end that waits on a fault forgets the remembered
   one and carries the agent's release), and an owed release's pay, still
   read a fault on the file's path as the file gone and drop its records
   with no document, a residual this change does not close, and the pay
-  reaches an agent with an end waiting on a fault too: an owed release
-  that finds nothing held is remembered as above while that end waits, so
-  a read that holds the file while a fault covers its path is dropped
-  with no document (both roads, and the deferral, are cases of `AgentEnd`
-  in `tests/test_record_cache_agent_end.py`);
+  reaches an agent with an end waiting on a fault too: an owed release that
+  finds nothing held is remembered as above while that end waits (with at
+  most one such end resolved a cycle, that can last cycles after the fault
+  clears, one for each end due ahead of it), so a read that holds the file
+  while a fault covers its path is dropped with no document, and a release
+  either road takes for that agent while its file is there ends the waiting
+  end too, since it covered the agent's file, while a release that is itself
+  that drop with no document keeps the waiting end, so its resolution after
+  the fault remembers the agent as above and the next whole read of the file
+  is released with its document (both roads, and the deferral, are cases of
+  `AgentEnd` in `tests/test_record_cache_agent_end.py`); whether the file is
+  there is a second check made after the release returns, not the check the
+  release itself made, and a fault that begins or clears between the two, a
+  window that holds the release's own document write and drop (and, at the
+  pay, the owed releases paid after it), is a residual of this change: one
+  that clears there follows a drop with no document and ends the waiting end,
+  so the next whole read of the file is held until the cache's own
+  bounds reach it, and one that begins there keeps the waiting end after a
+  release that covered the file, so its resolution after the fault
+  remembers the agent as above;
   a whole re-read of a file after its release was taken is held whole
   until the count cap, the byte budget or a quiescent drop reaches it,
   unless a later end of the agent comes after that release: one that finds

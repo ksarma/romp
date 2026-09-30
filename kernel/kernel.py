@@ -15977,17 +15977,26 @@ _AGENT_ENDED_FAULTED = {}           # (sid, agent id) -> ((place, kind), ...) fo
 #                                     at which one of its places reads again or the walk no longer reaches it, or at a later
 #                                     one when more such ends are due (_AGENT_FAULTED_LOOKUPS_MAX), each place read once per
 #                                     cycle until then and no walk (the reads: _unread_place_reads' docstring), and forgotten
-#                                     when a lookup is made, a start of the agent is drained, or the resolution or the release
-#                                     raises. The pusher thread's alone
+#                                     when a lookup is made, a start of the agent is drained, a release of the agent's file
+#                                     made with no lookup (its remembered unheld end's, or its owed release at the pay) is
+#                                     taken while the file is there to it (it covered the file; that is a second read after
+#                                     the release's own, and the window between the two is a residual _release_ended_agents'
+#                                     docstring states), or the resolution or the release raises. The pusher thread's alone
 _AGENT_FAULTED_LOOKUPS_MAX = 1      # the faulted ends _release_ended_agents looks up again in one cycle, a count and not a time:
 #                                     the oldest whose place reads again, the rest read again and looked up at the next cycles
 #                                     (a lookup forgets its end or remembers it again as the newest, so the ends waiting take
-#                                     turns). One, since a lookup can walk every sibling session's subagents tree in the
+#                                     turns: tests/test_record_cache_agent_end.py AgentEnd
+#                                     test_the_ends_due_take_turns_when_the_oldest_ones_lookup_faults_again_at_each_cycle).
+#                                     One, since a lookup can walk every sibling session's subagents tree in the
 #                                     project directory, and the 50 ms bound for one cycle's resolution holds at the median for
 #                                     one such walk (docs/reference.md's bound text); the measured figures are the faulted-end
 #                                     entry of _subagent_tree_memo_report's docstring. An end due behind others waits a cycle
 #                                     for each of them, and the residual of an owed release paid as absent beside it stays open
-#                                     that much longer (_release_ended_agents' docstring)
+#                                     that much longer; a release the unheld road or the owed releases' pay takes for the
+#                                     agent meanwhile, with the file there to it, forgets the faulted end too, since it
+#                                     covered the agent's file (_release_ended_agents' docstring; whether the file is
+#                                     there is a second os.path.exists after the release's own read, and a fault's edge
+#                                     between the two is a residual it states)
 
 
 def _remember_faulted_end(pair, places):
@@ -16034,26 +16043,27 @@ def _unread_place_reads(p, kind, sid):
     test_a_failed_place_answers_where_the_transcript_lies_in_another_project_and_waits_with_no_transcript_or_a_raise).
     With no transcript, an answer would have the lookup forget the end uncounted while the place still cannot be read.
     The fault is kept there because this read cannot tell a transcript that is gone from one that _path_of answers None
-    for because a fault covers the transcript's project directory (a residual _release_end states), and keeping fails
-    safe: the end waits until one of its places reads and is then looked up, and forgotten uncounted if the transcript
-    is still gone, or until the table's bound gives it up, counted in releaseLost. The wait never forgets it uncounted
-    while none of its places reads; the batch's events about the agent can (a start forgets it, the file live again, and
-    a later end is looked up as the batch's end is, which with no transcript forgets it uncounted, as _release_end
-    states). The follow-up that has _path_of report such a fault would let this read answer for a transcript that is
-    gone. On a raise, an answer would have the lookup give the end up at once, counted; the wait gives it up counted as
-    well, when a place reads and the resolution still raises or at the bound, so the two differ only in when. A read
-    that took every failed place as lasting would keep an end whose places the walk no longer reaches until the table's
-    bound gave it up (AgentEnd, the cases whose names say a place is read as the walk reads it, each red at its last
-    step under that read). Two faults are not seen here, and the end of each is looked up again at each cycle while it
-    lasts, in turn with the other ends due under _AGENT_FAULTED_LOOKUPS_MAX (AgentEnd, a residual witness each, the
-    second's in its root and its candidate form): a listing that fails only past its first entry, and a strict
-    os.path.realpath of the place (_find_agent_file's resolution of a tree's root or a candidate) that fails while the
-    place's own lstat answers, which on Linux takes a race or a failure the kernel's own resolution of the path does not
-    meet, since an lstat of the whole path reads every component the realpath reads. And the end waits only for a
-    recorded place to read again or leave the walk's way: a file of the agent's that appears under a place the faulted
-    walk already read, while every recorded place still fails, would be found by a walk, but its end waits until a
-    recorded place reads or the table's bound gives it up (a residual, outside what the CLI is known to do: the file
-    copied or restored there by hand, or written after its end was drained)."""
+    for because a fault covers the transcript's project directory while discover walks again (a residual _release_end
+    states), and keeping fails safe: the end waits until one of its places reads and is then looked up, and forgotten
+    uncounted if the transcript is still gone, or until the table's bound gives it up, counted in releaseLost. The wait
+    never forgets it uncounted while none of its places reads; the batch's events about the agent can (a start forgets
+    it, the file live again, and a later end is looked up as the batch's end is, which with no transcript forgets it
+    uncounted, as _release_end states). The follow-up that has _path_of report such a fault would let this read answer
+    for a transcript that is gone. On a raise, an answer would have the lookup give the end up at once, counted; the
+    wait gives it up counted as well, when a place reads and the resolution still raises or at the bound, so the two
+    differ only in when. A read that took every failed place as lasting would keep an end whose places the walk no
+    longer reaches until the table's bound gave it up (AgentEnd, the cases whose names say a place is read as the walk
+    reads it, each red at its last step under that read). Two faults are not seen here, and the end of each is looked up
+    again at each cycle while it lasts, in turn with the other ends due under _AGENT_FAULTED_LOOKUPS_MAX (AgentEnd, a
+    residual witness each, the second's in its root and its candidate form): a listing that fails only past its first
+    entry, and a strict os.path.realpath of the place (_find_agent_file's resolution of a tree's root or a candidate)
+    that fails while the place's own lstat answers, which on Linux takes a race or a failure the kernel's own resolution
+    of the path does not meet, since an lstat of the whole path reads every component the realpath reads. And the end
+    waits only for a recorded place to read again or leave the walk's way: a file of the agent's that appears under a
+    place the faulted walk already read (a tree it searched, or the project directory it listed), while every recorded
+    place still fails, would be found by a walk, but its end waits until a recorded place reads or the table's bound
+    gives it up (a residual, outside what the CLI is known to do: the file copied or restored there by hand, or written
+    after its end was drained)."""
     try:
         if kind == "tree":
             listed = stat.S_ISDIR(os.lstat(p).st_mode)     # the walk's own lstat, which never follows a link at the place
@@ -16116,15 +16126,19 @@ def _release_end(pair, popped):
     release of the pair paid as absent remembers the end as unheld again (a residual _release_ended_agents states); a
     standing resolution answered under such a place defers the same way. None when the session has no transcript or the
     agent no file, or when the resolution or the release raised (given up, counted in releaseLost and written to
-    stderr). A fault on the transcript's project directory can read as no transcript: _path_of answers None when
-    discover's listing of that directory fails (read as a directory with no transcript in it) or an SDK session's
-    registry road finds the transcript's stat refused (read as no transcript yet), and the end is then forgotten
-    uncounted and not looked up again, its records left to the cache's own bounds. That residual predates this change
-    and is not reached by it (the code before it forgot such an end the same way); the follow-up has _path_of report a
-    fault other than ENOENT or ENOTDIR, and this function remember such an end as faulted, as it does a lookup that
-    could not be made. Every outcome but "faulted" forgets a faulted end of the pair; "absent" remembers the end as
-    unheld, and every other outcome forgets an unheld end of the pair except a None for a session with no transcript or
-    an agent with no file, which leaves it (a raise forgets it)."""
+    stderr). A fault on the transcript's project directory can read as no transcript: _path_of can answer None when
+    discover walks again while the fault lasts and finds that directory's listing, or the stat of the transcript's entry
+    in it, refused, which the walk reads as a directory with no transcript in it. Until then discover's cache answers
+    the transcript it listed (it walks again when its fingerprint moves: as when a session is added or renamed or a new
+    transcript lands in a session's project directory, in a fresh kernel, and at once when the fault refuses the stat of
+    that directory itself, as a parent that cannot be searched or an I/O error does, since the fingerprint stats it),
+    and an SDK session's registry road, which stats the transcript itself, falls to that same walk when the stat is
+    refused. The end is then forgotten uncounted and not looked up again, its records left to the cache's own bounds.
+    That residual predates this change and is not reached by it (the code before it forgot such an end the same way);
+    the follow-up has _path_of report a fault other than ENOENT or ENOTDIR, and this function remember such an end as
+    faulted, as it does a lookup that could not be made. Every outcome but "faulted" forgets a faulted end of the pair;
+    "absent" remembers the end as unheld, and every other outcome forgets an unheld end of the pair except a None for a
+    session with no transcript or an agent with no file, which leaves it (a raise forgets it)."""
     sid, aid = pair
     ap = None
     try:
@@ -16202,18 +16216,39 @@ def _release_ended_agents():
       that is not in the batch (queued after the drain of the cycle that pays the owed release, or dropped past the
       queue's bound), or one drained after the end left _AGENT_RELEASED, cancels nothing, and a release taken then pops
       the running agent's entry (em.checkpoint_pay_owed_releases).
-    - The releases still owed are paid (em.checkpoint_pay_owed_releases). An owed end whose release is taken now is marked
-      taken, and every remembered end for that path is forgotten. When any was paid, an owed end whose release was not
-      taken and is no longer owed (paid as absent or lost, raised, given up at the owed table's bound, forgotten at a
-      checkpoint-directory rebind, or cancelled above) is dropped, and one paid as absent is remembered as unheld, a
-      faulted end of the pair left as it is (the residual below); one left in the table is still never counted, since its
-      entry was not popped.
-    - Each end remembered as unheld (_AGENT_ENDED_UNHELD: an end seen while the cache held nothing for the file) that this
-      batch does not speak for is released again, oldest first: still absent, it stays remembered; taken, it is recorded as
-      a taken release (a start a later cycle drains while _AGENT_RELEASED still holds the end is a false end); deferred or
-      raced, as an owed one; lost, or raising (counted in releaseLost), it is given up. Every outcome but absent forgets it.
-      So a read that holds the file after the end, before any other event about the agent, is released at the first cycle
-      after the read.
+    - The releases still owed are paid (em.checkpoint_pay_owed_releases). An owed end whose release is taken now is
+      marked taken, and every end remembered as unheld for that path is forgotten; a faulted end of the agent is
+      forgotten too when the file is there after the release (a second os.path.exists, made after em.release_entry
+      returned, not the read the release itself made: a residual below), since that release covered the agent's file,
+      as on the unheld road below (AgentEnd
+      test_an_owed_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too), and kept when it is not: the
+      release was then the residual's own pop with no document (below; AgentEnd
+      test_an_owed_release_that_pops_the_records_under_a_fault_keeps_the_agents_faulted_end), or the pop of a file that
+      is gone, with no fault, whose faulted end's lookup finds no file and forgets it, or, when a fault began between
+      the two reads, a release that saw the file (below). When any was paid, an owed
+      end whose release was not taken and is no longer owed (paid as absent or lost, raised, given up at the owed
+      table's bound, forgotten at a checkpoint-directory rebind, or cancelled above) is dropped, and one paid as absent
+      is remembered as unheld, a faulted end of the pair left as it is (the residual below); one left in the table is
+      still never counted, since its entry was not popped.
+    - Each end remembered as unheld (_AGENT_ENDED_UNHELD: an end seen while the cache held nothing for the file) that
+      this batch does not speak for is released again, oldest first: still absent, it stays remembered; taken, it is
+      recorded as a taken release (a start a later cycle drains while _AGENT_RELEASED still holds the end is a false
+      end), and a faulted end of the agent is forgotten too when the file is there after the release (the same second
+      os.path.exists as the pay's: a residual below), since that release covered the agent's file (the faulted end's
+      lookup, due at a later cycle under the cap, would find nothing held and remember the agent as unheld again:
+      AgentEnd test_an_unheld_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too); deferred or
+      raced, as an owed one; lost, or raising (counted in releaseLost), it is given up. Every outcome but absent forgets
+      it. Every outcome but a release taken with the file there keeps the agent's faulted end: nothing held, since the
+      faulted end still carries the agent's release (AgentEnd
+      test_an_unheld_release_that_finds_nothing_held_keeps_the_agents_faulted_end); a loss or a raise, after which the
+      faulted end carries that release the same way; a deferral or a race, which covers nothing yet (the pay, above,
+      forgets it once it takes the release); and a release taken with the file not there:
+      the residual's own pop with no document (below), after which the next fold reads the file whole, so the faulted
+      end's lookup after the fault remembers the agent as unheld and that whole read is released at the cycle after it
+      (AgentEnd test_an_unheld_release_that_pops_the_records_under_a_fault_keeps_the_agents_faulted_end), or a file that
+      is gone, whose faulted end's lookup finds no file and forgets it, or, when a fault began between the two reads, a
+      release that saw the file (below). So a read that holds the file after the end,
+      before any other event about the agent, is released at the first cycle after the read.
     - Each faulted end (_AGENT_ENDED_FAULTED: an end whose file lookup could not be made, below) that this batch does
       not speak for waits for one of the places its lookup's walk could not read to read again: each is read once per
       cycle, by the read the walk makes of it (_unread_place_reads), until one answers, and no walk is made until then;
@@ -16226,13 +16261,15 @@ def _release_ended_agents():
       end's wait ends: _unread_place_reads). Once one answers, the end is looked up again and released as a batch's end
       is (below), or, when that lookup could not be made either, remembered with the places its walk could not read this
       time; at most _AGENT_FAULTED_LOOKUPS_MAX (one) such lookups are made in a cycle, oldest first, and the other ends
-      whose places read are read again and looked up at the next cycles. So a fault's end is looked up at the first
-      cycle after the fault clears, or, when more ends are due than the cap, at one of the cycles after it, one end a
-      cycle, not at every cycle while it lasts; what the wait and the lookups cost is the faulted-end entry of
-      _subagent_tree_memo_report's docstring. A place whose read answers while the walk's read of it still fails (a
-      listing that fails past its first entry, or a strict realpath of the place that fails while its lstat answers:
-      _unread_place_reads) gets its end looked up at each cycle while that fault lasts, in turn with the other ends due
-      when there are more than the cap (the witnesses: tests/test_record_cache_agent_end.py AgentEnd
+      whose places read are read again and looked up at the next cycles; an end remembered again goes in as the newest,
+      so an end whose lookup faults again at every cycle does not hold the cycle's lookup (AgentEnd
+      test_the_ends_due_take_turns_when_the_oldest_ones_lookup_faults_again_at_each_cycle). So a fault's end is looked
+      up at the first cycle after the fault clears, or, when more ends are due than the cap, at one of the cycles after
+      it, one end a cycle, not at every cycle while it lasts; what the wait and the lookups cost is the faulted-end
+      entry of _subagent_tree_memo_report's docstring. A place whose read answers while the walk's read of it still
+      fails (a listing that fails past its first entry, or a strict realpath of the place that fails while its lstat
+      answers: _unread_place_reads) gets its end looked up at each cycle while that fault lasts, in turn with the other
+      ends due when there are more than the cap (the witnesses: tests/test_record_cache_agent_end.py AgentEnd
       test_residual_a_listing_that_fails_past_its_first_entry_has_its_end_looked_up_at_each_cycle_while_it_lasts,
       test_residual_a_resolution_that_fails_where_its_places_lstat_answers_has_its_end_looked_up_at_each_cycle_while_it_lasts
       for a candidate's resolution, and
@@ -16257,23 +16294,37 @@ def _release_ended_agents():
       standing it released under the fault, where em.release_entry's os.path.exists read the fault as the file gone and
       popped the records with no checkpoint document (tests/test_record_cache_agent_end.py AgentEnd, the cases of an end
       whose file lookup could not be made).
-    The deferral covers the ends this function looks up. The two roads that release a remembered path with no lookup
-    are not deferred by a fault: the unheld ends whose pair holds no faulted end (a faulted end forgets its pair's
-    unheld end and carries the pair's release, which the lookup it makes once a place reads again releases or remembers
-    as unheld again), and the owed releases' pay. On both, em.release_entry's own os.path.exists reads a fault on the
-    path as the file gone and pops the records with no document. The pay also leaves an unheld end beside a faulted end
-    of the same pair: an owed release paid as absent (its entry evicted or popped between the deferral and the pay) is
+    The deferral covers the ends this function looks up. The two roads that release a remembered path with no lookup are
+    not deferred by a fault: the unheld ends whose pair holds no faulted end (a faulted end forgets its pair's unheld
+    end and carries the pair's release, which the lookup it makes once a place reads again releases or remembers as
+    unheld again), and the owed releases' pay. On both, em.release_entry's own os.path.exists reads a fault on the path
+    as the file gone and pops the records with no document. The pay also leaves an unheld end beside a faulted end of
+    the same pair: an owed release paid as absent (its entry evicted or popped between the deferral and the pay) is
     remembered as unheld with the pair's faulted end left in place, so the unheld releases take that path at each cycle
     with no lookup while the faulted end waits, which can go on for cycles after its fault clears, one for each end due
     ahead of it (_AGENT_FAULTED_LOOKUPS_MAX), and a read that holds the file while a fault covers its path is popped
-    with no document (as when the fault that deferred the pair's later end refused a listing, and the directory's
-    search bit then goes too). That residual predates this change (fork PR #913's code, not reached through the
-    lookup), and its witnesses are AgentEnd
+    with no document (as when the fault that deferred the pair's later end refused a listing, and the directory's search
+    bit then goes too). A release taken on either road with the file there forgets the faulted end too (above), so the
+    pair's later lookup does not remember the agent as unheld again; a release that is that pop with no document keeps
+    it, so the pair's lookup after the fault remembers the agent as unheld and the next fold's whole read is released
+    with its document. That residual predates this change (fork PR #913's code, not reached through the lookup), and its
+    witnesses are AgentEnd
     test_residual_an_unheld_end_paid_under_an_unreadable_tree_pops_the_records_without_their_document, whose release is
     also the last step of the road through an owed release paid as absent, and
     test_residual_an_owed_release_paid_under_an_unreadable_tree_pops_the_records_without_their_document; the follow-up
     reads only ENOENT and ENOTDIR as the file gone and defers the release on any other error, which closes it on each of
-    those roads.
+    those roads. Whether the file is there after a release is, on both roads, a second os.path.exists made after
+    em.release_entry returned (the pay's `os.path.exists(rec[0])`, the unheld road's `os.path.exists(p)`), not the read
+    the release itself made, and a fault's edge between the two reads is a residual of this change (the window, on the
+    pusher thread, holds the release's own work after its read, the document's write when it saw the file and the pop,
+    which can wait out a read in flight on a path sharing its stripe, and at the pay every owed release paid after it in
+    that cycle, since the pay's second reads follow em.checkpoint_pay_owed_releases' return): a fault that clears there
+    follows a pop with no document and forgets the faulted end, so nothing remembers the agent after the fault and the
+    next fold's whole read stays held until the cache's own bounds reach it (the case the kept end exists for); a fault
+    that begins there keeps the faulted end after a release that saw the file and covered it, so the end's lookup after
+    the fault finds nothing held and remembers the agent as unheld again (the case the forgetting exists for). No case
+    in the suite places a fault's edge between the two reads; having em.release_entry report whether its own read found
+    the file, and keying the forgetting on that, would close the window.
     An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
     written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
     (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters
@@ -16281,9 +16332,9 @@ def _release_ended_agents():
     The file is resolved as the folds resolve it (_path_of, _subagent_file, with a faults list and `unread`: _release_end),
     so the release names the cache key the folds read and tells a lookup that could not be made from an agent with no
     file. It does not tell a fault on the transcript's project directory from a session with no transcript, since
-    _path_of can answer None for both, so such an end is forgotten uncounted and not looked up again: a residual that
-    predates this change and is not reached by it, stated with its follow-up in _release_end's docstring. Returns the
-    releases taken or owed for this batch's ends."""
+    _path_of can answer None for both (for the fault, when discover walks again while it lasts), so such an end is
+    forgotten uncounted and not looked up again: a residual that predates this change and is not reached by it, stated
+    with its follow-up in _release_end's docstring. Returns the releases taken or owed for this batch's ends."""
     be = _sdk_backend
     drain = getattr(be, "drain_agent_live_events", None) if be else None
     events, lost = drain() if drain is not None else ([], 0)
@@ -16310,6 +16361,11 @@ def _release_ended_agents():
             if got == "released":
                 rec[1] = True                          # the owed release was taken: a start a later cycle drains while
                                                        # this table holds the end is a false end
+                if os.path.exists(rec[0]):
+                    _AGENT_ENDED_FAULTED.pop(pair, None)   # and, as on the unheld road below, it saw the file and
+                    #                                        covered it: the agent's faulted end is over too (a read
+                    #                                        after the release's own: a fault's edge between the two
+                    #                                        is a residual the docstring states)
             elif rec[0] not in owed:
                 _AGENT_RELEASED.pop(pair, None)        # not taken and no longer owed: no entry was popped for this end
                 if got == "absent":
@@ -16333,6 +16389,16 @@ def _release_ended_agents():
             _note_agent_released(pair, p, got == "released")
             if got == "released":
                 popped.add(p)
+                if os.path.exists(p):
+                    _AGENT_ENDED_FAULTED.pop(pair, None)   # that release saw the file and covered it: the agent's
+                    #                                        faulted end is over too, or its lookup, due later under the
+                    #                                        cap, would find nothing held and remember the agent as
+                    #                                        unheld again. A release that read a fault on the path as
+                    #                                        the file gone (the residual's pop with no document) keeps
+                    #                                        it, so its lookup after the fault remembers the agent as
+                    #                                        unheld and the first whole re-read is released (this read
+                    #                                        comes after the release's own: a fault's edge between the
+                    #                                        two is a residual the docstring states)
     reads, looked = {}, 0                              # (place, kind, sid) -> _unread_place_reads' answer, this cycle's: the
     #                                                    ends waiting on one place cost one read of it per cycle, not one
     #                                                    each; and the faulted ends looked up below, at most
@@ -36912,16 +36978,18 @@ def _subagent_tree_memo_report():
         lstat) and 1.8 to 3.4 ms with two (7 lstats and 1 listing), fourteen cycles each over two runs. The memo shares
         nothing across sessions, so ends of several sessions waiting on one place cost one read of it for each session,
         and a table whose ends are each of their own session costs what the reads of each end's own places cost: 4096
-        ends of 4096 sessions on one root took 40 to 42 ms a cycle (4096 lstats) at a load of 8, where one session's
-        took 1.1 to 1.9 ms in the same run, with the fixture's _path_of, a stub, answering one transcript for every
-        session, so a lower bound; with two places an end, by the same reading, the per-end figure above, over the 50 ms
-        bound. The cycle in which the place reads again took 631 to 728 ms (median 692, seven runs) to look up all 4096
-        ends with no cap, and 1.1 to 1.9 ms (median 1.7, seven runs) to look up one with it; the table then empties in
-        4096 cycles, each run's median cycle 0.31 to 0.39 ms and its longest 2.9 to 28 ms, which takes at least 4096 s,
-        about 68 minutes, since the pusher starts at most one cycle a second (PUSH_MIN_INTERVAL_S, at its default),
-        longer where a cycle runs past half a second and no event wakes the loop after it, and sooner when a watched
-        tab's live-tail wake runs a cycle inside that second or a cycle raises, since its first retry starts half a
-        second later (PUSHER_FAIL_BACKOFF_S). A lookup's walk costs 0.17 ms in that fixture
+        ends of 4096 sessions on one root took 40 to 52 ms a cycle (4096 lstats) over two runs at a load of 8 to 9
+        (medians 41.4 and 41.6 ms, one cycle of fourteen past the 50 ms bound; the two trees differed only in the cap,
+        which a cycle whose ends all wait never reaches), where the reads of each end's own places took 41 to 43 ms at
+        that load (the tree before the memo, fourteen cycles) and one session's ends 1.1 to 1.9 ms in the same runs,
+        with the fixture's _path_of, a stub, answering one transcript for every session, so a lower bound; with two
+        places an end, by the same reading, the per-end figure above, over the 50 ms bound. The cycle in which the place
+        reads again took 631 to 728 ms (median 692, seven runs) to look up all 4096 ends with no cap, and 1.1 to 1.9 ms
+        (median 1.7, seven runs) to look up one with it; the table then empties in 4096 cycles, each run's median cycle
+        0.31 to 0.39 ms and its longest 2.9 to 28 ms: about 68 minutes at the default one cycle a second
+        (PUSH_MIN_INTERVAL_S), longer where a cycle runs past half a second and no event wakes the loop after it, and
+        sooner when a watched tab's live-tail wake runs a cycle inside that second or a cycle raises, since its first
+        retry starts half a second later (PUSHER_FAIL_BACKOFF_S). A lookup's walk costs 0.17 ms in that fixture
         (692 ms over 4096 lookups) and 21 to 49 ms at the median on the largest project measured (docs/reference.md's
         bound text), so the bound holds at the median for one lookup a cycle, and two are at or over it.
         tests/test_record_cache_agent_end.py AgentEnd, over two faulted cycles each:
@@ -36942,10 +37010,12 @@ def _subagent_tree_memo_report():
         test_a_path_waited_on_as_an_entry_and_as_a_tree_place_is_read_once_for_each_kind (one faulted cycle: the tree
         end looked up, one walk, while the entry end waits); the cap, AgentEnd
         test_the_ends_whose_place_reads_again_are_looked_up_one_per_cycle_oldest_first (two ends, one walk at each of
-        the two cycles after the clear). A place whose read answers while the walk's read of it still fails (a listing
-        that fails past its first entry, or _find_agent_file's strict realpath of the place failing while its lstat
-        answers) has its end looked up at each cycle while that fault lasts, at a walk's cost, in turn with the other
-        ends due under the cap (AgentEnd
+        the two cycles after the clear) and
+        test_the_ends_due_take_turns_when_the_oldest_ones_lookup_faults_again_at_each_cycle (one walk a cycle: the
+        older end, whose lookup faults again, then the younger, released at the second cycle). A place whose read
+        answers while the walk's read of it still fails (a listing that fails past its first entry, or
+        _find_agent_file's strict realpath of the place failing while its lstat answers) has its end looked up at each
+        cycle while that fault lasts, at a walk's cost, in turn with the other ends due under the cap (AgentEnd
         test_residual_a_listing_that_fails_past_its_first_entry_has_its_end_looked_up_at_each_cycle_while_it_lasts,
         test_residual_a_resolution_that_fails_where_its_places_lstat_answers_has_its_end_looked_up_at_each_cycle_while_it_lasts
         and, for a tree's root,
