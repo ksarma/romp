@@ -7527,15 +7527,19 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     interpreter reading the text binds it, folds it from the module's declaration alone: builtins.lineage = '' beside
     the module's lineage = 'zz', and then 'an' + lineage + 'yio', which the rule folds to 'anzzyio' where Python binds
     anyio (a class body's read of such a name ahead of its class's own binding, the module binding it by no
-    declaration, IS refused: HOW IT FOLLOWS A ROAD); no live site (neither tests/conftest.py nor tests/__init__.py
+    declaration, is read as no binding (the empty string beside the class's values: HOW IT FOLLOWS A ROAD), so it is
+    refused only where that empty string completes a word naming anyio; a value other than the empty string written
+    into the builtins module is not read, and passes); no live site (neither tests/conftest.py nor tests/__init__.py
     names builtins or __builtins__, so neither writes into the builtins module), escape-only, witness
-    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[builtins-written], whose three plants (B1 and B4,
+    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[builtins-written], whose four plants (B1 and B4,
     builtins.lineage = '' and __builtins__['lineage'] = '' beside the module's lineage = 'zz' in a branch not taken,
     read in a def the hook calls, and B3, builtins.lineage = '' ahead of a read at the module's level before its
-    lineage = 'zz'; the re-verification of the hundred and twentieth round-2 commit found the kind) are not run, since
-    the road reads the plugins the run loaded and not the command line. Code outside the conftest's text and the modules
-    it imports directly (a test module, a plugin, another conftest), which the rule does not read, can still falsify a
-    read by a literal key
+    lineage = 'zz', which the re-verification of the hundred and twentieth round-2 commit found; and Y1, found by the
+    re-verification of the hundred and twenty-first: builtins.lineage = 'y' and then, in a class body ahead of the
+    class's lineage = 'zz', 'an' + lineage + 'io', which the rule folds to 'anio' and 'anzzio' where Python binds
+    anyio) are not run, since the road reads the plugins the run loaded and not the command line. Code outside the
+    conftest's text and the modules it imports directly (a test module, a plugin, another conftest), which the rule
+    does not read, can still falsify a read by a literal key
     through WRITES TO OBJECTS AT RUN TIME, among them the hook's code object rewritten (its __code__ replaced, so the
     read is handed another literal), a plugin that copies
     config.option.plugins into another option the conftest reads by a literal key, and a plugin that wraps
@@ -8699,7 +8703,10 @@ _ESCAPE_ONLY_KINDS = (
         ("B4: __builtins__['lineage'] = '', the module's lineage = 'zz' in a branch not taken, a def's 'an' + lineage "
          "+ 'yio'",
          "import sys\n\nif False:\n    lineage = 'zz'\n__builtins__['lineage'] = ''\n\n\ndef _read():\n"
-         "    return 'an' + lineage + 'yio'" + _ESCAPE_ONLY_SOUGHT % "_read()", {}, None))),
+         "    return 'an' + lineage + 'yio'" + _ESCAPE_ONLY_SOUGHT % "_read()", {}, None),
+        ("Y1: builtins.lineage = 'y', a class body's 'an' + lineage + 'io' ahead of the class's lineage = 'zz'",
+         "import builtins\nimport sys\n\nbuiltins.lineage = 'y'\n\n\nclass _P:\n    NAME = 'an' + lineage + 'io'\n"
+         "    lineage = 'zz'" + _ESCAPE_ONLY_SOUGHT % "_P.NAME", {}, None))),
     ("code-outside-the-text", (
         ("a module outside the conftest's text replaces the hook's code, beside a literal key",
          _ESCAPE_ONLY_HOOK.lstrip("\n"), {"_outside": _ESCAPE_ONLY_OUTSIDE}, "outside"),
@@ -9307,8 +9314,8 @@ def _class_body_roads():
     Python reads the builtin, with a class-body read of vars whose module binds it too, in a branch not taken. Since
     the hundred and twenty-first (the re-verification of the hundred and twentieth, whose mutant of the clause "to no
     binding when the module has none", the class branch reading a builtin's name or a star import alone, survived every
-    road above: each names a builtin, is read in a text holding a star import, or is bound by the module), the two
-    "no binding" roads: a class-body read, ahead of the class's lineage = 'zz', of a name the module binds by no
+    road above: each names a builtin, is read in a text holding a star import, or reads a name the module binds), the
+    two "no binding" roads: a class-body read, ahead of the class's lineage = 'zz', of a name the module binds by no
     declaration, no builtin's name and no star import, but at run time through the module object
     (sys.modules[__name__].lineage = '') or by writing it into the builtins module (builtins.lineage = ''), in a fold
     ('an' + lineage + 'yio'), where Python reads the empty string and binds anyio. Synthetic: every name invented, the
