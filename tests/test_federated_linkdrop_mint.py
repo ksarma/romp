@@ -79,7 +79,14 @@ chain rooted at a foreign import binding is RESOLVED step by step through the mo
 pkgutil, 3.11 and later, since the tables are THIS interpreter's standard library and a plant that rides one Python's imports
 is a sample of the matrix: pass 11, after the two pkgutil plants redded Python 3.10 alone), and a member of a module
 whose source the census cannot read that the censused set does not read today (UNREAD_MEMBERS: `sys._getframe`,
-`sys.meta_path`, `mock.sys.modules`), are refused. A module an import binding resolves to is refused wherever it is read
+`sys.meta_path`, `mock.sys.modules`), are refused. A name a foreign module binds by a STAR import is not in that module's
+import table (_import_bindings keeps no star-bound name, and os's `from posix import *` sits inside an if, which no table
+reads), so _reach reads a chain through it as the module's own definition and does not refuse it: the stated outside (the
+maintainer's round 7, ruled at its focused re-check), live in the censused set as `struct.unpack` (struct's
+`from _struct import *`), `socket.AF_INET` and `socket.SOL_SOCKET` (socket's `from _socket import *`) and `os.getpid`, among
+others. No refusal is built for it: the spawning names such an import binds (os's system, fork, forkpty, execv, execve,
+posix_spawn and posix_spawnp, from posix) are each refused by name on any value (OS_SPAWNERS, OTHER_SPAWNERS). A module an
+import binding resolves to is refused wherever it is read
 but as an attribute's value or a call's function, so a rebinding (`_m9 = mock`, `g(mock)`) is refused at the read of the
 module and is never followed to its later reads (the maintainer's round 7, extra4-1). One instance of what remains is a
 spawning name resolved from a STRING inside a function of an allowed module that the censused set calls with it: a call of
@@ -531,7 +538,11 @@ def _import_bindings(src, stdlib=None, package=None):
     M (`from pathlib import Path`); `from M import n as x` binds x the same way. A relative import (a sibling of this directory,
     or, for a stdlib module read by path, its own package's module, resolved against `package`) binds its name to that
     package-qualified module. The touch derivation and the reach rule key on these bindings, not on the dotted spelling as
-    written (pass 10's fixer pass: `import uuid as u; u.getnode()` and `from uuid import getnode; getnode()` printed no touch)."""
+    written (pass 10's fixer pass: `import uuid as u; u.getnode()` and `from uuid import getnode; getnode()` printed no touch).
+    A star import (`from M import *`) binds no name here: the census refuses one in a censused module outright, and a name a
+    FOREIGN module binds by a star import is not in that module's table (_module_imports), so _reach reads a chain through it
+    as the module's own definition (`struct.unpack`, `socket.AF_INET`, `socket.SOL_SOCKET`, `os.getpid`: the stated outside,
+    the module docstring says why no refusal is built)."""
     bindings, loaded = {}, set()
     for n in ast.walk(ast.parse(src)):
         if isinstance(n, ast.Import):
@@ -604,7 +615,10 @@ def _reach(chain, bindings, loaded, siblings=(), stdlib=None):
     name a from-import binds to a MEMBER (`from sys import _getframe`, `from unittest.mock import builtins`) is resolved from
     that member on, the same two refusals (the maintainer's round 6, extra6-1: the earlier walk stopped at a member binding, so
     the from-import spelling of a refused attribute escaped). A binding to a def or a class imported by name (`Path`) is its
-    own: the walk stops there."""
+    own: the walk stops there. A name the module binds by a star import is not in its table (_import_bindings), so a chain
+    through it reads as the module's own definition and is not refused: `struct.unpack`, `socket.AF_INET` and
+    `socket.SOL_SOCKET` and `os.getpid`, live in the censused set, are the stated outside, and every spawning name such an
+    import binds is refused by name on any value (the module docstring)."""
     names = chain.split(".")
     bound = bindings.get(names[0])
     if bound is None or bound[0].split(".")[0] in siblings or bound[0].split(".")[0] == PACKAGE:
