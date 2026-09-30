@@ -167,10 +167,13 @@ and a reason or message that runs on to a line starting with an upper-case word 
 optional description and then "tests" before a slash, a space or the line's end (such as "ALL tests of this file need
 node_modules") is read as a kind the reader does not read. Under pytest 8 a subtest's skip prints as a SKIPPED line of
 its whole test, the same node id. One summary pytest writes correctly is read wrong without a refusal: a reason or
-message that runs on to a line of a kind the reader does read is read as that kind, so a skip line there (a failure
-message or a skip reason quoting an inner pytest's SKIPPED line, say) adds its node id to the set when DEPS_SKIP
-matches its reason, and the served leg's pytest then exits 4 unless a test has exactly that id, which it then runs
-again. And three cases fall outside the claim. A skip for want of the deps whose reason DEPS_SKIP does not match runs in no leg; the
+message that runs on to a line of a kind the reader does read is read as that kind. That has two consequences. A skip
+line there (a failure message or a skip reason quoting an inner pytest's SKIPPED line, say) adds its node id to the set
+when DEPS_SKIP matches its reason, and the served leg's pytest then exits 4 unless a test has exactly that id, which it
+then runs again. And a skip whose reason runs on to such a line (a FAILED, ERROR or SKIPPED line, say) has its reason
+cut there, so words of the reason after that line are not read: when only they would match DEPS_SKIP, the skip is
+dropped with no refusal, and the record lists it, with its reason up to that line, among the other skips
+(deps_skipped.unselected), so it can be seen. And three cases fall outside the claim. A skip for want of the deps whose reason DEPS_SKIP does not match runs in no leg; the
 pytest leg's record lists every other skip outside the served globs with its reason (deps_skipped.unselected), so such
 a miss can be seen. A test that does not skip without node_modules but takes another road runs there on that road
 only: two real-tree pins, in tests/test_lab_dist.py and tests/test_kernel_bundle_staleness.py, read esbuild.js under tests/lab_dist_stub.py's stand-in for a missing package,
@@ -3254,7 +3257,8 @@ def deps_skipped(path, served_files, others=None):
     not read, each named in why. The reader is closed: a line shaped like a kind that is none of the kinds, a skip line
     that does not name exactly one test (_skip_line), and a non-blank line before any kind line are not read. A line of
     no kind's shape after a kind line runs its reason or message on; a reason or message that runs on to a line of a
-    kind the reader reads is read as that kind (the module docstring discloses it)."""
+    kind the reader reads is read as that kind, and a skip's reason is cut there, so words after that line are not
+    matched (the module docstring discloses both)."""
     data = _read_log(path) if path else None
     if data is None:
         return None, "the pytest leg's log cannot be read"

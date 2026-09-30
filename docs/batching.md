@@ -252,10 +252,13 @@ subject; `verify` refuses the branch otherwise.
    then `tests` before a slash, a space or the line's end (such as `ALL tests of this file ...`),
    which the reader takes for a line of a kind pytest does not write. One summary pytest writes
    correctly is read wrong with no refusal: a reason or message running on to a line of a kind
-   the reader reads is read as that kind, so a `SKIPPED` line there (a failure message or a skip
+   the reader reads is read as that kind. So a `SKIPPED` line there (a failure message or a skip
    reason quoting an inner pytest's output, say) adds its test to the set when the rule reads its
    reason, and the served leg's pytest then exits 4 unless a test has exactly that id, which it
-   then runs again. That covers the skips whose reasons
+   then runs again. And a skip reason that runs on to such a line is cut there, so its words
+   after that line are not read: when only they would match the rule, the skip is dropped with no
+   refusal (the pytest leg's record lists it among the other skips, so it can be seen). That
+   covers the skips whose reasons
    the runner's rule reads, and three cases fall outside it: a skip for want of the deps in other words runs in no leg (the pytest leg's record lists
    every other skip outside the served files with its reason, so it can be seen); two real-tree pins in
    `tests/test_lab_dist.py` and `tests/test_kernel_bundle_staleness.py` do not skip without
