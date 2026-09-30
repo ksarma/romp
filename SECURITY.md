@@ -332,15 +332,21 @@ own, a name built at run time, gc or ctypes among them, and through a module
 reached by a tuple or list unpacking, an inline walrus,
 `sys.modules.__getitem__`, a for-loop target, a parameter default or a starred
 argument) is outside the list and not seen, and a module name or a builtin so
-rewritten is read as the file's text binds it; nor does it see a function's
-local or parameter rewritten at run time through the function's frame (the
-frame's locals, which Python 3.13 and later write through to the function,
-reached by `sys._getframe()`, `inspect.currentframe()` or
-`inspect.getargvalues()` among other calls), and it reads such a local, a page's
-text or a route's content type among them, as the function's text binds it (its
-witnesses: a handler that binds its content type to `application/json` and one
-that binds its page to `<p>ok</p>`, each rewriting that local through its frame,
-so that Python 3.13 and later serve a fetch as a page). A `_send`
+rewritten is read as the file's text binds it; nor does it see a scalar local or
+parameter a function rebinds at run time through its own frame (the frame's
+locals, which Python 3.13 and later write through to the function, reached by
+`sys._getframe()`, `inspect.currentframe()` or `inspect.getargvalues()` among
+other calls): a page's text, and a content type that is a string constant or a
+name bound once to one, so rebound the census reads as the function's text binds
+it, a stated limit on Python 3.13 and later (its witnesses: a handler that binds
+its content type to `application/json` and one that binds its page to
+`<p>ok</p>`, each rebinding that local through its frame, so that those versions
+serve a fetch as a page). A container a function binds and reads whole, changed
+through that same frame's local mapping, is refused by name on every version,
+since the change reaches the real object; a content type the census reads other
+than as a string constant or a name bound once to one is refused by name too, on
+every version, so no frame can rewrite an intermediate the census had read. A
+`_send`
 definition in a class that a function defines, a page function that a function
 encloses, a `_send` call inside a lambda's body, and a Content-Type write inside
 one that is no `_send` definition's own write fail the run by name: the census
@@ -441,12 +447,17 @@ such a base or of a method on one is handed, never the text it computes from
 them (a method whose return is not drawn from its receiver's text, called on
 such a base where it derives through a call handed arguments the pass reads,
 `str(X).lower()`, `int(X).bit_length()` and `base64.b64decode(X).decode()` among
-them, or on the bare
-name of one of the seven builtins, called unbound, `str.lower(X)`, is refused by
-name, with no exception by shape, at the call the page expression makes and at
-every call on the path below it, under a method whose return is drawn from its
-receiver's text, a join or a subscript, `str(X).lower().removeprefix(p)` and
-`str(X).lower().split()[0]` among them): text a call computes from its arguments
+them, or on the bare name of one of the seven builtins, called unbound,
+`str.lower(X)`, is refused by name because the base's own text is not read, not
+because its return is undrawn (a `.strip`, whose return is a piece of that
+unread text, is refused the same way): at the call the page expression makes,
+save a `.replace`, `.join`, `.format`, `.format_map`, `.encode`, `.strip`,
+`.lstrip` or `.rstrip` there, which the text-method arm reads as its own shape
+(below); and at every call on the path below it with no exception by shape, the
+text-method arm's among them, under a method whose return is drawn from its
+receiver's text, a join or a subscript, `str(X).lower().removeprefix(p)`,
+`str(X).lower().split()[0]` and `str(X).strip().removeprefix(p)` among them):
+text a call computes from its arguments
 is
 not
 read, a stated limit (`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read
@@ -873,8 +884,9 @@ call's argument, one of the seven builtins' among them) is read as a value slot
 and not refused. The run fails by name (SERVED) on
 any other reference to `_send` (a read of it that is not a call's function, a
 store or delete of an attribute so named, or a string equal to `_send`), a
-content type the pass cannot read, a script-running
-type written outside `_send`, a function that answers outside `_send` more often
+content type the pass cannot read, a content type the census reads other than as
+a string constant or a name bound once to one, a script-running type written
+outside `_send`, a function that answers outside `_send` more often
 than it writes a Content-Type header, a container the module writes at run time
 (a module name bound to a call whose object the file changes, read other than as
 a call's argument, among them), a local container whose every change the census
@@ -914,12 +926,13 @@ that stands directly as the right operand of a `%`, a `.format` argument or a
 `.format_map` value, a builtin other than the seven a page may name, a call of
 str with more than one positional argument, a starred argument or a keyword
 other than `object`, a call of max handed one iterable or a starred argument, a
-call of int or float bound other than to the builtin, a
-method whose return is not drawn from the text of a receiver the pass reads, or
-of a base whose own text it does not read that derives through a call handed
-arguments it reads (a call of int or float that is the builtin among them) or is
-one of the seven builtins' names called unbound, at any call on a page
-expression's path, a
+call of int or float bound other than to the builtin, a method whose return the
+census does not compute, called on a receiver the pass reads whose text it is
+not drawn from, or on a base whose own text it does not read (a `.strip` among
+the latter, whose return is a piece of that unread text) that derives through a
+call handed arguments it reads (a call of int or float that is the builtin among
+them) or is one of the seven builtins' names called unbound, at any call on a
+page expression's path, a
 join, format, format_map or replace called on the name str, bytes or bytearray,
 a `.replace`, `.format`, `.join`, `.format_map` or `.encode` in a shape the
 census does not compute,
@@ -1037,8 +1050,13 @@ literal or a set comprehension, its one argument or, unbound as in
 `str.join("", {...})`, its second, refuses by name, its iteration order not
 fixed, so its join is no one text. A file the page reads at run time is covered
 by the walk only where the walk scans it as browser text, its DOM loads counted
-as a page's are (a JavaScript file under ui/ or vscode-extension/src); one the
-walk scans as Python, as shell, or as JavaScript elsewhere, its DOM loads not
+as a page's are (a JavaScript file under ui/ or vscode-extension/src), and only
+where the page reads it with an encoding the census reads as utf-8, utf_8 or
+utf8, or with none: the walk scans each file once as UTF-8, so a page that reads
+such a file with any other encoding is refused by name, since that one scan may
+not be the text the page serves, and a read that names no encoding takes the
+locale's default, a stated limit the census cannot prove is UTF-8; one the walk
+scans as Python, as shell, or as JavaScript elsewhere, its DOM loads not
 counted, is refused by name, the kind named, since the walk reads none of its
 text as a page's; a stylesheet the walk does not scan is named, not scanned; and
 any other file is refused by name, as a path the census does not prove (above)

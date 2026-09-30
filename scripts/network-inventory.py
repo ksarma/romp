@@ -278,11 +278,15 @@ module's own
 built at run time, gc or ctypes among them, and through a module reached by a tuple or list unpacking, an inline walrus,
 `sys.modules.__getitem__`, a for-loop target, a parameter default or a starred argument)
 is outside the list and not seen, and a module name or a builtin so rewritten is read as the file's text binds it; nor does it see
-a function's local or parameter rewritten at run time through the function's frame (the frame's locals, which Python 3.13 and
-later write through to the function, reached by `sys._getframe()`, `inspect.currentframe()` or `inspect.getargvalues()` among
-other calls), and it reads such a local, a page's text or a route's content type among them, as the function's text binds it (its
-witnesses: a handler that binds its content type to `application/json` and one that binds its page to `<p>ok</p>`, each rewriting
-that local through its frame, so that Python 3.13 and later serve a fetch as a page). A `_send`
+a scalar local or parameter a function rebinds at run time through its own frame (the frame's locals, which Python 3.13 and later
+write through to the function, reached by `sys._getframe()`, `inspect.currentframe()` or `inspect.getargvalues()` among other
+calls): a page's text, and a content type that is a string constant or a name bound once to one, so rebound the census reads as
+the function's text binds it, a stated limit on Python 3.13 and later (its witnesses: a handler that binds its content type to
+`application/json` and one that binds its page to `<p>ok</p>`, each rebinding that local through its frame, so that those versions
+serve a fetch as a page). A container a function binds and reads whole, changed through that same frame's local mapping, is
+refused by name on every version, since the change reaches the real object; a content type the census reads other than as a string
+constant or a name bound once to one is refused by name too, on every version, so no frame can rewrite an intermediate the census
+had read. A `_send`
 definition in a class that a function defines, a page function that a function encloses, a `_send` call inside a lambda's body, and
 a Content-Type write inside one that is no `_send` definition's own write fail the run by name: the census does not read the
 enclosing function's or lambda's scope, so it would take a name that scope binds (a builtin or a module name it shadows) for the
@@ -348,10 +352,13 @@ binds from one of those, where no attribute is read on the path to it: `q.get(k)
 text the arguments a call of such a base or of a method on one is handed, never the text it computes from them (a method whose
 return is not drawn from its receiver's text, called on such a base where it derives through a call handed arguments the pass
 reads, `str(X).lower()`, `int(X).bit_length()` and `base64.b64decode(X).decode()` among them, or on the bare name of one of the
-seven builtins, called
-unbound, `str.lower(X)`, is refused by name, with no exception by shape, at the call the page expression makes and at every call
-on the path below it, under a method whose return is drawn from its receiver's text, a join or a subscript,
-`str(X).lower().removeprefix(p)` and `str(X).lower().split()[0]` among them): text a call computes from its arguments is not read,
+seven builtins, called unbound, `str.lower(X)`, is refused by name because the base's own text is not read, not because its return
+is undrawn (a `.strip`, whose return is a piece of that unread text, is refused the same way): at the call the page expression
+makes, save a `.replace`, `.join`, `.format`, `.format_map`, `.encode`, `.strip`, `.lstrip` or `.rstrip` there, which the
+text-method arm reads as its own shape (below); and at every call on the path below it with no exception by shape, the text-method
+arm's among them, under a method whose return is drawn from its receiver's text, a join or a subscript,
+`str(X).lower().removeprefix(p)`, `str(X).lower().split()[0]` and `str(X).strip().removeprefix(p)` among them): text a call
+computes from its arguments is not read,
 a
 stated limit (`dict(X).get(k)` and
 `json.loads(json.dumps(X))[0]` read X; the limit's witnesses are `chr(n)`, whose character is not n's text, `getattr(o, name)`,
@@ -622,8 +629,9 @@ value of a
 conversion takes it, since a conversion can turn it into characters (a `%c`, a `%x`, a `{:c}`, a `%.1s` over the empty bytes), and
 one held deeper there (a name or a local bound to one, an if-expression's branch, a list's element, or a call's argument, one of
 the seven builtins' among them) is read as a value slot and not refused. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, a
-store or delete of an attribute so named, or a string equal to `_send`), a content type the pass cannot read, a script-running
-type written outside `_send`, a function that
+store or delete of an attribute so named, or a string equal to `_send`), a content type the pass cannot read, a content type the
+census reads other than as a string constant or a name bound once to one, a script-running type written outside `_send`, a
+function that
 answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time (a module name
 bound to a call whose object the file changes, read other than as a call's argument, among them), a local container whose every
 change the census does not prove, an attribute
@@ -650,10 +658,11 @@ a `%`, an f-string, a `.join`, a `.format`, a `.format_map` or a `.replace`, a v
 slot that stands directly as the right operand of a `%`, a `.format` argument or a `.format_map` value, a builtin other than the
 seven a page
 may name, a call of str with more than one positional argument, a starred argument or a keyword other than `object`, a call of max
-handed one iterable or a starred argument, a call of int or float bound other than to the builtin, a method whose return is not
-drawn from the text of a receiver the pass reads, or of a
-base whose own text it does not read that derives through a call handed arguments it reads (a call of int or float that is the
-builtin among them) or is one of the seven builtins' names called unbound, at any call on a page expression's path, a join,
+handed one iterable or a starred argument, a call of int or float bound other than to the builtin, a method whose return the
+census does not compute, called on a receiver the pass reads whose text it is not drawn from, or on a base whose own text it does
+not read (a `.strip` among the latter, whose return is a piece of that unread text) that derives through a call handed arguments
+it reads (a call of int or float that is the builtin among them) or is one of the seven builtins' names called unbound, at any
+call on a page expression's path, a join,
 format, format_map or replace called on the name str, bytes or bytearray, a `.replace`, `.format`, `.join`, `.format_map` or
 `.encode` in a shape the census does not compute, a `%`, `.format` or `.format_map` on a string constant that is not expanded, a
 join whose folded
@@ -727,9 +736,13 @@ literal handed to `.join`, an element of a starred list or tuple literal handed 
 to `.format` or `.format_map`, among them), is refused by name, since the pass reads its container whole and not the text the join
 makes of the pieces the indexes select; the refusal is keyed on such a container, and a subscript of any other container is read
 piece by piece, as above; a subscript read through a function falls under the call limit above. A `.join` over a set literal or a set comprehension, its one argument or, unbound as in
-`str.join("", {...})`, its second, refuses by name, its iteration order not fixed, so its join is no one text. A file the page reads
-at run time is covered by the walk only where the walk scans it as browser text, its DOM loads counted as a page's are (a JavaScript
-file under ui/ or vscode-extension/src); one the walk scans as Python, as shell, or as JavaScript elsewhere, its DOM loads not
+`str.join("", {...})`, its second, refuses by name, its iteration order not fixed, so its join is no one text. A file the page
+reads at run time is covered by the walk only where the walk scans it as browser text, its DOM loads counted as a page's are (a
+JavaScript file under ui/ or vscode-extension/src), and only where the page reads it with an encoding the census reads as utf-8,
+utf_8 or utf8, or with none: the walk scans each file once as UTF-8, so a page that reads such a file with any other encoding is
+refused by name, since that one scan may not be the text the page serves, and a read that names no encoding takes the locale's
+default, a stated limit the census cannot prove is UTF-8; one the walk scans as Python, as shell, or as JavaScript elsewhere, its
+DOM loads not
 counted, is refused by name, the kind named, since the walk reads none of its text as a page's; a stylesheet the walk does not scan
 is named, not scanned; and any other file is refused by name, as a path the census does not prove (above) or as a file the walk does
 not scan, each unless SERVED_ALLOW names the read. A site in served text is listed
@@ -2793,6 +2806,26 @@ def _browser_text(rel, kind):
     return kind == "js" and rel.startswith(tuple(d + "/" for d in JS_ROOTS))
 
 
+def _read_codec(expr):
+    """The encoding argument of a file read (_READ_CALLS), or None where the read names none (the locale's default): `.read_text`'s
+    own first positional argument or its `encoding=` keyword, and for `.read` the `encoding=` (or fourth positional) of the
+    `open(...)` its receiver is. Returns (whether an encoding is named, the encoding node or None): a read whose encoding is named
+    and is not a string constant the census reads as one of _UTF8_NAMES no longer counts as covered by the walk's UTF-8 scan
+    (served_texts, _READ_CODEC), while a read that names none is the stated limit."""
+    if not (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute)): return False, None
+    attr = expr.func.attr
+    if attr == "read_text":
+        kw = next((k.value for k in expr.keywords if k.arg == "encoding"), None)
+        if kw is not None: return True, kw
+        return (True, expr.args[0]) if expr.args else (False, None)
+    o = expr.func.value   # `.read`: the encoding of the open(...) its receiver is
+    if isinstance(o, ast.Call) and isinstance(o.func, ast.Name) and o.func.id == "open":
+        kw = next((k.value for k in o.keywords if k.arg == "encoding"), None)
+        if kw is not None: return True, kw
+        return (True, o.args[3]) if len(o.args) > 3 else (False, None)
+    return False, None
+
+
 def line_scan(rel, kind, text, res, base=0, dom=None, served=False, cut=False):
     """The shell or JavaScript sites, the DOM loads and the package gate over one file's text (read once, by scan). For a page the
     kernel serves (served_texts), `base` offsets the line numbers to the constant's place in its Python file, `dom` forces the DOM
@@ -3187,6 +3220,13 @@ _SETTERS = ("setattr", "delattr", "__setattr__", "__delattr__")   # the calls _S
 _PATH_UNPROVEN = "a path the census does not prove by binding (%s)"
 _FILE_KINDS = {"py": "a file the walk reads as Python, not as browser text", "sh": "a file the walk reads as shell, not as browser text",
                "js": "a file the walk reads as JavaScript outside the browser and editor roots, with the DOM arm off"}
+# A page's read of a walked browser-text file counts as covered only because the walk scanned that file once as UTF-8 (scan, encoding
+# "utf-8"), so a page that reads it with an encoding the census does not read as one of _UTF8_NAMES may reveal a fetch the UTF-8 scan
+# did not: such a read is refused by name (served_texts, _read_codec). A read that names no encoding takes the locale's default, which
+# the census cannot prove is UTF-8; refusing it is not 0 live (a live page reads a walked .js with no encoding), so it is the stated
+# limit, its witness the (u7) plant u7c
+_READ_CODEC = ("a walked browser-text file a page reads with an encoding the census does not read as utf-8, utf_8 or utf8, so the "
+               "walk's one UTF-8 scan of it may not be the text the page serves")
 _SLICED = "a subscript by a slice or an index other than a constant, whose result the census does not compute"   # _Served._carries_text's refusal
 _SLOT_FORMAT = "a value slot a % or a format call takes, which a conversion can turn into characters"   # _Served._format_slots's refusal
 _SUB_OPERAND = ("a subscript as an operand of +, %, an f-string, .join, .format, .format_map or .replace, whose joined text the census does "
@@ -3535,6 +3575,26 @@ def _dict_of(e, consts, scopes, written):
         c = consts.get(e.id) if e.id not in written else None
         return c if isinstance(c, ast.Dict) else None
     return None
+
+
+def _ctype_simple(e, scopes, consts, written):
+    """Whether a content-type expression is a string constant, or a name bound once to one: a local of the innermost scope that binds
+    it with one string-constant value, or a module constant no code writes after binding it. These are the shapes the frame-local
+    limit's content-type face keeps (the census reads such a content type as the function's text binds it, its witness the frame-limit
+    plant frwt); every other resolvable shape (a `+`, a conditional, a dict read, a local bound more than once or to no constant) is
+    refused by name, since a frame may rewrite an intermediate local and the census does not read it. One check at 0 live (every live
+    content-type expression is a string constant: nsprobe), so under the 00:28Z rule the content-type face is refused where a check
+    does it, and only what no check refuses stays the stated limit (routes_of, judge)."""
+    if isinstance(e, ast.Constant): return type(e.value) is str
+    if isinstance(e, ast.Name):
+        for params, single, other in scopes:
+            if e.id in params or e.id in other: return False
+            if e.id in single:
+                v = single[e.id]
+                return len(v) == 1 and isinstance(v[0], ast.Constant) and type(v[0].value) is str
+        c = consts.get(e.id)
+        return isinstance(c, ast.Constant) and type(c.value) is str and e.id not in written
+    return False
 
 
 def _ctype_values(e, scopes, consts, written, depth=0):
@@ -4411,9 +4471,11 @@ def routes_of(rel, tree, sc, res):
     time, gc or ctypes among them, and through a module reached by a tuple or list unpacking, an inline walrus,
     `sys.modules.__getitem__`, a for-loop target, a parameter default or a starred argument) is outside the list
     and not seen (another walked file's import statement that may bind the module refuses the file whole: scan, _page_importers; a
-    module reached any other way, the stated limit), and so is a function's local or parameter rewritten at run time through the
-    function's frame (the frame's locals, which Python 3.13 and later write through to the function): the census reads a content
-    type as the handler's text binds it (the stated limit, its witness the (x) case's frwt). Any other reference to `_send` (a read
+    module reached any other way, the stated limit), and so is a content type a handler rebinds at run time through its own frame
+    (the frame's locals, which Python 3.13 and later write through to the function): the census reads a content type that is a string
+    constant or a name bound once to one as the handler's text binds it (the stated limit on those versions, its witness the (x)
+    case's frwt), and refuses by name a content type it reads any other way, so no frame can rewrite an intermediate it had read. Any
+    other reference to `_send` (a read
     of it that is not a call's
     function, a store or delete of an attribute so named, or a string equal to `_send`) is a SERVED line; a call through a name
     computed at
@@ -4450,6 +4512,13 @@ def routes_of(rel, tree, sc, res):
         if vals is None:
             res.problems.append("SERVED %s:%d serves a response whose content type the census cannot resolve (%s in %s): spell it so the "
                                 "scan reads it, or name the call in SERVED_ALLOW with its reason" % (rel, call.lineno, ast.unparse(expr)[:60] if expr is not None else "no value", where))
+            return None
+        if not _ctype_simple(expr, scopes(defs), consts, written):   # the content-type face of the frame-local limit refused where one
+            # check does it at 0 live (the 00:28Z rule): a content type the census resolves through anything but a string constant or a
+            # name bound once to one, which a frame may rewrite at run time, the census reading only what its text binds
+            res.problems.append("SERVED %s:%d serves a response whose content type the census reads other than as a string constant or a "
+                                "name bound once to one (%s in %s), which code may rewrite through the function's frame at run time: spell "
+                                "it as a constant, or name the call in SERVED_ALLOW with its reason" % (rel, call.lineno, ast.unparse(expr)[:60], where))
             return None
         script = sorted(v for v in vals if _script_type(v))
         if script and direct:
@@ -4609,12 +4678,22 @@ _READ_METHODS = frozenset(("get", "keys", "values", "items", "index", "count", "
 # pass reads, _UNDRAWN_BASE on a base whose own text it does not read, each reason true where it is given)
 _DRAWN = frozenset(("removeprefix", "removesuffix", "split", "rsplit", "splitlines", "partition", "rpartition", "group")) | _READ_METHODS
 _UNDRAWN = "a .%s() method whose return is not drawn from its receiver's text, on a receiver the census reads"   # _Served._undrawn's
-_UNDRAWN_BASE = ("a .%s() method whose return is not drawn from its receiver's text, on a base whose own text the census does not "
-                 "read")   # _Served._exempt_undrawn's, at receiver's exempt point
+_UNDRAWN_BASE = ("a .%s() method called on a base whose own text the census does not read, so the census does not compute the text it "
+                 "returns")   # _Served._exempt_undrawn's, at receiver's exempt point (true whether or not the method's return is drawn
+# from its receiver's text: a drawn method's, strip among them, returns a piece of the base's own text, which the census does not read)
 _GROWERS = ("append", "extend")
 _CHANGERS = frozenset(_MUTATORS + _DUNDER_MUTATORS + ("sort", "reverse", "appendleft", "extendleft", "rotate", "move_to_end", "difference_update",
                                                       "intersection_update", "symmetric_difference_update", "__setattr__", "__delattr__"))
 _CONTAINER = "a container the census does not prove it reads whole (%s)"   # _Served._containers's refusal, the clause naming the conjunct
+# A function that reaches its own frame's local mapping hands out the real container object on every CPython version (a mutation, not a
+# rebind, so it needs no 3.13 write-through), so the container proof cannot prove a container it binds is read whole: a page function,
+# or a function it follows, that calls locals or vars, or reads _getframe, currentframe, getargvalues or an f_locals attribute (a name
+# bound to any of them among them), refuses every container it binds by name (_Served._containers, _reaches_frame). One check at 0 live
+# (no live route function reaches its frame). A scalar a frame rewrites, not mutated, is a rebind Python 3.13 and later serve: the
+# frame-local stated limit, its witnesses frwt and frwb
+_FRAME_NAMES = frozenset(("locals", "vars", "_getframe", "currentframe", "getargvalues"))   # a call that hands out a frame's locals mapping
+_FRAME_ATTRS = frozenset(("_getframe", "currentframe", "getargvalues", "f_locals"))          # an attribute that reaches a frame, on any receiver
+_FRAME_CONTAINER = "changed through the function's frame's local mapping, which the census does not read"   # _Served._containers's, at a frame reach
 _DISPLAYS = (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp)   # a binding to one of these makes a name a container
 _FLOWS = (ast.BinOp, ast.List, ast.Tuple, ast.Set, ast.Dict) + _COMPS   # a node that holds a value it is handed in a new object (_flow)
 _NO_ROOTS = frozenset((ast.Constant, ast.JoinedStr, ast.Compare, ast.UnaryOp, ast.Lambda))   # a value that reads through no name (_flow_roots: none)
@@ -5072,9 +5151,11 @@ class _Served(object):
     methodcaller imported from a module other than its own, a name built at run time, gc or ctypes among them, and through a
     module reached by a tuple or list unpacking, an inline walrus, `sys.modules.__getitem__`, a for-loop target, a parameter
     default or a starred argument) being outside the list, and a function's write through a local
-    of the same name does not count; a function's local or parameter rewritten at run time through the function's frame (the
-    frame's locals, which Python 3.13 and later write through to the function) is not seen either, each read as the function's text
-    binds it (the stated limit, its witness the (x) case's frwb). A parameter in the body is
+    of the same name does not count; a scalar local or parameter a function rebinds at run time through its own frame (the
+    frame's locals, which Python 3.13 and later write through to the function) is not seen either, a page's text read as the
+    function's text binds it (the stated limit on those versions, its witness the (x) case's frwb), while a container the function
+    binds and reads whole, changed through that same frame's local mapping, is refused by name on every version (a mutation reaches
+    the real object; _containers, _reaches_frame). A parameter in the body is
     a value slot whose text is its argument's, read at the call, or, where a followed call omits it, its default's (_defaults).
     The other value slots the pass reads as no text are the kinds and roles a full served pass over the kernel hands resolve: a
     None, bool or int constant, the empty bytes constant, a Mult or LShift whose operands are int constants or such BinOps
@@ -5382,6 +5463,7 @@ class _Served(object):
         got = self.cproofs.get(id(fn))
         if got is not None: return got
         out = self.cproofs[id(fn)] = {}
+        reaches = self._reaches_frame(fn)   # layer iv: a function that reaches its frame hands out the real container object (any version)
         names, parents = _scope_names(fn)
         local, _b, _n, own = self.scopes[id(fn)][1]
         a = fn.args
@@ -5417,6 +5499,7 @@ class _Served(object):
             stores = [(n, c) for n, c in xs if isinstance(n.ctx, ast.Store)]
             if not any(e[9] == 0 and changes(e[6], e[7], e[8]) for e in events) and not any(
                     type(_bound_value(parents.get(id(n)))) in _DISPLAYS and _binds_whole(parents.get(id(n)), n) for n, _c in stores): continue   # no container
+            if reaches is not None: out[x] = _CONTAINER % _FRAME_CONTAINER; continue   # the function reaches its frame: the container refuses
             if x in params: out[x] = _CONTAINER % "a parameter"; continue
             if f != ["value"] or len(stores) != 1 or stores[0][1] != (fn,): out[x] = _CONTAINER % "bound other than once in its function's own body"; continue
             one = stores[0][0] if stores else None
@@ -5453,6 +5536,18 @@ class _Served(object):
                 elif kind == "handed": why = "changed by a call handed it as the object to change (%s)" % detail
                 if why is not None: out[x] = _CONTAINER % why; break
         return out
+
+    @staticmethod
+    def _reaches_frame(fn):
+        """The form by which the function `fn` reaches its own frame's local mapping (through which code may change a container it binds
+        on every CPython version), or None: a call of the name locals or vars, or a read of the attribute _getframe, currentframe,
+        getargvalues or f_locals on any receiver, or a bare name so spelled (a name an import binds to one of them), anywhere in the
+        function's own subtree. One syntactic check at 0 live (no live route function reaches its frame): every container the function
+        binds refuses (_containers, _FRAME_CONTAINER)."""
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Name) and n.id in _FRAME_NAMES: return ast.unparse(n)[:40]
+            if isinstance(n, ast.Attribute) and n.attr in _FRAME_ATTRS: return ast.unparse(n)[:40]
+        return None
 
     def _container_step(self, uses):
         """_containers' expansion of one (name, levels) its walk pops, which it calls once for each: the walk keeps one visited map per
@@ -7129,8 +7224,12 @@ def served_texts(rel, tree, routes, res):
     for label, lineno, name, path, why, where, expr in sorted(sv.files, key=lambda f: (f[1], f[6].col_offset)):
         kind = res.kinds.get(path) if path is not None else None   # the kind the walk scanned it as, None for a file it did not walk
         if kind is not None:   # a walked file: covered where the walk scanned it as browser text, else refused by that kind
-            if _browser_text(path, kind): continue
-            why = _FILE_KINDS[kind]
+            if _browser_text(path, kind):
+                named, enc = _read_codec(expr)   # the walk scanned it once as UTF-8: a read with an encoding the census does not read
+                # as UTF-8 may serve text the scan did not (_READ_CODEC); a read that names no encoding is the stated limit (u7c)
+                if not named or (isinstance(enc, ast.Constant) and type(enc.value) is str and enc.value.lower() in _UTF8_NAMES): continue
+                why = _READ_CODEC
+            else: why = _FILE_KINDS[kind]
         elif path is not None and path.endswith(".css"):   # a stylesheet the walk does not scan: named
             if (rel, lineno, path) not in res.served_files: res.served_files.append((rel, lineno, path))
             continue
