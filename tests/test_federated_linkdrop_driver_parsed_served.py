@@ -37,11 +37,11 @@ are pytest fixtures. esbuild exposes no tree (its API is build, transform and th
 
 WHY THIS FILE. CI's Python matrix installs no node deps, so the typescript package is absent there and a census that needs
 it cannot run in tests/test_federated_linkdrop_driver_bound.py without a skip that CI never turns into a failure. The
-vscode-extension job runs `npm ci` and then pytest over tests/test_*_browser.py and tests/test_*_served.py under
+served-pages job runs `npm ci` and then pytest over tests/test_*_browser.py and tests/test_*_served.py under
 ROMP_SERVED_TESTS_REQUIRE=1, which turns a skip in those files into a failure carrying the skip's reason (tests/conftest.py).
 This module takes the `_served` suffix for that job: on the matrix its census, TheDriverParsed, skips with its reason, as
-every served lab does, and in the served job it must run. It boots no kernel and drives no browser; TheDriverParsed needs
-node and the extension's node_modules.
+every served lab does, and in the served-pages job it must run. It boots no kernel and drives no browser; TheDriverParsed
+needs node and the extension's node_modules.
 The regex census in the driver-bound module stays as the matrix's backstop, its docstring naming the spellings it checks
 and this module as the instrument that reads the rest. One class here needs no node: TheParseTreesAreDropped runs
 TheDriverParsed's tearDownClass over a stand-in, on the matrix as in the served job.
@@ -310,9 +310,9 @@ def parse_js(sources):
     """[(name, src)] through node and the typescript package under EXT: (tsVersion, {name: (diagnostics, tree)}). Skips, in
     the served labs' words, when node or the package is absent, so ROMP_SERVED_TESTS_REQUIRE=1 turns that into a failure."""
     if not shutil.which("node"):
-        raise unittest.SkipTest("extension deps absent (npm ci not run here): this is a source parse with no server and no browser, placed under the _served suffix to reach the CI job that has node; it needs node")
+        raise unittest.SkipTest("extension deps absent (npm ci not run here): this is a source parse with no server and no browser, placed under the _served suffix for CI's served-pages job, which has node and requires this file to run; it needs node")
     if not os.path.isdir(os.path.join(EXT, "node_modules", "typescript")):
-        raise unittest.SkipTest("extension deps absent (npm ci not run here): this is a source parse with no server and no browser, placed under the _served suffix to reach the CI job that has vscode-extension/node_modules; it needs the typescript package there")
+        raise unittest.SkipTest("extension deps absent (npm ci not run here): this is a source parse with no server and no browser, placed under the _served suffix for CI's served-pages job, which has vscode-extension/node_modules and requires this file to run; it needs the typescript package there")
     d = tempfile.mkdtemp(prefix="linkdrop-parse-")
     try:
         helper, inputs = os.path.join(d, "parse.cjs"), os.path.join(d, "in.json")

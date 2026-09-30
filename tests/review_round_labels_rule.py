@@ -38,11 +38,12 @@ and a range EXPANDED, N through M each judged, so a caller's set need not be con
 followed by a list word (the serial comma: ", and", ", or", ", &", ", /"). The singular takes the same continuations but the bare
 comma and the serial comma: a count after a singular ("round N, M findings") is a continuation the list did not consume and is
 refused as one, and the one comma the singular reads is a comma followed by "and", so "round N, and M" is read as the list of N and
-M, while "round N, or M" is refused. A DATE after the number, after the list, or after the word of an ordinal form, is part of the
-form (DATE: a run of punctuation and spaces, no letter, and then YYYY-MM-DD, so "Review round N, YYYY-MM-DD", "round N
-(YYYY-MM-DD", "round N), YYYY-MM-DD" and the date straight after the number with a space or a comma are correct prose, not a
-further number the list did not consume; the list never reads a date's year as a number of its own); a further number after the
-date is refused as one the form did not consume.
+M, while "round N, or M" is refused. No list or range reads "and/or": a number after it, in either place, is refused as one the
+list did not consume ("round N and/or M", "the Nth and/or Mth round"). A DATE after the number, after the list, or after the word
+of an ordinal form, is part of the form (DATE: a run of punctuation and spaces, no letter, and then YYYY-MM-DD, so "Review round
+N, YYYY-MM-DD", "round N (YYYY-MM-DD", "round N), YYYY-MM-DD" and the date straight after the number with a space or a comma are
+correct prose, not a further number the list did not consume; the list never reads a date's year as a number of its own); a
+further number after the date is refused as one the form did not consume.
 
 Every spelling of the word is CLASSIFIED, over the numbers the reader knows: digits, digit ordinals and the words of its tables. A
 numbered form is read, and classed by its plural and its separator (FORM_CLASSES, an ordinal form in classes of its own, one red and
@@ -58,10 +59,11 @@ a longer word a number word begins or an ordinal ends ("round sevenfold", "a mil
 another word before which no ordinal is read and after which no number is ("rounded", "roundsman", "round-trip"), and a number
 spelled in a way the reader does not know, a Roman numeral among them, which no branch writes (the rule reads spellings of the word,
 not sentences, and a bare referential form carries no number and so no credit). A form the classifier cannot place is REFUSED, keyed
-on what it did not resolve: a number glued to a letter or an underscore ("round Nb", the lettered pass); a further number, digits or
-a number word, after a run the list did not consume that is not a date ("rounds N; M", "round N, M", "round N, or M") or before an
-ordinal run the list did not consume ("the Nth, Mth round", a compound ordinal written with a space, an ordinal joined by a hyphen
-to a number other than a tens word, "one hundred and first"); a number both before the word and after it; a plural that names one
+on what it did not resolve: a number glued to a letter or an underscore ("round Nb", the lettered pass); a further number, digits,
+a digit ordinal or a number word, after a run the list did not consume that is not a date ("rounds N; M", "round N, M", "round N,
+or M", "round N and/or M") or before an ordinal run the list did not consume ("the Nth, Mth round", in digits or in words, "the Nth
+and/or Mth round", a compound ordinal written with a space, an ordinal joined by a hyphen to a number other than a tens word, "one
+hundred and first"); a number both before the word and after it; a plural that names one
 number ("rounds N", "the Nth rounds"); a range that does not ascend ("rounds M-N" with M past N); a number word the reader does not
 read beside the word (LARGE: hundred, thousand, million and billion after the word or after a number it read, and their ordinals
 before it or after it; and any ordinal word after the word); punctuation or markup in that short run between the word and a number,
@@ -136,10 +138,13 @@ CONTINUATION_TOKEN = re.compile(r"\s*(?P<how>,\s*(?:%s)|%s|%s|,)\s*#?(?P<num>\d+
 FIRST_TOKEN = re.compile(r"\d+(?:st|nd|rd|th)?|%s|%s" % (_ORDINAL_WORD, _CARDINAL), re.I)
 RANGE_WORDS = re.compile(r"^(?:%s)$" % _RANGE, re.I)
 DIGITS = re.compile(r"\d+")
+# the list word a run the list did not consume may hold before a further number: "and" or "or", alone or joined by a slash to
+# either ("and/or"), which no list or range reads, so a number after "and/or" is refused as one the list did not consume
+_RUN_WORD = r"(?:and|or)(?:/(?:and|or))?"
 # after the last number the form consumed (or after the word of an ordinal form): a run of punctuation and spaces (no letter, no
-# newline), optionally a list word and a shorter run, and then a number, digits or a number word, is a continuation the list did
-# not resolve
-FURTHER = re.compile(r"[^\w\n]{1,6}(?:(?:and|or)[^\w\n]{1,3})?(?:\d|" + _ANY_WORD + ")", re.I)
+# newline), optionally a list word (_RUN_WORD) and a shorter run, and then a number, digits or a number word, is a continuation
+# the list did not resolve
+FURTHER = re.compile(r"[^\w\n]{1,6}(?:" + _RUN_WORD + r"[^\w\n]{1,3})?(?:\d|" + _ANY_WORD + ")", re.I)
 # after the word with no number read: a run of punctuation and spaces and then a number, digits or a number word, is punctuation or
 # markup between the word and a number, unclassifiable unless the run is the keyword-argument spelling's `=`
 GAP_NUMBER = re.compile(r"(?P<run>[^\w\n]{1,6})(?:\d|" + _ANY_WORD + ")", re.I)
@@ -164,9 +169,9 @@ UNREAD_BEFORE = re.compile(r"(?:%s)" % "|".join(LARGE_ORDINALS) + _WHOLE + _SEP 
 # BEFORE and UNREAD_BEFORE read nothing, so a run that is the separator alone has already been read and what this finds holds a
 # character the separator in its place does not take (the mirror of GAP_NUMBER after the word)
 MARKUP_BEFORE = re.compile(r"(?<!\w)(?:" + _ORDINAL + "|(?:%s)" % "|".join(LARGE_ORDINALS) + _WHOLE + r")[^\w\n]{1,6}(?:review[^\w\n]{1,6})?\Z", re.I)
-# before an ordinal run: a number, digits or a number word, then a run of punctuation and spaces, optionally a list word and a
-# shorter run, is a number the run did not consume
-FORE = re.compile(r"(?:\d|" + _ANY_WORD + r")[^\w\n]{1,6}(?:(?:and|or)[^\w\n]{1,3})?\Z", re.I)
+# before an ordinal run: a number, digits, a digit ordinal or a number word, then a run of punctuation and spaces, optionally a
+# list word (_RUN_WORD) and a shorter run, is a number the run did not consume
+FORE = re.compile(r"(?:\d(?:st|nd|rd|th)?|" + _ANY_WORD + r")[^\w\n]{1,6}(?:" + _RUN_WORD + r"[^\w\n]{1,3})?\Z", re.I)
 # the word glued to a letter, or to a hyphen and a letter ("rounded", "round-trip"): another word, before which an ordinal is not
 # read
 COMPOUND = re.compile(r"-?[A-Za-z]")

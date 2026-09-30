@@ -206,14 +206,16 @@ class RoundLabelRule(unittest.TestCase):
         filename carried in the offence, and the refusals told apart by their reasons. Then the READ direction's own probes (the
         coordinator's ruling of 2026-09-29 on PR 857's review), each a red the reader would miss without the part it pins: the
         serial comma in the plural, a range before it among them, and the singular's comma followed by "and" read as lists, and the
-        singular's other commas refused; a number word after the word read into its value (a qualified, an author's and a plural
-        word form refused, a range and a list in words, a tens word joined to a unit, a digit form beside a word elsewhere clean),
-        a list and a range whose continuation is capitalised or in capitals read the same (a range over GAPPED naming the hole),
-        and a number word the reader does not read, or does not place, refused; and an ordinal before the word read whether
-        credited or not (the author's credit in words and in digits, the maintainer's and the reviewer's past the set, an
-        unqualified one by the default), as a list and a range, a tens ordinal joined to a unit, and each ordinal shape the reader
-        cannot place refused (a plural naming one ordinal, a number before the run it did not consume, a number both before the
-        word and after it, a large ordinal, a number after the word of an ordinal form); and punctuation or markup between an ordinal
+        singular's other commas refused, and so is a number after "and/or", after the word and before it, in digits and in words; a
+        number word after the word read into its value (a qualified, an author's and a plural word form refused, a range and a list
+        in words, a tens word joined to a unit, a digit form beside a word elsewhere clean), a list and a range whose continuation
+        is capitalised or in capitals read the same (a range over GAPPED naming the hole), and a number word the reader does not
+        read, or does not place, refused; and an ordinal before the word read whether credited or not (the author's credit in words
+        and in digits, the maintainer's and the reviewer's past the set, an unqualified one by the default), as a list and a range
+        (the singular's list, its comma followed by "and" and its range each in words and in digits), a tens ordinal joined to a
+        unit, and each ordinal shape the reader cannot place refused (a plural naming one ordinal, a number before the run it did
+        not consume, a digit ordinal among them, a singular's range that does not ascend, a number both before the word and after
+        it, a large ordinal, a number after the word of an ordinal form); and punctuation or markup between an ordinal
         and the word refused, the mirror of the same after the word, credited or not, a large ordinal and "review" after the run
         among them, while the same markup before another word the word begins, or after the end of another word, is not read; and
         a number word glued to the list word or the range word before it, or a digit ordinal glued to the letter after it, read as
@@ -334,6 +336,15 @@ class RoundLabelRule(unittest.TestCase):
             with self.subTest(singular_comma=s):
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "a singular's comma followed by a list word but \"and\" is refused: %r" % (s,))
                 self.assertIn("a further number after a run the list did not consume", rule.offences(s, SET)[0][3])
+        # "and/or" between two numbers is no list word: the number after it is refused as one the list did not consume, after the
+        # word and before it, in digits and in words, as the singular's comma followed by "or" is, never read in part or as a list
+        for s, why in (("%s %s %d and/or %d" % (M, R, lo, hi), "a further number after a run"), ("%s %s and/or %s" % (R, WORDS[lo], WORDS[hi]), "a further number after a run"),
+                       ("%s %d or/and %d" % (R, lo, hi), "a further number after a run"), ("%ss %d and/or %d" % (R, lo, hi), "a further number after a run"),
+                       ("the %s and/or %s %s" % (nth(hi), nth(lo), R), "a further number before the ordinals"),
+                       ("%s %s and/or %s %s" % (M, NTH[hi], NTH[lo], R), "a further number before the ordinals")):
+            with self.subTest(and_or=s):
+                self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "a number after \"and/or\" is refused, never read in part or as a list: %r" % (s,))
+                self.assertIn(why, rule.offences(s, SET)[0][3], s)
         # the READ direction, number words after the word: read into their values, or refused when the reader cannot place them
         for s, nums in (("%s %s %s" % (M, R, WORDS[hi + 1]), [hi + 1]), ("%s %s %s" % (V, R, WORDS[hi + 1]), [hi + 1]), ("%ss %s and %s" % (R, WORDS[lo], WORDS[hi + 1]), [lo, hi + 1]),
                         ("%s %ss %s to %s" % (M, R, WORDS[hi - 1], WORDS[hi + 1]), [hi - 1, hi, hi + 1]), ("%ss %s and %d" % (R, WORDS[lo], hi + 1), [lo, hi + 1]),
@@ -368,13 +379,18 @@ class RoundLabelRule(unittest.TestCase):
             with self.subTest(unplaced_word=s):
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "a number word the reader cannot place is refused: %r" % (s,))
                 self.assertIn(why, rule.offences(s, SET)[0][3], s)
-        # the READ direction, ordinals before the word: read whether credited or not, into lists and ranges, or refused when unplaced
+        # the READ direction, ordinals before the word: read whether credited or not, into lists and ranges (the singular's list, its
+        # comma followed by "and" and its range among them, in words and in digits), or refused when unplaced
         for s, party, nums in (("%s %s %s fixed it" % (A, NTH[3], R), "author", [3]), ("%s %s %s" % (A, nth(3), R), "author", [3]),
                                ("%s %s %s found it" % (M, NTH[hi + 1], R), "reviewer", [hi + 1]), ("%s %s %s" % (V, nth(9), R), "reviewer", [9]),
                                ("in its %s %s" % (NTH[hi + 1], R), "reviewer", [hi + 1]), ("the %s and %s %ss" % (NTH[lo], NTH[hi + 1], R), "reviewer", [lo, hi + 1]),
                                ("%s %s, %s, and %s %ss" % (M, NTH[lo], NTH[hi], NTH[hi + 1], R), "reviewer", [lo, hi, hi + 1]),
                                ("the %s to %s %ss" % (nth(hi - 1), nth(hi + 1), R), "reviewer", [hi - 1, hi, hi + 1]), ("the %s-%s %s" % ("twenty", NTH[1], R), "reviewer", [21]),
-                               ("the %s %s" % ("twentieth", R), "reviewer", [20]), ("%s %s" % (NTH[hi + 1].capitalize(), R.capitalize()), "reviewer", [hi + 1]), ("the %s and %s-%s %ss" % (NTH[lo], "twenty", NTH[1], R), "reviewer", [lo, 21]), ("%s review %s %s" % (A, NTH[lo], R), "author", [lo]), ("%s %s review %s" % (A, NTH[lo], R), "author", [lo])):
+                               ("the %s %s" % ("twentieth", R), "reviewer", [20]), ("%s %s" % (NTH[hi + 1].capitalize(), R.capitalize()), "reviewer", [hi + 1]), ("the %s and %s-%s %ss" % (NTH[lo], "twenty", NTH[1], R), "reviewer", [lo, 21]), ("%s review %s %s" % (A, NTH[lo], R), "author", [lo]), ("%s %s review %s" % (A, NTH[lo], R), "author", [lo]),
+                               ("the %s and %s %s" % (NTH[lo], NTH[hi + 1], R), "reviewer", [lo, hi + 1]), ("the %s and %s %s" % (nth(lo), nth(hi + 1), R), "reviewer", [lo, hi + 1]),
+                               ("the %s, and %s %s" % (NTH[lo], NTH[hi + 1], R), "reviewer", [lo, hi + 1]), ("the %s, and %s %s" % (nth(lo), nth(hi + 1), R), "reviewer", [lo, hi + 1]),
+                               ("the %s to %s %s" % (NTH[hi - 1], NTH[hi + 1], R), "reviewer", [hi - 1, hi, hi + 1]),
+                               ("the %s to %s %s" % (nth(hi - 1), nth(hi + 1), R), "reviewer", [hi - 1, hi, hi + 1])):
             with self.subTest(read_ordinal=s):
                 self.assertEqual([(k, n) for _, _, k, n in rule.forms(s)], [("numbered", nums)], "an ordinal before the word is read into its value: %r" % (s,))
                 self.assertEqual([c[2] for c in rule.credits(s)], [party], "and credited to the party its qualifier names, or the reviewer by default: %r" % (s,))
@@ -387,6 +403,8 @@ class RoundLabelRule(unittest.TestCase):
                 self.assertEqual(rule.offences(s, SET), [], "an ordinal at a ruled round is clean: %r" % (s,))
                 self.assertEqual(len(rule.mentions(s)), 1, s)
         for s, why in (("the %s %ss" % (NTH[hi], R), "a plural that names one number"), ("the %s, %s %s" % (NTH[lo], NTH[hi], R), "a further number before the ordinals"),
+                       ("the %s, %s %s" % (nth(lo), nth(hi), R), "a further number before the ordinals"),
+                       ("the %s to %s %s" % (NTH[hi], NTH[lo], R), "a range that does not ascend"), ("the %s to %s %s" % (nth(hi), nth(lo), R), "a range that does not ascend"),
                        ("the %s %s %s" % ("twenty", NTH[1], R), "a further number before the ordinals"), ("one %s and %s %s" % ("hundred", NTH[1], R), "a further number before the ordinals"),
                        ("pass %d, %s %s" % (hi, NTH[hi], R), "a further number before the ordinals"),
                        ("one %s-%s %s" % ("hundred", NTH[hi], R), "a further number before the ordinals"), ("the %s %s %d" % (NTH[hi], R, hi), "a number both before the word and after it"),
