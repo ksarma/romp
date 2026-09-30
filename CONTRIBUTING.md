@@ -13,7 +13,7 @@ If you're interested in reporting bugs and making PRs, please try to reproduce t
 ```bash
 python3 -m pytest -q       # the Python pipeline (kernel/, cli/, postal/)
 bats tests/*.bats          # the shell surfaces (hooks, postal, manager)
-node --test tools/ci-browser-legs.test.mjs   # the browser-legs roster against the tree (CI's shell job, no npm ci)
+node --test tools/ci-browser-legs.test.mjs   # the browser-legs roster against the tree (CI's vendored-tooling job, no npm ci)
 cd vscode-extension && npm ci && npm test
 ```
 
@@ -62,7 +62,7 @@ catches or settles `inBrowser`'s rejection, so the rejection fails its test; it 
 end its own process, from a test, a hook or a timer; no condition the runner can leave unmet stands
 between a browser test and its `inBrowser` call; it skips and marks todo nothing). The reviewer of any PR
 that adds a roster line or changes a rostered leg's source or `inBrowser` checks the rule; the step does
-not. Nothing in the tree reads a leg's source for the rule, so the step can read green a rostered leg that
+not. Nothing checks the whole rule for every rostered leg, so the step can read green a rostered leg that
 breaks it. Examples, not the whole set: a rostered leg that launches its own browser and swallows a failed
 launch without skipping; a rostered module that launches nothing; a leg that drives a browser from a child
 process and tolerates the child's failure; a todo test that passes beside a real pass; a leg that catches
@@ -88,7 +88,7 @@ passing test, a skipped test, a failure inside a todo, or a file that failed as 
 the leg or the test; a leg that follows the roster rule and whose launch failed under the switch is
 named with the remedy to check the Chromium install step. The script's header states which results those
 reads cover. Before you push,
-`node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks CI's shell job runs
+`node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks CI's vendored-tooling job runs
 (no `npm ci` needed). From `vscode-extension/`,
 `bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks except the bundle check,
 without starting a browser, and the step itself is `bash scripts/ci-browser-legs.sh` with
@@ -96,9 +96,13 @@ without starting a browser, and the step itself is `bash scripts/ci-browser-legs
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed
-(`brew install gitleaks`, or a release binary; `ROMP_GITLEAKS` names one that is
-not on `PATH`). Installing it also arms the credential half of the `pre-push`
-hook, which is worth having before you push anything.
+(`brew install gitleaks`, or a release binary, 8.25.0 or later; `ROMP_GITLEAKS`
+names one that is not on `PATH`). Installing it also arms the credential half of
+the `pre-push` hook, which is worth having before you push anything. The floor
+is 8.25.0 because the hook's flags need 8.24.0 and this repository's
+`.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks reads correctly
+from 8.25.0 on; CI pins 8.28.0, above that floor. Under an older gitleaks the
+hook refuses a push that has something to scan and names the version it found.
 
 The Python and shell suites are also the CI gate, across Python 3.10 to 3.13 on
 Linux; the macOS cells run on demand from the Actions tab (they are billed even

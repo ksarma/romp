@@ -53,7 +53,7 @@ import { CHIP_LABEL, chipWords, statusChip, type ChipState } from "./status-chip
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail, RENAME_SUBLINE, END_SESSION_STANDING } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { historyMarks, historyBands, windowSpans, HIST_H, HIST_GAP } from "./glow-history";
-import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind } from "./skeleton-tabs";
+import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, onLayoutWord, nextPrefetch, renderKind, gateOnFrame, gateOnStrip, gateOnShow } from "./skeleton-tabs";
 import { reconcileTabOrder, adoptArrival } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned, reachableFrom, headWords,
@@ -1892,9 +1892,10 @@ function fileLink(path: string): HTMLElement {
 // on the RIGHT of the tool's HEAD line; the expandable content hangs below the
 // head, hidden until clicked — so each tool stays ONE row by default (the user:
 // vertical-compact). `head` must already be appended to `turn`.
-function inlineFold(head: HTMLElement, turn: HTMLElement, label: string, content: HTMLElement, key?: string) {
+function inlineFold(head: HTMLElement, turn: HTMLElement, label: string | HTMLElement, content: HTMLElement, key?: string) {
   const toggle = el("span", "tool-fold-toggle");
-  toggle.textContent = label;   // just the clickable summary ("+14 −0" / "12 lines") — no caret/bullet
+  if (typeof label === "string") toggle.textContent = label;   // just the clickable summary ("12 lines"), no caret or bullet
+  else toggle.appendChild(label);                                // or a dressed one: an edit's totals in the diff colours (diffTotals)
   toggle.title = "click to expand";
   applyFold(turn, "fold-open", key);
   toggle.addEventListener("click", (e) => { e.stopPropagation(); rememberFold(turn, "fold-open", key); });
@@ -4559,7 +4560,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       const reply = el("button", "ut-btn ut-reply");
       reply.dataset.act = "utreply"; reply.dataset.tid = t.id; reply.dataset.sid = renderingSid || "";
       (reply as any)._uttext = t.text;   // rides the node like qx's _qmd: the modal quotes the need it answers
-      (reply as any)._utdetail = t.detail || "";   // …and its detail, so the whole need is in view while answering
+      (reply as any)._utdetail = t.detail || "";   // …and its detail, quoted beneath the line, capped and scrolling within itself
       (reply as any)._utfile = t.file || "";   // …and the file it names, as the row's chip
       (reply as any)._utlink = t.link || "";   // …and the address it carries, as the row's other chip
       reply.textContent = "Reply";
@@ -5603,7 +5604,7 @@ function renderTool(ev: Extract<ChatEvent, { kind: "tool" }>): HTMLElement {
       row.append(og, ng, sign, txt);
       pre.appendChild(row);
     }
-    inlineFold(head, turn, `+${add} -${del}`, pre, fkey);   // the row's one totals text, the approved shape (+A -R, a hyphen minus); the head prints none beside it (T418 round two)
+    inlineFold(head, turn, diffTotals(add, del), pre, fkey);   // the row's one totals, the approved shape (+A -R, a hyphen minus) in the diff colours, the folded summary's dress; the head prints none beside it (T418 round two; the colours 2026-09-18)
   } else if (ev.name === "Read") {
     if (ev.output) { const n = countLines(ev.output); inlineFold(head, turn, `${n} line${n === 1 ? "" : "s"}`, preEl(ev.output, fkey && fkey + ":out"), fkey); }   // "1 line", not "1 lines" (T418, seen in the lab)
   } else if (ev.name === "Skill") {
@@ -6115,6 +6116,14 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
   colSets = readColSets();   // membership is fresh for the restore below (the chat split)
   if (back && heldHere(back) && restoreIfShown(back)) { /* focus is back on the tab the pane named; nothing more to paint here. Only a tab this column holds (the chat split): another column's session is its owner's to restore, and no record of it is this column's to keep */ }
   else if (!activeId) showActive();   // the strip changed under an unfocused pane (it may have emptied), or the tab it names is listed but hidden: the body's line and the box's placeholder follow it (the review's low)
+  // The idle prefetch's start gate, the strip half (stage 0, 2026-09-18; skeleton-tabs.ts gateOnStrip): the local kernel's
+  // strip that lists no LOCAL tab this pane shows or awaits as active (the stored tab ended while the page was away, none is
+  // stored, or the stored tab is another host's, whose full comes over that host's relay socket and is not this chain's to
+  // wait for) is the event that says no full is coming for one from this kernel, so the chain may start on it; a strip that
+  // lists a local want leaves the gate to that tab's first frame (upsert). Only the local strip: a re-emission is empty on a
+  // fresh page and says nothing. On every layout (the gate reads none). Ahead of the render below (schedulePrebuild queues
+  // one idle pass, so the order costs nothing).
+  if (localStrip(report) && gateOnStrip(skeletonTabs, kernelOrder, activeId || wantActive)) schedulePrebuild();
   // The board has been heard on this socket ONLY when this frame is the local kernel's own strip (tab-order.ts localStrip):
   // a synthetic re-emission is re-served from the manager's store, EMPTY on a fresh page (order []), and another host's
   // fresh push says nothing about this kernel's sessions. The vanishing tab (the user 2026-09-12): a view-order storage
@@ -10875,9 +10884,10 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   linkifyPrRefs(d, prRepoFor(sid));
   if (todoFile) d.append(" ", todoFileChip(todoFile, sid));   // the file the todo names, as on the row: the body delegate opens it from here too
   if (todoLink) d.append(" ", todoLinkChip(todoLink));   // the address it carries, as on the row: the document's anchor delegate opens it
-  // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress — the
-  // whole need stays in view while the answer is typed, without opening the fold first; a bare
-  // ask adds nothing here
+  // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress, without opening
+  // the fold first: capped (12em, or 34.8% of the window's height at rest when that is more; restCap below) and
+  // scrolling within itself, never under two of its lines, so the answer box keeps its rows and the buttons stay
+  // in reach with the keyboard up (styles.css #ut-reply-prompt .ut-detail.open); a bare ask adds nothing here
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
   if (dd) { dd.textContent = todoDetail; linkTodoDetailPaths(dd, sid); linkifyPrRefs(dd, prRepoFor(sid)); }
   const input = document.createElement("textarea");
@@ -10887,7 +10897,36 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
   const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
-  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  // THE DETAIL'S CAP AT REST (the maintainer's ruling at the merge with main, on the tall-window cap the pass left open):
+  // with the keyboard down the detail's cap is the larger of 12em and 34.8% of this window's height, so a tall window shows
+  // more of a long detail; with the keyboard up it is 12em and the flex shrink governs, as before (styles.css
+  // #ut-reply-prompt .ut-detail.open, where the share is derived). This publishes the window's height for that term at
+  // rest (--ut-rest-h on the overlay) and withdraws it with the keyboard up. The height is innerHeight, which is this
+  // window's visual viewport height except under a pinch zoom: a pinch shrinks only the visual viewport, so it leaves the
+  // cap alone (inside the shell the pane's iframe is sized to the visible height and never zoomed on its own). The
+  // keyboard is read as the shell reads it (kernel.py kbOpen): the visual viewport of the window that owns the screen more
+  // than 120px shorter than its layout viewport. That window is the parent: this window's own two heights agree whatever
+  // the keyboard does, and its height alone cannot tell the keyboard from a short window; standalone the parent is this
+  // window, and a cross-origin host (VS Code) throws, read as no keyboard. kbFit runs it at open and on every resize,
+  // before grow reads the room. A STATED RESIDUAL (the maintainer's ruling on the cap pass): Android Chrome honours the
+  // shell's interactive-widget=resizes-content (kernel.py's viewport meta; iOS ignores the token), so there the keyboard
+  // shrinks the shell's LAYOUT viewport, the shell's two heights agree, and this read, like kbOpen itself, sees no
+  // keyboard: the at-rest term applies under the keyboard (at 508, 34.8% is 177px against 12em's 134, and the room, 174px
+  // for a long detail under a short ask, sets the detail's height; the answer box keeps its three rows and Send stays in
+  // the box). No other keyboard signal is read here (a guess from a height or from focus is a heuristic, which the
+  // authoritative-sources rule avoids); the shell's blind spot is a follow-up of its own. waiting-reply-sheet-browser.test.ts and
+  // reply-sheet-keyboard.test.ts pin today's behaviour under that model.
+  const restCap = () => { let up = false; try { const p = window.parent, pv = p.visualViewport; up = !!pv && p.innerHeight - pv.height * (pv.scale || 1) > 120; } catch { up = false; } if (up) overlay.style.removeProperty("--ut-rest-h"); else overlay.style.setProperty("--ut-rest-h", window.innerHeight + "px"); };
+  // THE KEYBOARD (the user 2026-09-19, a phone screenshot: the detail filled the sheet and the answer box was one squeezed
+  // line). The shell sizes this iframe to the VISIBLE height, so the on-screen keyboard opening or closing lands here as
+  // this window's own resize: the picker's fold (kbFit in openPicker), on this overlay: short window → kb-tight, and
+  // styles.css pins the sheet to the top under a 12px frame and lets the box scroll (#ut-reply-prompt.kb-tight, the
+  // .picker-overlay.kb-tight rules the class shares). The same resize re-runs restCap (above: the detail's cap at rest)
+  // and then grow: the answer's cap is the room the box has left, and the keyboard opening or closing changes the room.
+  // Gone with the modal: close() drops it, and it drops itself when the overlay was removed some other way (a second
+  // Reply replacing this one). waiting.ts showReply is the twin.
+  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); restCap(); grow(true); };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", kbFit); };
   const go = () => {
     const text = input.value.trim();
     if (!text) { input.classList.add("bad"); input.focus(); return; }
@@ -10901,11 +10940,84 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   send.addEventListener("click", go);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  // the box grows with the answer (growComposer's auto-then-measure idiom): height auto measures the floor, three rows
+  // (rows=3; styles.css min-height), then the content's scroll height plus the border a border-box height carries. The
+  // cap is the ROOM the box has left, read from the box itself, never a share of the window (the maintainer's round 1
+  // ruling: a window-share cap laid Cancel and Send out below the box's clip at 390x508 with the keyboard up, and a tap
+  // there fell on the backdrop): the wanted height is written, the box's overflow past its own cap read, and the height
+  // gives that overflow back, never under the floor. Run on the window's resize too (kbFit), so a keyboard opening or
+  // closing re-fits an answer already grown; the box's own scroll (styles.css #ut-reply-prompt .picker-box) is the
+  // backstop for a window the floors alone overflow, with the actions row kept in view at its bottom
+  // (#ut-reply-prompt .confirm-actions) and the answer box kept clear of that row (grow's last line). A height the person
+  // DRAGGED stands against typing (the textarea
+  // keeps resize: vertical): the guard is file-comments.ts autosize's, compared string to string, an inline height that
+  // is not what this handler last wrote was dragged there, before the first keystroke or since (the maintainer's round 1
+  // ruling: without it every keystroke snapped a dragged box back to its content). On the window's resize (kbFit) that
+  // height is the person's PREFERENCE: clamped to the room the box has, never under the floor, and returned toward when
+  // the room comes back, never re-fit to the content (the author's pass after the maintainer's round 1, composition-3:
+  // before, a box dragged at 900 kept its height under the keyboard and Send lay below the frame). growComposer is the
+  // precedent for the auto-then-measure idiom only: it discards a dragged height too (only its cap survives a drag).
+  // waiting.ts showReply carries the same block, byte for byte (reply-sheet-keyboard.test.ts pins the two equal).
+  let sizedTo = "";   // what grow last wrote ("" before its first write): an inline height that is not it is the person's drag
+  let pref = 0;   // the height the person dragged to, in px (0 until a drag): their preference, which a keystroke leaves alone and a resize clamps to the room
+  const grow = (resized = false) => {
+    const stood = input.style.height;
+    if (stood !== sizedTo) pref = parseFloat(stood) || 0;   // dragged since the last write (resize: vertical writes the inline height, fires no input): the person's height is the preference from here on
+    if (pref > 0 && !resized) return;   // and it stands against typing; only the room's change (kbFit) re-fits it, to the room and back toward the preference
+    input.style.height = "auto";
+    const floor = input.offsetHeight;
+    if (!(floor > 0)) { input.style.height = stood; return; }   // no layout to measure (a box not laid out): keep what stood
+    const want = pref > 0 ? Math.max(floor, pref) : input.scrollHeight + floor - input.clientHeight;   // the preference, or the content's height plus the border
+    input.style.height = want + "px";
+    const over = box.scrollHeight - box.clientHeight;   // the box past its own cap with the answer at that height
+    if (over > 0) input.style.height = Math.max(floor, want - over) + "px";
+    sizedTo = input.style.height;
+    // the kept row (styles.css #ut-reply-prompt .confirm-actions, sticky at the box's bottom) holds Cancel and Send inside the
+    // box's clip wherever the floors overflow the box, over whatever the box scrolls under it; the answer box is the one thing it
+    // must not cover, so when the box overflows and the answer box's bottom lies under the row, the box is scrolled to its end,
+    // where the answer box sits just above the row (the maintainer's round 2 ruling, B-i: without this line the row covered the
+    // line being typed by up to about 20px)
+    if (box.scrollHeight > box.clientHeight && input.getBoundingClientRect().bottom > actions.getBoundingClientRect().top) box.scrollTop = box.scrollHeight;
+  };
+  input.addEventListener("input", () => grow());
+  // NOT a tap on the backdrop: a click whose gesture did not both begin and end there. Chromium and WebKit dispatch a click
+  // whose press and release targets differ to their common ancestor, here the overlay, so a grip pull released past the box's
+  // bottom edge (the box at its cap cannot grow with the answer box, so the pointer leaves it) and a text selection dragged
+  // out of the box arrived as backdrop clicks and closed the sheet with the answer (the author's pass after the maintainer's
+  // round 1, composition-2, and the reviewer's ruling on the pass's selection-drag observation). The reverse road, a press on
+  // the backdrop released inside the sheet, reached this handler in all three engines (the overlay is both the pressed node
+  // and the common ancestor) and closed the sheet with the answer too (the maintainer's round 2, ui-1). A backdrop tap is the
+  // whole gesture on the backdrop, press and release both, recorded per pointer: the overlay's pointerdown notes a pointer
+  // whose press began on the backdrop (the overlay itself, not the box or anything in it) and forgets one whose press began
+  // inside; its pointerup marks a tap pending only when that pointer's press began on the backdrop and its release lands there
+  // too; a cancelled pointer is forgotten; and any new press clears a pending tap. The click line closes only when the click's
+  // target is the overlay and a tap is pending. The click's own pointer is not compared, since WebKit dispatches a touch tap's
+  // click as the mouse's. While the gesture was two records shared by every pointer (the last press, the last release), two
+  // more roads closed the sheet with the answer (the maintainer's focused re-check of round 2): a chorded mouse, whose left
+  // button released over the sheet with a second button held is no pointerup, so its click read a release left from an
+  // earlier gesture; and a finger resting on the backdrop, whose press overwrote the record of a mouse or pen press inside the
+  // sheet. A press that wanders into the sheet and back out, released on the backdrop, is still a backdrop tap. The release
+  // is read where the pointer lifted: a touch pointer is implicitly captured to the node it pressed (Pointer Events), so a
+  // finger pressed on the backdrop delivers its pointerup to the overlay wherever it lifts, and a finger pressed just outside
+  // the box's edge and lifted inside it closed the sheet (measured in Chromium through CDP touch); a press on the backdrop
+  // therefore gives that capture back, and its pointerup's target is the node under the lift (the maintainer's round 2
+  // ruling). A press inside the sheet keeps its capture on the node it pressed. Beyond these lines, a stated residual: a short
+  // tap pressed on the backdrop just below the box, under Cancel or Send, and lifted inside the box is given to that button by
+  // Chromium's touch adjustment before this handler runs (it predates this fix; iOS is unmeasured). What a dismiss DOES (close
+  // with no save) is the filed discard item's, untouched here. These lines are plain JavaScript, no cast:
+  // reply-sheet-keyboard.test.ts executes them out of each builder and pins the two builders' equal
+  const backdropPress = new Set();   // the pointers whose press began on the backdrop, not yet released or cancelled
+  let tapPending = false;   // a pointer's press and release were both on the backdrop: set at that release, cleared by any new press
+  overlay.addEventListener("pointerdown", (e) => { tapPending = false; if (e.target === overlay) { backdropPress.add(e.pointerId); if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId); } else backdropPress.delete(e.pointerId); });
+  overlay.addEventListener("pointerup", (e) => { tapPending = backdropPress.has(e.pointerId) && e.target === overlay; backdropPress.delete(e.pointerId); });
+  overlay.addEventListener("pointercancel", (e) => { backdropPress.delete(e.pointerId); tapPending = false; });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay && tapPending) close(); });
   box.append(h, d); if (dd) box.appendChild(dd); box.append(input, actions);
   actions.append(cancel, send);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
+  window.addEventListener("resize", kbFit);
+  kbFit();   // synced at open too, not only on the first resize: the keyboard may already be up
   document.addEventListener("keydown", onKey, true);
   input.focus();
 }
@@ -14365,14 +14477,20 @@ function toolGroupKey(first: ChatEvent): string { return "tg:" + (first.uuid || 
 // end in the diff colours (+37 -0). Clicking the line toggles expand → the full non-compact rows (the user 2026-06-14). Carries
 // the rail dot + time-marker + hover wiring like any event so it anchors on the timeline; the dot is a green ✓ disc, red ✗ if any
 // errored.
-/** The edits' totals of a head, summed over every edit in the group, appended once in the diff colours. */
-function appendTotals(line: HTMLElement, add: number, del: number): void {
-  if (!add && !del) return;
+/** An edit's totals in the diff colours: "+A -R" as two spans (tool-plus green, tool-minus red, the theme tokens) inside one
+ *  tool-totals span. ONE dress for both places the numbers show (the user 2026-09-18: the folded group's summary was coloured,
+ *  the expanded rows' numbers were plain text): the collapsed group's head (appendTotals) and each row's diff-fold toggle. */
+function diffTotals(add: number, del: number): HTMLElement {
   const tot = el("span", "tool-totals");
   const plus = el("span", "tool-plus"); plus.textContent = "+" + add;
   const minus = el("span", "tool-minus"); minus.textContent = "-" + del;
-  tot.append(" ", plus, " ", minus);
-  line.appendChild(tot);
+  tot.append(plus, " ", minus);
+  return tot;
+}
+/** The edits' totals of a head, summed over every edit in the group, appended once in the diff colours. */
+function appendTotals(line: HTMLElement, add: number, del: number): void {
+  if (!add && !del) return;
+  line.append(" ", diffTotals(add, del));
 }
 function renderToolGroup(tools: Extract<ChatEvent, { kind: "tool" }>[], prevEpoch: number | null, key: string, open: boolean): HTMLElement {
   const turn = el("div", "turn turn-toolgroup" + (open ? " expanded" : ""));
@@ -14574,6 +14692,7 @@ function silentActivate(id: string): void {
   noteMru(id);                 // enter the recency stack, as setActive opens (round two, low c)
   if (activeId === id) return;
   activeId = id;
+  if (gateOnShow(skeletonTabs, id)) schedulePrebuild();   // a whole tab adopted as active: the visible tab has its frame, so the idle chain may start (the start gate, stage 0)
   loadComposerFor(id, true);   // the tab's own draft
   persistActive(id);           // the column's blob, so the next dial carries the shown tab
   renderTabs();                // mark the shown tab active in this column's strip
@@ -14642,8 +14761,20 @@ function cancelPrebuild(): void {
 function paneHidden(): boolean {
   try { return (window.parent !== window && (window.innerWidth === 0 || window.innerHeight === 0)) || (window as PaneHiddenHost).__rompPaneHidden === true; } catch { return false; }
 }
+// The shell's LAYOUT, read at the wsup arm (the owner's decision of 2026-09-19: after a return on the phone the other chat tabs
+// reload only when tapped, so the redial's chain is held there; skeleton-tabs.ts onSocketUp's returnHold). The shell publishes
+// window.__rompMobileOn in its head, read off window.parent the way paneHidden reads the shell's hidden word above; a standalone
+// page or the VS Code webview has no shell and reads false (the desktop's chain). The start gate itself reads no layout. The
+// hold's SECOND read is the shell's own layout word (panes `mob`, the panes handler below, review round 3): the shell re-tells it on
+// every media-query flip, so a flip inside the socket's life re-decides the hold instead of the arm's sample outliving the layout.
+function phoneShell(): boolean {
+  try { const p = window.parent as unknown as { __rompMobileOn?: unknown }; return window.parent !== window && typeof p.__rompMobileOn === "function" && !!(p.__rompMobileOn as () => unknown)(); } catch { return false; }
+}
 // The prefetch never runs while the browser tab is hidden (nextPrefetch); coming back is the event that re-arms
 // it. (A display:none pane has no event for its CSS flip — it re-arms on the next upsert / click instead.)
+// [fork] On the phone the chat pane's show re-arms it too: the chat-visibility observer's hidden-to-shown flip (watchChatVisibility's
+// onShown, schedulePrebuild) and the shell's panes word (the belt in the panes handler, for a browser whose observer does not run over a
+// hidden iframe); the next upsert or click still re-arms it as well (the reviewer's round-7 finding fresh-4).
 document.addEventListener("visibilitychange", () => { if (!document.hidden) schedulePrebuild(); });
 // the rail's minute tick (T406, refreshRelativeMarkers above): armed once here for the page, re-armed by each fire; a
 // window shown again after minutes hidden catches its today labels up at once rather than at the next boundary
@@ -19439,6 +19570,7 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
     clearSeek();
   }
   activeId = id;
+  gateOnShow(skeletonTabs, id);   // a tap onto a tab already whole on this socket opens the idle chain's start gate (stage 0); the tail's arm below runs it
   vanishedId = null; vanishedWhy = null; vanishedName = ""; wantActive = null; wantActiveGone = null; vanishedByDecline = false;   // any activation ends the unfocused state (T357)
   persistActive(id);   // the name rides beside the id: after a reload the unfocused body names the awaited tab before its host relays (T357)
   renderTabs();
@@ -19479,6 +19611,7 @@ function sharesAnyUuid(a: ChatEvent[], b: ChatEvent[]): boolean {
 
 function upsert(msg: any) {
   retryCmtCreates(String(msg.id || ""));   // a session frame = the kernel re-parsed → retry a lag-refused create (T106)
+  const gateWant = activeId || wantActive;   // the tab the strip shows as active, read BEFORE this frame's own adoption moves it (the start gate at the tail; stage 0)
   // The LOCAL kernel's own machine name rides its session frames (the kernel's _self_host, as the tabOrder
   // and feed frames carry it): the chat reads a postal card's sender host against it (postalSenderHost). It
   // was learned only from the + picker's sessionList reply before, so that reading was inert in any chat
@@ -19677,6 +19810,11 @@ function upsert(msg: any) {
   if (adoptsProvisional(existed, msg.name, pendingNewSession)) {
     adoptProvisional(msg.id);
   }
+  // The idle prefetch's start gate, the frame half (stage 0, 2026-09-18; skeleton-tabs.ts gateOnFrame): the first full applied
+  // for the tab the strip shows as active, the tab this pane showed at the frame's arrival or the one it awaited after a reload
+  // (gateWant, read above) or adopted from this very frame (activeId now), opens the chain; the arm below then runs it. Until
+  // then no background ask leaves: the visible tab's full never waits behind a tab nobody is looking at.
+  gateOnFrame(skeletonTabs, msg.id, [gateWant, activeId]);
   schedulePrebuild(); // startup + new content: build the off-screen tabs in idle so they open instantly
 }
 
@@ -20769,9 +20907,12 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   // replace: a key the shell stopped naming must not linger as on.
   if (m.romp === "panes") {
     if (m.on && typeof m.on === "object") {
+      const wasChatOff = panesOn.chat === false;   // the shell's last word said this pane was off screen (a phone tab other than Chat)
       const on: Record<string, boolean> = {};
       for (const k of Object.keys(m.on)) on[k] = m.on[k] === true;
       panesOn = on;
+      if (wasChatOff && on.chat === true) schedulePrebuild();   // the shell shows the chat tab: the idle chain re-arms on the word too (the belt beside the visibility flip's hook, for a browser whose observer does not run over a hidden iframe; runPrebuild re-reads paneHidden() at fire time, so a word ahead of the observer costs one null pass)
+      if (typeof m.mob === "boolean" && onLayoutWord(skeletonTabs, m.mob) && ((activeId && gateOnShow(skeletonTabs, activeId)) || skeletonTabs.gate)) schedulePrebuild();   // the shell's LAYOUT word (review round 3, extra8-1): the return hold is re-decided on every flip (skeleton-tabs.ts onLayoutWord), and a hold lifted by a flip to the desktop arms the chain when the gate is open for it: opened now for the shown tab whose full applied on this socket (gateOnShow), or open already (review round 4, verdict 1: a desktop redial's chain, stopped by a flip to the phone, resumes on the flip back; gateOnShow reports an OPENING and refuses an open gate, so the gate itself is the second read, and before this the flip back armed nothing and the chain waited for an unrelated arm). The lift is the one trigger and onLayoutWord reports it once per standing hold, so a repeat word arms nothing; a flip to the phone after a redial sets the hold, which nextPrefetch reads
     }
     // which panes exist to bring forward (the Files control's setting): whole-set replace as well
     const avail: Record<string, boolean> = {};
@@ -20779,12 +20920,18 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     panesAvail = avail;
     return;
   }
-  // [fork] D3 (2026-09-18, review round 2): the shell's link word ({romp:'link', link}), posted to every iframe outside the six
-  // pane frames on the shell socket's open, close and abandon (kernel.py _LANDING_COLLAPSE_JS tellLink), so a split chat
-  // column's pane shim can end its return await on it. The shim reads it on window itself; this handler has nothing to do with
-  // it, and it is not a kernel message: without this return a link-DOWN word fell through to retryFailedPreviews below, and
-  // each split column re-fetched its failed previews on a path the shell had just declared down.
-  if (m.romp === "link") return;
+  // [fork] D3 (2026-09-18, review round 2): the shell's link word ({romp:'link', link, mob}), posted to every iframe outside the six
+  // pane frames on the shell socket's open, close and abandon and on every tab switch and layout flip (kernel.py _LANDING_COLLAPSE_JS
+  // tellLink), so a split chat column's pane shim can end its return await on it. The shim reads the link on window itself; the one
+  // thing this handler takes from the word is the LAYOUT (review round 4, 2026-09-19, kernel-3): a split column hears no panes word,
+  // so before this a return hold it armed on the phone outlived a flip to the desktop for the socket's life, against skeleton-tabs.ts's
+  // "never outlives the layout"; the arm is the panes branch's expression, character for character (a lift over an open gate arms too:
+  // review round 4, verdict 1). Not a kernel message: without the return a link-DOWN word fell through to retryFailedPreviews below,
+  // and each split column re-fetched its failed previews on a path the shell had just declared down.
+  if (m.romp === "link") {
+    if (typeof m.mob === "boolean" && onLayoutWord(skeletonTabs, m.mob) && ((activeId && gateOnShow(skeletonTabs, activeId)) || skeletonTabs.gate)) schedulePrebuild();   // the layout word on the link word (kernel-3): the same arm as the panes branch above
+    return;
+  }
   // the pipe's down edge is the VS Code twin of the shim's romp:wsdown: unconfirmed sends say so (markPendingLost), and it
   // clears awaitingFull (an ask lost with the pipe must not suppress the re-ask after the reconnect's resync; see
   // requestFullSession; onWireDown clears the chat wire's window asks, not this set)
@@ -20821,7 +20968,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   else if (m.type === "chatEpisode") chatEpisode(m);
   else if (m.type === "subagent") applySubagentFrame(m);
   else if (m.type === "update") update(m);
-  else if (m.type === "wsup") { onSocketUp(skeletonTabs); skeletonDiagArmed = true; }   // the shim's socket-flip marker, in FRAME order: the dead socket's frames may still be draining from the FIFO when onopen fires (review find 2026-09-07)
+  else if (m.type === "wsup") { onSocketUp(skeletonTabs, phoneShell()); skeletonDiagArmed = true; }   // the shim's socket-flip marker, in FRAME order: the dead socket's frames may still be draining from the FIFO when onopen fires (review find 2026-09-07); on the phone the redial holds the chain (the owner's decision, 2026-09-19)
   else if (m.type === "status") statusOnly(m);
   else if (m.type === "glossary" && typeof m.id === "string") {   // the session's glossary index (T351 stage 2): a new one re-links the view
     glossaries.set(m.id, m as GlossaryIndex);
@@ -23278,7 +23425,7 @@ setupSettings();
 })();
 // The chat page's hidden word for the kernel's pane shim (chat-visibility.ts): the chat gates no paint, so this
 // is the one place it measures its own visibility. Once, at top level, over the page's body.
-watchChatVisibility(document.body, browserChatVisibilityDeps());
+watchChatVisibility(document.body, browserChatVisibilityDeps(), schedulePrebuild);   // the pane's show (its hidden word flipping true to false) re-arms the idle chain: on the phone the chat can be display:none at boot, where runPrebuild reads paneHidden() and asks nothing (stage 0)
 // right-click a selection in the transcript → Reply (quote it) / Copy
 document.getElementById("content")?.addEventListener("contextmenu", showSelectionMenu);
 // The chat document hosts the viewer itself (openPath), so it boots the viewer's listener with the

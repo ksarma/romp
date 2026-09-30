@@ -107,7 +107,7 @@ def pytest_configure(config):
     PytestConfigWarning, which is: every xdist worker whose interpreter has no SDK, which on a box is every
     worker, until the emitting module inserts the venv path; a controller whose interpreter has no SDK,
     which on a box is every controller; and the CI steps that install
-    no SDK, today the vscode-extension job's served-page pytest step, which loads this conftest (the Python matrix
+    no SDK, today the served-pages job's served-page pytest step, which loads this conftest (the Python matrix
     cells' interpreter, the five Linux cells and the two macOS cells on a weekly or dispatch run, imports the class
     since the SDK install step, in the controller and, on the Linux cells' two workers since batch 917, in each
     worker, since the package is installed in that interpreter rather than added to the path at import). A
@@ -140,6 +140,9 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # bus refuses its fixed port under a test unless the port is the run's own, which the marker beside a port says
 os.environ.pop("ROMP_POSTAL_PORT", None)
 os.environ["ROMP_POSTAL_HERMETIC"] = "1"
+os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # no in-process kernel of the run owns a bus: its ensure and its revive start none (2026-09-18: a revive
+#                                                on a daemon thread outran a test's environment restore and left a real bus detached on the box, whose
+#                                                port record under the shared state root redirected a later module's dial); a lab sets its own trio
 os.environ["ROMP_CKPT_FIRST_DOC_KB"] = "0"   # the young-session floor is off for the suite's small fixtures (a document under 1 MB of
 #                                                pre-cut bytes is never written live); the floor's own test sets it. A plain assignment: an
 #                                                exported value in the shell (64, say) would red every checkpoint fixture (1721 round two);
@@ -314,6 +317,7 @@ def _dead_manager_port():
     os.environ["ROMP_MANAGER_PORT"] = "1"
     os.environ["ROMP_KERNEL_PORT"] = "1"
     os.environ["ROMP_SERVE_PORT"] = "1"
+    os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # re-floored per test: tests/test_postal_peers.py pops it outright (1848's floor, 2026-09-18)
     yield
 
 
@@ -1997,7 +2001,7 @@ def _session_end_thread_guard(item):
 # tests/test_*_served.py boot a hermetic kernel and drive the real dashboard pages in playwright's Chromium; on a machine
 # without the extension's node deps or a browser they skip, and say why. CI's Python matrix jobs are such machines, so a
 # served-page regression never turned them red (the deep-link landing pin, T307, red on main while CI stayed green). The
-# extension job installs that browser and runs these files with ROMP_SERVED_TESTS_REQUIRE=1: any skip in them (a class
+# served-pages job installs that browser and runs these files with ROMP_SERVED_TESTS_REQUIRE=1: any skip in them (a class
 # setUp that finds no deps, a driver that exits 3 for a missing browser, a kernel that never served) is reported as a
 # FAILURE carrying the skip's own reason, the stance the pane bench takes with ROMP_UI_BENCH_REQUIRE. One exception a
 # test can claim for itself: a skip whose reason begins with "optional:" stays a skip, for a leg the runner has declared

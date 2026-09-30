@@ -337,11 +337,11 @@ class ServedUnfocusedPane(unittest.TestCase):
     @classmethod
     def _boot(cls):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
-            raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served lab needs them; CI's extension job has them and requires this file to run")
+            raise unittest.SkipTest("extension deps absent (npm ci not run here): the served lab needs them; CI's served-pages job has them and requires this file to run")
         probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p.chromium.executablePath())",
                                 os.path.join(EXT, "node_modules", "playwright")], capture_output=True, text=True)
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
-            raise unittest.SkipTest("no playwright browser on this box — the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         cls.lab = tempfile.mkdtemp(prefix="unfocused-pane-")
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
@@ -393,7 +393,7 @@ class ServedUnfocusedPane(unittest.TestCase):
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         if p.returncode == 3:
-            raise unittest.SkipTest("no playwright browser on this box — the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])

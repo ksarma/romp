@@ -24,7 +24,7 @@
 # inBrowser no test context but the one node gave it; it does not end its own process, from a test, a hook or a timer;
 # no condition the runner can leave unmet stands between a browser test and its inBrowser call; it skips and marks
 # todo nothing). The reviewer of any PR that adds a roster line or changes a rostered leg's source or inBrowser checks
-# the rule; the step does not. Nothing in the tree reads a leg's source for the rule, so the step can read green a
+# the rule; the step does not. Nothing checks the whole rule for every rostered leg, so the step can read green a
 # rostered leg that breaks it. Examples, not the whole set: a rostered leg that launches its own browser and swallows
 # a failed launch without skipping; a rostered module that launches nothing; a leg that drives a browser from a child
 # process and tolerates the child's failure; a todo test that passes beside a real pass; a leg that catches
@@ -49,3 +49,4 @@
 # children under the switch fail and the one without it skips: that is its test of the switch, not a browser driven
 # from a child process, and its own first test opens a page through inBrowser.
 out-tests/ui/webview/real-viewer-leg-switch.test.js
+out-tests/ui/webview/gear-sub-focus-browser.test.js

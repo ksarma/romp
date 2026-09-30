@@ -303,7 +303,36 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // the link). Gone with the modal: close() drops it, and it drops itself if the overlay was removed some
   // other way (a second Reply replacing this one, above).
   const onFocus = () => { if (!overlay.isConnected) { window.removeEventListener("focus", onFocus); return; } input.focus(); };
-  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("focus", onFocus); };
+  // THE DETAIL'S CAP AT REST (the maintainer's ruling at the merge with main, on the tall-window cap the pass left open):
+  // with the keyboard down the detail's cap is the larger of 12em and 34.8% of this window's height, so a tall window shows
+  // more of a long detail; with the keyboard up it is 12em and the flex shrink governs, as before (styles.css
+  // #ut-reply-prompt .ut-detail.open, where the share is derived). This publishes the window's height for that term at
+  // rest (--ut-rest-h on the overlay) and withdraws it with the keyboard up. The height is innerHeight, which is this
+  // window's visual viewport height except under a pinch zoom: a pinch shrinks only the visual viewport, so it leaves the
+  // cap alone (inside the shell the pane's iframe is sized to the visible height and never zoomed on its own). The
+  // keyboard is read as the shell reads it (kernel.py kbOpen): the visual viewport of the window that owns the screen more
+  // than 120px shorter than its layout viewport. That window is the parent: this window's own two heights agree whatever
+  // the keyboard does, and its height alone cannot tell the keyboard from a short window; standalone the parent is this
+  // window, and a cross-origin host (VS Code) throws, read as no keyboard. kbFit runs it at open and on every resize,
+  // before grow reads the room. A STATED RESIDUAL (the maintainer's ruling on the cap pass): Android Chrome honours the
+  // shell's interactive-widget=resizes-content (kernel.py's viewport meta; iOS ignores the token), so there the keyboard
+  // shrinks the shell's LAYOUT viewport, the shell's two heights agree, and this read, like kbOpen itself, sees no
+  // keyboard: the at-rest term applies under the keyboard (at 508, 34.8% is 177px against 12em's 134, and the room, 174px
+  // for a long detail under a short ask, sets the detail's height; the answer box keeps its three rows and Send stays in
+  // the box). No other keyboard signal is read here (a guess from a height or from focus is a heuristic, which the
+  // authoritative-sources rule avoids); the shell's blind spot is a follow-up of its own. waiting-reply-sheet-browser.test.ts and
+  // reply-sheet-keyboard.test.ts pin today's behaviour under that model.
+  const restCap = () => { let up = false; try { const p = window.parent, pv = p.visualViewport; up = !!pv && p.innerHeight - pv.height * (pv.scale || 1) > 120; } catch { up = false; } if (up) overlay.style.removeProperty("--ut-rest-h"); else overlay.style.setProperty("--ut-rest-h", window.innerHeight + "px"); };
+  // THE KEYBOARD (the user 2026-09-19, a phone screenshot: the detail filled the sheet and the answer box was one squeezed
+  // line). The shell sizes this iframe to the VISIBLE height, so the on-screen keyboard opening or closing lands here as
+  // this window's own resize: the picker's fold (render.ts kbFit), on this overlay: short window → kb-tight, and
+  // styles.css pins the sheet to the top under a 12px frame and lets the box scroll (#ut-reply-prompt.kb-tight, the
+  // .picker-overlay.kb-tight rules the class shares). The same resize re-runs restCap (above: the detail's cap at rest)
+  // and then grow: the answer's cap is the room the box has left, and the keyboard opening or closing changes the room.
+  // Gone with the modal: close() drops it, and it drops itself when the overlay was removed some other way (a second
+  // Reply replacing this one), as onFocus does.
+  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); restCap(); grow(true); };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("focus", onFocus); window.removeEventListener("resize", kbFit); };
   const go = () => {
     const text = input.value.trim();
     if (!text) { input.classList.add("bad"); input.focus(); return; }
@@ -315,11 +344,85 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   send.addEventListener("click", go);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  // the box grows with the answer (render.ts growComposer's auto-then-measure idiom): height auto measures the floor,
+  // three rows (rows=3; styles.css min-height), then the content's scroll height plus the border a border-box height
+  // carries. The cap is the ROOM the box has left, read from the box itself, never a share of the window (the
+  // maintainer's round 1 ruling: a window-share cap laid Cancel and Send out below the box's clip at 390x508 with the
+  // keyboard up, and a tap there fell on the backdrop): the wanted height is written, the box's overflow past its own
+  // cap read, and the height gives that overflow back, never under the floor. Run on the window's resize too (kbFit),
+  // so a keyboard opening or closing re-fits an answer already grown; the box's own scroll (styles.css
+  // #ut-reply-prompt .picker-box) is the backstop for a window the floors alone overflow, with the actions row kept in view
+  // at its bottom (#ut-reply-prompt .confirm-actions) and the answer box kept clear of that row (grow's last line). A height
+  // the person DRAGGED
+  // stands against typing (the textarea keeps resize: vertical): the guard is file-comments.ts autosize's, compared
+  // string to string, an inline height that is not what this handler last wrote was dragged there, before the first
+  // keystroke or since (the maintainer's round 1 ruling: without it every keystroke snapped a dragged box back to its
+  // content). On the window's resize (kbFit) that height is the person's PREFERENCE: clamped to the room the box has,
+  // never under the floor, and returned toward when the room comes back, never re-fit to the content (the author's pass
+  // after the maintainer's round 1, composition-3: before, a box dragged at 900 kept its height under the keyboard and
+  // Send lay below the frame). growComposer is the precedent for the auto-then-measure idiom only: it discards a dragged
+  // height too (only its cap survives a drag). render.ts showUserTodoReply carries the same block, byte for byte
+  // (reply-sheet-keyboard.test.ts pins the two equal).
+  let sizedTo = "";   // what grow last wrote ("" before its first write): an inline height that is not it is the person's drag
+  let pref = 0;   // the height the person dragged to, in px (0 until a drag): their preference, which a keystroke leaves alone and a resize clamps to the room
+  const grow = (resized = false) => {
+    const stood = input.style.height;
+    if (stood !== sizedTo) pref = parseFloat(stood) || 0;   // dragged since the last write (resize: vertical writes the inline height, fires no input): the person's height is the preference from here on
+    if (pref > 0 && !resized) return;   // and it stands against typing; only the room's change (kbFit) re-fits it, to the room and back toward the preference
+    input.style.height = "auto";
+    const floor = input.offsetHeight;
+    if (!(floor > 0)) { input.style.height = stood; return; }   // no layout to measure (a box not laid out): keep what stood
+    const want = pref > 0 ? Math.max(floor, pref) : input.scrollHeight + floor - input.clientHeight;   // the preference, or the content's height plus the border
+    input.style.height = want + "px";
+    const over = box.scrollHeight - box.clientHeight;   // the box past its own cap with the answer at that height
+    if (over > 0) input.style.height = Math.max(floor, want - over) + "px";
+    sizedTo = input.style.height;
+    // the kept row (styles.css #ut-reply-prompt .confirm-actions, sticky at the box's bottom) holds Cancel and Send inside the
+    // box's clip wherever the floors overflow the box, over whatever the box scrolls under it; the answer box is the one thing it
+    // must not cover, so when the box overflows and the answer box's bottom lies under the row, the box is scrolled to its end,
+    // where the answer box sits just above the row (the maintainer's round 2 ruling, B-i: without this line the row covered the
+    // line being typed by up to about 20px)
+    if (box.scrollHeight > box.clientHeight && input.getBoundingClientRect().bottom > actions.getBoundingClientRect().top) box.scrollTop = box.scrollHeight;
+  };
+  input.addEventListener("input", () => grow());
+  // NOT a tap on the backdrop: a click whose gesture did not both begin and end there. Chromium and WebKit dispatch a click
+  // whose press and release targets differ to their common ancestor, here the overlay, so a grip pull released past the box's
+  // bottom edge (the box at its cap cannot grow with the answer box, so the pointer leaves it) and a text selection dragged
+  // out of the box arrived as backdrop clicks and closed the sheet with the answer (the author's pass after the maintainer's
+  // round 1, composition-2, and the reviewer's ruling on the pass's selection-drag observation). The reverse road, a press on
+  // the backdrop released inside the sheet, reached this handler in all three engines (the overlay is both the pressed node
+  // and the common ancestor) and closed the sheet with the answer too (the maintainer's round 2, ui-1). A backdrop tap is the
+  // whole gesture on the backdrop, press and release both, recorded per pointer: the overlay's pointerdown notes a pointer
+  // whose press began on the backdrop (the overlay itself, not the box or anything in it) and forgets one whose press began
+  // inside; its pointerup marks a tap pending only when that pointer's press began on the backdrop and its release lands there
+  // too; a cancelled pointer is forgotten; and any new press clears a pending tap. The click line closes only when the click's
+  // target is the overlay and a tap is pending. The click's own pointer is not compared, since WebKit dispatches a touch tap's
+  // click as the mouse's. While the gesture was two records shared by every pointer (the last press, the last release), two
+  // more roads closed the sheet with the answer (the maintainer's focused re-check of round 2): a chorded mouse, whose left
+  // button released over the sheet with a second button held is no pointerup, so its click read a release left from an
+  // earlier gesture; and a finger resting on the backdrop, whose press overwrote the record of a mouse or pen press inside the
+  // sheet. A press that wanders into the sheet and back out, released on the backdrop, is still a backdrop tap. The release
+  // is read where the pointer lifted: a touch pointer is implicitly captured to the node it pressed (Pointer Events), so a
+  // finger pressed on the backdrop delivers its pointerup to the overlay wherever it lifts, and a finger pressed just outside
+  // the box's edge and lifted inside it closed the sheet (measured in Chromium through CDP touch); a press on the backdrop
+  // therefore gives that capture back, and its pointerup's target is the node under the lift (the maintainer's round 2
+  // ruling). A press inside the sheet keeps its capture on the node it pressed. Beyond these lines, a stated residual: a short
+  // tap pressed on the backdrop just below the box, under Cancel or Send, and lifted inside the box is given to that button by
+  // Chromium's touch adjustment before this handler runs (it predates this fix; iOS is unmeasured). What a dismiss DOES (close
+  // with no save) is the filed discard item's, untouched here. These lines are plain JavaScript, no cast:
+  // reply-sheet-keyboard.test.ts executes them out of each builder and pins the two builders' equal
+  const backdropPress = new Set();   // the pointers whose press began on the backdrop, not yet released or cancelled
+  let tapPending = false;   // a pointer's press and release were both on the backdrop: set at that release, cleared by any new press
+  overlay.addEventListener("pointerdown", (e) => { tapPending = false; if (e.target === overlay) { backdropPress.add(e.pointerId); if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId); } else backdropPress.delete(e.pointerId); });
+  overlay.addEventListener("pointerup", (e) => { tapPending = backdropPress.has(e.pointerId) && e.target === overlay; backdropPress.delete(e.pointerId); });
+  overlay.addEventListener("pointercancel", (e) => { backdropPress.delete(e.pointerId); tapPending = false; });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay && tapPending) close(); });
   box.append(h, d); if (chip) box.appendChild(chip); if (lchip) box.appendChild(lchip); if (dd) box.appendChild(dd); box.append(input, actions);
   actions.append(cancel, send);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
+  window.addEventListener("resize", kbFit);
+  kbFit();   // synced at open too, not only on the first resize: the keyboard may already be up
   document.addEventListener("keydown", onKey, true);
   window.addEventListener("focus", onFocus);
   input.focus();
@@ -365,7 +468,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   const reply = el("button", "ut-btn ut-reply");
   reply.dataset.act = "utreply"; reply.dataset.tid = w.todo.id; reply.dataset.sid = w.sid;
   (reply as any)._uttext = w.todo.text;          // the modal quotes the need it answers…
-  (reply as any)._utdetail = w.todo.detail || "";   // …and its detail, so the whole need is in view
+  (reply as any)._utdetail = w.todo.detail || "";   // …and its detail, quoted beneath the line, capped and scrolling within itself
   (reply as any)._utfile = w.todo.file || "";       // …and the file it names, as the row's chip
   (reply as any)._utlink = w.todo.link || "";       // …and the address it carries, as the row's other chip
   reply.textContent = "Reply";

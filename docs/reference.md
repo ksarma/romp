@@ -1236,7 +1236,7 @@ two. Every session's tab menu offers Move to folder.
   manager and the supervised service use. Set either and the other follows; set
   both to different values and the kernel refuses to start rather than picking
   one for you.
-- `ROMP_POSTAL_PORT=<port>` moves the postal bus off the default `25302`.
+- `ROMP_POSTAL_PORT=<port>` moves the postal bus off the default `25302`. The kernel dials the port the bus actually bound, read from the bus's record `postal/postal-port` under the state directory (written after the bind, removed on a clean exit), and falls back to this variable for any record it cannot trust as its own bus's (absent or unreadable, with no positive port or pid, stale with its pid no longer running, or another bus's with a token mark that is not this kernel's), or when its `ensure` at boot neither started the bus nor found the machine's own answering (a client-only host, whose `ensure` only pings its tunnel; a tunnel or another environment's bus answering the port), a road the kernel's log names once; a mismatch between the two is said once in the kernel's log. The two can disagree when a unit or profile sets the variable for one process and not the other, or when a stale legacy tunnel still reverse-forwards another machine's bus onto the fixed port: the operator's two checks when a held message's approve comes back refused.
 
 Set these if something else on the machine already holds the default. Both have
 to agree across everything that talks to the kernel, so export them where the
@@ -3658,7 +3658,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `watch`, `subagents`, `usage`, `offer`, `auth`, `downtime`, `debug`,
   `interrupting`, `closer`, `todos`, `queued`, `peers`, plus `cold` for a
   session with no entry) to the re-derivations it caused; a miss with several moved
-  components counts under each. Nudge facts invalidate only entries that read
+  components counts under each. `row_by` splits the `row` misses further by
+  the live-row position that moved (`state`, `since`, `billing` (the row's
+  authLive, auth, authLogin, authLoginLive and authLabel; distinct from
+  `miss_by`'s `auth`, the machine's key on hand), `retry`, `agents`, `tasks`,
+  plus `presence` for a row that appeared, left or changed shape): the key
+  folds only the row fields a card reads, so a context refresh or a
+  background agent's tool call moves no key. `reg` is the SDK registry
+  record's state plus the two fields a card reads, `bgLedger` and
+  `spawnedAt`, and the death marker's identity; the record's other fields
+  move `reg` no further, and a transcript-less live row's `cwd`, `lastSid`
+  and `name` reach the key through its session row, under `transcript` and
+  `names`. Nudge facts invalidate only entries that read
   the changed node's count, failure state or displayed history. The key on hand, the
   host-suspension spans and the debug mode are board-wide inputs: a change
   to one re-derives every session. The clock is not a component of the key:
@@ -3677,6 +3688,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   decodes, else absent for that build; the fault is said once per session per
   cause episode on stderr and as a bell row of the refused kind, anew after a
   build serves or derives the session.
+  `coldLive` counts the living sessions whose cache-only parse read missed,
+  per session per build (a session no client and no judge has parsed rides
+  it every build, so a standing count is those cold-by-design sessions, not
+  a fault), and `coldFlip` the ones the memo held under a warm key and
+  re-read in place through the parser instead of deriving cold (one kernel
+  parse each, counted under `parses` too).
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
@@ -3928,7 +3945,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   it was listed, served while every identity stands because a directory
   entry's creation, removal or renaming moves its parent's stamps and every
   parent is in the list, with `hit` and `miss` (trees vouched for by one stat
-  per known directory against trees walked), `evict` (roots dropped because
+  per known directory against trees walked), `scoped` (reads served from the
+  cycle's one sample with no stat at all: one sample per subagents root per
+  pusher cycle, jobs pass or connect push since 2026-09-18, the first reader
+  validating or walking and every later reader of the cycle served it, so
+  scoped over hit plus miss plus scoped is the share of reads that re-sampled
+  a root another reader took in the same cycle), `evict` (roots dropped because
   no alive session's transcript names them, on every jobs pass and, as a
   belt, after each feed build and from the tracking-off frame), `dirStats`
   (the stats validations paid), `walkMs` and `validateMs` (the time in each,
@@ -4187,7 +4209,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `fail`: a read that failed on a file that exists, answered as no overlay,
   memoized nothing and named once per episode on the kernel's stderr;
   `evict`: entries dropped for sessions that left the alive set; and the
-  gauge `entries`). The interrupt tick drops from `intrMarks`
+  gauge `entries`). `parkedHandoffs` is the feed's fold over the postal log
+  for the handoffs parked in a dead session's maildir (2026-09-18): one
+  carried set of the parked sends not yet recalled or bounced, so a quiet log
+  is one cursor check per feed build where the scan walked every row of the
+  log before (`hit`, `append`, `refold` and `fail` as above, the failure
+  answered as no parked handoffs for that build, memoized nothing and named
+  once per episode on the kernel's stderr; `restore`: the cursor came from
+  the log's checkpoint and the tail alone was stepped; `cold`: a checkpointed
+  cursor without its state, stepped from its cut; and the gauge `entries`,
+  the candidates held). Whether each candidate is still parked is read from
+  the maildir at every build, as before, for no more than the paths the walk
+  checked; the fold only spares the walk. The interrupt tick drops from `intrMarks`
   and `statesOverlay` the entries of sessions outside its alive set each
   cycle; past 256 entries the `statesOverlay` cache also sheds the cursors
   whose reader entry is gone or replaced (they could only refold or restore);
@@ -4242,13 +4275,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   building only the user rows that carry text, so the two say whether a
   dropped echo days back should hold the floor at all. `chatPostal` is
   the chat fold's memo of a tab's sealed postal cards, keyed on the values
-  the cards embed from outside the transcript (the message log's identity
-  and, per card, its caption and its peer's name and colour): `gate` (gate
-  checks that re-hydrated a tab's sealed cards because one of those values
-  moved, or because the entry was sealed outside the pusher's names snapshot
-  and had to be verified), `hit` (checks that verified the sealed cards from
-  their recorded values without hydrating), and `commit_new` (raw postal
-  events hydrated at fold commits; each is hydrated once, when it is first
+  the cards embed from outside the transcript (this session's revision of
+  the postal index: the records addressed to or from it, their outcomes and
+  the records with no recipient, and, per card, its caption and its peer's
+  name and colour; since 2026-09-18 a message between two other sessions
+  moves none of these, so it is a `hit`): `gate` (gate checks that
+  re-hydrated a tab's sealed cards because one of those values moved, or
+  because the entry was sealed outside the pusher's names snapshot and had to
+  be verified), `hit` (checks that verified the sealed cards from their
+  recorded values without hydrating), and `commit_new` (raw postal events
+  hydrated at fold commits; each is hydrated once, when it is first
   sealed). Before this memo every judge pass re-hydrated every tab's sealed
   cards, although a caption is the only judge-written value a card carries.
   `chatLedger` is the chat build's memo of a session's goal-tree walk and
@@ -4616,8 +4652,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   parse pair, captions file, archive record and unit cache, and no goal
   store: its idle path reads none. On the child road the gate runs in the
   child and this block reads this process's counters, which stay at zero
-  while the child judges (the done line carries no tiers block), so
-  `romp perf` prints no gated runs on the `tiers` line.
+  while the child judges, so `romp perf` prints no gated runs on the
+  `tiers` line; the child's own gate counters for its last pass ride its
+  done line and are served as `judge.child.tierGate`.
   `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
   `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper
@@ -4811,15 +4848,23 @@ orphan reply) carry synthetic uuids keyed by their second and ordinal.
 Stage three of the process split (plans/judges-process.md) moves the judge pass into one long-lived child, `romp-judge
 --serve`, that the kernel starts at boot and speaks to over a line protocol on the child's stdin and stdout (JSON, one
 object per line). The child announces `{"op":"ready","pid","judgeVersion","protocolVersion"}` once; the kernel sends
-`{"op":"pass","seq","now","mayStart"}` per producer wake and `{"op":"quit"}` to end; the child answers exactly one
-`{"op":"done","seq","wallMs","tierStarts","tierCpuMs","workerCpuMs","failures","recovered","recordCache","asmCheckpoint",
-"parses","goalIo"}` per pass. Every counter on it is a PER-PASS figure: `wallMs`, `tierCpuMs` and `workerCpuMs` are the
-pass's own, `failures` its tier crashes, and the four blocks (`recordCache` and `asmCheckpoint` from the event model,
-`parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes) are the DIFFERENCES
-against the previous pass's snapshot for every counter, so the kernel can feed its `/perf` counters per pass, while each
-block's GAUGES ride as their current values: in `recordCache` the keys `entries`, `bytes` (the cache's contents now),
-`bytesMax` (the life maximum of `bytes`), `budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document memo's size and cap);
-`parses` and `goalIo` carry counters only. `asmCheckpoint.restoreMs` is a counter like its neighbours (the restore's parts
+`{"op":"pass","seq","mayStart"}` per producer wake, with an OPTIONAL `now`, and `{"op":"quit"}` to end; the child
+answers exactly one `{"op":"done","seq","wallMs","tierStarts","tierCpuMs","workerCpuMs","failures","recovered",
+"recordCache","asmCheckpoint","parses","goalIo","tierGate"}` per pass. The request's `now`: absent or null, the tiers read
+their own clock during the pass, the in-process producer's behaviour, so a measured comparison of the two roads isolates
+the process split from the clock semantics; a number is the explicit clock variant, truncated to the second and handed
+to both tiers for the whole pass, available for a measurement that wants it on its own (2026-09-18). This kernel sends a
+live clock on every pass (`tests/test_judges_process.py` pins the request's fields), so the absent-or-null road is the
+child's tolerance rather than a road this kernel takes, and a comparison of the two roads on it does not isolate the
+process split from the clock semantics. Every counter on
+the done line is a PER-PASS figure: `wallMs`, `tierCpuMs` and `workerCpuMs` are
+the pass's own, `failures` its tier crashes, and the five blocks (`recordCache` and `asmCheckpoint` from the event model,
+`parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes, `tierGate` as the tiers'
+gate counters per stage (`plan`, `group`, `close`, `distill`, `unblock`, `consolidate` and `index`): `ran`, `skipped`, `stamped`,
+`bypassed`, `incomplete`, `due_clock`, the admittance the pass ran under) are the DIFFERENCES against the previous pass's snapshot for every counter, so the kernel can feed its `/perf`
+counters per pass, while each block's GAUGES ride as their current values: in `recordCache` the keys `entries`, `bytes`
+(the cache's contents now), `bytesMax` (the life maximum of `bytes`), `budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document
+memo's size and cap); in `tierGate` the key `stamps` (the stage stamps held now); `parses` and `goalIo` carry counters only. `asmCheckpoint.restoreMs` is a counter like its neighbours (the restore's parts
 since boot, as described above), so the line carries the pass's own restore time. A non-numeric value (a name) rides as
 current too. `recovered` is the child's judge-module recovery flag (the once-per-storm
 edge `consume_judge_recovery` reads), consumed by the child and acted on by the kernel, which re-arms its given-up cards on
@@ -5101,13 +5146,17 @@ frames it received is measured in the panes themselves, by
   per surface and key on stderr, at most eight of one row's by name plus one
   line counting the rest, and the whole latch holds 512 pairs, then says so
   once), cuts every string value at 64 characters at any depth, reads nesting
-  past 8 levels as `null`, stores a `data` that is not an object as `null`,
+  past 8 levels as `null` (a row a value of which was cut or nulled so carries
+  `cut`, the admitted keys it happened under, written by the kernel and admitted
+  from no poster, and the kernel says so once per surface and key on stderr, so a
+  stored value can be told from a whole one), stores a `data` that is not an object as `null`,
   keeps no key for a surface the table does not name, refuses a page's row
   under the kernel's own surface `kernel`, and appends the row to
   `client-diag.jsonl` under the state directory with the dashboard id (`wid`)
   and its own clock. An admitted key whose value lies outside the closed set
-  `CLIENT_DIAG_VALUES` states for it (today chat's `view`, one fixed word;
-  compared as posted, before the 64-character cut) is refused the way an
+  `CLIENT_DIAG_VALUES` states for it (today chat's `view`, one fixed word,
+  and federation's `road`, `wire` or `local`; compared as posted, before the
+  64-character cut) is refused the way an
   unknown key is: the row is stored without it, and one stderr line per
   surface and key names the key and the reason, never the value.
   A frame whose whole synchronous handling ran 100 ms or
@@ -5141,16 +5190,28 @@ frames it received is measured in the panes themselves, by
   open dashboard writes a few MB a day; with the share switch on, the first
   shared row adds about 2 KB of `res`, `env`, `nav` and `marks`. Every row is
   bounded at 24 KiB of JSON, a bound derived from the collector's own caps so
-  that no row it can build is touched (its worst case, every cap reached at
-  once, is about 17.9 KB with share off and 21.3 KB with share on): a `perf`
-  minute row over the bound sheds `frames`, `loaf`, `free` and `slow` in that
-  order until it fits, keeps its other keys, and carries
-  `capped: {bytes, dropped}` (the line's bytes before the shed and the keys
-  shed); any other row over the bound, and a minute row that does not fit
+  that no row it can build is shed or capped while its `wsBytesByHost` map, the
+  one key without a cap, is under the crossing (a long-frame key past 64
+  characters is still stored cut and the row marked `cut`; its worst case, every
+  cap reached at once and eight attached hosts, stored with that marker, is about
+  18.0 KB with share off and 21.5 KB with share on): a `perf`
+  minute row over the bound sheds `wsBytesByHost` whole, then `frames`,
+  `loaf`, `free` and `slow`, in that order until it fits, keeps its other
+  keys, and carries `capped: {bytes, dropped}` (the line's bytes before the
+  shed and the keys shed). The map goes first because it alone can take a row
+  the collector builds over the bound (each position adds 17 to 19 bytes, so
+  on that worst-case row the crossing is 176 positions, and on a smaller row
+  later), and shedding it whole returns such a row to its derived size,
+  under the bound, so the frames and the once-per-page fields stay; it is
+  never cut to the positions that fit, so a stored map is never a partial
+  host count. Any other row over the bound, and a minute row that does not fit
   even bare, is stored as `data: {capped: true, bytes: N, app}` (`app` where
   the row had one) with `t`, `wid`, `surface`, `what` and `reconnect` kept.
-  `romp perf client` skips the whole-row markers and counts both shapes in
-  its header line and its `--json`.
+  `romp perf client` skips the whole-row markers and counts all three loss
+  shapes in its header line and its `--json`: the minute rows that shed keys
+  (by the key shed, every key named), the rows capped whole, and, when any row
+  carried it, the rows carrying `cut` (by the key the cut fell under), so a
+  stored value can be told from a whole one at the reader as at the writer.
 
 Rows carry numbers and code identifiers only, never card text, session names,
 file paths or transcript content: an element id inside an invoker name is
@@ -5165,8 +5226,8 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   span_ms, frames: {<type>: {n, ms_sum, ms_max, n16, n100, hist}}, free: {n,
   p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
   inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
-  visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?, rafGap?,
-  capped?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
+  visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?,
+  wsBytesByHost?, rafGap?, capped?, cut?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
   `waiting`, `timeline`, `files`), or `shell` for the top-level window; `since`
   is the minute's start on the browser's clock (epoch ms) and `span_ms` its
   length (shorter than a minute when the page was hidden or closed); `hist` is
@@ -5180,7 +5241,7 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   the pane shim's test for a pane the shell has set to `display:none`: its
   zero-viewport probe, or the word the pane published as
   `window.__rompPaneHidden` from its own visibility events; `ua` is
-  `chrome-desktop`, `safari-ios` or `other`. The seven optional fields after
+  `chrome-desktop`, `safari-ios` or `other`. The eight optional fields after
   it are the shared fields, present only while the browser's share switch
   (below) is on, numbers, booleans and fixed-vocabulary identifiers only, a
   Performance API the browser lacks reading as `null`, never a guess. Once per
@@ -5210,11 +5271,107 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   `{hiddenN, visibleN, hiddenMs}`, the visibility transitions and the ms
   hidden since this pane's previous row (an idle or muted minute hands its
   counts on to the row that follows); `wsBytes` is the text-frame characters
-  the shim received on this pane's sockets since the previous row (`null`
-  without a shim: the shell, VS Code); `rafGap` is `{n, worst}`, the
-  animation-frame gaps over 50 ms while the document was visible, from a loop
-  that runs only while share is on and the document visible. `capped` is
-  present only on a row the kernel shed or replaced (the bound above).
+  the shim received on this pane's local socket since the previous row
+  (`null` without a shim: the shell, VS Code); `wsBytesByHost` is the same
+  unit for the pane's remote sockets, one number per attached remote host
+  keyed by the host's position in the pane document (`h1` the first remote
+  host this document attached, `h2` the next, in the order hosts first
+  appeared to the document, the kernel's `/tunnels` row order when one answer
+  lists several; one key per host, however many the document attaches; a row
+  the map takes over the kernel's 24 KiB bound is stored without it, above),
+  since the previous row (an idle or muted minute carries on the same way).
+  The two are disjoint: a remote socket's characters are counted under its
+  position and never in `wsBytes`. Positions are assigned per pane document
+  (each pane runs its own federation manager; the row's `app` names the pane),
+  so a page with several panes mints several positions for one machine, one
+  per document (two panes of the same `app` are two documents), and the file
+  holds more rows per host than a per-page grain would give; nothing on the
+  row names the document, so rows from different panes of one `wid` are never
+  folded or compared as one position space. A position is never reused: it is
+  on a row when its host is attached at the
+  flush or received characters in the minute, so the row closing the minute
+  of a host's detach carries the characters it received in it and the rows
+  after carry no key for it, an attached host that received nothing reads
+  0, a host that re-attaches counts on under its old position, and a reload
+  starts over, so `h1` can name a different host after a reload, and names
+  the same one again when the hub's dialable rows (a row with a token and a
+  local port) and their order have not changed: the assignment is re-derived
+  from the kernel's `/tunnels` row order at first sight, so it repeats across
+  page lives for a reader of that order until the roster or its order
+  changes, a row was not dialable at the pane's first poll, or the pane's
+  own attach and detach history differs from a fresh pane's first answer.
+  `GET /tunnels`, an authenticated route, is that order and so a
+  position-to-name map in its own right, as is the state directory the file
+  sits in, whose host registries sit beside the file: `remotes.json` holds
+  the attached set, written in the `/tunnels` row order, so a holder of it
+  maps any position to a name with no client-diag row and no page-life
+  correlation, the order being the kernel's own attached-host order persisted
+  in the same state directory as this file;
+  `remotes-known.json` holds every host ever attached or trusted, attached
+  ones included, each with a `lastAttachedAt` stamp refreshed by every
+  writer (attach, detach, trust and share), written with the newest stamp
+  first, so it names the hosts and not their order. After the file's rotation (8 MB, two
+  files) a pane's host-naming rows can be gone while its later perf rows
+  remain. Reading a registry is itself a join, and what any of these roads yields is
+  exact for a pane life that attached one host; for several it is an order
+  inference, holding while `remotes.json` still carries the row order the
+  pane's `/tunnels` answer had. The
+  map's keys carry positions and no host name, a property the collector
+  holds: the federation manager mints each key as `h` plus the attach
+  ordinal and the collector keeps a key only in the `h<n>` form (`bytesByHost`,
+  a regular-expression test in the page bundle, the one enforcement of the
+  property; the kernel has none); the kernel admits the top-level key and
+  does not inspect the map's keys, as it
+  inspects no nested key of any admitted object (`marks`, `env`, `nav`,
+  `res`, `frames`, `loaf` and federation's `counts` alike): a nested string
+  value is cut at 64 characters, a nested key is stored as posted, and a row a
+  value of which was cut carries `cut` naming the key. Host names reach the
+  file wherever an admitted value can hold one, in four forms: a bare name
+  under a `host` key (the shell's push-test row; every federation row that
+  carries its conn's host, the `hostconn`, `feedDelta-nobase`,
+  `feedDelta-stale`, `feedDelta-apply`, `sendqueue` and `senddrop` rows, with
+  the poll rows carrying an empty host and the local nobase and apply rows the
+  word local; and the kernel's own `wsopen` row for a spliced
+  relay, `kind` `hub`, above); a host-prefixed session id, `<host>:<uuid>`,
+  when the row concerns a remote session (the chat surface's `sid`, `id`,
+  `ids` and `active`: every remote session id a federated page holds carries
+  its host, and the 64-character cut keeps the head, prefix included; and the
+  shell's `tap-pending-land` and `tap-vanish-land` rows' `sid8`, the first 8
+  characters of the push ledger row's sid, which the test push files as the
+  active tab's whole data-id and the relay prefixes with its origin, so a host
+  name's first 8 characters or a short host whole, on every row of both kinds
+  that concerns a remote session); a host-keyed map (federation's `feedmerge`
+  `counts`); and a host name at the tail of a postal message id,
+  `<epoch>.<pid>_<hex>.<host>` (the postal service bakes the delivering
+  kernel's postal host in): the feed surface's `id`, `appeared` and `gone`
+  carry item ids, and a parked hand-off's card id is `parked:` plus that
+  message id (the card's own kernel's postal host, on a single-kernel page the
+  page's own machine's, of which 5 to 11 characters survive the cut) and a
+  quarantined relay's is `quarantine:` plus the held mail's id (its origin
+  kernel's postal host, 0 to 4 characters surviving), on every row of the kind
+  that names such a card, filed on routine use and not gated by the share
+  switch; and the chat surface's `anchor` on one road, a landing miss for a
+  deep link the timeline's message connector filled with a postal message id,
+  the last 12 characters of it, a host of up to 11 characters whole. The chat
+  road is older than this field, is not gated by the share switch, and is
+  filed on routine use (a send, a scroll, a tab set: up to 40 scroll rows a
+  minute per kind), so on a federated page it is the most frequent
+  host-carrying row type; the position-to-name map itself follows from the
+  rows that record a host at attach (federation's `hostconn` open rows of the
+  same pane), not from chat or feed rows alone, which name a host without its
+  position. `tests/test_client_diag_allowlist.py` classifies every admitted
+  key of every surface by the content its value can carry, following each
+  value to its producers (a field is a carrier if any producer chain can put a
+  host name in it, classified by that chain's range, never by the field's
+  typical content), so a new key fails there until classified. The key is absent, not `null`, when no remote host is attached
+  at the flush and none received characters in the minute: a page that never
+  attached one, the shell, and the rows after every host has detached. `rafGap` is
+  `{n, worst}`, the animation-frame gaps over 50 ms while the document was
+  visible, from a loop that runs only while share is on and the document
+  visible. `capped` is present only on a row the kernel shed or replaced
+  (the bound above); `cut`, on any surface's row, only when a value under one
+  of its admitted keys was cut at 64 characters or nulled past depth 8, and it
+  lists those keys.
 - `{"t", "wid", "surface": "perf", "what": "slowframe", "data": {app, type, ms,
   dom, loaf?: {ms, blocking_ms, top: [{k, ms, inv}]}}}`. `type` is the frame
   as received on the wire and `ms` its whole synchronous handling, the
@@ -5236,7 +5393,13 @@ arrival at the kernel, frame counts and long frames); heap and DOM at the last
 sample; and the five slowest slow frames in the window with their attribution,
 plus how many more there were. The shell's row shows as one more pane of its
 dashboard: no frame types, the long frames it observed and the pane scripts
-they name. An absent file or one without perf rows is
+they name. The header's closing clause, present only when the file lost
+something, counts the rows the kernel stored short in each of its three shapes:
+minute rows that shed keys (by key, every key shed named), rows capped whole,
+and, when any row carried it, rows carrying `cut` (by the key the cut fell
+under); `--json` carries the same as
+`shed_minute_rows`, `shed_keys`, `capped_rows`, `cut_rows` and `cut_keys`. An
+absent file or one without perf rows is
 reported as no browser telemetry yet (the bundles predate it or no dashboard
 has loaded them: rebuild the bundles and reload the dashboard); perf rows all
 older than the window are reported with their age. `--json` prints the folded
@@ -6327,14 +6490,16 @@ Bounds and counters, all on `/perf` under `judge`:
 - On the child road `parses.judge` and the `goals` block read zero: the judges' parses and store writes happen in the
   child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`. So do
   `judge.tiers` and the judge-module memos (`memos.chain`, `courierSkip`, `plannerSkip`, `backref`, `captions`): the
-  gate and those memos run in the child, the done line carries neither, and `romp perf` prints no gated runs and zero
-  chain memo hits while the child judges. `memos.goalArchive` moves here too: a store load that replays a `restore`
-  override (`_replay_overrides`, under `load_goals` and `load_goals_shared`) reads the archive through the counted
-  shared reader. `judge.cpu_ms_workers` is the in-process pools' share, near zero on this road.
+  gate and those memos run in the child. The done line carries the gate's per-pass counters, served as
+  `judge.child.tierGate`, and none of the memos; `romp perf` reads this process's `judge.tiers` and `memos.chain`, so
+  it prints no gated runs and zero chain memo hits while the child judges. `memos.goalArchive` moves here too: a store
+  load that replays a `restore` override (`_replay_overrides`, under `load_goals` and `load_goals_shared`) reads the
+  archive through the counted shared reader. `judge.cpu_ms_workers` is the in-process pools' share, near zero on this
+  road.
 - `cpu_ms_sum` counts the child's tier and worker CPU as it counts the in-process tiers and pools; `cpu_ms_child_workers`
   is the workers' share alone; `child` is the last done line's numbers: `seq`, `pid`, `t`, `chars` (the line's length),
   `status` (`ok` or `failed`), `failures` (a count), `recovered`, `wallMs`, `tierStarts`, `tierCpuMs`, `workerCpuMs`,
-  and its four counter blocks (`recordCache`, `asmCheckpoint`, `parses`, `goalIo`) as the child sent them. The line's
+  and its five counter blocks (`recordCache`, `asmCheckpoint`, `parses`, `goalIo`, `tierGate`) as the child sent them. The line's
   text is not served: its first failure is an exception message that can name a path or quote session text, and the
   snapshot is meant to be pasteable (2026-09-18). `tierStarts` is counted at the request, so a long pass reads it
   during the pass.

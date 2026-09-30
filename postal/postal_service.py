@@ -5,7 +5,7 @@
 # stdlib-only program (no deps, nothing to install) with several modes:
 #
 #   romp-postal-service serve            run the message bus (HTTP, singleton on 127.0.0.1:PORT)
-#   romp-postal-service ensure           start the bus if it isn't running (race-safe; no-op on remote)
+#   romp-postal-service ensure           start the bus if it isn't running (race-safe; no-op on remote); says the road it took on stdout
 #   romp-postal-service mcp              run the per-session stdio MCP server (tool-native messaging)
 #   romp-postal-service send <to> <txt>  deliver a message to a live romp session       [CLI]
 #   romp-postal-service inbox            print + consume this session's mail             [CLI]
@@ -78,6 +78,11 @@ MAILHELD = STATE / "mail-held"         # <sid>: one message id per line, claimed
 WARNED = STATE / "warned-undelivered"  # marker per msg-id we've already warned a sender is STILL UNDELIVERED (one-time)
 LOG = STATE / "server.log"
 PIDFILE = STATE / "server.pid"
+PORTFILE = STATE / "postal-port"        # {"port", "pid"}: the port this bus BOUND, written after the bind and removed on a clean
+#                                          exit under the pid it names (the kernel's serve-port pattern), so the kernel's loopback
+#                                          dials read the bus's own answer ahead of the environment (2026-09-18: a kernel and a bus
+#                                          that read ROMP_POSTAL_PORT from different environments dialed different ports, and a
+#                                          held message's approve reached a bus that never held it, refused as "no held message")
 NAMES_DIR = Path(os.environ.get("ROMP_STATE_DIR")
                  or Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")) / "romp") / "names"
 TLDIR = STATE.parent / "timeline"     # append-only logs for the timeline view (messages.jsonl)
@@ -1331,20 +1336,26 @@ def _agent_rows(sessions):
 
 def local_agents_checked(threads=False):
     """(local_agents rows, answered) — the honesty-arm variant for consumers whose REFUSALS ride the
-    listing (the inbound relay's bounces, the presence producer): 'answered' distinguishes a kernel
-    that said "no sessions" from one that couldn't answer at all (mid-restart), the same bit the
-    sending resolver has carried since the answered-but-absent round (2026-08-31).
+    listing (the inbound relay's bounces, the presence producer, quarantine_decide's approve and its check
+    that a decision's session is this machine's): 'answered' distinguishes a kernel that said "no
+    sessions" from one that couldn't answer at all (mid-restart), the same bit the sending resolver
+    has carried since the answered-but-absent round (2026-08-31).
 
     The read is also RECORDED, as (answered, the sids the rows own), for the deadness mirror's one release
     (_LOCAL_LISTING, read by _local_listing_owned; round 3 of fork PR #897, the reviewer's ruling): a heartbeat
     row whose sid the local kernel's ANSWERED listing owns is dropped at the mirror's next write, since rules 1
     and 2 of the judge's ladder own a sid the local kernel lists. The record is the latest word any
     local_agents_checked consumer read (the recorder at every beat, the presence producer at every exchange, the
-    autostop gate at every poll, the inbound relay's bounces); a read that did not answer is recorded as such,
+    autostop gate at every poll, the inbound relay at every message whose mid it has not seen, and quarantine_decide
+    at every approve of a held message and, when it reads no hold for the message and the decision names a
+    session, in its check that the session is this machine's); a read that did not answer is recorded as such,
     and releases nothing. A read without thread rows owns no comment thread's sid (the seam filters as the route
-    does), so a thread's row is released by the recorder's read, which asks for them: the recorder hands the sid that
+    does), so a thread's row is released only after a read that asks for them: the recorder's, the inbound
+    relay's or quarantine_decide's check. The recorder's alone is keyed to its write: the recorder hands the sid that
     read owns to the write it triggers (_write_remote_sids' `released`; round 4 of fork PR #897, the thirty-fourth
-    commit), so a thread-less read landing before that write takes the lock does not keep the row."""
+    commit), so a thread-less read landing before that write takes the lock does not keep the row. The relay's
+    and the check's reads are recorded like any other, and a thread-less read landing before the next write
+    replaces them."""
     rows, answered = _kernel_sessions_checked(threads=threads)
     _LOCAL_LISTING[0] = (bool(answered), frozenset(str(r.get("id")) for r in rows
                                                     if isinstance(r, dict) and r.get("id")))
@@ -1521,10 +1532,10 @@ def _record_heartbeat(sid, name):
     thirty-fourth commit): when it answers local, the sid it owns is handed to that write as `released`, which
     the writer unions with the last read under _REMOTE_SIDS_LOCK, so a beat that meets such a listing is neither
     recorded nor kept whatever read lands between this one and the write. Until that commit the write read the
-    last read alone, and a thread-less read in that window (the autostop gate's, the presence producer's) owned
-    no comment thread's sid, so a thread's blink row and entry stayed while its loop, told local, beat no more.
-    A listing that did not answer releases nothing, so a beat filed during a blink stays, heard, until one
-    answers."""
+    last read alone, and a thread-less read in that window (the autostop gate's, the presence producer's,
+    quarantine_decide's approve) owned no comment thread's sid, so a thread's blink row and entry stayed while
+    its loop, told local, beat no more. A listing that did not answer releases nothing, so a beat filed during a
+    blink stays, heard, until one answers."""
     local = False
     if sid and _safe_id(sid):
         rows, answered = local_agents_checked(threads=True)
@@ -3148,12 +3159,41 @@ class Handler(BaseHTTPRequestHandler):
             mid = str(data.get("mid") or "")       # blocked card via the kernel; approve delivers, deny drops
             action = str(data.get("action") or "").strip().lower()
             text = data.get("text")                # optional human-edited body for approve
-            ok, err = quarantine_decide(mid, action, text, feedback=data.get("feedback"))
+            ok, err = quarantine_decide(mid, action, text, feedback=data.get("feedback"), sid=data.get("sid"))   # sid: the recipient the kernel names (2026-09-18)
             return self._send({"ok": ok} if ok else {"ok": False, "error": err}, 200 if ok else 400)
         if u.path == "/restore":                   # the kernel handing back fed-and-lost mail by id (restore_stranded)
             payload, status = restore_stranded(data)
             return self._send(payload, status)
         self._send({"error": "not found"}, 404)
+
+def _token_mark():
+    """A short mark of THIS bus's serve token (a sha256 prefix, never the token), so a kernel trusts the record only when its own
+    token makes the same mark: a record left by another bus, another state root's world, or a reused pid can never redirect a
+    kernel's dial to a bus that is not its own (2026-09-18)."""
+    try:
+        return hashlib.sha256(str(SERVE_TOKEN or "").encode()).hexdigest()[:16]
+    except Exception:
+        return ""
+
+
+def _write_port_record(port):
+    """Publish the port this bus bound as {"port", "pid", "tok"} (PORTFILE), atomically; best-effort and said when it fails, since
+    a kernel that cannot read the record falls back to the environment and a mismatch there is the fault this removes."""
+    try:
+        _atomic_json_put(PORTFILE, {"port": int(port), "pid": os.getpid(), "tok": _token_mark()})
+    except Exception as e:
+        _log("the port record could not be written (%s); the kernel falls back to ROMP_POSTAL_PORT" % e)
+
+
+def _remove_port_record():
+    """On a clean exit, remove the record when it still names THIS process (a newer bus's record is left standing)."""
+    try:
+        rec = json.loads(PORTFILE.read_text())
+        if int(rec.get("pid") or 0) == os.getpid():
+            PORTFILE.unlink()
+    except Exception:
+        pass
+
 
 def _log(msg):
     try:
@@ -3695,6 +3735,7 @@ def serve():
         PIDFILE.write_text(str(os.getpid()))
     except Exception:
         pass
+    _write_port_record(httpd.server_address[1])
     _log("bus up on %s (pid %d)" % (BASE, os.getpid()))
     boot_fp = _source_fingerprint()                              # so the monitor can reload if the code changes under us
     threading.Thread(target=_monitor, args=(httpd, boot_fp), daemon=True).start()
@@ -3707,6 +3748,7 @@ def serve():
                 PIDFILE.unlink()
         except Exception:
             pass
+        _remove_port_record()
     return 0
 
 # ───────────────────────── client (talks to the bus) ─────────────────────────
@@ -4742,12 +4784,14 @@ def _local_listing_owned():
     """The sids the local kernel's listing owns, for the deadness mirror's one release (round 3 of fork PR #897,
     the reviewer's ruling, the seventeenth commit): the listing as this bus LAST read it through
     local_agents_checked (_LOCAL_LISTING: the recorder at every beat, the presence producer at every exchange,
-    the autostop gate at every poll, the inbound relay's bounces) when that read ANSWERED; an empty set when it
-    did not answer, or none has been read in this process. A listing that did not answer releases nothing: its
-    rows are [] (the fetch collapsed), and the last answered rows the presence producer serves through a blink
-    are a cache, not the listing's word at this write, so they are never read here; a beat filed during the
-    blink stays until a listing answers. Nothing here asks the kernel: the release rides the reads the bus
-    already makes, so a write costs the kernel nothing more."""
+    the autostop gate at every poll, the inbound relay at every message whose mid it has not seen, and
+    quarantine_decide at every approve of a held message and, when it reads no hold for the message and the
+    decision names a session, in its check that the session is this machine's) when that read ANSWERED; an empty
+    set when it did not answer, or none has been read in this process. A listing that did not answer releases
+    nothing: its rows are [] (the fetch collapsed), and the last answered rows the presence producer serves
+    through a blink are a cache, not the listing's word at this write, so they are never read here; a beat filed
+    during the blink stays until a listing answers. Nothing here asks the kernel: the release rides the reads the
+    bus already makes, so a write costs the kernel nothing more."""
     last = _LOCAL_LISTING[0]
     return last[1] if last and last[0] else frozenset()
 
@@ -5702,10 +5746,13 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     kernel lists, its transcript being local, so the row said nothing the ladder needed and would otherwise have
     stood for the file's life (in peer mode every beat that reaches HEARTBEATS is such a session's, filed during
     a blink). The event is the listing's word, read by the recorder at every beat, by the presence producer at
-    every exchange and by the autostop gate at every poll (_monitor_tick reads before it writes); a listing that
-    did not answer releases nothing, and the last answered rows the presence producer serves through a blink are
-    a cache, never read here. A read without thread rows does not own a comment thread's sid (the seam and the
-    route filter alike), so a thread's blink beat waits for the recorder's read, which asks for them. The release
+    every exchange, by the autostop gate at every poll (_monitor_tick reads before it writes), by the inbound
+    relay at every message whose mid it has not seen, and by quarantine_decide at every approve of a held message and
+    in its check of the session a decision names when it reads no hold; a listing that did not answer releases
+    nothing, and the last answered rows the presence producer serves through a blink are a cache, never read here. A
+    read without thread rows does not own a comment thread's sid (the seam and the route filter alike), so a thread's
+    blink beat waits for a read that asks for them: the recorder's, which hands the sid it owns to its own write, or
+    the inbound relay's or quarantine_decide's check, if no thread-less read lands before the next write. The release
     reaches HEARTBEAT rows alone, in memory and in the carry: a heard peer row or via row naming an owned sid
     beside another is written whole, and the legacy list, a peer row or a via row doing so is carried whole, since
     its other sids are that source's word: a drop of such a row for the owned sid would leave them in no row, and a
@@ -5984,8 +6031,8 @@ def _write_remote_sids(released=()):
     _record_heartbeat passes when its own answered read answers local, and the write unions it with
     _local_listing_owned() under _REMOTE_SIDS_LOCK. Until that commit the write read the last read alone, and a
     thread-less read landing between the recorder's read and this lock (the autostop gate's, the presence
-    producer's) owned no comment thread's sid, so the thread's blink row and entry both stayed while its loop,
-    told local, beat no more (the witness: tests/test_postal_remote_sids_mirror.py
+    producer's, quarantine_decide's approve) owned no comment thread's sid, so the thread's blink row and entry
+    both stayed while its loop, told local, beat no more (the witness: tests/test_postal_remote_sids_mirror.py
     test_the_recorders_release_is_keyed_on_its_own_read_whatever_read_lands_before_its_write, the window held
     open by this lock and an event).
     FORGETTING THE ENTRY REACHES PAST THE MIRROR, and that is the design (round 4 of fork PR #897, the reviewer's
@@ -6857,7 +6904,7 @@ def quarantine_del(mid):
     except OSError:
         return False
 
-def quarantine_decide(mid, action, text=None, feedback=None):
+def quarantine_decide(mid, action, text=None, feedback=None, sid=None):
     """Approve (deliver, optionally with human-edited text) or deny (drop) a held message. Returns
     (ok, error). Approve replays the deliver() the gate would have run for a trusted peer, so the
     message lands as normal postal mail (from-attribution intact). The mid was already peer_seen'd at
@@ -6869,6 +6916,13 @@ def quarantine_decide(mid, action, text=None, feedback=None):
     origin host's own trust gate like any inbound mail."""
     rec = quarantine_get(mid)
     if rec is None:
+        if sid:
+            agents, answered = local_agents_checked(threads=True)
+            if answered and not any(str(a.get("id") or "") == str(sid) for a in agents):
+                # the decision names a recipient this bus does not serve: the kernel that asked dialed a bus that is not
+                # its own (a port the two read differently, or a stale legacy forward), so the fault names itself
+                return False, ("this bus holds nothing for session %s, which is not one of this machine's: is the kernel "
+                               "dialing its own bus? (its port record is STATE/postal/postal-port)" % str(sid)[:8])
         return False, "no held message '%s'" % mid
     if action == "deny":
         note = " ".join(str(feedback or "").split())
@@ -7750,26 +7804,79 @@ def _remote_nudge():
         sys.stderr.write("[romp mail] you look like a remote machine on a local-only "
                          "Romp Postal Service — run `romp mail remote` to reach your laptop's sessions.\n")
 
-def ensure():
-    """Make sure the bus is reachable. On a designated client-only host (remote),
-    rely on the ssh tunnel rather than starting a local bus."""
-    if ping():
+def _pid_alive(pid):
+    """Whether a process with this pid runs: a signal-0 probe (a pid this process may not signal still runs)."""
+    try:
+        pid = int(pid)
+        if pid <= 0:
+            return False
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
         return True
+    except (ValueError, TypeError, OverflowError, OSError):
+        return False
+    return True
+
+
+def _own_bus_record():
+    """The bus's own record (PORTFILE) when it names a LIVE local bus of THIS token: {"port", "pid", "tok"} with a port, a pid
+    that runs and a mark equal to this process's _token_mark(); None for no record, a torn one, a dead pid or another token's
+    mark (another state root's world, a reused pid). The three tests the kernel's _bus_port applies before it trusts the
+    record; here they say whether the machine's own bus is up, whichever port answered the ping."""
+    try:
+        rec = json.loads(PORTFILE.read_text())
+        if int(rec.get("port") or 0) > 0 and _pid_alive(rec.get("pid")) and str(rec.get("tok") or "") == _token_mark():
+            return rec
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return None
+
+
+ENSURE_OWNED = ("spawned", "up")   # the roads of ensure_road on which this machine owns a local bus; the kernel arms its
+#                                    trust in the port record on these alone (kernel _BUS_OWNED_ROADS: KEEP IN SYNC)
+
+
+def ensure():
+    """Make sure the bus is reachable: True when one answers, by whichever road ensure_road took."""
+    return ensure_road()[0]
+
+
+def ensure_road():
+    """Make sure the bus is reachable, and say by which ROAD: (ok, road). On a designated client-only host (remote), rely on
+    the ssh tunnel rather than starting a local bus. The road is for the kernel, which trusts the bus's port record only for
+    a bus of its own (kernel _BUS_ENSURED; the fold 3 review, 2026-09-21: an exit 0 alone armed that trust, a client-only
+    host's ping of the tunnel included, and a live local record then redirected dials meant for the tunnel). The roads:
+      spawned      this call started the bus and it answered
+      up           the machine's own bus was already answering: its record names a live pid under this token
+      answering    something answered on the environment's port, but no live record of this token claims a local bus (a
+                   stale legacy tunnel forwarding another machine's bus, another environment's bus, a bus whose record
+                   write failed): reachable, owned by nobody here
+      client-only  a designated client-only host: the ping is all it does, it starts nothing
+      refused      the fixed-port refusal (a hermetic kernel under a test), said on stderr
+      down         nothing answered
+    Only `spawned` and `up` (ENSURE_OWNED) are a bus of this machine's own."""
+    if ping():
+        if is_client_only():
+            return True, "client-only"
+        return True, ("up" if _own_bus_record() else "answering")
     if is_client_only():
-        return ping()
+        return ping(), "client-only"
     why = _fixed_port_refusal()   # 2026-09-10: a hermetic kernel's ensure never takes the shared port
     if why:
         _refuse_loudly(why)
-        return False
+        return False, "refused"
     STATE.mkdir(parents=True, exist_ok=True)
     logf = open(LOG, "a")
     subprocess.Popen([sys.executable, os.path.abspath(__file__), "serve"],
                      stdout=logf, stderr=logf, stdin=subprocess.DEVNULL, start_new_session=True)
     for _ in range(40):           # ~4s
         if ping():
-            return True
+            return True, "spawned"
         time.sleep(0.1)
-    return ping()
+    ok = ping()
+    return ok, ("spawned" if ok else "down")
 
 def restart():
     """Force a FRESH bus process so 'restart everything' (`romp refresh`) actually includes the bus, not
@@ -8836,7 +8943,10 @@ def main(argv):
         print(USAGE); return 0
     cmd, rest = argv[0], argv[1:]
     if cmd == "serve":   return serve()
-    if cmd == "ensure":  return 0 if ensure() else 1
+    if cmd == "ensure":
+        ok, road = ensure_road()
+        print("ensure: road=%s" % road)   # read by the kernel's ensure runner (kernel _ensure_postal_bus); the SessionStart hook discards stdout
+        return 0 if ok else 1
     if cmd == "restart": return 0 if restart() else 1   # `romp refresh` bounces the bus too, not just the kernels
     if cmd == "mcp":     return mcp()
     if cmd == "remote":  return setup_remote(force=("--force" in rest or "-f" in rest))

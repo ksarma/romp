@@ -3196,7 +3196,7 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs marked over a document with an unclosed `<kbd>`,
   `<pre>`, `<code>` or `<script>` and holds decision 52's scope sentence to the lexer (every later block unescaped
   until an end tag of any of the four names or the document's end, `inLink` the same); its lexer legs skip where
-  marked is not installed, which is every run of CI's shell job, so
+  marked is not installed, which is every run of CI's vendored-tooling job, so
   `ui/webview/file-review-plan-inlinetag-rawblock.test.ts` (the second round) holds the same scope through both
   callers' lexes (mdBlock's marked.lexer over a copy of the defaults, `placeTokens`' `Lexer.lex`) under the one
   configuration, built and run by the extension job's `npm test`, and the tools module holds that twin and its
@@ -5505,7 +5505,8 @@ document stands on its own, each with the reasoning it was given.
     to the module, both callers, the guide and the tree; `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs
     marked over a document with an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` and holds the scope sentence
     above to the lexer: every later block unescaped, an end tag of any of the four names clearing it, `inLink` the
-    same, where marked is installed (CI's shell job installs nothing, so those legs skipped there);
+    same, where marked is installed (CI's vendored-tooling job, the tools modules' runner, installs nothing, so those
+    legs skip there, as they did in the Shell job before it);
     `ui/webview/file-review-plan-inlinetag-rawblock.test.ts` (the second round) runs the same documents through both
     callers' lexes under the one configuration inside the extension job's `npm test`, so the scope sentence has an
     arbiter in CI, and the tools module holds that twin and its runner to the tree. The first round added three
@@ -5523,8 +5524,8 @@ document stands on its own, each with the reasoning it was given.
     guide's sentence on the tags that take the rest of the file when they stay HTML too, `<title>`, `<script>`,
     `<style>` and `<iframe>` first on their line (block `html` tokens) or written with the slash mid-sentence (inline
     `html` tokens the rule leaves), `<textarea>` beside them. Its lexer legs skip where marked is not installed, which
-    is every run of CI's shell job, so `ui/webview/guide-own-html-block-tag.test.ts` (the same round) runs them
-    through both callers' lexes under the viewer's configuration inside the extension job's `npm test`, and
+    is every run of CI's vendored-tooling job, so `ui/webview/guide-own-html-block-tag.test.ts` (the same round) runs
+    them through both callers' lexes under the viewer's configuration inside the extension job's `npm test`, and
     `tests/test_guide_files_own_html_foreign_tag.py` holds that sentence in its place in the paragraph and the rule's
     two exclusions at the source. `tools/file-review-plan-inlinetag-records.test.mjs` (the second
     round) holds this record's account of the first round to the code: the stacks per name, `IMG_ALIAS` outside the

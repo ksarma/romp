@@ -41,7 +41,7 @@ before the high-water mark, a second "Yesterday" in `api`). The T344 half is red
 bundle as is: the echoes then sat in the last turn, so `web`'s rows stepped back in time and its "Yesterday" opened the
 10:00 row (not the 09:47 echo), and `api` had no weekday divider leading the transcript (its stale run sat among
 yesterday's rows, with nothing opening its day). Skips LOUDLY without the extension deps or a Playwright browser; the
-extension CI job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a
+served-pages CI job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a
 failure there. SYNTHETIC fixtures only (sessions web and api, invented notice texts, the notes-api demo world)."""
 import json
 import os
@@ -254,11 +254,11 @@ class ServedDayDivider(unittest.TestCase):
     @classmethod
     def _boot(cls):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
-            raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served guard needs them; CI's extension job has them and requires this file to run")
+            raise unittest.SkipTest("extension deps absent (npm ci not run here): the served guard needs them; CI's served-pages job has them and requires this file to run")
         probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p.chromium.executablePath())",
                                 os.path.join(EXT, "node_modules", "playwright")], capture_output=True, text=True)
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
-            raise unittest.SkipTest("no playwright browser on this box — the served guard needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served guard needs one; CI's served-pages job installs Chromium and requires this file to run")
         cls.lab = tempfile.mkdtemp(prefix="day-divider-")
         cls.before = os.environ.get("DD_BEFORE_DIST", "")
         dist = os.path.join(cls.lab, "dist")
@@ -337,7 +337,7 @@ class ServedDayDivider(unittest.TestCase):
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         if p.returncode == 3:
-            raise unittest.SkipTest("no playwright browser on this box — the served guard needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served guard needs one; CI's served-pages job installs Chromium and requires this file to run")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
