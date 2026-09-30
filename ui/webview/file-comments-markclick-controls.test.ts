@@ -325,7 +325,7 @@ function answer(w: World, s: Status, m = lastOf(w, "fileComments", "status")): v
   if (s.root && s.configMtimeNs !== null) w.mtimes[s.root + "/.trackchanges/config.json"] = s.configMtimeNs;
 }
 /** Mount the panel's unit over the stand-in and answer its first status ask: the marks paint with the panel CLOSED (every
- *  status runs paintAll); with `open`, click the unit's button and answer the second ask, so the aside mounts. */
+ *  status runs the pass, paintPass: through #latchCardState when it differs, through paintAll when it does not); with `open`, click the unit's button and answer the second ask, so the aside mounts. */
 async function mount(w: World, open: boolean, s: Status = status()): Promise<{ unit: El; button: El; aside: El | null }> {
   const fc = await import("./file-comments");
   const unit = fc.fileCommentsAction.mount(w.ctx) as unknown as El;

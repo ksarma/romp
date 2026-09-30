@@ -5377,7 +5377,7 @@ def _sdk_module_for_the_road_pins():
     """The module the connect loop imports ClaudeSDKClient from, and whether this call installed it: the installed SDK when
     there is one, else a stand-in with an inert class for any name the backend imports. The road pins stub the transport and
     fake the client, so they need no package; the stand-in is for an interpreter without one (a box venv without the SDK, the
-    vscode-extension job's served-page pytest step; every Python matrix cell installs it since #872), and a gate on the package
+    served-pages job's served-page pytest step; every Python matrix cell installs it since #872), and a gate on the package
     would let a re-key on the pre-read go green wherever the package is absent (the follow-up's item a). The stand-in lives in
     sys.modules only for the test that asked (its tearDown removes it): left behind, it made every later import of the SDK
     succeed with inert classes, and the kernel's own wiring took roads it never takes without the package (two shared-parse

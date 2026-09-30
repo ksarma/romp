@@ -230,7 +230,7 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   assert.match(PANEL, /composerBox = el\("div", "fc-composer"\);/);
   assert.match(PANEL, /composerActs = el\("div", "fc-actions"\);/);
   assert.match(PANEL, /composerErr = el\("div"\);/, "the composer's error slot is a class-less div");
-  assert.match(PANEL, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/);
+  assert.match(PANEL, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log, this\.live\);/);
   // the fresh list lands in the cards section — wholesale, or grafted around a reply's box standing in a card the fresh
   // list keeps (swapCards; file-comments-reply-keep.test.ts) — and the composer is rendered after it, before the send
   // section: the box is placed into a card of the fresh list (the reply follow-on, 2026-09-07; file-comments-reply-place.test.ts)

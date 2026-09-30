@@ -378,6 +378,7 @@ class Collector(unittest.TestCase):
         # the three identity memos' readers land here (review find, 2026-09-08: they had no consumer)
         self.assertEqual(set(snap["memos"]), {"pass", "shared", "chain", "nudgeGate", "nudgeWalk", "convergeDeclined", "sessionsListing", "cleared", "courierSkip", "backref", "captions", "goalArchive", "plannerSkip", "ghostDropped",
                                               "bgTops", "liftGate", "intrMarks", "deadWait", "tickSeen", "statesOverlay", "lanes", "spendTree", "summaryAnchor",
+                                              "parkedHandoffs",   # the feed's parked-handoff fold over the postal log (2026-09-18)
                                               "judgingBand",   # the judging band's per-row memo and horizon cursor (2026-09-16)
                                               "subagentTree",   # the subagents directory walk memo (2026-09-16): served vs walked, roots held
                                               "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
@@ -416,6 +417,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["memos"]["intrMarks"], km._intr_marks_memo_report())
         self.assertEqual(set(snap["memos"]["statesOverlay"]), {"hit", "append", "refold", "fail", "evict", "entries"})
         self.assertEqual(snap["memos"]["statesOverlay"], km._states_overlay_report())
+        self.assertEqual(set(snap["memos"]["parkedHandoffs"]), {"hit", "append", "refold", "restore", "cold", "fail", "entries"},
+                         "the parked-handoff fold's paths, pre-seeded so the key set is fixed, and its occupancy (2026-09-18)")
+        self.assertEqual(snap["memos"]["parkedHandoffs"], km._parked_fold_report())
         for blk in ("intrMarks", "statesOverlay"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
@@ -973,7 +977,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty", "memo"})   # dirty: this fork's forced-rebuild counter beside the memo
         memo = snap["builds"]["feed"]["memo"]
         self.assertEqual(set(memo), {"hit", "miss", "evict", "entries", "bytes", "bound", "derived", "miss_by",
-                                     "failed", "failing"})   # failed: derivations that raised, cumulative; failing: sessions whose last one did (2026-09-17)
+                                     "failed", "failing",   # failed: derivations that raised, cumulative; failing: sessions whose last one did (2026-09-17)
+                                     "row_by",            # a row miss by the row position that moved (2026-09-18)
+                                     "coldLive", "coldFlip"})   # coldLive: living sessions whose cache-only parse read missed, per build; coldFlip: those re-read in place because the memo held them warm (2026-09-18)
         # ...and the reference's builds.feed.memo paragraph names every counter the block serves, so a counter cannot
         # ship undocumented (2026-09-18: `failed` and `failing` arrived with the card-build containment and the paragraph
         # named the eight older ones only). The slice: from the paragraph's opening line to the next block's bullet.
@@ -983,6 +989,7 @@ class Collector(unittest.TestCase):
         for k in memo:
             self.assertIn("`%s`" % k, para, "builds.feed.memo `%s` is not named in the reference's memo paragraph" % k)
         self.assertEqual(set(memo["miss_by"]), set(km._FEED_MEMO_LABELS) | {"cold"})
+        self.assertEqual(set(memo["row_by"]), set(km._FEED_ROW_FIELDS) | {"presence"})
         self.assertEqual(memo["bound"], km.FEED_MEMO_BYTES)
         self.assertEqual(memo, km._feed_memo_report())
         for k, v in memo.items():
@@ -1108,14 +1115,17 @@ class Collector(unittest.TestCase):
     def test_judge_child_is_served_as_a_size_and_a_status_never_the_line(self):
         """judge.child stood as the judges' child's done line verbatim (2026-09-18, a paste-safety review of the snapshot):
         its failures.first is an exception message, which names paths and quotes session text. The served block is the
-        line's length in characters, one of two fixed status tokens, the line's per-pass numbers and its four counter
-        blocks as the child sent them (numbers are not a leak); the failures are a count; the line's text never reaches
-        the snapshot."""
+        line's length in characters, one of two fixed status tokens, the line's per-pass numbers and its five counter
+        blocks as the child sent them (numbers are not a leak; the fifth, tierGate, is the tiers' gate counters per
+        stage and the stamps held, fixed names over integers, served since fold 3 brought it onto the line); the
+        failures are a count; the line's text never reaches the snapshot."""
         home = "/home/tester/.claude/projects/-home-tester-code-notes-api/%s.jsonl" % SID
         first = "OSError: [Errno 2] No such file or directory: '%s'" % home
         blocks = {"recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}}},
                   "asmCheckpoint": {"restored": 1, "hydratedBy": {"_unit_text<-build_session": 10}},
-                  "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}}
+                  "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1},
+                  "tierGate": {"plan": {"ran": 1, "skipped": 2, "stamped": 1, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                               "stamps": 3}}
         done = {"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
                 "failures": {"count": 2, "first": first}, "recovered": True, **blocks}
         self.st.judge_child_done(done, pid=4242)
@@ -1129,7 +1139,7 @@ class Collector(unittest.TestCase):
         compact = len(json.dumps(done, separators=(",", ":")))
         self.assertEqual(child, {"seq": 7, "pid": 4242, "chars": compact, "status": "failed", "failures": 2, "recovered": True,
                                  "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0, **blocks},
-                         "no reader count given: the line re-encoded compactly is its size; the four blocks ride as sent")
+                         "no reader count given: the line re-encoded compactly is its size; the five blocks ride as sent")
         self.st.judge_child_done({"op": "done", "seq": 9, "recordCache": "not a block", "goalIo": {"loads": 2}}, pid=4242)
         child = self.st.snapshot()["judge"]["child"]
         self.assertEqual((child.get("recordCache"), child.get("goalIo"), "asmCheckpoint" in child), (None, {"loads": 2}, False),
@@ -1145,6 +1155,20 @@ class Collector(unittest.TestCase):
         child = self.st.snapshot()["judge"]["child"]
         self.assertEqual((child["status"], child["failures"], child["wallMs"], child["tierStarts"]), ("ok", 0, None, None),
                          "a non-number where a number belongs is served as null, never as itself")
+
+    def test_judge_child_serves_every_counter_block_the_done_line_carries(self):
+        """The child's done line carries one counter block per key of judge.py's _serve_counter_blocks (_serve_pass sends
+        a delta for each), and judge.child serves the blocks CHILD_BLOCKS names. Fold 3 brought upstream's fifth block,
+        tierGate, onto the line, and upstream's kernel serves the line whole; a list left at four dropped it here. So the
+        list is the line's block set, read from the function that builds the line: a block added to the line later
+        turns this red, to be served once its keys are read to be fixed names and its values numbers (the 2026-09-18
+        rule), never dropped unseen."""
+        self.assertEqual(sorted(km._PerfStats.CHILD_BLOCKS), sorted(km.jd._serve_counter_blocks()),
+                         "judge.child serves every counter block the child's done line carries")
+        blocks = {k: {"n": 1} for k in km.jd._serve_counter_blocks()}
+        self.st.judge_child_done(dict({"op": "done", "seq": 3}, **blocks), pid=4242)
+        child = self.st.snapshot()["judge"]["child"]
+        self.assertEqual({k: child.get(k) for k in blocks}, blocks, "each block rides judge.child as the child sent it")
 
     def test_sends_classify_by_kind_and_slot_name(self):
         self.st.send(("chat", SID), "full", 1000)            # a tuple dedup key: the slot is its first element
@@ -5438,13 +5462,15 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             self.em._count_read(path, n)
         self.addCleanup(self._unplant_reads)
         st = self.st
+        self.tier_gate = km.jd.tier_stats()      # the gate block in the shape its minter builds (every gated tier's counters and
+        #                                          the stamps held), so the walk covers the key set the child's line carries
         st.judge_child_done({"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
                              "failures": {"count": 1, "first": self.first}, "recovered": False,
                              "recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}},
                                              "wholeReadsByStage": {"push:leaf<-_parse": {"count": 1, "bytes": 5}}},
                              "asmCheckpoint": {"restored": 1, "hydratedBy": {"_unit_text<-build_session": 10},
                                                "hydratedByStage": {"push:_unit_text<-build_session": 10}},
-                             "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}}, pid=4242)
+                             "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}, "tierGate": self.tier_gate}, pid=4242)
         st.build_chat(False, 0.100, active=True, sid=SID, nbytes=4096)
         st.build_chat(True, sid=SID)
         st.parse(SID, 4096)
@@ -5544,6 +5570,7 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual({k: v["bytes"] - self.reads_before[k]["bytes"] for k, v in ck["readByKind"].items()},
                          {"leaf": 4096, "agent": 512, "states": 256, "postal": 128, "checkpoint": 64, "other": 32})
         self.assertEqual((snap["judge"]["child"]["status"], snap["judge"]["child"]["failures"]), ("failed", 1))
+        self.assertEqual(snap["judge"]["child"].get("tierGate"), self.tier_gate, "the child's gate block rode in the walk, whole")
         self.assertEqual([r["rank"] for r in snap["builds"]["chat"]["bySession"]], [1])
         self.assertEqual(snap["parses"]["perSession"], {"sessions": 1, "max": 1})
         h = snap["http"]

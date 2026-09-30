@@ -6,7 +6,7 @@
 // laid out, pays about 340 ms against about 790 there, Chromium's detachment of each mark's layout object being the rest: the Slice 5
 // review, round 1). Now the parents are collected over the loop and each normalized once after it. Driven
 // over the behavior suite's DOM stand-in, its normalize counted per element: a paint pass over a body whose marks stand (the seam's
-// onRendered for the same text: paintAll unpaints before it repaints) normalizes the row holding three comments' marks once, and the
+// onRendered for the same text: #latchCardState's pass, paintPass, unpaints before it repaints) normalizes the row holding three comments' marks once, and the
 // row holding two overlapping comments' nested marks once, and the rows read as built afterwards (one text node, the line whole);
 // the framed picture path is untouched (a frame is stripped, never unwrapped). md-config-paint-whitespace-browser.test.ts times
 // the same function over the 5,000-link paragraph in Chromium. Nodes hide their edges at construction (hideEdges,
@@ -311,7 +311,7 @@ test("a paint pass over a body whose marks stand normalizes the row holding thre
   assert.equal(w.code.querySelectorAll("mark.fc-hl").length, 6, "the five comments paint six marks (B's is cut in two by A's)");
   assert.equal(shapeOf(ct), "T MARK T MARK T MARK T", "three marks in the row, text between");
   normalized.clear();
-  for (const cb of w.hooks.rendered) cb();   // the seam's onRendered for the same text: paintAll unpaints the standing marks, then repaints
+  for (const cb of w.hooks.rendered) cb();   // the seam's onRendered for the same text: #latchCardState's pass unpaints the standing marks, then repaints
   assert.equal(normalized.get(ct) || 0, 1, "the row's parent normalized once for its three marks (per mark, it was three)");
   // ...and the unpaint gave the row back whole before the repaint split it again: the repaint's marks stand over one text node's pieces
   assert.equal(shapeOf(ct), "T MARK T MARK T MARK T", "repainted the same");
