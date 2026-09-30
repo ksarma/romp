@@ -429,13 +429,26 @@ proof lists, what a function does with a value it is handed, the call limit (its
 witness: a queue a module function takes as its parameter and puts a fetch into,
 the put's return used); and on the module side, a list of a module container
 bound to a name by an unpacking nested in another, or by a loop's unpacking, in
-a function, which the module side reads at a depth that does not reach the
-container, or held in a new list there and extended through a subscript of it by
-an augmented assignment (its witnesses: a list of a module dict of lists so
-bound by a nested unpacking and appended to, and so held and extended). A
-default of a function or a lambda that takes the item, or a name bound to it,
-marks the name at any level of new objects, and a def's default is an occurrence
-in a def nested in the function, so that road refuses rather than passes. A
+a function or at module level, which the module side reads at a depth that does
+not reach the container, or held in a new list in either place and extended
+through a subscript of it by an augmented assignment (its witnesses: a list of a
+module dict of lists so bound in a function by a nested unpacking and appended
+to, so bound there by a loop's unpacking and appended to, and so held there and
+extended; and the same three at module level). A default of a function or a
+lambda that reads the name, or a name the proof follows from it (a name that a
+plain or annotated assignment, a walrus, or a loop's, a comprehension's or a
+with statement's target, an unpacking's names among them, binds to it, to an
+item of it or to a new object holding one, outside every def or class statement
+and lambda body the function nests), marks the name at any level of new objects
+(unless the str exemption the local container's definition below states holds),
+and a def's default is an occurrence in a def nested in the function, so that
+road refuses; a default that takes the item through a name the proof does not
+follow from it passes silently, part of the item limit (its witnesses: a dict of
+lists bound through a boolean operation, a list of it captured by a match
+statement's mapping pattern and taken as the default of a nested def, and of a
+lambda, that appends a fetch to it; and a list of that dict stored as another
+object's attribute and taken from that attribute as a nested def's default that
+appends a fetch to it). A
 `_send`
 definition in a class that a function defines, a page function that a function
 encloses, a `_send` call inside a lambda's body, and a Content-Type write inside
@@ -590,10 +603,17 @@ setattr or delattr, or a method spelled on a class, handed it or an item of it;
 a binding of it, or of a new object holding it, to a name the function declares
 global or nonlocal, or as a default of a function or a lambda (unless the name
 is no parameter and every binding of it is a plain assignment of one name to a
-value the proof types as a str: a string constant, a walrus of one, a boolean
-operation or an if-expression whose operands or branches all are, or a subscript
-load without a slice, or a dict's get, on a list, tuple or dict literal, or on
-such a load or get, whose items, and get's default where it has one, all are);
+value the proof types as a str: a string constant; a walrus of one; a boolean
+operation or an if-expression whose operands or branches all are; or an item
+read, by a subscript load without a slice or by a dict's get (its default, where
+it has one, of the items' type too), out of a container every item of which is
+one, such a container being a list, tuple or dict literal (with no starred
+element or `**` entry, a dict's items its values), a slice of a list or a tuple
+one, a copy of a list or a dict one, an item so read out of a container every
+item of which is such a container of one kind, or a walrus, a boolean operation
+or an if-expression over such containers of one kind; an item read out of a
+container that holds none, which Python cannot read, has no type and is left out
+wherever types are met);
 an augmented assignment
 to a name bound to it or to an item of it, which runs that value's own in-place
 method (`e += [v]` extends a list, `e |= {...}` updates a dict); one of the
