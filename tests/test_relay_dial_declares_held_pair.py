@@ -286,7 +286,7 @@ class PreconditionSkipsUnderRequire(unittest.TestCase):
         def skipping(dest):
             raise unittest.SkipTest("esbuild failed here: the stub's reason")
         lab_dist.copy_dist = skipping
-        self.addCleanup(setattr, lab_dist, "copy_dist", real)
+        self.addCleanup(lambda: setattr(lab_dist, "copy_dist", real))
 
     @staticmethod
     def _setup_outcome():

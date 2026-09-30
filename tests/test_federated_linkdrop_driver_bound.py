@@ -1036,11 +1036,16 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         entry's row over the tree's entries (the renderer's own cut applied by the renderer, never spelled here), read from the
         row and brace-expanded (`tests/test_federated_linkdrop_{a,b}.py` names two paths: the family's full paths beside the
         branch's other paths cannot fit under the cut in any order, so the family is one stem); every module of the family is
-        on the cell and every path on the cell is a file of the tree, so a module the cut drops, a module the tree gained, or a
-        stale path on the line is a red naming it.
-        The paths on the cell beyond the family (the branch's other files: since the author's pass 11 the shared round-label
-        rule tests/review_round_labels_rule.py and its test, and since the maintainer's round 7 the entry's own path, which
-        the line had left out) are git's to derive, the branch's diff against
+        on the cell, every path on the where line is on the cell but at most the entry's own, and every path on the line is a
+        file of the tree, so a module the cut drops, a module the tree gained, or a stale path on the line is a red naming it.
+        The entry's own path is the one path the cut may take, and only as the line's last: the row's title links that file,
+        so the table CI publishes names it whatever the cut leaves. Since the landing merge the line also names PR 860's relay
+        module, and no spelling this one-level expander reads fits every path under the cut, so the pin lets the cut take that
+        one path and no other.
+        The paths on the line beyond the family (the branch's other files: since the author's pass 11 the shared round-label
+        rule tests/review_round_labels_rule.py and its test, since the maintainer's round 7 the entry's own path, which the line
+        had left out, and since the landing merge PR 860's tests/test_relay_dial_declares_held_pair.py, one line of which the
+        branch respells so the mint census reads it as a call) are git's to derive, the branch's diff against
         its merge base, which a CI checkout may not hold; the author's walk of the where line against that diff at each push
         holds them complete, not this pin, which holds them to be files of the tree. The entry's body points at the where line
         and keeps no count of modules and no class list (correctness-2: both hand-kept lists went stale as the family grew), and
@@ -1056,13 +1061,19 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         cell = ledger.row_cells(rows[0])[1]
         modules = sorted(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(HERE, "test_federated_linkdrop*.py")))
         self.assertTrue(modules, "the family in the tree, by the glob (a glob that reads nothing is a broken glob, not a clean tree)")
-        named = sorted(_expand_braces(cell))
-        self.assertEqual(cell, entry.get("where"), "the rendered where cell is the entry's whole where value: the renderer cut it (%d characters), so a module is lost from "
-                                                   "the table CI publishes; shorten the spelling (one brace-expanded stem) rather than the family: %r" % (len(entry.get("where") or ""), cell))
+        where = entry.get("where") or ""
+        named, lined = sorted(_expand_braces(cell)), sorted(_expand_braces(where))
+        own = "upstream/" + name
+        lost = sorted(set(lined) - set(named))
+        self.assertIn(lost, ([], [own]), "the rendered where cell names every path of the entry's where line but, at most, the entry's own: the renderer cut the line "
+                                         "(%d characters) and %r is lost from the table CI publishes; shorten the spelling (one brace-expanded stem) rather than the family, "
+                                         "and keep the entry's own path last: %r" % (len(where), lost, cell))
+        if lost:
+            self.assertIn("(%s)" % own, ledger.row_cells(rows[0])[0], "the entry's own path, cut from the where cell, is the file the row's title links: %r" % (rows[0],))
         self.assertEqual(sorted(set(modules) - set(named)), [], "the rendered where cell names every module of the family in the tree; missing from the cell %r (the cell: %r)"
                          % (sorted(set(modules) - set(named)), cell))
-        stale = [p for p in named if not os.path.isfile(os.path.join(ROOT, p))]
-        self.assertEqual(stale, [], "a path on the where line that is not a file of the tree (stale, misspelled, or a file the branch no longer carries): %r (the cell: %r)" % (stale, cell))
+        stale = [p for p in lined if not os.path.isfile(os.path.join(ROOT, p))]
+        self.assertEqual(stale, [], "a path on the where line that is not a file of the tree (stale, misspelled, or a file the branch no longer carries): %r (the line: %r)" % (stale, where))
         with open(os.path.join(ROOT, "upstream", name), encoding="utf-8") as f:
             text = f.read()
         prose = text.split("---", 2)[2] if text.count("---") >= 2 else text

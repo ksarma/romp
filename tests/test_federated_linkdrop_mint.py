@@ -241,9 +241,12 @@ REFLECTIVE_ATTR_OUTSIDE = ("compile",)
 # attribute chain ROOTED AT AN IMPORT BINDING is resolved through the allowed modules' own imports and refused by _reach where
 # it reaches a module outside this tuple, and a module an import binding resolves to is refused wherever it is read as a value
 # (_module_of); what neither resolver reads (a chain rooted at a sibling's binding, a module that comes from no read of an
-# import-bound name) is outside, under the rule the module docstring states.
+# import-bound name) is outside, under the rule the module docstring states. struct is here since the censused set reached
+# PR 860's tests/test_relay_dial_declares_held_pair.py (tests/test_federated_dial_terms_served.py imports it inside a function),
+# which unpacks a WebSocket frame's length with it: a module that packs and unpacks bytes and starts nothing (its own source
+# imports nothing but the _struct extension, and the road cell's derivation reads that source and finds no road in it).
 ALLOWED_IMPORTS = ("base64", "contextlib", "errno", "fcntl", "fnmatch", "hashlib", "http", "json", "os", "pathlib", "re", "select",
-                   "shlex", "shutil", "signal", "socket", "subprocess", "sys", "tempfile", "threading", "time", "unittest", "urllib", "uuid")
+                   "shlex", "shutil", "signal", "socket", "struct", "subprocess", "sys", "tempfile", "threading", "time", "unittest", "urllib", "uuid")
 # the hand-kept DENY list the import pin keys on beside the equality: none of these eight is allowed (the check is this list,
 # not a property of every allowed module's source; that property is derived, above)
 DENIED_IMPORTS = ("pty", "asyncio", "_posixsubprocess", "multiprocessing", "ctypes", "importlib", "builtins", "operator")
