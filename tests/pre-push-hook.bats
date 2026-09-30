@@ -8724,10 +8724,11 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     clean_tip_after_base
     n="$(git -C "$REPO" ls-tree -r -z -l "$sha" | wc -c | tr -d ' ')"
     [ "$n" -ge 100 ]
-    # wc -c reading the tip listing's rewrite, told from the other scratch files by device and inode (the shell's -ef, over
-    # the scratch directory the hook makes under TMPDIR with the prefix romp-pre-push.): /proc/self/fd, which named the
-    # file here until now, is Linux's alone
-    calls_short_on wc rewrite-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ] && [ -f /dev/stdin ] && for f in "${TMPDIR:-/tmp}"/romp-pre-push.*/listing.nl; do [ /dev/stdin -ef "$f" ] && break; done' digits:1
+    # wc -c reading the tip listing's rewrite, told from the other scratch files by what it reads: the first record ends in
+    # a newline there and in a NUL in the listing itself, and the read list's rewrite holds no mode. By content, as the tag
+    # capture's and the config's byte counts are told: stdin's name (/proc/self/fd, then the shell's -ef against
+    # /dev/stdin) never picked the call on macOS
+    calls_short_on_input wc rewrite-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' $'\tbase.txt\n100644 blob ' digits:1
     push_main_through_hook_with_shim
     fired_short rewrite-count "wc -c"
     [ "$status" -ne 0 ]
