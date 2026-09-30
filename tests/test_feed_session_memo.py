@@ -66,6 +66,8 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_feed_session_memo", os.path.join(BIN, "romp-kernel"))
 jd = km.jd                              # the kernel's judge: the one object build_feed reads stores through
+# A private copy of the SDK backend module: a backend over one board's own root (HostRegistryProgress._board_backend)
+sb = load_source("romp_sdk_backend_feed_session_memo", os.path.join(BIN, "romp_sdk_backend.py"))
 
 # This module's PRIVATE synthetic sids (never the shared 11111111-2222-... placeholder: see the docstring).
 # (a tuple, unpacked below: a session named after the demo's api service assigned a high-entropy string on its
@@ -321,6 +323,17 @@ class HostRegistryProgress(_Board):
         os.replace(pending, path)
         return path
 
+    def _board_backend(self):
+        """An SdkBackend over THIS board's root, as the kernel builds its own over jd.STATE (_sdk_locked): the records
+        _publish_registry writes are that backend's sessions, as every record under STATE/sdk is the kernel backend's
+        in a running kernel. The kernel's own singleton (km._sdk_backend) cannot serve: it is built once per process,
+        at the first km._sdk() call, over the root jd.STATE names then, which is this board's only when this test is
+        the first in its process to reach km._sdk() (run alone, first on an xdist worker, or after only tests that
+        build no feed, such as TheClearedIndexMatchesTheFilter) and an earlier board test's removed root otherwise.
+        Hosts off in the root first: this hands SdkBackend a root the runner's conftest did not floor."""
+        (Path(jd.STATE) / "session-hosts").write_text("off")
+        return sb.SdkBackend(jd.STATE, "/bin/true", lambda *a, **k: None)
+
     def test_host_progress_replacements_keep_all_sessions_cached_and_match_a_fresh_build(self):
         record = {"sid": WEB, "name": "web", "spawnedAt": T0}
         self._publish_registry(WEB, record)
@@ -356,36 +369,52 @@ class HostRegistryProgress(_Board):
 
     def test_bookkeeping_the_feed_never_reads_keeps_every_session_cached_and_matches_a_fresh_build(self):
         """The registry fields no feed derivation reads move no key: a result's cost watermark, the Stop hook's
-        settle stamp and opener, the echo and queue mirrors, the bgTasks mirror, the cron records, a pending ask, a
-        field nobody reads. The `reg` component takes the record's state and its allow-listed fields alone
-        (_feed_reg_sig, 2026-09-18); before, it folded every field but the host journal's, and each of these writes
-        re-derived the session's cards though no card reads them. The two payload equalities are a regression belt,
-        not the proof that the body reads none of these: this board has no SDK backend and no live snapshot, so
-        _bg_live_norm answers [] before it reaches the ledger and the parse is cache-only, which makes the
-        equalities hold whatever the body reads. The proof is the census in tests/test_feed_memo_inputs.py
-        (RegAllowList): every registry field read anywhere in the kernel or the judge is classified, and the fields
-        the feed's readers name ARE the allow-list."""
+        settle stamp and opener, the echo mirror, the bgTasks mirror, the cron records, a pending ask, a field nobody
+        reads. The `reg` component takes the record's state and its allow-listed fields alone (_feed_reg_sig,
+        2026-09-18); before, it folded every field but the host journal's, and each of these writes re-derived the
+        session's cards though no card reads them. The queue mirror is the one field here this fork's key reads: its
+        `queued` component (keyed for the user-todo floor's gate, _user_todo_idle) asks the session's backend whether
+        a send is waiting, and for a session its backend is not running the answer is this mirror
+        (SdkBackend.pending_queued), so that write re-derives web once, under `queued` alone and never under `reg`.
+        The body cannot read the queue on this board: the user-todos switch is off, so _open_user_todos answers [] for
+        web and the body never asks the floor's gate (which also refuses a cold parse before its queue read), and the
+        payload equalities show the payload unchanged. The queue row therefore pins the key's unconditional `queued`
+        read: were the key narrowed to the switch or to open todos, its expectation would become {}. The board builds
+        with a backend over its own root (_board_backend) owning web, so that answer does not depend on which test ran
+        first in the process. Over the kernel's singleton this case was red whenever it was the first test in its
+        process to reach km._sdk() (run alone, first on an xdist worker, or after only tests that build no feed, such
+        as TheClearedIndexMatchesTheFilter) and green after any earlier board case (2026-09-30).
+        The two payload equalities are a regression belt, not the proof that the body reads none of these: this
+        board's backend runs no session and there is no live snapshot, so _bg_live_norm answers [] before it reaches
+        the ledger and the parse is cache-only, which makes the equalities hold whatever the body reads. The proof is
+        the census in tests/test_feed_memo_inputs.py (RegAllowList): every registry field read anywhere in the kernel
+        or the judge is classified, and the fields the feed's readers name ARE the allow-list."""
+        be = self._board_backend()
         record = {"sid": WEB, "name": "web", "spawnedAt": T0}
         self._publish_registry(WEB, record)
-        before = self._build()
-        for fields in ({"costState": {"total": 1.25, "tokens": {"in": 10}, "t": T0 + 5}},
-                       {"lastStopAt": T0 + 6, "lastTurnOpener": "human"},
-                       {"echoes": [{"text": "hello", "t": T0 + 7}]},
-                       {"queue": ["next"], "queueMeta": [{"text": "next"}]},
-                       {"bgTasks": [{"toolUseId": "toolu_1", "desc": "a shell", "since": T0 + 8}]},
-                       {"sessionCrons": [], "sessionCronsAt": T0 + 9},
-                       {"pendingAsk": True},
-                       {"futureDisplayField": "changed"}):
-            with self.subTest(fields=fields):
-                record.update(fields)
-                self._publish_registry(WEB, record)
-                delta, cached = self._delta(self._build)
-                self.assertEqual((delta["derived"], delta["hit"]), (0, 3), delta)
-                self.assertEqual(delta["miss_by"], {})
-                self.assertEqual(_dump(cached), _dump(before))
-                _reset_memo()
-                self.assertEqual(_dump(cached), _dump(self._build()),
-                                 "skipping bookkeeping the feed never reads must preserve the real payload")
+        with mock.patch.object(km, "_sdk", lambda: be):
+            self.assertIs(km.Sessions.backend_for(WEB), be, "web's record is under that backend's root: it owns web")
+            self.assertFalse(km._backend_queued(WEB), "no send waiting before the queue mirror is written")
+            before = self._build()
+            for fields, moved in (({"costState": {"total": 1.25, "tokens": {"in": 10}, "t": T0 + 5}}, {}),
+                                  ({"lastStopAt": T0 + 6, "lastTurnOpener": "human"}, {}),
+                                  ({"echoes": [{"text": "hello", "t": T0 + 7}]}, {}),
+                                  ({"queue": ["next"], "queueMeta": [{"text": "next"}]}, {"queued": 1}),
+                                  ({"bgTasks": [{"toolUseId": "toolu_1", "desc": "a shell", "since": T0 + 8}]}, {}),
+                                  ({"sessionCrons": [], "sessionCronsAt": T0 + 9}, {}),
+                                  ({"pendingAsk": True}, {}),
+                                  ({"futureDisplayField": "changed"}, {})):
+                with self.subTest(fields=fields):
+                    record.update(fields)
+                    self._publish_registry(WEB, record)
+                    delta, cached = self._delta(self._build)
+                    n = sum(moved.values())
+                    self.assertEqual((delta["derived"], delta["hit"]), (n, 3 - n), delta)
+                    self.assertEqual(delta["miss_by"], moved)
+                    self.assertEqual(_dump(cached), _dump(before))
+                    _reset_memo()
+                    self.assertEqual(_dump(cached), _dump(self._build()),
+                                     "skipping bookkeeping the feed never reads must preserve the real payload")
 
     def test_a_transcript_less_live_rows_registry_path_move_re_derives_it_once_under_transcript(self):
         """A live SDK session discover cannot see yet (no names entry, no transcript on disk) takes its row from the
