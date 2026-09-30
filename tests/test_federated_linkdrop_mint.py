@@ -541,8 +541,8 @@ def _import_bindings(src, stdlib=None, package=None):
     written (pass 10's fixer pass: `import uuid as u; u.getnode()` and `from uuid import getnode; getnode()` printed no touch).
     A star import (`from M import *`) binds no name here: the census refuses one in a censused module outright, and a name a
     FOREIGN module binds by a star import is not in that module's table (_module_imports), so _reach reads a chain through it
-    as the module's own definition (`struct.unpack`, `socket.AF_INET`, `socket.SOL_SOCKET`, `os.getpid`: the stated outside,
-    the module docstring says why no refusal is built)."""
+    as the module's own definition (`struct.unpack`, `socket.AF_INET`, `socket.SOL_SOCKET`, `os.getpid`, among others: the stated
+    outside, the module docstring says why no refusal is built)."""
     bindings, loaded = {}, set()
     for n in ast.walk(ast.parse(src)):
         if isinstance(n, ast.Import):
@@ -617,8 +617,8 @@ def _reach(chain, bindings, loaded, siblings=(), stdlib=None):
     the from-import spelling of a refused attribute escaped). A binding to a def or a class imported by name (`Path`) is its
     own: the walk stops there. A name the module binds by a star import is not in its table (_import_bindings), so a chain
     through it reads as the module's own definition and is not refused: `struct.unpack`, `socket.AF_INET` and
-    `socket.SOL_SOCKET` and `os.getpid`, live in the censused set, are the stated outside, and every spawning name such an
-    import binds is refused by name on any value (the module docstring)."""
+    `socket.SOL_SOCKET` and `os.getpid`, among others, live in the censused set and are the stated outside, and every spawning
+    name such an import binds is refused by name on any value (the module docstring)."""
     names = chain.split(".")
     bound = bindings.get(names[0])
     if bound is None or bound[0].split(".")[0] in siblings or bound[0].split(".")[0] == PACKAGE:

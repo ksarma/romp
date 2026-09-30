@@ -25,8 +25,9 @@ the coordinator's ruling of 2026-09-30 restated the earlier ruling's refusal of 
 one), the wrapped shapes (a comment marker or a block comment's continuation line between the qualifier and the number, and the
 wrap a list or a range takes between two of its numbers: read whole, a further number past it beside a link refused as on one
 line, a line break with no link beside it joining nothing, a range mark opening the next line, a bullet, joining nothing while
-one ending the first line joins, and each width and look-back that docstring states for the refusal runs and the date probed at
-its bound), the plural's lists
+one ending the first line joins, each width and look-back that docstring states for the refusal runs and the date probed at its
+bound, the wrap with no comment marker probed for a list, a comma and a date, and the two examples that docstring gives past a
+bound read as the first number alone), the plural's lists
 and ranges (every number judged, a range expanded so a caller's set need not be contiguous), the date form, the forms refused as
 unresolved, the unnumbered spellings not read, the credit's two names and the default with its stated reason, each misattribution
 refused with its reason and the caller's author form named in it, and the tree-only pin carried over from the 857 guard and adapted:
@@ -543,21 +544,36 @@ class RoundLabelRule(unittest.TestCase):
         refused either; a range mark that ends the first line still joins, the range read whole after the word and before it and a
         date after it the date form; a comma that ends the first line joins across a bullet on the next as it does across a bare
         wrap, and the number is refused; a date wrapped beside its comma is the date form, and a further number
-        after it is refused; a CRLF line end reads as a newline (the rule's docstring counts a carriage return before a newline as a
-        space). Then each width the rule's docstring states for the refusal runs and the date, probed at its bound in digits and in
+        after it is refused; a date wrapped beside "&" or a slash, the mark ending the first line or opening the next, is the date
+        form too; a CRLF line end reads as a newline (the rule's docstring counts a carriage return before a newline as a
+        space). With no comment marker, the marker being optional in the wrap, a list is read whole across the wrap, a further
+        number past it after a comma is refused after the word and before an ordinal run, a date wrapped after its comma is the date
+        form and a further number after that date is refused; and the word ending one line with a hyphen and a number opening the
+        next is read, with a comment marker or with none, since the separator between the word and its first number takes a hyphen
+        after a line break and the bullet guard is not in the separator. Then each width the rule's docstring states for the refusal
+        runs and the date, probed at its bound in digits and in
         words: across the wrap, six characters before a link that ends the first line, three after it on its line, three after the
         wrap or after a second link (in punctuation or in letters), the spaces before a wrap that precedes the link, and three after
         that link (in punctuation or in letters), each refused after the word and before an ordinal run, and the date's own widths
         read as the date form; on one line, six characters between the two numbers or before a list word and three after it, refused,
-        and six before a date, read as the date form; a date after a link spelled in letters is no date and its year is refused; and
-        the two 400-character look-backs, the number before an ordinal run found 400 characters before it and an ordinal run that
+        and six before a date, read as the date form; a date after a link spelled in letters is no date and its year is refused, the
+        list word on one line, ending the first line or opening the next, or opening the next after a comma that ends the first
+        line; the two examples the rule's docstring gives of a number past a wider run ("and/or" then four spaces and the number, on
+        one line or with the line break after the spaces, and a comment marker on the list word's line with no line break before
+        it) read as the first number alone; and the two 400-character look-backs, the number before an ordinal run found 400
+        characters before it and an ordinal run that
         starts 400 characters before the word read whole. Each probe's label names the part it pins and the mutant that reds it: a
         join without the wrap (_NUMBERED's list group, CONTINUATION_TOKEN after the link, _ORDINAL_RUN, the comma joins of
         _CONTINUE); FURTHER or FORE without _WRAP_RUN, or _WRAP_RUN without one of its two arms or its second link; a marker dropped
         from _BREAK, a link from _MARK or the list words from _LINK; DATE without _DATE_WRAP; the run before a wrap that precedes the
         link widened past spaces; the slash guard dropped; _BREAK refusing a carriage return before its newline; a width of
         _WRAP_RUN, of _DATE_WRAP or of a one-line run cut by one character, or the spaces before a wrap that precedes the link
-        removed; _DATE_WRAP taking the links spelled in letters; FORE's or before()'s window cut back from 400 characters; the
+        removed; _DATE_WRAP taking the links spelled in letters in either arm, or a second link in its arm with the mark first;
+        DATE's one-line run taking a list word; _DATE_WRAP's mark without "&" or without the slash, in either arm; _BREAK's comment
+        marker made required, the joins taking the wrap only with a comment marker, or _DATE_WRAP's wrap requiring one; the bullet
+        guard extended to the separator between the word and its first number; FURTHER's one-line run after the list word, or
+        _WRAP_RUN's run after a link that ends the first line, widened by one character; FORE's or before()'s window cut back from
+        400 characters; the
         bullet guard dropped from _NUMBERED's list, from _ORDINAL_RUN, from _WRAP_RUN's arm with the link second or from _DATE_WRAP's
         arm with the mark second, or widened to a range mark that ends the first line in _NUMBERED's list, in _ORDINAL_RUN, in
         _WRAP_RUN's arm with the link first or in _DATE_WRAP's arm with the mark first. A probe that must stay unread names the
@@ -656,7 +672,15 @@ class RoundLabelRule(unittest.TestCase):
                           ("after the word, a date wrapped after its comma, a mark starting the next line (the run after the wrap dropped from _DATE_WRAP's first arm)",
                            "%s%s %s,%s(%s" % (lead, R, num(hi), br, D), [hi]),
                           ("after the word, a date wrapped before its comma (DATE without _DATE_WRAP, or without its arm with the link second)",
-                           "%s%s %s%s, %s" % (lead, R, num(hi), br, D), [hi])]
+                           "%s%s %s%s, %s" % (lead, R, num(hi), br, D), [hi]),
+                          ("after the word, a date wrapped after \"&\" (_DATE_WRAP's mark without \"&\" in its arm with the mark first)",
+                           "%s%s %s &%s%s" % (lead, R, num(hi), br, D), [hi]),
+                          ("after the word, a date wrapped after a slash (_DATE_WRAP's mark without the slash in its arm with the mark first)",
+                           "%s%s %s /%s%s" % (lead, R, num(hi), br, D), [hi]),
+                          ("after the word, a date wrapped before \"&\" (_DATE_WRAP's mark without \"&\" in its arm with the mark second)",
+                           "%s%s %s%s& %s" % (lead, R, num(hi), br, D), [hi]),
+                          ("after the word, a date wrapped before a slash (_DATE_WRAP's mark without the slash in its arm with the mark second)",
+                           "%s%s %s%s/ %s" % (lead, R, num(hi), br, D), [hi])]
                 for label, s, nums in unread:
                     with self.subTest(wrap_unread=label, mark=mark, spelling=spell):
                         self.assertEqual([(k, n) for _, _, k, n in rule.forms(s)], [("numbered", nums)], "what follows a line break with no link beside it is not read: %r" % (s,))
@@ -719,6 +743,37 @@ class RoundLabelRule(unittest.TestCase):
             with self.subTest(wrap_edge="a CRLF line end, refused (_BREAK refusing a carriage return before its newline)", spelling=spell):
                 s = "# %s %s,\r\n# %s findings" % (R, num(hi), num(hi + 1))
                 self.assertIn(after, rule.offences(s, SET)[0][3], s)
+            # the wrap with no comment marker (the marker is optional in the wrap the rule's docstring states): a list read whole, a
+            # further number past the wrap after a comma refused after the word and before an ordinal run, a date wrapped after its
+            # comma the date form, and a further number after that date refused
+            past = "no ruling exists for a round numbered %d" % (hi + 1)
+            with self.subTest(wrap_edge="no comment marker, the plural's list, the wrap after the list word, read whole (the joins taking the wrap only with a comment marker)", spelling=spell):
+                s = "%ss %s and\n%s found it" % (R, num(lo), num(hi + 1))
+                self.assertEqual([(k, n) for _, _, k, n in rule.forms(s)], [("numbered", [lo, hi + 1])], s)
+                self.assertIn(past, rule.offences(s, SET)[0][3], s)
+            for label, s, why in (("no comment marker, after the word, the wrap after a bare comma, refused (_BREAK's comment marker made required)",
+                                   "%s %s,\n%s findings" % (R, num(hi), num(hi + 1)), after),
+                                  ("no comment marker, before the word, the wrap after a bare comma, refused (_BREAK's comment marker made required)",
+                                   "the %s,\n%s %s" % (o(hi), o(lo), R), before),
+                                  ("no comment marker, a further number after a date wrapped after its comma, the refusal quoting past the date (_BREAK's comment marker made required, or _DATE_WRAP's wrap alone requiring it)",
+                                   "%s %s,\n%s, %s findings" % (R, num(hi), D, num(hi + 1)), "%s, %s'" % (D, num(hi + 1)))):
+                with self.subTest(wrap_edge=label, spelling=spell):
+                    self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], s)
+                    self.assertIn(why, rule.offences(s, SET)[0][3], s)
+            with self.subTest(wrap_edge="no comment marker, a date wrapped after its comma, the date form (_DATE_WRAP's wrap requiring a comment marker)", spelling=spell):
+                s = "%s %s,\n%s" % (R, num(hi), D)
+                self.assertEqual([(k, n) for _, _, k, n in rule.forms(s)], [("numbered", [hi])], s)
+                self.assertEqual(rule.offences(s, SET), [], s)
+            # the separator between the word and its first number takes a hyphen after a line break, with or without a comment
+            # marker: the word ending one line and a hyphen and a number opening the next is read, the bullet guard being in the
+            # lists, the refusal runs and the date's wrap, not in the separator
+            for label, s in (("the word ending the line, a hyphen and a number opening the next, no comment marker, read (the bullet guard extended to the separator between the word and its first number)",
+                              "%s %s\n- %s items" % (M, R, num(hi + 1))),
+                             ("the word ending the line, a hyphen and a number opening the next after a comment marker, read (the bullet guard extended to the separator between the word and its first number)",
+                              "# %s %s\n    # - %s items" % (M, R, num(hi + 1)))):
+                with self.subTest(wrap_edge=label, spelling=spell):
+                    self.assertEqual([(k, n) for _, _, k, n in rule.forms(s)], [("numbered", [hi + 1])], s)
+                    self.assertIn(past, rule.offences(s, SET)[0][3], s)
         # the widths the rule's docstring states for the refusal runs and the date, each probed at its bound, in digits and in words: a
         # number past a run at the bound is refused, after the word and before an ordinal run; a date past it is the date form; a date
         # after a link spelled in letters is no date; and the two 400-character look-backs, each probe placed at exactly 400. Each
@@ -752,6 +807,19 @@ class RoundLabelRule(unittest.TestCase):
                     with self.subTest(wrap_bound="%s, %s" % (label, place), spelling=spell):
                         self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "a number past a refusal run at its stated bound is refused: %r" % (s,))
                         self.assertIn(why, rule.offences(s, SET)[0][3], s)
+            # the two examples the rule's docstring gives of a number past a wider run, the stated outside, each read as the first
+            # number alone: "and/or" then four spaces and the number, on one line and with the line break after the four spaces, and
+            # a comment marker on the list word's line with no line break before it; each label names the widening by one character
+            # that would take the number
+            for label, s in (("past the bound, \"and/or\" then four spaces and a number on one line: the first number alone (FURTHER's one-line run after the list word widened from three characters to four)",
+                              "%s %s and/or    %s" % (R, num(lo), num(hi + 1))),
+                             ("past the bound, \"and/or\" then four spaces, the line break and a number: the first number alone (_WRAP_RUN's run after a link that ends the first line widened from three characters to four)",
+                              "# %s %s and/or    \n    # %s" % (R, num(lo), num(hi + 1))),
+                             ("past the bound, \"and\" then a comment marker and a number on one line: the first number alone (FURTHER's one-line run after the list word widened from three characters to four)",
+                              "%s %s and // %s" % (R, num(lo), num(hi + 1)))):
+                with self.subTest(wrap_bound=label, spelling=spell):
+                    self.assertEqual([(k, n) for _, _, k, n in rule.forms(s)], [("numbered", [lo])], "a number past a wider run is the stated outside, the first number read alone: %r" % (s,))
+                    self.assertEqual(rule.offences(s, SET), [], s)
             dates = [("across the wrap, six characters before a mark that ends the first line, then a date (_DATE_WRAP's run before that mark cut from six characters)",
                       "# %s %s%s,\n    # %s" % (R, num(hi), run6, D)),
                      ("across the wrap, three characters after a mark that ends the first line, then a date (_DATE_WRAP's run after that mark cut from three characters)",
@@ -771,6 +839,17 @@ class RoundLabelRule(unittest.TestCase):
                 s = "# %s %s and\n    # %s" % (R, num(hi), D)
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], s)
                 self.assertIn("a further number after a run the list did not consume, and not a date", rule.offences(s, SET)[0][3], s)
+            # the year after a list word spelled in letters in its other three placements, each no date and refused: on one line, the
+            # list word opening the next line, and a comma ending the first line with the list word opening the next
+            for label, s in (("a list word spelled in letters on one line, then a date: no date, its year refused (DATE's one-line run taking a list word)",
+                              "%s %s and %s" % (R, num(hi), D)),
+                             ("the wrap, then a link spelled in letters opening the next line and a date: no date, its year refused (_DATE_WRAP's arm with the mark second taking the links spelled in letters)",
+                              "# %s %s\n    # or %s" % (R, num(hi), D)),
+                             ("a comma, the wrap, then a link spelled in letters opening the next line and a date: no date, its year refused (_DATE_WRAP's arm with the mark first taking a second link)",
+                              "# %s %s,\n    # or %s" % (R, num(hi), D))):
+                with self.subTest(wrap_bound=label, spelling=spell):
+                    self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], s)
+                    self.assertIn("a further number after a run the list did not consume, and not a date", rule.offences(s, SET)[0][3], s)
             with self.subTest(wrap_bound="a number 400 characters before an ordinal run, a deep indentation between (FORE's window cut back from 400 characters)", spelling=spell):
                 s = "# the %s,\n%s# %s %s" % (o(hi), " " * (396 - len(o(hi))), o(lo), R)
                 self.assertEqual(s.index(o(lo) + " " + R) - s.index(o(hi)), 400, "the probe sits at the bound")
