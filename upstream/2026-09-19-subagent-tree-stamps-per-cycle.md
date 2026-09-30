@@ -8,7 +8,7 @@ tier: fix
 offered:
 closed:
 ---
-Lands in one batch with the dependency-key fix (fork PR #910): fork PR #910 first, then this PR after its focused re-check by execution and green CI.
+Lands after the dependency-key fix (fork PR #910): fork PR #910 lands first, and this PR in the batch after the one that lands it, following a closing check of its head commit alone and green CI.
 
 Upstream already holds each subagents tree once per cycle, and this PR carries the follow-up that change names. romp-on/romp PR #1822 (cf0be377f) stores one sample per subagents root, the (directories, stats) pair _subagent_tree answers, on `_live_scope.subagent_trees` for each pusher cycle, jobs pass and connect push, and counts a read answered from a held pair under `scoped`. romp-on/romp PR #1788 is the walk memo underneath it (_SUBAGENT_TREES: a tree validated by one lstat per known directory instead of a listing). The commit message of romp-on/romp PR #1822 names the viewer frame's hit-path re-stats through _dir_stamps as a separate route and a follow-up. The dependency-key defect that romp-on/romp PR #1822 brings (the agent-file walk noted a sibling root under a stat taken after the held listing) is fixed by fork PR #910, which has its own entry, upstream/2026-09-24-subagent-tree-dependency-key.md.
 
