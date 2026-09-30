@@ -350,8 +350,10 @@ that a statement of the
 module's or the function's own body, outside every def, class or lambda
 statement it nests (header and body alike), binds to one of those primitives,
 its bound value the primitive's own bare name or attribute, by a plain or
-annotated assignment, a walrus, an equal-length unpacking of a list or tuple
-literal into plain names, or a `from ... import` of one of the seven names, and
+annotated assignment, a walrus, an unpacking of a list or tuple literal into a
+target list of as many elements (each plain name there bound to the value at its
+place, beside a starred or nested target too), or a `from ... import` of one of
+the seven names, and
 any name such a statement binds to a name so bound, resolved among those
 statements), is refused by name on every version, since the change reaches the
 real object; the check reads the spelling anywhere in the function, called or
@@ -362,17 +364,22 @@ other spelling (among them: the name `locals` or `vars` as an attribute on a
 receiver; exec or eval reached as an attribute; `f_locals` as a bare name; one
 of the four attributes named by a string, as `getattr(frame, "f_locals")`; and
 any binding of a name to a primitive that the resolution above does not read, a
-starred or nested unpacking target, an alias whose bound value is any other
-expression (an if-expression, a call), and a binding in the header or the body
-of a def, class or lambda statement) is the stated precondition, outside what
+plain name among the targets of an unpacking whose targets are not as many as
+its values, a name a nested unpacking target binds, an alias whose bound value
+is any other expression (an if-expression, a call), and a binding in the header
+or the body of a def, class or lambda statement) is the stated precondition,
+outside what
 the census reads, and passes silently (its
 witnesses, one for each road named: `locals` reached as an attribute on a
 receiver; `builtins.exec`; `builtins.eval`; `f_locals` called as a bare name;
 `getattr` handed a frame from `inspect.stack()` and the string `f_locals`; a
-starred and a nested unpacking target; a module alias bound to an if-expression
-and one bound to a call's return; a walrus in a module-level def's default, a
-`from ... import` in a def nested in the function, and an assignment inside a
-module-level def's body), while a name a nested scope binds to a primitive by an
+plain name beside a starred target that takes two values, and a name in a nested
+target; a module alias bound to an if-expression and one bound to a call's
+return; a walrus in a module-level def's default, a `from ... import` in a def
+nested in the function, an assignment inside a module-level def's body, an
+assignment in a module-level class's body, read as the class's attribute, and a
+walrus in a module-level lambda's default), while a name a nested scope binds to
+a primitive by an
 assignment
 carries the spelling in the function's subtree and refuses; code the function
 runs that the census does not read (a helper it calls as a statement, a method
@@ -520,10 +527,21 @@ witness: a class that a sibling module defines, read as an attribute of that
 module, which the page imports by name) or through a call's return, under the
 call limit; code behind a name on self is not followed at all, since every
 method called on self is refused by name (below), and an item of self, a
-parameter's, is text such a base holds. A local container (a name a function the pass reads binds whole to a list, dict
-or set literal or comprehension, or one it changes, directly, through an item
-of it or an expression holding it, or through a name bound to it, to an item of
-it or to a new object holding one) is read whole only where every occurrence of
+parameter's, is text such a base holds. A local container (a name a function the
+pass reads binds whole to a list, dict or set literal or comprehension, or a
+name with one of these uses: a store or delete through it or an item of it; an
+append or extend; setattr or delattr, or a method spelled on a class, handed it
+or an item of it; one of the in-place changers of a list, dict, set, deque or
+OrderedDict called on it or read off it unbound (update, setdefault, append,
+extend, insert, pop, popitem, clear, add, discard, remove, sort, reverse,
+appendleft, extendleft, rotate, move_to_end, difference_update,
+intersection_update and symmetric_difference_update, or a spelled-out
+`__setitem__`, `__delitem__`, `__setattr__`, `__delattr__`, `__ior__`,
+`__iadd__`, `__isub__`, `__iand__`, `__ixor__` or `__imul__`), or a method whose
+return a statement drops; or a method other than get, keys, values, items,
+index, count or copy called on an item of it, or an attribute read off one; each
+directly or through a name bound to it, to an item of it or to a new object
+holding one) is read whole only where every occurrence of
 its name, resolved by binding, is one of the proven forms: its one binding (a
 plain single-name assignment to a list, dict, set or tuple literal or to a call
 whose return the census reads as a value slot, an import's, one of the seven
@@ -544,13 +562,24 @@ bound once, a dict), gives the container a type; bound to any other call the
 census reads as a value slot (`dict(...)` or an import's call among them), it
 has no type, and a read method or a subscript load on it refuses. A read
 method's or a subscript load's result is an item the census follows by binding
-like any other value. The proof covers the container; for an item it reads the
-following: a change through the item (a store into it; a method that changes an
-object in place called on it; setattr or delattr, or a container type's changer
-spelled on its type (`list.append`, `dict.update`), handed it as the object to
-change; or a method called on it as a statement other than get, keys, values,
-items, index, count or copy, which read it), directly or through a name bound to
-it, refuses the container, and so does its hand-off to another object's method
+like any other value. The proof covers the container, and an item of it (a read
+method's or a subscript load's result, directly or through a name bound to it or
+to a new object holding it) it reads by the same principle, through the closed
+read set of the item's own type, known as the container's is: from the literal,
+from parse_qs (whose items are lists of str) and from each value stored or
+appended into the container, a string constant being a str, and a copy of a
+dict, a list or a set, or a slice of a list or a tuple, being of its receiver's
+type and a new object holding its receiver's items. Any other method called on
+the item, and a read
+method or a subscript load outside its type's set (a spelled-out dunder among
+them), whether the return is used or dropped, an attribute read off it other
+than as a method's callee, a store into it, setattr or delattr handed it, and a
+method spelled on a class handed it as its first argument (a builtin class, as
+in `list.append`, or a class of collections imported as the module or by name,
+as in `deque.append`), directly or through a name bound to it, refuses the
+container; a str has no read set, nor has an item whose type the census does not
+know (a call's return, a name it does not follow), so any method or subscript
+load on one refuses; and so does the item's hand-off to another object's method
 by an operator (an operand of a binary operation or a comparison whose other
 operand is no constant, a subscript's index, a slice's bound, the value of an
 augmented assignment, or what an index or a count with an argument that is no
@@ -558,8 +587,10 @@ constant compares) or
 any use of it the census does not read (called, or stored into another object,
 an attribute or a name the function declares global or nonlocal); compared or
 combined with a constant, an item is read, since only its own type's method and
-the constant's run; and an item handed as an argument to any other call is under
-the call limit, as the container is (below). Any other occurrence refuses the
+the constant's run; and an item handed as an argument to any other call, a
+method spelled on any other value among them (a class the file defines or
+another import names, a module's function), is under the call limit, as the
+container is (below). Any other occurrence refuses the
 container by the rule, its reason naming the role it fails: the whole
 container bound to another name, to a name the function declares global or
 nonlocal, or into an attribute or another object; a read that hands it to
@@ -571,9 +602,10 @@ second binding (an augmented assignment, a walrus, or a for, with, except,
 match or unpacking target); a delete; a method other than append, extend or a
 read method of its type, a read method outside its type's set or a spelled-out
 dunder among them, or an attribute of it read other than as a method's callee;
-setattr or delattr, or a container type's changer spelled on its type
-(`list.append`, `dict.update`), handed it as the object to change; a store by a
-key that is no constant; an append or extend of other than one
+setattr or delattr, or a method spelled on a class (a builtin class, or a class
+of collections imported as the module or by name), handed it as its first
+argument; a store by a key that is no constant; an append or extend of other
+than one
 plain argument; or any occurrence in a function or lambda nested in it, or a
 class body it defines, whose code the census does not read (a closure capture)
 or which makes a class attribute; a comprehension is read where it stands, as
@@ -585,10 +617,10 @@ parameter of a method or a route handler is not read so: every attribute read
 and method call on it is refused already. The container, or an item of it,
 handed as an argument to any other call is under the call limit, what the callee
 does with it not read (its witnesses: a local dict a module function it is
-handed
-stores a fetch into; and a list read out of a local dict of lists by a subscript
-load, by `.get`, or through a name bound to it, which a module function it is
-handed appends a fetch to).
+handed stores a fetch into; a list read out of a local dict of lists by a
+subscript load, by `.get`, or through a name bound to it, which a module
+function it is handed appends a fetch to; and such a list handed to append
+spelled on a class of the file that derives from list).
 An attribute read in a page position, as a value or anywhere on the
 path of a receiver or a container (but never inside the index of a subscript
 over a container whose text the pass does not read: below), is refused by name
@@ -789,7 +821,8 @@ dict or set constant (a literal or a comprehension a top-level assignment binds)
 is a container the module writes at run time as well, a run-time memo no type is
 read through, where the file changes it other than by the writes listed above
 for a route's type (a store or delete through an item of it or on it as an
-attribute, a changer called on an item of it or read off it unbound, a method
+attribute, one of the in-place changers named above called on an item of it or
+read off it unbound, a method
 called on it whose return is dropped, a setattr or delattr on it), changes it
 through a name bound to it, to an item of it or to a new object holding one
 (each name read by its spelling in every scope, so a local of that spelling
@@ -1135,14 +1168,17 @@ fixed, so its join is no one text: the argument itself, a walrus's value, an
 if-expression's branches, a boolean operation's operands, a list or tuple
 display's elements (a starred one's value among them), the sources of a list or
 dict comprehension or a generator (one that names the comprehension's own target
-excepted, its items held by an earlier source), and every value the census reads
-a name by (a local's values, a loop's, an unpacking's or a with target's source
-and a local container's appended or stored values among them, or a module
-constant's value), a name bound so in turn; a set the census reaches only
-through a call's return (a function's, or a read method's, a set's copy or a
-dict's get among them) is read piece by piece, under the join limit above (its
-witnesses: a set a module function returns, a set's copy and a set a dict's get
-returns, each joined, a fetch split across its elements). A file the page reads
+excepted, its items held by an earlier source), and the values of a local of the
+page's scope or of a module constant that the census reads the name by (a
+local's values, a loop's, an unpacking's or a with target's source and a local
+container's appended or stored values among them, or a module constant's value),
+a name bound so in turn; a set the census reaches only through a call's return
+(a function's, or a read method's, a set's copy or a dict's get among them) or
+through a parameter (the argument a call hands it, or its default) is read piece
+by piece, under the join limit above (its witnesses: a set a module function
+returns, a set's copy and a set a dict's get returns, and a set a module
+function's parameter takes as its argument and one it takes as its default, each
+joined, a fetch split across its elements). A file the page reads
 at run time is covered
 by the walk only where the walk scans it as browser text, its DOM loads counted
 as a page's are (a JavaScript file under ui/ or vscode-extension/src), and only

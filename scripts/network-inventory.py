@@ -289,7 +289,8 @@ or run as code in the function's own body (one of the seven bare names `locals`,
 attribute on any receiver, or a name that a statement of the module's or the function's own body, outside every def, class or
 lambda statement it
 nests (header and body alike), binds to one of those primitives, its bound value the primitive's own bare name or attribute, by a
-plain or annotated assignment, a walrus, an equal-length unpacking of a list or tuple literal into plain names, or a `from ...
+plain or annotated assignment, a walrus, an unpacking of a list or tuple literal into a target list of as many elements (each
+plain name there bound to the value at its place, beside a starred or nested target too), or a `from ...
 import` of one of the seven names, and any name such a statement binds to a name so bound, resolved among those statements), is
 refused by name
 on every version, since the change reaches the real object; the check reads the spelling anywhere
@@ -297,13 +298,15 @@ in the function, called or not, so a name merely spelled like a primitive is ref
 not a frame reached; a change to those locals at run time through a frame object, exec or eval reached in any other spelling
 (among them: the name `locals` or `vars` as an attribute on a receiver; exec or eval reached as an attribute; `f_locals` as a bare
 name; one of the four attributes named by a string, as `getattr(frame, "f_locals")`; and any binding of a name to a primitive that
-the resolution above does not read, a starred or nested unpacking target, an alias whose bound value is any other expression (an
-if-expression, a call), and a binding in the header or the body of a def, class or lambda statement) is the stated precondition,
+the resolution above does not read, a plain name among the targets of an unpacking whose targets are not as many as its values, a
+name a nested unpacking target binds, an alias whose bound value is any other expression (an if-expression, a call), and a binding
+in the header or the body of a def, class or lambda statement) is the stated precondition,
 outside what the census reads, and passes silently (its witnesses, one for each road named: `locals`
 reached as an attribute on a receiver; `builtins.exec`; `builtins.eval`; `f_locals` called as a bare name; `getattr` handed a
-frame from `inspect.stack()` and the string `f_locals`; a starred and a nested unpacking target; a module alias bound to an
-if-expression and one bound to a call's return; a walrus in a module-level def's
-default, a `from ... import` in a def nested in the function, and an assignment inside a module-level def's body), while a name a
+frame from `inspect.stack()` and the string `f_locals`; a plain name beside a starred target that takes two values, and a name in
+a nested target; a module alias bound to an if-expression and one bound to a call's return; a walrus in a module-level def's
+default, a `from ... import` in a def nested in the function, an assignment inside a module-level def's body, an assignment in a
+module-level class's body, read as the class's attribute, and a walrus in a module-level lambda's default), while a name a
 nested
 scope binds to
 a primitive by an assignment carries the spelling in the function's subtree and refuses; code the function runs that the census does
@@ -401,9 +404,15 @@ a sibling module defines and the page
 imports, and a class reached through an import's attribute (its witness: a class that a sibling module defines, read as an attribute
 of that module, which the page imports by name) or through a call's return, under the call limit; code behind a name on self is not
 followed at all, since every method called on self is refused by name (below), and an item of self, a parameter's, is text such a
-base holds. A local container (a name a function the pass reads binds whole to a list, dict or set literal or comprehension, or
-one it changes, directly, through an item of it or an expression holding it, or through a name bound to it, to an item of it or to
-a new object holding one) is read whole only where every occurrence of its name, resolved by binding, is one of the proven forms:
+base holds. A local container (a name a function the pass reads binds whole to a list, dict or set literal or comprehension, or a
+name with one of these uses: a store or delete through it or an item of it; an append or extend; setattr or delattr, or a method
+spelled on a class, handed it or an item of it; one of the in-place changers of a list, dict, set, deque or OrderedDict called on
+it or read off it unbound (update, setdefault, append, extend, insert, pop, popitem, clear, add, discard, remove, sort, reverse,
+appendleft, extendleft, rotate, move_to_end, difference_update, intersection_update and symmetric_difference_update, or a
+spelled-out `__setitem__`, `__delitem__`, `__setattr__`, `__delattr__`, `__ior__`, `__iadd__`, `__isub__`, `__iand__`, `__ixor__`
+or `__imul__`), or a method whose return a statement drops; or a method other than get, keys, values, items, index, count or copy
+called on an item of it, or an attribute read off one; each directly or through a name bound to it, to an item of it or to a new
+object holding one) is read whole only where every occurrence of its name, resolved by binding, is one of the proven forms:
 its one binding (a plain single-name assignment to a list, dict, set or tuple literal or to a call whose return the census reads
 as a value slot, an import's, one of the seven builtins a page may name, a parameter's or a method's on one of those); the base of
 a subscript store by a str or int constant key as the one target of a plain assignment, whose stored value the census reads; the
@@ -416,26 +425,33 @@ argument's method, and the container refuses). Only a list, dict, set or tuple l
 urllib.parse at the top level and bound once, a dict), gives the container a type; bound to any other call the census reads as a
 value slot (`dict(...)` or an import's call among them), it has no type, and a read method or a subscript load on it refuses. A
 read method's or a subscript load's result is an item the census follows by binding like any other value. The proof covers the
-container; for an item it reads the following: a change through the item (a store into it; a method that changes an object in
-place called on it; setattr or delattr, or a container type's changer spelled on its type (`list.append`, `dict.update`), handed
-it as the object to change; or a method called on it as a statement other than get, keys, values, items, index, count or copy,
-which read it), directly or through a name bound to it, refuses the container, and so does its hand-off to another object's method
-by an operator (an operand of a binary operation or a comparison whose other operand is no constant, a subscript's index, a
+container, and an item of it (a read method's or a subscript load's result, directly or through a name bound to it or to a new
+object holding it) it reads by the same principle, through the closed read set of the item's own type, known as the container's
+is: from the literal, from parse_qs (whose items are lists of str) and from each value stored or appended into the container, a
+string constant being a str, and a copy of a dict, a list or a set, or a slice of a list or a tuple, being of its receiver's type
+and a new object holding its receiver's items. Any other method called on the item, and a read method or a subscript load outside
+its type's set (a
+spelled-out dunder among them), whether the return is used or dropped, an attribute read off it other than as a method's callee, a
+store into it, setattr or delattr handed it, and a method spelled on a class handed it as its first argument (a builtin class, as
+in `list.append`, or a class of collections imported as the module or by name, as in `deque.append`), directly or through a name
+bound to it, refuses the container; a str has no read set, nor has an item whose type the census does not know (a call's return, a
+name it does not follow), so any method or subscript load on one refuses; and so does the item's hand-off to another object's
+method by an operator (an operand of a binary operation or a comparison whose other operand is no constant, a subscript's index, a
 slice's bound, the value of an augmented assignment, or what an index or a count with an argument that is no constant compares) or
 any use of it the census does not read (called, or stored into another object, an attribute or a name the function declares global
 or nonlocal); compared or combined with a constant, an item is read, since only its own type's method and the constant's run; and
-an item handed as an argument to any other call is under the call limit, as the container is (below). Any other occurrence refuses
-the
-container by the rule, its reason naming the role it fails: the whole container bound to another name, to a name the function
+an item handed as an argument to any other call, a method spelled on any other value among them (a class the file defines or
+another import names, a module's function), is under the call limit, as the container is (below). Any other occurrence refuses
+the container by the rule, its reason naming the role it fails: the whole container bound to another name, to a name the function
 declares global or nonlocal, or into an attribute or
 another object; a read that hands it to another object's method (an operand of a binary operator, a comparison or `in`, a
 subscript's index, a slice's bound, the value of an augmented assignment) or any other read (a test, an identity test, a boolean
 operation's operand, held in a new object); a second binding (an augmented assignment, a walrus, or a for, with, except, match or
 unpacking
 target); a delete; a method other than append, extend or a read method of its type, a read method outside its type's set or a
-spelled-out dunder among them, or an attribute of it read other than as a method's callee; setattr or delattr, or a container
-type's changer spelled on its type (`list.append`, `dict.update`), handed it as the object to change; a store by a key that is no
-constant;
+spelled-out dunder among them, or an attribute of it read other than as a method's callee; setattr or delattr, or a method spelled
+on a class (a builtin class, or a class of collections imported as the module or by name), handed it as its first argument; a
+store by a key that is no constant;
 an append or extend of other than one plain argument; or any occurrence in a function or lambda nested in it, or a class
 body it defines, whose code the census does not read (a closure capture) or which makes a class attribute; a comprehension is read
 where it stands, as the function's own body is: a read of the fourth form and an append of a read value there pass, the container
@@ -443,8 +459,9 @@ as a comprehension's source, in its condition or as its element refuses as any o
 fold, a comprehension target store among them, refuses. The first parameter of a method or a route
 handler is not read so: every attribute read and method call on it is refused already. The container, or an item of it, handed as
 an argument to any other call is under the call limit, what the callee does with it not read (its witnesses: a local dict a module
-function it is handed stores a fetch into; and a list read out of a local dict of lists by a subscript load, by `.get`, or through
-a name bound to it, which a module function it is handed appends a fetch to). An attribute
+function it is handed stores a fetch into; a list read out of a local dict of lists by a subscript load, by `.get`, or through a
+name bound to it, which a module function it is handed appends a fetch to; and such a list handed to append spelled on a class of
+the file that derives from list). An attribute
 read in a page position, as a value or
 anywhere on the path of a receiver or a container (but never inside the index of a subscript over a
 container whose text the pass does not read: below), is refused by name unless the root its base reaches by
@@ -576,7 +593,8 @@ annotated assignment or a walrus binds to one of these; or an if-expression or a
 operands. A function's `X = []` of a local of the same name, or its `X.append(...)`, does not rebind it. A module list, dict or set
 constant (a literal or a comprehension a top-level assignment binds) is a container the module writes at run time as well, a
 run-time memo no type is read through, where the file changes it other than by the writes listed above for a route's type (a store
-or delete through an item of it or on it as an attribute, a changer called on an item of it or read off it unbound, a method called
+or delete through an item of it or on it as an attribute, one of the in-place changers named above called on an item of it or read
+off it unbound, a method called
 on it whose return is dropped, a setattr or delattr on it), changes it through a name bound to it, to an item of it or to a new
 object holding one (each name read by its spelling in every scope, so a local of that spelling counts too), or lets it or such a
 name leave the census's sight (stored into another object, returned, yielded, handed as a default or matched; an item of a literal
@@ -796,11 +814,13 @@ unbound as in `str.join("", {...})`, its second, is or holds a set literal or a 
 by name, its iteration order not fixed, so its join is no one text: the argument itself, a walrus's value, an if-expression's
 branches, a boolean operation's operands, a list or tuple display's elements (a starred one's value among them), the sources of a
 list or dict comprehension or a generator (one that names the comprehension's own target excepted, its items held by an earlier
-source), and every value the census reads a name by (a local's values, a loop's, an unpacking's or a with target's source and a
-local container's appended or stored values among them, or a module constant's value), a name bound so in turn; a set the census
-reaches only through a call's return (a function's, or a read method's, a set's copy or a dict's get among them) is read piece by
-piece, under the join limit above (its witnesses: a set a module function returns, a set's copy and a set a dict's get returns,
-each joined, a fetch split across its elements). A file the page
+source), and the values of a local of the page's scope or of a module constant that the census reads the name by (a local's
+values, a loop's, an unpacking's or a with target's source and a local container's appended or stored values among them, or a
+module constant's value), a name bound so in turn; a set the census reaches only through a call's return (a function's, or a read
+method's, a set's copy or a dict's get among them) or through a parameter (the argument a call hands it, or its default) is read
+piece by piece, under the join limit above (its witnesses: a set a module function returns, a set's copy and a set a dict's get
+returns, and a set a module function's parameter takes as its argument and one it takes as its default, each joined, a fetch split
+across its elements). A file the page
 reads at run time is covered by the walk only where the walk scans it as browser text, its DOM loads counted as a page's are (a
 JavaScript file under ui/ or vscode-extension/src), and only where the page reads it with an encoding the census reads as utf-8,
 utf_8 or utf8, or with none: the walk scans each file once as UTF-8, so a page that reads such a file with any other encoding, or through a `**` keyword whose mapping the census cannot read, is refused by name, since that one scan may not be the text the page serves, and a read that names no encoding takes the locale's default, a stated limit the census cannot prove is UTF-8; one the walk scans as Python, as shell, or as JavaScript elsewhere, its
@@ -836,6 +856,7 @@ connections this scan cannot see: such a site is listed by program, on a road th
 import _string   # str.format's own field parser and field-name split (_Served._format_length)
 import ast
 import builtins
+import collections
 import json
 import os
 import re
@@ -2067,7 +2088,8 @@ class Scan(ast.NodeVisitor):
     def cflows(self):
         """Layer iv's module side, at the walk's end: each module container whose text the census reads (a module name one top-level
         assignment binds to a list, dict or set literal or comprehension) that is changed other than by the forms write records (a
-        store or delete through an item of it or an attribute, a changer called on an item of it or read off it unbound, a method called
+        store or delete through an item of it or an attribute, one of the in-place changers (_CHANGERS) called on an item of it or
+        read off it unbound, a method called
         on it whose return is dropped, a setattr or delattr on it: cwrites), or that a name bound to it, to an item of it or to a new
         object holding one is changed through (at a depth reaching it: its levels of new objects taken off), or that such a name, or it,
         leaves the file's sight through (stored into another object, returned, yielded, handed as a default or matched: the container
@@ -4739,9 +4761,11 @@ def routes_of(rel, tree, sc, res):
 # argument, _COMPARED), each checked against the set of the type the one binding gives: a list, dict, set or tuple literal, or a call of
 # parse_qs (a dict); a binding to any other value slot gives no type, and every read method and subscript load on it refuses
 # (_CT_UNTYPED). An item a read method returns, or a subscript load returns, is a value the census follows by binding like any other
-# (condition 2 of the 07:37Z ruling: _flow, _Served._containers). The append or extend of one plain argument, on
-# the container itself, is the one growth it reads; and the calls that change a container or an object in place, any of which makes a
-# name a container whose every occurrence the proof reads
+# (condition 2 of the 07:37Z ruling: _flow, _Served._containers), read only through the closed set of its own type (the item rule
+# below). The append or extend of one plain argument, on the container itself, is the one growth it reads; and the in-place changers of
+# a list, a dict, a set, a deque and an OrderedDict, with the spelled-out dunders that write, each of which, called on a name or read
+# off it unbound, makes a name bound to anything but a literal a container whose every occurrence the proof reads (_Served._containers's
+# changes: what marks a container, never what reads an item) and writes a module container (Scan.cwrite, layer iv's module side)
 _READ_METHODS = frozenset(("get", "keys", "values", "items", "index", "count", "copy"))
 # The methods whose return is drawn from their receiver's text (the eleventh round's rulings, the reviewer's 14:42Z item 3 and 16:33Z
 # E2: the allowlist _Served._undrawn reads for a method called on a receiver whose text the pass reads, or on a base whose own text it
@@ -4773,14 +4797,29 @@ _CT_ITEM = "an item of it handed to another object's method (%s)"
 _CT_SUB = "a subscript load on it, a set by its one binding"   # a typed container: a subscript load is a dict's, a list's or a tuple's read
 _CT_UNTYPED = ("read through %s where its one binding, neither a literal nor a call of parse_qs, gives it no type whose read methods "
                "the census knows")   # a container bound to any other value slot (dict(...), an import's call): no read method or subscript load reads it
+# An item of a container the proof reads (a read method's or a subscript load's result, directly or through a name bound to it or to a
+# new object holding it) is read only through the closed read set of the item's own type, the type known as the container's is, from the
+# one binding and the values stored or appended into the container (_Served._item_types, _value_type): condition 1 of the 07:37Z ruling
+# applied to its items. Any other method called on it, a read method or a subscript load outside that set, a spelled-out dunder among
+# them, whether the return is used or dropped, an attribute read off it other than as a method's callee, and a method spelled on a class
+# (a builtin class, or a class of collections imported as the module or by name: _Served._class_callee) handed it as its first argument
+# refuse the container; a str has no read set, nor has an item whose type the census does not know (a call's return, a name it does not
+# follow), so any method or subscript load on one refuses (_Served._containers)
+_CT_ITEM_USE = "%s on an item of it, not a read of the item's type (%s)"
+_CT_ITEM_UNKNOWN = "%s on an item of it, whose type the census does not know"
+_CT_ITEM_ATTR = "an attribute of an item of it read other than as a method's callee (%s)"
+_CT_THROUGH = "through %s, a name the function binds to an item of it or to a new object holding one: %s"
+_CT_CLASS = "handed to %s, a method spelled on a class, as the object it runs on"   # a builtin class or a class of collections: _Served._class_callee
+_CT_ITEM_CLASS = "an item of it " + _CT_CLASS
 # A function whose frame's local mapping is reached, or run as code, hands out or mutates the real container object on every CPython
 # version (a mutation, not a rebind, so it needs no 3.13 write-through), so the container proof cannot prove a container it binds is read
 # whole: a page function whose own subtree holds, anywhere and whether called or not, one of the SEVEN bare names in _FRAME_NAMES (locals,
 # vars, exec, eval, _getframe, currentframe, getargvalues), one of the FOUR attributes in _FRAME_ATTRS (_getframe, currentframe,
 # getargvalues, f_locals) spelled as an attribute on any receiver, or a name that a statement of the module's or the function's own body,
 # outside every def, class or lambda statement it nests (header and body alike), binds to one of those primitives, its bound value the
-# primitive's own bare name or attribute (a plain or annotated assignment, a walrus, an EQUAL-LENGTH unpacking of a list or tuple literal
-# into plain names, or a `from ... import` of one of the seven names), and any name such a statement binds to a name so bound (a chained
+# primitive's own bare name or attribute (a plain or annotated assignment, a walrus, an unpacking of a list or tuple literal into a
+# target list of AS MANY elements, each plain name there bound to the value at its place, beside a starred or nested target too, or a
+# `from ... import` of one of the seven names), and any name such a statement binds to a name so bound (a chained
 # alias), resolved among those statements (_frame_alias_names), refuses every container it binds by name (_Served._containers,
 # _reaches_frame). The check is syntactic: it reads the spelling, not a call, so a name merely spelled like a primitive refuses too (the
 # safe side), and its reason names the spelling found (_FRAME_CONTAINER, `its function spells <the spelling>`), not a frame reached. One
@@ -4791,12 +4830,15 @@ _CT_UNTYPED = ("read through %s where its one binding, neither a literal nor a c
 # `locals` reached as an attribute, frxr is exec so reached, frev eval); f_locals as a bare NAME (`f_locals(fr)`), since f_locals is in
 # _FRAME_ATTRS alone, not _FRAME_NAMES (bfl2); one of the four attributes named by a STRING, `getattr(inspect.stack()[0].frame,
 # "f_locals")`, since the check matches an attribute node and inspect.stack and frame are in neither set (fgs2); and any binding of a name
-# to a primitive that _frame_alias_names does not read: a STARRED or NESTED unpacking target, which the equal-length plain-name arm skips
-# (fsst `_PS, *_pr = locals, 1, 2`; fsnt `(_PN, _pz), _py = (locals, 1), 2`); an alias whose bound value is any other expression (tx4 a
+# to a primitive that _frame_alias_names does not read: a plain name among the targets of an unpacking whose targets are NOT AS MANY as
+# its values (fsst `_PS, *_pr = locals, 1, 2`, two targets and three values) and a name a NESTED target binds (fsnt `(_PN, _pz), _py =
+# (locals, 1), 2`), each of which the unpacking arm skips; an alias whose bound value is any other expression (tx4 a
 # module alias bound to an if-expression, `_TX4 = locals if True else None`; txc one bound to a call's return, `_TXC = _ident(locals)`);
 # and a binding in the header or the body of a def, class or lambda statement, which _own_stmts and _module_level_stmts skip whole: a
-# walrus in a module-level def's default (tx2), a `from ... import` a def nested in the function makes (nstb), whose imported spelling sits
-# in the alias node and whose alias name ast.walk does not match, or an assignment inside a module-level def's body (tx3). But a binding a
+# walrus in a module-level def's default (tx2), a `from ... import` a def nested in the function makes (nstb), whose imported spelling
+# sits in the alias node and whose alias name ast.walk does not match, an assignment inside a module-level def's body (tx3), an
+# assignment in a module-level class's body, read as the class's attribute (frcl `class _FrK: fl = locals`, `_FrK.fl()`), or a walrus in
+# a module-level lambda's default (flam `lambda z=(_LW := locals): z`). But a binding a
 # nested def, class or lambda makes by an ASSIGNMENT carries the primitive's spelling in the function's subtree, which ast.walk(fn) reads,
 # so it refuses (nsta), as does a name merely spelled like a primitive (lcsy binds `currentframe` to a string). Code the page function runs
 # that the census does not read (a helper it calls as a statement, a method on self, a context manager it enters), reaching the caller's
@@ -4811,6 +4853,89 @@ _FLOWS = (ast.BinOp, ast.List, ast.Tuple, ast.Set, ast.Dict) + _COMPS   # a node
 _NO_ROOTS = frozenset((ast.Constant, ast.JoinedStr, ast.Compare, ast.UnaryOp, ast.Lambda))   # a value that reads through no name (_flow_roots: none)
 _READS = (ast.FormattedValue, ast.JoinedStr, ast.Compare, ast.UnaryOp, ast.Expr, ast.If, ast.While, ast.Assert, ast.Raise, ast.Slice, ast.Return,
           ast.Yield, ast.YieldFrom, ast.Lambda, ast.match_case)   # a node that consumes a value it holds
+
+
+_UNSET = object()   # a name's type the container proof's fixpoint has not read yet (_Served._containers)
+
+
+def _meet(a, b):
+    """The type two values share, as the container proof reads an item's type: a pair (the kind, "dict", "list", "tuple", "set" or
+    "str", and the type of the items it holds), None where it does not know it, _UNSET for no value read yet; the same kind with the item
+    types met in turn, or None where the kinds differ or either is not known."""
+    if a is _UNSET: return b
+    if b is _UNSET: return a
+    if a is None or b is None or a[0] != b[0]: return None
+    return (a[0], _meet(a[1], b[1]))
+
+
+def _settled(t):   # a type with any item type still unread (an empty literal's, which nothing fills) read as not known
+    return None if t is _UNSET or t is None else (t[0], _settled(t[1]))
+
+
+def _value_type(e, types):
+    """The type (_meet's pair) of the value `e`, as the container proof reads an item's: a name's from `types` (the container's own,
+    from its one binding, and those of the names bound to it, to an item of it or to a new object holding one; None for any other name); a
+    string constant a str; a list, tuple or set display that kind, holding its elements' types met (a starred element's not known); a
+    dict display a dict holding its values' (a ** entry's not known); a subscript load on a dict, a list or a tuple the type of the items
+    it holds, and a slice of a list or a tuple its own type; a read method of the receiver's own type (_TYPE_READS) the type it returns: a
+    copy the receiver's, a dict's get the type of its items met with the default's, and keys, values, items, index or count one it does
+    not know (a view or a number); a boolean operation's operands and an if-expression's branches met; a walrus its value's. Any other
+    value (a call, an attribute, a number, a subscript load or a read method its receiver's type does not read) is one it does not know."""
+    t = type(e)
+    if t is ast.Name: return types.get(e.id)
+    if t is ast.Constant: return ("str", None) if type(e.value) is str else None
+    if t is ast.List or t is ast.Tuple or t is ast.Set:
+        held = _UNSET
+        for v in e.elts: held = _meet(held, None if type(v) is ast.Starred else _value_type(v, types))
+        return ("list" if t is ast.List else "tuple" if t is ast.Tuple else "set", held)
+    if t is ast.Dict:
+        held = _UNSET
+        for k, v in zip(e.keys, e.values): held = _meet(held, None if k is None else _value_type(v, types))
+        return ("dict", held)
+    if t is ast.Subscript:
+        base = _value_type(e.value, types)
+        if base is _UNSET: return _UNSET
+        if base is None or "[]" not in _TYPE_READS.get(base[0], ()): return None
+        return base if type(e.slice) is ast.Slice and base[0] != "dict" else None if type(e.slice) is ast.Slice else base[1]
+    if t is ast.Call and type(e.func) is ast.Attribute and e.func.attr in _READ_METHODS:
+        base = _value_type(e.func.value, types)
+        if base is _UNSET: return _UNSET
+        if base is None or e.func.attr not in _TYPE_READS.get(base[0], ()): return None
+        if e.func.attr == "copy": return base
+        if e.func.attr == "get": return base[1] if len(e.args) < 2 else _meet(base[1], _value_type(e.args[1], types))
+        return None
+    if t is ast.BoolOp:
+        held = _UNSET
+        for v in e.values: held = _meet(held, _value_type(v, types))
+        return held
+    if t is ast.IfExp: return _meet(_value_type(e.body, types), _value_type(e.orelse, types))
+    if t is ast.NamedExpr: return _value_type(e.value, types)
+    return None
+
+
+def _bind_type(p, types):
+    """The type the binding node `p` gives the one name it binds from a value holding a container (_value_type): a plain assignment of
+    one name, an annotated assignment or a walrus, its value's; a loop's or a comprehension's target that is one name, the type of the
+    items its source holds (a list's, a tuple's or a set's; a dict's keys not known); any other binding (an unpacking, a with target) one
+    it does not know."""
+    if isinstance(p, ast.Assign):
+        return _value_type(p.value, types) if len(p.targets) == 1 and isinstance(p.targets[0], ast.Name) else None
+    if isinstance(p, (ast.AnnAssign, ast.NamedExpr)): return _value_type(p.value, types) if isinstance(p.target, ast.Name) else None
+    if isinstance(p, (ast.For, ast.AsyncFor, ast.comprehension)) and isinstance(p.target, ast.Name):
+        src = _value_type(p.iter, types)
+        if src is _UNSET: return _UNSET
+        return src[1] if src is not None and src[0] in ("list", "tuple", "set") else None
+    return None
+
+
+def _item_recv(e):
+    """The receiver of an item use among _containers' events: a method called on, a read method's or a subscript load's step taken from,
+    or an attribute read off a value at no level of new objects that stands inside the container (_flow's "method", "rstep", "sstep" and
+    "attr" with `inside`: an item of it, directly or through a name bound to one or to a new object holding one); None for any other
+    event, a use of the container itself (its own name, or a name bound to it whole, which its own occurrence refuses) among them."""
+    kind, node, fresh, inside = e[6], e[7], e[9], e[11]
+    if fresh or not inside or kind not in ("method", "rstep", "sstep", "attr"): return None
+    return node.func.value if kind in ("method", "rstep") else node.value
 
 
 def _scope_names(fn):
@@ -4942,85 +5067,97 @@ def _own_stmts(node):
     return out
 
 
-def _flow(u, parents, fresh=0):
-    """Where the value the Name node u reads goes, walked up its parents (layer iv): a list of steps, each (kind, node, detail, fresh),
-    the last its sink. `fresh` counts the levels of a value that are new objects around the container's own: a literal, a
-    binary operation or a comprehension that holds the value adds one, and an item read (a subscript's container, a read method's
-    return: _READ_METHODS) takes one off, or once none is left goes into the container itself; a change reaches the container only
-    where none is left (0). Through a boolean operation's operand,
-    an if-expression's branch, a starred value, an await and a walrus's value (a walrus also binds its name: "bind") the value goes on
-    as it is. The sinks: "store" a store or delete through it (the subscript or attribute); "handed" a setattr or delattr, or a
-    changer called on a container type (dict.update, list.append: _CONTAINER_TYPES), handed it as its first argument (detail the
-    callee); "grow" an append or extend called on u
-    itself; "method" any other method called on it or on an item of it (detail its name); "attr" an attribute read on it other than
-    as a method's callee (detail its name); "bind" its value, or an item of it, bound to names, by an assignment, an augmented or
-    annotated one, a loop, a comprehension, a with statement or a walrus (detail the names; a loop's or a comprehension's target an
-    item of it); "escape" stored into another object, handed as a default,
-    matched, called, or held anywhere else (detail the words); "operand" handed to another object's method by an operator, which
-    Python invokes with the value as its argument (an operand of a binary operation or a comparison whose other operand is no constant,
-    a subscript's index, a slice's bound, the value of an augmented assignment, or a .index()/.count() with an argument that is no
-    constant): the 07:37Z ruling's condition 2, where the value is an item a read of the container returns; "call" a call's argument,
-    the call limit; "read" consumed some other way (a test, a comprehension's condition, an identity comparison, an operand of a
-    binary operation or a comparison whose other operands are constants, an f-string's field, a statement's value, a return or a
-    yield, a lambda's body). For the container's OWN name, the fourth-form check (_own_use, _Served._containers) keeps only "read" as a read
-    method's receiver or a subscript load's base; every other "read" or "operand" role of the container's own name refuses it."""
+def _flow(u, parents, fresh=0, inside=False):
+    """Where the value the Name node u reads goes, walked up its parents (layer iv): a list of steps, each (kind, node, detail, fresh,
+    inside), the last its sink. `fresh` counts the levels of a value that are new objects around the container's own: a literal, a
+    binary operation or a comprehension that holds the value adds one, and an item step (a subscript load's, or a read method's return:
+    _READ_METHODS) takes one off, or once none is left goes into the container: `inside`, the value an item of it (or an item of one) and
+    no longer the container itself. A change reaches the container only where no level is left (0). Through a boolean operation's
+    operand, an if-expression's branch, a starred value, an await and a walrus's value (a walrus also binds its name: "bind") the value
+    goes on as it is. The steps that do not end the walk: "sstep" a subscript load on the value and "rstep" a read method called on it
+    (detail its name), each read by _Served._containers against the type of the value it is taken from. The sinks: "store" a store or
+    delete through it (the subscript or attribute); "handed" setattr or delattr handed it as the first argument (detail the callee);
+    "tcall" a method spelled on another value (`list.append(x, v)`) handed it as the first argument (detail the callee as spelled),
+    which _Served._containers reads as the method running on it where that value is a class it resolves (_class_callee) and as the
+    call limit otherwise; "grow" an append or extend called on u itself; "method" any other method called on it (detail its name); "attr"
+    an attribute read on it other than as a method's callee (detail its name); "bind" its value, or an item of it, bound to names, by an
+    assignment, an augmented or annotated one, a loop, a comprehension, a with statement or a walrus (detail the names; a loop's or a
+    comprehension's target an item of it); "escape" stored into another object, handed as a default, matched, called, or held anywhere
+    else (detail the words); "operand" handed to another object's method by an operator, which Python invokes with the value as its
+    argument (an operand of a binary operation or a comparison whose other operand is no constant, a subscript's index, a slice's
+    bound, the value of an augmented assignment, or a .index()/.count() with an argument that is no constant): the 07:37Z ruling's
+    condition 2, where the value is an item a read of the container returns; "call" a call's argument, the call limit; "read" consumed
+    some other way (a test, a comprehension's condition, an identity comparison, an operand of a binary operation or a comparison whose
+    other operands are constants, an f-string's field, a statement's value, a return or a yield, a lambda's body). For the container's
+    OWN name, the fourth-form check (_own_use, _Served._containers) keeps only "read" as a read method's receiver or a subscript load's
+    base; every other "read" or "operand" role of the container's own name refuses it."""
     steps, cur = [], u
+
+    def item(fresh, inside):   # an item step: a level of new objects off, or with none left, into the container
+        return (fresh - 1, inside) if fresh else (0, True)
     while True:
         p = parents.get(id(cur))
         if isinstance(p, ast.Subscript):
-            if p.value is not cur: return steps + [("operand", p, "a subscript's index", fresh)]   # an index
-            if not isinstance(p.ctx, ast.Load): return steps + [("store", p, None, fresh)]
-            cur, fresh = p, max(0, fresh - 1); continue
+            if p.value is not cur: return steps + [("operand", p, "a subscript's index", fresh, inside)]   # an index
+            if not isinstance(p.ctx, ast.Load): return steps + [("store", p, None, fresh, inside)]
+            steps = steps + [("sstep", p, "[]", fresh, inside)]
+            cur = p; fresh, inside = item(fresh, inside)
+            if type(p.slice) is ast.Slice: fresh += 1   # a slice: a new object holding its receiver's items
+            continue
         if isinstance(p, ast.Attribute):
-            if not isinstance(p.ctx, ast.Load): return steps + [("store", p, None, fresh)]
+            if not isinstance(p.ctx, ast.Load): return steps + [("store", p, None, fresh, inside)]
             gp = parents.get(id(p))
             if isinstance(gp, ast.Call) and gp.func is p:
                 if p.attr in _READ_METHODS:
                     if p.attr in _COMPARED and not (gp.args and type(gp.args[0]) is ast.Constant):
-                        return steps + [("operand", gp, "compared by .%s() with an argument that is no constant" % p.attr, fresh)]
-                    cur, fresh = gp, max(0, fresh - 1); continue
-                if p.attr in _GROWERS and cur is u: return steps + [("grow", gp, None, fresh)]
-                return steps + [("method", gp, p.attr, fresh)]
-            return steps + [("attr", p, p.attr, fresh)]
+                        return steps + [("operand", gp, "compared by .%s() with an argument that is no constant" % p.attr, fresh, inside)]
+                    steps = steps + [("rstep", gp, p.attr, fresh, inside)]
+                    cur = gp; fresh, inside = item(fresh, inside)
+                    if p.attr == "copy": fresh += 1   # a copy: a new object holding its receiver's items
+                    continue
+                if p.attr in _GROWERS and cur is u: return steps + [("grow", gp, None, fresh, inside)]
+                return steps + [("method", gp, p.attr, fresh, inside)]
+            return steps + [("attr", p, p.attr, fresh, inside)]
         if isinstance(p, ast.IfExp):
-            if cur is p.test: return steps + [("read", p, None, fresh)]
+            if cur is p.test: return steps + [("read", p, None, fresh, inside)]
             cur = p; continue
         if isinstance(p, (ast.BoolOp, ast.Starred, ast.Await)): cur = p; continue
         if type(p) is ast.BinOp and type(p.right if cur is p.left else p.left) is not ast.Constant:
-            return steps + [("operand", p, "an operand of a binary operation whose other operand is no constant", fresh)]
+            return steps + [("operand", p, "an operand of a binary operation whose other operand is no constant", fresh, inside)]
         if isinstance(p, _FLOWS): cur, fresh = p, fresh + 1; continue   # a literal, a binary operation or a comprehension's element holding it
         if isinstance(p, ast.NamedExpr):
-            steps.append(("bind", p, [p.target.id], fresh)); cur = p; continue
+            steps.append(("bind", p, [p.target.id], fresh, inside)); cur = p; continue
         if isinstance(p, ast.Call):
-            if cur is p.func: return steps + [("escape", p, "called", fresh)]
-            if p.args and cur is p.args[0] and (type(p.func) is ast.Name and p.func.id in _NS_SETTERS or type(p.func) is ast.Attribute
-                                                 and p.func.attr in _CHANGERS and _dotted(p.func.value) in _CONTAINER_TYPES):
-                return steps + [("handed", p, _dotted(p.func), fresh)]   # setattr(x, ...), dict.update(x, ...): a change of x
-            return steps + [("call", p, None, fresh)]
+            if cur is p.func: return steps + [("escape", p, "called", fresh, inside)]
+            if p.args and cur is p.args[0] and type(p.func) is ast.Name and p.func.id in _NS_SETTERS:
+                return steps + [("handed", p, p.func.id, fresh, inside)]   # setattr(x, ...) or delattr(x, ...): a change of x
+            if p.args and cur is p.args[0] and type(p.func) is ast.Attribute:   # `list.append(x, v)`: a method spelled on a class runs on
+                return steps + [("tcall", p, _dotted(p.func) or p.func.attr, fresh, inside)]   # x where _containers reads its value as a class
+            return steps + [("call", p, None, fresh, inside)]
         if isinstance(p, ast.keyword):
             gp = parents.get(id(p))
             return steps + [("call" if isinstance(gp, ast.Call) else "escape", gp if isinstance(gp, ast.Call) else p,
-                             None if isinstance(gp, ast.Call) else "held in a position the census does not read", fresh)]
+                             None if isinstance(gp, ast.Call) else "held in a position the census does not read", fresh, inside)]
         if isinstance(p, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.For, ast.AsyncFor, ast.comprehension, ast.withitem)):
             loop = isinstance(p, (ast.For, ast.AsyncFor, ast.comprehension))
             src = p.context_expr if isinstance(p, ast.withitem) else p.iter if loop else p.value
-            if cur is not src: return steps + [("read", p, None, fresh)]   # a comprehension's condition
-            if isinstance(p, ast.AugAssign): return steps + [("operand", p, "the value of an augmented assignment", fresh)]
+            if cur is not src: return steps + [("read", p, None, fresh, inside)]   # a comprehension's condition
+            if isinstance(p, ast.AugAssign): return steps + [("operand", p, "the value of an augmented assignment", fresh, inside)]
             tgts = (p.targets if isinstance(p, ast.Assign) else [p.optional_vars] if isinstance(p, ast.withitem) else [p.target])
             names, other = [], False
             for t in tgts:
                 if t is None: continue
                 got = _target_names(t); names += got[0]; other = other or got[1]
-            if other: return steps + [("escape", p, "stored into another object", fresh)]
-            return steps + [("bind", p, names, max(0, fresh - 1) if loop else fresh)]
-        if isinstance(p, ast.arguments): return steps + [("escape", p, "a default of a function or a lambda", fresh)]
-        if isinstance(p, ast.Match): return steps + [("escape", p, "matched by a match statement", fresh)]
+            if other: return steps + [("escape", p, "stored into another object", fresh, inside)]
+            return steps + [("bind", p, names) + (item(fresh, inside) if loop else (fresh, inside))]   # a loop's target: an item of its source
+        if isinstance(p, ast.arguments): return steps + [("escape", p, "a default of a function or a lambda", fresh, inside)]
+        if isinstance(p, ast.Match): return steps + [("escape", p, "matched by a match statement", fresh, inside)]
         if type(p) is ast.Compare and not all(type(o) in (ast.Is, ast.IsNot) for o in p.ops) and any(
                 type(o) is not ast.Constant for o in [p.left] + p.comparators if o is not cur):
-            return steps + [("operand", p, "an operand of a comparison or `in` whose other operand is no constant", fresh)]
-        if type(p) is ast.Slice: return steps + [("operand", p, "a slice's bound", fresh)]
-        if isinstance(p, _READS): return steps + [("read", p, None, fresh)]
-        return steps + [("escape", p, "held in a position the census does not read", fresh)]
+            return steps + [("operand", p, "an operand of a comparison or `in` whose other operand is no constant", fresh, inside)]
+        if type(p) is ast.Slice: return steps + [("operand", p, "a slice's bound", fresh, inside)]
+        if isinstance(p, _READS): return steps + [("read", p, None, fresh, inside)]
+        return steps + [("escape", p, "held in a position the census does not read", fresh, inside)]
 
 
 def _role(n, p):
@@ -5122,7 +5259,9 @@ class _Served(object):
     such proof reads the page's own file alone, so a file another walked file's import statement may bind is refused whole, one line
     at its first route candidate, scan's _page_importers, and a module reached another way is the stated limit), a local by every
     binding it has in the function (a container only where the container proof holds: _containers), a `.format`,
-    `.join` (but one over a set or a value the census reads from one: _set_value, _JOIN_SET), `.replace` or `.strip` receiver and its
+    `.join` (but one over a set, or over a local or a module constant the census reads by its binding from one: _set_value, _JOIN_SET;
+    a set a call returns or a parameter takes, as its argument or its default, read piece by piece under the join limit), `.replace`
+    or `.strip` receiver and its
     arguments (but a `.format`, `.join` or `.replace` called on the name str, bytes or bytearray; each refused below), and every `return`
     of a module function
     or a function defined in the page function that the census proves a plain def (_def_shape, _def_uses; a method called on self is
@@ -5219,25 +5358,28 @@ class _Served(object):
     subscript load; a tuple's index and count and a subscript load; a set's copy; index and count only with a constant argument; the
     type only from a list, dict, set or tuple literal or a call of parse_qs, a dict, so a container bound to any other value slot has
     none and any read method or subscript load on it refuses, _CT_UNTYPED)), and any other occurrence refuses it: a second binding, a
-    del, a store or method the census cannot fold (setattr or delattr, or a container type's changer spelled on its type, handed it
-    as the object to change, among them), a bind of the whole container to another name or to a global or nonlocal name, a
+    del, a store or method the census cannot fold (setattr or delattr, or a method spelled on a class, handed it as its first
+    argument, among them), a bind of the whole container to another name or to a global or nonlocal name, a
     read that hands it to another object's method (an operand of an operator, a comparison or `in`, or a subscript's index) or any
     other read, or a read or change in a def, class or lambda nested in it among them, a nested scope's own binding of the spelling
-    being no occurrence of it; a read method's or a subscript load's result is an item the census follows by binding, and of an item
-    the proof reads this: a change through it (a store into it; a changer called on it; setattr or delattr, or a container type's
-    changer spelled on its type, handed it as the object to change; or a method called on it as a statement other than the read
-    methods, _READ_METHODS, which read it), its hand-off to another object's method by an operator whose other operand is no constant (a
+    being no occurrence of it; a read method's or a subscript load's result is an item the census follows by binding, read only
+    through the closed read set of its own type (_item_types, _value_type: condition 1 applied to it), and of an item the proof reads
+    this: any other method called on it, a read method or a subscript load outside that set (a str has none, nor has an item whose
+    type the census does not know), an attribute read off it, a store into it, and setattr, delattr or a method spelled on a class
+    handed it, its hand-off to another object's method by an operator whose other operand is no constant (a
     comparison, a binary operation, a subscript's index, a slice's bound, an augmented assignment's value, or what an index or a count with
     an argument that is no constant compares), and any use the census does not read (called,
     or stored into another object, an attribute or a global or nonlocal name) refuse the container, while an item compared or
     combined with a constant is read (only its own type's method and the constant's run), and one handed as an argument to any other
-    call is under the call limit; a comprehension is read where it stands, as the function's own body is: a read of the fourth form, an
+    call, a method spelled on a class the census does not resolve among them, is under the call limit; a comprehension is read where
+    it stands, as the function's own body is: a read of the fourth form, an
     append of a read value and a call's argument pass there, and any other read refuses), any other container of the scope refused by name
     wherever it is read (_Container, _CONTAINER), save the first parameter of a method or a route handler, and the container or an item of
     it handed as an argument to any other
     call being under the call limit (its witnesses a local dict a module function it is handed stores a fetch into, ctwit, and a list read
-    out of a local dict of lists by a subscript load, by `.get` or through a name bound to it, which a module function it is handed appends
-    a fetch to, ihc, ihg and ihn); a module container some code writes after binding it (a write
+    out of a local dict of lists by a subscript load, by `.get` or through a name bound to it, which a module function it is handed
+    appends a fetch to, ihc, ihg and ihn, and such a list handed to append spelled on a class of the file that derives from list,
+    itcw); a module container some code writes after binding it (a write
     Result.writes records, as the served sentence lists them, a module list, dict or set changed or let out of the census's sight
     among them: Scan.cflows) is a run-time memo, and so is a module name bound to a call whose object the file changes
     (Result.changed, self.cmemos), save as a call's argument (self.cargs: the call limit, its witness an import's object an
@@ -5372,15 +5514,17 @@ class _Served(object):
     (_getframe, currentframe, getargvalues, f_locals) spelled as an attribute on any receiver, and a name a statement of the module's or
     the function's own body, outside every def, class or lambda statement it nests (header and body alike), binds to a frame primitive, its
     bound value the
-    primitive's own bare name or attribute, by a plain or annotated assignment, a walrus, an equal-length unpacking of a list or tuple
-    literal into plain names or a `from ... import` of one of the seven names, and any name such a statement binds to a name so bound),
+    primitive's own bare name or attribute, by a plain or annotated assignment, a walrus, an unpacking of a list or tuple literal into
+    a target list of as many elements (each plain name there bound to the value at its place, beside a starred or nested target too)
+    or a `from ... import` of one of the seven names, and any name such a statement binds to a name so bound),
     is refused by name on every version, its reason naming the spelling found, not a frame reached (a mutation reaches the real object;
     _containers, _reaches_frame, _FRAME_CONTAINER); a change to those locals reached in any other spelling (among them locals or vars
     as an attribute on a receiver, exec or eval reached as an attribute, f_locals as a bare name, one of the four attributes named by a
-    string, `getattr(frame, "f_locals")`, and any binding of a name to a primitive the resolution does not read, a starred or nested
-    unpacking target, an alias whose bound value is any other expression (an if-expression, a call) and a binding in the header or the
-    body of a def, class or lambda statement) is the stated precondition, one witness for each road named (fratr, frxr and frev; bfl2;
-    fgs2; fsst and fsnt; tx4 and txc; tx2, nstb and tx3), while a binding a
+    string, `getattr(frame, "f_locals")`, and any binding of a name to a primitive the resolution does not read, a plain name among
+    the targets of an unpacking whose targets are not as many as its values and a name a nested unpacking target binds, an alias whose
+    bound value is any other expression (an if-expression, a call) and a binding in the header or the body of a def, class or lambda
+    statement) is the stated precondition, one witness for each road named (fratr, frxr and frev; bfl2; fgs2; fsst and fsnt; tx4 and
+    txc; tx2, nstb, tx3, frcl and flam), while a binding a
     nested scope makes by an assignment carries the primitive's spelling in the function's subtree and refuses (nsta); code the function
     runs that the census does not read (a helper it calls as a statement, a method on self, a context manager it enters) reaching the
     caller's frame instead is a stated limit, its witness fhlp. A parameter in the body is
@@ -5470,6 +5614,12 @@ class _Served(object):
         # _sole: layer v of the eleventh round's rulings)
         self.parse_qs = {a.asname or a.name for node in tree.body if isinstance(node, ast.ImportFrom) and node.level == 0
                          and node.module == "urllib.parse" for a in node.names if a.name == "parse_qs"}
+        # the names a top-level `import` binds, each to its module, and those a top-level `from collections import` binds, each to the
+        # name it imports (_class_callee: a method spelled on a class of collections)
+        self.import_mods = {a.asname or a.name.split(".")[0]: a.name if a.asname else a.name.split(".")[0]
+                            for node in tree.body if isinstance(node, ast.Import) for a in node.names}
+        self.from_collections = {a.asname or a.name: a.name for node in tree.body if isinstance(node, ast.ImportFrom) and node.level == 0
+                                 and node.module == "collections" for a in node.names if a.name != "*"}
         self.pathlib_path = any(isinstance(node, ast.ImportFrom) and node.module == "pathlib"
                                 and any(a.name == "Path" and (a.asname or a.name) == "Path" for a in node.names) for node in tree.body)
         # every module-level binding, from the count's own walk, and the builtins: a bare name of one not a constant is classified by
@@ -5479,10 +5629,11 @@ class _Served(object):
         self.names = set(self.builtins) | set(self.bound)
         self.memos = {x for x in res.writes.get(rel, {}) if x in self.consts}   # the module containers some code writes (Scan's walk)
         # layer iv's module side: a module name bound to a call whose object the file changes other than by the forms Result.writes
-        # records (a store through an item of it or on it as an attribute, a setattr or delattr on it, a changer called on an item of
-        # it or read off it, a method called on it whose return is dropped: Scan.cwrites), read as a run-time memo wherever the pass
-        # takes text through it (a receiver, a container, an attribute's root, a bare value, a local's value), and only as a call's
-        # argument not (cargs: the call limit, what the callee does with it not read, and its text the call's own arguments)
+        # records (a store through an item of it or on it as an attribute, a setattr or delattr on it, one of the in-place changers
+        # (_CHANGERS) called on an item of it or read off it, a method called on it whose return is dropped: Scan.cwrites), read as a
+        # run-time memo wherever the pass takes text through it (a receiver, a container, an attribute's root, a bare value, a local's
+        # value), and only as a call's argument not (cargs: the call limit, what the callee does with it not read, and its text the
+        # call's own arguments)
         self.cmemos = {x for x in res.changed.get(rel, ()) if isinstance(self.consts.get(x), ast.Call)} - self.memos
         self.cargs = set()   # ids of the names standing directly as a call's argument in a page (resolve's Call arm)
         self.rebound = set(res.rebinds.get(rel, {}))   # the names a function binds under `global` or a module-level statement writes
@@ -5684,44 +5835,61 @@ class _Served(object):
         comparison or `in` (whatever the other operand), or as a subscript's index or a slice's bound, or the value of an augmented
         assignment (Python hands it to the other operand's or the subscripted object's method there: the dunder hand-off); the whole
         container bound to another name; and every other read (a test, an identity test, a boolean operation's operand, an
-        if-expression's branch, held in a new object, a return, an f-string's field). A read method's or a subscript load's RESULT is an
-        item the census follows by binding like any other value (07:37Z condition 2); the proof covers the container, and of an item it
-        reads this: a change through the item (a store into it; a changer called on it; setattr or delattr, or a container type's
-        changer spelled on its type, handed it as the object to change, _flow's "handed"; or a method called on it as a statement other
-        than one of _READ_METHODS, which _flow follows as a read and never makes a "method" event), directly or through a name bound to it
-        ("changed through <name>, a name the function binds to it or to an item of it", or "changed through an item of it or an expression
-        holding it"), refuses; so does its hand-off to another object's method
+        if-expression's branch, held in a new object, a return, an f-string's field). A read method's or a subscript load's RESULT is
+        an item the census follows by binding like any other value (07:37Z condition 2); the proof covers the container, and an item
+        of it (a value standing inside it, directly or through a name bound to it or to a new object holding it: _flow's `inside`) it
+        reads by condition 1's principle, through the closed read set of the item's own type (_item_types, _value_type: known from a
+        dict, list, tuple or set literal's elements, a string constant a str, parse_qs's items lists of str, met with each value a
+        constant-key store or an append puts in the container or an extend's argument holds; a copy of a dict, a list or a set, or a
+        slice of a list or a tuple, of its receiver's type, and a new object holding the receiver's items, so a change to it reaches
+        no item and a change
+        through its items does). Any other method called on the item, a read method or a subscript load outside its type's set (a
+        spelled-out dunder among them, whether the return is used or dropped: _CT_ITEM_USE; a str has no read set, nor has an item
+        whose type the census does not know, a call's return or a name it does not follow: _CT_ITEM_UNKNOWN), an attribute read off it
+        other than as a method's callee (_CT_ITEM_ATTR), a method spelled on a class handed it as its first argument (_CT_ITEM_CLASS:
+        a builtin class, or a class of collections imported as the module or by name, _class_callee), a store into it ("changed
+        through an item of it or an expression holding it"), and setattr or delattr handed it, refuses the container, directly or
+        through a name bound to it (_CT_THROUGH, or "changed through <name>, a name the function binds to it or to an item of it"); so
+        does its hand-off to another object's method
         by an operator whose other operand is no constant (an operand of a binary operation or a comparison, a subscript's index, a
         slice's bound, an augmented assignment's value, or what a .index() or .count() with an argument that is no constant compares:
         _CT_ITEM), and any use of it the census does not read (called, or stored into another object, an attribute or a global or
         nonlocal name); an item compared or combined with a constant is read, only its own type's method and the constant's running
-        there; and an item handed as an argument to any other call is under the call limit, as the container is (its witnesses ihc, ihg and
-        ihn, a list read out of a local dict of lists by a subscript load, by `.get` and through a name bound to it, which a module
-        function it is handed appends a fetch to). A
-        container is a name an assignment, augmented or annotated, or a walrus binds whole to such a literal or comprehension, or a name
-        the function changes (a store or delete through it, an append or extend, a changer of a container or an object in place
-        (_CHANGERS), setattr or delattr or a container type's changer handed it, a changer read off it unbound, a method whose return a
-        statement
-        drops), directly, through an item of it or an expression holding it, or through a name it binds to it. Any other occurrence refuses
+        there; and an item handed as an argument to any other call, a method spelled on any other value among them (a class the file
+        defines or another import names, a module's function), is under the call limit, as the container is (its witnesses ihc, ihg
+        and ihn, a list read out of a local dict of lists by a subscript load, by `.get` and through a name bound to it, which a
+        module function it is handed appends a fetch to, and itcw, such a list handed to append spelled on a class of the file that
+        derives from list). A container is a name an assignment, augmented or annotated, or a walrus binds whole to such a literal or
+        comprehension, or a name with one of these uses at no level of new objects around it (changes()): a store or delete through it
+        or through an item of it; an append or extend; setattr or delattr, or a method spelled on a class, handed it or an item of it;
+        on the container itself (its own name, or a name bound to it whole), one of the in-place changers (_CHANGERS) called on it or
+        read off it unbound, or a method whose return a statement drops; and on an item of it, any method (a read method is a step of
+        the item's walk, never a "method" use) or an attribute read; each directly or through a name it binds to it, to an item of it
+        or to a new object holding one. A method outside _CHANGERS called on the container itself with its return used makes no
+        container of a name bound to anything but a literal (a name bound to a call of parse_qs or dict among them, `z =
+        q.__init__(...)`), which the census then reads as that call's value slot. Any other occurrence refuses
         the container, by the rule and not by a list, the clause naming the role it fails (_CONTAINER): bound to another name, or to a
         name the function declares global or nonlocal (whose uses leave it), or into an attribute or another object; a second binding
         (an augmented assignment, a walrus, or a for, with, except, match or unpacking target); del; any method but append, extend or a
-        read method of the type its binding gives it, or an attribute of it read other than as a method's callee; a store by a key that is
-        no constant, or other than as the one target of a plain assignment; an append or extend of other than one plain argument; and any
+        read method of the type its binding gives it, or an attribute of it read other than as a method's callee; setattr or delattr,
+        or a method spelled on a class, handed it as its first argument (_CT_CLASS); a store by a key that is no constant, or other
+        than as the one target of a plain assignment; an append or extend of other than one plain argument; and any
         occurrence in a
         function or lambda nested in it, or a class body it defines (a closure capture whose code the census does not read, or a class
         attribute; a nested scope's own binding of the spelling is not an occurrence of this container). A comprehension is read where it
         stands, as the function's own body is: a read of the fourth form and an append of a read value there pass, the container as a
         comprehension's source, in its condition or as its element refuses as any other read does (_own_use, _role), and a change the
-        census cannot fold (a comprehension target store) refuses. Handed as an argument to any other call (not setattr, delattr or a
-        container type's changer handed it as the object to change, which refuse above), it is under the call limit: what the callee does
+        census cannot fold (a comprehension target store) refuses. Handed as an argument to any other call (not setattr or delattr,
+        nor a method spelled on a class the census resolves, handed it as its first argument, which refuse above), it is under the
+        call limit: what the callee does
         with it is not read (its witness ctwit, a container a function it is handed to changes), the census reading neither the callee nor
         the return. A container a
         function that reaches its frame binds refuses too (_reaches_frame, _FRAME_CONTAINER). The first parameter of a method (_SelfParam)
         or of a route handler (_Unclassified) is not read here: every attribute read on it and every method called on it refuses already,
         and code behind it is the stated limit. A name bound to an item of it is read by its spelling anywhere in the function, so a nested
-        scope's own name of that spelling counts too, on the refusing side. A name is read again only at fewer levels than any it was read
-        at (a binding that holds itself ends the walk), each (name, levels) popped expanded once, in _container_step. Computed once per
+        scope's own name of that spelling counts too, on the refusing side. A name is read again only at fewer levels than any it was
+        read at standing the same way, inside it or not (a binding that holds itself ends the walk), each (name, levels, inside)
+        popped expanded once, in _container_step. Computed once per
         function (self.cproofs)."""
         got = self.cproofs.get(id(fn))
         if got is not None: return got
@@ -5733,41 +5901,49 @@ class _Served(object):
         params = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x is not None}
         flows = {}
 
-        def changes(kind, node, detail):   # a use that changes what it reaches: a store, an append or extend, a setattr or delattr or a
-            # container type's changer handed it, a changer called or read unbound, or a method whose return a statement drops
-            return kind in ("store", "grow", "handed") or kind in ("method", "attr") and detail in _CHANGERS or (
-                kind == "method" and isinstance(parents.get(id(node)), ast.Expr))
-
-        def flow(n, fresh):
-            f = flows.get((id(n), fresh))
-            if f is None: f = flows[(id(n), fresh)] = _flow(n, parents, fresh)
+        def flow(n, fresh, inside):
+            f = flows.get((id(n), fresh, inside))
+            if f is None: f = flows[(id(n), fresh, inside)] = _flow(n, parents, fresh, inside)
             return f
         for x in sorted(set(own) | params):
             f = own.get(x, [])
             if "global" in f or "nonlocal" in f or not ("value" in f or x in params): continue
             xs = [(n, c) for n, c in names.get(x, ()) if c == (fn,) or _binding_scope(x, (n.lineno, n.col_offset), c[1:]) is None]
             # its uses, and those of every name bound to it, to an item of it or to a new object holding one (with the levels of new
-            # objects around it, so a change reaches it only where none is left: _flow). A name is read again only at fewer levels than
-            # any it was read at, which reach it wherever more do, so a binding that holds itself (`x = x + [y]`) ends the walk
-            low, todo, events = {x: 0}, [(x, 0)], []
+            # objects around it, so a change reaches it only where none is left, and whether it stands inside it, an item: _flow). A
+            # name is read again only at fewer levels than any it was read at standing the same way, which reach it wherever more do, so
+            # a binding that holds itself (`x = x + [y]`) ends the walk; each binding of such a name is kept (binds) for the item types
+            low, todo, events, binds = {(x, False): 0}, [(x, 0, False)], [], []
             while todo:
-                y, fr = todo.pop()
-                for n, c in self._container_step(xs if y == x and fr == 0 else names.get(y, ())):
+                y, fr, ins = todo.pop()
+                for n, c in self._container_step(xs if y == x and fr == 0 and not ins else names.get(y, ())):
                     nested = any(isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)) for s in c[1:])   # in a
                     if not isinstance(n.ctx, ast.Load): continue   # function, lambda or class body nested in it: closure capture (code the census does
                     # not read) or a class attribute, so the container refuses; a comprehension is read where it stands (_own_use)
-                    use = _own_use(n, parents, own) if y == x and fr == 0 and not nested else None
+                    use = _own_use(n, parents, own) if y == x and fr == 0 and not ins and not nested else None
                     if use is not None and (use[0] == "refuse" or use[2] is not None):
-                        events.append((n.lineno, n.col_offset, y, fr, n, c, "own" if use[0] == "refuse" else "rmeth", use[1], use[2], 0, False))
-                    for kind, node, detail, fresh in flow(n, fr):
+                        events.append((n.lineno, n.col_offset, y, fr, n, c, "own" if use[0] == "refuse" else "rmeth", use[1], use[2], 0, False, False))
+                    for kind, node, detail, fresh, inside in flow(n, fr, ins):
                         if kind == "bind" and not nested:   # its value bound to a name of this scope, followed (a name only read stays read)
                             for z in detail:
                                 if "global" in own.get(z, ()) or "nonlocal" in own.get(z, ()):   # a name whose uses leave the function
-                                    events.append((n.lineno, n.col_offset, y, fr, n, c, "gescape", None, z, fresh, False))
-                                elif low.get(z, fresh + 1) > fresh: low[z] = fresh; todo.append((z, fresh))
-                        else: events.append((n.lineno, n.col_offset, y, fr, n, c, kind, node, detail, fresh, nested))
+                                    events.append((n.lineno, n.col_offset, y, fr, n, c, "gescape", None, z, fresh, False, inside))
+                                else:
+                                    binds.append((z, node))
+                                    if low.get((z, inside), fresh + 1) > fresh: low[(z, inside)] = fresh; todo.append((z, fresh, inside))
+                        else: events.append((n.lineno, n.col_offset, y, fr, n, c, kind, node, detail, fresh, nested, inside))
+
+            def changes(e):   # a use that makes x a container (at no level of new objects around it): a store or delete through it,
+                # an append or extend, setattr or delattr or a method spelled on a class (_class_callee) handed it; on its own name, one
+                # of the in-place changers (_CHANGERS) called on it or read off it unbound, or a method whose return a statement drops;
+                # and on an item of it, any method (a read method is a step, never a "method" event) or an attribute read
+                kind, node, detail = e[6], e[7], e[8]
+                if e[9]: return False
+                if _item_recv(e) is not None: return kind in ("method", "attr")
+                return kind in ("store", "grow", "handed") or kind == "tcall" and self._class_callee(node.func.value, ctx) or (
+                    kind in ("method", "attr") and detail in _CHANGERS or kind == "method" and isinstance(parents.get(id(node)), ast.Expr))
             stores = [(n, c) for n, c in xs if isinstance(n.ctx, ast.Store)]
-            if not any(e[9] == 0 and changes(e[6], e[7], e[8]) for e in events) and not any(
+            if not any(changes(e) for e in events) and not any(
                     type(_bound_value(parents.get(id(n)))) in _DISPLAYS and _binds_whole(parents.get(id(n)), n) for n, _c in stores): continue   # no container
             if reaches is not None: out[x] = _CONTAINER % (_FRAME_CONTAINER % reaches); continue   # a frame primitive spelled: refused
             if x in params: out[x] = _CONTAINER % "a parameter"; continue
@@ -5781,11 +5957,14 @@ class _Served(object):
             v = _bound_value(st)
             if not (isinstance(v, (ast.List, ast.Dict, ast.Set, ast.Tuple)) or isinstance(v, ast.Call) and self._base(v, ctx)[0] == "exempt"):
                 out[x] = _CONTAINER % "bound to neither a literal nor a call whose return the census reads as a value slot"; continue
-            ctype = ("dict" if isinstance(v, ast.Dict) else "list" if isinstance(v, ast.List) else "tuple" if isinstance(v, ast.Tuple)
-                     else "set" if isinstance(v, ast.Set) else "dict" if (isinstance(v.func, ast.Name) and v.func.id in self.parse_qs
-                                                                        and self._scoped(v.func.id, ctx, callee=True) is None and self._sole(v.func.id)) else None)
-            for _l, _c, y, fr, n, c, kind, node, detail, fresh, nested in sorted(events, key=lambda e: e[:2]):
-                why = None
+            qs = isinstance(v, ast.Call) and (isinstance(v.func, ast.Name) and v.func.id in self.parse_qs
+                                              and self._scoped(v.func.id, ctx, callee=True) is None and self._sole(v.func.id))
+            ctype = ("dict" if isinstance(v, ast.Dict) or qs else "list" if isinstance(v, ast.List) else "tuple" if isinstance(v, ast.Tuple)
+                     else "set" if isinstance(v, ast.Set) else None)
+            types = None   # the item types, read at the first use of an item that needs them (_item_types)
+            for e in sorted(events, key=lambda e: e[:2]):
+                _l, _c, y, fr, n, c, kind, node, detail, fresh, nested, inside = e
+                why, recv = None, _item_recv(e)
                 if nested: why = "read or changed in a function, lambda or class body nested in it"   # closure capture (code unread) or a class attribute
                 elif kind == "gescape": why = "bound to %s, a name the function declares global or nonlocal, whose uses leave it" % detail
                 elif kind == "escape": why = detail   # it, or an object holding it, stored elsewhere, handed as a default, matched or called
@@ -5797,15 +5976,28 @@ class _Served(object):
                 elif kind == "operand": why = _CT_ITEM % detail
                 elif kind in ("read", "call"): pass   # a value consumed without a change (_flow's "read": a test, a comprehension's
                 # condition, an identity comparison, an operand whose other operands are constants, an f-string's field, a statement's
-                # value, a return or a yield, a lambda's body) or handed as an argument to a call other than the "handed" changers (the
-                # call limit). For the container's own name every such read has refused above but a read method's receiver or a
-                # subscript load's base, through the _own_use event recorded first at the same place; what passes here is the container
-                # or an item of it handed to such a call, or an item of it, or a name bound to one, read
-                elif fresh or not changes(kind, node, detail) and (y != x or fr or kind == "method" and node.func.value is not n
-                                                                    or kind == "attr" and node.value is not n):
-                    pass   # a change to a new object around it, not to it; or a read of it through a name bound to it, an item of it or
-                    # an expression holding it that changes nothing (a method or an attribute other than a changer's)
-                elif y != x or fr: why = "changed through %s, a name the function binds to it or to an item of it" % y
+                # value, a return or a yield, a lambda's body) or handed as an argument to a call other than setattr, delattr or a method
+                # spelled on a class (the call limit). For the container's own name every such read has refused above but a read method's
+                # receiver or a subscript load's base, through the _own_use event recorded first at the same place; what passes here is the
+                # container or an item of it handed to such a call, or an item of it, or a name bound to one, read
+                elif fresh: pass   # a use of a new object around it, not of it
+                elif kind == "tcall":   # a method spelled on a value handed it as its first argument: a class's runs on it; any other call
+                    if self._class_callee(node.func.value, ctx):   # (a module's function, a class the census does not resolve) is the call limit
+                        why = ((_CT_CLASS if node.args[0] is n else _CT_ITEM_CLASS) % detail if y == x and not fr
+                               else _CT_THROUGH % (y, _CT_CLASS % detail))
+                elif recv is not None:   # an item of it, or a name bound to one or to a new object holding one: its type's closed read set
+                    if kind == "attr": got = _CT_ITEM_ATTR % detail
+                    else:
+                        if types is None: types = self._item_types(x, v, qs, events, binds, parents)
+                        t = _settled(_value_type(recv, types))
+                        what = "a subscript load" if detail == "[]" else ".%s()" % detail
+                        got = (None if t is not None and detail in _TYPE_READS.get(t[0], ()) else
+                               _CT_ITEM_UNKNOWN % what if t is None else _CT_ITEM_USE % (what, t[0]))
+                    if got is not None: why = got if y == x and not fr else _CT_THROUGH % (y, got)
+                elif y != x or fr:   # through a name bound to it or to an item of it: a store, an append or extend, setattr or delattr,
+                    # one of the in-place changers, or a method whose return a statement drops (a name bound to it whole is refused where
+                    # its own occurrence binds it)
+                    if changes(e): why = "changed through %s, a name the function binds to it or to an item of it" % y
                 elif kind == "store":
                     tgt = parents.get(id(node))
                     if node.value is not n: why = "changed through an item of it or an expression holding it"
@@ -5816,10 +6008,9 @@ class _Served(object):
                         why = "stored into by a key that is no constant"
                 elif kind == "grow":
                     if len(node.args) != 1 or isinstance(node.args[0], ast.Starred) or node.keywords: why = "appended or extended by other than one plain argument"
-                elif kind == "method":
-                    why = ("changed through an item of it or an expression holding it" if node.func.value is not n else None)
                 elif kind == "attr": why = "an attribute of it read other than as a method's callee (%s)" % detail   # on it, or a changer
                 elif kind == "handed": why = "changed by a call handed it as the object to change (%s)" % detail
+                # its own name's method call or read method's or subscript load's step: the fourth form's rmeth event decides it
                 if why is not None: out[x] = _CONTAINER % why; break
         return out
 
@@ -5828,10 +6019,10 @@ class _Served(object):
         code may change a container it binds on every CPython version), or None: one of the seven bare names in _FRAME_NAMES (locals,
         vars, exec, eval, _getframe, currentframe, getargvalues), one of the four attributes in _FRAME_ATTRS (_getframe, currentframe,
         getargvalues, f_locals) spelled as an attribute on any receiver, or a name that a statement of the MODULE's or of `fn`'s OWN body,
-        outside every def, class or lambda statement it nests (header and body alike), binds to one of those frame primitives, its bound
-        value the
-        primitive's own bare name or attribute (a plain or annotated assignment, a walrus, an EQUAL-LENGTH unpacking of a list or tuple
-        literal into plain names, or a `from ... import` of one of the seven names), and any name such a statement binds to a name so
+        outside every def, class or lambda statement it nests (header and body alike), binds to one of those frame primitives, its
+        bound value the primitive's own bare name or attribute (a plain or annotated assignment, a walrus, an unpacking of a list or
+        tuple literal into a target list of AS MANY elements, each plain name there bound to the value at its place, beside a starred
+        or nested target too, or a `from ... import` of one of the seven names), and any name such a statement binds to a name so
         bound (a chained alias), resolved among those statements (_frame_alias_names over _module_level_stmts, seeded with the module
         aliases for `fn`'s own statements), anywhere in the function's own subtree. A name `fn` binds to a primitive by an assignment in
         its OWN body carries the primitive's own spelling there, so this walk sees it whether or not it is resolved; the resolution catches
@@ -5846,14 +6037,15 @@ class _Served(object):
         attribute (`builtins.exec`), since none of locals, vars, exec, eval is in _FRAME_ATTRS (its witness fratr is `locals` reached as
         an attribute, frxr exec so reached, frev eval); f_locals as a bare name, since f_locals is in _FRAME_ATTRS alone, not _FRAME_NAMES
         (bfl2); one of the four attributes named by a string, since only an attribute node is matched (fgs2,
-        `getattr(inspect.stack()[0].frame, "f_locals")`); and any binding of a name to a primitive that _frame_alias_names does not read: a
-        starred or nested unpacking target,
-        which the equal-length plain-name arm skips (fsst, fsnt), an alias whose bound value is any other expression (tx4 an
+        `getattr(inspect.stack()[0].frame, "f_locals")`); and any binding of a name to a primitive that _frame_alias_names does not
+        read: a plain name among the targets of an unpacking whose targets are not as many as its values (fsst) and a name a nested
+        target binds (fsnt), each of which the unpacking arm skips, an alias whose bound value is any other expression (tx4 an
         if-expression, txc a call's return), and a binding in the header or the body of a def, class or lambda statement, which
         _own_stmts and _module_level_stmts skip whole (tx2 a walrus in a module-level def's default; nstb a `from ... import` a def nested
         in `fn` makes, whose imported spelling sits in the alias node and whose alias name ast.walk does not match; tx3 an assignment
-        inside a module-level def's body); a binding a nested scope makes by an ASSIGNMENT carries the primitive's spelling in `fn`'s
-        subtree and refuses (nsta). Code the
+        inside a module-level def's body; frcl an assignment in a module-level class's body, read as the class's attribute; flam a
+        walrus in a module-level lambda's default); a binding a nested scope makes by an ASSIGNMENT carries the primitive's spelling
+        in `fn`'s subtree and refuses (nsta). Code the
         function runs that the census does not read (a helper it calls as a statement, a method on self, a context manager it enters),
         reaching the CALLER's frame, is the stated limit too: the census reads no such code's body for its frame reach, as the call limit
         reads none for what a callee does with a container it is handed."""
@@ -5864,26 +6056,91 @@ class _Served(object):
             if isinstance(n, ast.Attribute) and n.attr in _FRAME_ATTRS: return ast.unparse(n)[:40]
         return None
 
+    def _item_types(self, x, v, qs, events, binds, parents):
+        """name -> its type (_meet's pair, _value_type), for the container `x` bound by the one value `v` (a literal, or a call; `qs`
+        whether a call of parse_qs, whose documented return is a dict of lists of str) and for every name its walk bound to it, to an item
+        of it or to a new object holding one (binds, with the node of each binding): the container's the literal's type, or a dict of
+        lists of str for parse_qs, or none known for any other call, its items met with every value a constant-key subscript store puts in
+        it and every value an append puts in or an extend's argument holds; each other name's the meet of what each of its bindings gives
+        it (_bind_type), read again whenever a name its bindings read moves, until none does. Types only fall from _UNSET toward not
+        known, and every name's bindings reach the container's own fixed type, so the reading ends; were a type still moving after four
+        readings per binding and sixteen more, every name would be read as not known (the safe side). Read once per container, at the
+        first item use its verdict reaches."""
+        tx = None
+        if isinstance(v, (ast.List, ast.Dict, ast.Set, ast.Tuple)): tx = _value_type(v, {})
+        elif qs: tx = ("dict", ("list", ("str", None)))
+        if tx is not None:
+            held = tx[1]
+            for e in events:
+                _l, _c, y, fr, n, _s, kind, node, _d, fresh, nested, inside = e
+                if fresh or nested or inside or y != x or fr: continue
+                if kind == "store" and isinstance(node, ast.Subscript) and node.value is n:
+                    tgt = parents.get(id(node))
+                    held = _meet(held, _value_type(tgt.value, {}) if isinstance(tgt, ast.Assign) else None)
+                elif kind == "grow":
+                    arg = node.args[0] if node.args and not node.keywords else None
+                    got = None if arg is None or isinstance(arg, ast.Starred) else _value_type(arg, {})
+                    if node.func.attr == "append": held = _meet(held, got)
+                    else: held = _meet(held, got[1] if got is not None and got is not _UNSET and got[0] in ("list", "tuple", "set") else None)
+            tx = (tx[0], held)
+        types, by, uses = {x: tx}, {}, {}
+        for z, p in binds:
+            if z == x: continue
+            by.setdefault(z, []).append(p); types[z] = _UNSET
+            src = p.iter if isinstance(p, (ast.For, ast.AsyncFor, ast.comprehension)) else p.context_expr if isinstance(p, ast.withitem) else p.value
+            for m in ast.walk(src):
+                if type(m) is ast.Name: uses.setdefault(m.id, set()).add(z)   # z's type reads m's
+        todo, budget = sorted(by), 4 * len(binds) + 16
+        while todo and budget:   # each name read again only when a name its bindings read moves; types only fall from _UNSET
+            z = todo.pop(); budget -= 1
+            t = _UNSET
+            for p in by[z]: t = _meet(t, _bind_type(p, types))
+            if t != types[z]: types[z] = t; todo += sorted(uses.get(z, set()) - set(todo))
+        if todo:   # a type still moving when the budget ends is read as not known
+            for z in by: types[z] = None
+        return {k: _settled(t) for k, t in types.items()}
+
+    def _class_callee(self, e, ctx):
+        """Whether `e`, the value a called method is spelled on (`list` in `list.append(x, v)`), names a class by binding, so the method
+        runs on the call's first argument (layer iv, _containers: a container or an item of it handed so refuses, _CT_CLASS): a builtin
+        class (a builtin no binding of the file or the function shadows: _builtin, _scoped), a class of collections that a top-level `from
+        collections import` binds the name to, the name bound once (_sole), or an attribute naming one on a name a top-level `import
+        collections` binds once. Any other value (a class of the file, a class another import names, a module, a call's return) is not
+        read as a class: a call of a method spelled on it, handed the container or an item of it, is under the call limit."""
+        if type(e) is ast.Name:
+            if self._scoped(e.id, ctx) is not None: return False
+            if self._builtin(e.id): return isinstance(getattr(builtins, e.id, None), type)
+            src = self.from_collections.get(e.id)
+            return src is not None and self._sole(e.id) and isinstance(getattr(collections, src, None), type)
+        if type(e) is ast.Attribute and type(e.value) is ast.Name:
+            m = e.value.id
+            return (self.import_mods.get(m) == "collections" and self._sole(m) and self._scoped(m, ctx) is None
+                    and isinstance(getattr(collections, e.attr, None), type))
+        return False
+
     def _container_step(self, uses):
-        """_containers' expansion of one (name, levels) its walk pops, which it calls once for each: the walk keeps one visited map per
-        name the function binds (`low`, the fewest levels of new objects each name bound to it was read at, so a name is read again
-        only at fewer), and the step, given the popped name's uses (the Name nodes and the scopes around them), hands them back to
+        """_containers' expansion of one (name, levels, inside) its walk pops, which it calls once for each: the walk keeps one
+        visited map per container (`low`, the fewest levels of new objects each name bound to it was read at, standing inside it or
+        not, so a name is read again only at fewer standing the same way), and the step, given the popped name's uses (the Name nodes
+        and the scopes around them), hands them back to
         read, in their order (freeze ruling 2 of the eleventh round: its count pin reads this step from outside the script)."""
         return list(uses)
 
     @staticmethod
     def _frame_alias_names(nodes, seed=()):
-        """The names a plain or annotated assignment, a walrus, an equal-length unpacking of a list or tuple literal into a list or tuple of
-        plain names, or a `from ... import` among `nodes` (the nodes of one scope's own body, statements and expressions alike, every def,
+        """The names a plain or annotated assignment, a walrus, an unpacking of a list or tuple literal into a list or tuple target of
+        as many elements (each plain name there, beside a starred or nested target too, bound to the value at its place), or a `from
+        ... import` among `nodes` (the nodes of one scope's own body, statements and expressions alike, every def,
         class and lambda statement excluded, header and body: _own_stmts) binds to a frame primitive, its bound value the primitive itself
         (`_L = locals`, `_gf = sys._getframe`, `_LT, _z = locals, 1`, `from inspect import currentframe as _cf`), and every name bound in
         turn to one of those (a chained alias `_L2 = _L1`), resolved to a fixpoint among those statements. A primitive is a bare name in
         _FRAME_NAMES, an attribute in _FRAME_ATTRS, or the imported name of a `from ... import` in _FRAME_NAMES (whose spelling sits in the
         alias node, so the reader's subtree does not hold it). `seed` names that already alias a primitive (the module aliases, when this
         reads a function's own body). Layer iv, _Served._reaches_frame: a name so bound hands out a frame's locals mapping. Any other
-        binding is not reached, the stated precondition and not a refusal: among them a binding in the header or the body of a def, class
-        or lambda statement (tx2, nstb, tx3), a starred or nested target or an unpacking of anything but a same-length literal (fsst,
-        fsnt), and an alias whose bound value is any other expression, an if-expression or a call (tx4, txc). The fixpoint is a worklist with
+        binding is not reached, the stated precondition and not a refusal: among them a binding in the header or the body of a def,
+        class or lambda statement (tx2, nstb, tx3, frcl, flam), a name a nested target binds and a plain name among the targets of an
+        unpacking whose targets are not as many as its values, or of anything but a list or tuple literal (fsst, fsnt), and an alias
+        whose bound value is any other expression, an if-expression or a call (tx4, txc). The fixpoint is a worklist with
         one visited set (`out`) that expands each alias name once, in _frame_alias_step (freeze ruling 2 of the eleventh round: its count
         pin reads that step from outside the script; without the visited set a cycle of aliases loops)."""
         prim, edges = set(seed), []   # names bound directly to a primitive; (target, source-name) edges, a chained or unpacked name alias
@@ -7150,9 +7407,12 @@ class _Served(object):
         itself; a walrus's value; an if-expression's branches; a boolean operation's operands; the elements of a list or tuple display, a
         starred element's value among them; the sources of a list or dict comprehension or a generator expression, whose order is theirs
         (the first read in the scope around it; a later one that names a target of the comprehension reads an item of an earlier source,
-        which this reads whole, and is not read itself); and every value the census reads a name by (_binding: a local of the page's scope,
-        its values as _locals holds them, a loop's, an unpacking's or a with target's source and a local container's appended or stored
-        values among them, or a module constant, its one value), a name bound so in turn. A set a call returns, an attribute holds or a
+        which this reads whole, and is not read itself); and the values of a name _binding reads: a local of the page's scope (its
+        values as _locals holds them, a loop's, an unpacking's or a with target's source and a local container's appended or stored
+        values among them) or a module constant (its one value), a name bound so in turn. A parameter, an except name and any other
+        name _binding does not read are not followed, so a set a parameter takes, as the argument a call hands it or as its default,
+        is read piece by piece under the join limit, as a call's return is (its witnesses jwp and jwq). A set a call returns, an
+        attribute holds or a
         subscript selects is not reached here. Walked iteratively, as the format strings' walk is: an explicit worklist and one visited set
         per query, keyed on the binding's scope and the name, so each name expands once, in _set_step (freeze ruling 2 of the eleventh
         round: its count pin reads that step from outside the script; without the visited set a cycle of names loops)."""
@@ -7593,8 +7853,9 @@ def served_texts(rel, tree, routes, res):
     literal's line, each record it finds
     beyond what its
     literals' own reads find added, so a load split across such a join is read and a site both reads find is listed once (a `.join`
-    over a set or a value the census reads from one (_Served._set_value), called on a string or unbound as in `str.join("", {...})`,
-    whose order is not fixed, is no such join: resolve refuses it by name; a fetch
+    over a set, or over a local or a module constant the census reads by its binding from one (_Served._set_value), called on a string
+    or unbound as in `str.join("", {...})`, whose order is not fixed, is no such join: resolve refuses it by name; one over a set a
+    call returns or a parameter takes, as its argument or its default, is read piece by piece under the join limit; a fetch
     or import() argument, or a program call's arguments, that run past a joined literal's end are left to the join's text, which
     reads them whole: line_scan's `cut`); a file
     a page reads at run time is covered by the walk only where the walk scanned it as browser text (_browser_text: JavaScript under
