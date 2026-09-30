@@ -8,6 +8,7 @@ import pathlib
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from romp_load import load_source
@@ -22,6 +23,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  a served text with its comments blanked (loads no romp code)
 
 
 class _R:
@@ -1011,7 +1014,7 @@ class UpdateUI(unittest.TestCase):
         self.assertIn("phase", km._RDRIFT_JS, "a state machine drives the flow")
 
     def test_popover_shows_behind_and_a_push_button(self):
-        self.assertIn("behind", km._LANDING_REMOTES_JS)
+        self.assertIn("behind", served_css.js_code(km._LANDING_REMOTES_JS))   # the code, comments blanked: a served comment spells the token too (tests/test_served_pins_read_elements.py)
         self.assertIn(">Push</button>", km._LANDING_REMOTES_JS)
         self.assertIn("/tunnels/update", km._LANDING_REMOTES_JS)
         self.assertIn("data-u=", km._LANDING_REMOTES_JS)
@@ -1159,7 +1162,7 @@ class DriftWordingUI(unittest.TestCase):
     """The popover row names HOW the remote differs, not just 'behind' (the user 2026-07-11)."""
 
     def test_row_names_how_the_remote_differs(self):
-        js = km._LANDING_REMOTES_JS
+        js = served_css.js_code(km._LANDING_REMOTES_JS)   # the code, comments blanked: a served comment spells the token too (tests/test_served_pins_read_elements.py)
         self.assertIn("down=bb>0?('behind '+bb):''", js)   # said in words since 2026-07-30
         self.assertIn("up=ab>0?('ahead '+ab):''", js)
         self.assertIn("'diverged: '", js)

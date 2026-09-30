@@ -234,7 +234,7 @@ exec bash "$@"
 OLD
     chmod +x "$TEST_DIR/blocking-python"
     local nopath; nopath="$(_path_without timeout gtimeout)"
-    [ -z "$(PATH="$nopath" command -v timeout || true)" ]            # the tool really is hidden
+    [ -z "$(PATH=$nopath; command -v timeout || true)" ]            # the tool really is hidden (a plain assignment: bash 3.2 answers a PATH= prefixed command -v from its command hash)
     local t0=$SECONDS
     PATH="$nopath" ROMP_PYTHON="$TEST_DIR/blocking-python" run "$ROMP_SERVE" --print-python
     [ "$status" -eq 1 ]

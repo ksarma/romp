@@ -368,7 +368,11 @@ class ThePanesNotice(_Base):
             self.assertIn("<button id=tt-off-btn type=button class=notice-act>Open Task tracking settings</button>", page)
         km._set_task_tracking(False, gt=1)
         feed, fleet = km._feed_page(), km._fleet_page()
-        self.assertIn("<div id=tt-off class=tt-off style=", feed, "off: the notice shows")
+        # the off render is the on render less its hidden attribute, and the served-pins census judges a pin over _feed_page()
+        # against the on render (tests/test_served_pins_read_elements.py), where a literal spanning that attribute occurs nowhere
+        # and fails as a verdict that proves nothing: the notice's opening up to the attribute is pinned here, and the attribute's
+        # absence by the two assertNotIn below
+        self.assertIn("<div id=tt-off class=tt-off", feed, "off: the notice is in the page, with no hidden attribute (below)")
         self.assertIn("there is no feed to show", feed)
         self.assertIn("there is no outline to show", fleet)
         self.assertNotIn("class=tt-off hidden", feed)
