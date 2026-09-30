@@ -1067,8 +1067,8 @@ SWITCH_LISTED = {
     ("served-pages", "Browser-backed served-page tests (pytest)"): (
         "the switch declares that the interpreter running pytest has the SDK the Python job's install step put there, "
         "and this job installs none (its pip line names pip, pytest, pytest-timeout and cryptography; run 35535192879's "
-        "served step installed nine packages, no SDK), so setting it would declare something untrue; and no module its "
-        "two globs collect spells the switch's name, nor does any non-test module under tests/ or any module those "
+        "served step installed nine packages, no SDK), so setting it would declare something untrue; and none of the "
+        "files the pytest line names spells the switch's name, nor does any non-test module under tests/ or any module those "
         "import (their import statements followed transitively, test_ modules included), so the switch would change "
         "nothing there today. Premises checked: no SDK install in the job's run blocks; no collected, non-test or "
         "imported file under tests/ spells the switch's name (served_load_set; keyed on the spelling in the file's text, "

@@ -552,9 +552,11 @@ class Mirror(unittest.TestCase):
         re-file: rules 1 and 2 of the judge's ladder own a sid the local kernel lists (its transcript is local), and in
         peer mode every beat that reaches the table is such a session's, filed during a listing blink. The listing is the
         one this bus LAST read through local_agents_checked (the recorder at every beat, the presence producer at every
-        exchange, the autostop gate at every poll), when that read answered; a listing that did not answer releases
-        nothing, and the last answered rows the presence producer serves through a blink are a cache, not the listing's
-        word at this write. Until this commit no event removed a heartbeat row: a local session's blink beat stood, heard,
+        exchange, the autostop gate at every poll, the inbound relay at every message whose mid it has not seen, and
+        quarantine_decide at every approve of a held message and in its check of the session a decision names when it
+        reads no hold), when that read answered; a listing that did not answer releases nothing, and the last answered
+        rows the presence producer serves through a blink are a cache, not the listing's word at this write. Until this
+        commit no event removed a heartbeat row: a local session's blink beat stood, heard,
         for the file's life, and the sixteenth commit had refused a pop in the recorder because the carry re-filed the
         key from the file (the reviewer's refuters, by execution); the writer's own drop leaves it nothing to re-file.
         Every other row still has no release (the disclosed cost in _remote_sids_document). The composition with the

@@ -724,10 +724,16 @@ class ByteIdenticalFrames(unittest.TestCase):
         builds.chat labels it `targeted` only when the tab is unwatched (a watched tab's targeted build lands in active_built
         with no label), which is why targetedBuilds is published: without it the identity would ask the reader to subtract
         a number /perf does not publish for the watched case. Driven from `between` at cycle 5 with one connected chat
-        client, once unwatched and once watching the tab: targetedBuilds 1 either way, pre 6 = 3 + 4 - 1 + 0, post 3 = 4 - 1 - 0."""
-        for watched in (False, True):
+        client, once unwatched, once watching the tab, and once watching it through the parked-reveal preference's record
+        (pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-1: the client declares another tab
+        and carries `preferred` naming this one, the state _push ranks first; the label read `c.get("active")` and filed the
+        session the preference served whole as background, so one question had two answers): targetedBuilds 1 in every case,
+        pre 6 = 3 + 4 - 1 + 0, post 3 = 4 - 1 - 0."""
+        other = "11111111-2222-3333-4444-555555555599"   # the page's own declared tab, another session, while the record names this one
+        for watched in (False, True, "preference"):
             with self.subTest(watched=watched):
-                c = self._connected(**({"active": self.SID} if watched else {}))
+                kw = {"active": self.SID} if watched is True else ({"active": other, "preferred": self.SID} if watched else {})
+                c = self._connected(**kw)
 
                 def between(i, c=c):
                     if i == 5:
