@@ -16,6 +16,15 @@ Red first at the base (the bare dial), green with the terms, on three observable
      true (the stored row records iid as present/absent, not the value: kernel.py _note_ws_open), where the
      bare dial left it the absent one that reads as an anonymous relay.
 
+A second pass (review round 3 of the lazy panes, 2026-09-19): the hub's SHELL at a phone viewport, a cold open with
+the remote attached, the stored tab the remote's `api`. The phone's chat pane dials its LOCAL socket with skeleton=1
+(the fork's phone diet) at the shim's parse; federation.ts dials the relay only after its async /tunnels poll, by
+which time the local socket has opened and the shim's __rompDialTerms answers skeleton 0 (its term is scoped to the
+first local dial through !everConnected), so the relay dial carries active=<api> and NO skeleton and the remote serves
+its whole board through the relay: the order is recorded (the relay's dial stamp against the local socket's open), the
+remote's coldSkipped does not move across the pass, and no TESTHOST tab lands as a skeleton. The pin reads the dial's
+skeleton, active, delta, iid and wid, and deliberately not `caps` (PR 815 adds a constant caps term to the same URL).
+
 This lab boots subprocess kernels and drives Chromium; it loads no romp code in-process, so it carries no
 in-process state-isolation preamble and is not scanned by tests/test_state_isolation_order.py (the same as
 tests/test_chat_split_host_served.py, its two-kernel sibling). Synthetic only: placeholder uuids, hostname
@@ -226,8 +235,67 @@ await browser.close();
 """
 
 
+# The phone-shell pass (review round 3, regression-2): the hub's SHELL (`/?token=`) at an iPhone viewport, the stored tab
+# the REMOTE's api. Every WebSocket any document of the page constructs is recorded on the top window with the document
+# that dialed it, the dial's stamp and the open's stamp (same origin), so the chat pane's LOCAL dial, its open and its
+# RELAY dial can be ordered; the strip is read for the remote's tabs and whether any landed as a skeleton.
+DRIVER_PHONE = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const { chromium, devices } = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await chromium.launch(cfg.launch || {}); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const dev = { ...(devices["iPhone 14"] || {}) }; delete dev.defaultBrowserType;
+const context = await browser.newContext({ ...dev, viewport: { width: 390, height: 844 } });
+const out = { wire: [], died: null, remoteTabs: null, mobileShell: null };
+// in every document (the shell and each pane): wrap the WebSocket constructor so each dial is recorded on the TOP window with
+// its document, its stamp and its open's stamp; the top document also seeds the chat blob with the REMOTE tab as the one shown
+await context.addInitScript((rid) => {
+  try {
+    const T = window.top; if (!T.__wire) T.__wire = [];
+    const W = window.WebSocket;
+    const Wrapped = function (url, protos) {
+      const rec = { url: String(url), t: Date.now(), doc: location.pathname, openT: null };
+      T.__wire.push(rec);
+      const ws = protos === undefined ? new W(url) : new W(url, protos);
+      ws.addEventListener("open", () => { rec.openT = Date.now(); });
+      return ws;
+    };
+    Wrapped.prototype = W.prototype; Wrapped.CONNECTING = 0; Wrapped.OPEN = 1; Wrapped.CLOSING = 2; Wrapped.CLOSED = 3;
+    window.WebSocket = Wrapped;
+    if (window === window.top) localStorage.setItem("romp-vscode-state-chat", JSON.stringify({ activeId: rid }));
+  } catch (e) {}
+}, cfg.remote0);
+const page = await context.newPage();
+page.on("pageerror", () => {});
+try {
+  await page.goto(cfg.shell);
+  // the chat pane's relay dial to the remote (federation.ts, after its /tunnels poll)
+  await page.waitForFunction(() => (window.__wire || []).some((r) => r.doc === "/chat" && r.url.indexOf("/remote/TESTHOST/ws?app=chat") !== -1), null, { timeout: 30000 });
+  out.mobileShell = await page.evaluate(() => !!document.getElementById("mtabs") && getComputedStyle(document.getElementById("mtabs")).display !== "none");
+  const chat = () => page.frames().find((f) => { try { return new URL(f.url()).pathname === "/chat"; } catch (e) { return false; } });
+  const readTabs = () => { const f = chat(); return f ? f.evaluate(() => Array.from(document.querySelectorAll("#tabs .tab[data-id]")).map((t) => ({ id: t.dataset.id, skeleton: t.classList.contains("tab-skeleton"), active: t.classList.contains("active") }))).catch(() => null) : Promise.resolve(null); };
+  // the remote's two tabs on the strip, neither a skeleton (bounded; what stood at the deadline is what is asserted)
+  const deadline = Date.now() + 30000; let tabs = null;
+  while (Date.now() < deadline) { tabs = await readTabs(); if (tabs && tabs.filter((t) => t.id.indexOf("TESTHOST:") === 0).length >= 2 && tabs.every((t) => !t.skeleton)) break; await page.waitForTimeout(150); }
+  await page.waitForTimeout(3000);   // the remote's push cycle: its relay wsopen row filed, its builds counted
+  out.remoteTabs = await readTabs();
+  out.wire = await page.evaluate(() => (window.__wire || []).slice());
+} catch (e) {
+  out.died = String(e).slice(0, 400);
+  try { out.wire = await page.evaluate(() => (window.__wire || []).slice()); } catch (e2) {}
+}
+console.log("RESULT:" + JSON.stringify(out));
+await browser.close();
+"""
+
+
 class FederatedDialTerms(unittest.TestCase):
-    """Two kernels (a hub and a checked-in TESTHOST), one page, one driver run in setUpClass; each method asserts one observable."""
+    """Two kernels (a hub and a checked-in TESTHOST), two driver runs in setUpClass (the standalone skeleton page, then the phone
+    shell's cold open, one browser at a time); each method asserts one observable."""
     maxDiff = None
 
     @classmethod
@@ -280,6 +348,14 @@ class FederatedDialTerms(unittest.TestCase):
         cls._drive()
         cls.remote_chat_perf = cls._poll_remote_chat_perf()
         cls.remote_relay_rows = cls._read_relay_wsopen_rows()
+        # the phone-shell pass (review round 3): the remote's counters read before and after it, once they hold still, so the
+        # pass's own effect is the difference (the first pass left coldSkipped above 0 and one relay row)
+        cls.phone_cold_before = cls._settled_remote_chat_perf()
+        cls.phone_relay_rows_before = len(cls._read_relay_wsopen_rows())
+        cls.phone_result, cls.phone_error = None, None
+        cls._drive_phone()
+        cls.phone_relay_rows_after = len(cls._relay_wsopen_rows_at_least(cls.phone_relay_rows_before + 1))
+        cls.phone_cold_after = cls._settled_remote_chat_perf()
 
     @classmethod
     def _drive(cls):
@@ -307,6 +383,65 @@ class FederatedDialTerms(unittest.TestCase):
             cls.driver_error = "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:]
             return
         cls.result = json.loads(line[len("RESULT:"):])
+
+    @classmethod
+    def _drive_phone(cls):
+        cfg = os.path.join(cls.lab, "cfg-phone.json")
+        with open(cfg, "w") as f:
+            json.dump({"shell": "http://127.0.0.1:%d/?token=%s" % (cls.hport, cls.htoken), "remote0": REMOTE0}, f)
+        driver = os.path.join(cls.lab, "driver-phone.mjs")
+        with open(driver, "w") as f:
+            f.write(DRIVER_PHONE)
+        try:
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=240,
+                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
+        except subprocess.TimeoutExpired as e:
+            so = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode()
+            cls.phone_error = "phone driver timed out; partial output:\n%s" % so
+            return
+        if p.returncode == 3:
+            raise unittest.SkipTest("no playwright browser on this box, the served leg needs one (CI installs none)")
+        if p.returncode != 0:
+            cls.phone_error = "phone driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
+            return
+        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
+        if line is None:
+            cls.phone_error = "phone driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:]
+            return
+        cls.phone_result = json.loads(line[len("RESULT:"):])
+
+    @classmethod
+    def _remote_chat_perf_once(cls):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d/perf?token=%s" % (cls.rport, cls.rtoken), timeout=3) as r:
+                perf = json.loads(r.read().decode())
+            return (perf.get("builds") or {}).get("chat") or {}
+        except Exception:
+            return {}
+
+    @classmethod
+    def _settled_remote_chat_perf(cls):
+        """The remote's builds.chat once two reads 0.7 s apart agree (the lab is quiet: no CLI, no live turn), bounded; the last
+        read otherwise. A before/after pair of these makes one pass's effect readable on cumulative counters."""
+        last = cls._remote_chat_perf_once()
+        for _ in range(14):
+            time.sleep(0.7)
+            cur = cls._remote_chat_perf_once()
+            if cur and cur == last:
+                return cur
+            last = cur
+        return last
+
+    @classmethod
+    def _relay_wsopen_rows_at_least(cls, n):
+        """The remote's relay wsopen rows once at least `n` are on file (bounded); what is on file otherwise."""
+        rows = []
+        for _ in range(40):
+            rows = cls._read_relay_wsopen_rows()
+            if len(rows) >= n:
+                break
+            time.sleep(0.3)
+        return rows
 
     @classmethod
     def _poll_remote_chat_perf(cls):
@@ -399,6 +534,62 @@ class FederatedDialTerms(unittest.TestCase):
         self.assertTrue(any((r.get("data") or {}).get("iid") for r in rows),
                         "a relay row names a per-pane iid (present), not the absent one that reads as an anonymous relay: %r"
                         % [r.get("data") for r in rows])
+
+    # ---- the phone shell's cold open with the remote attached (review round 3 of the lazy panes, regression-2) ----
+    def _phone_ran(self):
+        if getattr(type(self), "phone_error", None):
+            self.fail(type(self).phone_error)
+        r = getattr(type(self), "phone_result", None)
+        if r is None:
+            raise unittest.SkipTest("the phone driver produced no result")
+        self.assertIsNone(r.get("died"), "the phone driver died: %r" % r.get("died"))
+        self.assertTrue(r.get("mobileShell"), "the viewport selected the phone shell (the tab bar shows)")
+        return r
+
+    def _phone_chat_dials(self):
+        """The chat pane's first LOCAL dial and its first RELAY dial to TESTHOST, from the wire the driver recorded; both lists
+        are guarded non-empty before anything is compared."""
+        r = self._phone_ran()
+        wire = r.get("wire") or []
+        self.assertTrue(wire, "the page dialed at least one socket")
+        local = [w for w in wire if w.get("doc") == "/chat" and "/ws?app=chat" in w.get("url", "") and "/remote/" not in w.get("url", "")]
+        relay = [w for w in wire if w.get("doc") == "/chat" and "/remote/TESTHOST/ws?app=chat" in w.get("url", "")]
+        self.assertTrue(local, "the chat pane dialed its local socket: %r" % [w.get("url") for w in wire])
+        self.assertTrue(relay, "the chat pane dialed the remote's relay socket: %r" % [w.get("url") for w in wire])
+        return local[0], relay[0]
+
+    def test_a_phone_cold_open_dials_the_local_chat_with_skeleton_1_and_the_relay_without_it_after_the_local_open(self):
+        local, relay = self._phone_chat_dials()
+        lq = parse_qs(urlsplit(local["url"]).query)
+        self.assertEqual(lq.get("skeleton"), ["1"], "the phone's first LOCAL chat dial takes the diet (the fork's RESTART_DIET line): %r" % local["url"])
+        self.assertEqual(lq.get("active"), [REMOTE0], "the stored tab rides the local dial host-prefixed, as the dashboard carries it")
+        self.assertNotIn("reconnect", lq, "a first dial")
+        self.assertIsNotNone(local.get("openT"), "the local socket opened (the open's stamp is on the record): %r" % (local,))
+        rq = parse_qs(urlsplit(relay["url"]).query)
+        self.assertEqual(rq.get("app"), ["chat"])
+        self.assertEqual(rq.get("delta"), ["1"], "delta rides the relay dial, as the local one")
+        wid = (rq.get("wid") or [""])[0]
+        self.assertTrue(wid, "the relay dial carries the dashboard's wid: %r" % relay["url"])
+        self.assertTrue((rq.get("iid") or [""])[0].startswith(wid + ":"), "the iid is namespaced by that wid: %r" % rq.get("iid"))
+        self.assertEqual(rq.get("active"), [SID_R0], "the stored tab is this host's, stripped to its bare sid")
+        self.assertNotIn("skeleton", rq, "the relay dial carries NO skeleton term: the shim's __rompDialTerms scopes the phone diet to the first local dial (!everConnected), and the relay is dialed after the local open: %r" % relay["url"])
+        self.assertNotIn("reconnect", rq, "a first relay dial")
+        # the order the comment in kernel.py states, recorded: the relay's dial after the local socket's open
+        self.assertGreater(relay["t"], local["openT"], "the relay was dialed %d ms after the local dial and %d ms after its open; the comment's order holds"
+                           % (relay["t"] - local["t"], relay["t"] - local["openT"]))
+
+    def test_a_phone_cold_open_is_served_the_remotes_whole_board_through_the_relay(self):
+        r = self._phone_ran()
+        cls = type(self)
+        self.assertGreaterEqual(cls.phone_relay_rows_after, cls.phone_relay_rows_before + 1,
+                                "the remote accepted the phone pane's relay socket (a relay wsopen row of its own): %d before, %d after" % (cls.phone_relay_rows_before, cls.phone_relay_rows_after))
+        tabs = r.get("remoteTabs") or []
+        remote = [t for t in tabs if str(t.get("id", "")).startswith(HOST + ":")]
+        self.assertEqual(sorted(t["id"] for t in remote), sorted([REMOTE0, HOST + ":" + SID_R1]), "the remote's two tabs are on the phone's strip: %r" % (tabs,))
+        self.assertEqual([t["id"] for t in remote if t.get("skeleton")], [], "none of them landed as a skeleton: the remote served its whole board (no skeleton term on the relay dial, so no diet): %r" % (remote,))
+        before, after = cls.phone_cold_before.get("coldSkipped"), cls.phone_cold_after.get("coldSkipped")
+        self.assertIsInstance(before, int); self.assertIsInstance(after, int)
+        self.assertEqual(after, before, "the remote skipped no cold tab for the phone's relay client (the first pass's %d stand): %r -> %r" % (before, cls.phone_cold_before, cls.phone_cold_after))
 
 
 if __name__ == "__main__":
