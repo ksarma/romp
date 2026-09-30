@@ -6481,7 +6481,10 @@ _ANYIO_KEYED = {"getoption": ("plugins", "-p"), "getvalue": ("plugins", "-p"), "
 #   -p is declared with dest plugins, so getoption("-p") reads -p's list, as the anyio pin's child pytest shows; the
 #   ini's addopts carries options, and its markers the markers each plugin registers) and the plugin manager's lookups
 #   of one plugin by its name, admitted only as a call whose key THE PROOF proves to be one fixed string, none of these
-#   and naming none of _ANYIO_WORDS (the rule's keyed-read clause)
+#   and naming none of _ANYIO_WORDS (the rule's keyed-read clause); and a getoption, getvalue or getvalueorskip key
+#   that is ANY option string (a key starting with -, as every option string does) is refused too, since _opt2dest
+#   maps it to whatever dest its declaration names, and an option a conftest declares as --plugins, or with
+#   dest='plugins', takes -p's (the hundred and fifteenth round-2 commit of fork PR #894)
 _ANYIO_BY_NAME = {"getattr": 1, "hasattr": 1, "getattr_static": 1, "__getattribute__": None, "__getattr__": None,
                   "methodcaller": 0, "attrgetter": None, "get": 0, "pop": 0, "setdefault": 0, "__getitem__": 0}
 #   the calls that read an attribute or an item by a name handed them, {function or method: the index of the argument
@@ -6508,8 +6511,9 @@ _ANYIO_ALLOWLIST_NAMES_CAP = 8
 #   more": one is enough to refuse the module wholesale, and the cap keeps a refusal readable
 _ANYIO_PARSES = frozenset(("parse_args", "parse_known_args", "parse_intermixed_args", "parse_known_intermixed_args"))
 #   the parses of an argument parser that read sys.argv when handed no list of arguments or None (argparse's four, and
-#   optparse's parse_args): THE ANYIO RULE admits one only as a call handed a list it proves, and refuses a value naming
-#   one where a carrier's name is refused and a bare name spelled as one where a carrier's is (its seventh clause)
+#   optparse's parse_args): THE ANYIO RULE admits one only as a call handed a list or tuple display at the call (a name
+#   is unproven, whatever it is bound to), and refuses a value naming one where a carrier's name is refused and a bare
+#   name spelled as one where a carrier's is (its seventh clause)
 _ANYIO_IMPORT_PATHS = frozenset(("path", "meta_path", "path_hooks", "path_importer_cache"))
 #   the attributes of sys that decide where an import finds its module: THE DIRECT-IMPORT CHECK refuses a read of one in
 #   the conftest's text, since a module the text then imports may come from a directory the check does not read
@@ -6807,8 +6811,12 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     conftest that passes keys is refused visibly, naming its site, and never admitted silently. The fail-closed trade
     the ruling accepts: getattr(config, "workerinput", {}) is refused (workerinput read by its name through getattr)
     while hasattr(config, "workerinput") is admitted, and a key bound to a fold ('verb' + 'ose') is refused though the
-    rule folds it. Outside the kinds WHAT IT DOES NOT READ lists, a read the rule admits can reach the option one way
-    only, and that way is a defect of the rule: the rule PROVED a key that is false. The kinds of road no
+    rule folds it. A literal key of getoption, getvalue or getvalueorskip that is an OPTION STRING (a key starting with
+    -) is refused too, since pytest maps an option string to the dest its declaration names, which can be -p's (the
+    KEYED READ clause, below); the trade, since the hundred and fifteenth round-2 commit of fork PR #894:
+    getoption('--cmdopt'), the spelling pytest's documentation shows, is refused, while getoption('cmdopt'), the
+    option's dest, is admitted. Outside the kinds WHAT IT DOES NOT READ lists, a read the rule admits can reach the
+    option one way only, and that way is a defect of the rule: the rule PROVED a key that is false. The kinds of road no
     honest author writes, whose only effect is to escape the check, are refused, and refuse nothing of
     tests/conftest.py, its reading of
     tests/__init__.py included: in the conftest's own text (a write to the module's namespace, at the end of the fifth
@@ -6971,7 +6979,14 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
       lookups by name, each admitted only as a call whose key, its first argument or its name=, THE PROOF proves to be
       one fixed string that is no key of the method's entry (plugins, and -p, the option string pytest maps to it;
       addopts and markers for getini) and names none of the first clause's words (has_plugin("anyio") is refused here
-      as well as by the first clause), and read in no other way (a key the text does not hold); config.option,
+      as well as by the first clause), and, for getoption, getvalue and getvalueorskip, is no OPTION STRING (a key
+      starting with -, as every option string does, argparse's prefix): pytest's getoption, which the other two call,
+      maps an option string through the parser's _opt2dest to the dest its declaration names, so an option the
+      conftest declares as --plugins (argparse derives the dest plugins, -p's) or with dest='plugins' is read by
+      getoption('--plugins'), or by its own option string, as -p's list, while a key with no leading - is read as the
+      dest it names (the verification of the hundred and fourteenth round-2 commit of fork PR #894 found both admitted,
+      a child pytest handing the read the run's -p list; the hundred and fifteenth refuses them, at the trade WHAT IT
+      CLAIMS states); and read in no other way (a key the text does not hold); config.option,
       admitted only as an attribute of it the text names, none of the names above and no double-underscore name, or
       through getattr or hasattr with a key THE PROOF proves so; a namespace's item (vars(x)[k], vars(x).get(k),
       globals()[k], x.__dict__[k]), admitted only by a key THE PROOF proves, since it reads the attribute so named; and
@@ -7004,12 +7019,16 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     - AN ARGUMENT PARSER'S PARSE (_ANYIO_PARSES: argparse's parse_args, parse_known_args, parse_intermixed_args and
       parse_known_intermixed_args, and optparse's parse_args), which reads sys.argv when handed no list of arguments or
       None: admitted only as a call of an attribute so named whose first argument, else its args=, is a list or tuple
-      display or a name every declaration of which binds one by an assignment, so a parse handed none, None, a
-      parameter (a helper's argv=None) or any other value is refused; and so is one read other than as a call's callee
+      display AT THE CALL, so a parse handed none, None, a parameter (a helper's argv=None), a NAME of any kind or any
+      other value is refused; and so is one read other than as a call's callee
       (bound to a name), a value naming one wherever a carrier's name is refused (getattr(_P, "parse_known_args"),
       operator.methodcaller("parse_args"), a subscript of its class's namespace, a class pattern's keyword), and a bare
       name spelled as one that resolves outside every def, lambda and comprehension, as the third clause reads a
-      carrier's (parse_known_args(_P) after globals().update(vars(argparse.ArgumentParser))).
+      carrier's (parse_known_args(_P) after globals().update(vars(argparse.ArgumentParser))). A name handed a parse is
+      unproven whatever its declarations bind it to, as a key's name is (THE PROOF): until the hundred and fifteenth
+      round-2 commit of fork PR #894 the rule proved a name every declaration of which binds a list display, and the
+      verification of the hundred and fourteenth found a module outside the conftest's text rebinding such a name
+      (_ARGS = [] at the module's scope) to None, so the parse read sys.argv while the rule admitted it.
     - THE DIRECT-IMPORT CHECK (the reviewer's ruling of 18:47Z): each module of the repository the text imports
       directly, by an import or a from import wherever it stands, a relative one included (resolved to a file in `where`
       or a parent up to the first with no __init__.py, the directories _import_roots names), is read by the clauses
@@ -7082,7 +7101,9 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     not the conftest's). Every key of a keyed read it makes (its get_plugin and getplugin, each getattr and hasattr,
     and each item of what vars() returns that it reads directly) is a str literal in its own text, so none is a name
     of any kind, which THE PROOF does not prove, or another key it does not prove (its environment lookups by a key
-    the proof does not prove are no keyed read: THE ENVIRONMENT, in WHAT IT DOES NOT READ). The
+    the proof does not prove are no keyed read: THE ENVIRONMENT, in WHAT IT DOES NOT READ). It calls no getoption,
+    getvalue or getvalueorskip, so the refusal of an option string refuses nothing of it, and no argument parser's
+    parse, nor does tests/__init__.py. The
     direct-import check reads tests/__init__.py, which the conftest imports as _tests and, in a def, as `from tests
     import remove_made_dirs`; its one read, sys.argv in write_owner_marker, is in a def that returns nothing and has no
     decorator, so it matches none of the module's names: that def is the module's one module-level statement holding a
@@ -7111,7 +7132,9 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     hands getoption 'plugins', and where the writer is code outside the conftest's text the child imports that module
     after the conftest; a plant that reads the command line hands getoption 'verbose' under -p no:planted and nothing
     without it), or, for a plant whose writer is a plugin, in a child pytest that loads the plugin by -p, where the
-    conftest's read by a literal key is handed the run's -p list; so a kind the rule starts refusing turns its own
+    conftest's read by a literal key is handed the run's -p list, or, for a plant whose conftest's own hook is handed
+    the plugins the run loaded, in that child pytest, where the hook sees the plugin -p loads and not the one -p
+    blocks; so a kind the rule starts refusing turns its own
     subtest red and this listing stays true;
     test_the_anyio_rules_listing_names_each_escape_only_witness_and_no_other holds the ids named here equal to that
     test's subtests, so a dangling id or an unlisted subtest is a red naming it. THE POSITIVE ALLOWLIST refuses a NAME,
@@ -7179,7 +7202,17 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     directly, as above), escape-only, witness
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[another-process], which runs ps (psutil's road is not
     planted: where psutil is not installed, the rule refuses its import as a module the direct-import check cannot
-    find).
+    find). The plugins the run loaded, read through a hook's parameters: the conftest's own
+    pytest_plugin_registered(plugin, plugin_name, manager), a historic hook pytest calls for every plugin registered
+    before the conftest as well as after, is handed through its parameters alone each plugin and its name, what the
+    rule refuses where it is read through the plugin manager's get_plugins or list_name_plugin, so no read is refused
+    (to key on anyio the hook must name it, which the first two clauses refuse, spell it so the rule cannot fold it,
+    the unfoldable key's line below, or key on a count or on another plugin); no live site (tests/conftest.py
+    implements no pytest_plugin_registered), escape-only, witness
+    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[plugin-registered-hook], whose plant collects the
+    names the hook is handed and prints them, and in a child pytest that loads the plugin _outside by -p and blocks
+    the cache plugin sees _outside and not cacheprovider (the verification of the hundred and fourteenth round-2
+    commit of fork PR #894 found the kind).
     CODE THE RULE DOES NOT PARSE, AND BUILTINS REACHED A WAY IT DOES NOT SEE. Code the module runs from a string (exec,
     eval), whose reads the rule does not parse as code (a string naming anyio there is still refused as a value, and
     exec or eval named in the text defeats THE PROOF of a literal key, so any keyed read beside one is refused, and
@@ -7440,12 +7473,12 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
 
     def proven_list(call):
         """Whether an argument parser's parse `call` is handed a list it proves: its first argument, else its args=, a
-        list or tuple display, or a name every declaration of which binds one by an assignment (the seventh clause)."""
+        list or tuple display AT THE CALL, and nothing else (the seventh clause). A name is unproven whatever its
+        declarations bind it to, since code outside the text can rebind it to None, and the parse then reads sys.argv
+        (the principle of the reviewer's ruling of 2026-09-30 01:04Z on round 2 of fork PR #894, carried to the parse
+        by the hundred and fifteenth round-2 commit)."""
         given = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == "args"), None)
-        if isinstance(given, (ast.List, ast.Tuple)):
-            return True
-        decls = declared(given) if isinstance(given, ast.Name) else None
-        return bool(decls) and all(d.kind == "assign" and isinstance(d.value, (ast.List, ast.Tuple)) for d in decls)
+        return isinstance(given, (ast.List, ast.Tuple))
 
     def proven(n):
         """(the one str `n` holds, None) where THE PROOF proves it, else (None, why): a STR LITERAL AT THE READ SITE,
@@ -7579,6 +7612,11 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
                     elif value in _ANYIO_KEYED[n.attr] or words([value]):
                         off(n, "the keyed read %s called with the key %r, which reads the run's -p options or its "
                                "plugins" % (n.attr, value))
+                    elif n.attr in ("getoption", "getvalue", "getvalueorskip") and value.startswith("-"):
+                        off(n, "the keyed read %s called with the option string %r, which pytest maps through the "
+                               "parser's _opt2dest to the dest its declaration names (an option declared as --plugins, "
+                               "or with dest='plugins', takes -p's dest), so only a key with no leading - is read as the "
+                               "dest it names" % (n.attr, value))
             if isinstance(n, ast.Attribute) and n.attr == "option":
                 p = parent.get(n)
                 ok = (isinstance(p, ast.Attribute) and p.value is n and not p.attr.startswith("__")
@@ -7676,8 +7714,9 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
                 if not (isinstance(p, ast.Call) and p.func is n):
                     off(n, "an argument parser's %s other than as a call, so what it is handed is not in the text" % n.attr)
                 elif not proven_list(p):
-                    off(n, "an argument parser's %s handed no list of arguments the rule proves (none, None, a parameter "
-                           "or another value), so it may read sys.argv, as it does when handed none" % n.attr)
+                    off(n, "an argument parser's %s handed no list of arguments the rule proves (none, None, a parameter, "
+                           "a name or another value: only a list or tuple display at the call), so it may read sys.argv, "
+                           "as it does when handed none" % n.attr)
         if follow:
             for node, why in _anyio_import_reads(tree, HERE if where is None else where, bindings, parent):
                 off(node, why)
@@ -8178,6 +8217,9 @@ _ESCAPE_ONLY_PLUGIN_ADD = ("import pytest\n\n\ndef pytest_addoption(parser):\n"
                            "    parser.addoption('--seen', dest='seen', default=None)\n\n\n@pytest.hookimpl(tryfirst=True)\n"
                            "def pytest_configure(config):\n")
 _ESCAPE_ONLY_PLUGIN_TEST = "def test_x():\n    pass\n"
+_ESCAPE_ONLY_SEEN_CONF = ("import json\n\n_SEEN = []\n\n\ndef pytest_plugin_registered(plugin, plugin_name, manager):\n"
+                          "    _SEEN.append(plugin_name)\n\n\ndef pytest_configure(config):\n"
+                          "    print(%r + json.dumps(sorted(set(map(str, _SEEN)))))\n" % _ESCAPE_ONLY_HANDED)
 #   the defeater plants' parts: the arguments of a compile whose first constant is a hook that hands getoption
 #   'plugins', and a hook whose key is a literal; a hook whose key is a def's local bound once (a road of
 #   test_every_road_through_the_withdrawn_def_local_proof_is_refused); the modules outside the conftest's text the child
@@ -8188,7 +8230,9 @@ _ESCAPE_ONLY_PLUGIN_TEST = "def test_x():\n    pass\n"
 #   local K holds 'verbose', writes 'plugins' to it through the frame's f_locals, which the interpreter copies back into
 #   the frame; and the PLUGIN plants' parts: a conftest whose hook prints, as one JSON line after _ESCAPE_ONLY_HANDED,
 #   what its read by the literal key 'seen' is handed (_escape_only_pytest), the head of a plugin that adds the option
-#   --seen and whose pytest_configure runs first, and a test module for the child pytest to collect
+#   --seen and whose pytest_configure runs first, and a test module for the child pytest to collect; and the HOOK
+#   plant's conftest, whose own pytest_plugin_registered collects the name of each plugin it is handed and whose
+#   pytest_configure prints them, as one JSON line after _ESCAPE_ONLY_HANDED
 _ESCAPE_ONLY_KINDS = (
     ("filled-at-import", (
         ("G1b: lines.append(sys.argv) at the module's import", "import _ih" + _ESCAPE_ONLY_READ % "_ih.lines[0]",
@@ -8219,6 +8263,9 @@ _ESCAPE_ONLY_KINDS = (
          "import os\nimport subprocess" + _ESCAPE_ONLY_READ
          % "subprocess.run(['ps', '-ww', '-o', 'args=', '-p', str(os.getpid())], capture_output=True, text=True).stdout",
          {}, "read"),)),
+    ("plugin-registered-hook", (
+        ("the conftest's own pytest_plugin_registered collects the names of the plugins the run loaded",
+         _ESCAPE_ONLY_SEEN_CONF, {"_outside": "X = 1\n", "test_x": _ESCAPE_ONLY_PLUGIN_TEST}, "hook"),)),
     ("code-from-a-string", (
         ("the hook defined in a string exec runs",
          "exec(\"def pytest_configure(config):\\n    import sys\\n    if 'no:planted' in sys.argv:\\n"
@@ -8293,8 +8340,11 @@ _ESCAPE_ONLY_KINDS = (
 #   'verbose', so getoption is handed 'plugins'; "outside" for a rewrite whose writer is the module _outside, which the
 #   conftest does not import and the child imports after it (code outside the conftest's text); "plugin" for one whose
 #   writer is the module _outside loaded as a plugin by -p in a child pytest (_escape_only_pytest), where the conftest's
-#   read by a literal key is handed the run's -p list; None for one not run (the unfoldable keys, whose road reads the
-#   plugins the run loaded and not the command line). Synthetic: every name invented, the direct import's text named
+#   read by a literal key is handed the run's -p list; "hook" for one whose conftest's own hook is handed the plugins
+#   the run loaded, run in that child pytest, where the module _outside, a plugin that does nothing, is loaded by -p
+#   and the cache plugin is blocked, so the names the hook prints hold _outside and not cacheprovider; None for one not
+#   run (the unfoldable keys, whose road reads the plugins the run loaded and not the command line). Synthetic: every
+#   name invented, the direct import's text named
 #   only by identifiers tests/__init__.py holds (THE POSITIVE ALLOWLIST)
 _ESCAPE_ONLY_CHILD = ("import importlib, json, sys\nsys.path.insert(0, sys.argv[1])\nkeys = []\n\n\nclass C:\n"
                       "    def getoption(self, k, *a, **kw):\n        keys.append(k)\n\n\n"
@@ -12302,7 +12352,7 @@ class HermeticKernelPostal(unittest.TestCase):
         leg, line = "ROMP_POSTAL_CLIENT_ONLY", _CLIENT_ONLY_FLOOR
         self.assertEqual(FLOOR_LEAK_WRITES, {leg: "'1'"}, "the one floor write the check passes")
         floor = records_of(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read(), "conftest.py")
-        if not floor[leg]:                  # tests/conftest.py floors client-only itself, so it is read as it stands
+        if not floor[leg]:      # spliced in only for a conftest without its own floor line (tests/conftest.py has one)
             floor = records_of(_conftest_with_the_client_only_floor(), "conftest.py")
         self.assertEqual([r.module for r in floor[leg]], ["conftest.py"],
                          "the walker reads the conftest's own floor line (spliced in only for a conftest without it) as "
@@ -13783,7 +13833,9 @@ class HermeticKernelPostal(unittest.TestCase):
         other than as a call's callee, and the later commits' classes named with their cases). Red at the commit that
         added this test under a reader without the rule (every case counted on the module road, and each case with no
         call on the text road) and under a reader without each one clause (its cases); the cases on -p's option string
-        red under a reader whose keyed reads lack it, and the cases on a bare name under a reader without that clause.
+        red under a reader whose keyed reads lack it (since the hundred and fifteenth round-2 commit, a reader that also
+        lacks the refusal of any option string, which refuses -p too), and the cases on a bare name under a reader
+        without that clause.
         The cases the verifier found at the eighty-seventh commit red at that commit's rule, and at the commit that
         added them under a reader without the one check that
         refuses each: the bare name refused only where no declaration binds it, as at the eighty-seventh commit (the
@@ -13797,7 +13849,10 @@ class HermeticKernelPostal(unittest.TestCase):
         config.workerinput['mainargv'], each on the flag given and not given; an argument parser's parse handed nothing
         (argparse's parse_known_args and optparse's parse_args, given and not given; argparse's parse_intermixed_args
         and parse_known_intermixed_args), handed None and args=None, handed a helper's argv=None parameter, and bound to
-        a name; and, over a module written beside the conftest (_di_helpers.py), a def of it returning sys.argv's words
+        a name (and, since the hundred and fifteenth round-2 commit, handed a name bound to a list display, at the
+        module's scope and as a def's local, each admitted before that commit, the first a control of this test: code
+        outside the text can rebind such a name to None, and the parse then reads sys.argv); and, over a module
+        written beside the conftest (_di_helpers.py), a def of it returning sys.argv's words
         imported in a hook by a from import and at import as a module (given and not given), a def of it reaching
         sys.argv through a def of its own module, a method of a class of it, the module bound to another name, a star
         import of it, names it binds from sys.argv, sys.orig_argv and PYTEST_ADDOPTS, a name a def of it binds through
@@ -13863,7 +13918,7 @@ class HermeticKernelPostal(unittest.TestCase):
         with a literal, a def's parameter named argv, a star import of a module whose
         names the conftest reads, none a carrier, a local named argv in a def of a module with a star import,
         another attribute read by inspect.getattr_static, object.__getattribute__ or operator.attrgetter with a
-        literal, a parse handed a list display or a name bound to one, write_owner_marker's shape (a def of a module the
+        literal, a parse handed a list display, write_owner_marker's shape (a def of a module the
         conftest imports that reads sys.argv and returns nothing, called from a hook; red under a check that matches a
         def whatever it returns), a def of that module that returns a value and reads no carrier, a name of it bound to
         a literal, and the stated limit where the check stops, a name reached only through an import of an import
@@ -14135,6 +14190,14 @@ class HermeticKernelPostal(unittest.TestCase):
                    + hook(ng % "_ns().p"), {"parser"}, False),
                   ("parse_known_args bound to a name", argparse_head + "_parse = _P.parse_known_args\n\n\n"
                    + hook(ng % "_parse()[0].p"), {"parser"}, False),
+                  # a control until the hundred and fifteenth round-2 commit: a name every declaration of which binds a
+                  # list display, which code outside the text can rebind to None, so the parse reads sys.argv (the
+                  # verification of the hundred and fourteenth)
+                  ("argparse's parse_known_args handed a name bound to a list display at the module's scope",
+                   argparse_head + "_ARGS = []\n\n\n" + hook(ng % "_P.parse_known_args(_ARGS)[0].p"), {"parser"}, False),
+                  ("argparse's parse_known_args handed a def's local bound to a list display",
+                   argparse_head + "def pytest_configure(config):\n    args = []\n    if %s:\n        pass\n"
+                   % (ng % "_P.parse_known_args(args)[0].p"), {"parser"}, False),
                   ("a def of an imported module reaching sys.argv through a def of its own module",
                    "import _di_helpers as _h\n\n\n" + hook(ng % "_h.blocked()"), {"direct"}, False),
                   ("a method of a class of an imported module returning sys.argv",
@@ -14336,8 +14399,6 @@ class HermeticKernelPostal(unittest.TestCase):
                      hook("operator.attrgetter('rootpath')(config) is None"), False),
                     ("an argument parser's parse handed a list display",
                      argparse_head + hook("_P.parse_known_args(['-x'])[1] == ['-x']"), False),
-                    ("an argument parser's parse handed a name bound to a list display",
-                     argparse_head + "_ARGS = ['-x']\n\n\n" + hook("_P.parse_known_args(_ARGS)[1] == ['-x']"), False),
                     ("write_owner_marker's shape: a def of an allowlist-clean imported module that reads sys.argv and "
                      "returns nothing, called from a hook",
                      "def pytest_configure(config):\n    from _di_okp import write_owner_marker\n"
@@ -14603,8 +14664,15 @@ class HermeticKernelPostal(unittest.TestCase):
         reached through an import is not proven. THE WITHDRAWN DEF-LOCAL PROOF (the reviewer's ruling of 2026-09-30
         01:04Z on round 2 of fork PR #894): the four keyed reads this test admitted until the hundred and fourteenth, by a
         def's local bound once to a literal (get_plugin's and getoption's, an enclosing def's read in a nested one, and
-        D1, a factory's read in the closure it returns), are refused with the plain reason. ADMITTED, each with no read:
-        a keyed read by a literal, name= a literal; getattr by a literal (a thread's
+        D1, a factory's read in the closure it returns), are refused with the plain reason. THE OPTION STRING (the
+        hundred and fifteenth round-2 commit, on the verification of the hundred and fourteenth): a literal key of
+        getoption, getvalue or getvalueorskip that is an option string is refused as one, since pytest maps it to the
+        dest its declaration names: getoption of the conftest's own --plugins declared with append, with no dest and in
+        a group (H1 to H3), of an option string it declares with dest='plugins', plainly and in a group, and getvalue of
+        that string (A1 to A3), getvalueorskip and name= of --plugins, each admitted before that commit, and the trade,
+        getoption('--cmdopt'). ADMITTED, each with no read:
+        a keyed read by a literal, name= a literal, getoption by 'cmdopt', the dest of the conftest's own --cmdopt, and by
+        'verbose' beside its own --plugins declared; getattr by a literal (a thread's
         __module__ among them), hasattr of workerinput, workerinput by a literal key, config.option by attribute or by getattr with a literal, a namespace's item by a
         literal, globals()
         read by a
@@ -15174,10 +15242,49 @@ class HermeticKernelPostal(unittest.TestCase):
                      "to a literal",
                      hook("_mk()(config)", "def _mk():\n    k = 'verbose'\n    return lambda c: c.getoption(k)\n\n\n"),
                      {"keyed"}, "keyed", NAME)]
+        # THE OPTION STRING (the hundred and fifteenth round-2 commit of fork PR #894, on the verification of the hundred
+        # and fourteenth): a literal key of getoption, getvalue or getvalueorskip that is an option string is refused,
+        # since pytest maps it through the parser's _opt2dest to the dest its declaration names. H1 to H3 declare
+        # --plugins (argparse derives the dest plugins, -p's) and A1 to A3 an option string with dest='plugins'; each was
+        # admitted before this commit while a child pytest handed the read the run's -p list (the artifacts). And the
+        # trade: getoption('--cmdopt'), the spelling pytest's documentation shows, is refused too.
+        OPT = "called with the option string"
+        declare = "def pytest_addoption(parser):\n    %s\n\n\n"
+        plugins_append = "parser.addoption('--plugins', action='append', default=[], help='notes-api plugins to load')"
+        early = "parser.addoption('--early-plugins', action='append', dest='plugins', default=[])"
+        cmdopt = "parser.addoption('--cmdopt', action='store', default='type1', help='notes-api option')"
+        refused += [("the option string: H1, getoption of the conftest's own --plugins, declared with append",
+                     hook("config.getoption('--plugins')", declare % plugins_append), {"keyed"}, "keyed", OPT),
+                    ("the option string: H2, getoption of the conftest's own --plugins, declared with no dest",
+                     hook("config.getoption('--plugins')",
+                          declare % "parser.addoption('--plugins', default=None, help='notes-api plugins to load')"),
+                     {"keyed"}, "keyed", OPT),
+                    ("the option string: H3, getoption of the conftest's own --plugins, declared in a group",
+                     hook("config.getoption('--plugins')",
+                          declare % "parser.getgroup('notes-api').addoption('--plugins', action='store', default='', "
+                                    "help='notes-api plugins')"), {"keyed"}, "keyed", OPT),
+                    ("the option string: A1, getoption of an option string the conftest declares with dest='plugins'",
+                     hook("config.getoption('--early-plugins')", declare % early), {"keyed"}, "keyed", OPT),
+                    ("the option string: A2, the same declared in a group, with store",
+                     hook("config.getoption('--plugin-names')",
+                          declare % "parser.getgroup('notes-api').addoption('--plugin-names', dest='plugins')"),
+                     {"keyed"}, "keyed", OPT),
+                    ("the option string: A3, getvalue of an option string the conftest declares with dest='plugins'",
+                     hook("config.getvalue('--early-plugins')", declare % early), {"keyed"}, "keyed", OPT),
+                    ("the option string: getvalueorskip of the conftest's own --plugins",
+                     hook("config.getvalueorskip('--plugins')", declare % plugins_append), {"keyed"}, "keyed", OPT),
+                    ("the option string: getoption by name= the conftest's own --plugins",
+                     hook("config.getoption(name='--plugins')", declare % plugins_append), {"keyed"}, "keyed", OPT),
+                    ("the option string's trade: getoption('--cmdopt'), the spelling pytest's documentation shows",
+                     hook("config.getoption('--cmdopt')", declare % cmdopt), {"keyed"}, "keyed", OPT)]
         admitted = [
             ("get_plugin by a literal", hook("config.pluginmanager.get_plugin('terminalreporter')")),
             ("getoption by a literal", hook("config.getoption('verbose')")),
             ("getoption by name= a literal", hook("config.getoption(name='verbose')")),
+            ("getoption by the literal 'cmdopt', the dest of the conftest's own --cmdopt (the option string's trade)",
+             hook("config.getoption('cmdopt')", declare % cmdopt)),
+            ("getoption by the literal 'verbose', beside the conftest's own --plugins declared",
+             hook("config.getoption('verbose')", declare % plugins_append)),
             ("getattr by a literal", hook("getattr(config, 'rootpath', None)")),
             ("a thread's __module__ by getattr", hook("import threading\ngetattr(threading.current_thread(), '__module__', '')")),
             ("hasattr of workerinput", hook("hasattr(config, 'workerinput')")),
@@ -15563,9 +15670,11 @@ class HermeticKernelPostal(unittest.TestCase):
         a way the rule does not read, hands getoption 'verbose' under the command line -p no:planted and nothing without
         it, so the plant is a road to the command line and not a text that reads nothing; and a PLUGIN plant, whose
         writer is the module _outside loaded as a plugin by -p in a child pytest (_escape_only_pytest), hands the
-        conftest's read by a literal key the run's -p list, -p no:planted among it. The unfoldable keys' plants are not
-        run: their road reads the plugins the run loaded, not the command line. So a kind the rule starts refusing reds
-        its own subtest, and the listing's line for it must then change;
+        conftest's read by a literal key the run's -p list, -p no:planted among it; and a HOOK plant, whose conftest's
+        own pytest_plugin_registered collects the names of the plugins it is handed, run in that child pytest, sees
+        _outside, which the command line loads by -p, and pytest's python, and not cacheprovider, which it blocks. The
+        unfoldable keys' plants are not run: their road reads the plugins the run loaded, not the command line. So a
+        kind the rule starts refusing reds its own subtest, and the listing's line for it must then change;
         test_the_anyio_rules_listing_names_each_escape_only_witness_and_no_other holds the listing's ids equal to these
         subtests."""
         where = os.path.realpath(tempfile.mkdtemp())
@@ -15583,7 +15692,7 @@ class HermeticKernelPostal(unittest.TestCase):
                             f.write(text)
                     self.assertEqual(_anyio_option_reads(ast.parse(conf), where=d), [],
                                      "%s, %s: ADMITTED, reads=0, as the listing says" % (kind, label))
-                    self.assertIn(run, ("read", "rewrite", "outside", "plugin", None),
+                    self.assertIn(run, ("read", "rewrite", "outside", "plugin", "hook", None),
                                   "%s, %s: how the plant runs" % (kind, label))
                     if run in ("rewrite", "outside"):
                         self.assertEqual(_escape_only_run(d, _ESCAPE_ONLY_FLAG,
@@ -15600,6 +15709,13 @@ class HermeticKernelPostal(unittest.TestCase):
                         self.assertTrue(isinstance(handed, list) and "no:planted" in handed and "_outside" in handed,
                                         "%s, %s: the read by a literal key is handed the run's -p list: %r"
                                         % (kind, label, handed))
+                    elif run == "hook":
+                        seen = _escape_only_pytest(d)
+                        self.assertTrue(isinstance(seen, list) and "_outside" in seen and "python" in seen
+                                        and "cacheprovider" not in seen,
+                                        "%s, %s: the hook is handed the plugins the run loaded, _outside (-p _outside) "
+                                        "and pytest's python among them, and not cacheprovider (-p no:cacheprovider): %r"
+                                        % (kind, label, seen))
 
     def test_the_anyio_rules_listing_names_each_escape_only_witness_and_no_other(self):
         """THE LISTING PIN (the reviewer's ruling of 2026-09-29 18:09Z on round 2 of fork PR #894): the ids

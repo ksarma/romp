@@ -265,8 +265,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   parameter, a default, a name of the conftest's module scope and a name an
   import binds alike, since code outside the conftest's text can falsify what
   the text binds a name to. The reviewer's rulings withdrew the three proofs
-  of a name the rule once had, each after verifications found an honest way to
-  falsify it at run time: a key reached through an import (a stub in
+  of a name the rule once had, each after verifications found a way to
+  falsify it at run time (for the import and module-scope proofs, an honest
+  one): a key reached through an import (a stub in
   `sys.modules`, a directory ahead on the import path, another module
   rebinding the attribute), a name of the module's scope (a test module's
   `monkeypatch.setattr` on the conftest, or a store through `sys.modules`, as
@@ -277,9 +278,19 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   literal in its own text, so none of this refuses anything of it. A key taken
   from a list, a loop, a parameter, a default, a class attribute or a fold is
   refused, so a helper that passes keys is refused visibly rather than
-  admitted. The rule states the trade this makes:
+  admitted. A literal key of `getoption`, `getvalue` or `getvalueorskip` that
+  is an option string (one starting with `-`) is refused too, since pytest maps
+  an option string to the dest its declaration names, and an option the
+  conftest declares as `--plugins`, or with `dest="plugins"`, takes the dest of
+  `-p`. An argument parser's parse is admitted only when handed a list or tuple
+  written out at the call, since a name handed to it can be rebound to `None`
+  from outside the conftest's text, and the parse then reads `sys.argv`. The
+  rule states the trades this makes:
   `getattr(config, "workerinput", {})` is refused, and
-  `hasattr(config, "workerinput")` is admitted. Through a module of the
+  `hasattr(config, "workerinput")` is admitted;
+  `config.getoption("--cmdopt")`, the spelling pytest's documentation shows,
+  is refused, and `config.getoption("cmdopt")`, the option's dest, is
+  admitted. Through a module of the
   repository the conftest imports directly, the rule refuses the conftest's
   read of a function there that returns a value, or of a name there, whose
   code reads what the rule refuses (for a name, the statement that binds it
