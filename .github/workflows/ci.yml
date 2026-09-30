@@ -686,7 +686,7 @@ jobs:
         # but the one node gave it; it does not end its own process, from a test, a hook or a timer; no condition the
         # runner can leave unmet stands between a browser test and its inBrowser call; it skips and marks todo
         # nothing). The reviewer of any PR that adds a roster line or changes a rostered leg's source or inBrowser
-        # checks the rule; the step does not. Nothing in the tree reads a leg's source for the rule, so the step can
+        # checks the rule; the step does not. Nothing checks the whole rule for every rostered leg, so the step can
         # read green a rostered leg that breaks it. Examples, not the whole set: a rostered leg that launches its own
         # browser and swallows a failed launch without skipping; a rostered module that launches nothing; a leg that
         # drives a browser from a child process and tolerates the child's failure; a todo test that passes beside a
@@ -718,6 +718,9 @@ jobs:
         # bound does not fit the margin (the job comment above), and node's --test-timeout when one leg's own bound or
         # its whole-file seconds need it. Step seconds, job minutes and the job's cap:
         # (measured on the runner at 6dd80a6e7, the fork's main after batch 932, in main's run 36555049532, the first run on main after the served-page tests moved to a job of their own, one leg rostered, the launcher's own switch test: 2 s for this step (node's own duration 2.36 s) in a job of 4 min 45 s, under the 17-minute cap, a margin of 735 s. The step's and the job's times are the jobs API's, in whole seconds. A later commit is read against the files this step runs: the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts); one that changes none of them leaves the step as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds and the job's length, which moves with the suite, are re-read from CI at each pushed head in the PR's body. tools/ci-browser-legs.test.mjs holds the job time here against the cap and the step's own bound, and the cap's figure to the job's timeout-minutes line; of its other figures it checks only that one spelled N s is present, and reads the step's seconds, the stated margin, the sha and the run not at all. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; each PR that adds a leg states its own leg's numbers in its body.)
+        # The rostered leg's source named in that parenthesis is the measured head's own: the roster also holds
+        # ui/webview/gear-sub-focus-browser.test.ts since fork PR 860 added its line, and that PR's body states the leg's
+        # whole-file seconds.
         timeout-minutes: 5
         env:
           ROMP_BROWSER_LEGS_REQUIRE: "1"
@@ -828,7 +831,15 @@ jobs:
         # this step does not run; see the install step above). The matrix jobs are unchanged: still no
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
         # the job's one long phase (1930 s at the fork's main 1d591384e, against the job's cap above),
-        # and every served lab added grows it, so the next growth should be visible by name.
+        # and every served lab added grows it, so the next growth should be visible by name. Two additions on 2026-09-20
+        # (the maintainer's round 1 of the wsBytesByHost review), both pinned by tests/test_served_labs_under_ci.py: the pytest line
+        # names tests/test_relay_dial_declares_held_pair.py by file, a raw-socket kernel leg that needs the dist
+        # tests/lab_dist.py builds and no browser, so no glob names it and it ran in no job (its filename is plain on
+        # purpose, so the conftest's REQUIRE rule does not read it; the module itself turns its precondition
+        # skips, no built dist or a kernel that never served, into failures under the switch, and its gen-key
+        # skip alone stays a skip here); and ROMP_CORNER_TWO_HOSTS
+        # runs the two-host lab (TwoHostsBytesByHost in the corners module: three kernels and Chromium),
+        # whose knob keeps every other runner unchanged.
         # -p no:anyio, as on every pytest invocation in this file (tests/test_ci_sdk_pin.py's population
         # check holds the flag on each, with no exemption): this interpreter has no anyio today (the pip
         # line below installs pip, pytest, pytest-timeout and cryptography, none of which depends on it;
@@ -838,14 +849,15 @@ jobs:
         # ROMP_SDK_REQUIRE: the switch declares that the interpreter running pytest has the SDK the Python
         # job's install step put there, and this job installs none, so setting it would declare something
         # untrue; the population check lists this step for the switch with that reason and checks its
-        # premises (no SDK install in this job's run blocks; no file the two globs collect, and no helper
-        # module under tests/ they could import, conftest included, spells the switch's name), so the day a
+        # premises (no SDK install in this job's run blocks; none of the files the pytest line names, and no
+        # helper module under tests/ they could import, conftest included, spells the switch's name), so the day a
         # served module spells the switch's name the listing goes red (keyed on the spelling in the file's
         # text: a reader that spells the name indirectly is outside that read).
         working-directory: ${{ github.workspace }}
         env:
           ROMP_SERVED_TESTS_REQUIRE: "1"
           ROMP_SERVED_TESTS_ENGINES: chromium
+          ROMP_CORNER_TWO_HOSTS: "1"
         run: |
           python -m pip install --upgrade pip pytest pytest-timeout cryptography
-          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider -p no:anyio --durations=20 --timeout=600 --timeout-method=thread
+          python -m pytest tests/test_*_browser.py tests/test_*_served.py tests/test_relay_dial_declares_held_pair.py -q -rs -p no:cacheprovider -p no:anyio --durations=20 --timeout=600 --timeout-method=thread
