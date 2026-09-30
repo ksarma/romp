@@ -343,16 +343,22 @@ its content type to `application/json` and one that binds its page to
 `<p>ok</p>`, each rebinding that local through its frame, so that those versions
 serve a fetch as a page). A container a function binds and reads whole, changed
 through that same frame's local mapping, reached or run as code in the
-function's own body (the name `locals`, `vars`, `exec` or `eval`, a read of a
-frame attribute, or a name the module or the function's own body binds to one of
-those by an assignment, a walrus, an unpacking or a `from ... import`, resolved
-by binding), is refused by name on every version, since the change reaches the
+function's own body (the name `locals`, `vars`, `exec` or `eval`, the attribute
+`_getframe`, `currentframe`, `getargvalues` or `f_locals` on any receiver, or a
+name that a top-level statement of the module or of the function's own body,
+outside any def, class or lambda it nests, binds to one of those primitives by a
+plain assignment, a walrus, an unpacking of a list or tuple literal, or a `from
+... import`, and any name so bound in turn, resolved among those statements), is
+refused by name on every version, since the change reaches the
 real object; the check reads the spelling anywhere in the function, called or
 not, so a name merely spelled like a primitive is refused too, its reason naming
 the form the census cannot follow rather than a frame reached; a change to those
 locals at run time through a frame object, exec or eval reached in any other
-spelling (a frame primitive as an attribute on a receiver, or exec or eval
-reached other than as one of the names above) is the stated precondition,
+spelling (the name `locals` or `vars` as an attribute on a receiver, exec or
+eval reached other than as one of the names above, a name a def, class or lambda
+nested in the function binds to a primitive, an unpacking of a name rather than
+a literal, or any other alias the resolution above does not reach) is the stated
+precondition,
 outside what the census reads, and passes silently (its witnesses: a frame
 primitive reached as an attribute on a receiver, an exec, and an eval); code the
 function runs that the census does not read (a helper it calls as a statement, a
@@ -511,21 +517,24 @@ slot, an import's, one of the seven builtins a page may name, a parameter's or a
 method's on one of those); the base of a subscript store by a str or int
 constant key as the one target of a plain assignment, whose stored value the
 census reads; the receiver of an append or extend of one plain argument the
-census reads; and a read inside an expression the census itself reads as the
-page's value (through a name it binds to a read of it, whose own occurrences are
-proven the same way, or through a new object holding it, a change to which is
-none). Any other occurrence refuses the container by the rule, its reason naming
+census reads; and a read of it the census follows as a value it consumes (an
+operand, a test, an index, an f-string's field, a statement's value, a return or
+a yield, or a lambda's body), through a name it binds to a read of it, whose own
+occurrences are proven the same way, or through a new object holding it, a
+change to which is none. Any other occurrence refuses the container by the rule,
+its reason naming
 the role it fails: bound to another name whose uses are not all proven, to a
 name the function declares global or nonlocal, or into an attribute or another
-object; a second binding (an augmented assignment, a for, with or unpacking
-target); a delete; a method other than a read method (get, keys, values, items,
-index, count, copy) or a bare-callee attribute; a store by a key that is no
+object; a second binding (an augmented assignment, a walrus, or a for, with,
+except, match or unpacking target); a delete; a method other than append, extend
+or a read method (get, keys, values, items, index, count, copy), or an attribute
+of it read other than as a method's callee; a store by a key that is no
 constant; an append or extend of other than one plain argument; or any
 occurrence in a function or lambda nested in it, or a class body it defines,
 whose code the census does not read (a closure capture) or which makes a class
 attribute; a comprehension is read where it stands, so a read there and an
-append or subscript store of a read value there pass, and only a change the
-census cannot fold refuses. The first parameter of a
+append of a read value there pass, and a change the census cannot fold, a
+comprehension target store among them, refuses. The first parameter of a
 method or a route handler is not read so: every attribute read and method call
 on it is refused already. One handed to a call as an argument is under the call
 limit, what the callee does with it not read, as is a container the page changes
