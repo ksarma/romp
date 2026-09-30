@@ -3027,18 +3027,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   so this window hears its blur. A pointerout with an element of this document as its relatedTarget is a press's own boundary
   //   event, which the allowlist admits with the button down: a held press whose point another document's element takes while the
   //   pointer stays inside the frame sent Firefox's pointerout to this window's root element. An element's blur inside this
-  //   document, the focus moving within it, is admitted only where an element's focus follows it before the next pointerup or
-  //   mouseup; one that no element's focus follows is refused, the chain of extra5-1's covered click with the focus not back
-  //   and of the viewer's own press released before retakeAfterHide's focus returns (the allowlist's costs below). A mouse's press
-  //   and a pen's in the desktop order send their own mousedown after their pointerdown and before their pointerup, while a tap's
-  //   compatibility mousedown comes after its pointerup, and so does a pen's in the touch order (iPadOS's Pencil and Android's
-  //   and ChromeOS's styluses, read and not run: no browser here drives one), so such a mousedown is a tap's, a touch-order pen's,
-  //   a chorded button's, WebKit's next press of the mouse after a press whose pointerup never came (a drag in another pane, whose
-  //   dragstart this window never hears: the dashboard's panes are same-origin frames, and WebKit keeps the button's pressed
-  //   state across them; and presumably a native context menu or a middle press's autoscroll, not measured), or a tap on another
-  //   document's element over the picture that went away during the press (a top page's menu item, backdrop or hover tooltip over
-  //   the viewer's frame), whose press and release that document heard and whose compatibility mousedown, mouseup and click land
-  //   in this window with no pointerdown or pointerup of theirs. Emptying the slot can only refuse a click, never open one, but
+  //   document that no read-out takes out, the focus moving within it, is admitted only where an element's focus follows
+  //   it before the next pointerup or mouseup; one that no element's focus follows is refused, the chain of extra5-1's
+  //   covered click with the focus not back and of the viewer's own press released before retakeAfterHide's focus returns
+  //   (the allowlist's costs below). A mouse's press and a pen's in the desktop order send their own mousedown after their
+  //   pointerdown and before their pointerup, while a tap's compatibility mousedown comes after its pointerup, and so does
+  //   a pen's in the touch order (iPadOS's Pencil and Android's and ChromeOS's styluses, read and not run: no browser here
+  //   drives one), so such a mousedown is a tap's, a touch-order pen's, a chorded button's, WebKit's next press of the
+  //   mouse after a press whose pointerup never came (a drag in another pane, whose dragstart this window never hears:
+  //   the dashboard's panes are same-origin frames, and WebKit keeps the button's pressed state across them; and presumably
+  //   a native context menu or a middle press's autoscroll, not measured), or a tap on another document's element over
+  //   the picture that went away during the press (a top page's menu item, backdrop or hover tooltip over the viewer's
+  //   frame), whose press and release that document heard and whose compatibility mousedown, mouseup and click land in
+  //   this window with no pointerdown or pointerup of theirs. Emptying the slot can only refuse a click, never open one, but
   //   ending a record by deleting it sends that pointer's next click to the slot, which may hold another pointer's verdict, so no
   //   rule ends a record but its own pointerup or pointercancel, a primary press, a mousedown with no pointerdown and a click
   //   under its pointerId, and the retired rules marked records refused in place of deleting them (a gate that deleted the mouse's
@@ -3181,12 +3182,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   own pointerouts and pointerleaves to no element and a touchend where they come, at most one compatibility boundary
   //   pair (a mouseout and a mouseover to elements, or a mouseover from no element), one or more mousemoves with no button
   //   down, the mousedown, the focus arriving and a mouseup of detail 1, or of 1 or 2 for a finger's; and anywhere an element's
-  //   blur that no element's focus follows before the next pointerup or mouseup is refused. Before the grammar reads a
-  //   chain, four read-outs take out the tokens of four more own gestures (the fixes for the file review's round 20, the
-  //   coordinator's ruling on the allowlist's build): between a mouse's pointerup and its mouseup, the tokens there only
-  //   when they are, whole, the focus leaving this window in one of three orders, an element's blur, the document's or
-  //   both, then the window's (an element's blur and the window's, Chromium and WebKit; an element's, the document's and
-  //   the window's, or the document's and the window's, Firefox), the focus leaving at the click's release and nothing
+  //   blur that no element's focus follows before the next pointerup or mouseup is refused, but where a read-out below takes it
+  //   out. Before the grammar reads a chain, four read-outs take out the tokens of four more own gestures (the fixes for the file
+  //   review's round 20, the coordinator's ruling on the allowlist's build): between a mouse's pointerup and its mouseup, the
+  //   tokens there only when they are, whole, the focus leaving this window in one of three orders, an element's blur, the
+  //   document's or both, then the window's (an element's blur and the window's, Chromium and WebKit; an element's, the document's
+  //   and the window's, or the document's and the window's, Firefox), the focus leaving at the click's release and nothing
   //   else there; in a finger's tap before its pointerup, one run of the focus leaving this window in one of those orders,
   //   a finger held while the focus leaves this window once (any other run left for the grammar), and the mouse's pointermoves
   //   and mousemoves with no button down, the mouse moving during the tap; and in a mouse's press between its mousedown and its

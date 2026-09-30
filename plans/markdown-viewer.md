@@ -8823,17 +8823,17 @@ the document, the window or an element, or an element's blur that an element's f
 then only its own moves and its boundary events to an element with the button down (a pen's also the mouse-typed ones Chromium
 sends) and the focus arriving, then its pointerup and a mouseup of detail 1 or 2; a tap by a finger, or by a pen in the touch
 order, is its pointerdown, a touchstart where one comes, its own moves and boundary events to an element with the contact down (a
-finger's also the focus arriving and the mouse's pointerout, pointerover, mouseout and mouseover to no element with no button
-down), its pointerup, its own pointerouts and pointerleaves to no element and a touchend where they come, at most one
+finger's also the focus arriving and the mouse's pointerout, pointerover, mouseout and mouseover to no element with no
+button down), its pointerup, its own pointerouts and pointerleaves to no element and a touchend where they come, at most one
 compatibility boundary pair (a mouseout and a mouseover to elements, or a mouseover from no element), one or more mousemoves with
 no button down, the mousedown, the focus arriving and a mouseup of detail 1, or of 1 or 2 for a finger's; anywhere an element's
-blur that no element's focus follows before the next pointerup or mouseup is refused; before the grammar reads a chain, four
-read-outs take out the tokens of four more own gestures (the fixes for that round, the coordinator's ruling on the allowlist's
-build): between a mouse's pointerup and its mouseup, the tokens there only when they are, whole, the focus leaving this
-window in one of three orders, an element's blur, the document's or both, then the window's (an element's blur and the
-window's, Chromium and WebKit; an element's, the document's and the window's, or the document's and the window's, Firefox),
-the focus leaving at the click's release and nothing else there; in a finger's tap before its pointerup, one run of the
-focus leaving this window in one of those orders, a finger held while the focus leaves this window once (any other run
+blur that no element's focus follows before the next pointerup or mouseup is refused, but where a read-out below takes it out;
+before the grammar reads a chain, four read-outs take out the tokens of four more own gestures (the fixes for that round, the
+coordinator's ruling on the allowlist's build): between a mouse's pointerup and its mouseup, the tokens there only when they are,
+whole, the focus leaving this window in one of three orders, an element's blur, the document's or both, then the window's (an
+element's blur and the window's, Chromium and WebKit; an element's, the document's and the window's, or the document's and the
+window's, Firefox), the focus leaving at the click's release and nothing else there; in a finger's tap before its pointerup, one
+run of the focus leaving this window in one of those orders, a finger held while the focus leaves this window once (any other run
 left for the grammar), and the mouse's pointermoves and mousemoves with no button down, the mouse moving during the tap;
 and in a mouse's press between its mousedown and its pointerup, a finger's pointermoves with the contact down, a resting
 finger moving during the click; and every other chain is refused by construction, a mouse event with no button down inside
