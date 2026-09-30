@@ -7329,11 +7329,12 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     asserts 0 reads, so a refusal that hit the site would turn it red. A kind with NO live site says so, is ESCAPE-ONLY,
     and names its witness by the subtest id in brackets after
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted: one subtest per such kind, which runs the rule over
-    the kind's synthetic plants and asserts each ADMITTED (reads=0), and runs each plant but the unfoldable keys': in a
-    child interpreter handed a fake config (a plant that rewrites the literal key THE PROOF proved to be 'verbose'
-    hands getoption 'plugins', and where the writer is code outside the conftest's text the child imports that module
-    after the conftest; a plant that reads the command line hands getoption 'verbose' under -p no:planted and nothing
-    without it), or, for a plant whose writer is a plugin, in a child pytest that loads the plugin by -p, where the
+    the kind's synthetic plants and asserts each ADMITTED (reads=0), and runs each plant but the unfoldable keys' and
+    the builtins-written names': in a child interpreter handed a fake config (a plant that rewrites the literal key
+    THE PROOF proved to be 'verbose' hands getoption 'plugins', and where the writer is code outside the conftest's
+    text the child imports that module after the conftest; a plant that reads the command line hands getoption
+    'verbose' under -p no:planted and nothing without it), or, for a plant whose writer is a plugin, in a child pytest
+    that loads the plugin by -p, where the
     conftest's read by a literal key is handed the run's -p list, or, for a plant whose conftest's own code is handed
     the plugins the run loaded (a hook's parameters, or a callback or a writer it hands pluggy), in that child pytest,
     where that code sees the plugin -p loads and not the one -p blocks; so a kind the rule starts refusing turns its
@@ -7519,7 +7520,20 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     of the hundred and eighteenth round-2 commit found; and a key built through an attribute, composed by an augmented
     and by a later assignment or read on a class, and one through a name rebound through the module object, in each of
     the four spellings above, which the re-verification of the hundred and nineteenth found) are not run, since the
-    road reads the plugins the run loaded and not the command line. Code outside the conftest's text and the modules
+    road reads the plugins the run loaded and not the command line. A name the text WRITES INTO THE BUILTINS MODULE
+    (builtins.X = ..., __builtins__[...] = ...), read where the module's own binding has not run (the binding in a
+    branch not taken, read by a def, or a read at the module's level ahead of the binding), which Python reads from
+    the builtins module while the rule, which reads a name as a builtin's only where the builtins module of the
+    interpreter reading the text binds it, folds it from the module's declaration alone: builtins.lineage = '' beside
+    the module's lineage = 'zz', and then 'an' + lineage + 'yio', which the rule folds to 'anzzyio' where Python binds
+    anyio (a class body's read of such a name ahead of its class's own binding, the module binding it by no
+    declaration, IS refused: HOW IT FOLLOWS A ROAD); no live site (neither tests/conftest.py nor tests/__init__.py
+    names builtins or __builtins__, so neither writes into the builtins module), escape-only, witness
+    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[builtins-written], whose three plants (B1 and B4,
+    builtins.lineage = '' and __builtins__['lineage'] = '' beside the module's lineage = 'zz' in a branch not taken,
+    read in a def the hook calls, and B3, builtins.lineage = '' ahead of a read at the module's level before its
+    lineage = 'zz'; the re-verification of the hundred and twentieth round-2 commit found the kind) are not run, since
+    the road reads the plugins the run loaded and not the command line. Code outside the conftest's text and the modules
     it imports directly (a test module, a plugin, another conftest), which the rule does not read, can still falsify a
     read by a literal key
     through WRITES TO OBJECTS AT RUN TIME, among them the hook's code object rewritten (its __code__ replaced, so the
@@ -8480,9 +8494,9 @@ _ESCAPE_ONLY_READ = "\n\n\ndef pytest_configure(config):\n    if 'no:planted' in
 #   proves, keyed in turn on a carrier reached a way the rule does not read
 _ESCAPE_ONLY_SOUGHT = ("\n\n\ndef pytest_configure(config):\n    if %s in sys.modules:\n"
                        "        config.getoption('verbose')\n")
-#   an unfoldable key's hook, given the expression that holds the key: a keyed read by a literal key, keyed in turn on
-#   the key sought in sys.modules, which holds the module of each plugin the run loaded (the unfoldable keys' plants
-#   are not run)
+#   an unfoldable key's hook, and a builtins-written name's, given the expression that holds the key: a keyed read by a
+#   literal key, keyed in turn on the key sought in sys.modules, which holds the module of each plugin the run loaded
+#   (neither kind's plants are run)
 _ESCAPE_ONLY_MOD = ("import _ih\n\nKZ = 'verbose'\n\n\ndef pytest_configure(config):\n"
                     "    _ih.remove_made_dirs(pytest_configure)\n    config.getoption(KZ)\n")
 _ESCAPE_ONLY_PREFIX = ("import _ih\n\nprefix = 'verbose'\n\n\ndef pytest_configure(config):\n"
@@ -8675,6 +8689,17 @@ _ESCAPE_ONLY_KINDS = (
         ("a key through a name rebound through the module object, sys.modules[__name__].__dict__['stem'] = ''",
          "import sys\n\nstem = 'zz'\nsys.modules[__name__].__dict__['stem'] = ''"
          + _ESCAPE_ONLY_SOUGHT % "'an' + stem + 'yio'", {}, None))),
+    ("builtins-written", (
+        ("B1: builtins.lineage = '', the module's lineage = 'zz' in a branch not taken, a def's 'an' + lineage + 'yio'",
+         "import builtins\nimport sys\n\nif False:\n    lineage = 'zz'\nbuiltins.lineage = ''\n\n\ndef _read():\n"
+         "    return 'an' + lineage + 'yio'" + _ESCAPE_ONLY_SOUGHT % "_read()", {}, None),
+        ("B3: builtins.lineage = '', then NAME = 'an' + lineage + 'yio' ahead of the module's lineage = 'zz'",
+         "import builtins\nimport sys\n\nbuiltins.lineage = ''\nNAME = 'an' + lineage + 'yio'\nlineage = 'zz'"
+         + _ESCAPE_ONLY_SOUGHT % "NAME", {}, None),
+        ("B4: __builtins__['lineage'] = '', the module's lineage = 'zz' in a branch not taken, a def's 'an' + lineage "
+         "+ 'yio'",
+         "import sys\n\nif False:\n    lineage = 'zz'\n__builtins__['lineage'] = ''\n\n\ndef _read():\n"
+         "    return 'an' + lineage + 'yio'" + _ESCAPE_ONLY_SOUGHT % "_read()", {}, None))),
     ("code-outside-the-text", (
         ("a module outside the conftest's text replaces the hook's code, beside a literal key",
          _ESCAPE_ONLY_HOOK.lstrip("\n"), {"_outside": _ESCAPE_ONLY_OUTSIDE}, "outside"),
@@ -8700,8 +8725,8 @@ _ESCAPE_ONLY_KINDS = (
 #   the run loaded (a hook's parameters, or a callback or a writer it hands pluggy), run in that child pytest, where
 #   the module _outside, a plugin that does nothing (or implements one hook that does nothing), is loaded by -p and the
 #   cache plugin is blocked, so the names the conftest prints hold _outside and not cacheprovider; None for one not
-#   run (the unfoldable keys, whose road reads the plugins the run loaded and not the command line). Synthetic: every
-#   name invented, the direct import's text named
+#   run (the unfoldable keys and the names written into the builtins module, whose road reads the plugins the run
+#   loaded and not the command line). Synthetic: every name invented, the direct import's text named
 #   only by identifiers tests/__init__.py holds (THE POSITIVE ALLOWLIST)
 _ESCAPE_ONLY_CHILD = ("import importlib, json, sys\nsys.path.insert(0, sys.argv[1])\nkeys = []\n\n\nclass C:\n"
                       "    def getoption(self, k, *a, **kw):\n        keys.append(k)\n\n\n"
@@ -9261,7 +9286,9 @@ def _class_body_roads():
     admits, an expression _class_body_value evaluates, the repr it prints, whether the plant's hook keys a literal-key
     read on the command line)], for test_a_class_body_read_takes_the_modules_binding_where_python_reads_it. `how` is
     "plant" for a road the rule admitted until the hundred and eighteenth round-2 commit (the class-body resolution of
-    _anyio_resolution disabled), "kept" for a control refused either way and "admitted" for one admitted either way.
+    _anyio_resolution disabled), "no binding" for a plant that ruled item 2's clause "to no binding when the module has
+    none" alone refuses (admitted by 298df9982's resolution, and by the fix's with that clause dropped, where every
+    "plant" is still refused), "kept" for a control refused either way and "admitted" for one admitted either way.
     Each road reads a name its class binds, in one of three shapes, a read ahead of the class's binding (before), a read
     after the class binds it and deletes it (del), and a read with the class's binding in a branch not taken (branch),
     through each site of the rule that resolves a name: the fold (a value naming anyio or PYTEST_ADDOPTS; the class in a
@@ -9277,9 +9304,15 @@ def _class_body_roads():
     lineage + 'yio', the direct import's lineage the empty string, a name THE POSITIVE ALLOWLIST holds), where the
     fold reads the empty string for no binding (through); and the module-scope twins of the vars and globals roads, a
     builtin's name the module's scope binds and deletes, binds in a branch not taken, or binds after the read, where
-    Python reads the builtin, with a class-body read of vars whose module binds it too, in a branch not taken.
-    Synthetic: every name invented, the direct import's text named only by identifiers tests/__init__.py holds (THE
-    POSITIVE ALLOWLIST)."""
+    Python reads the builtin, with a class-body read of vars whose module binds it too, in a branch not taken. Since
+    the hundred and twenty-first (the re-verification of the hundred and twentieth, whose mutant of the clause "to no
+    binding when the module has none", the class branch reading a builtin's name or a star import alone, survived every
+    road above: each names a builtin, is read in a text holding a star import, or is bound by the module), the two
+    "no binding" roads: a class-body read, ahead of the class's lineage = 'zz', of a name the module binds by no
+    declaration, no builtin's name and no star import, but at run time through the module object
+    (sys.modules[__name__].lineage = '') or by writing it into the builtins module (builtins.lineage = ''), in a fold
+    ('an' + lineage + 'yio'), where Python reads the empty string and binds anyio. Synthetic: every name invented, the
+    direct import's text named only by identifiers tests/__init__.py holds (THE POSITIVE ALLOWLIST)."""
     hook = "\n\n\ndef pytest_configure(config):\n    if %s:\n        config.getoption('verbose')\n"
     argv = hook % "'no:planted' in %s"
     shapes = {"before": "    {use}\n    {name} = {none}\n", "del": "    {name} = {none}\n    del {name}\n    {use}\n",
@@ -9345,6 +9378,16 @@ def _class_body_roads():
             ("module scope, globals, %s: globals().update(x=1), globals a name the module binds" % shape, "plant",
              {"conftest": module.format(use="globals().update(x=1)", name="globals", none="None")},
              "a write to the module's namespace", "conftest.x", "1", False)]
+    later = "\n\n\nclass _P:\n    NAME = 'an' + lineage + 'yio'\n    lineage = 'zz'" + hook % "_P.NAME in sys.modules"
+    roads += [
+        ("fold, before, the module binding the name through the module object alone, sys.modules[__name__].lineage = "
+         "'': 'an' + lineage + 'yio', the class's lineage 'zz' later", "no binding",
+         {"conftest": "import sys\n\nsys.modules[__name__].lineage = ''" + later},
+         "a value naming anyio", "conftest._P.NAME", "'anyio'", False),
+        ("fold, before, the module binding the name by writing it into the builtins module alone, builtins.lineage = "
+         "'': 'an' + lineage + 'yio', the class's lineage 'zz' later", "no binding",
+         {"conftest": "import builtins\nimport sys\n\nbuiltins.lineage = ''" + later},
+         "a value naming anyio", "conftest._P.NAME", "'anyio'", False)]
     roads += [
         ("control: the class's binding first, K + 'yio' folded from the class's K 'an'", "kept",
          {"conftest": "import sys\n\n\nclass _P:\n    K = 'an'\n    NAME = K + 'yio'" + hook % "_P.NAME in sys.modules"},
@@ -16226,21 +16269,38 @@ class HermeticKernelPostal(unittest.TestCase):
         alone, in a fold, the module-scope twins of the vars and globals roads, and a class-body read of vars whose
         module binds it too, in a branch not taken) are plants of the same pin, each admitted by 298df9982's resolution
         and refused at the fix; each was admitted at the hundred and eighteenth too, whose fold read no empty string for
-        no binding and whose resolution read a builtin's name the module's scope binds as bound. 0 LIVE: no class body
-        of tests/conftest.py or tests/__init__.py reads a name its class binds, and neither binds a builtin's name in
-        its module's scope, so the resolution changes no reading of either (THE LIVE WITNESS asserts 0 reads over
-        both)."""
+        no binding and whose resolution read a builtin's name the module's scope binds as bound. Ruled item 2's clause
+        "to no binding when the module has none" is pinned by the NO BINDING plants the hundred and twenty-first adds
+        (the re-verification of the hundred and twentieth, whose mutant of that clause alone survived every other
+        road): a class-body read of a name the module binds by no declaration, no builtin's name and no star import,
+        only at run time through the module object or by writing it into the builtins module, each REFUSED at the fix
+        and ADMITTED at 298df9982 as a plant is, and ADMITTED by the fix's resolution with that clause dropped (the
+        class branch's no binding read for a builtin's name or a star import alone, `without_the_clause`), under which
+        each PLANT is still refused, so the clause is what refuses them. 0 LIVE: no class body of tests/conftest.py or
+        tests/__init__.py reads a name its class binds, and neither binds a builtin's name in its module's scope, so the
+        resolution changes no reading of either (THE LIVE WITNESS asserts 0 reads over both)."""
         from unittest import mock
         mod = sys.modules[__name__]
         where = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, where, True)
+        real = _anyio_resolution
 
         def plain(bindings, name_node):
             """298df9982's resolution: ast_bindings' scope rule alone."""
             decls, scope = bindings.scope_of(name_node).resolve(name_node.id)
             return decls, scope, not decls
+
+        def without_the_clause(bindings, name_node):
+            """The fix's resolution with the clause "to no binding when the module has none" dropped: a class-body read
+            of a name its class binds (the class branch, whose scope is the class's) may take no binding only where it
+            names a builtin or its text holds a star import, its declarations the class's and the module's as at the
+            fix."""
+            decls, scope, unbound = real(bindings, name_node)
+            if scope is not None and scope.kind == "class":
+                unbound = name_node.id in vars(builtins) or _anyio_star_imported(bindings)
+            return decls, scope, unbound
         roads = _class_body_roads()
-        self.assertEqual(sorted({how for _l, how, *_r in roads}), ["admitted", "kept", "plant"])
+        self.assertEqual(sorted({how for _l, how, *_r in roads}), ["admitted", "kept", "no binding", "plant"])
         for i, (label, how, files, why, expr, value, reads_argv) in enumerate(roads):
             with self.subTest(road=label):
                 d = os.path.join(where, "c%02d" % i)
@@ -16258,12 +16318,22 @@ class HermeticKernelPostal(unittest.TestCase):
                 else:
                     self.assertTrue(any(why in w for _l, w in reads),
                                     "%s: refused at the fix, naming its clause (%r): %s" % (label, why, reads))
-                    if how == "plant":
+                    if how in ("plant", "no binding"):
                         self.assertEqual(before, [], "%s: admitted at 298df9982 (the class-body resolution disabled)"
                                          % label)
                     else:
                         self.assertTrue(any(why in w for _l, w in before), "%s: refused at 298df9982 too: %s"
                                         % (label, before))
+                if how in ("plant", "no binding"):
+                    with mock.patch.object(mod, "_anyio_resolution", without_the_clause):
+                        dropped = _anyio_option_reads(ast.parse(conf), where=d)
+                    if how == "no binding":
+                        self.assertEqual(dropped, [], "%s: admitted with the clause 'to no binding when the module "
+                                                      "has none' dropped, so the clause is what refuses it" % label)
+                    else:
+                        self.assertTrue(any(why in w for _l, w in dropped),
+                                        "%s: refused with that clause dropped too (the module's binding, a builtin's "
+                                        "name or a star import refuses it): %s" % (label, dropped))
                 self.assertEqual(_class_body_value(d, expr), value, "%s: what Python binds, %s" % (label, expr))
                 if reads_argv:
                     self.assertEqual(_escape_only_run(d, _ESCAPE_ONLY_FLAG), ["verbose"],
@@ -16615,7 +16685,8 @@ class HermeticKernelPostal(unittest.TestCase):
         implementations pluggy hands the callback its pytest_configure gives add_hookcall_monitoring, or the lines
         pluggy's tracing hands the writer it gives the plugin manager's trace), run in that child pytest, sees
         _outside, which the command line loads by -p, and pytest's python, and not cacheprovider, which it blocks. The
-        unfoldable keys' plants are not run: their road reads the plugins the run loaded, not the command line. So a
+        unfoldable keys' plants and the builtins-written names' are not run: their road reads the plugins the run
+        loaded, not the command line. So a
         kind the rule starts refusing reds its own subtest, and the listing's line for it must then change;
         test_the_anyio_rules_listing_names_each_escape_only_witness_and_no_other holds the listing's ids equal to these
         subtests."""
