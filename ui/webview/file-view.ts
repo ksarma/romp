@@ -3483,14 +3483,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the mouse moves in the viewer (Chromium, pen emulated, 3 of 3 at d9fb76da0, open at bef9ff8fc), since a pen's press admits no
   // mouse event with no button down, a cost the incremental reads pay too (their read of extra7-1 refuses the pen's record at the
   // mouse's move). Four own gestures the allowlist refused before its read-outs, where bef9ff8fc's gate opened them, open since:
-  // the focus moved between a mouse click's pointerup and its click and a finger held while the focus moves (round 19's
-  // measurement of the blur's rule, its recorded rows replayed: Chromium 18 and 14, Firefox 14 and WebKit 18, with Firefox's 2
-  // taps whose own pointerdown took the focus out of the viewer's window, 66 in all, and the first own-gesture adversary's rows at
-  // d9fb76da0), and on a device with a mouse and a touchscreen, a finger's tap during which the mouse moves in the viewer and a
-  // mouse click during which a finger resting on the viewer moves (Chromium, touch emulated, that adversary's rows); in the
-  // browser at 5288151dd, which brought the read-outs, the first opened 13 of 13 in each engine (the Files pane and the chat), the
-  // second 13 of 13, the device's tap and click 5 of 5 each and the pen's press during which the mouse moves 0 of 5, each as the
-  // same probe read it at bef9ff8fc but the pen's, 5 of 5 there. The press
+  // the focus moved between a mouse click's pointerup and its click and a finger held while the focus moves, each in an order with
+  // an element's or the document's blur first (round 19's measurement of the blur's rule, its recorded rows replayed: Chromium 18
+  // and 14, Firefox 14 and WebKit 18, with Firefox's 2 taps whose own pointerdown took the focus out of the viewer's window, 66 in
+  // all, and the first own-gesture adversary's rows at d9fb76da0), and on a device with a mouse and a touchscreen, a finger's tap
+  // during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves (Chromium,
+  // touch emulated, that adversary's rows); in the browser at 5288151dd, which brought the read-outs, the first opened 13 of 13 in
+  // each engine (the Files pane and the chat), the second 13 of 13, the device's tap and click 5 of 5 each and the pen's press
+  // during which the mouse moves 0 of 5, each as the same probe read it at bef9ff8fc but the pen's, 5 of 5 there. The press
   // held while the focus moves out of the viewer's window, and a tap whose pointerup the
   // focus moves at, paid the retired blur rule's cost and pay the allowlist's the same (round 19's measurement: a mouse press held
   // on the control or on the picture while the page or a peer frame moves the focus, Chromium 18 of 18, Firefox 14 of 14 and

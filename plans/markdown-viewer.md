@@ -8990,16 +8990,16 @@ press held while the page or a peer frame moves the focus refused in Chromium 18
 each mover, a pen's press so in Chromium 14 of 14, the focus moved at a mouse click's own pointerdown and at a tap's pointerup
 18 of 18, 14 of 14 and 18 of 18 each, and the nested frame, the tab and the dialog in the check), while a finger held while the
 focus moves (Chromium 0 of 14 refused) and the focus moved at a mouse click's pointerup (0 of 18, 0 of 14, 0 of 18), which that
-rule refused none of, the allowlist admits through its focus-leaving read-outs (below), and the first own
-click after a focus move (0 of the 141 that followed a real blur), the first own tap (0 of 132) and the cells with no focus move
-(0 of 164) changed nothing, Firefox's blur after the viewer's own open, the opened tab taking the focus after that open's click,
-counted apart and refusing nothing, Firefox's phone rows left out since Playwright's Firefox mouse click under isMobile opened
-nothing there under either gate, the closed direction adding no open (a search from this gate without the rule to it closed at
-depth 13, and one from the gate at ddb446fae, a literal enumeration and 60,000,000 random walks found none, each seeing the
-opens of a gate whose blur marks the records accepted), and the viewer's window holding the focus that blur needs after a click
-or a tap in its text, its picture or a field of its own document, after the open's landing and, in Chromium and WebKit, after
-another tab comes to the front and back, never from a press on the web control, whose mousedown the viewer cancels; the primary
-press's clear's cost on a device with a
+rule refused none of, the allowlist admits through its focus-leaving read-outs, the focus in each of those rows leaving with an
+element's or the document's blur first (below), and the first own click after a focus move (0 of the 141 that followed a real
+blur), the first own tap (0 of 132) and the cells with no focus move (0 of 164) changed nothing, Firefox's blur after the viewer's
+own open, the opened tab taking the focus after that open's click, counted apart and refusing nothing, Firefox's phone rows left
+out since Playwright's Firefox mouse click under isMobile opened nothing there under either gate, the closed direction adding no
+open (a search from this gate without the rule to it closed at depth 13, and one from the gate at ddb446fae, a literal enumeration
+and 60,000,000 random walks found none, each seeing the opens of a gate whose blur marks the records accepted), and the viewer's
+window holding the focus that blur needs after a click or a tap in its text, its picture or a field of its own document, after the
+open's landing and, in Chromium and WebKit, after another tab comes to the front and back, never from a press on the web control,
+whose mousedown the viewer cancels; the primary press's clear's cost on a device with a
 mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere in the
 viewer's window loses its record, so its click opens nothing and reveals, while one that lands on another document's element
 leaves the record standing unless a mousedown with no pointerdown ends it, and in WebKit that press's click finds it
@@ -9023,16 +9023,16 @@ whose chain is extra5-1's with the focus not back; a 2,000 px block inserted abo
 pen's press during which the mouse moves in the viewer (Chromium, pen emulated, 3 of 3 at d9fb76da0, open at bef9ff8fc), since a
 pen's press admits no mouse event with no button down, a cost the incremental reads pay too (their read of extra7-1 refuses the
 pen's record at the mouse's move); four own gestures the allowlist refused before its read-outs, where bef9ff8fc's gate opened
-them, open since: the focus moved between a mouse click's pointerup and its click and a finger held while the focus moves (round
-19's measurement of the blur's rule, its recorded rows replayed: Chromium 18 and 14, Firefox 14 and WebKit 18, with Firefox's 2
-taps whose own pointerdown took the focus out of the viewer's window, 66 in all, and the first own-gesture adversary's rows at
-d9fb76da0), and on a device with a mouse and a touchscreen, a finger's tap during which the mouse moves in the viewer and a mouse
-click during which a finger resting on the viewer moves (Chromium, touch emulated, that adversary's rows), in the browser at
-5288151dd, which brought the read-outs, 13 of 13 in each engine, 13 of 13 and 5 of 5 each, the pen's press during which the mouse
-moves 0 of 5 there and 5 of 5 at bef9ff8fc; and by reading any event the grammar does not name that a real gesture brings into a
-press or a tap, since the allowlist refuses each such chain by construction, among them every place below where the incremental
-reads would open (21 families of them measured since, below), and besides them a touch-order pen's tap with the focus leaving
-before its compatibility mousedown,
+them, open since: the focus moved between a mouse click's pointerup and its click and a finger held while the focus moves, each
+in an order with an element's or the document's blur first (round 19's measurement of the blur's rule, its recorded rows replayed:
+Chromium 18 and 14, Firefox 14 and WebKit 18, with Firefox's 2 taps whose own pointerdown took the focus out of the viewer's
+window, 66 in all, and the first own-gesture adversary's rows at d9fb76da0), and on a device with a mouse and a touchscreen, a
+finger's tap during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves
+(Chromium, touch emulated, that adversary's rows), in the browser at 5288151dd, which brought the read-outs, 13 of 13 in each
+engine, 13 of 13 and 5 of 5 each, the pen's press during which the mouse moves 0 of 5 there and 5 of 5 at bef9ff8fc; and by
+reading any event the grammar does not name that a real gesture brings into a press or a tap, since the allowlist refuses each
+such chain by construction, among them every place below where the incremental reads would open (21 families of them measured
+since, below), and besides them a touch-order pen's tap with the focus leaving before its compatibility mousedown,
 an eraser or a barrel button and any event of an engine not measured (the file review's round 17, tests-1
 with regression-1, its round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them, the closing
 check after those fixes, the closing check at 142ade155 after the fixes for the file review's round 18, the file review's round

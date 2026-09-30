@@ -3504,13 +3504,13 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // of 3), and on a device with a mouse and a pen, a pen's press during which the mouse moves in the viewer (Chromium, pen emulated,
 // 3 of 3 at d9fb76da0, open at bef9ff8fc), a cost the incremental reads pay too; four own gestures the allowlist refused before its
 // read-outs, which bef9ff8fc's gate opened, open since: the focus moved between a mouse click's pointerup and its click and a
-// finger held while the focus moves (round 19's measurement of the blur's rule, its recorded rows replayed, Chromium 18 and 14,
-// Firefox 14 and WebKit 18, with Firefox's 2 taps whose own pointerdown took the focus out of the viewer's window, 66 in all), and
-// a finger's tap during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves
-// (Chromium, touch emulated); and by reading any event the grammar does not name that a real gesture brings into a press or a tap,
-// among them the places below where the incremental reads would open, 21 families of which are measured since, and the device's
-// gestures in Firefox and WebKit; the retired blur's rule's own cost, a
-// focus move out of the
+// finger held while the focus moves, each in an order with an element's or the document's blur first (round 19's measurement of the
+// blur's rule, its recorded rows replayed, Chromium 18 and 14, Firefox 14 and WebKit 18, with Firefox's 2 taps whose own
+// pointerdown took the focus out of the viewer's window, 66 in all), and a finger's tap during which the mouse moves in the viewer
+// and a mouse click during which a finger resting on the viewer moves (Chromium, touch emulated); and by reading any event the
+// grammar does not name that a real gesture brings into a press or a tap, among them the places below where the incremental reads
+// would open, 21 families of which are measured since, and the device's gestures in Firefox and WebKit; the retired blur's rule's
+// own cost, a focus move out of the
 // viewer's window during the
 // viewer's own press or between a tap's pointerup and its compatibility mousedown, refused once, the allowlist pays the same,
 // and the retired leave's arm for no button and mouseout's clear cost nothing measured, no cell of this leg changing under them
