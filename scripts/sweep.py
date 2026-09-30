@@ -39,12 +39,19 @@ outside vscode-extension/node_modules that the legs before it in its checkout di
 there would read it: bytecode, which python loads in place of a source when it is a timestamp pyc whose stamp matches
 or an unchecked hash-based one, or a node_modules or dist tree that node, tsc or esbuild resolve from; the deps leg is
 its job's first, so in practice nothing is excused); when the clone's .git was replaced or its HEAD, config or
-info/exclude changed; or when one of those names is now in an ancestor directory. After the pytest leg and the served
-leg it also reads that leg's environment (the venvs below) against the tree its build left, and records the run
+info/exclude changed; or when one of those names is now in an ancestor directory. The clone's .git, and then its HEAD,
+config and info/exclude, are checked first with os.lstat: a .git that is not a directory makes the run invalid naming
+.git, and a HEAD, config or info/exclude that is not a regular file (a FIFO, a device, a symlink) makes it invalid
+naming each such file and its type, with nothing else read either way, since git and the runner would open them, and a
+git follows a .git file to the directory it names (cannot_read; the closing check's item 2). After the pytest leg
+and the served leg it also reads that leg's environment (the venvs below) against the tree its build left, and records the run
 invalid, naming the paths, when a file there was added, changed or is gone. After the last leg it reads the batcher's
 repository's shallow file again and records the run invalid, naming the file, when it is not the copy read before the
 first leg (shallow_moved): no job of the run read what a leg wrote there, but the runner does not restore the file, and
-the next run's checkouts would read it. That re-read after each leg, the verification of each later checkout and the
+the next run's checkouts would read it. A shallow file that is not a regular file by os.lstat (a FIFO, a device, a
+symlink, whatever it points to) is never opened, by the runner or by a git it starts: one there when the run starts
+refuses it before the runner's first git call that parses commits, and one a leg leaves makes the run invalid at that
+re-read, each naming the file and its type (cannot_read; the closing check's item 1). That re-read after each leg, the verification of each later checkout and the
 shallow file's re-read after the last leg are the runner's producers of invalid; the legs after either of the first
 two do not run.
 The batcher's tree is read for its HEAD sha and branch only, so it need not be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
@@ -255,8 +262,8 @@ its clone's alternates: each clone holds the sha alone, no branch and no tag of 
 CI's checkout fetches the pushed sha alone, and names no remote, so a plain `git fetch` in a later job copies none. Nor
 does a shallow file a leg writes there: each clone gets the one the runner read before the first leg (shallow_snapshot;
 the narrow landing delta's ruling 8). That file does reach the next run, whose snapshot reads it, so every checkout of
-that run is cut where the leg's file says, and the batcher's repository stays shallow: the runner writes nothing there
-and does not restore it, and instead the run in which the file changed is invalid, naming it (shallow_moved; the
+that run reads it as it now stands, cut where the leg's file says, or not shallow at all when the leg removed it, and
+the batcher's repository stays as the leg left it: the runner writes nothing there and does not restore it, and instead the run in which the file changed is invalid, naming it (shallow_moved; the
 owner's question 2 after the merge of main), unless that run ends before the re-read after its last leg (stopped, or
 refused before its first leg), which then names nothing. Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
 each leg makes the run invalid when it finds one of the changes it checks for (above); anything else a leg leaves in
@@ -345,6 +352,7 @@ the standard library.
 """
 import argparse
 import datetime as _dt
+import errno
 import fcntl
 import hashlib
 import json
@@ -1210,19 +1218,95 @@ def common_dir(tree):
     return common if os.path.isabs(common) else os.path.abspath(os.path.join(tree, common))
 
 
+# What cannot_read calls each file type that is not a regular file.
+_FILE_TYPES = {stat.S_IFIFO: "a FIFO", stat.S_IFLNK: "a symlink", stat.S_IFDIR: "a directory", stat.S_IFCHR: "a character device",
+               stat.S_IFBLK: "a block device", stat.S_IFSOCK: "a socket"}
+
+
+def cannot_read(path):
+    """Why the file at `path` cannot be read, or None when it can: the one check made before the runner, or a git it
+    starts, reads the batcher's shallow file or a checkout's GIT_STATE_FILES (the closing check's items 1 and 2). It
+    calls os.lstat, which follows no symlink: a regular file, or nothing at all, can be read; anything else cannot, a
+    symlink included whatever it points to, and is named by its type ("a FIFO, not a regular file"), as is a path whose
+    lstat fails for any reason but absence. Nothing at all is ENOENT, or ENOTDIR (a path under something that is not a
+    directory, which no open() can reach either). Opening such a file could wait without end (open() waits on a FIFO
+    until a writer comes, and so does a git that reads one) or read without end (a symlink to /dev/zero)."""
+    try:
+        st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError as e:
+        return "its lstat failed: %s" % (e.strerror or e)
+    if stat.S_ISREG(st.st_mode):
+        return None
+    return _not_regular(st.st_mode)
+
+
+def _not_regular(mode):
+    """What cannot_read, and read_regular's fstat, call a file of `mode` that is not a regular file."""
+    return "%s, not a regular file" % _FILE_TYPES.get(stat.S_IFMT(mode), "a file of another type")
+
+
+class Unreadable(OSError):
+    """A file read_regular will not read: cannot_read's verdict, or the fstat after the open finding no regular file."""
+
+
+# The flags read_regular opens a file with, once cannot_read has passed it: a symlink swapped in after that check fails
+# the open (O_NOFOLLOW), a FIFO opens without waiting for a writer (O_NONBLOCK), and a terminal does not become the
+# runner's controlling terminal (O_NOCTTY); the fstat after the open then refuses anything but a regular file. Each is
+# POSIX, as the fcntl the runner imports is, so each is named directly (a getattr on os reads to the launcher census,
+# tests/test_sweep_runner.py's child_launchers, as a possible fork).
+_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY
+
+
+def read_regular(path):
+    """The bytes of the regular file at `path`, or None when there is none (ENOENT or ENOTDIR, as cannot_read reads
+    them). It is checked with cannot_read first, and one that is not a regular file raises Unreadable naming why, and is
+    never opened. One that passed is opened with _READ_FLAGS and read only when fstat finds a regular file, so a FIFO or
+    a symlink a process swapped in between the check and the open (docs/batching.md names the kinds of process that can
+    outlive their leg) raises Unreadable as well, without a wait, and is never read (the closing check's verify, code
+    finding 4). Any other OSError propagates."""
+    why = cannot_read(path)
+    if why is not None:
+        raise Unreadable(why)
+    try:
+        fd = os.open(path, _READ_FLAGS)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise Unreadable(_not_regular(stat.S_IFLNK))
+        raise
+    with os.fdopen(fd, "rb") as f:
+        mode = os.fstat(f.fileno()).st_mode
+        if not stat.S_ISREG(mode):
+            raise Unreadable(_not_regular(mode))
+        return f.read()
+
+
 def shallow_path(tree):
-    """The batcher's repository's shallow file, <common dir>/shallow, which shallow_snapshot reads before the first leg
-    and shallow_moved reads again after the last."""
+    """The batcher's repository's shallow file, <common dir>/shallow, which cmd_run and cmd_check check first (shallow_checked),
+    shallow_snapshot reads before the first leg and shallow_moved reads again after the last."""
     return os.path.join(common_dir(tree), "shallow")
 
 
+def shallow_checked(tree):
+    """Refused, naming the file and its type, when the batcher's repository's shallow file exists and cannot_read says
+    it cannot be read (the closing check's item 1). cmd_run calls this before any git call that parses commits, since git
+    reads that file first: with a FIFO there, uncommitted_count's git status waited without end, before the per-sha lock
+    and before shallow_snapshot could refuse it. cmd_check calls it first too, since its rev-parse of the commit read
+    the FIFO and waited the same way (the closing check's verify)."""
+    path = shallow_path(tree)
+    why = cannot_read(path)
+    if why is not None:
+        raise Refused("the shallow file of the repository at %s cannot be read (%s: %s)" % (tree, path, why))
+
+
 def _read_shallow(path):
-    """The bytes of the shallow file at `path`, or None when there is none; any other OSError propagates."""
-    try:
-        with open(path, "rb") as f:
-            return f.read()
-    except FileNotFoundError:
-        return None
+    """The bytes of the shallow file at `path`, or None when there is none. It is read through cannot_read, by
+    read_regular: one that is not a regular file raises OSError (Unreadable) naming its type, and is never read; any
+    other OSError propagates."""
+    return read_regular(path)
 
 
 def shallow_snapshot(tree):
@@ -1232,7 +1316,8 @@ def shallow_snapshot(tree):
     write that file, and a checkout that re-read it would then be shallow at the leg's boundary, so what the leg wrote
     would reach every later job (the narrow landing delta's ruling 8). After the last leg the runner reads the file
     again (shallow_moved), and a file that differs from this snapshot makes the run invalid. A shallow file that exists
-    and cannot be read refuses the run, naming it."""
+    and cannot be read refuses the run, naming it: one that is not a regular file is never read (_read_shallow), and
+    cmd_run has refused it already, before its first git call that reads it (shallow_checked)."""
     path = shallow_path(tree)
     try:
         return _read_shallow(path)
@@ -1254,17 +1339,22 @@ def shallow_moved(path, snapshot):
     first leg (`snapshot`; absent then and now included), else the run's invalid mark, naming the file. Each job's
     checkout got the snapshot, so within the run no later job read what a leg wrote there; but the file stays as the leg
     left it (the runner writes nothing in the batcher's repository, so it does not restore it), and the next run's
-    snapshot reads it, so every checkout of that run, at any sha, would be cut at the leg's boundary, and the batcher's
-    own repository stays shallow. The mark voids this run's passes and keeps its failures, as every invalid mark does,
+    snapshot reads it, so every checkout of that run, at any sha, would read it as the leg left it: cut at the leg's
+    boundary, or not shallow at all when the leg removed the file (the closing check's item 4), and the batcher's own
+    repository stays as the leg left it. The mark voids this run's passes and keeps its failures, as every invalid mark does,
     and it names the file rather than a leg: the re-read runs once, after the last leg, so it cannot tell which leg,
-    setup or process wrote it. A file that cannot be read now counts as changed, since whether it moved is not known.
+    setup or process wrote it. A file that cannot be read now counts as changed, since whether it moved is not known,
+    and one that is not a regular file (a FIFO, a symlink to /dev/zero) is one of those, and is never read (_read_shallow,
+    the closing check's item 1); no checkout reads such a file, since the next run refuses it before its first leg
+    (shallow_checked, or shallow_snapshot's read), so that mark says the next run is refused until the file can be read
+    or is removed.
     A run that ends before the re-read (stopped by a signal, or refused before its first leg) records no such mark: the
     re-read follows the legs inside the run's try block, which a stop's exception leaves."""
     try:
         now_ = _read_shallow(path)
     except OSError as e:
         return ("after the legs the batcher's repository's shallow file %s cannot be read (%s), so whether a leg changed "
-                "it is not known; the next run's checkouts would read it" % (path, e))
+                "it is not known; the next run is refused until the file can be read or is removed" % (path, e))
     if now_ == snapshot:
         return None
     return ("after the legs the batcher's repository's shallow file %s is not the one read before the first leg (%s "
@@ -1505,14 +1595,42 @@ def verify_checkout(path, sha, entries):
 # in its fresh checkout there is none.
 DEPS_PRODUCTS = b"vscode-extension/node_modules/"
 # The files in the private clone's .git that decide what the runner's own git reads there (its HEAD, its repository
-# config, its excludes): a leg that changes one, or replaces .git itself, changes the re-read's verdict.
+# config, its excludes): a leg that changes one, or replaces .git itself, changes the re-read's verdict. Each is checked
+# with cannot_read before the runner, or a git it starts, reads it (git_state_unreadable, the closing check's item 2).
 GIT_STATE_FILES = ("HEAD", "config", os.path.join("info", "exclude"))
+
+
+def git_dir_replaced(path):
+    """True when the private clone's .git exists and is not a directory by os.lstat (a file, a symlink, a FIFO), or its
+    lstat fails for any reason but absence. The re-read then names .git and reads nothing else (the closing check's
+    verify, texts finding 3): under such a .git each GIT_STATE_FILES path reads as absent (cannot_read), and a git the
+    runner started there would read a .git file as a gitfile and follow it to whatever directory it names, whose HEAD
+    can be a FIFO."""
+    try:
+        st = os.lstat(os.path.join(path, ".git"))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return not stat.S_ISDIR(st.st_mode)
+
+
+def git_state_unreadable(path):
+    """[path bytes] naming each GIT_STATE_FILES file of the private clone at `path` that cannot_read says cannot be read,
+    with its type (".git/info/exclude: a FIFO, not a regular file"); empty when each is a regular file or absent."""
+    out = []
+    for name in GIT_STATE_FILES:
+        why = cannot_read(os.path.join(path, ".git", name))
+        if why is not None:
+            out.append(os.fsencode("%s: %s" % (os.path.join(".git", name), why)))
+    return out
 
 
 def git_state(path):
     """{name: value} for the private clone's .git: its identity (a directory, its device and inode) and the bytes of each
-    GIT_STATE_FILES file (None when absent). The re-read after every leg compares it with the one taken before the
-    first leg."""
+    GIT_STATE_FILES file (None when absent), each read through cannot_read, by read_regular: one that is not a regular
+    file is never read, and its value names why, which no file's bytes equal. The re-read after every leg compares it
+    with the one taken before the first leg."""
     g = os.path.join(path, ".git")
     try:
         st = os.lstat(g)
@@ -1521,8 +1639,9 @@ def git_state(path):
     out = {".git": (stat.S_ISDIR(st.st_mode), st.st_dev, st.st_ino)}
     for name in GIT_STATE_FILES:
         try:
-            with open(os.path.join(g, name), "rb") as f:
-                out[os.path.join(".git", name)] = f.read()
+            out[os.path.join(".git", name)] = read_regular(os.path.join(g, name))
+        except Unreadable as e:
+            out[os.path.join(".git", name)] = "cannot be read: %s" % e
         except OSError:
             out[os.path.join(".git", name)] = None
     return out
@@ -1588,7 +1707,17 @@ def recheck_checkout(path, sha, entries, before, only_under=None, known=None):
     the leg) holds as it is now; the
     clone's .git replaced or its HEAD, config or info/exclude changed since
     `before` (git_state); and a name of ANCESTOR_NAMES in an ancestor directory (ancestor). Ignored build products
-    (node_modules, dist/, out-tests/, bytecode) are otherwise allowed."""
+    (node_modules, dist/, out-tests/, bytecode) are otherwise allowed. Before any of that, each GIT_STATE_FILES file is
+    checked with cannot_read, and one that is not a regular file is the whole verdict ("cannot be read", naming it and
+    its type), with nothing else read (the closing check's item 2): git check-ignore reads all three before any path it
+    is asked about, and git_state opens each, so a FIFO at any of them made this re-read wait without end, and a symlink
+    to /dev/zero read without end. First of all, a .git that is not a directory (git_dir_replaced) is the whole verdict
+    ("git", naming .git), with nothing else read: git would follow a .git file to the directory it names."""
+    if git_dir_replaced(path):
+        return [("git", [b".git"])]
+    unreadable = git_state_unreadable(path)
+    if unreadable:
+        return [("cannot be read", unreadable)]
     faults = _entry_faults(path, entries)
     tracked = {n for n, (mode, _oid) in entries.items() if mode != b"160000"}
     extra = sorted(_disk_paths(path) - tracked)
@@ -3459,10 +3588,13 @@ def deps_skipped(path, served_files, others=None):
         elif _SUMMARY_WORD.match(line):
             cur, seen, ended = None, True, False
         elif line.startswith("=") or PYTEST_SUMMARY.fullmatch(line):
-            if ended:
+            if ended or not seen:
                 # a second such line before the next kind line is itself a non-blank line after one, so it too leaves the
-                # set unknown (the focused re-check's item 1 after the merge of main: its words went unread)
-                unread.append(("a line after a line starting with '=' or shaped like the closing summary line", line))
+                # set unknown (the focused re-check's item 1 after the merge of main: its words went unread); and one right
+                # after the header, before any kind line, is a non-blank line before any kind line (the closing check's
+                # item 3: it was read past, and the skips after it were read)
+                unread.append(("a line before any kind line" if not seen else
+                               "a line after a line starting with '=' or shaped like the closing summary line", line))
             cur, ended = None, True
         elif line.strip() and (_KIND_SHAPED.match(line) or not seen or ended):
             unread.append(("a kind this reader does not read" if _KIND_SHAPED.match(line) else "a line before any kind line"
@@ -3763,6 +3895,9 @@ def cmd_run(args):
     if git(tree, "rev-parse", "--is-inside-work-tree", check=False).stdout.strip() != "true":
         raise Refused("%s is not a git working tree" % tree)
     tree = git(tree, "rev-parse", "--show-toplevel")
+    # The batcher's shallow file, checked here, before any git call that parses commits, since git reads it first (the
+    # closing check's item 1): one that is not a regular file refuses the run, naming it.
+    shallow_checked(tree)
     sha = git(tree, "rev-parse", "HEAD")
     branch = git(tree, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
     wraps = parse_wraps(args.wrap)
@@ -4270,6 +4405,9 @@ def cmd_check(args):
     told apart from the sha (a result for the tree's branch at another sha reads stale, not missing), then the excuse
     rule against the sha's tree."""
     tree = os.path.realpath(args.tree or os.getcwd())
+    # Before the first git call that parses a commit, as in cmd_run: rev-parse's ^{commit} reads the shallow file, so
+    # one that is not a regular file refuses here, naming it, instead of waiting (the closing check's verify, code 2).
+    shallow_checked(tree)
     sha = git(tree, "rev-parse", "--verify", (args.sha or "HEAD") + "^{commit}")
     subject = "HEAD" if not args.sha or args.sha == "HEAD" else sha[:10]
     branch = args.branch

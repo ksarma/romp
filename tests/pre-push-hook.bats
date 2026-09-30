@@ -152,6 +152,22 @@ remove_file() {   # <path> <message>
     git -C "$REPO" commit -qm "$2"
 }
 
+# An in-place sed edit that GNU sed and BSD sed (macOS) both run. BSD sed reads the
+# word after a bare -i as the backup suffix, so `sed -i SCRIPT FILE` runs FILE as
+# the script there ("invalid command code"); a suffix attached to -i is read the
+# same way by both. Both keep the file's mode, and the backup is removed at once.
+sed_in_place() {   # <sed script> <file>
+    sed -i.sed-bak "$1" "$2" && rm -f "$2.sed-bak"
+}
+
+# Write an a, i or c command as one -e argument: the command, a backslash, a newline, then
+# the text (sed -e '2a\<newline>TEXT'). GNU sed and BSD sed (macOS) read that form alike.
+# BSD sed refuses GNU's one-line forms (2a TEXT, 2a\TEXT). Given the text as a second -e
+# argument (-e '2a\' -e TEXT, a GNU extension), it reads an empty text and runs TEXT as
+# commands. Given the script without -e, the sed of macOS 15 and earlier prints the last text
+# line with no newline after it. Start a text line that begins with blanks with a backslash,
+# which both seds remove: the sed of macOS 10.15 and earlier removes the blanks otherwise.
+
 # The 2026-09-06 incident, reproduced. main publishes an identifier (LEAK_SHA,
 # pushed, so the remote has it); a branch is cut from there and commits work of
 # its own, whose tree INHERITS the leak although its diff is clean. Leaves HEAD on
@@ -3668,9 +3684,10 @@ wc_silent() {   # a wc that reads its input and answers nothing, exit 0
     hidden_file_on_remote_then_clean_commit
     blob="$(git -C "$REPO" rev-parse "$sha:notes.txt")"
     expected="$(git -C "$REPO" ls-tree -r -z -l "$sha" | wc -c)"                # the listing's bytes: the input the rewrite must match
+    expected=${expected//[[:space:]]/}                                          # its digits alone, as the hook's line prints them: BSD wc (macOS) pads a count with blanks
     tr_silent_on "$blob"                                                        # the hidden blob's sha is in the tip's listing and in no other scratch file of this push
     run _hook_in "$REPO" -c 'printf "a\\0b" | tr "\\0" "\\n" | wc -c'          # a clean input runs through the real tr
-    [ "$output" = 3 ]
+    [ "$output" -eq 3 ]                                                         # a number: BSD wc answers "       3"
     run_hook "$BASE"
     [ "$status" -eq 1 ]
     [[ "$output" == *"the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the rewrite of listing wrote 0 bytes for $expected read; tr exited 0)"* ]]
@@ -3690,6 +3707,7 @@ wc_silent() {   # a wc that reads its input and answers nothing, exit 0
     remove_file notes.txt "remove it"                          # the tip is clean: only the per-commit half can name it
     attrs="$(git -C "$REPO" rev-parse "$leak:.gitattributes")"
     expected="$(printf '%s\t%s\0%s\t%s\0' "$attrs" .gitattributes "$blob" notes.txt | wc -c)"   # the post-images file holds the commit's two records
+    expected=${expected//[[:space:]]/}                             # its digits alone, as the hook's line prints them: BSD wc pads a count with blanks
     tr_silent_on "$(printf '%s\t%s' "$blob" notes.txt)"        # the blob and the path: the leak commit's post-images, and no other scratch file (the removal's deletions hold the blob alone)
     run_hook
     [ "$status" -eq 1 ]
@@ -3705,6 +3723,7 @@ wc_silent() {   # a wc that reads its input and answers nothing, exit 0
     third_path_committed
     blob="$(git -C "$REPO" rev-parse "$merge:b.txt")"
     expected="$(printf '%s\t%s\0' "$blob" b.txt | wc -c)"
+    expected=${expected//[[:space:]]/}                             # its digits alone, as the hook's line prints them: BSD wc pads a count with blanks
     tr_silent_on "$(printf '%s\t%s' "$blob" b.txt)"            # the merge's post-images alone: the sources are on the remote, the removal's deletions hold the blob without the path
     run_hook "$BASE"
     [ "$status" -eq 1 ]
@@ -4112,7 +4131,7 @@ grep_refusing() {   # <bash test over the shim's "$@">
     # both kinds are in use, and the two lists are disjoint
     [[ "$tags" == *'gate="'* ]]
     [[ "$tags" == *'own="'* ]]
-    [ "$(printf '%s\n' "$tags" | sed 's/^[a-z]*=//' | sort | uniq -d | wc -l)" = 0 ]
+    [ "$(printf '%s\n' "$tags" | sed 's/^[a-z]*=//' | sort | uniq -d | wc -l)" -eq 0 ]   # a number: BSD wc (macOS) pads a count with blanks
 }
 
 @test "the ADDED LINES grep exiting 2 (an error, not a no-match) is refused as unscanned naming the read, through a real push: a grep that could not read the lines is not a commit that added nothing, and the remote stays at the base" {
@@ -4666,7 +4685,7 @@ leak_in_middle_commit_after_base() {   # a base on the remote (BASE), then a com
     run _hook_in "$REPO" -c 'printf "x\n" | awk "{ printf \"tip\\t%s\\n\", \$0 }"; echo "status $?"'
     [ "$output" = "status 0" ]
     run _hook_in "$REPO" -c 'git grep --no-color -I -l -z -e "" "$1" -- | tr "\0" "\n" | wc -l' _ "$sha"
-    [ "$output" = 2 ]                                      # .gitattributes and other.txt read; notes.txt skipped under -diff
+    [ "$output" -eq 2 ]                                    # .gitattributes and other.txt read; notes.txt skipped under -diff (a number: BSD wc pads a count with blanks)
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     [[ "$output" == *"the TREE of the tip of refs/heads/main (${sha:0:10}) was joined short with the grep's read list for the BINARY VERDICT check (the join appended 0 candidate rows where the -z listing names 3 regular files with bytes and the grep's read list 2 of them, so the count expected is 1; awk and tr exited 0)"* ]]
@@ -4779,7 +4798,8 @@ echo "--- a status outside the set with the file open is the set's own refusal"
 judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -o "$1/out" -- bash -c 'exit 3'; echo "o-status rc=$? failed_scan=$failed_scan"
 echo "--- the descriptor is closed again: a second read after the first opens afresh"
 failed_scan=0
-judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -o "$1/out2" -- bash -c 'ls /proc/self/fd 2>/dev/null | tr "\n" " "'; echo "fds=$(cat "$1/out2")"
+# /dev/fd lists the open descriptors of the process reading it, ls here, on Linux (a link to /proc/self/fd) and on macOS (its fdesc file system, with no /proc)
+judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -o "$1/out2" -- bash -c 'ls /dev/fd 2>/dev/null | tr "\n" " "'; echo "fds=$(cat "$1/out2")"
 PROBE
     } > "$probe"
     run bash "$probe" "$TEST_DIR/p"
@@ -5120,7 +5140,13 @@ census_definition_shapes() {   # <bash file>: prints "<line>:<text>" once for ea
     done
     return 0
 }
-declare -gA CENSUS_IS=()
+needs_bash4() {   # [<minor>]: the first statement of each case that runs bash-4 code in its own shell (the census's associative arrays and mapfile; round 12c's deriving case's own associative array and negative index). Under a bash older than 4.<minor> (4.2 when omitted, for declare -g), such as a stock mac's /bin/bash 3.2, it skips the case and names the running bash; otherwise it declares the census's two memo arrays empty, as each test's shell had them. The arrays were declared at file scope until that stopped the macOS cell from gathering this file: declare -g and -A are errors under bash 3.2, and bats runs the file scope while it gathers. shell-portability.bats pins such constructs out of the file scope
+    local minor="${1:-2}"
+    if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]:-0}" -lt "$minor" ]; }; then
+        skip "bash $BASH_VERSION is older than 4.$minor, which this case needs (the census cases run associative arrays and mapfile, bash 4, and this helper declares their memo arrays with declare -g, 4.2; round 12c's deriving case reads a negative index, 4.3)"
+    fi
+    declare -gA CENSUS_IS=() CENSUS_KIND=()
+}
 census_is() {   # <regex> <word>: [[ word =~ regex ]], each answer kept per regex and word for the shell's life (round 12q, the cost round: bash compiles a regex at every test, about 150 microseconds for the tool list, and census_command made several a record over the four word lists)
     local k="$1"$'\x1f'"$2"
     case "${CENSUS_IS[$k]:-}" in 1) return 0 ;; 0) return 1 ;; esac
@@ -5128,7 +5154,6 @@ census_is() {   # <regex> <word>: [[ word =~ regex ]], each answer kept per rege
     CENSUS_IS[$k]=0
     return 1
 }
-declare -gA CENSUS_KIND=()
 census_word_kind() {   # <masked word>: sets wk, the caller's, to prefix, assign, redir2 (a redirection operator standing alone, its operand the next word), redir1 (a redirection with its operand attached) or word, by census_command's tests in its order (round 12q, the cost round: each answer kept per word; a word a redirection test matches is neither a prefix nor an assignment, so the loop that tests redirections alone reads the same answer)
     if [ -z "$1" ]; then wk=word; return 0; fi
     wk=${CENSUS_KIND[$1]:-}
@@ -5540,6 +5565,7 @@ census_memo() {   # <census helper> <bash file> [<arguments>...]: prints what th
 }
 
 @test "every read of the hook is DECLARED (the population half of case 174's guarantee): a census over the hook's text finds no command line running a reading tool that is not a judged_read call, inside a function the helper is handed whole, an array literal or under an outside-judged_read marker; the census flags a planted read in a copy, the double-quoted substitution spelling and a grep over captured content included, and passes a planted marker, an array literal and tool words inside a string" {
+    needs_bash4
     run census_memo undeclared_reads "$HOOK"
     [ "$status" -eq 0 ]
     [[ "$output" != *"undeclared: "* ]]
@@ -5584,15 +5610,18 @@ census_memo() {   # <census helper> <bash file> [<arguments>...]: prints what th
     [[ "$census" == *"swallowed=0 "* ]]
     [ "$(grep -c '^declared: body [0-9]* byte_counts: git head od awk cat$' <<< "$output")" -eq 1 ]
     # the census's own sensitivity, executed over planted copies (the first line is the shebang; the plant is line 2)
-    sed '1a x=$(git rev-parse HEAD 2>/dev/null || true)' "$HOOK" > "$TEST_DIR/plant-a.sh"                    # the plain substitution
+    sed -e '1a\
+x=$(git rev-parse HEAD 2>/dev/null || true)' "$HOOK" > "$TEST_DIR/plant-a.sh"                    # the plain substitution
     run undeclared_reads "$TEST_DIR/plant-a.sh"
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
     [[ "$output" == *'undeclared: 2:x=$(git rev-parse HEAD 2>/dev/null || true)'* ]]
-    sed '1a tipname="$(git rev-parse --short HEAD 2>/dev/null || true)"' "$HOOK" > "$TEST_DIR/plant-b.sh"    # the spelling the hook uses: the substitution inside double quotes stays visible
+    sed -e '1a\
+tipname="$(git rev-parse --short HEAD 2>/dev/null || true)"' "$HOOK" > "$TEST_DIR/plant-b.sh"    # the spelling the hook uses: the substitution inside double quotes stays visible
     run undeclared_reads "$TEST_DIR/plant-b.sh"
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
     [[ "$output" == *'undeclared: 2:tipname="$(git rev-parse --short HEAD 2>/dev/null || true)"'* ]]
-    sed '1a hits=$(printf "%s\\n" "$read_out" | grep -c x || true)' "$HOOK" > "$TEST_DIR/plant-c.sh"          # a grep over captured content, the class round 5 reopened
+    sed -e '1a\
+hits=$(printf "%s\\n" "$read_out" | grep -c x || true)' "$HOOK" > "$TEST_DIR/plant-c.sh"          # a grep over captured content, the class round 5 reopened
     run undeclared_reads "$TEST_DIR/plant-c.sh"
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
     [[ "$output" == *'undeclared: 2:hits=$(printf "%s\n" "$read_out" | grep -c x || true)'* ]]
@@ -5981,8 +6010,15 @@ SHIM
 # without a read, a row whose case names none, and a header block the generator does not print.
 tool_silent_on() {   # <tool> <bash test over the shim's "$@">: for that shape a <tool> that reads its stdin, prints nothing and exits 0 (the class's silent tool); the real one for every other shape
     local real real_cat
-    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"      # the shim directory stripped: a shim written before this one is not the real tool
-    real_cat="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v cat)"
+    # Every strip of the shim directory in this file holds the pattern in a variable, and every lookup made past that
+    # directory assigns PATH as a statement of its own inside the substitution, never as a prefix of command -v, for two
+    # behaviours of bash 3.2 (a stock mac's /bin/bash): given PATH= as a prefix, its command -v answers from the command
+    # hash, so once the case's own shell has run a shim by name (each push helper runs git through the git shim that
+    # git_shim put first on PATH), a second shim of the same tool is written with its own path as the real tool and execs
+    # itself until the case's time bound; and it reads a / inside the quoted pattern of ${PATH//"$TEST_DIR/shim:"/}
+    # as the pattern's end, so that strip replaces the wrong text.
+    real="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v "$1")"      # the shim directory stripped: a shim written before this one is not the real tool
+    real_cat="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v cat)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -5994,7 +6030,7 @@ tool_silent_on() {   # <tool> <bash test over the shim's "$@">: for that shape a
 }
 tool_answering_then_exiting() {   # <tool> <bash test over the shim's "$@"> <status>: for that shape the real <tool> runs and prints its answer, then the shim exits with the status in its place; the real one for every other shape
     local real
-    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"
+    real="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v "$1")"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -6006,7 +6042,7 @@ tool_answering_then_exiting() {   # <tool> <bash test over the shim's "$@"> <sta
 }
 git_shim() {   # <bash lines, run first with the git's arguments in "$@" and the real git in $real_git>: a git of the case's own; the real git for every command the lines do not end
     local real_git
-    real_git="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v git)"
+    real_git="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v git)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\nreal_git=%q\n' "$real_git"
@@ -6441,6 +6477,7 @@ descriptor_loops() {   # <bash file>: the count of while-read loops that read th
 }
 
 @test "no loop that runs a tool reads its list on stdin (round 8b, widened in rounds 9b and 10c): every while or until loop whose body runs a reading tool, a judged_read call or a function of the hook whose body runs one (resolved transitively, a one-line function's header its body) reads with -u from a descriptor 1 to 9 at every read of its condition, across the condition's lines, and no while-true, while-colon or until loop with no read in its condition runs one, so a tool that reads its stdin empties no list; the census flags each loop round 8b moved reverted to stdin, loops running a tool through judged_read, through hook functions, through a function that reaches one only transitively and through a one-line function, a -u 0 loop, a second read on stdin, a continued condition, a body read on a descriptor, an until loop and while-true and while-colon loops, and passes the same loop on a descriptor and loops of builtins and of functions that run no tool; every function definition of the hook is a multi-line column-0 name() { closed by a lone }; a loop whose condition is a test and reads its list in its body is disclosed" {
+    needs_bash4
     run census_memo stdin_loops_running_tools "$HOOK"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
@@ -6815,6 +6852,7 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
 }
 
 @test "every read of the hook has a row in tests/pre-push-reads.tsv, keyed to it, and every row names the case that drives THAT read through a real push (A.8, rounds 8b and 8b2) and, since round 8b3, the END of its answer and the case that drives it with that answer cut short, or why no cut applies: the predicate holds over the tree, the header block is the table's generated output byte for byte, and each red the predicate claims is executed over a planted copy" {
+    needs_bash4
     [ -f "$READS_TSV" ]
     [ -x "$READS_HEADER_GEN" ]
     run reads_table_check "$HOOK" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
@@ -6873,7 +6911,8 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
         cover "$output"
     }
     # a planted read with no row: a judged_read call whose tag the table lacks
-    sed '2a judged_read gate="the PLANTED read with no row" 0 "the PLANTED read could not be made (a probe exited {rc})" -- git rev-parse HEAD' "$HOOK" > "$P/hook-read"
+    sed -e '2a\
+judged_read gate="the PLANTED read with no row" 0 "the PLANTED read could not be made (a probe exited {rc})" -- git rev-parse HEAD' "$HOOK" > "$P/hook-read"
     run reads_table_check "$P/hook-read" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
     [ "$status" -ne 0 ]
     [ "$output" = "the gate= tags and the table's gate rows differ: < the PLANTED read with no row " ]
@@ -6945,7 +6984,8 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
     [ "$output" = "the read outside judged_read at line $tl is matched by 2 keys: $tt" ]
     cover "$output"
     # a planted read outside judged_read, declared at its site, with no row
-    sed '2a # outside judged_read: planted for the table case\
+    sed -e '2a\
+# outside judged_read: planted for the table case\
 zz_planted=$(git config core.zzsynthPlanted 2>/dev/null || true)' "$HOOK" > "$P/hook-outside"
     run reads_table_check "$P/hook-outside" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
     [ "$status" -ne 0 ]
@@ -7071,7 +7111,7 @@ zz_planted=$(git config core.zzsynthPlanted 2>/dev/null || true)' "$HOOK" > "$P/
     r1="$(awk -F'\t' '$1 == "gate" || $1 == "own" || $1 == "outside" { print $2; exit }' "$READS_TSV")"
     c1="$(awk -F'\t' '$1 == "gate" || $1 == "own" || $1 == "outside" { print $1 ":" $6; exit }' "$READS_TSV")"
     [ -n "$r1" ]
-    [[ "$c1" == gate:@(marker|count|size|listing|digits|status|answer) ]]   # a gate= row of a fact class, as the plants below need
+    [[ "$c1" =~ ^gate:(marker|count|size|listing|digits|status|answer)$ ]]   # a gate= row of a fact class, as the plants below need (a regex: bash 3.2 cannot parse an extglob pattern inside [[ ]], and the parse error kept the whole file from loading)
     for col in 4 7; do
         [ "$col" -eq 4 ] && what="the case" || what="the short case"
         for ref in zzsynth-no-colon zzsynth:no-such-file; do
@@ -7153,8 +7193,8 @@ zz_planted=$(git config core.zzsynthPlanted 2>/dev/null || true)' "$HOOK" > "$P/
 # table's case column names these cases; the table case after them holds the column to that.
 calls_silent_on() {   # <tool> <calls name> <bash test over the shim's "$@">: for that shape a <tool> that appends "<tool> <arguments>" to $TEST_DIR/calls.<name>, reads its stdin, prints nothing and exits 0; the real one for every other shape
     local real real_cat
-    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"
-    real_cat="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v cat)"
+    real="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v "$1")"
+    real_cat="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v cat)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -7166,8 +7206,8 @@ calls_silent_on() {   # <tool> <calls name> <bash test over the shim's "$@">: fo
 }
 calls_silent_on_text() {   # <tool> <calls name> <fixed text>: the same, for a call whose arguments carry that text (an awk program, a sed script)
     local real real_cat
-    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"
-    real_cat="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v cat)"
+    real="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v "$1")"
+    real_cat="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v cat)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -7180,7 +7220,7 @@ calls_silent_on_text() {   # <tool> <calls name> <fixed text>: the same, for a c
 }
 calls_silent_on_input() {   # <tool> <calls name> <bash test over the shim's "$@"> <fixed text>: the same, for a call of that shape whose INPUT carries that text (two reads of one shape told apart by what they read); the real one, fed the same input, otherwise
     local real
-    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"
+    real="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v "$1")"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -7285,8 +7325,8 @@ r9d_base() {   # the real scanner armed, the identifier scan off, and a clean ba
 }
 feed_git_cut_then() {   # <bash line run after the cut>: a git whose feed answer (the one diff-tree given --text) is kept up to its second diff --git line, the call recorded in calls.feedcut, then the line given runs (exit 1, a SIGKILL of itself); the real git for every other command
     local real_git real_awk
-    real_git="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v git)"
-    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    real_git="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v git)"
+    real_awk="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -7986,7 +8026,7 @@ feed_git_cut_then() {   # <bash line run after the cut>: a git whose feed answer
     [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing) while no remote-tracking ref contains the pushed commit and it is not an ancestor of the remote's ${BASE:0:10}, so the listing answered short"* ]]
     [[ "$output" == *"gitleaks could not scan"* ]]
     at_base
-    rm -f "$TEST_DIR/shim/git"; export PATH="${PATH//"$TEST_DIR/shim:"/}"   # git_refusing resolves the real git on PATH: the silent shim leaves first
+    rm -f "$TEST_DIR/shim/git"; local s="$TEST_DIR/shim:"; export PATH="${PATH//"$s"/}"   # git_refusing resolves the real git on PATH: the silent shim leaves first
     git_refusing '[ "${1:-}" = rev-list ] && [ "${3:-}" = --not ]' 1 "shim: rev-list refused"
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
@@ -8145,7 +8185,9 @@ feed_git_cut_then() {   # <bash line run after the cut>: a git whose feed answer
 # answer to cut, in the table's order, each named in the row's short column (a row with none says why
 # there): each puts a tool first on the hook's PATH that, for THAT read's argument shape alone (or its
 # input), runs the REAL tool, cuts its answer short by the cut the case names (bytes:N keeps the first N
-# bytes, less:N drops the last N, lines:N keeps the first N lines, and since round 9d before:<prefix>:<n> keeps the
+# bytes, digits:N keeps the blanks a count begins with and its first N digits (BSD wc, macOS's, pads a count
+# with blanks and GNU wc does not, so bytes:1 of a BSD count is a blank), less:N drops the last N, lines:N keeps
+# the first N lines, and since round 9d before:<prefix>:<n> keeps the
 # bytes ahead of the n-th line that begins with the prefix), prints the cut answer and exits 0 (a
 # real non-zero exit passes through uncut), and records the call with the whole and the cut byte counts;
 # the case pushes for real through core.hooksPath, asserts the shim FIRED with an answer cut short
@@ -8154,11 +8196,12 @@ feed_git_cut_then() {   # <bash line run after the cut>: a git whose feed answer
 # The table case holds the short column to these cases.
 calls_short_on_shim() {   # <plain|text|input> <tool> <calls name> <cut> <shape: a bash test over "$@", or the fixed text> [<input text>]: the shim of the three helpers below
     local how=$1 tool=$2 name=$3 cut=$4 shape=$5 p real r_cat r_wc r_head r_mktemp r_rm r_awk keep b_rest b_n b_pre
-    p=${PATH//"$TEST_DIR/shim:"/}
-    real="$(PATH=$p command -v "$tool")"; r_cat="$(PATH=$p command -v cat)"; r_wc="$(PATH=$p command -v wc)"; r_awk="$(PATH=$p command -v awk)"
-    r_head="$(PATH=$p command -v head)"; r_mktemp="$(PATH=$p command -v mktemp)"; r_rm="$(PATH=$p command -v rm)"
+    p="$TEST_DIR/shim:"; p=${PATH//"$p"/}
+    real="$(PATH=$p; command -v "$tool")"; r_cat="$(PATH=$p; command -v cat)"; r_wc="$(PATH=$p; command -v wc)"; r_awk="$(PATH=$p; command -v awk)"
+    r_head="$(PATH=$p; command -v head)"; r_mktemp="$(PATH=$p; command -v mktemp)"; r_rm="$(PATH=$p; command -v rm)"
     case "$cut" in
         bytes:*) keep="k=${cut#bytes:}" ;;
+        digits:*) keep="v=\$($(printf %q "$r_cat") \"\$w\"); v=\${v%%[![:space:]]*}; k=\$((\${#v} + ${cut#digits:}))" ;;
         less:*)  keep="k=\$((n - ${cut#less:})); [ \"\$k\" -ge 0 ] || k=0" ;;
         lines:*) keep="k=\$($(printf %q "$r_head") -n ${cut#lines:} \"\$w\" | $(printf %q "$r_wc") -c); k=\${k//[[:space:]]/}" ;;
         before:*)                                       # round 9d: the bytes ahead of the n-th line that begins with the prefix (before:<prefix>:<n>)
@@ -8468,7 +8511,7 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     git -C "$REPO" add twelve.txt
     git -C "$REPO" commit -qm "twelve clean lines"
     sha="$(git -C "$REPO" rev-parse HEAD)"
-    calls_short_on wc line-count '[ "${1:-}" = -l ] && [ "$#" -eq 1 ]' bytes:1
+    calls_short_on wc line-count '[ "${1:-}" = -l ] && [ "$#" -eq 1 ]' digits:1
     push_main_through_hook_with_shim
     fired_short line-count "wc -l"
     [ "$status" -ne 0 ]
@@ -8593,7 +8636,7 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
 @test "round 8b3 short case: the BYTE COUNT of a tag capture: a wc whose wc -c over the tag capture answers the first digit of its count (exit 0), through a real push of a tag whose message names the host, is refused naming both numbers, and the remote never gets the tag" {
     r8b2_tag_naming_the_host
     size="$(git -C "$REPO" cat-file -s "$tag")"
-    calls_short_on_input wc tag-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "object " bytes:1
+    calls_short_on_input wc tag-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "object " digits:1
     push_ref_through_hook_with_shim refs/tags/v1
     fired_short tag-count "wc -c"
     [ "$status" -ne 0 ]
@@ -8681,7 +8724,11 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     clean_tip_after_base
     n="$(git -C "$REPO" ls-tree -r -z -l "$sha" | wc -c | tr -d ' ')"
     [ "$n" -ge 100 ]
-    calls_short_on wc rewrite-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ] && [ -f /dev/stdin ] && [[ "$(readlink /proc/self/fd/0)" == */listing.nl ]]' bytes:1
+    # wc -c reading the tip listing's rewrite, told from the other scratch files by what it reads: the first record ends in
+    # a newline there and in a NUL in the listing itself, and the read list's rewrite holds no mode. By content, as the tag
+    # capture's and the config's byte counts are told: stdin's name (/proc/self/fd, then the shell's -ef against
+    # /dev/stdin) never picked the call on macOS
+    calls_short_on_input wc rewrite-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' $'\tbase.txt\n100644 blob ' digits:1
     push_main_through_hook_with_shim
     fired_short rewrite-count "wc -c"
     [ "$status" -ne 0 ]
@@ -9907,8 +9954,8 @@ r10a_one_parent_witness() {   # <cause>: a one-parent commit adds evil.txt with 
 }
 r10a_feed_git_rewriting() {   # <awk program>: a git whose feed answer (the one diff-tree given --text) is rewritten by the program, its status kept, the call recorded in calls.rewrite; the real git for every other command
     local real_git real_awk
-    real_git="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v git)"
-    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    real_git="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v git)"
+    real_awk="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -10311,8 +10358,8 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
 # arm's case cuts the list itself, by a mkdir run after the list is written and before parent_counts.
 r11c_awk_on_program() {   # <calls name> <marker text of an awk program> <silent|mute>: for the program carrying the marker, an awk that appends one line (awk and the marker) to calls.<name> and then reads its input and exits 0 writing nothing (silent) or runs the real awk with its stdout discarded, its status kept (mute); the real awk for every other program
     local real_awk real_cat
-    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
-    real_cat="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v cat)"
+    real_awk="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
+    real_cat="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v cat)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -10467,8 +10514,8 @@ r11c_octopus_push() {   # r10a_octopus 64 with the real scanner armed and the id
 # publishes.
 r11c_listing_rewriting() {   # <awk program over the listing, the clean blob's id in the variable c>: a git whose merge's combined raw listing (-c --raw --no-commit-id --no-abbrev) is rewritten by the program, its status kept, the call recorded in calls.rlist; the real git for every other command
     local real_git real_awk
-    real_git="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v git)"
-    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    real_git="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v git)"
+    real_awk="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -11498,7 +11545,7 @@ r11a_shape_case() {   # <S1|S2|S3|S4|W7>: the shape's config in the work tree, i
     nb=$(wc -c < "$REPO/.gitleaks.toml"); nb=${nb//[[:space:]]/}
     [ "${#nb}" -ge 2 ]
     commit_file ok.txt "nothing to see" "a clean commit"
-    calls_short_on_input wc cfg-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "r11a byte count marker" bytes:1
+    calls_short_on_input wc cfg-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "r11a byte count marker" digits:1
     push_main_through_hook_with_shim
     fired_short cfg-count "wc -c"
     r11a_refused_by_reader "romp pre-push: the gitleaks config $R11A_WT was read short (the shell read $nb bytes of the ${nb:0:1} wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere); no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"
@@ -12196,6 +12243,7 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
 }
 
 @test "round 11c (C, the census of the pins), re-aimed in round 12n (romp-manager's ruling P on round 12l's audit A1, its condition 3): over the hook's git calls, no git read runs with GIT_DIFF_OPTS taken from it (an env -u or --unset of it, an assignment of it ahead of git, env -i), and no statement of the hook names GIT_DIFF_OPTS, so the feed and the first-parent read see it as main's git log does; the feed's diff-tree and the merges' first-parent diff-tree (the git diff-tree reads given --stdin and --text) carry -c diff.suppressBlankEmpty=false, and every git log or rev-list read given a format pins its output encoding (--encoding=UTF-8), the list of reads derived from the hook's git calls and equal to the lines that run one, the for-each-ref %(refname) reads the stated exemption; each pin removed in a copy, one at a time, reds the check, and so do env -u GIT_DIFF_OPTS put back on either read, an unset of it at the top of the text, and a new format read of either kind; and the prefix rule's other arms (an assignment of it ahead of git, env -i, env's --unset in both spellings, -u joined to the name, a lone -), each on a text of one git read, red it naming the word (until round 12n the check required env -u GIT_DIFF_OPTS on both reads)" {
+    needs_bash4
     run census_memo r11c_pins_check "$HOOK"
     [ "$output" = "" ]
     [ "$status" -eq 0 ]
@@ -12212,11 +12260,12 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
         "/--format='message/s/ --encoding=UTF-8 / /"
         's/^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" --diff-merges=first-parent /    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" --diff-merges=first-parent /'
         '/ --diff-merges=first-parent /s/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /'
-        '1a unset GIT_DIFF_OPTS')
+        '1a\
+unset GIT_DIFF_OPTS')
     local -a said=("runs with GIT_DIFF_OPTS taken from it (-u GIT_DIFF_OPTS)" "carries no -c diff.suppressBlankEmpty=false" "git rev-list at line" "git log at line" "git log at line" "runs with GIT_DIFF_OPTS taken from it (-u GIT_DIFF_OPTS)" "carries no -c diff.suppressBlankEmpty=false" "the statement at line 2 names GIT_DIFF_OPTS")
     local k
     for k in 0 1 2 3 4 5 6 7; do
-        sed "${drop[k]}" "$HOOK" > "$TEST_DIR/pins-$k.sh"
+        sed -e "${drop[k]}" "$HOOK" > "$TEST_DIR/pins-$k.sh"
         [ "$(diff "$HOOK" "$TEST_DIR/pins-$k.sh" | grep -c '^>')" -eq 1 ]                 # the change landed, on one line
         run r11c_pins_check "$TEST_DIR/pins-$k.sh"
         [ "$status" -ne 0 ]
@@ -12359,7 +12408,7 @@ R11C_DIRS_TAIL="so neither the additive run nor the probe run can read its copie
     {
         printf '#!/usr/bin/env bash\n'
         printf 'if [ "${1:-}" = -0 ] && [ "${2:-}" = mkdir ]; then\n'
-        printf '    mapfile -d "" -t a; n=${#a[@]}; k=$((n / 2))\n'
+        printf '    a=(); while IFS= read -r -d "" x || [ -n "$x" ]; do a+=("$x"); done; n=${#a[@]}; k=$((n / 2))\n'   # the list as mapfile -d "" -t reads it, in a loop bash 3.2 runs (mapfile -d is bash 4.4)
         printf '    %q -- "${a[@]:0:k}"\n' "$real_mkdir"
         printf '    printf "%%s\\n" "xargs $* [whole $n cut $k]" >> %q; exit 0\n' "$TEST_DIR/calls.dirs"
         printf 'fi\n'
@@ -12526,8 +12575,8 @@ r12a_rules_file() {   # <file> <config text>: the text written to that absolute 
 
 r12a_probe_answer_edit() {   # <calls name> <awk program over the answer>: an awk that, for the probe check's program alone (its text carries sec[$3] = np), runs the real awk and hands its answer through the program given, the call recorded in calls.<name>; the real awk for every other program
     local p real r_mktemp r_rm r_cat
-    p=${PATH//"$TEST_DIR/shim:"/}
-    real="$(PATH=$p command -v awk)"; r_mktemp="$(PATH=$p command -v mktemp)"; r_rm="$(PATH=$p command -v rm)"; r_cat="$(PATH=$p command -v cat)"
+    p="$TEST_DIR/shim:"; p=${PATH//"$p"/}
+    real="$(PATH=$p; command -v awk)"; r_mktemp="$(PATH=$p; command -v mktemp)"; r_rm="$(PATH=$p; command -v rm)"; r_cat="$(PATH=$p; command -v cat)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -12781,7 +12830,8 @@ r12b_log_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the scan of recor
         printf '#!/usr/bin/env bash\n'
         printf 'case " $* " in *" --log-level trace "*) ;; *) exec %q "$@" ;; esac\n' "$GL"
         printf 'case "$PWD" in */creds.d) ;; *) exec %q "$@" ;; esac\n' "$GL"
-        printf 'stat -L -c %%a /proc/self/fd/2 >> %q; readlink /proc/self/fd/2 >> %q\n' "$TEST_DIR/calls.logmode" "$TEST_DIR/calls.logpath"
+        printf 'f=""; for c in "${TMPDIR:-/tmp}"/*/*; do if [ /dev/stderr -ef "$c" ]; then f=$c; fi; done\n'   # the file stderr is, found by device and inode (the shell's -ef) under TMPDIR, where the hook makes its scratch directory: /proc/self/fd is Linux's alone
+        printf 'if [ -n "$f" ]; then ls -ln "$f" 2>/dev/null | cut -c1-10; else echo none; fi >> %q; echo "${f:-none}" >> %q\n' "$TEST_DIR/calls.logmode" "$TEST_DIR/calls.logpath"   # its mode as ls -l prints it: GNU stat's -c is not BSD stat's
         printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
         printf 'if grep -qF -- %q "$e"; then echo in-log >> %q; else echo absent >> %q; fi\n' "$(r12b_token)" "$TEST_DIR/calls.premise" "$TEST_DIR/calls.premise"
         printf 'cat "$e" >&2; rm -f "$e"; exit "$s"\n'
@@ -12791,7 +12841,7 @@ r12b_log_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the scan of recor
 }
 r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reached the trace log, which was mode 600 and is gone, the token printed nowhere and the hook's TMPDIR empty
     [ "$(tail -n 1 "$TEST_DIR/calls.premise")" = in-log ]
-    [ "$(tail -n 1 "$TEST_DIR/calls.logmode")" = 600 ]
+    [ "$(tail -n 1 "$TEST_DIR/calls.logmode")" = "-rw-------" ]     # mode 600
     [[ "$(tail -n 1 "$TEST_DIR/calls.logpath")" == "$TMPDIR/romp-pre-push."*"/creds.log" ]]
     [ ! -e "$(tail -n 1 "$TEST_DIR/calls.logpath")" ]
     [[ "$output" != *"$(r12b_token)"* ]]
@@ -12863,6 +12913,7 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
 }
 
 @test "every read of the hook is DECLARED, round 12b split (1 of 2): the census's sensitivity to the shapes it READS, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a redirection operator standing alone ahead of the command word, a quoted command word, a command after a lone & and after |&, a wrapper outside the prefixes, and a command word whose quoting or escaping splits the tool's name, alone and under a wrapper, each planted alone and flagged once by the census and not by the pins; a tilde prefix and a dollar-double-quote planted together, each flagged once by the census and not by the pins; and since round 12l (the landing round's extra7-1) four plants inside path_skips, a body passed whole, each alone: a read as a statement of its own ahead of the body's last pipeline, a read in a substitution whose status || : swallows, and a read in a substitution on a ROMP_X= prefix of a stage of that pipeline, bare and with || true inside, each flagged undeclared once, the two swallowed ones named swallowed too (all four passed the census at 64e1da798); and since round 12m (round 12l's audit A3 and A4, the census reading statements) three more in path_skips, each alone: a read sharing the awk's first line after ;, named once, and a read chained to the awk by ||, named with the awk's line (both passed the census at 1e827e62d), and the same read chained by &&, a control since round 12n, declared with the awk (a failure on either side of && is the statement's status; round 12m's census named it); and since round 12n (round 12m's audit A2, the fold owner's call: a group read by the same rule) four more in path_skips, each alone: a brace group and a subshell as the awk's first stage, each holding a read ahead of its own last statement, and a brace group whose last statement puts the read on the right of ||, each named once (all three passed the census at 43bbcb7b0, which declared a group stage whole), and the brace group with the read as its own last statement, a control, declared" {
+    needs_bash4
     local plant k=0
     # round 9b (the round 8 rulings' F): the shapes the census and its pins read nothing of until then (the round 8
     # refuters' probes: undeclared=0 and no pin line for each at cad898dd2), each planted alone and flagged ONCE, by
@@ -12921,8 +12972,10 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     [ "$(sed -n "$((h + 1))p" "$HOOK")" = "    LC_ALL=C awk '" ]
     run census_memo undeclared_reads "$HOOK"
     [[ "$output" == *"declared: body $((h + 1)) path_skips: awk"* ]]
-    sed "${h}a\\    git rev-parse HEAD > /dev/null" "$HOOK" > "$TEST_DIR/plant-r12l-1.sh"
-    sed "${h}a\\    x=\$(git rev-parse HEAD || :)" "$HOOK" > "$TEST_DIR/plant-r12l-2.sh"
+    sed -e "${h}a\\
+\\    git rev-parse HEAD > /dev/null" "$HOOK" > "$TEST_DIR/plant-r12l-1.sh"
+    sed -e "${h}a\\
+\\    x=\$(git rev-parse HEAD || :)" "$HOOK" > "$TEST_DIR/plant-r12l-2.sh"
     sed "$((h + 1))s/^    LC_ALL=C awk '\$/    LC_ALL=C ROMP_X=\$(git rev-parse HEAD) awk '/" "$HOOK" > "$TEST_DIR/plant-r12l-3.sh"
     sed "$((h + 1))s/^    LC_ALL=C awk '\$/    LC_ALL=C ROMP_X=\$(git rev-parse HEAD || true) awk '/" "$HOOK" > "$TEST_DIR/plant-r12l-4.sh"
     local -a want=('    git rev-parse HEAD > /dev/null' '    x=$(git rev-parse HEAD || :)' "    LC_ALL=C ROMP_X=\$(git rev-parse HEAD) awk '" "    LC_ALL=C ROMP_X=\$(git rev-parse HEAD || true) awk '")
@@ -12945,8 +12998,10 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     # the fold owner's call): the awk runs only when the read passes, so the statement's status is the read's when it
     # fails and the awk's otherwise, and both lines are declared (round 12m's census named them).
     sed "$((h + 1))s|^    LC_ALL=C awk '\$|    git rev-parse HEAD > /dev/null; LC_ALL=C awk '|" "$HOOK" > "$TEST_DIR/plant-r12m-1.sh"
-    sed "${h}a\\    git rev-parse HEAD > /dev/null ||" "$HOOK" > "$TEST_DIR/plant-r12m-2.sh"
-    sed "${h}a\\    git rev-parse HEAD > /dev/null &&" "$HOOK" > "$TEST_DIR/plant-r12m-3.sh"
+    sed -e "${h}a\\
+\\    git rev-parse HEAD > /dev/null ||" "$HOOK" > "$TEST_DIR/plant-r12m-2.sh"
+    sed -e "${h}a\\
+\\    git rev-parse HEAD > /dev/null &&" "$HOOK" > "$TEST_DIR/plant-r12m-3.sh"
     local -a w12m=("    git rev-parse HEAD > /dev/null; LC_ALL=C awk '" '    git rev-parse HEAD > /dev/null ||' '    git rev-parse HEAD > /dev/null &&')
     local -a u12m=("undeclared: $((h + 1)):${w12m[0]}" "undeclared: $((h + 1)):${w12m[1]}"$'\n'"undeclared: $((h + 2)):    LC_ALL=C awk '")
     for k in 1 2 3; do
@@ -12988,6 +13043,7 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
 }
 
 @test "every read of the hook is DECLARED, round 12b split (2 of 2): the pins over the shapes the census CANNOT read, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a command word held in a variable by a lookup or a path-qualified default, a lookup's answer as the command word, a trap action running a reading tool, source or . of a substitution and bash -c, each pinned once and read by the census nowhere; an alias defined and the word-shaped pins read unquoted; a variable given a reading tool's path then run; a here-doc; the scanner's lookup excepted by its exact text; the three variable command words excepted only inside their owners; an owner renamed named by the pin, its words then pinned" {
+    needs_bash4
     local plant k=0
     # ... and pins absent a command word held in a variable by a lookup or a path-qualified default, a lookup's answer
     # standing as the command word, a trap action running a reading tool, source or . of a substitution, and bash -c
@@ -13068,8 +13124,8 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 0 ]
     n=$(grep -n '^scanner_version() {' "$HOOK" | cut -d: -f1)
     [ -n "$n" ]
-    sed "${n}a\\
-    v=\$(\"\$gl\" version)" "$HOOK" > "$TEST_DIR/plant-r10c-sv.sh"
+    sed -e "${n}a\\
+\\    v=\$(\"\$gl\" version)" "$HOOK" > "$TEST_DIR/plant-r10c-sv.sh"
     [ "$(sed -n "$((n + 1))p" "$TEST_DIR/plant-r10c-sv.sh")" = '    v=$("$gl" version)' ]
     run census_unread_shapes "$TEST_DIR/plant-r10c-sv.sh"
     [ "$output" = "$((n + 1)):    v=\$(\"\$gl\" version)" ]
@@ -13221,7 +13277,8 @@ r12b3_canary_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the canary's 
     {
         printf '#!/usr/bin/env bash\n'
         printf 'case "$PWD" in */creds.c) ;; *) exec %q "$@" ;; esac\n' "$GL"
-        printf 'stat -L -c %%a /proc/self/fd/2 >> %q; readlink /proc/self/fd/2 >> %q\n' "$TEST_DIR/calls.clogmode" "$TEST_DIR/calls.clogpath"
+        printf 'f=""; for c in "${TMPDIR:-/tmp}"/*/*; do if [ /dev/stderr -ef "$c" ]; then f=$c; fi; done\n'   # the file stderr is, found by device and inode as r12b_log_watcher finds it
+        printf 'if [ -n "$f" ]; then ls -ln "$f" 2>/dev/null | cut -c1-10; else echo none; fi >> %q; echo "${f:-none}" >> %q\n' "$TEST_DIR/calls.clogmode" "$TEST_DIR/calls.clogpath"
         printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
         printf 'if grep -qF -- %q "$e"; then echo in-log >> %q; else echo absent >> %q; fi\n' "$(r12b3_value)" "$TEST_DIR/calls.cpremise" "$TEST_DIR/calls.cpremise"
         printf 'cat "$e" >&2; rm -f "$e"; exit "$s"\n'
@@ -13240,7 +13297,7 @@ r12b3_canary_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the canary's 
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [ "$(cat "$TEST_DIR/calls.cpremise")" = in-log ]
-    [ "$(cat "$TEST_DIR/calls.clogmode")" = 600 ]
+    [ "$(cat "$TEST_DIR/calls.clogmode")" = "-rw-------" ]          # mode 600
     [[ "$(cat "$TEST_DIR/calls.clogpath")" == "$TMPDIR/romp-pre-push."*"/creds.canary.log" ]]
     [ ! -e "$(cat "$TEST_DIR/calls.clogpath")" ]
     [[ "$output" != *"$(r12b3_value)"* ]]
@@ -13362,8 +13419,8 @@ r12b3_canary_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the canary's 
 
 r12b3_canary_answer_edit() {   # <awk program over the answer>: an awk that, for the canary's read alone (the path skips' program over creds.canary.log), runs the real awk and hands its answer through the program given, the call recorded in calls.canary-edit; the real awk for every other call
     local p real r_mktemp r_rm r_cat
-    p=${PATH//"$TEST_DIR/shim:"/}
-    real="$(PATH=$p command -v awk)"; r_mktemp="$(PATH=$p command -v mktemp)"; r_rm="$(PATH=$p command -v rm)"; r_cat="$(PATH=$p command -v cat)"
+    p="$TEST_DIR/shim:"; p=${PATH//"$p"/}
+    real="$(PATH=$p; command -v awk)"; r_mktemp="$(PATH=$p; command -v mktemp)"; r_rm="$(PATH=$p; command -v rm)"; r_cat="$(PATH=$p; command -v cat)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
@@ -13545,10 +13602,10 @@ r12d_m_edit() {   # <m2|m13>: the credential written into the base's nuget confi
 r12d_sk_merge() {   # the evil merge of item 3: config/deploy.sh at its base (seven lines), a side and a main edit, and the merge adding the sidekiq URL as the file's last line with no final newline; sha and merge are the merge
     r12d_base_file config/deploy.sh 'a\nb\nc\nd\ne\nf\ng\n'
     git -C "$REPO" checkout -q -b side
-    sed -i 's/^a$/a-side/' "$REPO/config/deploy.sh"
+    sed_in_place 's/^a$/a-side/' "$REPO/config/deploy.sh"
     git -C "$REPO" commit -qam "side: line a"
     git -C "$REPO" checkout -q main
-    sed -i 's/^d$/d-main/' "$REPO/config/deploy.sh"
+    sed_in_place 's/^d$/d-main/' "$REPO/config/deploy.sh"
     git -C "$REPO" commit -qam "main: line d"
     git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
     printf 'a-side\nb\nc\nd-main\ne\nf\ng\n%s' "$(r12d_sk)" > "$REPO/config/deploy.sh"
@@ -13705,10 +13762,10 @@ r12d_sk_merge() {   # the evil merge of item 3: config/deploy.sh at its base (se
     r11a_base
     r12d_base_file config/deploy.sh 'a\nb\nc\nd\ne\nf\ng'
     git -C "$REPO" checkout -q -b side
-    sed -i 's/^a$/a-side/' "$REPO/config/deploy.sh"
+    sed_in_place 's/^a$/a-side/' "$REPO/config/deploy.sh"
     git -C "$REPO" commit -qam "side: line a"
     git -C "$REPO" checkout -q main
-    sed -i 's/^d$/d-main/' "$REPO/config/deploy.sh"
+    sed_in_place 's/^d$/d-main/' "$REPO/config/deploy.sh"
     git -C "$REPO" commit -qam "main: line d"
     git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
     printf 'a-side\nb\nc\nmerge-own\nd-main\ne\nf\ng' > "$REPO/config/deploy.sh"
@@ -13932,7 +13989,7 @@ mkv-far 5000 0=1a45dfa3 4200=42827a6d6174726f736b61
 dex+webp 60 0=6465780a 8=57454250 36=70
 mp4-badbrand+exe 30 0=4d5a 4=66747970 8=7a7a7a7a'
 r12d_types_check() {   # <hook file> <work directory>: prints "mismatch: <label> ..." for each piece whose skip by the running gitleaks differs from the hook's ~ line, "framed: <label>" for a framed piece gitleaks skips, and a closing line "types: entries=<n> pieces=<n> skipped=<n>"
-    local hook=$1 W=$2 P n=0 name cls lo hi rest c ci cj off hex a T num w t sk bad
+    local hook=$1 W=$2 P n=0 name cls lo hi rest c ci cj off hex a T num w t sk bad entries
     local -a conds alts args
     mkdir -p "$W/s" "$W/f" "$W/p"
     P=$(awk -v q="'" '$0 == "CRED_PIECES_AWK=" q { p = 1; next } p { print; if (substr($0, length($0)) == q) exit }' "$hook"); P=${P%\'}
@@ -14016,7 +14073,8 @@ r12d_types_check() {   # <hook file> <work directory>: prints "mismatch: <label>
         [ "$bad" -eq "$t" ] || echo "mismatch: $name: gitleaks skip=$bad, the hook's ~ line=$t"
         if [ "$t" -eq 1 ] && ! grep -qxF "$num	." "$W/rep.f"; then echo "framed: $name"; fi
     done < "$W/manifest"
-    echo "types: entries=$(wc -l < "$W/table") pieces=$n skipped=$sk"
+    entries=$(wc -l < "$W/table"); entries=${entries//[[:space:]]/}      # the digits alone, which the caller's sed reads: BSD wc (macOS) pads a count with blanks
+    echo "types: entries=$entries pieces=$n skipped=$sk"
 }
 
 @test "round 12d (b): the type table is DERIVED: the hook's own piecing text writes the ~ line ahead of exactly the pieces the running gitleaks skips by type, over a piece for each entry of the hook's table and each alternative, for each matcher of h2non/filetype v1.1.3 (which gitleaks 8.25.0 to 8.30.1 call), NUL bytes mapped as the feed maps them, for each image, video and audio matcher beside a skip signature, and for the edges; each framed piece is read; and the check reds over planted copies missing Mach-O's entry, the mp4 entry that claims a piece first, and the short OLE entry's bound" {
@@ -14442,13 +14500,13 @@ r12d2_census_fixture() {   # the census's history: a base on the remote (BASE), 
     printf '\nBEGIN\nK2\nEND\n\nBEGIN\nK1\nEND\n' > "$REPO/keys/slide.txt"
     mkdir -p "$REPO/new" "$REPO/ren2" "$REPO/notes"
     git -C "$REPO" mv old/moved.txt new/moved.txt
-    sed -i '10s/.*/moved line ten/' "$REPO/new/moved.txt"
+    sed_in_place '10s/.*/moved line ten/' "$REPO/new/moved.txt"
     sed '15s/.*/orig line fifteen/' "$REPO/src/orig.txt" > "$REPO/src/copy.txt"
     printf 'orig line 31\n' >> "$REPO/src/orig.txt"
     git -C "$REPO" mv ren/r1.txt ren2/q1.txt                       # new basenames: git pairs a moved file with one of its own basename past any rename limit
     git -C "$REPO" mv ren/r2.txt ren2/q2.txt
-    sed -i '5s/.*/first rename line five/' "$REPO/ren2/q1.txt"
-    sed -i '5s/.*/second rename line five/' "$REPO/ren2/q2.txt"
+    sed_in_place '5s/.*/first rename line five/' "$REPO/ren2/q1.txt"
+    sed_in_place '5s/.*/second rename line five/' "$REPO/ren2/q2.txt"
     printf 'alpha\nbeta2\ngamma\n' > "$REPO/drv/file.drv"
     printf 'a\nb' > "$REPO/notes/nonl.txt"
     seq 1 20 | sed 's/^/sub line /; 5s/.*/sub line five/; 9s/.*/sub line nine/' > "$REPO/sub/s.txt"   # two edits one hunk apart in git diff's context, then a file added
@@ -14458,7 +14516,7 @@ r12d2_census_fixture() {   # the census's history: a base on the remote (BASE), 
     git -C "$REPO/sub" commit -qm "the submodule's new file"
     git -C "$REPO" add -A
     git -C "$REPO" commit -qm "the census edits"
-    sed -i '12s/.*/twelve/' "$REPO/src/nums.txt"
+    sed_in_place '12s/.*/twelve/' "$REPO/src/nums.txt"
     git -C "$REPO" commit -qam "a second commit"
     unset ROMP_NO_GITLEAKS
 }
@@ -14573,7 +14631,7 @@ r12d2_fp_merge() {   # <zz|nuget|m2>: decision 5's check's first-parent witnesse
             printf 'K1=v\nK2=v\nK3=v\nK4=side\n%s\nK5=v\nK6=v\n' "$(r12d_zz)" > "$REPO/config/app.env"
             git -C "$REPO" commit -qam "side: K4 changed, a key added after it"
             git -C "$REPO" checkout -q main
-            sed -i 's/^K4=v$/K4=side/' "$REPO/config/app.env"
+            sed_in_place 's/^K4=v$/K4=side/' "$REPO/config/app.env"
             git -C "$REPO" commit -qam "main: the same K4 change" ;;
         nuget|m2)
             r12d_base_file deploy/prod.nuget.config '<configuration>\n<feed name="a" />\n<feed name="b" />\n</configuration>\n'
@@ -14586,7 +14644,7 @@ r12d2_fp_merge() {   # <zz|nuget|m2>: decision 5's check's first-parent witnesse
             fi
             git -C "$REPO" commit -qam "side: feed a renamed, a password added beside it"
             git -C "$REPO" checkout -q main
-            sed -i 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
+            sed_in_place 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
             git -C "$REPO" commit -qam "main: the same rename" ;;
     esac
     git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
@@ -14958,7 +15016,7 @@ PY
 r12e_enc_capture() {   # <hook>: a real push of main through that hook (the remote and its tracking ref first put back at BASE), with an awk on the hook's PATH that saves the label read's program and the ROMP_ENC_LABELS it is handed to $TEST_DIR/enc/prog and $TEST_DIR/enc/labels, then runs the real awk; the push passes, and the awk fired once
     local real_awk
     mkdir -p "$TEST_DIR/enc" "$TEST_DIR/shim"
-    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    real_awk="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
     {
         printf '#!/usr/bin/env bash\n'
         printf 'case "$*" in *%q*)\n' 'ENVIRON["ROMP_ENC_LABELS"]'
@@ -14977,18 +15035,20 @@ r12e_enc_capture() {   # <hook>: a real push of main through that hook (the remo
     [ -s "$TEST_DIR/enc/prog" ]
 }
 r12e_enc_accepted() {   # <labels file, one per line>: the captured program, under the captured ROMP_ENC_LABELS, over one synthetic commit per label as git cat-file --batch answers it (its header carrying that label's encoding line); prints each label it passes, one per line; status 1 when its record is not every commit read, or it refuses a commit of no label
-    local E=$TEST_DIR/enc real_awk lab n
-    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    local E=$TEST_DIR/enc real_awk lab n k
+    real_awk="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
     lab=$(< "$E/labels")
     LC_ALL=C "$real_awk" '{ printf "%040d\n", NR }' "$1" > "$E/list"
     LC_ALL=C "$real_awk" '{ b = "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor A <a@example.invalid> 0 +0000\ncommitter A <a@example.invalid> 0 +0000\nencoding " $0 "\n\nc\n"; printf "%040d commit %d\n%s\n", NR, length(b), b }' "$1" > "$E/stream"
     LC_ALL=C ROMP_ENC_FILE="$E/list" ROMP_ENC_RECORD="$E/rec" ROMP_ENC_LABELS="$lab" "$real_awk" "$(< "$E/prog")" < "$E/stream" > "$E/refused" || return 1
-    n=$(wc -l < "$1")
-    [ "$(< "$E/rec")" = "$n $(wc -l < "$E/refused")" ] || { echo "the comparison's record reads \"$(< "$E/rec")\" over $n commits"; return 1; }
+    n=$(wc -l < "$1"); n=${n//[[:space:]]/}                                # the counts' digits alone, as the record holds them: BSD wc (macOS) pads a count with blanks
+    k=$(wc -l < "$E/refused"); k=${k//[[:space:]]/}
+    [ "$(< "$E/rec")" = "$n $k" ] || { echo "the comparison's record reads \"$(< "$E/rec")\" over $n commits"; return 1; }
     LC_ALL=C "$real_awk" -F '\t' 'NR == FNR { if ($2 != "label") bad = 1; no[$1 + 0] = 1; next } !(FNR in no) { print } END { exit bad }' "$E/refused" "$1"
 }
 
 @test "round 12c (D, the list's deriving case; re-aimed in round 12e, the round 12c audit's F2, the fold owner's option (b)): the list the hook USES is derived by execution: a real push through the hook, the identifier scan armed, with an awk on its PATH that saves the label read's program and the ROMP_ENC_LABELS the hook hands it (the list as the hook sets it at run time, by whatever road); that program, run over one synthetic commit per label iconv -l prints, passes some of them, and each label it passes is converted to UTF-8 by the platform's iconv as git's reencode_string_iconv converts (python3's ctypes, one process: one conversion from the initial state, no flush, any error but E2BIG counting as git reading the raw bytes): every ASCII byte decodes to itself, each high byte that converts decodes to bytes none of them ASCII, and each lead byte followed by every ASCII byte fails to convert; on glibc the labels passed number the header's two class counts summed and every one opens, elsewhere the case prints what it covered; red on a copy of the hook whose list adds SHIFT_JIS, BIG5, CP1258 or CP1255 inside its block, on one that assigns the list again after the block adding BIG5 or CP932 (a label no pin names), and on one whose label read is handed the list with GBK added, each where the platform's iconv prints the label and converts it unsafely (where it converts it safely, or does not print it, the case says so on fd 3: the 02:31Z ruling on the round 12c questions, its (1))" {
+    needs_bash4 3
     local hdr single multi l n k E=$TEST_DIR/enc q="'"
     r12c_base
     iconv -l | sed 's,//$,,; s,/$,,' | LC_ALL=C sort -u > "$TEST_DIR/iconv-labels"
@@ -15025,7 +15085,8 @@ r12e_enc_accepted() {   # <labels file, one per line>: the captured program, und
     for k in in-SHIFT_JIS in-BIG5 in-CP1258 in-CP1255 after-BIG5 after-CP932 read-GBK; do
         l=${k#*-}
         case "$k" in
-            in-*) sed "/^ASCII_SAFE_LABELS='\$/a\\    $l" "$HOOK" > "$TEST_DIR/list-$k" ;;
+            in-*) sed -e "/^ASCII_SAFE_LABELS='\$/a\\
+\\    $l" "$HOOK" > "$TEST_DIR/list-$k" ;;
             after-*) awk -v q="$q" -v add="ASCII_SAFE_LABELS=\"\$ASCII_SAFE_LABELS $l\"" '$0 == "ASCII_SAFE_LABELS=" q { inb = 1; print; next } { print } inb && $0 == q { print add; inb = 0 }' "$HOOK" > "$TEST_DIR/list-$k" ;;
             read-*) sed "s/ ROMP_ENC_LABELS=\$ASCII_SAFE_LABELS awk / ROMP_ENC_LABELS=\"\$ASCII_SAFE_LABELS $l\" awk /" "$HOOK" > "$TEST_DIR/list-$k" ;;
         esac
@@ -15111,8 +15172,8 @@ r12e_enc_accepted() {   # <labels file, one per line>: the captured program, und
     at_base
     for line in drop kind; do
         local real_awk real_sed script
-        real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
-        real_sed="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v sed)"
+        real_awk="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
+        real_sed="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v sed)"
         if [ "$line" = drop ]; then script='/\tlabel\t/d'; else script='s/\tlabel\t/\tlabelx\t/'; fi
         {
             printf '#!/usr/bin/env bash\n'
@@ -15194,7 +15255,7 @@ r12e_fp_own() {   # <zz|nuget|m2>: round 12d2's first-parent witnesses (r12d2_fp
             printf 'K1=v\nK2=v\nK3=v\nK4=side\n%s\nK5=v\nK6=v\n' "$(r12d_zz)" > "$REPO/config/app.env"
             git -C "$REPO" commit -qam "side: K4 changed, a key added after it"
             git -C "$REPO" checkout -q main
-            sed -i 's/^K4=v$/K4=side/' "$REPO/config/app.env"
+            sed_in_place 's/^K4=v$/K4=side/' "$REPO/config/app.env"
             git -C "$REPO" commit -qam "main: the same K4 change"
             git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
             printf 'K1=v\nK2=v\nK3=v\nK4=side\n%s\nK4b=merge\nK5=v\nK6=v\n' "$(r12d_zz)" > "$REPO/config/app.env"
@@ -15210,7 +15271,7 @@ r12e_fp_own() {   # <zz|nuget|m2>: round 12d2's first-parent witnesses (r12d2_fp
             fi
             git -C "$REPO" commit -qam "side: feed a renamed, a password added beside it"
             git -C "$REPO" checkout -q main
-            sed -i 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
+            sed_in_place 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
             git -C "$REPO" commit -qam "main: the same rename"
             git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
             if [ "$1" = nuget ]; then
@@ -15432,7 +15493,8 @@ r12e_fp_refused() {   # <clause>: the push just made was refused by that line of
 @test "round 12e (the FIRST-PARENT DIFF read, its foreign arm): a git whose first-parent diff-tree prints a Binary notice after each diff header (a line --text keeps a real git from printing), through a real push of evilI, is refused naming the merge and that line's read, no credential named, and the remote stays at its base (red under the mutant deleting that arm)" {
     r11a_base
     r12e_evil ihc
-    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed "/^diff --git /a Binary files differ"; exit "${PIPESTATUS[0]}"; fi' "$r12e_fp_shape" "$TEST_DIR/calls.fpforeign")"
+    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed -e %q; exit "${PIPESTATUS[0]}"; fi' "$r12e_fp_shape" "$TEST_DIR/calls.fpforeign" '/^diff --git /a\
+Binary files differ')"
     push_main_through_hook_with_shim
     [ "$(wc -l < "$TEST_DIR/calls.fpforeign")" -eq 1 ]
     r12e_fp_refused "the FIRST-PARENT DIFF of the pushed merges could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside merge 1 of those it was given, ${merge:0:10}, that is none of the shapes a two-way diff prints, so what that line stands for went unread)"
@@ -15838,7 +15900,8 @@ r12f_nl_shape='[[ " $* " == *" diff-tree "* ]] && [[ " $* " == *" --name-status 
 @test "round 12f (the NAME LISTING read, its foreign arm): a git whose name listing prints a line that is no status line after the commit's head marker, through a real push of the reversed key block under the textconv driver, is refused naming the commit and that line's read, and the remote stays at its base (red under the mutant deleting that arm)" {
     r11a_base
     r12e_tc attr
-    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed "1a zzsynth"; exit "${PIPESTATUS[0]}"; fi' "$r12f_nl_shape" "$TEST_DIR/calls.nlforeign")"
+    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed -e %q; exit "${PIPESTATUS[0]}"; fi' "$r12f_nl_shape" "$TEST_DIR/calls.nlforeign" '1a\
+zzsynth')"
     push_main_through_hook_with_shim
     [ "$(wc -l < "$TEST_DIR/calls.nlforeign")" -eq 1 ]
     r12e_attr_refused "the NAME LISTING of the pushed commits could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside commit 1 of those it was given, ${sha:0:10}, that is no status line of --name-status, so a path that line stands for went unlisted)"
@@ -16261,6 +16324,7 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
 }
 
 @test "round 12m (round 12l's audit A3 and A4 under extra7-1's property: the census reads a passed body into statements): in one copy of the hook, each plant in a passed body of its own, the census names once each a read joined to probe_check's awk line as a background job of its own (a lone &), a negated last pipeline (!), a coproc, a last pipeline ended by &, and a last statement that is a keyword compound; and three controls stay declared: path_skips' awk after a statement that runs no read on its first line (;), tip_candidates' awk and tr behind a keyword compound that runs no read, and unlisted_verdict_path's awk inside a brace group over three lines, read by the same rule since round 12n, the awk its last statement (each of the five named shapes passed the census at 1e827e62d); and since round 12n (round 12m's audit A3, the fold owner's call) a statement turning pipefail off, the premise the passed-whole rule rests on, is named: set +o pipefail ahead of name_listing's pipeline and shopt -u -o pipefail ahead of diff_attrs', each named once, while set -euo pipefail ahead of parent_counts', which turns it on, stays unnamed (both toggles passed the census at 43bbcb7b0)" {
+    needs_bash4
     # A body passed whole returns its last statement's status, and every stage's status reaches judged_read through
     # pipefail only when that statement is one pipeline run in the foreground: a read ahead of it after a lone & runs
     # as a background job whose status nothing waits for; ! inverts the pipeline's status; a coproc and a pipeline
@@ -16283,12 +16347,18 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
         -e "$((at[tip_blobs] + 1))"'s/ "$1"$/ "$1" \&/' \
         -e "$((at[merge_rename_candidates] + 1))"'s/^    \(.*\)$/    if :; then \1; fi/' \
         -e "$((at[path_skips] + 1))"'s/^    LC_ALL=C awk /    :; LC_ALL=C awk /' \
-        -e "${at[tip_candidates]}"'a\    if :; then :; fi' \
-        -e "$((at[unlisted_verdict_path] + 1))"'i\    {' \
-        -e "$((at[unlisted_verdict_path] + 1))"'a\    }' \
-        -e "${at[name_listing]}"'a\    set +o pipefail' \
-        -e "${at[diff_attrs]}"'a\    shopt -u -o pipefail' \
-        -e "${at[parent_counts]}"'a\    set -euo pipefail' \
+        -e "${at[tip_candidates]}"'a\
+\    if :; then :; fi' \
+        -e "$((at[unlisted_verdict_path] + 1))"'i\
+\    {' \
+        -e "$((at[unlisted_verdict_path] + 1))"'a\
+\    }' \
+        -e "${at[name_listing]}"'a\
+\    set +o pipefail' \
+        -e "${at[diff_attrs]}"'a\
+\    shopt -u -o pipefail' \
+        -e "${at[parent_counts]}"'a\
+\    set -euo pipefail' \
         "$HOOK" > "$c"
     [ "$(diff "$HOOK" "$c" | grep -c '^>')" -eq 12 ]
     local -A planted=(
@@ -16568,6 +16638,7 @@ r12t_summary_lines() {   # <commit> [<log option>...]: the summary lines git log
 }
 
 @test "round 12t (CC1, the census of the pins widened): every git read that passes --submodule pins its output encoding; r12t_submodule_reads finds over the hook's census records exactly the three reads handed the clone's diff.submodule through feed_opts (the name listing, the feed and the merges' first-parent read, each a function a judged_read call hands \"\${feed_opts[@]}\", whose git passes its positional list), and r11c_pins_check passes the hook; a copy dropping --encoding=UTF-8 from any one of the three reds the check naming that read's line (all three unpinned at 363fa75dc); a copy whose feed_opts holds no --submodule reds it as finding no such read; and on texts of a few lines the derivation's other roads red it (a git read given the option itself, a scalar variable holding it, an array copied from another and handed through two functions), while a git read given --encoding=UTF-8 or -c i18n.logOutputEncoding=UTF-8 passes, and a function whose git passes its positional list, handed no such word, is not required to pin (round 12t, the closing check's CC1)" {
+    needs_bash4
     local k ln
     local -a want=() pat=('^    git -c core.quotePath=true diff-tree --stdin -r --name-status ' '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p .* -c --root ' '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p .* --diff-merges=first-parent ')
     run census_memo r11c_pins_check "$HOOK"

@@ -260,18 +260,21 @@ so there is no list to write. **gitleaks** covers them, in two places:
   push puts on its ref, and a pull request's from that merge commit, which
   carries the base's copy of the file. So a push to an open pull request's
   branch is scanned twice, once by each trigger, when the branch carries the
-  file, and once when only the base does (a branch cut from `main` before the
-  file landed, or cut from the project). A pull request from another repository
-  is scanned once for each push, by a `pull_request` run, since its pushes go to
-  that repository. When a pull request's branch and its base both lack the file,
-  its merge commit carries an older `ci.yml`, whose `Secret scan (gitleaks)` job
-  runs on pull requests (`main`'s copy before the file landed runs it, and so
-  does the project's), though that copy cancels a pull request's run in progress
-  when a newer push to it arrives. Three kinds of push start no run: a push to a
-  branch cut before the file landed that has no open pull request, until it
-  merges `main`; a tag on such a commit; and a push that deletes the file, since
-  a pull request's merge commit then lacks it as well. A push that edits the
-  file runs its edited copy. The `pull_request` trigger has three limits of
+  file, and once when only the base does because the branch never had it (a
+  branch cut from `main` before the file landed, or cut from the project). A
+  pull request from another repository is scanned once for each push, by a
+  `pull_request` run, since its pushes go to that repository, whatever its head
+  carries unless the head deletes the file. When a pull request's branch and
+  its base both lack the file, its merge commit carries an older `ci.yml`,
+  whose `Secret scan (gitleaks)` job runs on pull requests (`main`'s copy
+  before the file landed runs it, and so does the project's), though that copy
+  cancels a pull request's run in progress when a newer push to it arrives.
+  Three kinds of push start no run: a push to a branch cut before the file
+  landed that has no open pull request, until it merges `main`; a tag on such a
+  commit; and a push whose commit lacks the file because it or an earlier
+  commit on its branch deleted it, since a pull request's merge commit then
+  lacks it as well. A push that edits the file runs its edited copy. The
+  `pull_request` trigger has three limits of
   GitHub's own: no run while a pull request conflicts with its base (GitHub
   makes no merge commit until the conflict is resolved); a first-time
   contributor's pull request from another repository may wait for a maintainer

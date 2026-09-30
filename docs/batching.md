@@ -19,10 +19,10 @@ on every push to an open PR's branch. GitHub reads a push's workflows from the c
 on its ref, and a PR's from the merge commit it makes of the PR's head and its base, which carries
 main's copy of the file, so a member PR's pushes are scanned even on a branch cut from main before
 the file landed. Among the pushes that start no run: a push to such a branch that has no open PR,
-until it merges main; a tag on such a commit; and a push that deletes the file. A PR that conflicts
-with its base gets no run of its own until the conflict is resolved (CLAUDE.md, "Credentials", says
-what the scan reads, which pushes start no run and GitHub's other limits). Nothing in the landing
-reads that workflow's runs.
+until it merges main; a tag on such a commit; and a push whose commit lacks the file because it or
+an earlier commit on its branch deleted it. A PR that conflicts with its base gets no run of its
+own until the conflict is resolved (CLAUDE.md, "Credentials", says what the scan reads, which
+pushes start no run and GitHub's other limits). Nothing in the landing reads that workflow's runs.
 
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
 `land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps the commit a
@@ -345,10 +345,14 @@ subject; `verify` refuses the branch otherwise.
    a later job copies nothing. When your repository is shallow as the sweep starts, each clone is
    shallow the same way: the sweep reads your shallow file before the first leg and gives every
    clone that copy, so a leg that writes the file changes no later job's clone. After the last leg
-   the sweep reads the file again, and when it differs from that copy (a leg wrote it, or anything
-   else did during the run) the run is invalid, naming the file: the sweep does not restore it, so
-   your repository stays shallow where the file now says, and the next sweep's clones would be cut
-   there. The legs of one job share its
+   the sweep reads the file again, and when it differs from that copy (a leg wrote or removed it,
+   or anything else did during the run) the run is invalid, naming the file: the sweep does not
+   restore it, so the next sweep's clones read it as it now stands: cut where the file now says,
+   or, when a leg removed it, not shallow at all. A shallow file that is not a regular file (a
+   FIFO, a device, or a symlink, which the sweep does not follow) is never opened: one there as the
+   sweep starts refuses the run before the sweep's first `git` call that would read it, and one a
+   leg leaves makes the run invalid, each naming the file; `scripts/sweep.py check` refuses one
+   the same way, before its first `git` call. The legs of one job share its
    checkout, as CI's steps do. The machine itself stays shared, and a leg can leave a file there
    that a later leg reads: `/tmp` outside each TMPDIR, `/dev/shm`, `/run/user/<uid>`, the npm and
    Playwright caches, your passwd home, tmux's socket directory (tmux ignores TMPDIR), `--python`'s
@@ -357,7 +361,11 @@ subject; `verify` refuses the branch otherwise.
    tracked `.gitignore` covers, whatever the clone's own git state says; after `npm ci`, any
    ignored file outside `vscode-extension/node_modules` that `npm ci` added or changed) makes the
    run invalid, and so does a job's fresh checkout that is not the sha's tree, or a shallow file
-   changed during the run (above). A leg can also leave
+   changed during the run (above). So does a clone's `.git` that a leg leaves as anything but a
+   directory, or its `.git/HEAD`, `.git/config` or `.git/info/exclude` left as anything but a
+   regular file (a FIFO, a device, a symlink): the sweep checks `.git` and then those three first,
+   names each one it finds, and opens none of them, since reading one could wait or read without
+   end, and `git` follows a `.git` file to the directory it names. A leg can also leave
    a process running. The sweep reaps its own process tree: when a leg ends, it kills its children
    again and again until none is left or 30 s pass, and on Linux, where the sweep is a child
    subreaper and so adopts each orphaned descendant of a leg (a `setsid` child, a double-forked

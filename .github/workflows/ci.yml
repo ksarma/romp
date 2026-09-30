@@ -24,8 +24,9 @@ name: CI
 # minutes' worth, and a floor: the 3.13 cell was cancelled at its 60-minute cap, the 3.10 cell
 # ended 52 minutes into its pytest step when the per-test timeout stopped its in-process run on a
 # test that hung (the same hang is in main's macOS runs), and the bats cell failed 11 s into its
-# test step without running a test (bats could not gather the tests: macOS's bash 3.2 rejects the
-# file-scope `declare -gA` in tests/pre-push-hook.bats), where a working run of the suite takes
+# test step without running a test (bats could not gather the tests: macOS's bash 3.2 rejected the
+# file-scope `declare -gA` that tests/pre-push-hook.bats had then; fork PR 937 has since moved it
+# into a helper, and the file now loads under bash 3.2), where a working run of the suite takes
 # about 16 minutes (below).
 # Going private needs a change to this file before the first private batch push. The Linux Python
 # cells' two workers do not fit the private runner (they peak at 10.9 GB; the Run pytest step gives
@@ -511,8 +512,9 @@ jobs:
     # The job reads the repository and writes nothing.
     permissions:
       contents: read
-    # About a minute in practice (a full-history checkout, then two scans); the cap exists so a
-    # wedged download cannot burn the 6h default.
+    # About 2 to 5 minutes in practice, and more as the history grows (a full-history checkout, then
+    # two scans; secret-scan.yml's header gives the measured runs); the cap exists so a wedged
+    # download cannot burn the 6h default.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
