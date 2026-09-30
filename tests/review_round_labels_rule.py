@@ -38,8 +38,9 @@ and a range EXPANDED, N through M each judged, so a caller's set need not be con
 followed by a list word (the serial comma: ", and", ", or", ", &", ", /"). The singular takes the same continuations but the bare
 comma and the serial comma: a count after a singular ("round N, M findings") is a continuation the list did not consume and is
 refused as one, and the one comma the singular reads is a comma followed by "and", so "round N, and M" is read as the list of N and
-M, while "round N, or M" is refused. No list or range reads "and/or": a number after it, in either place, is refused as one the
-list did not consume ("round N and/or M", "the Nth and/or Mth round"). A DATE after the number, after the list, or after the word
+M, while "round N, or M" is refused. No list or range reads "and/or", with or without a space on either side of its slash: a
+number after it, in either place, is refused as one the list did not consume ("round N and/or M", "round N and / or M", "the Nth
+and/or Mth round"). A DATE after the number, after the list, or after the word
 of an ordinal form, is part of the form (DATE: a run of punctuation and spaces, no letter, and then YYYY-MM-DD, so "Review round
 N, YYYY-MM-DD", "round N (YYYY-MM-DD", "round N), YYYY-MM-DD" and the date straight after the number with a space or a comma are
 correct prose, not a further number the list did not consume; the list never reads a date's year as a number of its own); a
@@ -139,8 +140,9 @@ FIRST_TOKEN = re.compile(r"\d+(?:st|nd|rd|th)?|%s|%s" % (_ORDINAL_WORD, _CARDINA
 RANGE_WORDS = re.compile(r"^(?:%s)$" % _RANGE, re.I)
 DIGITS = re.compile(r"\d+")
 # the list word a run the list did not consume may hold before a further number: "and" or "or", alone or joined by a slash to
-# either ("and/or"), which no list or range reads, so a number after "and/or" is refused as one the list did not consume
-_RUN_WORD = r"(?:and|or)(?:/(?:and|or))?"
+# either ("and/or", and with a space on either side of the slash or both, "and / or"), which no list or range reads, so a number
+# after "and/or" is refused as one the list did not consume
+_RUN_WORD = r"(?:and|or)(?:\s*/\s*(?:and|or))?"
 # after the last number the form consumed (or after the word of an ordinal form): a run of punctuation and spaces (no letter, no
 # newline), optionally a list word (_RUN_WORD) and a shorter run, and then a number, digits or a number word, is a continuation
 # the list did not resolve

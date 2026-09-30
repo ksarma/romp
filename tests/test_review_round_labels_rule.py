@@ -206,7 +206,8 @@ class RoundLabelRule(unittest.TestCase):
         filename carried in the offence, and the refusals told apart by their reasons. Then the READ direction's own probes (the
         coordinator's ruling of 2026-09-29 on PR 857's review), each a red the reader would miss without the part it pins: the
         serial comma in the plural, a range before it among them, and the singular's comma followed by "and" read as lists, and the
-        singular's other commas refused, and so is a number after "and/or", after the word and before it, in digits and in words; a
+        singular's other commas refused, and so is a number after "and/or", after the word and before it, in digits and in words,
+        with a space on either side of its slash or on both among them; a
         number word after the word read into its value (a qualified, an author's and a plural word form refused, a range and a list
         in words, a tens word joined to a unit, a digit form beside a word elsewhere clean), a list and a range whose continuation
         is capitalised or in capitals read the same (a range over GAPPED naming the hole), and a number word the reader does not
@@ -337,11 +338,18 @@ class RoundLabelRule(unittest.TestCase):
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "a singular's comma followed by a list word but \"and\" is refused: %r" % (s,))
                 self.assertIn("a further number after a run the list did not consume", rule.offences(s, SET)[0][3])
         # "and/or" between two numbers is no list word: the number after it is refused as one the list did not consume, after the
-        # word and before it, in digits and in words, as the singular's comma followed by "or" is, never read in part or as a list
+        # word and before it, in digits and in words, as the singular's comma followed by "or" is, never read in part or as a list;
+        # the same with a space on either side of the slash or on both, each side with a probe of its own after the word and before it
         for s, why in (("%s %s %d and/or %d" % (M, R, lo, hi), "a further number after a run"), ("%s %s and/or %s" % (R, WORDS[lo], WORDS[hi]), "a further number after a run"),
                        ("%s %d or/and %d" % (R, lo, hi), "a further number after a run"), ("%ss %d and/or %d" % (R, lo, hi), "a further number after a run"),
                        ("the %s and/or %s %s" % (nth(hi), nth(lo), R), "a further number before the ordinals"),
-                       ("%s %s and/or %s %s" % (M, NTH[hi], NTH[lo], R), "a further number before the ordinals")):
+                       ("%s %s and/or %s %s" % (M, NTH[hi], NTH[lo], R), "a further number before the ordinals"),
+                       ("%s %s %d and / or %d" % (M, R, lo, hi), "a further number after a run"), ("%s %s and / or %s" % (R, WORDS[lo], WORDS[hi]), "a further number after a run"),
+                       ("%s %d and/ or %d" % (R, lo, hi), "a further number after a run"), ("%s %s %s or /and %s" % (M, R, WORDS[lo], WORDS[hi]), "a further number after a run"),
+                       ("the %s and / or %s %s" % (nth(hi), nth(lo), R), "a further number before the ordinals"),
+                       ("%s %s and / or %s %s" % (M, NTH[hi], NTH[lo], R), "a further number before the ordinals"),
+                       ("the %s and /or %s %s" % (nth(hi), nth(lo), R), "a further number before the ordinals"),
+                       ("%s %s or/ and %s %s" % (M, NTH[hi], NTH[lo], R), "a further number before the ordinals")):
             with self.subTest(and_or=s):
                 self.assertEqual([k for _, _, k, _ in rule.forms(s)], ["unclassifiable"], "a number after \"and/or\" is refused, never read in part or as a list: %r" % (s,))
                 self.assertIn(why, rule.offences(s, SET)[0][3], s)
