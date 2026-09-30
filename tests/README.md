@@ -363,9 +363,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   rewrites no key the rule proves). Code outside the conftest's text and the
   modules it imports directly (a test module, a plugin) is not read at all: a
   name of the module's scope it could rebind is not proven, and what it can
-  still do is rewrite a function's code object or a cell, which no honest
-  author writes and which is listed with its witness. The rule claims no more
-  than this. Its
+  still do includes rewriting a function's code object or a cell, or writing a
+  function's local through its frame's `f_locals` from a trace function
+  (`sys.settrace`), none of which an honest author writes; each is listed with
+  its witness. The rule claims no more than this. Its
   docstring, `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`,
   lists in WHAT IT DOES NOT READ what it leaves unrefused. A name
   is licensed only when a child pytest over a copy of the conftest writes the

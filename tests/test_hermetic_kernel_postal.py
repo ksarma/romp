@@ -6887,8 +6887,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     only where its key is PROVEN to be one fixed string other than the option's (THE PROOF, below): a str literal, or a
     def's local bound once to a str literal in the conftest's own text, and nothing else; a carrier is refused wherever
     it is read; a value naming anyio, PYTEST_ADDOPTS or mainargv is refused wherever it stands. So a key taken from a
-    collection, a loop, a parameter, a helper's argument, a default, a class attribute, a closure's cell, a rebinding
-    or a fold is refused, and so is a NAME OF THE MODULE'S SCOPE, however the text binds it, since code outside the
+    collection, a loop, a parameter, a helper's argument, a default, a class attribute, a rebinding or a fold is
+    refused, and so is one a nested def reads from a closure's cell over a parameter, a loop, a rebinding, a collection
+    or a fold (a closure's cell over a def's local bound once to a str literal is that local, which THE PROOF proves),
+    and so is a NAME OF THE MODULE'S SCOPE, however the text binds it, since code outside the
     text can rebind it at run time (the hundred and ninth round-2 commit of fork PR #894, on the verification of the
     hundred and eighth: a test module's monkeypatch.setattr on the conftest, or a store through sys.modules), and a KEY
     REACHED THROUGH ANY IMPORT (a name an import binds, or an attribute read on one), whatever the module the import
@@ -7322,12 +7324,19 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     and a prefix) are not run, since the road reads the plugins the run loaded and not the command line. Code outside
     the conftest's text and the modules it imports directly (a test module, a plugin, another conftest), which the rule
     does not read: a name of the conftest's module scope it can rebind is never proven, and a def's local it cannot
-    rebind by name, so what it leaves is a rewrite of the hook's code object or of a def's cell (the hook's __code__
-    replaced, or a cell written through its def's __closure__), which defeats a literal key and a def's local; no live
-    site (no module under tests/ writes the code object or a cell of a def of tests/conftest.py), escape-only, witness
-    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[code-outside-the-text], whose two plants, a literal key
-    and a def's local, each have a module the child imports after the conftest replace the hook's code, so getoption is
-    handed 'plugins' where THE PROOF proved 'verbose'. A name of the module's scope rebound by such code, or in the
+    rebind by a statement, so what it leaves are writes to the objects a proven key is read from rather than to a
+    name, among them the hook's code object rewritten (its __code__ replaced, which defeats a literal key and a def's
+    local), a def's cell written (through its def's __closure__, which defeats a def's local a nested def reads) and a
+    def's local written through a frame's f_locals by a trace function (sys.settrace, which defeats a def's local:
+    CPython 3.10 and 3.12 copy f_locals back into the frame after each trace call, and since 3.13 f_locals writes
+    through); no live site (no module under tests/ writes the code object, a cell or a frame's locals of a def of
+    tests/conftest.py, and the trace functions tests/test_kernel_delta_send.py and
+    tests/test_nudge_walk_one_load_per_pass.py set record events and write nothing), escape-only, witness
+    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[code-outside-the-text], whose four plants each have a
+    module the child imports after the conftest rewrite the key: the hook's code replaced, beside a literal key and
+    beside a def's local; the cell of a factory's local the hook closes over, written through the hook's __closure__;
+    and a trace function writing the hook's local through frame.f_locals; so getoption is handed 'plugins' where THE
+    PROOF proved 'verbose'. A name of the module's scope rebound by such code, or in the
     conftest's own text by a road the rule does not read (setattr reached through pydoc.locate, a patch helper spelled
     other than as unittest.mock spells it), which this listing named until the hundred and ninth round-2 commit, is no
     longer a kind: the rule proves no name of the module's scope, so a keyed read by one is refused. And the plugins
@@ -8242,10 +8251,20 @@ _ESCAPE_ONLY_LOCAL = "\n\ndef pytest_configure(config):\n    K = 'verbose'\n    
 _ESCAPE_ONLY_OUTSIDE = ("import sys\n\n_h = sys.modules['conftest'].pytest_configure\n"
                         "_h.__code__ = _h.__code__.replace(co_consts=tuple('plugins' if c == 'verbose' else c "
                         "for c in _h.__code__.co_consts))\n")
+_ESCAPE_ONLY_FACTORY = ("def _mk():\n    K = 'verbose'\n\n    def hook(config):\n        config.getoption(K)\n"
+                        "    return hook\n\n\npytest_configure = _mk()\n")
+_ESCAPE_ONLY_OUTSIDE_CELL = "import sys\n\nsys.modules['conftest'].pytest_configure.__closure__[0].cell_contents = 'plugins'\n"
+_ESCAPE_ONLY_OUTSIDE_TRACE = ("import sys\n\n\ndef _t(frame, event, arg):\n    if frame.f_code.co_name != 'pytest_configure':\n"
+                              "        return None\n    if event == 'line' and frame.f_locals.get('K') == 'verbose':\n"
+                              "        frame.f_locals['K'] = 'plugins'\n    return _t\n\n\nsys.settrace(_t)\n")
 #   the defeater plants' parts: the arguments of a compile whose first constant is a hook that hands getoption
-#   'plugins', and a hook whose key is a literal; a hook whose key is a def's local bound once; and the module outside
-#   the conftest's text of the code-outside-the-text plants, which the child imports after the conftest and which
-#   replaces the hook's code so every 'verbose' among its constants reads 'plugins'
+#   'plugins', and a hook whose key is a literal; a hook whose key is a def's local bound once; and the modules outside
+#   the conftest's text of the code-outside-the-text plants, which the child imports after the conftest: one replaces
+#   the hook's code so every 'verbose' among its constants reads 'plugins'; one writes 'plugins' into the cell of a
+#   factory's local, bound once to 'verbose', that the hook the factory returns closes over (_ESCAPE_ONLY_FACTORY),
+#   through the hook's __closure__; and one sets a trace function (sys.settrace) that, on a line of the hook where its
+#   local K holds 'verbose', writes 'plugins' to it through the frame's f_locals, which the interpreter copies back
+#   into the frame
 _ESCAPE_ONLY_KINDS = (
     ("filled-at-import", (
         ("G1b: lines.append(sys.argv) at the module's import", "import _ih" + _ESCAPE_ONLY_READ % "_ih.lines[0]",
@@ -8329,7 +8348,11 @@ _ESCAPE_ONLY_KINDS = (
         ("a module outside the conftest's text replaces the hook's code, beside a literal key",
          _ESCAPE_ONLY_HOOK.lstrip("\n"), {"_outside": _ESCAPE_ONLY_OUTSIDE}, "outside"),
         ("a module outside the conftest's text replaces the hook's code, beside a def's local",
-         _ESCAPE_ONLY_LOCAL.lstrip("\n"), {"_outside": _ESCAPE_ONLY_OUTSIDE}, "outside"))),
+         _ESCAPE_ONLY_LOCAL.lstrip("\n"), {"_outside": _ESCAPE_ONLY_OUTSIDE}, "outside"),
+        ("a module outside the conftest's text writes, through the hook's __closure__, the cell of a factory's local "
+         "the hook closes over", _ESCAPE_ONLY_FACTORY, {"_outside": _ESCAPE_ONLY_OUTSIDE_CELL}, "outside"),
+        ("a trace function a module outside the conftest's text sets writes the hook's local through frame.f_locals",
+         _ESCAPE_ONLY_LOCAL.lstrip("\n"), {"_outside": _ESCAPE_ONLY_OUTSIDE_TRACE}, "outside"))),
 )
 #   THE ESCAPE-ONLY KINDS (the reviewer's ruling of 2026-09-29 18:09Z on round 2 of fork PR #894): each kind of road
 #   _anyio_option_reads' WHAT IT DOES NOT READ lists with no live site, (id, plants), the id the one the listing names in
@@ -14486,9 +14509,10 @@ class HermeticKernelPostal(unittest.TestCase):
         case a subtest classed by the clause its reads name, the refusal naming its site (the line the read stands on)
         and why. REFUSED, each class a check of the ruling: A KEYED READ whose key THE PROOF does not prove to be one
         fixed string (getoption, getvalue's kin, getini, has_plugin, get_plugin), by a key from a list or a set the text
-        extends later, a comprehension, a helper's parameter, a default, a class attribute, a closure's cell, a name
-        bound to a fold, name= a parameter, a key given through ** or starred, a subscript, a call, and a name a tuple
-        unpacking or a walrus binds (THE PROOF takes a plain or annotated assignment alone); AN ATTRIBUTE READER
+        extends later, a comprehension, a helper's parameter, a default, a class attribute, a closure's cell over a
+        parameter, a loop's target, a rebinding, a collection's item or a fold, a name bound to a fold, name= a
+        parameter, a key given through ** or starred, a subscript, a call, and a name a tuple unpacking or a walrus
+        binds (THE PROOF takes a plain or annotated assignment alone); AN ATTRIBUTE READER
         (getattr, hasattr, operator.attrgetter and methodcaller, object.__getattribute__, inspect.getattr_static) handed
         such a name, or none it can read (hasattr of a loop's name over a tuple included); config.option read
         by getattr with such a key; A NAMESPACE'S ITEM (vars(sys)[k], vars(sys).get(k), sys.__dict__[k]) by such a key;
@@ -14526,9 +14550,9 @@ class HermeticKernelPostal(unittest.TestCase):
         once to a literal (from-imported at the module's level or in a hook, or read as an attribute of the module),
         ADMITTED before the hundred and eighth and refused at it; a from-imported key the text rebinds (bound twice);
         and a name imported from a module outside the repository. ADMITTED, each with no read: a keyed read by a
-        literal, name= a literal, a def's local bound once to a literal (get_plugin's and getoption's, or an enclosing
-        def's read in a nested one); getattr by a literal (a thread's __module__ among them), hasattr of workerinput,
-        workerinput by a literal key, config.option by attribute or by getattr with a literal, a namespace's item by a
+        literal, name= a literal, a def's local bound once to a literal (get_plugin's and getoption's, an enclosing
+        def's read in a nested one, or a factory's read in the closure it returns); getattr by a literal (a thread's
+        __module__ among them), hasattr of workerinput, workerinput by a literal key, config.option by attribute or by getattr with a literal, a namespace's item by a
         literal, globals()
         read by a
         literal key, by get or by `in`, vars() called with nothing in a def and held whole (the def's own namespace, not
@@ -14690,6 +14714,18 @@ class HermeticKernelPostal(unittest.TestCase):
             ("getoption by a closure's cell",
              hook("_mk('plugins')(config)", "def _mk(k):\n    return lambda c: c.getoption(k)\n\n\n"), {"keyed"},
              "keyed", "a parameter"),
+            ("getoption by a closure's cell over a loop's target",
+             hook("_mk()(config)", "def _mk():\n    for k in ['plugins']:\n        pass\n"
+                  "    return lambda c: c.getoption(k)\n\n\n"), {"keyed"}, "keyed", "a loop's target"),
+            ("getoption by a closure's cell over a rebinding",
+             hook("_mk()(config)", "def _mk():\n    k = 'verbose'\n    k = 'plugins'\n"
+                  "    return lambda c: c.getoption(k)\n\n\n"), {"keyed"}, "keyed", "bound 2 times"),
+            ("getoption by a closure's cell over a collection's item",
+             hook("_mk()(config)", "def _mk():\n    ks = ['plugins']\n    k = ks[0]\n"
+                  "    return lambda c: c.getoption(k)\n\n\n"), {"keyed"}, "keyed", "not a str literal"),
+            ("getoption by a closure's cell over a fold",
+             hook("_mk()(config)", "def _mk():\n    k = 'plug' + 'ins'\n    return lambda c: c.getoption(k)\n\n\n"),
+             {"keyed"}, "keyed", "not a str literal"),
             ("get_plugin by a name bound to a fold",
              hook("config.pluginmanager.get_plugin(_T)", "_T = 'terminal' + 'reporter'\n\n\n"), {"keyed"}, "keyed",
              "not a str literal"),
@@ -15072,6 +15108,8 @@ class HermeticKernelPostal(unittest.TestCase):
             ("getoption by a def's local bound once to a literal", hook("k = 'verbose'\nconfig.getoption(k)")),
             ("getoption by an enclosing def's local read in a nested def",
              hook("k = 'verbose'\n\ndef _in():\n    return config.getoption(k)\n\n_in()")),
+            ("getoption by a closure's cell over a factory's local bound once to a literal",
+             hook("_mk()(config)", "def _mk():\n    k = 'verbose'\n    return lambda c: c.getoption(k)\n\n\n")),
             ("getattr by a literal", hook("getattr(config, 'rootpath', None)")),
             ("a thread's __module__ by getattr", hook("import threading\ngetattr(threading.current_thread(), '__module__', '')")),
             ("hasattr of workerinput", hook("hasattr(config, 'workerinput')")),
