@@ -342,8 +342,13 @@ it, a stated limit on Python 3.13 and later (its witnesses: a handler that binds
 its content type to `application/json` and one that binds its page to
 `<p>ok</p>`, each rebinding that local through its frame, so that those versions
 serve a fetch as a page). A container a function binds and reads whole, changed
-through that same frame's local mapping, is refused by name on every version,
-since the change reaches the real object; a content type the census reads other
+through that same frame's local mapping reached in the function's own body (a
+call of `locals` or `vars`, of a name the module binds to one, or a read of a
+frame attribute), is refused by name on every version, since the change reaches
+the real object; a followed helper that reaches the caller's frame to change
+such a container instead is a stated limit, the census reading no callee's body
+for its frame reach as the call limit reads none for what a callee does with a
+container it is handed; a content type the census reads other
 than as a string constant or a name bound once to one is refused by name too, on
 every version, so no frame can rewrite an intermediate the census had read. A
 `_send`
@@ -497,8 +502,9 @@ an append or extend of one plain argument, in the function's own body; no method
 but a read method (get, keys, values, items, index, count, copy) is called on it
 and no attribute of it is read but as a method's callee; nothing is changed
 through an item of it, an expression holding it or a name bound to it or to an
-item of it; and neither it nor such a name is stored into another object, handed
-as a default, matched, called or held where the census does not read it. Any
+item of it; and neither it nor such a name is stored into another object, bound
+as a name in a class body, handed as a default, matched, called or held where
+the census does not read it. Any
 other local container, one a nested function, lambda, class body or
 comprehension changes and a parameter the function changes among them, is
 refused by name wherever it is read, the reason naming the first condition it
