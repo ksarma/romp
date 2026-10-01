@@ -19180,7 +19180,7 @@ ssize_t __read_chk(int fd, void *buf, size_t len, size_t buflen) { (void)buflen;
 EIO
     "$cc" -shared -fPIC -o "$TEST_DIR/eio.so" "$TEST_DIR/eio.c" -ldl
 }
-push_main_through_hook_with_shim_within() {   # <seconds> [<NAME=value>...]: push_main_through_hook_with_shim's push, with those variables in the push's environment, under timeout's bound (status 124 when the bound ends it)
+push_main_through_hook_with_shim_within() {   # <seconds> [<NAME=value>...]: push_main_through_hook_with_shim's push, with those variables in the push's environment, under timeout's bound (status 124 when the bound ends it); where no timeout is on PATH (macOS), under perl's alarm, its SIGALRM status (142) read as 124
     local bound=$1
     shift
     mkdir -p "$TEST_DIR/hooks"
@@ -19191,7 +19191,12 @@ push_main_through_hook_with_shim_within() {   # <seconds> [<NAME=value>...]: pus
     } > "$TEST_DIR/hooks/pre-push"
     chmod 755 "$TEST_DIR/hooks/pre-push"
     git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
-    run env "$@" timeout "$bound" git -C "$REPO" push origin main
+    if command -v timeout > /dev/null 2>&1; then
+        run env "$@" timeout "$bound" git -C "$REPO" push origin main
+    else                                     # macOS has no timeout (the macOS dispatch at c4dbf4d96: "env: timeout: No such file or directory")
+        run env "$@" perl -e 'alarm shift; exec @ARGV or die "exec: $!\n"' "$bound" git -C "$REPO" push origin main
+        [ "$status" -ne 142 ] || status=124   # the alarm's SIGALRM, read as timeout's bound
+    fi
     git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
 }
 
