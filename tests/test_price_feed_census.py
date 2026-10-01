@@ -8113,11 +8113,11 @@ AW_NEAR = (("awa", "a stamp handed a value other than the definition's own param
             ("an Assign statement outside its listed roles at line %d", "ctype=ctype)")),
            ("awn", "an injection whose first argument is no string constant",
             ('body.replace("<head>", "<head>" + extra', 'body.replace(ctype, "<head>" + extra'),
-            ("an Assign statement outside its listed roles at line %d", "body.replace(ctype,")),
+            ("an Assign statement outside its listed roles at line %d", 'extra = ""')),
            ("awc", "an injection whose count is no int constant",
-            ("+ _PROBE_AWW_INJ, 1)\n", '+ _PROBE_AWW_INJ, "1")\n'), ("an Assign statement outside its listed roles at line %d", '_PROBE_AWW_INJ, "1")')),
+            ("+ _PROBE_AWW_INJ, 1)\n", '+ _PROBE_AWW_INJ, "1")\n'), ("an Assign statement outside its listed roles at line %d", 'extra = ""')),
            ("awr", "an injection on a text other than the page parameter",
-            ('body = body.replace("<head>"', 'body = ctype.replace("<head>"'), ("an Assign statement outside its listed roles at line %d", "ctype.replace(")),
+            ('body = body.replace("<head>"', 'body = ctype.replace("<head>"'), ("an Assign statement outside its listed roles at line %d", 'extra = ""')),
            ("awl", "the cache header holding a CR LF",
             ('            cache = "no-store"\n', '            cache = "no-store\\r\\nX-Probe: 1"\n'),
             ("an Assign statement outside its listed roles at line %d", 'cache = "no-store\\r')),
@@ -8444,8 +8444,8 @@ LS_WITNESSES = (("lsmh", 'import sys\n\n\nclass _ProbeLsmh(object):\n    def new
 AE_FILES += tuple((t, _a_module(t, A_SEND % "", head=head, branches=(branch,))) for t, head, branch, _w, _r in AG_BIND) + (
     ("apg", _a_module("apg", A_SEND % "", head=APG_HEAD, branches=(_fo_page("apg", '_PROBE_APG.sub("x", "<p>x</p>")'),))),) + tuple(
     (t, _a_module(t, A_SEND % "", head=head, branches=(_fo_page(t, e),))) for t, head, e, _w in LS_WITNESSES)
-# (ar) the writer proof's roles (A(i) of the reviewer's 06:26Z ruling of 2026-10-01): one plant for each conjunct of the stamp, the
-# injection, the text name and the non-body header writes that no plant held until a mutant dropped it (the mutants and their reds are
+# (ar) the writer proof's roles (rule A of the reviewer's 06:01Z ruling of 2026-10-01): one plant for each conjunct of the stamp, the
+# injection, the text name, the non-body header writes and a preamble if's test that no plant held until a mutant dropped it (the mutants and their reds are
 # in the build record), each aww's module with its swaps (_ae_module), refused at the definition with the gate's reason at its line, or
 # read, its fetch listed. A near shape that leaves aww's text name read in no injection (ard, are, arh, ari, arj) is refused first at
 # the text name's assignment; with the conjunct dropped the shape is taken for an injection, and the refusal moves or goes. ara, a stamp through a method of the page, no bare name; arb, a stamp handed a constant; ard, an injection
@@ -8455,7 +8455,8 @@ AE_FILES += tuple((t, _a_module(t, A_SEND % "", head=head, branches=(branch,))) 
 # text only through the text role); arm, a string constant assigned to a name the definition reads nowhere; arn, the page parameter
 # bound to a string constant holding a fetch (no text the census reads, Python serving the fetch, were it admitted); aro and arp, the
 # cache header holding a CR alone and an LF alone; arq, a header value that is a bool constant; arr, a header value built by a `+`;
-# ars, a header value that is a `%` whose left operand is a parameter.
+# ars, a header value that is a `%` whose left operand is a parameter; aru, a preamble if whose test is a module constant, which no
+# flag or parameter proof admits (admitting any own name as a truthiness test would pass a name the census never proved safe).
 _AR_STAMP = "        body = _probe_aww_stamp(code, body, ctype)\n"
 _AR_INJ = '            body = body.replace("<head>", "<head>" + extra + _PROBE_AWW_INJ, 1)\n'
 _AR_EXTRA = '            extra = ""\n'
@@ -8494,7 +8495,12 @@ AR_PLANTS = (("ara", "a stamp through a method of the page, no bare name", ((_AR
              ("arr", "a header value built by a +", ((_AR_PCT, '"probe_aww=" + self.probe_more'),),
               ("gate", '"probe_aww=" + self.probe_more', "a BinOp expression outside its listed roles at line %d")),
              ("ars", "a header value that is a `%` whose left operand is a parameter", ((_AR_PCT, "ctype % code"),),
-              ("gate", '"X-Probe-Name", ctype % code)', "a BinOp expression outside its listed roles at line %d")))
+              ("gate", '"X-Probe-Name", ctype % code)', "a BinOp expression outside its listed roles at line %d")),
+             ("aru", "a preamble if whose test is a module constant, neither a flag nor a parameter",
+              ((_AE_NAME, _AE_NAME + "\n_PROBE_ARU_FLAG = 1"),
+               ('        if getattr(self, "probe_ok", False) and isinstance(body, str) and ctype.startswith("text/html") and "<head>" in body:\n',
+                "        if _PROBE_ARU_FLAG:\n")),
+              ("gate", "if _PROBE_ARU_FLAG:", "an If statement outside its listed roles at line %d")))
 AR_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AR_PLANTS)
 AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES
 
@@ -14462,8 +14468,9 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
     shape; ard, are, arh, ari and arj injections outside its shape, each refused at the text name its injection then leaves unread; ark
     a parameter bound again and read in an injection's value; arm a string constant assigned to a name read nowhere; arn the page
     parameter bound to a string constant; aro and arp the cache header holding a CR or an LF alone; arq, arr and ars header values
-    that are a bool constant, a `+` and a `%` whose left operand is a parameter; and arl, a text name bound to a module constant, read.
-    The reds, each over a mutant of the fix script with one conjunct or arm dropped, are in the build record (r13/record.md)."""
+    that are a bool constant, a `+` and a `%` whose left operand is a parameter; aru a preamble if whose test is a module constant,
+    neither a flag nor a parameter; and arl, a text name bound to a module constant, read.
+    The reds, each over a mutant of the fix script with one conjunct or arm dropped, are in the build record."""
 
     def setUp(self):
         self.at, (self.rc, self.out) = served_pass()
@@ -14480,11 +14487,12 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
         self.assertEqual(self._served("aww"), [], "the writer proof reads the admitted preamble: no SERVED line (%r)" % self._served("aww"))
         for ft in ("awws", "awwi", "awwe"):
             self.assertTrue(self._is_site(ft), "the stamp's return, the injected text name and the module constant an injection reads are page text: %s a site" % ft)
+        files = dict(AD_FILES)
         for tag, what, _swap, why in AW_NEAR:
             with self.subTest(plant="(aw) %s (%s)" % (what, tag)):
                 srv = self._served(tag)
-                reason = why[2] if why[0] == "served" else why[0].split(" at line")[0]
-                self.assertEqual(sum(1 for ln in srv if reason in ln), 1, "the near shape refuses once with its reason: %r" % srv)
+                reason = why[2] if why[0] == "served" else why[0] % _a_line(files[tag], why[1])
+                self.assertEqual(sum(1 for ln in srv if reason in ln), 1, "the near shape refuses once with its reason at its line: %r" % srv)
         for tag, fts in (("awd", ("awwi", "awwe")), ("aws", ("awws", "awwe"))):
             for ft in fts:
                 self.assertTrue(self._is_site(ft), "%s: %s still read" % (tag, ft))

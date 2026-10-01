@@ -4200,7 +4200,7 @@ def _send_preamble(d, me, page, params, codec):
       None or bool constant default, isinstance(<page>, str), `<parameter>.startswith(<a str constant>)` or `<a str constant> in
       <page>`, or the `and` of those.
     Each name in a role is the definition's own (a parameter, or a local only these roles bind); the gate (_send_gate) refuses any
-    other node by its kind and line, as it refuses any other statement. Two conjuncts are dominated, kept and argued here (choice 5 of
+    other node by its kind and line, as it refuses any other statement. Three conjuncts are dominated, kept and argued here (choice 5 of
     the eleventh round's rulings): a flag's every load is an if's test, so no flag is read in an injection's value, and neither the
     flag's `t not in read_in` nor the text name's `t not in flags` can decide; and `params` never holds self (the gate drops it), so
     the cache header's `t != me` cannot either, and _body_param refuses a definition that binds self again before the gate reads it."""
