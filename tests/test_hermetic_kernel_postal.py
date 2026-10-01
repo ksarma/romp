@@ -7158,9 +7158,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
       the value it composes, met again through that declaration) is read as the empty string, open, so a value a loop
       builds by repeating one assignment is read over two of its passes at most (K = '' and then for p in ('an', 'y',
       'io'): K += p, or K = K + p, folds K + p to 'any' and 'yio' among its values and never to 'anyio'); and a name a
-      for or a comprehension binds through a TUPLE TARGET (for K, J in ...), or an unpacking binds from anything but a
-      display of its own length (K, J = pair), is read as the empty string, open (each a line of WHAT IT DOES NOT READ,
-      the unfoldable key's). An operand the rule cannot fold (a parameter, an import, a call, a subscript, an
+      for or a comprehension binds through a TUPLE OR LIST TARGET (for K, J in ...), or an unpacking binds from
+      anything but a tuple or list display of its own length with no starred element on either side (K, J = pair), is
+      read as the empty string, open (each a line of WHAT IT DOES NOT READ, the unfoldable key's). An operand the rule
+      cannot fold (a parameter, an import, a call, a subscript, an
       attribute, a name no declaration binds, a star import's say) is read as the empty string beside the values it
       can, and so is a name read that may take no binding, beside its declarations' values (a class body's read whose
       module binds none, a builtin's name the module's scope binds, a name the module's scope binds in a text that
