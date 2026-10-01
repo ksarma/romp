@@ -1,6 +1,6 @@
 # The modules under tests/ that write ROMP_KERNEL_NO_OPEN at module level, one path per line relative to tests/, the floor
 # modules aside; derived by the census of tests/test_hermetic_kernel_postal.py at round 2 of fork PR #894's review,
-# and derived again at each of that PR's seven landing merges with main: the first took in the writers of two modules
+# and derived again at each of that PR's eight landing merges with main: the first took in the writers of two modules
 # that batch fork PR #921 added (fork PR #842's test_nudge_walk_one_load_per_pass.py and fork PR #913's
 # test_record_cache_agent_end.py), and the second the writers of six modules that batch fork PR #925 added, all
 # fork PR #919's (test_fetch_wrapper_census.py, test_file_cap_binding.py, test_login_cookie_not_token.py,
@@ -10,14 +10,15 @@
 # took in no writer; the fifth took in the writers of three modules that batch fork PR #934 carried, all added by
 # fork PR #875 (test_card_boards.py, test_postal_bus_revive_guard.py and test_subagent_tree_cycle_scope.py), the
 # sixth the writer of one module that batch fork PR #936 carried, added by fork PR #860
-# (test_client_diag_capped_shape.py), and the seventh the writer of one module that batch fork PR #938 carried,
-# added by fork PR #858 (test_served_pins_read_elements.py).
+# (test_client_diag_capped_shape.py), the seventh the writer of one module that batch fork PR #938 carried, added by
+# fork PR #858 (test_served_pins_read_elements.py), and the eighth the writer of one module that batch fork PR #941
+# carried, added by fork PR #882 (test_subagent_tree_stamps_per_cycle.py).
 # The census pin compares it with the census by equality (_writer_set_faults): a module that writes the name and is
 # not here faults as a new writer, and a module here that no longer writes it faults until its line is removed.
 # Lines leave as writers migrate; a new writer is not added (omit the write or move it to the conftest floor),
 # except as a rename of a line here; the first three landing merges' lines were added on the reviewer's rulings of
-# round 2 on fork PR #894, which had the file derived again at each merge, and the fifth's, the sixth's and the
-# seventh's by the same derivation, which at the fourth took in none.
+# round 2 on fork PR #894, which had the file derived again at each merge, and the fifth's, the sixth's, the seventh's
+# and the eighth's by the same derivation, which at the fourth took in none.
 bench_chatbuild.py
 permission_ask_feeder_drive.py
 test_anchor_mints.py
@@ -506,6 +507,7 @@ test_states_overlay_fold.py
 test_subagent_transcripts.py
 test_subagent_tree_cycle_scope.py
 test_subagent_tree_memo.py
+test_subagent_tree_stamps_per_cycle.py
 test_summary_anchor_outrun.py
 test_tab_meta_push.py
 test_tag_edit_ack.py
