@@ -55,7 +55,8 @@ The guards here:
     planted in the lab kernel's environment as a probe is absent, and so is a ROMP_TESTS_ name, the
     run's own, wherever it came from; a live session's identity and manager pid in the runner reach
     neither the lab kernel nor the file; the lab's own names, the run's private roots and its git
-    isolation present); the served legs check the written file itself.
+    isolation present); the served legs check the written file itself. The stanza's waitFree program, which the drivers
+    run between the kill and the relaunch, blocks while the kernel's instance lock is held and returns once it is free.
 
 All fixtures synthetic.
 """
@@ -542,8 +543,8 @@ class _ShipLab(unittest.TestCase):
 class RelaunchEnv(unittest.TestCase):
     """The relaunch stanza a served lab writes to its cfg.json for the driver's relaunch of the kernel carries only
     the names the relaunched kernel needs, never anything else a lab put in its kernel's environment: the file
-    holds it for the run. No kernel and no browser, so this runs everywhere; the served legs check the written file
-    itself (_run_driver)."""
+    holds it for the run. Its waitFree program blocks on a held instance lock and returns once the lock is free. No
+    kernel and no browser, so this runs everywhere; the served legs check the written file itself (_run_driver)."""
 
     def test_a_planted_name_never_reaches_the_relaunch_env_and_the_kernels_names_do(self):
         lab = os.path.join(os.sep, "lab")

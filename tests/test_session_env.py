@@ -321,7 +321,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3316,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3328,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -362,7 +362,12 @@ COUNTS = {
     #                                _remember_faulted_end, _unread_place_kind, _unread_place_reads and _release_end to
     #                                kernel/kernel.py; then at its merge of fork PR #910's head 0e437ac8b as 3316, that head's 3304
     #                                and this pull request's twelve, the census's own derivation on the merged tree; no lambda and
-    #                                no other entry moved
+    #                                no other entry moved; then on the kernel instance lock's branch as 3328, over fork main
+    #                                e015c014e's 3316: the lock adds _kernel_lock_path, _kernel_lock_write, _kernel_lock_read,
+    #                                _kernel_lock_pid_alive, _kernel_lock_when, _kernel_lock_wait with its nested _expired,
+    #                                _kernel_lock_refusal, _kernel_lock_holder_why, _kernel_lock_acquire, _kernel_lock_refuse and
+    #                                _kernel_lock_announce_drain to kernel/kernel.py, the census's own derivation; no lambda and no
+    #                                other entry moved
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and

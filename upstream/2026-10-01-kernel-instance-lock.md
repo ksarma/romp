@@ -1,7 +1,7 @@
 ---
 title: One kernel per state root: the kernel takes an instance lock (`kernel.lock`) before any write, waits for a draining predecessor up to its announced deadline, refuses any other holder with exit 75, and writes repo-root after the bind instead of at import
 status: candidate
-where: `kernel/kernel.py` (`_kernel_lock_acquire`, `_kernel_lock_announce_drain`, `_persist_repo_root` moved into `main`), `tests/test_kernel_instance_lock.py`, `tests/test_perf_bench.py`, `tests/test_remote_clone_discovery.py`, `tests/test_ship_reship_served.py`, `tests/test_dashboard_reload_served.py`, `tests/README.md`, `tools/perf-bench.py`, `docs/reference.md`, `plans/multi-kernel.md`, `upstream/2026-10-01-kernel-instance-lock.md` (this entry)
+where: `kernel/kernel.py` (`_kernel_lock_acquire`, `_kernel_lock_announce_drain`, `_persist_repo_root` moved into `main`), `tests/test_kernel_instance_lock.py`, `tests/test_perf_bench.py`, `tests/test_remote_clone_discovery.py`, `tests/test_ship_reship_served.py`, `tests/test_dashboard_reload_served.py`, `tests/test_session_env.py`, `tests/test_federated_linkdrop_mint.py`, `tests/README.md`, `tools/perf-bench.py`, `docs/reference.md`, `plans/multi-kernel.md`, `upstream/2026-10-01-kernel-instance-lock.md` (this entry)
 added: 2026-10-01
 pr:
 tier: fix
