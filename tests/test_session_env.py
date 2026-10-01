@@ -321,7 +321,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3302,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3316,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -349,7 +349,20 @@ COUNTS = {
     #                                batch 925 as 3297, the fold's 19 and the batch's 17 over 3261, the census's own derivation on
     #                                the merged tree; no other entry moved; and at fork PR #821's merge of main at batch
     #                                2026-09-29b as 3302, both sides' functions kept (PR #821's 5 and fold 3's 19 over 3278), the
-    #                                census's own derivation on the merged tree; no other entry moved
+    #                                census's own derivation on the merged tree; no other entry moved; then at fork PR
+    #                                #910's merge of fork main 15d0f29d2 as 3304: main's 3302 and the fix's _subagent_tree_dep_note
+    #                                and _subagent_walk_dep_note in kernel/kernel.py (3299 at #910's merge of ee5caa810), the
+    #                                census's own derivation on the merged tree; no lambda and no other entry moved;
+    #                                then, on this branch, at fork PR #882's merge of fork PR #910's round-2 head as 3307 (over
+    #                                that head's 3299): this pull request adds _SubagentTreeUnreadable.__init__,
+    #                                _subagent_file_notes_replay, _subagent_walk_unreadable and _subagent_walk_excluded to
+    #                                kernel/kernel.py, with the nested unread of _subagent_tree_sample, under of
+    #                                _subagent_walk_excluded, exclude of _subagent_file_walk and on of _agent_launch_ids; then at
+    #                                its round-5 fix as 3311: the release's caller fix, in fork PR #913's code, adds
+    #                                _remember_faulted_end, _unread_place_kind, _unread_place_reads and _release_end to
+    #                                kernel/kernel.py; then at its merge of fork PR #910's head 0e437ac8b as 3316, that head's 3304
+    #                                and this pull request's twelve, the census's own derivation on the merged tree; no lambda and
+    #                                no other entry moved
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
