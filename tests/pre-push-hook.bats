@@ -17089,7 +17089,7 @@ AWK
     # a strip moves nothing else the census reads, beside bare expansions and beside guarded ones, a guard dropped among
     # the rest being a regression's shape (until build 3 of item 40, a copy of its own for each guard, each read in a
     # census run of its own; the odd and even copies since that build's audit, X2)
-    sed 's/\${\([A-Za-z_][A-Za-z0-9_]*\)\[\([@*]\)\]+"\${\1\[\2\]}"}/"${\1[\2]}"/g' "$HOOK" > "$copy"
+    LC_ALL=C sed 's/\${\([A-Za-z_][A-Za-z0-9_]*\)\[\([@*]\)\]+"\${\1\[\2\]}"}/"${\1[\2]}"/g' "$HOOK" > "$copy"   # C locale: macOS's sed refused this pattern over the hook's UTF-8 lines (illegal byte sequence, dispatch 36803452491)
     [ "$(grep -c '\${[A-Za-z_][A-Za-z0-9_]*\[[@*]\]+"\${' "$HOOK")" -ge 1 ]           # the strip had guards to strip
     [ "$(grep -c '\${[A-Za-z_][A-Za-z0-9_]*\[[@*]\]+"\${' "$copy" || true)" -eq 0 ]   # and stripped every one (grep -c prints 0 and exits 1 when none is left)
     awk -F'\t' '$2 == "plain" && $4 ~ /^guarded / { print $1 "\t" $3 "\t" substr($4, 10, 1) }' <<< "$out" > "$TEST_DIR/strip-all"
