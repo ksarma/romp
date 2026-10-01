@@ -11109,12 +11109,14 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [[ "$output" != *"Argument list too long"* ]]
+    [[ "$output" != *"xargs:"* ]] || false                                   # xargs printed nothing: GNU xargs takes -s 16384 under its limit here, and one above it would say so (piece_dirs' comment)
     [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~48000 bytes\nINF scanned ~48000 bytes')" ]   # 4,000 pieces of 12 bytes (round 12d: no ~ line), then their copies
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
     # Round 10b2 (the r10b audit's probe): the batch was sized by the scratch path's length in BYTES. In a UTF-8
     # locale bash's ${#scratch} counts characters, so round 10b's count made a batch under a TMPDIR named past ASCII
     # larger in bytes than it was counted. Since round 11c no batch is counted in the hook: xargs sizes each mkdir in
-    # bytes around the environment (piece_dirs), and the push stays a witness against any batch sized in characters.
+    # bytes (since item 40's build 3 at most 16,384 of them, -s: piece_dirs), and the push stays a witness against any
+    # batch sized in characters.
     # The locale is set for the push, the first of two that counts the run of CJK characters as 80, and the geometry
     # is checked first: under a count in characters one batch's argument strings alone pass 128 KB, so the push
     # below is red there whatever else the environment holds.
@@ -11141,6 +11143,7 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [[ "$output" != *"Argument list too long"* ]]
+    [[ "$output" != *"xargs:"* ]] || false                                   # xargs printed nothing: GNU xargs takes -s 16384 under its limit here, and one above it would say so (piece_dirs' comment)
     [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~48000 bytes\nINF scanned ~48000 bytes')" ]   # the second commit's 4,000 pieces of 12 bytes (round 12d: no ~ line), then their copies
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
 }
@@ -12078,16 +12081,17 @@ r11b_empty_path_case() {   # <the empty string, quoted>: S1's rule with that pat
 # output encoding (--encoding=UTF-8), so a clean push under GIT_DIFF_OPTS=--unified=3 with the key true, or under a
 # UTF-16 log or commit encoding, passes where 93684a4d1 refused it; a census over the hook's git calls holds the pins,
 # its list of reads derived from the hook, each pin's removal planted and red. D (extra6-2): the per-piece
-# directories made by xargs (piece_dirs), which sizes each mkdir around the environment, its status judged and each
-# directory tested, so the first push of round 10b's G case (the path-scoped copies' directories are made past the
-# argument limit) passes under an exported 80 KB variable where 93684a4d1 ended on bash's Argument list too long line,
-# and a mkdir that fails refuses with a romp line, never bash's; the new read's table and short cases. And
-# romp-manager's 06:29Z ruling on round 11b's flag 7: the empty path exempt in all four quote forms, one pin per
-# form. A title that says a witness is refused at 93684a4d1 records the run made against that hook for the round's
-# log; every credential-shaped string is assembled at run time. Since round 12n (romp-manager's ruling P on round 12l's
-# audit A1, 2026-09-27 20:52Z) the feed and the first-parent read honour GIT_DIFF_OPTS as main's git log does, so the
-# -c diff.suppressBlankEmpty=false pin alone keeps the witness whole: the cases below that named env -u GIT_DIFF_OPTS
-# are re-aimed, and the census of the pins asserts that no read unsets the variable.
+# directories made by xargs (piece_dirs), which sized each mkdir around the environment (since item 40's build 3 each
+# mkdir is given at most 16,384 bytes, -s), its status judged and each directory tested, so the first push of round
+# 10b's G case (the path-scoped copies' directories are made past the argument limit) passes under an exported 80 KB
+# variable where 93684a4d1 ended on bash's Argument list too long line, and a mkdir that fails refuses with a romp
+# line, never bash's; the new read's table and short cases. And romp-manager's 06:29Z ruling on round 11b's flag 7:
+# the empty path exempt in all four quote forms, one pin per form. A title that says a witness is refused at 93684a4d1
+# records the run made against that hook for the round's log; every credential-shaped string is assembled at run time.
+# Since round 12n (romp-manager's ruling P on round 12l's audit A1, 2026-09-27 20:52Z) the feed and the first-parent
+# read honour GIT_DIFF_OPTS as main's git log does, so the -c diff.suppressBlankEmpty=false pin alone keeps the
+# witness whole: the cases below that named env -u GIT_DIFF_OPTS are re-aimed, and the census of the pins asserts that
+# no read unsets the variable.
 
 r11c_blank_context_history() {   # r9d_base, then a clean history whose edits sit beside blank lines: an edit, a rename with an edit, a mode change, a deletion, a file with no final newline edited, and a two-parent merge adding a clean line of its own beside blank lines while auto-merging a path under a committed -diff attribute (its combined diff a Binary notice, read whole)
     r9d_base
@@ -12446,6 +12450,7 @@ r11c_yaml_files() {   # <directory> <count>: that many one-line .yaml files unde
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [[ "$output" != *"Argument list too long"* ]]
+    [[ "$output" != *"xargs:"* ]] || false                                   # xargs printed nothing: GNU xargs takes -s 16384 under its limit here, and one above it would say so (piece_dirs' comment)
     [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~48000 bytes\nINF scanned ~48000 bytes')" ]   # 4,000 pieces of 12 bytes (round 12d: no ~ line), then their copies
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
 }
@@ -12480,9 +12485,9 @@ R11C_DIRS_TAIL="so neither the additive run nor the probe run can read its copie
 
 @test "round 11c table case: the DIRECTORIES of the path-scoped copies: an xargs silent on the directories' mkdir alone (exit 0, its input drained, nothing made), through a real push of a password in prod.nuget.config, is refused naming the directories it was given that do not exist, bash's own line absent, no path-scoped run made, and the remote stays at its base" {
     r11c_password_commit
-    calls_silent_on xargs dirs '[ "${1:-}" = -0 ] && [ "${2:-}" = mkdir ]'
+    calls_silent_on xargs dirs '[ "${1:-}" = -0 ] && [ "${2:-}" = -s ] && [ "${4:-}" = mkdir ]'
     push_main_through_hook_with_shim
-    fired dirs "-0 mkdir"
+    fired dirs "-0 -s 16384 mkdir --"
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: the DIRECTORIES of the path-scoped copies were made short (xargs, running mkdir, exited 0, and 2 of the 2 directories it was given do not exist, the first "*"/creds.p/1), $R11C_DIRS_TAIL"* ]]
     [[ "$output" != *"pre-push: line "* ]]
@@ -12496,7 +12501,7 @@ R11C_DIRS_TAIL="so neither the additive run nor the probe run can read its copie
     real_xargs="$(command -v xargs)"; real_mkdir="$(command -v mkdir)"
     {
         printf '#!/usr/bin/env bash\n'
-        printf 'if [ "${1:-}" = -0 ] && [ "${2:-}" = mkdir ]; then\n'
+        printf 'if [ "${1:-}" = -0 ] && [ "${2:-}" = -s ] && [ "${4:-}" = mkdir ]; then\n'
         printf '    a=(); while IFS= read -r -d "" x || [ -n "$x" ]; do a+=("$x"); done; n=${#a[@]}; k=$((n / 2))\n'   # the list as mapfile -d "" -t reads it, in a loop bash 3.2 runs (mapfile -d is bash 4.4)
         printf '    %q -- "${a[@]:0:k}"\n' "$real_mkdir"
         printf '    printf "%%s\\n" "xargs $* [whole $n cut $k]" >> %q; exit 0\n' "$TEST_DIR/calls.dirs"
@@ -12506,7 +12511,7 @@ R11C_DIRS_TAIL="so neither the additive run nor the probe run can read its copie
     chmod 755 "$TEST_DIR/shim/xargs"
     export PATH="$TEST_DIR/shim:$PATH"
     push_main_through_hook_with_shim
-    fired_short dirs "-0 mkdir"
+    fired_short dirs "-0 -s 16384 mkdir --"
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: the DIRECTORIES of the path-scoped copies were made short (xargs, running mkdir, exited 0, and 1 of the 2 directories it was given do not exist, the first "*"/creds.q/1), $R11C_DIRS_TAIL"* ]]
     [[ "$output" != *"pre-push: line "* ]]
@@ -12913,17 +12918,21 @@ r12b_form_case() {   # <form>: that allowlist form with the crafted number path,
     [[ "$output" == *"switch a rule off with disabledRules"* ]]
 }
 
-r12b_log_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the scan of record's run alone (its arguments carry --log-level trace and it runs in the pieces' directory, creds.d: since round 12b3 the skip canary's run is at the trace level too, in creds.c), records the mode and the path of the file its stderr is (the hook's log), runs the real scanner with its log to a file of its own, records whether the token is in that log (never the token itself), and hands the log on to its stderr unchanged; the real scanner for every other run
+r12b_log_by_content() {   # <mode file> <path file>: the watcher's lines (printed, for its script) that find the file its stderr is by content, once it has handed the log on whole: the one regular file under TMPDIR's directories, where the hook makes its scratch directory, whose bytes are the log's ($e), and record its mode as ls -l prints it (GNU stat's -c is not BSD stat's) and its path; none when no file holds them, many when more than one does. Until build 3 of item 40 the watchers found it as the file [ /dev/stderr -ef FILE ] names, which never matches on macOS, where the stat of /dev/stderr gives devfs's device and not the file's (the macOS dispatch recorded none, and the mode went unmeasured); /proc/self/fd is Linux's alone
+    printf 'f=""; k=0; for c in "${TMPDIR:-/tmp}"/*/*; do if [ -f "$c" ] && [ ! -L "$c" ] && cmp -s "$e" "$c"; then f=$c; k=$((k + 1)); fi; done; [ "$k" -le 1 ] || f=many\n'
+    printf 'if [ -f "$f" ]; then ls -ln "$f" 2>/dev/null | cut -c1-10; else echo "${f:-none}"; fi >> %q; echo "${f:-none}" >> %q\n' "$1" "$2"
+}
+r12b_log_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the scan of record's run alone (its arguments carry --log-level trace and it runs in the pieces' directory, creds.d: since round 12b3 the skip canary's run is at the trace level too, in creds.c), runs the real scanner with its log to a file of its own, records whether the token is in that log (never the token itself), hands the log on to its stderr unchanged, and then records the mode and the path of the file its stderr is (the hook's log), found by content (r12b_log_by_content); the real scanner for every other run
     mkdir -p "$TEST_DIR/scanner"
     {
         printf '#!/usr/bin/env bash\n'
         printf 'case " $* " in *" --log-level trace "*) ;; *) exec %q "$@" ;; esac\n' "$GL"
         printf 'case "$PWD" in */creds.d) ;; *) exec %q "$@" ;; esac\n' "$GL"
-        printf 'f=""; for c in "${TMPDIR:-/tmp}"/*/*; do if [ /dev/stderr -ef "$c" ]; then f=$c; fi; done\n'   # the file stderr is, found by device and inode (the shell's -ef) under TMPDIR, where the hook makes its scratch directory: /proc/self/fd is Linux's alone
-        printf 'if [ -n "$f" ]; then ls -ln "$f" 2>/dev/null | cut -c1-10; else echo none; fi >> %q; echo "${f:-none}" >> %q\n' "$TEST_DIR/calls.logmode" "$TEST_DIR/calls.logpath"   # its mode as ls -l prints it: GNU stat's -c is not BSD stat's
         printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
         printf 'if grep -qF -- %q "$e"; then echo in-log >> %q; else echo absent >> %q; fi\n' "$(r12b_token)" "$TEST_DIR/calls.premise" "$TEST_DIR/calls.premise"
-        printf 'cat "$e" >&2; rm -f "$e"; exit "$s"\n'
+        printf 'cat "$e" >&2\n'
+        r12b_log_by_content "$TEST_DIR/calls.logmode" "$TEST_DIR/calls.logpath"
+        printf 'rm -f "$e"; exit "$s"\n'
     } > "$TEST_DIR/scanner/gitleaks"
     chmod 755 "$TEST_DIR/scanner/gitleaks"
     export ROMP_GITLEAKS="$TEST_DIR/scanner/gitleaks"
@@ -13390,16 +13399,16 @@ r12b3_forms() {   # <the canary config's line expected, or empty for no canary r
     [ ! -s "$TEST_DIR/calls.canary" ]
 }
 
-r12b3_canary_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the canary's run alone (in creds.c), records the mode and the path of the file its stderr is (the canary's log), runs the real scanner with its log to a file of its own, records whether the canary's value is in that log (never the value itself), and hands the log on to its stderr unchanged; the real scanner for every other run
+r12b3_canary_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the canary's run alone (in creds.c), runs the real scanner with its log to a file of its own, records whether the canary's value is in that log (never the value itself), hands the log on to its stderr unchanged, and then records the mode and the path of the file its stderr is (the canary's log), found by content as r12b_log_watcher finds it; the real scanner for every other run
     mkdir -p "$TEST_DIR/scanner"
     {
         printf '#!/usr/bin/env bash\n'
         printf 'case "$PWD" in */creds.c) ;; *) exec %q "$@" ;; esac\n' "$GL"
-        printf 'f=""; for c in "${TMPDIR:-/tmp}"/*/*; do if [ /dev/stderr -ef "$c" ]; then f=$c; fi; done\n'   # the file stderr is, found by device and inode as r12b_log_watcher finds it
-        printf 'if [ -n "$f" ]; then ls -ln "$f" 2>/dev/null | cut -c1-10; else echo none; fi >> %q; echo "${f:-none}" >> %q\n' "$TEST_DIR/calls.clogmode" "$TEST_DIR/calls.clogpath"
         printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
         printf 'if grep -qF -- %q "$e"; then echo in-log >> %q; else echo absent >> %q; fi\n' "$(r12b3_value)" "$TEST_DIR/calls.cpremise" "$TEST_DIR/calls.cpremise"
-        printf 'cat "$e" >&2; rm -f "$e"; exit "$s"\n'
+        printf 'cat "$e" >&2\n'
+        r12b_log_by_content "$TEST_DIR/calls.clogmode" "$TEST_DIR/calls.clogpath"
+        printf 'rm -f "$e"; exit "$s"\n'
     } > "$TEST_DIR/scanner/gitleaks"
     chmod 755 "$TEST_DIR/scanner/gitleaks"
     export ROMP_GITLEAKS="$TEST_DIR/scanner/gitleaks"
@@ -16899,7 +16908,13 @@ r12t_feed_advice() {   # the push just made was refused as unscanned with failed
 # subscript), which expands to no word when the array has no element and to "${a[@]}" when it has one, under bash
 # 3.2.57 and 5.2.21 alike while IFS holds a character (bash 3.2.57 joins the elements into one word under an empty IFS,
 # so the census names an IFS set anywhere but ahead of a read). array_census reads a bash file quote-aware and prints one
-# record per array expansion and per shape it cannot read; the case after it pins the hook with it. It proves no array
+# record per array expansion and per shape it cannot read; the case after it pins the hook with it. Given two files or
+# more, it reads each as a text of its own in the one awk run and leads each record with the file's place among them
+# (1, 2 and so on), so the case reads its three stripped copies of the hook in one run, after the run over the hook.
+# The census costs about 5 s a text under the awk macOS ships (4.8 to 5.4 s under Apple's awk-40 built here, 0.2 s
+# under gawk), whose substr() measures its whole string on every call, and the case's runs, one for the hook and one
+# for each copy of its 18 guarded expansions until item 40's build 3, passed bats' 180 s bound in fork PR 940's macOS
+# cell; the case now reads four texts. It proves no array
 # non-empty: every ${name[@]} or ${name[*]} with no operator counts as one that can be empty, so every one carries the
 # guard, whether or not a road empties it (the census of the roads is in the ledger entry's item 40). What it does not
 # read: an expansion built at run time (eval, which the census above pins absent; an indirect ${!name}, which this one
@@ -16909,10 +16924,11 @@ r12t_feed_advice() {   # the push just made was refused as unscanned with failed
 # assigned only outside functions, first ahead of the trap line. The cases below end each [[ ]] assertion with
 # || false: bash before 4.1 does not end a test on a failed [[ ]] under set -e (bats' documented gotcha), and these
 # cases are the witnesses a bash 3.2 run reads.
-array_census() {   # <bash file>: one record per line, tab-separated: the line, the kind, a name and a detail (the awk's header)
+array_census() {   # <bash file>...: one record per line, tab-separated: the line, the kind, a name and a detail (the awk's header), led by the file's place when there are two files or more
     if [ ! -f "$TEST_DIR/arrays.awk" ]; then
         cat > "$TEST_DIR/arrays.awk" <<'AWK'
-# One record per line of output, tab-separated: the line, the kind, a name and a detail.
+# One record per line of output, tab-separated: the line, the kind, a name and a detail. Each file is one text (one
+# record, RS a byte no text holds); given two files or more, each output line is led by the text's place, a tab after it.
 #   plain    ${n[@]} or ${n[*]} with no operator; detail "guarded" when it sits in the word of a ${n[@]+...} or
 #            ${n[*]+...} of the same name (bash expands that word only when n has an element), else "bare"
 #   op       ${n[@]} or ${n[*]} with an operator (${n[@]:0}, ${n[@]#x}, ${n[@]+w} and the rest); detail the operator
@@ -16927,7 +16943,7 @@ array_census() {   # <bash file>: one record per line, tab-separated: the line, 
 # The text is read quote-aware, in the C locale: comments and the text of '...' and $'...' are passed over; "...", $( ),
 # backquotes, arithmetic and the word of a ${ } are read for the expansions inside them. A function is a line
 # name() { at column 0 through the next line that is } alone.
-function emit(ln, kind, name, detail) { printf "%d\t%s\t%s\t%s\n", ln, kind, name, detail }
+function emit(ln, kind, name, detail) { printf "%s%d\t%s\t%s\t%s\n", tag, ln, kind, name, detail }
 function guarded(name,   k) {
     for (k = pd; k >= 1; k--) if (pname[k] == name && psub[k] ~ /^[@*]$/ && pop[k] == "+") return 1
     return 0
@@ -16972,8 +16988,8 @@ function statement_word(i,   j, e, w, nm) {   # at a word's start in code: the I
 }
 BEGIN { RS = "\001" }
 {
-    t = $0; n = length(t); i = 1; ln = 1; split(t, L, "\n")
-    depth = 0; st[0] = "code"; prev = "\n"; pd = 0; fname = ""; oneline = 0
+    t = $0; n = length(t); i = 1; ln = 1; split(t, L, "\n"); tag = (ARGC > 2) ? NR "\t" : ""
+    depth = 0; st[0] = "code"; par[0] = 0; prev = "\n"; pd = 0; fname = ""; oneline = 0
     while (i <= n) {
         c = substr(t, i, 1); c2 = substr(t, i, 2); s = st[depth]
         if (prev == "\n" && depth == 0) {                                  # a line's start at the top: a function's extent
@@ -17043,11 +17059,11 @@ BEGIN { RS = "\001" }
 }
 AWK
     fi
-    LC_ALL=C awk -f "$TEST_DIR/arrays.awk" "$1"
+    LC_ALL=C awk -f "$TEST_DIR/arrays.awk" "$@"
 }
 
-@test "bash 3.2 (2026-09-30, the guard's census): every array expansion with no operator in the hook carries the guard, since bash before 4.4 calls an array with no element unbound under set -u; array_census names the line of a bare one, of a shape it cannot read, of an IFS set outside a read's prefix and of a name that would stand in for the EXIT trap's; each guard stripped in a copy of the hook is the line named; and a probe text reads as the committed list under each awk" {
-    local out bare other trapln first k n ln kind name detail sb esc copy probe="$TEST_DIR/arrays-probe.sh" want="$TEST_DIR/arrays-want" a d
+@test "bash 3.2 (2026-09-30, the guard's census): every array expansion with no operator in the hook carries the guard, since bash before 4.4 calls an array with no element unbound under set -u; array_census names the line of a bare one, of a shape it cannot read, of an IFS set outside a read's prefix and of a name that would stand in for the EXIT trap's; each guard, stripped in three copies of the hook that one census run reads (every guard stripped, the odd ones and the even ones, counted through the hook), is named bare at its line while each guard left reads guarded, and no strip moves any other record the census reads; and a probe text reads as the committed list under each awk" {
+    local out cout bare other trapln first n k want_plain got_plain want_rest got_rest copy="$TEST_DIR/hook-bare" codd="$TEST_DIR/hook-bare-odd" ceven="$TEST_DIR/hook-bare-even" probe="$TEST_DIR/arrays-probe.sh" want="$TEST_DIR/arrays-want" a d
     run array_census "$HOOK"
     [ "$status" -eq 0 ]
     out=$output
@@ -17065,19 +17081,54 @@ AWK
     first=$(awk -F'\t' '$2 == "verdict" { print $1; exit }' <<< "$out")
     [ -n "$first" ]
     [ "$first" -lt "$trapln" ]
-    # each guard, stripped in a copy of its own, is the one line the census names
-    k=0
-    while IFS=$'\t' read -r ln kind name detail; do
-        [ "$kind" = plain ] || continue
-        k=$((k + 1)); copy="$TEST_DIR/hook-bare-$k"
-        sb=${detail#*[}; sb=${sb%]}; esc=@
-        if [ "$sb" = '*' ]; then esc='\*'; fi
-        sed "${ln}s/\${$name\\[$esc\\]+\"\${$name\\[$esc\\]}\"}/\"\${$name[$sb]}\"/" "$HOOK" > "$copy"
-        [ "$(cmp -l "$HOOK" "$copy" 2>/dev/null | wc -l)" -gt 0 ]           # the strip landed
-        run array_census "$copy"
-        [ "$(awk -F'\t' '$2 == "plain" && $4 !~ /^guarded/ { print $1 }' <<< "$output")" = "$ln" ]
-    done <<< "$out"
-    [ "$k" -eq "$n" ]
+    # each guard, stripped, is the line the census names, in three copies one census run reads (the note above: it
+    # costs a run a text): every guard stripped (sed, in one pass, strips each ${n[@]+"${n[@]}"} to "${n[@]}" and each
+    # ${n[*]+"${n[*]}"} to "${n[*]}"), and the odd and the even guards the census read, counted through the hook,
+    # stripped where it read them. In each copy each guard stripped is bare at its line, under its name and subscript,
+    # each guard left reads guarded, and every other record is the hook's, less the + record of each guard stripped: so
+    # a strip moves nothing else the census reads, beside bare expansions and beside guarded ones, a guard dropped among
+    # the rest being a regression's shape (until build 3 of item 40, a copy of its own for each guard, each read in a
+    # census run of its own; the odd and even copies since that build's audit, X2)
+    sed 's/\${\([A-Za-z_][A-Za-z0-9_]*\)\[\([@*]\)\]+"\${\1\[\2\]}"}/"${\1[\2]}"/g' "$HOOK" > "$copy"
+    [ "$(grep -c '\${[A-Za-z_][A-Za-z0-9_]*\[[@*]\]+"\${' "$HOOK")" -ge 1 ]           # the strip had guards to strip
+    [ "$(grep -c '\${[A-Za-z_][A-Za-z0-9_]*\[[@*]\]+"\${' "$copy" || true)" -eq 0 ]   # and stripped every one (grep -c prints 0 and exits 1 when none is left)
+    awk -F'\t' '$2 == "plain" && $4 ~ /^guarded / { print $1 "\t" $3 "\t" substr($4, 10, 1) }' <<< "$out" > "$TEST_DIR/strip-all"
+    awk -F'\t' 'NR % 2 == 1' "$TEST_DIR/strip-all" > "$TEST_DIR/strip-odd"
+    awk -F'\t' 'NR % 2 == 0' "$TEST_DIR/strip-all" > "$TEST_DIR/strip-even"
+    [ "$(grep -c . "$TEST_DIR/strip-all")" -eq "$n" ]
+    [ "$(grep -c . "$TEST_DIR/strip-odd")" -ge 1 ]                      # the odd and the even guards part the guards between them, neither copy empty
+    [ "$(grep -c . "$TEST_DIR/strip-even")" -ge 1 ]
+    [ "$(( $(grep -c . "$TEST_DIR/strip-odd") + $(grep -c . "$TEST_DIR/strip-even") ))" -eq "$n" ]
+    for k in odd even; do                                                # strip the listed guards: each line, name and subscript, as many as listed
+        LC_ALL=C awk -F'\t' 'NR == FNR { w[$1 "\t" $2 "\t" $3]++; next }
+            {
+                o = ""; s = $0
+                while (match(s, /\$\{[A-Za-z_][A-Za-z0-9_]*\[[@*]\]\+"\$\{[A-Za-z_][A-Za-z0-9_]*\[[@*]\]\}"\}/)) {
+                    m = substr(s, RSTART, RLENGTH); x = substr(m, 3); y = substr(m, index(m, "\"") + 3)
+                    nm = substr(x, 1, index(x, "[") - 1); sb = substr(x, index(x, "[") + 1, 1)
+                    if (nm == substr(y, 1, index(y, "[") - 1) && sb == substr(y, index(y, "[") + 1, 1) && w[FNR "\t" nm "\t" sb] > 0) {
+                        w[FNR "\t" nm "\t" sb]--; o = o substr(s, 1, RSTART - 1) "\"${" nm "[" sb "]}\""
+                    } else o = o substr(s, 1, RSTART + RLENGTH - 1)
+                    s = substr(s, RSTART + RLENGTH)
+                }
+                print o s
+            }
+            END { for (x in w) if (w[x] > 0) { print "a guard listed to strip is not in the hook: " x > "/dev/stderr"; bad = 1 } exit bad }' "$TEST_DIR/strip-$k" "$HOOK" > "$TEST_DIR/hook-bare-$k"
+    done
+    run array_census "$copy" "$codd" "$ceven"
+    [ "$status" -eq 0 ]
+    for k in 1:all 2:odd 3:even; do
+        cout=$(awk -F'\t' -v k="${k%%:*}" '$1 == k' <<< "$output" | cut -f2-)
+        want_plain=$(awk -F'\t' 'NR == FNR { w[$0]++; next } $2 == "plain" { x = $1 "\t" $3 "\t" substr($4, 10, 1); if (w[x] > 0) { w[x]--; print $1 "\t" $3 "\tbare [" substr($4, 10, 1) "]" } else print $1 "\t" $3 "\t" $4 }' "$TEST_DIR/strip-${k#*:}" - <<< "$out" | sort)
+        got_plain=$(awk -F'\t' '$2 == "plain" { print $1 "\t" $3 "\t" $4 }' <<< "$cout" | sort)
+        [ "$(grep -c . <<< "$got_plain")" -eq "$n" ]
+        [ "$(grep -c -F 'bare [' <<< "$want_plain")" -eq "$(grep -c . "$TEST_DIR/strip-${k#*:}")" ]   # as many bare as stripped, every other guarded
+        [ "$got_plain" = "$want_plain" ]
+        want_rest=$(awk -F'\t' 'NR == FNR { g[$1 "\t" $2]++; next } $2 == "plain" { next } $2 == "op" && $4 == "+" && g[$1 "\t" $3] > 0 { g[$1 "\t" $3]--; next } { print }' "$TEST_DIR/strip-${k#*:}" - <<< "$out")
+        got_rest=$(awk -F'\t' '$2 != "plain"' <<< "$cout")
+        [ -n "$got_rest" ]
+        [ "$got_rest" = "$want_rest" ]
+    done
     # the probe text: each form the census reads, and each it cannot, against the committed list
     cat > "$probe" <<'SH'
 f "${a[@]}"
@@ -18561,4 +18612,478 @@ push_main_through_hook_home_unset() {   # push_main_through_hook_with_shim, with
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]] || false
     at_remote_main                                                      # the witness: the environment's config misses the repository's credential
+}
+
+# ── macOS (2026-09-30, build 3 of item 40: the twelve reds of the macOS dispatch of fork PR 940, ruled at 21:47Z) ──
+# The dispatch ran the credential cases on macOS for the first time (build 2 installs gitleaks there), and twelve were
+# red. Seven were one defect of the hook's: the awk macOS ships (BWK's; Apple's awk-40, "awk version 20200816") ends a
+# field at every newline too when split() is given a one-character separator (its src/run.c), and the piecing text split
+# the type table's alternatives on "|". Three entries' bytes end in a newline (amr's #!AMR, Dex's dex and Dey's dey), so
+# under that awk each gained an empty alternative, which every piece matches: amr's, a p entry, left every
+# signature-led piece of 12 bytes or more without its ~ line, so gitleaks skipped it and the byte figure refused a clean
+# push; Dex's and Dey's wrote the ~ line ahead of text no signature leads (37 bytes or more with p at byte 36, or 101
+# or more with p at byte 76), and a repository's own rule anchored at the start of the text missed a credential on that
+# text's first line and published it (W1 to W3 below). The hook now splits the alternatives with alts, an index()
+# splitter every awk runs alike. The cases below hold it on Linux: the piecing text calls split() with no
+# one-character separator but a blank or a newline (both split alike under BWK awk), read statically, so a Linux run
+# catches what only macOS's awk does; and under bwk_split_awk, an awk that splits as BWK's does (a shim over the real
+# awk that gives each split() call's separator to a function deciding at run time, so nothing is built), W1 to W3 are
+# refused and the seven reds' pushes behave as under any awk. The two xargs reds are the directories' batch
+# (piece_dirs' comment in the hook: -s 16384), held under an xargs that sizes its batches as BSD xargs does and fails
+# as XNU's exec does. Every value is assembled at run time, and every [[ ]] assertion that is not a case's last
+# command ends with || false, as the bash 3.2 cases above do.
+
+split_seps_awk() {   # writes $TEST_DIR/split-seps.awk once: an awk program read over another on stdin; -v mode=census prints a line per place the word split stands (its line, its separator as written, and the separator's kind, or unparsed where no call is read), -v mode=rewrite prints the program with each call's separator, but a regex literal, given to bwk_split_sep() (bwk_split_awk appends it), the rewrites counted on stderr, and exits 2 on an unparsed split
+    [ ! -f "$TEST_DIR/split-seps.awk" ] || return 0
+    cat > "$TEST_DIR/split-seps.awk" <<'AWK'
+# A call is the word split (no name character either side), then blanks, tabs or backslash-newlines, then (, the
+# arguments closing at the matching ). Every other place the word stands (a comment, a string, a call whose arguments
+# do not close) is unparsed: the census names it, and the rewrite refuses the program, so no spelling of a call is
+# passed over unread. A separator's kind: blank (" " or "\040", POSIX's field splitting, at blanks and newlines in
+# every awk), newline ("\n" or "\012", whose split BWK's newline rule leaves as it is), one (a one-character string of
+# any other character: BWK awk also ends a field at every newline under it, other awks do not), longer (a string of
+# two characters or more, or a regex literal: a regular expression in every awk), empty (""), unread (anything but a
+# literal: a variable, an expression) or none (no separator: the field separator, which a program can set). A string's
+# characters are counted as BWK awk reads them: an escape is one character, an octal one taking up to three digits and
+# \x every hex digit after it (gawk and mawk take two, so "\x7ca" is two characters there and one here). The rewrite
+# wraps each call's separator, but a regex literal, in bwk_split_sep(), and gives a call with no separator
+# bwk_split_sep(FS): at run time that function turns a one-character string other than a blank or a newline into a
+# bracket expression that also matches a newline, as BWK awk splits, whatever the separator's spelling or source.
+BEGIN { RS = "\001" }
+{ t = t (NR > 1 ? RS : "") $0 }
+function chars(a,   i, n, c) {   # the characters a string literal, its quotes included, stands for under BWK awk; -1 when a is not one
+    if (length(a) < 2 || substr(a, 1, 1) != "\"" || substr(a, length(a), 1) != "\"") return -1
+    n = 0
+    for (i = 2; i < length(a); i++) {
+        c = substr(a, i, 1)
+        if (c == "\"") return -1
+        if (c == "\\") {
+            i++; c = substr(a, i, 1)
+            if (c ~ /[0-7]/) { if (substr(a, i + 1, 1) ~ /[0-7]/) i++; if (substr(a, i + 1, 1) ~ /[0-7]/) i++ }
+            else if (c == "x") while (substr(a, i + 1, 1) ~ /[0-9A-Fa-f]/) i++
+        }
+        n++
+    }
+    return n
+}
+function arg(a) { gsub(/\\\n/, " ", a); sub(/^[ \t\n]+/, "", a); sub(/[ \t\n]+$/, "", a); return a }
+function kind(a,   n) {
+    a = arg(a)
+    if (a == "") return "none"
+    if (length(a) >= 2 && substr(a, 1, 1) == "/" && substr(a, length(a), 1) == "/") return "longer"
+    n = chars(a)
+    if (n < 0) return "unread"
+    if (n == 0) return "empty"
+    if (n > 1) return "longer"
+    if (a == "\" \"" || a == "\"\\040\"") return "blank"
+    if (a == "\"\\n\"" || a == "\"\\012\"") return "newline"
+    return "one"
+}
+function lineof(s,   x) { x = substr(t, 1, s); return 1 + gsub(/\n/, "", x) }
+END {
+    out = ""; i = 1; n = length(t); r = 0; bad = 0; p = 1
+    while ((j = index(substr(t, p), "split")) > 0) {
+        s = p + j - 1; p = s + 5
+        if (s > 1 && substr(t, s - 1, 1) ~ /[A-Za-z0-9_]/) continue        # a name that ends in split: another function
+        if (substr(t, p, 1) ~ /[A-Za-z0-9_]/) continue                     # a name that starts with it
+        k = p
+        while (k <= n) { c = substr(t, k, 1); if (c == " " || c == "\t") k++; else if (c == "\\" && substr(t, k + 1, 1) == "\n") k += 2; else break }
+        e = 0; a3 = 0; c3 = 0; argn = 0
+        if (substr(t, k, 1) == "(") {
+            k++; d = 0; argn = 1; prev = "("
+            while (k <= n) {
+                c = substr(t, k, 1)
+                if (c == "\"") { k++; while (k <= n && substr(t, k, 1) != "\"") { if (substr(t, k, 1) == "\\") k++; k++ } prev = c; k++; continue }
+                if (c == "/" && (prev == "(" || prev == ",")) { k++; while (k <= n && substr(t, k, 1) != "/") { if (substr(t, k, 1) == "\\") k++; k++ } prev = c; k++; continue }
+                if (c == "(" || c == "[") d++
+                else if (c == ")" || c == "]") { if (d == 0) { e = k; break } d-- }
+                else if (c == "," && d == 0) { argn++; if (argn == 3) a3 = k + 1; else if (argn == 4) c3 = k }
+                if (c != " " && c != "\t" && c != "\n") prev = c
+                k++
+            }
+        }
+        if (!e) {
+            if (mode == "census") printf "%d\t-\tunparsed\n", lineof(s)
+            else { printf "split-seps: line %d: the word split where no call is read\n", lineof(s) > "/dev/stderr"; bad = 1 }
+            continue
+        }
+        a = a3 ? substr(t, a3, (c3 ? c3 : e) - a3) : ""
+        kd = kind(a)
+        if (mode == "census") { a = arg(a); gsub(/[\t\n]/, " ", a); printf "%d\t%s\t%s\n", lineof(s), a, kd; continue }
+        if (s < i) { printf "split-seps: line %d: a split inside another split's arguments\n", lineof(s) > "/dev/stderr"; bad = 1; continue }
+        if (argn == 2) { out = out substr(t, i, e - i) ", bwk_split_sep(FS)"; i = e; r++; continue }
+        if (!a3 || substr(arg(a), 1, 1) == "/") continue
+        out = out substr(t, i, a3 - i) " bwk_split_sep(" a ")"; i = c3 ? c3 : e; r++
+    }
+    if (mode == "census") exit 0
+    if (bad) exit 2
+    printf "%s", out substr(t, i)
+    printf "rewrote %d\n", r > "/dev/stderr"
+}
+AWK
+}
+
+bwk_split_awk() {   # an awk in $TEST_DIR/shim that splits as BWK awk, macOS's, does: each program it is given that holds the word split rewritten by split-seps.awk (rewrite mode) and given bwk_split_sep(), then run by the real awk; a line per call in calls.bwk, the rewrites it made
+    local real
+    real="$(s="$TEST_DIR/shim:"; PATH=${PATH//"$s"/}; command -v awk)"
+    split_seps_awk
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'real=%q rw=%q log=%q\n' "$real" "$TEST_DIR/split-seps.awk" "$TEST_DIR/calls.bwk"
+        cat <<'SH'
+# BWK awk's split(), given a one-character separator other than a blank, ends a field at that character and at every
+# newline (its run.c); a regular expression that matches either does the same under any awk. ] and a backslash are
+# placed where a bracket expression reads them literally.
+fn='function bwk_split_sep(s) { if (length(s) != 1 || s == " " || s == "\n") return s; if (s == "\\") return "[\n\\\\]"; if (s == "]") return "[]\n]"; return "[\n" s "]" }'
+opts=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --) opts+=("$1"); shift; break ;;
+        -f|-f?*) echo "bwk_split_awk: a program given with -f is not rewritten here" >&2; exit 2 ;;
+        -v|-F) [ "$#" -ge 2 ] || break; opts+=("$1" "$2"); shift 2 ;;
+        -?*) opts+=("$1"); shift ;;
+        *) break ;;
+    esac
+done
+[ "$#" -gt 0 ] || exec "$real" ${opts[@]+"${opts[@]}"}
+prog=$1
+shift
+case "$prog" in
+    *split*) prog=$(printf '%s' "$prog" | LC_ALL=C "$real" -v mode=rewrite -f "$rw" 2>> "$log") || { echo "bwk_split_awk: the program could not be rewritten" >&2; exit 2; }
+             prog="$prog"$'\n'"$fn" ;;
+    *) echo "rewrote 0" >> "$log" ;;
+esac
+exec "$real" ${opts[@]+"${opts[@]}"} "$prog" "$@"
+SH
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+}
+
+piecing_text() {   # <hook file>: the hook's piecing text, CRED_PIECES_AWK's value, as r12d_types_check reads it: the lines after its opening line through the one its closing quote ends, that quote dropped
+    awk -v q="'" '$0 == "CRED_PIECES_AWK=" q { p = 1; next } p { if (substr($0, length($0)) == q) { print substr($0, 1, length($0) - 1); exit } print }' "$1"
+}
+
+split_census_of() {   # <hook file>: split-seps.awk's census over its piecing text, each line number the hook's
+    local start
+    start=$(grep -n -x "CRED_PIECES_AWK='" "$1" | cut -d: -f1)
+    [ -n "$start" ] || { echo "no piecing text in $1"; return 1; }
+    piecing_text "$1" | LC_ALL=C awk -v mode=census -f "$TEST_DIR/split-seps.awk" | awk -F'\t' -v o="$start" 'BEGIN { OFS = "\t" } { $1 += o; print }'
+}
+
+split_named() {   # <census>: a line per place the word split stands that the piecing text must not hold: a call whose separator is of kind one, empty, unread or none, or the word where no call is read (unparsed); nothing when there is none
+    awk -F'\t' '$3 == "unparsed" { print "line " $1 ": the word split where no call is read (unparsed)"; next } $3 != "blank" && $3 != "newline" && $3 != "longer" { print "line " $1 ": split() with the separator " $2 " (" $3 ")" }' <<< "$1"
+}
+
+@test "macOS awk (2026-09-30, build 3, the splitter's pin): the piecing text calls split() with no one-character separator but a blank or a newline (both split alike under BWK awk) and holds the word split nowhere else, since the awk macOS ships (BWK's) also ends a field at every newline under any other, and the type table's entries hold newlines; a split() planted with |, a tab, | as an octal or a hex escape, a hex escape of three digits (one character under BWK awk), | with a blank, a tab or a backslash-newline between split and its parenthesis, the empty string, a separator the census cannot read or none is named at its line, as is the word split in a comment, and one with a regular expression, a newline or a blank is not; and the text before the fix, whose type table split its alternatives with split(..., \"|\"), is named at both lines" {
+    local census named copy line l1 l2 want form sep g plant
+    split_seps_awk
+    census=$(split_census_of "$HOOK")
+    printf '%s\n' "$census"
+    named=$(split_named "$census")
+    [ -z "$named" ]
+    # the census read the text: skipped's split() over the entries' numbers, joined by blanks, is there
+    [ "$(awk -F'\t' '$3 == "blank"' <<< "$census" | wc -l)" -ge 1 ]
+    # the text before the fix: its two split(..., "|") calls, each named at its line
+    copy="$TEST_DIR/hook-split-before"
+    sed -e 's/m = alts(tb\[k, 1\], a);/m = split(tb[k, 1], a, "|");/' -e 's/m = alts(b, a); ok = 0/m = split(b, a, "|"); ok = 0/' "$HOOK" > "$copy"
+    l1=$(grep -n -F 'm = split(tb[k, 1], a, "|");' "$copy" | cut -d: -f1)
+    l2=$(grep -n -F 'm = split(b, a, "|"); ok = 0' "$copy" | cut -d: -f1)
+    [ "$(grep -c . <<< "$l1")" -eq 1 ]                                   # both plants landed, once each
+    [ "$(grep -c . <<< "$l2")" -eq 1 ]
+    named=$(split_named "$(split_census_of "$copy")")
+    [ "$named" = "$(printf 'line %s: split() with the separator "|" (one)\nline %s: split() with the separator "|" (one)' "$l1" "$l2")" ]
+    # each plant in tmatch's split, one at a time: named at its line with its kind, or not named
+    line=$(grep -n -F 'm = alts(b, a); ok = 0' "$HOOK" | cut -d: -f1)
+    [ "$(grep -c . <<< "$line")" -eq 1 ]
+    while read -r want form sep; do                                      # the kind named (- for none), the call's form (- for split( written whole), then the separator (- for no separator)
+        if [ "$sep" = - ]; then sep=""; fi
+        case "$form" in
+            -) g="" ;;
+            blank) g=" " ;;
+            tab) g=$'\t' ;;
+            bsnl) g=$'\\\n' ;;
+        esac
+        if [ "$form" = word ]; then plant="m = alts(b, a); ok = 0   # alts, never split"; else plant="m = split${g}(b, a${sep:+, $sep}); ok = 0"; fi
+        PLANT=$plant awk -v n="$line" 'NR == n { o = "m = alts(b, a); ok = 0"; i = index($0, o); if (i) $0 = substr($0, 1, i - 1) ENVIRON["PLANT"] substr($0, i + length(o)) } { print }' "$HOOK" > "$copy"
+        [ "$(PLANT=$plant awk 'BEGIN { RS = "\001" } { s = $0; while ((i = index(s, ENVIRON["PLANT"])) > 0) { k++; s = substr(s, i + 1) } } END { print k + 0 }' "$copy")" -eq 1 ]    # the plant landed, as written, once
+        named=$(split_named "$(split_census_of "$copy")")
+        if [ "$want" = - ]; then
+            [ -z "$named" ]
+        elif [ "$want" = unparsed ]; then
+            [ "$named" = "line $line: the word split where no call is read (unparsed)" ]
+        else
+            [ "$named" = "line $line: split() with the separator $sep ($want)" ]
+        fi
+    done <<'SEPS'
+one - "|"
+one - "\t"
+one - "\174"
+one - "\x7c"
+one - "\x7ca"
+one blank "|"
+one tab "|"
+one bsnl "|"
+empty - ""
+unread - sep
+none - -
+none blank -
+unparsed word -
+- - "||"
+- - /[|]/
+- - "\n"
+- - " "
+- blank " "
+SEPS
+}
+
+macos_refused_as() {   # <rule> <path>: r12d_refused_as, each [[ ]] ending in || false so a bash 3.2 run holds it
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential ($1) in: $2"* ]] || false
+    [[ "$output" != *"the scan is incomplete"* ]] || false
+    [[ "$output" != *"$(r12d_pw)"* ]] || false
+    [[ "$output" != *"$(r12d_zz)"* ]] || false
+    at_base
+}
+macos_passes() {   # r10a_passes, its [[ ]] ending in || false so a bash 3.2 run holds it
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]] || false
+    [[ "$output" != *"$(r12d_pw)"* ]] || false
+    [[ "$output" != *"$(r12d_zz)"* ]] || false
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse main)" ]
+}
+
+@test "macOS awk (2026-09-30, build 3, the witness): under an awk that splits as BWK awk (macOS's) does, a one-character separator also ending a field at every newline, W1 and W2 are refused naming zz-key, the commit and config/app.env, each piece read whole with no ~ line ahead of it: a repository rule ^.*zzkey_[0-9a-f]{16}, its key the whole first line of config/app.env, which no signature leads, byte 36 of the file's 48-byte piece a p (W1), and byte 76 of a 108-byte piece a p, byte 36 not (W2); and W3, W1's shape with the key after dev and a blank, which reaches Dex's entry through tmatch's split alone; each published under that awk before the fix, where split() gave Dex's and Dey's entries an empty alternative, so the ~ line led the piece and the anchor met it" {
+    local l2 prog
+    r11a_base
+    bwk_split_awk
+    # the shim splits as BWK awk does: #!AMR and an empty alternative, where every other awk gives #!AMR and its newline
+    [ "$("$TEST_DIR/shim/awk" 'BEGIN { n = split("#!AMR\n", a, "|"); print n, length(a[1]), length(a[2]) }')" = "2 5 0" ]
+    [ "$("$TEST_DIR/shim/awk" 'BEGIN { print split("a|b", a, "|"), split("x y\nz", b, " "), split("a\nb", c, "\n"), split("a]\nb", d, "]") }')" = "2 3 2 3" ]
+    # whatever the separator's spelling or source: a blank, a tab or a backslash-newline before the parenthesis, a hex
+    # escape, a variable, or none, the field separator, set in the program or by -F (the fields of a record are split
+    # as under any awk: BWK's newline rule is split()'s alone); each value as Apple's awk-40 prints it
+    prog=$(printf 'BEGIN { s = "|"; FS = "|"; print split ("dex\\n", a, "|"), split\t("dex\\n", a, "|"), split\\\n("dex\\n", a, "|"), split("dex\\n", a, "\\x7c"), split("dex\\n", a, s), split("dex\\n", a) }')
+    [ "$("$TEST_DIR/shim/awk" "$prog")" = "2 2 2 2 2 2" ]
+    [ "$(printf 'dex\n' | "$TEST_DIR/shim/awk" -v RS='\001' -F'|' '{ print split($0, a), NF }')" = "2 1" ]
+    # and a program holding the word split where no call is read is refused, never run unrewritten
+    run "$TEST_DIR/shim/awk" 'BEGIN { print "a split, unread" }'
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"bwk_split_awk: the program could not be rewritten"* ]] || false
+    r11a_config "$(r12d2_dot_config zz)"
+    # W1: Dex's entry, dex and p at byte 36 of a piece of 37 bytes or more
+    l2="0123456789abcp0123456789"
+    r12d_commit_file config/app.env '%s\n%s\n' "$(r12d_zz)" "$l2"
+    [ "$(head -c 37 "$REPO/config/app.env" | tail -c 1)" = p ]          # the premise: the piece is the file's added lines, and its byte 36 is p
+    [ "$(( $(wc -c < "$REPO/config/app.env") ))" -eq 48 ]
+    [ "$(head -c 2 "$REPO/config/app.env")" = zz ]                     # no signature leads it
+    : > "$TEST_DIR/calls.bwk"
+    push_main_through_hook_with_shim
+    [ -s "$TEST_DIR/calls.bwk" ]                                         # the hook's awk ran through the shim
+    macos_refused_as zz-key config/app.env
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output" | head -n 1)" = "INF scanned ~48 bytes" ]   # the scan of record read the 48 bytes alone: no ~ line
+    # W2: Dey's entry, dey, dex at byte 40 and p at byte 76 of a piece of 101 bytes or more, byte 36 not p
+    git -C "$REPO" reset -q --hard "$BASE"
+    l2="$(printf '%s' 0123456789 0123456789 0123456789 0123456789 0123456789 012)p$(printf 'q%.0s' $(seq 1 30))"
+    r12d_commit_file config/app.env '%s\n%s\n' "$(r12d_zz)" "$l2"
+    [ "$(head -c 77 "$REPO/config/app.env" | tail -c 1)" = p ]
+    [ "$(head -c 37 "$REPO/config/app.env" | tail -c 1)" != p ]
+    [ "$(( $(wc -c < "$REPO/config/app.env") ))" -eq 108 ]
+    : > "$TEST_DIR/calls.bwk"
+    push_main_through_hook_with_shim
+    [ -s "$TEST_DIR/calls.bwk" ]
+    macos_refused_as zz-key config/app.env
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output" | head -n 1)" = "INF scanned ~108 bytes" ]
+    # W3: Dex's entry again, its piece led by d, the first byte of dex, so the entry is tried by that byte and tmatch's
+    # split alone gives the empty alternative that matches (W1 and W2 need both splits: types', which files the entry
+    # under every first byte, and tmatch's)
+    git -C "$REPO" reset -q --hard "$BASE"
+    l2="012345678p0123456789"
+    r12d_commit_file config/app.env 'dev %s\n%s\n' "$(r12d_zz)" "$l2"
+    [ "$(head -c 37 "$REPO/config/app.env" | tail -c 1)" = p ]
+    [ "$(head -c 4 "$REPO/config/app.env")" = "dev " ]
+    [ "$(( $(wc -c < "$REPO/config/app.env") ))" -eq 48 ]
+    : > "$TEST_DIR/calls.bwk"
+    push_main_through_hook_with_shim
+    [ -s "$TEST_DIR/calls.bwk" ]
+    macos_refused_as zz-key config/app.env
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output" | head -n 1)" = "INF scanned ~48 bytes" ]
+}
+
+@test "macOS awk (2026-09-30, build 3, the seven reds' shapes): under the same awk, the pushes of the seven macOS reds that failed closed behave as under any other awk: a file led by a zip signature (round 9d), a hunk and a new file led by Mach-O's BE BA FE CA (round 12d) and the clean merges of a zip path and a pdf path (round 10a) pass behind the ~ line; TildeMZ and TildeZZ publish, the stated limit for a signature-led first line (round 12d2, ITEM R); the offset class is refused on the byte figure and its controls pass (round 12d2, ITEM D); and the type table check finds the hook's ~ line where gitleaks skips, no mismatch (round 12d); before the fix, under that awk, each push was refused on the byte figure, or the check named mismatches, where split() gave amr's entry an empty alternative" {
+    local kind sig opath last
+    r11a_base
+    bwk_split_awk
+    # round 9d: a file led by a zip signature, read behind the ~ line
+    printf 'PK\003\004\024\000\nnothing here\n' > "$REPO/aa.zip"
+    git -C "$REPO" add aa.zip
+    git -C "$REPO" commit -qm "a zip signature, then text"
+    push_main_through_hook_with_shim
+    macos_passes
+    [[ "$output" == *"scanned ~22 bytes"* ]] || false
+    # round 12d: Mach-O's BE BA FE CA leading a hunk's first added line and a new file's first line
+    r12d_base_file src/raw.txt 'a\nb\nc\nd\n'
+    r12d_commit_file src/raw.txt 'a\n\276\272\376\312 magic-looking text line\nb\nc\nd2\n'
+    r12d_commit_file src/raw2.txt '\276\272\376\312 magic-looking text line\nsecond line\n'
+    push_main_through_hook_with_shim
+    macos_passes
+    # round 10a: clean merges of a zip path and of a pdf path, each resolved to a version led by its signature
+    for kind in zip pdf; do
+        if [ "$kind" = zip ]; then sig='PK\003\004'; else sig='%%PDF-1.4\n'; fi
+        printf "$sig"'\0base\n' > "$REPO/x.$kind"
+        git -C "$REPO" add "x.$kind"
+        git -C "$REPO" commit -qm "a $kind"
+        git -C "$REPO" push -q origin main
+        git -C "$REPO" checkout -q -b "side-$kind"
+        printf "$sig"'\0side\n' > "$REPO/x.$kind"; git -C "$REPO" commit -qam "one side"
+        git -C "$REPO" checkout -q main
+        printf "$sig"'\0main\n' > "$REPO/x.$kind"; git -C "$REPO" commit -qam "the other"
+        git -C "$REPO" merge -q --no-ff --no-commit "side-$kind" > /dev/null 2>&1 || :
+        printf "$sig"'\0resolved\nclean text\n' > "$REPO/x.$kind"
+        r10a_merge_commit "x.$kind"
+        push_main_through_hook_with_shim
+        macos_passes
+    done
+    # round 12d2, ITEM R: TildeMZ and TildeZZ publish, the stated limit, as under any awk
+    r11a_config "$(r12d2_dot_config nuget)"
+    r12d_commit_file deploy/prod.nuget.config 'MZ %s\n<!-- prod -->\n' "$(r12d_cred)"
+    push_main_through_hook_with_shim
+    macos_passes
+    r11a_config "$(r12d2_dot_config zz)"
+    r12d_commit_file config/app.env 'MZ=%s\nMODE=prod\n' "$(r12d_zz)"
+    push_main_through_hook_with_shim
+    macos_passes
+    # round 12d2, ITEM D: ustar at byte 255 behind the MZ-led first line's ~ line is refused on the byte figure; at 257,
+    # and a lone ustar at 257 or DICM at 128, pass
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    { printf 'MZ first line\n'; head -c 241 /dev/zero | tr '\0' q; printf 'ustar tail\nb\n'; } > "$REPO/data.txt"
+    [ "$(head -c 260 "$REPO/data.txt" | tail -c 5)" = ustar ]
+    git -C "$REPO" add data.txt
+    r11b_commit "an MZ-led text with ustar at byte 255"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the CREDENTIAL scan read 0 of the 270 bytes of added lines it was fed; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"ADDS a credential"* ]] || false
+    at_base
+    { printf 'MZ first line\n'; head -c 243 /dev/zero | tr '\0' q; printf 'ustar tail\nb\n'; } > "$REPO/data.txt"
+    { printf 'hello\n'; head -c 251 /dev/zero | tr '\0' q; printf 'ustar tail\nb\n'; } > "$REPO/data2.txt"
+    { printf 'hello\n'; head -c 122 /dev/zero | tr '\0' q; printf 'DICM tail\nb\n'; } > "$REPO/data3.txt"
+    git -C "$REPO" add data.txt data2.txt data3.txt
+    git -C "$REPO" commit -q --amend -m "ustar at byte 257 behind MZ, and lone offset signatures"
+    push_main_through_hook_with_shim
+    macos_passes
+    # round 12d: the type table, the hook's piecing text run by the same awk
+    opath=$PATH
+    PATH="$TEST_DIR/shim:$PATH"
+    run r12d_types_check "$HOOK" "$TEST_DIR/types"
+    PATH=$opath
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"mismatch: "* ]] || false
+    [[ "$output" != *"framed: "* ]] || false
+    last=${output##*$'\n'}
+    [[ "$last" == "types: entries="* ]] || false
+    [ "$(sed -E 's/.*entries=([0-9]+).*/\1/' <<< "$last")" -ge 50 ]
+    [ "$(sed -E 's/.*pieces=([0-9]+).*/\1/' <<< "$last")" -ge 250 ]
+    [ "$(sed -E 's/.*skipped=([0-9]+).*/\1/' <<< "$last")" -ge 90 ]
+    [ "$(grep -c '^rewrote ' "$TEST_DIR/calls.bwk")" -ge 1 ]              # the hook's awk and the check's ran through the shim
+}
+
+bsd_xargs() {   # an xargs in $TEST_DIR/shim that sizes its batches as BSD xargs does and fails as XNU's exec does (the case below); a line per batch in calls.bsdx: "batch", its arguments, their bytes (the utility's words included, each with its NUL), the exec's footprint and the stack limit, in bytes
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'log=%q\n' "$TEST_DIR/calls.bsdx"
+        cat <<'SH'
+# Apple's shell_cmds xargs/xargs.c: without -s a batch holds at most 5,000 arguments and kern.argmax (1 MB, fixed) less
+# MAXPATHLEN (1,024), less each environment string with its NUL and a pointer, less a pointer, and each argument and
+# each of the utility's words reserves a pointer beside its bytes; with -s the given size is the limit, no environment
+# counted and no pointer reserved. XNU (bsd/kern/kern_exec.c) copies the argument and environment strings, the
+# executable's path and a pointer for each onto the new stack, sized by the stack limit, and fails the exec with EFAULT
+# past it: counted here as those bytes and pointers and 1,024 more for the strings the kernel adds after the environment
+# and the alignment. A spawn that fails prints xargs: <utility>: Bad address and exits 126, as xargs does.
+export LC_ALL=C
+[ "${1:-}" = -0 ] || { echo "bsd_xargs: -0 first, as the hook calls it" >&2; exit 2; }
+shift
+size=""
+if [ "${1:-}" = -s ]; then size=$2; shift 2; fi
+[ "$#" -gt 0 ] || { echo "bsd_xargs: no utility" >&2; exit 2; }
+util=("$@")
+envb=$(env | wc -c); envb=$((envb))
+envc=$(compgen -e | wc -l); envc=$((envc))
+stack=$(ulimit -s)
+if [ "$stack" = unlimited ]; then stack=0; else stack=$((stack * 1024)); fi
+if [ -n "$size" ]; then nline=$size; pad=0; else nline=$((1048576 - 1024 - envb - 8 * envc - 8)); pad=8; fi
+cnt=0
+for w in "${util[@]}"; do cnt=$((cnt + ${#w} + 1 + pad)); done
+room=$((nline - cnt - 1))
+[ "$room" -gt 0 ] || { echo "xargs: insufficient space for command" >&2; exit 1; }
+path=$(command -v "${util[0]}")
+rval=0
+run_batch() {
+    local bytes=0 x foot
+    for x in "${util[@]}" "${b[@]}"; do bytes=$((bytes + ${#x} + 1)); done
+    foot=$((bytes + envb + ${#path} + 1 + 8 * (${#util[@]} + ${#b[@]} + 1 + envc + 1) + 1024))
+    printf 'batch %d %d %d %d\n' "${#b[@]}" "$bytes" "$foot" "$stack" >> "$log"
+    if [ "$stack" -gt 0 ] && [ "$foot" -gt "$stack" ]; then echo "xargs: ${util[0]}: Bad address" >&2; exit 126; fi
+    "${util[@]}" "${b[@]}" || rval=1
+}
+b=()
+used=0
+while IFS= read -r -d '' a || [ -n "$a" ]; do
+    [ $((${#a} + 1 + pad)) -le "$room" ] || { echo "xargs: insufficient space for argument" >&2; exit 1; }
+    if [ "${#b[@]}" -ge 5000 ] || [ $((used + ${#a} + 1 + pad * (${#b[@]} + 1))) -gt "$room" ]; then run_batch; b=(); used=0; fi
+    b+=("$a")
+    used=$((used + ${#a} + 1))
+done
+[ "${#b[@]}" -eq 0 ] || run_batch
+exit "$rval"
+SH
+    } > "$TEST_DIR/shim/xargs"
+    chmod 755 "$TEST_DIR/shim/xargs"
+}
+
+@test "macOS xargs (2026-09-30, build 3, the directories' batch): under an xargs that sizes its batches as BSD xargs does (kern.argmax, a fixed 1 MB, less the environment, at most 5,000 arguments; given -s, that size and no environment counted) and fails as XNU's exec does, Bad address and exit 126, when a batch's strings, their pointers and the environment pass the stack limit, 1,000 one-line .yaml files in one commit, pushed for real under ulimit -s 512 with an exported 80,000-byte variable and a TMPDIR 242 bytes deep, pass, both byte figures agreeing, the 2,000 directories made over several mkdirs, each exec within the stack (refused before the fix: xargs, running mkdir, exited 126, the whole list one batch past the stack, as in the macOS dispatch); the same xargs given the list as the hook gave it before the fix, with no -s, fails so" {
+    local d td
+    r9d_base
+    bsd_xargs
+    r11c_yaml_files k8s 1000
+    d="$(printf 'd%.0s' $(seq 1 120))"
+    td="$TEST_DIR/$d/$d"
+    mkdir -p "$td"
+    R11C_PAD="$(head -c 80000 /dev/zero | tr '\0' x)"
+    export R11C_PAD
+    # the witness: 2,000 directories as long as the push's, handed over as the hook handed them before the fix, are one
+    # batch, past the 512 KB stack. The list is written here by the printf builtin and read from a file, so the shell
+    # that lowers the stack has a short argv: XNU refuses a stack limit below the depth already in use (dosetrlimit in
+    # its bsd/kern/kern_resource.c), and the 2,000 paths as that shell's arguments put 590 KB or more above its first
+    # stack frame, so ulimit -s 512 would fail there before xargs ran (the build's audit, X1; Linux has no such check)
+    printf '%s\0' "$td/romp-pre-push.w1tnss/creds."{p,q}/{1..1000} > "$TEST_DIR/w-list"
+    run bash -c 'ulimit -s 512 && "$1" -0 mkdir -- < "$2"' _ "$TEST_DIR/shim/xargs" "$TEST_DIR/w-list"
+    [ "$status" -eq 126 ]
+    [[ "$output" == *"xargs: mkdir: Bad address"* ]] || false
+    [ ! -e "$td/romp-pre-push.w1tnss" ]
+    [ "$(grep -c '^batch ' "$TEST_DIR/calls.bsdx")" -eq 1 ]
+    [ "$(awk '$1 == "batch" { print $2 }' "$TEST_DIR/calls.bsdx")" -eq 2000 ]
+    : > "$TEST_DIR/calls.bsdx"
+    # the push
+    mkdir -p "$TEST_DIR/hooks"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'export PATH=%q:"$PATH"\n' "$TEST_DIR/shim"
+        printf 'exec %q "$@"\n' "$HOOK"
+    } > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run env TMPDIR="$td" bash -c 'ulimit -s 512 && exec git -C "$1" push origin main' _ "$REPO"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+    unset R11C_PAD
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]] || false
+    [[ "$output" != *"Bad address"* ]] || false
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~12000 bytes\nINF scanned ~12000 bytes')" ]   # 1,000 pieces of 12 bytes, then their copies
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
+    # the 2,000 directories went over several mkdirs, each exec within the stack
+    [ "$(grep -c '^batch ' "$TEST_DIR/calls.bsdx")" -ge 2 ]
+    [ "$(awk '$1 == "batch" { n += $2 } END { print n + 0 }' "$TEST_DIR/calls.bsdx")" -eq 2000 ]
+    [ -z "$(awk '$1 == "batch" && $4 > $5' "$TEST_DIR/calls.bsdx")" ]
 }

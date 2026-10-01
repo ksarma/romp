@@ -373,12 +373,23 @@ jobs:
   shell:
     name: Shell (bats, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Generous on purpose: the suite took ~1min on Linux when this was set but
-    # ~16min on macOS, so anything near 15 would kill a PASSING job. Run bats has
-    # grown since (700 s on Linux at the fork's main 1d591384e, run 36388144219).
-    # The vendored tooling tests that ran after it moved to a job of their own
-    # (vendored-tooling, below) instead of this cap being raised to hold them.
-    timeout-minutes: 35
+    # A cap for each OS, in the python job's form (its per-OS expression), each the slowest
+    # measured or projected job plus 10 minutes, rounded up to a multiple of 5: the 10 minutes
+    # exceed the 180 s per-test bound bats is given below plus setup, the margin the python
+    # job's rule requires over its own 600 s per-test bound. Linux, 45: fork PR 940's head
+    # be4c8e0ab took 32 min 1 s in its PR run (job 110071521217) and 29 min 0 s in its dispatch
+    # (job 110071618264); main's own Linux job took 26 min 39 s to 30 min 15 s over its three
+    # runs before (jobs 110069374401 and 109591223429 the two ends), which gives 45 by this
+    # rule. macOS, 55: the dispatch at be4c8e0ab (job 110071618124), the first with gitleaks
+    # installed in this cell and so the first to run the credential cases here, was cancelled at
+    # 35 min 31 s by the flat 35-minute cap then in force, after 1,445 of its 1,631 cases
+    # (1.45 s a case); the 186 cases left took 75 s in PR 937's macOS cell (job 109887118335,
+    # the same files), and that cell's bats step ended 273 s after its last case (most likely a
+    # fake head's sleep 300 in tests/shell-portability.bats holding the output open: the step
+    # ended 1.5 s after that sleep's 300 s), so the job projects to about 41 min 19 s, and 55.
+    # The vendored tooling tests that ran after Run bats moved to a job of their own
+    # (vendored-tooling, below) on 2026-09-28 instead of this cap being raised to hold them.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 45 }}
     strategy:
       fail-fast: false
       matrix:

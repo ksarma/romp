@@ -46,7 +46,8 @@ literal, and any change to it is red until the literal changes with it, on purpo
    and that module says what the values held must mean (one weekly cron at a quiet hour Pacific, the manual dispatch kept)
    and ties them to every matrix expression's events, so a change made on purpose updates ON_LINES here and must still
    pass that module.
-4. The Shell job's cap line EQUALS SHELL_CAP_LINE (35 minutes): it is the only line at four spaces in that job holding
+4. The Shell job's cap line EQUALS SHELL_CAP_LINE (55 minutes on macOS, 45 on Linux, in the python job's per-OS form, set
+   from fork PR 940's measurement on 2026-09-30; a flat 35 until then): it is the only line at four spaces in that job holding
    "timeout", so a second copy, bare, quoted or as an explicit key, is red too (one whose quoted key spells the word through
    an escape is not read here; actionlint and tests/test_ci_sdk_pin.py refuse it). And the Shell job's lines that name
    node as a word or hold --test EQUAL SHELL_NODE_LINES, the manager handshake step's name line and run line. The ruling
@@ -184,8 +185,10 @@ ON_LINES = (
     '    - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the same matrix a manual dispatch does',
     "",
 )
-# The Shell job's cap: the only line at four spaces in that job that holds "timeout".
-SHELL_CAP_LINE = "    timeout-minutes: 35"
+# The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
+# the slowest measured or projected job plus 10 minutes, rounded up to a multiple of 5 (ci.yml's comment above the line
+# carries the measurement: fork PR 940 at be4c8e0ab, Linux 32 min 1 s, macOS projected at about 41 min 19 s).
+SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 45 }}"
 # The Shell job's lines that name node as a word or hold --test: the manager handshake step's name and run lines (T224).
 SHELL_NODE_LINES = (
     "      - name: Manager handshake tests (node --test)",
@@ -565,12 +568,14 @@ class VendoredToolingJob(unittest.TestCase):
             "printed above, check that tests/test_ci_macos_schedule.py still passes, and say in the commit why the triggers "
             "changed."))
 
-    def test_4_the_shell_cap_stays_35(self):
+    def test_4_the_shell_cap_is_55_on_macos_and_45_on_linux(self):
         self.assertNoFaults(check_shell_cap(raw()), (
-            "The Shell job's cap changed (above). The vendored tooling step left that job so its 35-minute cap could stay: "
-            "raising it would hide the growth the move was meant to show, and a lower cap can cut a passing macOS cell (Run "
-            "bats alone took about 16 minutes there, the Shell job's comment says). If the change is meant, update "
-            "SHELL_CAP_LINE in tests/test_ci_vendored_job.py and say why in the commit."))
+            "The Shell job's cap changed (above). It is set per OS from a measurement, the slowest measured or projected "
+            "job plus 10 minutes rounded up to a multiple of 5 (ci.yml's comment above the line: fork PR 940 at "
+            "be4c8e0ab, Linux 32 min 1 s, macOS projected at about 41 min 19 s after the 35-minute cap cancelled it at 35 "
+            "min 31 s). A higher cap hides growth the vendored tooling move was meant to show, and a lower one cuts a "
+            "passing cell. If the change is meant, measure the job again, update SHELL_CAP_LINE in "
+            "tests/test_ci_vendored_job.py and ci.yml's comment, and say why in the commit."))
 
     def test_4_the_shell_job_runs_no_node_test_but_the_handshake(self):
         self.assertNoFaults(check_shell_node(raw()), (
@@ -727,8 +732,16 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
             (check_on_block, "pull_request dropped", "top", "  pull_request:", []),
             (check_on_block, "a branches filter on push widened", "top", "    branches: [main]", ["    branches: [main, 'x/**']"]),
             (check_top_keys, "a second, quoted on key", "top", "concurrency:", ["\"on\": [workflow_dispatch]", "concurrency:"]),
-            (check_shell_cap, "the Shell cap 35 to 12", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 12"]),
-            (check_shell_cap, "the Shell cap 35 to 40", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 40"]),
+            (check_shell_cap, "the Shell cap back to the flat 35", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 35"]),
+            (check_shell_cap, "the Shell cap a flat 45", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 45"]),
+            (check_shell_cap, "the macOS Shell cap 55 to 60", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 55", "&& 60")]),
+            (check_shell_cap, "the macOS Shell cap 55 to 50", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 55", "&& 50")]),
+            (check_shell_cap, "the Linux Shell cap 45 to 35", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 45", "|| 35")]),
+            (check_shell_cap, "the Linux Shell cap 45 to 50", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 45", "|| 50")]),
+            (check_shell_cap, "the two Shell caps swapped", "shell", SHELL_CAP_LINE,
+             ["    timeout-minutes: ${{ matrix.os == 'macos-latest' && 45 || 55 }}"]),
+            (check_shell_cap, "the Shell caps keyed on the other OS", "shell", SHELL_CAP_LINE,
+             ["    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 55 || 45 }}"]),
             (check_shell_cap, "a second Shell cap after the steps", "shell", SHELL_NODE_LINES[1],
              [SHELL_NODE_LINES[1], "    \"timeout-minutes\": 90"]),
             (check_shell_node, "the step put back in the Shell job", "shell", SHELL_NODE_LINES[1],

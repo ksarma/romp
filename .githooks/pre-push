@@ -770,9 +770,10 @@
 #       which ignored the environment's share of the argument limit, and a
 #       clean push under an exported 80,000-byte variable and ulimit -s 512
 #       was refused with bash's Argument list too long line and no romp line).
-#       Its end: xargs and mkdir print nothing, and their answer is the
-#       directories on disk, so a run that stops early leaves a directory it
-#       was given absent, which the test counts
+#       Its end: the answer is the directories on disk, never output (mkdir
+#       prints nothing, and xargs nothing but GNU's warning that -s passes its
+#       limit, in the band piece_dirs' comment names), so a run that stops
+#       early leaves a directory it was given absent, which the test counts
 #   the ERR line of the scanner log
 #       the answer is always a word: none for a log with no ERR line, or
 #       error, a tab and the first such line, the awk stripping colour codes
@@ -1397,7 +1398,15 @@
 # redefined as ^.*<add key=... with the first line of a nuget config led by
 # MZ, and TildeZZ, a repository rule ^.*zzkey_ with the first line of
 # config/app.env led by MZ=; and TildeZZ's rule written with (?m)^ is
-# refused (tests/pre-push-hook.bats, round 12d2, the ITEM R cases). And the
+# refused (tests/pre-push-hook.bats, round 12d2, the ITEM R cases). That limit
+# holds as stated under every awk since item 40's build 3: until then, under
+# the awk macOS ships, whose split() cut the type table's entries at a newline
+# as well as at | (the type table's paragraph, above CRED_PIECES_AWK), the ~
+# line also led a piece no signature leads, one of 37 bytes or more with p at
+# byte 36 or of 101 or more with p at byte 76, and the limit reached a
+# credential on such a piece's first line (its witnesses W1 to W3, published
+# under that awk before the fix and refused at it; tests/pre-push-hook.bats,
+# the case titled "macOS awk (2026-09-30, build 3, the witness)"). And the
 # offset class, a false refusal: a piece that takes the ~ line and holds
 # ustar at byte 255, DICM at 126 or CD001 at 32,767 has that signature moved,
 # by the line's two bytes, onto the offset the type check reads (257, 128 or
@@ -4769,7 +4778,7 @@ scan_identifiers() {
 # add, two kept back while the ~ line is undecided, so no piece passes CAP);
 # the ring (keep and forget); newpiece (the index lines, the replay); emit (a
 # line, or the windows of a long one); shut; the type table (types, sig,
-# tmatch, mkv, hat and skipped); choose, the path-scoped selection by a
+# alts, tmatch, mkv, hat and skipped); choose, the path-scoped selection by a
 # path's basename (the header); and letters, a piece's number spelled for its
 # second copy's name. Each awk program is this text followed by its own
 # rules.
@@ -4789,19 +4798,31 @@ scan_identifiers() {
 # bytes there, alternatives joined by | (no signature holds that byte), or m
 # and a word: the matroska search, the word's first place in the first 4,096
 # bytes at an offset of 3 or more, B and 0x82 three and two bytes before it.
-# Left out, each with its reason: every matcher that needs a NUL byte, which
-# no piece holds (tr maps NUL to 0x01 ahead of every writer): wasm, xz, eot,
-# the four fonts, jpeg2000, cr2, tiff, ico and mpeg, and mov's first form;
-# heif, whose box size, the first four bytes read as a number, would have to
-# be at most the piece's length, and four bytes with no NUL read at least
-# 16,843,009; zstd's skippable frames, for the same reason in bytes 4 to 7;
-# rar's 0x00 at byte 6 (a NUL there reads 0x01, the byte the entry names);
-# and epub, docx, xlsx, pptx and deb, whose signatures begin with zip's
-# PK\003\004 or ar's !<arch>, entries the table holds. The deriving case
-# (tests/pre-push-hook.bats, round 12d, the case titled "the type table is
-# DERIVED") builds a piece for each entry's alternatives and for each
-# matcher of h2non/filetype v1.1.3, runs gitleaks on it and compares its
-# skip with skipped's answer.
+# The alternatives are cut apart by alts, at each | with index(), never by
+# split(): the awk macOS ships (BWK's, Apple's awk-40) also ends a field at
+# every newline when split() is given a one-character separator other than a
+# blank, and three entries' bytes end in a newline (amr's #!AMR, Dex's dex and
+# Dey's dey), so under it split() gave each an empty alternative, which every
+# piece matches: amr's, a p entry, left each signature-led piece of 12 bytes
+# or more without its ~ line, which the byte figure then refused, and Dex's
+# and Dey's put the ~ line ahead of text no signature leads, of 37 bytes or
+# more with p at byte 36 or of 101 or more with p at byte 76 (item 40's build
+# 3; tests/pre-push-hook.bats, the macOS awk cases: the pin that the piecing
+# text calls split() with no one-character separator but a blank or a newline
+# (both split alike under BWK awk) and holds the word split nowhere else, and
+# the witnesses under an awk that splits as macOS's does). Left out, each with
+# its reason: every matcher that needs a NUL byte, which no piece holds (tr
+# maps NUL to 0x01 ahead of every writer): wasm, xz, eot, the four fonts,
+# jpeg2000, cr2, tiff, ico and mpeg, and mov's first form; heif, whose box
+# size, the first four bytes read as a number, would have to be at most the
+# piece's length, and four bytes with no NUL read at least 16,843,009; zstd's
+# skippable frames, for the same reason in bytes 4 to 7; rar's 0x00 at byte 6
+# (a NUL there reads 0x01, the byte the entry names); and epub, docx, xlsx,
+# pptx and deb, whose signatures begin with zip's PK\003\004 or ar's !<arch>,
+# entries the table holds. The deriving case (tests/pre-push-hook.bats, round
+# 12d, the case titled "the type table is DERIVED") builds a piece for each
+# entry's alternatives and for each matcher of h2non/filetype v1.1.3, runs
+# gitleaks on it and compares its skip with skipped's answer.
 CRED_PIECES_AWK='
         function pieces_begin() {
             bytes = 0; pbytes = 0; pieces = 0; cur = ""; curq = 0; q = 0; rh = 1; rt = 0; rb = 0
@@ -4914,9 +4935,10 @@ CRED_PIECES_AWK='
             sig("iso", "s", 32774, 0, 32769, "CD001")
             sig("macho", "s", 4, 0, 0, "\376\355\372\317|\376\355\372\316|\276\272\376\312|\317\372\355\376|\316\372\355\376|\312\376\272\276")
             for (k = 1; k <= ns; k++)
-                if (to[k, 1] == 0) { m = split(tb[k, 1], a, "|"); for (i = 1; i <= m; i++) { c = substr(a[i], 1, 1); if (index(tk[c] " ", " " k " ") == 0) tk[c] = tk[c] " " k } }
+                if (to[k, 1] == 0) { m = alts(tb[k, 1], a); for (i = 1; i <= m; i++) { c = substr(a[i], 1, 1); if (index(tk[c] " ", " " k " ") == 0) tk[c] = tk[c] " " k } }
                 else tk[""] = tk[""] " " k
         }
+        function alts(s, a,   n, i) { if (s == "") return 0; n = 0; while ((i = index(s, "|")) > 0) { a[++n] = substr(s, 1, i - 1); s = substr(s, i + 1) } a[++n] = s; return n }
         function hat(o, k,   i, p, L, s, r) {
             r = ""; p = 0
             for (i = 1; i <= hn && p < o + k; i++) {
@@ -4932,7 +4954,7 @@ CRED_PIECES_AWK='
             for (j = 1; j <= 3 && tb[k, j] != ""; j++) {
                 o = to[k, j]; b = tb[k, j]
                 if (o == "m") { if (!mkv(h, b)) return 0; continue }
-                m = split(b, a, "|"); ok = 0
+                m = alts(b, a); ok = 0
                 for (i = 1; i <= m && !ok; i++) ok = ((o + length(a[i]) <= 4096 ? substr(h, o + 1, length(a[i])) : hat(o, length(a[i]))) == a[i])
                 if (!ok) return 0
             }
@@ -6824,35 +6846,63 @@ attr_reads() {   # <count of paths the NAME LISTING read recorded>
 # The per-piece directories of the path-scoped copies and the probe run (its
 # arguments: <scratch>/creds.p/<piece> and creds.q/<piece> for each selected
 # piece, handed over in the shell, where no exec's limit applies), made by
-# xargs, which runs mkdir as often as the list needs and sizes each exec's
-# arguments around what the environment leaves of the system's argument limit
-# (GNU findutils 4.9.0 on the box): Linux counts an exec's arguments and its
+# xargs, which runs mkdir as often as the list needs, each mkdir given at most
+# 16,384 bytes of command line (-s 16384: the command's words and the
+# arguments, each string with its NUL). GNU xargs (findutils 4.9.0 on the box)
+# would size each exec's arguments itself, around what the environment leaves
+# of the system's argument limit: Linux counts an exec's arguments and its
 # environment against one limit, a quarter of the stack limit and never below
-# 128 KB, so a batch of fixed size, 64 KB of arguments from round 10b (flag
-# 131's bound), failed under a large exported environment and a low stack
+# 128 KB, so a batch of 64 KB of arguments, round 10b's fixed size (flag 131's
+# bound), failed under a large exported environment and a low stack
 # limit, and bash's Argument list too long line ended the hook with no romp
 # line on a clean push (an exported 80,000-byte variable under ulimit -s 512;
 # the round 10 rulings' D, 2026-09-26), as one mkdir for every piece had past
-# the limit itself until round 10b. printf is a builtin, so the list reaches
-# xargs with no exec of its own. With about 127,000 bytes of environment under
-# ulimit -s 512 no process can be exec'd, bash and git included, so no push
-# runs; in the narrow band where bash starts and the hook's own execs do not
-# fit, the first exec that does not fit may be the scratch mkdir of creds.d,
-# creds.p and creds.q (scan_credentials, ahead of this step), which ends the
-# hook under set -e with bash's Argument list too long line and no romp line:
-# the push is still refused, never published, and the header's scratch
-# paragraph (the scratch writers set -e ends the hook at; the round 7
-# refuter, 2026-09-23) covers that writer (the round 11 rulings' G,
-# correcting round 10's D, which said the git reads ahead of this step refuse
-# by name in all of the band). Its status, under
-# pipefail, is printf's or xargs', judged by scan_credentials (judged_read,
-# the DIRECTORIES read), which then tests each directory in the shell, so a
-# mkdir that failed, or directories left unmade, refuse the push with a romp
-# line naming them, never bash's line: this writer has left the scratch
-# writers set -e ends the hook at (the header's scratch paragraph).
-piece_dirs() {   # <directory>...: makes each; prints nothing
+# the limit itself until round 10b. BSD xargs, macOS's, sizes its batch by the
+# argument limit alone, kern.argmax, a fixed 1 MB, less the environment, and
+# at most 5,000 arguments, never by the stack limit (Apple's shell_cmds,
+# xargs/xargs.c), while XNU copies an exec's argument and environment strings
+# and a pointer for each onto the new process's stack, which the stack limit
+# sizes, and fails the exec with EFAULT when they pass it (xnu,
+# bsd/kern/kern_exec.c): under ulimit -s 512 a batch of the 8,000 directories
+# two cases of tests/pre-push-hook.bats push (round 10b's G and round 11c's D
+# witness) passed 512 KB, xargs printed mkdir: Bad address and exited 126, and
+# the push was refused (item 40's build 3, the macOS dispatch of fork PR 940).
+# Hence -s, and its value. Given -s, BSD xargs caps a batch's strings at that
+# size and counts neither the environment nor the per-argument pointer it
+# otherwise reserves, so an exec copies at most 16 KB of arguments and their
+# pointers (8 bytes each, under 4,096 bytes in all at the shortest directory
+# the hook makes, about 32 bytes with its NUL) beside the environment: about
+# 20 KB of a 512 KB stack, where the environment of round 11c's D witness push
+# takes about 84 KB. GNU xargs reads a -s above its own limit (the argument
+# limit less the environment and 2,048 bytes) as too large: it prints that the
+# value should be at most that limit, and uses the limit. 16,384 is under that
+# limit in the cases' setting (45,391 to 45,477 bytes in round 11c's D witness
+# push under ulimit -s 512 on the box, the push that exports the 80,000-byte
+# variable) and passes it only with more than 112,640 bytes of environment
+# under that stack (131,072 less 2,048 less 16,384), near the 128 KB at which
+# no exec fits at all; and a batch holds the longest path mkdir can take
+# (PATH_MAX, 4,096 bytes on Linux and 1,024 on macOS) three times over on
+# Linux and fifteen times on macOS (16,384 bytes less the 9 that mkdir and --
+# take with their NULs), so neither xargs refuses a directory as too long for
+# a batch. printf is a builtin, so the list reaches xargs with no exec of its
+# own. With about 127,000 bytes of environment under ulimit -s 512 no process
+# can be exec'd, bash and git included, so no push runs; in the narrow band
+# where bash starts and the hook's own execs do not fit, the first exec that
+# does not fit may be the scratch mkdir of creds.d, creds.p and creds.q
+# (scan_credentials, ahead of this step), which ends the hook under set -e
+# with bash's Argument list too long line and no romp line: the push is still
+# refused, never published, and the header's scratch paragraph (the scratch
+# writers set -e ends the hook at; the round 7 refuter, 2026-09-23) covers
+# that writer (the round 11 rulings' G, correcting round 10's D, which said
+# the git reads ahead of this step refuse by name in all of the band). Its
+# status, under pipefail, is printf's or xargs', judged by scan_credentials
+# (judged_read, the DIRECTORIES read), which then tests each directory in the
+# shell, so a mkdir that failed, or directories left unmade, refuse the push
+# with a romp line naming them, never bash's line: this writer has left the
+# scratch writers set -e ends the hook at (the header's scratch paragraph).
+piece_dirs() {   # <directory>...: makes each; prints nothing on stdout
     [ "$#" -gt 0 ] || return 0
-    printf '%s\0' "$@" | xargs -0 mkdir --
+    printf '%s\0' "$@" | xargs -0 -s 16384 mkdir --
 }
 
 # The credential scan (the header's paragraph): the ref loop lists each
@@ -7128,13 +7178,17 @@ scan_credentials() {
         # scanner run per push with a selected file and no process per piece,
         # and its directories are made with the additive run's below. Every
         # piece's two directories are made by piece_dirs, xargs running mkdir
-        # as often as the list needs, each exec's arguments sized around what
-        # the environment leaves of the argument limit (piece_dirs' comment:
-        # a batch of fixed size, 64 KB of arguments from round 10b, ignored
-        # the environment's share of that limit, and one mkdir for every
-        # piece, until round 10b, failed past the limit itself; each ended the
-        # hook with bash's Argument list too long line and no romp line on a
-        # clean push). Its status is judged (judged_read) and each directory
+        # as often as the list needs, each mkdir given at most 16,384 bytes
+        # of command line (-s), which BSD xargs and XNU's exec hold under a
+        # 512 KB stack, GNU xargs taking its own smaller limit, with a
+        # warning, when the environment leaves less (piece_dirs' comment: a
+        # batch of 64 KB of arguments, round 10b's, ignored the environment's
+        # share of the argument limit, and one mkdir for every piece, until
+        # round 10b, failed past the limit itself, each ending the hook with
+        # bash's Argument list too long line and no romp line on a clean
+        # push; and until item 40's build 3 BSD xargs, sizing its batch by
+        # its 1 MB limit alone, failed with Bad address under that stack).
+        # Its status is judged (judged_read) and each directory
         # is then tested by the shell, so a mkdir that failed, or directories
         # left unmade, refuse the push naming them, and neither run is made.
         if [ "$scanning" -eq 1 ] && [ -s "$scratch/creds.pindex" ]; then
