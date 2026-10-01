@@ -73,9 +73,10 @@ class KernelUp(unittest.TestCase):
         # The seam is popped for the class and put back by a cleanup registered right here, restore-or-delete
         # (review round 1 of the peers-leak fix, 2026-09-18). tearDown put it back only when a prior value existed,
         # so with the variable unset at setUp the "/nonexistent" the seam test writes outlived the class, and a set
-        # value means "a test with no live kernel" to every postal call on the worker afterwards. Masked in a full
-        # xdist run: ten postal modules write the seam at import, so conftest's guard saw no unset-to-set change. The
-        # module alone, and KernelUpSeamRestore below, are the fails-before.
+        # value means "a test with no live kernel" to every postal call on the worker afterwards. It was masked in a
+        # full xdist run until fork PR #894: ten postal modules wrote the seam at import, so conftest's guard saw no
+        # unset-to-set change; no module writes it at import now. The module alone, and KernelUpSeamRestore below, are
+        # the fails-before.
         self._seam = os.environ.pop("ROMP_SESSIONS_FILE", None)
         self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", self._seam)
 
@@ -105,7 +106,7 @@ class KernelUpSeamRestore(unittest.TestCase):
     """Executed pin for the restore above (review round 1, 2026-09-18): KernelUp's seam test is run through unittest
     with ROMP_SESSIONS_FILE unset, and the variable must be unset afterwards. Red on a tearDown that puts back only a
     prior value ('/nonexistent' is not None), whatever else is collected; conftest's _shared_state_restored names the
-    same leftover, but only in a run that collects no module writing the seam at import."""
+    same leftover."""
 
     def test_the_seam_test_leaves_the_variable_unset_when_it_found_it_unset(self):
         prior = os.environ.pop("ROMP_SESSIONS_FILE", None)

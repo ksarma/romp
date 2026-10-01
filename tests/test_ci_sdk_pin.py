@@ -222,8 +222,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    flag, one of nine passed it, while this docstring, ci.yml and tests/README.md said the cells' plugin set was the
    box's). The rule: every argv
    under tests/ that runs pytest, and every call under tests/ that runs pytest in the calling process, passes
-   -p no:anyio or is in LAUNCHERS_LISTED with a reason (empty: pytest accepts the flag where anyio is absent, so no
-   launcher has had a reason to lack it), and the population is derived from the modules' syntax by
+   -p no:anyio or is in LAUNCHERS_LISTED with a reason (one entry, and it is no launcher: a tuple of module names the
+   census reads as pytest by name; pytest accepts the flag where anyio is absent, so no launcher has had a reason to
+   lack it), and the population is derived from the modules' syntax by
    child_pytest_launchers, keyed on the argv PROPERTY and not a spelling. Among what it reads (_launchers_in's docstring
    states the read in full; round 4's ruling, 2026-09-23, added the positional arguments and the in-process call): a
    list or tuple literal, wherever it is built (in the call, in a helper that passes it on, in a variable extended
@@ -4383,10 +4384,15 @@ FLAG_ARGV = ("-p", "no:anyio")
 FLAG_ONE_TOKEN = "-pno:anyio"
 
 # Launchers that lack the flag, each with the reason that makes that right, keyed (file relative to tests/, enclosing
-# function name). EMPTY: pytest accepts the flag where anyio is absent, so no launcher has had a reason to lack it. An
-# entry must name a live launcher that lacks the flag (ChildPytestLaunchers' stale-entry case), so the table cannot
-# outlive its subject.
-LAUNCHERS_LISTED = {}
+# function name). No launcher is here: pytest accepts the flag where anyio is absent, so no launcher has had a reason to
+# lack it. The one entry is a row the census reads that runs nothing (the reviewer's ruling at fork PR #894's second
+# landing merge, of main at 1d591384e, (3), which lists it here rather than restructure the code to step around the
+# census, so the case
+# stays visible): tests/test_hermetic_kernel_postal.py's _PYTEST_OWN = ("pytest", "_pytest"), at module level, the
+# names of pytest's own top-level packages, which the census reads as pytest by name or path as argv[0]. Its key
+# covers every row at the module level of that file, where the tuple is the one row today. An entry must name a live
+# row that lacks the flag (ChildPytestLaunchers' stale-entry case), so the table cannot outlive its subject.
+LAUNCHERS_LISTED = {("test_hermetic_kernel_postal.py", "<module>"): "a tuple of module names, not a command"}
 
 
 def _str(node):
