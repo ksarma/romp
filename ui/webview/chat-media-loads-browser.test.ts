@@ -20,7 +20,7 @@
 // svg. localhost and 127.0.0.1 are two sites (the registrable domain differs), so a cookie set on 127.0.0.1 with SameSite=Lax is
 // withheld and one with SameSite=None; Secure is sent in Chromium and Firefox: the cookies that browser sends to a host on another
 // site (WebKit sends that Secure cookie to this plain-http host on no cross-site load; see its test below). The message
-// goes through md()'s pipeline as render.ts runs it (marked, sanitizeMd, linkifyPrRefs, mdImgPostPass); the file preview loads the real
+// goes through md()'s pipeline as render.ts runs it (marked, sanitizeMd, linkifyPrRefs, capAuthoredFileUrls, mdImgPostPass); the file preview loads the real
 // render.ts bundle and hovers (and focuses) a link the kernel allows to preview; the notice loads the real feed.ts bundle and posts a
 // notice card. The exact code-line pin on md()'s body ties the probe to the source, so a statement added to it reds the tie and the
 // probe must follow it before the scenes mean anything. Scene 2 serves the same pages under the editor's CSP (extension.ts buildHtml
@@ -183,11 +183,12 @@ function probeBundle(): string {
     'import { sanitizeMd } from "./md-sanitize";',
     'import { applyMdConfig } from "./md-config";',
     'import { linkifyPrRefs } from "./pr-links";',
+    'import { capAuthoredFileUrls } from "./authored-file-caps";',
     'import { mdImgPostPass } from "./preview";',
     'import { userMdHtml } from "./chat-md";',
     "applyMdConfig();",
-    "(window as any).__md = (src: string) => { const clean = sanitizeMd(marked.parse(src) as string); linkifyPrRefs(clean, null); mdImgPostPass(clean); return clean.innerHTML; };",
-    "(window as any).__userMd = (src: string) => { const clean = sanitizeMd(userMdHtml(src)); linkifyPrRefs(clean, null); mdImgPostPass(clean); return clean.innerHTML; };",
+    "(window as any).__md = (src: string) => { const clean = sanitizeMd(marked.parse(src) as string); linkifyPrRefs(clean, null); capAuthoredFileUrls(clean); mdImgPostPass(clean); return clean.innerHTML; };",
+    "(window as any).__userMd = (src: string) => { const clean = sanitizeMd(userMdHtml(src)); linkifyPrRefs(clean, null); capAuthoredFileUrls(clean); mdImgPostPass(clean); return clean.innerHTML; };",
   ].join("\n");
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, sourcefile: "md-media-probe.ts", loader: "ts" } });
   return r.outputFiles[0].text;
@@ -200,9 +201,9 @@ function tsFunction(src: string, head: string): string {
 function codeLines(fn: string): string[] {
   return fn.split("\n").slice(2, -2).map((l) => l.replace(/\s+\/\/.*$/, "").trim()).filter((l) => l && !l.startsWith("//"));
 }
-const MD_BODY = ["try {", "const dirty = marked.parse(src) as string;", "const clean = sanitizeMd(dirty);", "linkifyPrRefs(clean, repo);", "mdImgPostPass(clean);", "return clean.innerHTML;",
+const MD_BODY = ["try {", "const dirty = marked.parse(src) as string;", "const clean = sanitizeMd(dirty);", "linkifyPrRefs(clean, repo);", "capAuthoredFileUrls(clean);", "mdImgPostPass(clean);", "return clean.innerHTML;",
   '} catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }'];
-const USER_MD_BODY = ["try {", "const clean = sanitizeMd(userMdHtml(src));", "linkifyPrRefs(clean, repo);", "mdImgPostPass(clean);", "return clean.innerHTML;",
+const USER_MD_BODY = ["try {", "const clean = sanitizeMd(userMdHtml(src));", "linkifyPrRefs(clean, repo);", "capAuthoredFileUrls(clean);", "mdImgPostPass(clean);", "return clean.innerHTML;",
   '} catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }'];
 
 // ── the content: one inline svg per paint attribute, and the media the strip removes ────────────────
