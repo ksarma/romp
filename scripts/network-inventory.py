@@ -192,7 +192,12 @@ is skipped as a printed remedy only when nothing live follows the printed text: 
 curl ...` and `echo "rate: $(curl ...)"` are sites and a remedy that names a tool inside quotes is not.
 The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven pane
 pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they inline),
-are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted.
+are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted. A
+string constant is scanned whole; a bytes constant is scanned the same way, each byte its own character; and a name bound once, by
+one top-level plain assignment, to a call of `compile` handed a string or bytes constant (and at most a flags argument that is an
+int constant, an attribute of that name, or their `|`) on a name the module binds to the standard library's `re` by binding is
+read through its `.sub`, `.search`, `.match`, `.fullmatch` and `.findall`, which change nothing, so such a call's arguments are
+the page text and the compiled name holds none of its own.
 The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a name
 computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A `_send`
 call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in its
@@ -252,7 +257,16 @@ to itself or to itself encoded by `.encode("utf-8")`, alone or as the branches o
 body.encode("utf-8") if isinstance(body, str) else body`); a loop over a parameter's items (`for k, v in (headers or
 {}).items():`) and an if on a parameter or on that getattr, each into header calls; header values built from string constants
 holding no CR or LF, parameters, the loop's targets, attributes read on self, str, len and a `%` format on a string constant; and
-a signature of positional parameters, none positional-only, with None defaults and no annotation. Any other script-running call
+a signature of positional parameters, none positional-only, with None defaults and no annotation. The definition may run, before
+that one rebinding of the page, statements that build the page it writes, each read for the text it puts there and refused by name
+in any other shape: a stamp `<page> = F(<the definition's own parameters, positional, none starred and no keyword>)`, F a bare
+name the served pass follows only where it proves a module function a plain def and reads its returns; an injection `<page> =
+<page>.replace(<a string constant>, <value>)`, or with a third argument an int constant, whose value the served pass reads as page
+text; a name `<name> = <value>` no parameter, the page or self names, read where an injection's value reads it; a flag `<name> =
+True` or `= False` read only as an if's test; a non-body header write `<parameter> = <a string constant holding no CR or LF>`; and
+an if with no else whose test is a flag, a parameter, getattr of self with a string-constant name and a None or bool default,
+`isinstance(<page>, str)`, `<parameter>.startswith(<a string constant>)`, `<a string constant> in <page>`, or the `and` of those,
+whose body holds these statements. Any other script-running call
 fails the run by name,
 its reason naming the road (a second write, a write through an alias, a print to a stream and, for any other statement or
 expression, its node kind and line among the reasons), among them a keyword body, a starred or `**` call, a definition whose one
@@ -321,8 +335,16 @@ call limit reads none for what a callee does with a container it is handed (its 
 helper the handler calls as a statement that appends a fetch to the handler's container through its caller's frame, and one that
 finds that container among gc.get_objects() by its content and appends a fetch to it); a content type the census reads other than
 as a string constant or a name bound once to one is refused by name too, on
-every version, so no frame can rewrite an intermediate the census had read. Beside that precondition stands the item limit, for
-the local container proof below: what code does with an item of a container the proof reads, or with the object that a name bound
+every version, so no frame can rewrite an intermediate the census had read. Beside that precondition stands a second one, for the
+functions the census follows: the census reads a function as its text defines it, so a change at run time to a function's code,
+its defaults, its keyword defaults, its closure cells or its globals (`__code__`, `__defaults__`, `__kwdefaults__`, `__closure__`
+cell contents, `__globals__`), by any reach, is outside what it reads and passes silently, one witness for each road the reviews
+of this census found: a function the page function defines, reached by `locals().get` with its literal name and its `__code__`
+rewritten; a module function reached as an attribute of the module object by its literal name; a module function found on the
+garbage collector's heap by its name; and a module function found among `inspect.getmembers` over the module object (a lookup by
+name on a namespace mapping whose key is not constant text, which may spell any module function's name at run time, is refused
+instead, where one check does it, as above). Beside that precondition stands the item limit, for the local container proof below:
+what code does with an item of a container the proof reads, or with the object that a name bound
 other than to a literal or a call of parse_qs holds, after the census has read it, in a spelling the proof does not refuse, is
 outside what the census reads and passes silently, one witness for each road the reviews of this census found, each named here: a
 name an unpacking binds from a new object that holds the item, a tuple or list display, a comprehension, or a slice or a copy of
@@ -435,7 +457,16 @@ the seven builtins a page may name, each for what its result is (str, its argume
 with more than one positional argument, a starred argument or a keyword other than `object`, any of which may be an encoding or an
 errors argument that decodes its first, refused by name, an honest decode of bytes failing closed with it; int and float, a
 number, which carries no host, so a call of either that is the builtin is a leaf whose argument the pass does not read, save where
-the call is the base of a receiver, a container or an attribute, where the argument is read as any call's is (the leaf rests on
+the call is the base of a receiver, a container or an attribute, where the argument is read as any call's is; and a digest, a leaf
+of the same kind, carrying no host: a call, with no argument, of the `.digest()` or `.hexdigest()` method of a call of `hmac`'s
+`new` or of one of `hashlib`'s constructors, each module name the standard library's by binding, is a value the census reads none
+of what it is computed from, and a base64 encoding of such a leaf (one of base64's encoders on the name base64 so bound, handed
+the leaf alone), a `.decode()` of one with no argument, a slice of one, and a strip of one (`.strip`, `.lstrip` or `.rstrip` with
+no argument or one string constant) stay leaves, as do a name the census reads by binding whose every value is a leaf and a call
+of a function the census follows as a plain def every return of which is a leaf (whose arguments are then not read either); a
+base64 encoding alone is no leaf and is read as before, and a digest or base64 encoding through `hmac`, `hashlib` or `base64`
+bound other than to the standard library's module is refused by name (the escape-only limit, a digest or constructor whose code is
+replaced at run time, stated with its witness) (the leaf rests on
 the builtin's return, which the census does not read: an `__int__` or an `__index__` returning an int subclass, or a
 `__float__` returning a float subclass, whose `__str__` or `__format__` is overridden is the escape shape that could put text
 there, the stated limit, and the interpreters the census runs on copy such a return to an exact int or float, so its witness
@@ -513,8 +544,11 @@ by binding, is one of the proven forms:
 its one binding (a plain single-name assignment to a list, dict, set or tuple literal or to a call whose return the census reads
 as a value slot, an import's, one of the seven builtins a page may name, a parameter's or a method's on one of those); the base of
 a subscript store by a str or int constant key as the one target of a plain assignment, whose stored value the census reads; the
-receiver of an append or extend of one plain argument the census reads; and the fourth form, a read that hands the container to no
-other code: the receiver of one of the read methods of the type its one binding gives it, or the base of a subscript load on a
+receiver of an append or extend of one plain argument the census reads; a `.pop` on a dict of a constant key, or of a key a for
+target over a tuple of string constants proves constant by binding (the name no parameter and bound no other way in the function),
+with at most a constant default and no keyword or starred argument, which can only remove and hands the container's method no
+object of its own; and the fourth form, a read that hands the container to no other code: the receiver of one of the read methods
+of the type its one binding gives it, or the base of a subscript load on a
 type that has one, wherever it stands, tests included. The read methods are a closed set per type: a dict's get, keys, values,
 items and copy and a subscript load; a list's index, count and copy and a subscript load; a tuple's index and count and a
 subscript load; a set's copy; an index or a count only with a constant argument (with any other, Python hands each item to that
@@ -745,9 +779,15 @@ constant or constants the census folds to text, since any other key, a parameter
 at run time. A module function that a lookup by name on the module object itself reaches with such a key (getattr or attrgetter,
 the module reached through sys.modules, import_module, a parameter or any other way) is not seen, a stated limit, since the census
 does not read which object a lookup's receiver is (its witness: a module function that getattr on `sys.modules[__name__]` reaches
-by a module helper's return and whose `__code__` the file rewrites). Any other callee of those two kinds is refused by name, the
-reason naming the
-condition it fails; a module-level def of int or float is not followed but refused as a call of int or float bound other than to
+by a module helper's return and whose `__code__` the file rewrites). It follows a call whose callee reads a dispatch table, a
+module name one top-level plain assignment binds once to a dict literal whose keys are string constants and whose values are bare
+names of module functions the module binds once, no code changing it after that binding and every other occurrence of the name a
+`.get` callee's receiver, a subscript load's base, or a membership test's right operand (a read, since such a dict's
+`__contains__` is the builtin's, which hands the dict to no other code): the callee is a `.get` of the table with one argument, a
+subscript load of it, or a name a function binds once by a plain assignment to one of those whose every occurrence in the function
+is that binding, a callee or an identity test against None, and each value of the table is followed as a page renderer under the
+same proof. Any other callee of those two kinds is refused by name, the reason naming the condition it fails; a module-level def
+of int or float is not followed but refused as a call of int or float bound other than to
 the builtin (above). It also follows a text method or a file read, and any other method through its receiver, as above, and it
 reads every call's arguments but those of a call of int or float that is the builtin, a leaf, save where the call is a base
 (above). It follows no method called on the
@@ -886,7 +926,7 @@ binding, an import, a def or a class bound once inside a module-level block and 
 any other form inside such a block's body, a name a star import may rebind, a module name in a file that writes its module
 namespace through a computed name or may rewrite it at run time (the reason naming the form and its line), a builtin in a file
 that may rewrite the builtins, and a rebound import, builtin, function or
-class among them), any other kind of expression in a page (a non-empty bytes, float, complex or Ellipsis constant, an f-string's
+class among them), any other kind of expression in a page (a float, complex or Ellipsis constant, an f-string's
 format spec, any other operator, a comparison and a unary expression among them, and a yield, a yield from or an await, whose
 value is what the generator is sent, what the iterator it delegates to returns or what the awaited object returns, not its
 operand), and a route whose body yields no piece and no file slot (each
@@ -1421,6 +1461,9 @@ class Result(object):
         # to text, spells (Scan.visit_Name, Scan.visit_Constant, Scan.fold_def), and the lines where a lookup by name on a namespace
         # mapping takes a key that is not constant text (Scan.ns_string)
         self.fn_refs = {}
+        # per Python file, the occurrences of each module name bound once to a dict literal of bare names (Scan.tuses), which the
+        # dispatch table's proof reads (_Served._table)
+        self.tuses = {}
         # per Python file, the names layer iv's module side finds changed other than by the forms Result.writes records (Scan.cwrites):
         # the served pass reads a module name bound to a call that is one of them as a run-time memo (_Served.cmemos)
         self.changed = {}
@@ -1568,9 +1611,16 @@ class Scan(ast.NodeVisitor):
         # or matched (cescapes); read at the walk's end (cflows) for the module containers the served pass and the route typing read
         self.cdepth, self.cedges, self.cescapes, self.cdropped = {}, {}, {}, set()   # cdropped: the calls a statement drops the return of
         self.cwrites = {}   # name -> the lines of the changes cwrite reads that reach it, besides the ones write records
+        self.cins = []   # the bare names a membership test holds on its right, decided at the walk's end (_membership_reads)
+        # the dispatch tables' occurrences (_Served._table): the module names one top-level plain assignment binds to a dict literal
+        # whose every value is a bare name (tnames), each occurrence of one in any scope and context, (the node, the scopes around it as
+        # kscopes holds them, its role or None), and the roles the walk marks on a name before it reaches it (troles: "bind" its one
+        # binding, "sub" a subscript load's base, "get" the receiver of a call of its get, "in" a membership test's right operand)
+        self.tnames, self.tuses, self.troles = frozenset(), {}, {}
     def visit_Module(self, n):   # the walk, then the routes read from its candidates
         self.ktree = n
         self.fn_names = frozenset(s.name for s in n.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)))
+        self.tnames = frozenset(k for k, v in _module_consts(n).items() if _table_shaped(v))
         for x in _statements(n.body):   # the imports ns_listed and ns_string read, in every scope, gathered before the walk reads any use of their names
             if isinstance(x, ast.ImportFrom):   # `from X import builtins [as Y]` or `from X import operator [as Y]`, any X at any level,
                 # binds that module, as visit_ImportFrom counts the first as importing the builtins module
@@ -1584,6 +1634,7 @@ class Scan(ast.NodeVisitor):
                 self.ns_bmods.update(a.asname or a.name for a in x.names if a.name == "builtins")
                 self.ns_opmods.update(a.asname or a.name for a in x.names if a.name == "operator")
         self.generic_visit(n)
+        self._membership_reads()   # a membership test's right operand, a change of it unless a dict literal of constant keys (B')
         self.cflows()   # layer iv's module side: a module container changed through a name bound to it, or escaping, is written
         self.res.changed[self.rel] = frozenset(self.cwrites)
         flags = _namespace_flags(self.ns_facts, self.ns_stem)   # read once: the forms below and _key_settle's add run-time forms alone
@@ -1592,6 +1643,7 @@ class Scan(ast.NodeVisitor):
         flags["runtime"] = min(self.ns_facts["runtime"])[2] if self.ns_facts["runtime"] else None   # the first form, as _namespace_flags reads it
         self.res.ns[self.rel] = flags
         self.res.fn_refs[self.rel] = (self.fn_uses, self.fn_strs, self.fn_keys)
+        self.res.tuses[self.rel] = self.tuses
         self.routes = routes_of(self.rel, n, self, self.res)
         cands = self.sends + self.ctype_writes + self.responds + self.send_refs   # the route candidates: _page_importers reads the first
         if cands: self.res.candidates[self.rel] = min(c[0].lineno for c in cands)
@@ -2296,6 +2348,7 @@ class Scan(ast.NodeVisitor):
     def visit_Name(self, n):   # a module name a function binds under `global`; a bare `_send` read other than as a call's function
         if isinstance(n.ctx, ast.Store): self.global_bind(n.id, n.lineno)
         elif n.id == "_send" and isinstance(n.ctx, ast.Load) and id(n) not in self.send_funcs: self.send_ref(n)
+        if n.id in self.tnames: self.tuses.setdefault(n.id, []).append((n, tuple(self.kscopes), self.troles.get(id(n))))   # a table's occurrence
         if n.id in self.fn_names and id(n) not in self.ns_facts["callees"]:   # a top-level def's name in any other role, in any context
             self.fn_uses.setdefault(n.id, []).append(((n.lineno, n.col_offset), tuple(self.kscopes)))
         listed = self.ns_listed(n)   # arm ii: the listed callable, computed-name writer or setter the name reaches, by its own name or an import's name for it
@@ -2355,6 +2408,7 @@ class Scan(ast.NodeVisitor):
     def send_ref(self, n):
         self.send_refs.append((n, tuple(self.defs), ".".join(self.stack) or "<module>"))
     def visit_Subscript(self, n):   # a subscript store or delete writes its container
+        if isinstance(n.ctx, ast.Load) and isinstance(n.value, ast.Name): self.troles[id(n.value)] = "sub"   # a table's subscript load
         if isinstance(n.ctx, (ast.Store, ast.Del)) and isinstance(n.value, ast.Name): self.write(n.value.id, n.lineno)
         elif isinstance(n.ctx, (ast.Store, ast.Del)): self.cwrite(n.value, n.lineno)   # layer iv: through an item or an attribute
         self.ns_string(n)   # arm iii: a listed name as a namespace subscript's key
@@ -2428,6 +2482,8 @@ class Scan(ast.NodeVisitor):
     def visit_Assign(self, n):
         self.ns_assign(n.targets, n.value); self.cbind(n.targets, n.value)
         if len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            if not self.stack and not self.kscopes and n.targets[0].id in self.tnames and n.value is _module_consts(self.ktree).get(n.targets[0].id):
+                self.troles[id(n.targets[0])] = "bind"   # a table's one binding
             if not self.stack: self.consts[n.targets[0].id] = n.value
             else: self.bind(n.targets[0].id, n.value)
         self.generic_visit(n)
@@ -2468,8 +2524,35 @@ class Scan(ast.NodeVisitor):
         for o in ops:   # constant), a change of the name it reaches (the dunder hand-off; the 07:37Z ruling's condition 2 on an item)
             if any(type(q) is not ast.Constant for q in ops if q is not o): self.cwrite(o, getattr(o, "lineno", 0))
     def visit_Compare(self, n):   # layer iv: a comparison or `in`, save an identity test, hands each operand to another's method
-        if not all(isinstance(o, (ast.Is, ast.IsNot)) for o in n.ops): self.coperands([n.left] + n.comparators)
+        if len(n.ops) == 1 and isinstance(n.ops[0], (ast.In, ast.NotIn)) and type(n.comparators[0]) is ast.Name:
+            self.troles[id(n.comparators[0])] = "in"   # a table's membership test, its right operand
+        if (len(n.ops) == 1 and isinstance(n.ops[0], (ast.In, ast.NotIn)) and type(n.comparators[0]) is ast.Name
+                and type(n.left) is not ast.Constant):
+            # a membership test on a bare name: its left operand is handed to that name's __contains__, as before; the name itself is a
+            # change of it only where its module binding is no dict literal of constant keys, decided at the walk's end (cins), since a
+            # dict literal's __contains__ is the builtin's, which hands no other code the dict (the reviewer's 06:26Z ruling of
+            # 2026-10-01, B')
+            self.cwrite(n.left, getattr(n.left, "lineno", 0)); self.cins.append(n.comparators[0])
+        elif not all(isinstance(o, (ast.Is, ast.IsNot)) for o in n.ops): self.coperands([n.left] + n.comparators)
         self.generic_visit(n)
+    def _pattern_call(self, n):
+        """Whether the call `n` is one of _PATTERN_READS called on a bare name that the module binds once, by one top-level plain
+        assignment, to a compiled pattern's shape (_re_compile) whose name every module-level binding binds to re by a plain import,
+        read by spelling, as Result.writes reads names: no change of that name (A(i) of the reviewer's 06:26Z ruling of 2026-10-01).
+        The served pass proves the binding where it reads the call (_Served._pattern)."""
+        r, attr = getattr(n.func, "value", None), getattr(n.func, "attr", None)
+        if attr not in _PATTERN_READS or not isinstance(r, ast.Name): return False
+        m = _re_compile(_module_consts(self.ktree).get(r.id))
+        return m is not None and _plain_imports(self.ktree).get(m, []) == ["re"] * _module_bound(self.ktree).get(m, -1)
+    def _membership_reads(self):
+        """At the walk's end, before cflows: each bare name a membership test held on its right (visit_Compare, cins) is a change of
+        that name as any other operand is (cwrite), save where the module binds the name once, by one top-level plain assignment, to a
+        dispatch table's shape (_table_shaped: a dict literal of string-constant keys and bare names): that dict's __contains__ is the
+        builtin's, which hashes the left operand and compares it with the keys, string constants, so the test reads the dict and hands
+        it to no other code (the reviewer's 06:26Z ruling of 2026-10-01, B'). Read by spelling, as Result.writes reads names."""
+        consts = _module_consts(self.ktree)
+        for n in self.cins:
+            if not _table_shaped(consts.get(n.id)): self.cwrite(n, n.lineno)
     def visit_BinOp(self, n):   # a program path built with pathlib: ROOT / "tools" / "x.mjs"; and layer iv's operand hand-off
         self.fold_def(n)   # a `+` or a `%` of string constants: its folded text, for the follow proof's string conjunct
         self.coperands([n.left, n.right])
@@ -2517,6 +2600,7 @@ class Scan(ast.NodeVisitor):
         f = n.func; listed = self.ns_listed(f)   # the listed callable, computed-name writer or setter the callee reaches (ns_listed, arm ii)
         if (f.id if isinstance(f, ast.Name) else attr) in _SETTERS: self.setter_calls.append(n)   # _stored_attrs reads their names
         if attr == "get": self.ns_facts["gets"].add(id(n.func.value))   # a `.get(...)` read, the one use of a namespace mapping that writes nothing
+        if attr == "get" and isinstance(n.func.value, ast.Name): self.troles[id(n.func.value)] = "get"   # a table's .get read, its callee
         elif listed in _NS_SETTERS: self.ns_facts["setattrs"].append(n)   # a call of setattr or delattr, by its own name, an import's name for it or as an attribute of builtins (_namespace_flags)
         elif listed in _NS_WRITERS:   # a call of globals or vars, by its own name, an import's name for it or as an attribute of builtins
             if not n.args and not n.keywords: self.ns_facts["ns_calls"].append(n)
@@ -2542,9 +2626,10 @@ class Scan(ast.NodeVisitor):
                 and n.args[1].value == "_send"):   # `_send` named by a getattr: refused as the call (its string is no second reference)
             self.send_refs.append((n, tuple(self.defs), where)); self.send_funcs.add(id(n.args[1]))
         if attr == "send_response": self.responds.append((n, tuple(self.defs), where))
-        if attr and (attr not in _READ_THROUGH or attr not in _READ_METHODS and id(n) in self.cdropped):   # layer iv: a method
-            self.cwrite(n.func.value, n.lineno)   # outside the closed set _READ_THROUGH (a changer among them), or one whose return is
-            # dropped, a change of its receiver, at the receiver's depth below the name it reaches
+        if attr and (attr not in _READ_THROUGH or attr not in _READ_METHODS and id(n) in self.cdropped) and not self._pattern_call(n):
+            # layer iv: a method outside the closed set _READ_THROUGH (a changer among them), or one whose return is dropped, a change
+            # of its receiver, at the receiver's depth below the name it reaches; a compiled pattern's read method is none (A(i))
+            self.cwrite(n.func.value, n.lineno)
         if listed in _NS_SETTERS and n.args: self.cwrite(n.args[0], n.lineno)   # layer iv: setattr or delattr on it
         if attr in _MUTATORS + _DUNDER_MUTATORS:   # a mutating call writes its receiver, and a container type's writes its first argument
             if isinstance(n.func.value, ast.Name): self.write(n.func.value.id, n.lineno)
@@ -3462,6 +3547,7 @@ def _scopes_of(defs):
 
 
 _CONSTS = weakref.WeakKeyDictionary()   # a module's tree -> (its _module_consts, its _module_bound, its _module_info): routes_of and the served pass read them once per tree
+_IMPORTS = weakref.WeakKeyDictionary()   # a module's tree -> its _plain_imports, read once per tree
 _STAR = "a module name a star import may rebind"
 _IN_BLOCK = "a module name bound once inside a module-level block, not by a top-level import, def or class statement"
 _IN_BLOCK_BODY = "a module name bound once inside a module-level block, not by a top-level statement"
@@ -3596,6 +3682,35 @@ _PAGE_BUILTINS = {"str": "its argument's text, or a value's printed form (with m
 # one drawn from its receiver's text keeps the call limit, its arguments read (_chain_args), and any other refuses by name.
 _NUMBER_LEAVES = ("int", "float")
 _NUMBER_REBOUND = "a call of int or float bound other than to the builtin, whose return may be any text, not a number"   # resolve's
+# The digest leaf (the reviewer's 06:26Z ruling of 2026-10-01, A(ii)): a value from which no host can be recovered, so resolve reads
+# none of what it is computed from. A call of the digest or hexdigest method, with no argument, on a call of hmac's new or of one of
+# hashlib's constructors (_DIGEST_CALLS) is the leaf, each module name bound to that standard library module by binding
+# (_Served._std_module: no scope around the call binds the name, and every module-level binding of it is a plain import of that one
+# module, never rebound, in a file with no star import that writes no name of its module namespace through a computed name); so is a
+# base64 encoding of a leaf (one of _B64_ENCODERS on base64 so bound, handed the leaf alone), a .decode() of a leaf with no argument,
+# a slice of a leaf, and a strip of a leaf (strip, lstrip or rstrip with no argument or one string constant), each a text drawn from
+# the leaf alone; a name the census reads by binding whose every value is a leaf (a local bound only by plain assignments, a module
+# constant no code writes at run time); and a call of a function the census follows as a plain def (layer ii) every return of which is
+# a leaf, whose arguments are then not read either (_Served._leaf, a walk over those names and functions with one visited set per
+# query, _leaf_step its expansion). A base64 encoding alone is no leaf: it carries what it encodes, and resolve reads it as before. A
+# call of those shapes through hmac, hashlib or base64 bound other than to the standard library module of that name is refused by
+# name (_LEAF_REBOUND). The leaf rests on the standard library's digest, which the census does not read: a digest or a constructor
+# whose code is replaced at run time (an assignment to a method of hmac's or hashlib's classes, or to the module's own function) is the
+# stated limit, reached only by such an escape (its witness ldgw).
+_DIGEST_CALLS = {"hmac": frozenset(("new",)),
+                 "hashlib": frozenset(("new", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_384",
+                                       "sha3_512", "blake2b", "blake2s"))}
+_DIGEST_METHODS = ("digest", "hexdigest")
+_B64_ENCODERS = ("b64encode", "urlsafe_b64encode", "standard_b64encode")
+_LEAF_STRIPS = ("strip", "lstrip", "rstrip")
+_LEAF_REBOUND = "a digest or a base64 encoding through %s, bound other than to the standard library's module, whose return may be any text"
+# A compiled pattern (the reviewer's 06:26Z ruling of 2026-10-01, A(i)): a module name bound once to a call of re's compile handed a
+# string or bytes constant (and at most a flags argument: an int constant, an attribute of re, or their `|`: _re_compile), re bound to
+# the standard library's module by binding, is read through by the methods of _PATTERN_READS, which change nothing: what such a call
+# returns is drawn from its arguments (a substitution's replacement and its subject), which resolve reads as text, so the receiver
+# holds no page text of its own. Scan's module side takes those methods on such a name for no change of it (Scan._pattern_call), and
+# receiver reads the call through where no scope around it binds the name and the file changes the name no other way (_Served._pattern).
+_PATTERN_READS = ("sub", "search", "match", "fullmatch", "findall")
 # The text-method arm's shapes (the eleventh round's rulings: the reviewer's 14:42Z item 2, and his 16:33Z E1 and E3): a .replace,
 # .format, .join, .format_map or .encode in a shape _const_text does not fold is refused by name (_text_shape gives the clause), never
 # read as its receiver's text
@@ -3804,6 +3919,63 @@ def _namespace_flags(facts, stem):
     return out
 
 
+def _table_shaped(v):
+    """Whether a module constant's value has a dispatch table's shape: a dict literal holding at least one entry, no ** entry, every key a
+    string constant and every value a bare name (B' of the reviewer's 06:26Z ruling of 2026-10-01). Scan takes a membership test on
+    such a name for a read (Scan._membership_reads) and records its occurrences (Scan.tuses); the served pass proves the table
+    (_Served._table)."""
+    return (isinstance(v, ast.Dict) and bool(v.keys) and all(isinstance(k, ast.Constant) and type(k.value) is str for k in v.keys)
+            and all(isinstance(x, ast.Name) for x in v.values))
+
+
+def _leaf_shape(e):
+    """Whether the expression `e` has an outer shape a digest leaf can have (_Served._leaf): a name, a slice, a call of a name, or a
+    call of one of the methods and functions the leaf's shapes name (the digest methods, a .decode(), a strip, a base64 encoder). The
+    walk asks it of a function's returns before it expands the function, so a function no return of which can be a leaf costs no
+    context; it decides nothing the walk would not."""
+    while isinstance(e, ast.Subscript) and isinstance(e.slice, ast.Slice): e = e.value
+    if isinstance(e, ast.Name): return True
+    if not isinstance(e, ast.Call): return False
+    f = e.func
+    return isinstance(f, ast.Name) or isinstance(f, ast.Attribute) and f.attr in _DIGEST_METHODS + _B64_ENCODERS + _LEAF_STRIPS + ("decode",)
+
+
+def _re_compile(v):
+    """The name a module constant's value calls compile on where the value is a compiled pattern's shape (_PATTERN_READS): a call of
+    `<name>.compile` handed a string or bytes constant first, and at most one more argument, positional or the keyword flags, that is
+    an int constant, an attribute of that same name, or the `|` of those, none starred; None for any other value. The caller proves
+    the name's binding to re (_Served._std_module; Scan._pattern_call by the module's own count)."""
+    if not (isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "compile" and isinstance(v.func.value, ast.Name)):
+        return None
+    m, rest = v.func.value.id, v.args[1:] + [k.value for k in v.keywords]
+
+    def flag(x):
+        return (isinstance(x, ast.Constant) and type(x.value) is int or isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name)
+                and x.value.id == m or isinstance(x, ast.BinOp) and isinstance(x.op, ast.BitOr) and flag(x.left) and flag(x.right))
+    ok = (v.args and isinstance(v.args[0], ast.Constant) and type(v.args[0].value) in (str, bytes) and len(rest) <= 1
+          and all(k.arg == "flags" for k in v.keywords) and not any(isinstance(x, ast.Starred) for x in v.args) and all(flag(x) for x in rest))
+    return m if ok else None
+
+
+def _plain_imports(tree):
+    """name -> the module each plain `import` statement at module level binds the name to, one entry per binding, read where
+    _module_consts's count reads the module's bindings (every statement outside a def's or a class's body, a block's included): the
+    standard library proof of a digest, a base64 encoding and a compiled pattern compares this list with the name's count of
+    module-level bindings (_Served._std_module, Scan._pattern_call), so a name any other statement binds has no module here. Computed
+    once per tree (_IMPORTS, keyed on the tree object and holding no tree alive)."""
+    got = _IMPORTS.get(tree)
+    if got is not None: return got
+    out, stack = {}, list(tree.body)
+    while stack:
+        n = stack.pop()
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): stack.extend(_header(n)); continue
+        if isinstance(n, ast.Import):
+            for a in n.names: out.setdefault(a.asname or a.name.split(".")[0], []).append(a.name if a.asname else a.name.split(".")[0])
+        stack.extend(ast.iter_child_nodes(n))
+    _IMPORTS[tree] = out
+    return out
+
+
 def _module_consts(tree):
     """The module names the served pass and the route typing read as constants, each with its value: a name bound by one top-level
     plain single-name assignment (not annotated, unpacking or chained) and by no other binding at module level. The count walks the module's statements outside def, class
@@ -3974,10 +4146,110 @@ _HEADER_ARITY = {"send_response": 1, "send_header": 2, "end_headers": 0}        
 _SEND_BUILTINS = ("isinstance", "str", "len", "getattr")                            # the builtins a `_send` may call, where nothing binds or rebinds the name
 # The node kinds of the kernel's Handler._send (kernel/kernel.py), each read only in the roles it takes there (_send_gate). Derived from
 # that definition by a walk of its syntax tree; the fix commit of the eighth round's review records the command.
-_SEND_KINDS = ("Expr", "Assign", "For", "If", "Call", "Attribute", "Name", "Tuple", "Constant", "BinOp", "BoolOp", "Dict", "IfExp")
+_SEND_KINDS = ("Expr", "Assign", "For", "If", "Call", "Attribute", "Name", "Tuple", "Constant", "BinOp", "BoolOp", "Dict", "IfExp", "Compare")
 
 
-def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False):
+def _send_preamble(d, me, page, params, codec):
+    """The writer proof's roles for the statements a `_send` definition runs on its page parameter before the codec (rule A of the
+    landing rulings, the writer proof extended to the statements the kernel's Handler._send runs on its page: a stamp that rebuilds
+    the page from the definition's own parameters, an injection that inserts a text into it, a text name an injection reads, a flag an
+    if tests, a non-body header write, and the preamble ifs that guard them). Returns (the role of each node by its id, the text the
+    served pass reads as the page's in the definition's scope). The roles, each a statement of the definition's own body standing
+    before the codec (`codec`, the one rebinding of the page parameter to itself encoded), or inside a preamble if's body:
+    - the stamp: `<page> = F(<a parameter>, ...)`, F a bare name, the arguments the definition's own parameters, positional, none
+      starred and no keyword; the served pass reads the call as page text, so it follows F only where it proves a module function a
+      plain def (layer ii) and reads its returns, refusing by name any other callee;
+    - an injection: `<page> = <page>.replace(<a str constant>, <value>)`, or with a third argument that is an int constant (a count);
+      the served pass reads <value> as page text in the definition's scope, the names it reads through among it;
+    - a text name: `<name> = <value>`, the name no parameter, the page or self, read in an injection's value: its value is read
+      where the injection's value reads the name;
+    - a flag: `<name> = True` or `= False`, the name no parameter, the page or self, read only as an if's test;
+    - the cache header: `<parameter> = <a str constant holding no CR or LF>`, the parameter neither the page nor self, a
+      non-body write (the definition reads that parameter as a header value or a test);
+    - an if with no else, its body these statements, its test a flag, a parameter, getattr of self with a str constant name and a
+      None or bool constant default, isinstance(<page>, str), `<parameter>.startswith(<a str constant>)` or `<a str constant> in
+      <page>`, or the `and` of those.
+    Each name in a role is the definition's own (a parameter, or a local only these roles bind); the gate (_send_gate) refuses any
+    other node by its kind and line, as it refuses any other statement."""
+    top = list(d.body)
+    cut = top.index(codec) if codec in top else len(top)
+    roles, texts = {}, []
+    loads = {}   # name -> the parents of its loads in the definition
+    parent = {}
+    for n in ast.walk(d):
+        for c in ast.iter_child_nodes(n): parent[id(c)] = n
+    for n in ast.walk(d):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load): loads.setdefault(n.id, []).append(parent.get(id(n)))
+
+    def name(e, i=None):
+        return isinstance(e, ast.Name) and (i is None or e.id == i)
+
+    def own(x):   # a name these roles may bind: no parameter, not the page and not self
+        return x not in params and x != page and x != me
+
+    def is_str(e):
+        return isinstance(e, ast.Constant) and type(e.value) is str
+
+    def test(e):   # a preamble if's test, its nodes' roles recorded
+        if isinstance(e, ast.BoolOp) and isinstance(e.op, ast.And):
+            if all(test(v) for v in e.values):
+                roles[id(e)] = "test"; return True
+            return False
+        if name(e) and (e.id in params or (own(e.id) and e.id in flags)):
+            roles[id(e)] = "test"; return True
+        if (isinstance(e, ast.Call) and name(e.func, "getattr") and me is not None and len(e.args) == 3 and not e.keywords
+                and name(e.args[0], me) and is_str(e.args[1]) and isinstance(e.args[2], ast.Constant) and (e.args[2].value is None or type(e.args[2].value) is bool)):
+            roles.update({id(e): "test", id(e.func): "builtin", id(e.args[0]): "self", id(e.args[1]): "const", id(e.args[2]): "const"}); return True
+        if (isinstance(e, ast.Call) and name(e.func, "isinstance") and len(e.args) == 2 and not e.keywords and name(e.args[0], page)
+                and name(e.args[1], "str")):
+            roles.update({id(e): "test", id(e.func): "builtin", id(e.args[0]): "page", id(e.args[1]): "builtin"}); return True
+        if (isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "startswith" and name(e.func.value)
+                and e.func.value.id in params and e.func.value.id != page and len(e.args) == 1 and not e.keywords and is_str(e.args[0])):
+            roles.update({id(e): "test", id(e.func): "callee", id(e.func.value): "param", id(e.args[0]): "const"}); return True
+        if (isinstance(e, ast.Compare) and len(e.ops) == 1 and isinstance(e.ops[0], ast.In) and is_str(e.left)
+                and len(e.comparators) == 1 and name(e.comparators[0], page)):
+            roles.update({id(e): "test", id(e.left): "const", id(e.comparators[0]): "page"}); return True
+        return False
+
+    # the flags and text names first (a name these roles bind is one of them by its loads: an if's test, or an injection's value)
+    stmts, stack = [], [(s, True) for s in top[:cut]]
+    while stack:
+        s, at_top = stack.pop()
+        stmts.append(s)
+        if isinstance(s, ast.If): stack.extend((b, False) for b in s.body)
+    flags = {s.targets[0].id for s in stmts if isinstance(s, ast.Assign) and len(s.targets) == 1 and name(s.targets[0])
+             and own(s.targets[0].id) and isinstance(s.value, ast.Constant) and type(s.value.value) is bool
+             and all(isinstance(p, ast.If) and name(p.test, s.targets[0].id) for p in loads.get(s.targets[0].id, ()))}
+    injects = [s for s in stmts if isinstance(s, ast.Assign) and len(s.targets) == 1 and name(s.targets[0], page)
+               and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Attribute) and s.value.func.attr == "replace"
+               and name(s.value.func.value, page) and not s.value.keywords and len(s.value.args) in (2, 3) and is_str(s.value.args[0])
+               and (len(s.value.args) == 2 or isinstance(s.value.args[2], ast.Constant) and type(s.value.args[2].value) is int)
+               and not any(isinstance(a, ast.Starred) for a in s.value.args)]
+    read_in = {n.id for s in injects for n in ast.walk(s.value.args[1]) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    for s in sorted(stmts, key=lambda s: (s.lineno, s.col_offset)):
+        if isinstance(s, ast.If):
+            if not s.orelse and test(s.test): roles[id(s)] = "if"
+            continue
+        if not (isinstance(s, ast.Assign) and len(s.targets) == 1 and name(s.targets[0])): continue
+        t, v = s.targets[0].id, s.value
+        if t == page and s in injects:
+            roles.update({id(s): "inject", id(s.targets[0]): "page", id(v): "inject", id(v.func): "callee", id(v.func.value): "page",
+                          id(v.args[0]): "const"})
+            if len(v.args) == 3: roles[id(v.args[2])] = "const"
+            texts.append(v.args[1]); roles.update((id(x), "text") for x in ast.walk(v.args[1]))
+        elif t == page and isinstance(v, ast.Call) and name(v.func) and not v.keywords and all(name(a) and a.id in params for a in v.args):
+            roles.update({id(s): "stamp", id(s.targets[0]): "page"})
+            texts.append(v); roles.update((id(x), "text") for x in ast.walk(v))
+        elif own(t) and t in flags and t not in read_in:
+            roles.update({id(s): "flag", id(s.targets[0]): "flag", id(v): "const"})
+        elif own(t) and t in read_in and t not in flags:
+            roles.update({id(s): "textname", id(s.targets[0]): "textname"}); roles.update((id(x), "text") for x in ast.walk(v))
+        elif t in params and t != page and t != me and is_str(v) and "\r" not in v.value and "\n" not in v.value:
+            roles.update({id(s): "cache", id(s.targets[0]): "cache", id(v): "const"})
+    return roles, texts
+
+
+def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, consts=None, out=None):
     """Why the census does not read a `_send` definition, or None when nothing in its signature or body lies outside the kinds and
     roles of the kernel's Handler._send (_SEND_KINDS), the one definition that types script-running routes. `me` is a method's self
     (None for a module function), `page` its second positional parameter, `write` its one write (`<me>.wfile.write(<page>)`), `local`
@@ -4045,7 +4317,7 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False):
             and isinstance(top[widx - 1].value.func, ast.Attribute) and top[widx - 1].value.func.attr == "end_headers"
             and me is not None and isinstance(top[widx - 1].value.func.value, ast.Name) and top[widx - 1].value.func.value.id == me else None)
     limit = widx - 1 if ends is not None else widx
-    assigns, fors = [s for s in top if isinstance(s, ast.Assign)], [s for s in top if isinstance(s, ast.For)]
+    fors = [s for s in top if isinstance(s, ast.For)]
     loop = fors[0] if fors else None
     # every name under the loop's target: the loop is accepted only where that target is a name or a tuple of names (ok's For arm),
     # which binds each name here, and with any other target the loop is outside its role, so the gate refuses the definition: a name
@@ -4056,6 +4328,9 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False):
 
     def named(e, i=None):
         return isinstance(e, ast.Name) and (i is None or e.id == i)
+
+    def is_codec(s):   # the one rebinding of the page parameter to itself encoded: the first so shaped
+        return isinstance(s, ast.Assign) and len(s.targets) == 1 and named(s.targets[0], page) and codec(s.value)
 
     def header(c):
         return (me is not None and isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr in _HEADER_ARITY
@@ -4073,26 +4348,36 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False):
     def gets(e):
         return (me is not None and isinstance(e, ast.Call) and named(e.func, "getattr") and len(e.args) == 3 and not e.keywords
                 and named(e.args[0], me) and isinstance(e.args[1], ast.Constant) and type(e.args[1].value) is str
-                and isinstance(e.args[2], ast.Constant) and e.args[2].value is None)
+                and isinstance(e.args[2], ast.Constant) and (e.args[2].value is None or type(e.args[2].value) is bool))
 
     def codec(e):
         leaf = lambda x: named(x, page) or encode(x)
         return leaf(e) or (isinstance(e, ast.IfExp) and is_str(e.test) and leaf(e.body) and leaf(e.orelse))
 
-    def value(n, p):   # a header value: an argument of a header call or of str(), or the right operand of the `%`
+    coded = next((s for s in top if is_codec(s)), None)
+    roles, texts = _send_preamble(d, me, page, params, coded)
+    if out is not None: out.extend(texts)
+
+    def value(n, p):   # a header value: an argument of a header call or of str(), the right operand of the `%`, or an element of a
+        # tuple that is that right operand
         return ((isinstance(p, ast.Call) and any(x is n for x in p.args) and (header(p) or named(p.func, "str")))
-                or (isinstance(p, ast.BinOp) and p.right is n))
+                or (isinstance(p, ast.BinOp) and p.right is n)
+                or (isinstance(p, ast.Tuple) and isinstance(p.ctx, ast.Load) and isinstance(parent.get(id(p)), ast.BinOp)
+                    and parent[id(p)].right is p))
 
     def early(n):   # a statement of the body before the end_headers (before the write where there is none)
         return limit is not None and top.index(n) < limit
 
     def ok(n):
         p = parent[id(n)]
+        r = roles.get(id(n))
+        if r == "text": return True   # page text the served pass reads in the definition's scope (_send_preamble), refusing what it cannot
+        if r is not None and not isinstance(n, ast.Name): return True   # a node in a preamble role (_send_preamble)
         if isinstance(n, ast.Expr):
             if n is ends or (n.value is write and p is d): return ends is not None
             return header(n.value) and (p is not d or early(n))
         if isinstance(n, ast.Assign):
-            return p is d and n is assigns[0] and early(n) and len(n.targets) == 1 and named(n.targets[0], page) and codec(n.value)
+            return p is d and n is coded and early(n)
         if isinstance(n, ast.For):
             it = n.iter
             return (p is d and n is loop and early(n) and not n.orelse and not targets & (params | {me})
@@ -4128,9 +4413,11 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False):
             return n.attr == "items" and isinstance(n.value, ast.BoolOp) and isinstance(p, ast.Call) and p.func is n
         if isinstance(n, ast.Name):
             if isinstance(n.ctx, ast.Store):
-                return ((n.id == page and isinstance(p, ast.Assign) and p is (assigns[0] if assigns else None) and any(t is n for t in p.targets))
-                        or (n.id in targets and (p is loop or (isinstance(p, ast.Tuple) and parent.get(id(p)) is loop))))
+                return ((n.id == page and isinstance(p, ast.Assign) and p is coded and any(t is n for t in p.targets))
+                        or (n.id in targets and (p is loop or (isinstance(p, ast.Tuple) and parent.get(id(p)) is loop)))
+                        or r in ("page", "flag", "textname", "cache"))
             if not isinstance(n.ctx, ast.Load): return False
+            if r == "test": return True   # a flag or a parameter as a preamble if's test
             if (isinstance(p, ast.Call) and p.func is n) or (is_str(p) and p.args[1] is n):
                 # the builtin allowance, decided here alone: the name is no binding of the definition's or the module's, nothing
                 # rebinds it (a function under `global`, or a module-level statement), no star import may, and the file writes no
@@ -4140,9 +4427,17 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False):
                 if allowed and isinstance(shadow, str): run_why[id(n)] = "%s at line %d, %s" % (n.id, n.lineno, _RUNTIME_BUILTIN % shadow)
                 return allowed and not shadow
             if me is not None and n.id == me: return (isinstance(p, ast.Attribute) and p.value is n) or (gets(p) and p.args[0] is n)
+            # a module constant (one top-level plain assignment, nothing rebinding it) as a header value: a non-body write
+            if (consts and n.id in consts and n.id not in local and n.id not in rebinds and not star and n.id not in params
+                    and value(n, p)): return True
             return n.id in params or (n.id in targets and id(n) in in_loop)
-        if isinstance(n, ast.Tuple): return isinstance(n.ctx, ast.Store) and p is loop and loop.target is n
-        if isinstance(n, ast.Constant): return type(n.value) is str or n.value is None
+        if isinstance(n, ast.Tuple):
+            if isinstance(n.ctx, ast.Load):   # the right operand of a header value's `%`, its elements header values
+                return (isinstance(p, ast.BinOp) and isinstance(p.op, ast.Mod) and p.right is n and isinstance(p.left, ast.Constant)
+                        and type(p.left.value) is str)
+            return isinstance(n.ctx, ast.Store) and p is loop and loop.target is n
+        if isinstance(n, ast.Constant):   # a str or None; a bool only as getattr's default (gets)
+            return type(n.value) is str or n.value is None or type(n.value) is bool and gets(p) and p.args[2] is n
         if isinstance(n, ast.BinOp):
             return isinstance(n.op, ast.Mod) and isinstance(n.left, ast.Constant) and type(n.left.value) is str and value(n, p)
         if isinstance(n, ast.BoolOp):
@@ -4166,7 +4461,7 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False):
     return min(bad, key=lambda b: b[:2])[2] if bad else None   # the first in the definition's order; min keeps the outer at a tie
 
 
-def _body_param(d, pos, me, tree, rebinds=(), shadow=False):
+def _body_param(d, pos, me, tree, rebinds=(), shadow=False, texts=None):
     """(the parameter a `_send` definition writes as its page body, None), or (None, why the census does not read it). The body is
     its second positional parameter (`pos`, self dropped for a method; `me` a method's first parameter, and a module function has
     none), read only when the definition's one output is its one `self.wfile.write(<that parameter>)` and nothing in its signature
@@ -4267,7 +4562,10 @@ def _body_param(d, pos, me, tree, rebinds=(), shadow=False):
     if not (len(w.args) == 1 and not w.keywords and isinstance(w.args[0], ast.Name) and len(pos) > 1 and w.args[0].id == pos[1]):
         return None, "the definition's written body is not its second positional parameter"
     # the gate, after every named reason: the definition's every node of a kind, in a role, the kernel's Handler._send holds
-    why = _send_gate(d, me, pos[1], w, local, _module_bound(tree), rebinds, _module_info(tree)["star"], shadow)
+    got = []
+    why = _send_gate(d, me, pos[1], w, local, _module_bound(tree), rebinds, _module_info(tree)["star"], shadow,
+                     {} if shadow else _module_consts(tree), got)
+    if not why and texts is not None: texts.extend(got)   # the text the definition puts in the page (_send_preamble), for the served pass
     return (None, why) if why else (pos[1], None)
 
 
@@ -4926,7 +5224,10 @@ def routes_of(rel, tree, sc, res):
                 res.problems.append("SERVED %s:%d calls _send on %s, %s: the census cannot read the response's content type"
                                     % (rel, call.lineno, ast.unparse(f)[:40], _TYPE_REBOUND % typed[("rebound", id(d))]))
             continue
-        if ("body", id(d)) not in typed: typed[("body", id(d))] = _body_param(d, pos, me, tree, res.rebinds.get(rel, {}), ns["computed"] or ns["builtins"] or ns["runtime"])
+        if ("body", id(d)) not in typed:
+            typed[("texts", id(d))] = []
+            typed[("body", id(d))] = _body_param(d, pos, me, tree, res.rebinds.get(rel, {}), ns["computed"] or ns["builtins"] or ns["runtime"],
+                                                 typed[("texts", id(d))])
         # the page function, or for a call through self the class whose body holds `_send`, inside a function: that function's names
         # (a builtin or a module name it shadows among them) are no scope the census reads, so neither the definition nor the page is read
         held = fn if fn is not None else cls if method else None
@@ -4950,6 +5251,10 @@ def routes_of(rel, tree, sc, res):
                                     % (rel, call.lineno, ctype.split(";")[0], dkey.split(":", 1)[1], unread, where))
                 continue
             routes.append((call, fn, cls, ctype, call.args[1]))   # the route class by its class statement (choice 1 of the eleventh round's rulings)
+            if ("wrote", id(d)) not in typed:   # the text the definition itself puts in every page it writes (_send_preamble: the stamp's
+                # return, an injection's value), read once per definition in its own scope, its class the call's for a method
+                typed[("wrote", id(d))] = True
+                routes.extend((call, d, cls if method else None, ctype, t, typed[("body", id(d))][0]) for t in typed[("texts", id(d))])
     for node, defs, where in sc.send_refs:   # a reference to `_send` that is no call the scan reads: its calls would be no routes
         if not allowed(where, node, node):
             res.problems.append("SERVED %s:%d refers to _send other than by a call the scan reads (%s in %s): the routes are the calls "
@@ -5269,6 +5574,30 @@ def _flow_roots(e):
         elif t is ast.ListComp or t is ast.SetComp or t is ast.GeneratorExp: todo.append((x.elt, path + ("wrap",)))
         elif t is ast.DictComp: w = path + ("wrap",); todo += [(x.key, w), (x.value, w)]
     return out
+
+
+def _const_pop(c, names, parents, fn, own):
+    """Whether the call `c` (a `.pop` called on a container's own name, in the function `fn`, whose names and parents _scope_names
+    reads and whose binding forms `own` holds) pops a constant key, with at most a default that is a constant and no keyword or starred
+    argument: the key one str or int constant, or a name proven constant by binding, the one store of which in fn is the target of a
+    for statement over a tuple literal of str constants, the name no parameter and bound no other way in fn (its forms exactly one
+    value form; a store in a nested scope that binds the name itself is that scope's own). A pop can only remove, and such a key hands
+    no object of its own to the container's method (C and C' of the reviewer's 06:01Z and 06:26Z rulings of 2026-10-01): the pop joins
+    rule A's proven change forms beside the constant-key store."""
+    a = c.args
+    if c.keywords or not 1 <= len(a) <= 2 or any(isinstance(x, ast.Starred) for x in a) or (len(a) == 2 and not isinstance(a[1], ast.Constant)):
+        return False
+    k = a[0]
+    if isinstance(k, ast.Constant): return type(k.value) in (str, int)
+    if not isinstance(k, ast.Name) or own.get(k.id) != ["value"] or k.id in {x.arg for x in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs
+                                                                           + [fn.args.vararg, fn.args.kwarg] if x is not None}:
+        return False
+    stores = [n for n, ch in names.get(k.id, ()) if (ch == (fn,) or _binding_scope(k.id, (n.lineno, n.col_offset), ch[1:]) is None)
+              and not isinstance(n.ctx, ast.Load)]
+    if len(stores) != 1 or not isinstance(stores[0].ctx, ast.Store): return False
+    loop = parents.get(id(stores[0]))
+    return (isinstance(loop, ast.For) and loop.target is stores[0] and isinstance(loop.iter, ast.Tuple) and bool(loop.iter.elts)
+            and all(isinstance(x, ast.Constant) and type(x.value) is str for x in loop.iter.elts))
 
 
 def _bound_value(st):
@@ -5890,6 +6219,7 @@ class _Served(object):
         # name it imports (_class_callee: a method spelled on a class of collections)
         self.import_mods = {a.asname or a.name.split(".")[0]: a.name if a.asname else a.name.split(".")[0]
                             for node in tree.body if isinstance(node, ast.Import) for a in node.names}
+        self.std_imports = _plain_imports(tree)   # name -> the module each module-level plain import binds it to (_std_module)
         self.from_collections = {a.asname or a.name: a.name for node in tree.body if isinstance(node, ast.ImportFrom) and node.level == 0
                                  and node.module == "collections" for a in node.names if a.name != "*"}
         self.pathlib_path = any(isinstance(node, ast.ImportFrom) and node.module == "pathlib"
@@ -5937,6 +6267,9 @@ class _Served(object):
         self.sopen = None   # whether the file's setter read fails closed, read once per file at the first _replaced (_setters_open)
         self.cproofs = {}   # id(function) -> the container proof's refusals for the names it binds (_containers), read once per function
         self.frame_aliases = None   # the module's names bound to a frame primitive (_frame_alias_names over tree.body), read once (_reaches_frame)
+        self.tables, self.table_vals = {}, None   # the dispatch tables' proofs by name, and the positions of the proven tables' values (_table)
+        self.fn_of = {}   # id(a context's locals map) -> the function that context reads (_ctx), for the dispatch arm's name (_dispatch)
+        self.leaf_ctxs = {}   # (id(a function), id(its def statement's context) or None) -> the context _leaf reads its returns in, built once
 
     @staticmethod
     def _locals(fn):
@@ -6057,7 +6390,8 @@ class _Served(object):
         if holder is None:
             got = self.res.fn_refs.get(self.rel)
             if got is None: return _DEF_ALIAS   # no scan read the file's names: no proof
-            if any(_binding_scope(fn.name, at, chain) is None for at, chain in got[0].get(fn.name, ())): return _DEF_ALIAS
+            vals = self._table_vals()   # a value of a dispatch table the census proves (_table) is no alias: the dispatch follows it
+            if any(_binding_scope(fn.name, at, chain) is None and at not in vals for at, chain in got[0].get(fn.name, ())): return _DEF_ALIAS
             if fn.name in got[1]: return _DEF_STRING
             return _DEF_KEY if got[2] else None
         return _DEF_ALIAS if any(_binding_scope(fn.name, at, chain) is holder for at, chain in _name_reads(holder, fn.name)) else None
@@ -6097,7 +6431,7 @@ class _Served(object):
             params, local, nested, forms = params | outer[0], dict(outer[1], **local), dict(outer[3], **nested), dict(outer[5], **forms)
             self.local_at[id(local)] = {k: self._value_ctx(k, outer) for k in outer[1] if k not in own_local}
         for k in gl: local.pop(k, None); nested.pop(k, None)
-        self.held.append(local)
+        self.held.append(local); self.fn_of[id(local)] = fn
         ctx = (params | bound) - gl, local, cls, nested, where or fn.name, forms
         for k, n in got[1][2].items():   # the defs this function holds run their defaults here (_defaults), and their names bind here (_def_uses)
             if k not in gl: self.def_ctx[id(n)] = (n, ctx, fn)
@@ -6385,8 +6719,13 @@ class _Served(object):
                 # capture (code unread), a class body's own code (an expression, or a class attribute it makes), or a value a nested
                 # statement's decorator or header hands on
                 elif kind == "gescape": why = "bound to %s, a name the function declares global or nonlocal, whose uses leave it" % detail
-                elif kind == "escape": why = detail   # it, or an object holding it, stored elsewhere, handed as a default, matched or called
+                elif kind == "escape":   # it, or an object holding it, stored elsewhere, handed as a default, matched or called; an
+                    # item of it, or a new object holding one, stored into another object is the item limit (C of the reviewer's 06:01Z
+                    # ruling of 2026-10-01, its witness istw)
+                    if not (inside and detail == "stored into another object"): why = detail
                 elif kind == "own": why = detail
+                elif kind == "rmeth" and detail == "pop" and ctype == "dict" and _const_pop(node, names, parents, fn, own):
+                    pass   # a pop of a constant key, or of a key constant by binding: it can only remove (C and C'), beside the store
                 elif kind == "rmeth":
                     if detail not in _TYPE_READS.get(ctype, ()):
                         why = (_CT_UNTYPED % ("a subscript load" if detail == "[]" else ".%s()" % detail)
@@ -6708,6 +7047,182 @@ class _Served(object):
         key = ("%s:%s" % (self.rel, where), ast.unparse(whole))
         if key not in SERVED_ALLOW: return False
         self.res.allow_hits.setdefault(key, set()).add((whole.lineno, whole.col_offset)); return True
+
+    def _table(self, name):
+        """Why the module name `name` is no dispatch table the census proves (rule B of the landing rulings), or None where it is: the
+        module binds it once by one top-level plain assignment to a dict literal (_module_consts) with no ** entry, every value of
+        which is a bare name of a module function the module binds once (_sole); no code changes it after that binding (no write
+        Result.writes records, no change Scan's module side records, nothing rebinding the name: Result.changed, Result.rebinds); and
+        every other occurrence of the name in the file that reaches that binding (_binding_scope) is a read by `.get` (the callee of
+        a call of its get attribute) or a subscript load. Any other table shape refuses, its reason naming the conjunct. Read once per
+        name."""
+        if name in self.tables: return self.tables[name]
+        v = self.consts.get(name)
+        why = None
+        if not isinstance(v, ast.Dict) or not self._sole(name): why = "a module name the census reads as no dict literal bound once"
+        elif any(k is None for k in v.keys): why = "a dict literal with a ** entry"
+        elif not all(isinstance(x, ast.Name) and x.id in self.funcs and self._sole(x.id) for x in v.values):
+            why = "a dict literal holding a value that is no name of a module function the file binds once"
+        elif name in self.memos or name in self.res.changed.get(self.rel, ()) or name in self.rebound: why = "a dict the file changes at run time"
+        else:
+            for n, chain, role in self.res.tuses.get(self.rel, {}).get(name, ()):   # Scan's walk: every occurrence, with its role
+                if _binding_scope(name, (n.lineno, n.col_offset), chain) is not None: continue   # another scope's own binding of the spelling
+                if role == "bind" and not chain: continue   # its one binding
+                if role in ("sub", "get", "in") and isinstance(n.ctx, ast.Load): continue   # a subscript load, a .get callee's receiver, a
+                # membership test's right operand, a read: the dict literal's __contains__ is the builtin's (B')
+                why = "a dict read other than by .get, a subscript load or a membership test (line %d)" % n.lineno; break
+        self.tables[name] = why
+        return why
+
+    def _table_vals(self):
+        """The positions of the values of every dispatch table the census proves (_table), read once per file: _def_uses takes a read
+        of a module function's name there for no alias, since the dispatch follows that value as a renderer."""
+        if self.table_vals is None:
+            self.table_vals = {(x.lineno, x.col_offset) for k, v in self.consts.items() if isinstance(v, ast.Dict) and self._table(k) is None
+                               for x in v.values}
+        return self.table_vals
+
+    def _dispatch(self, f, ctx):
+        """(the table's name, why the call is refused or None) where the callee `f` is a dispatch from a module dict (rule B of the
+        landing rulings), or None: a read of a table by `.get` with one argument or by a subscript load, as the callee itself or as the
+        one value of a name the function binds once by a plain assignment, every occurrence of which in that function is that binding,
+        a call's callee or an identity test against None (`x is None`, `x is not None`). The table's proof (_table) and each value's
+        follow proof (_def_shape, _def_uses) decide; the reason names the conjunct that fails."""
+        def read(e):   # the table a read names, or None
+            if (isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "get" and isinstance(e.func.value, ast.Name)
+                    and len(e.args) == 1 and not e.keywords and not isinstance(e.args[0], ast.Starred)):
+                return e.func.value.id
+            if isinstance(e, ast.Subscript) and isinstance(e.ctx, ast.Load) and isinstance(e.value, ast.Name): return e.value.id
+            return None
+        t, holder = read(f), None
+        if t is None and isinstance(f, ast.Name):
+            forms = ctx[5].get(f.id)   # a local bound one way, by value (a container mark the call limit gives it set aside: the
+            if not forms or list(forms) != ["value"]: return None   # occurrence check below decides the name)
+            oc = self._value_ctx(f.id, ctx); vals = oc[1].get(f.id, ())
+            if len(vals) != 1 or read(vals[0]) is None: return None
+            t, holder = read(vals[0]), self.fn_of.get(id(oc[1]))
+        if t is None or self._scoped(t, ctx) is not None or t not in self.consts or not isinstance(self.consts[t], ast.Dict): return None
+        if holder is not None:   # the name's every occurrence in its function: its one binding, a callee, an identity test against None
+            names, parents = _scope_names(holder)
+            for n, c in names.get(f.id, ()):
+                if c != (holder,) and _binding_scope(f.id, (n.lineno, n.col_offset), c[1:]) is not None: continue
+                pa = parents.get(id(n))
+                if isinstance(n.ctx, ast.Store) and isinstance(pa, ast.Assign) and pa.targets == [n] and read(pa.value) == t: continue
+                if isinstance(pa, ast.Call) and pa.func is n: continue
+                if (isinstance(pa, ast.Compare) and len(pa.ops) == 1 and isinstance(pa.ops[0], (ast.Is, ast.IsNot))
+                        and all(isinstance(o, ast.Constant) and o.value is None for o in [pa.left] + pa.comparators if o is not n)): continue
+                return t, "a name bound to a dispatch table's read, used other than as a callee or an identity test against None (line %d)" % n.lineno
+        why = self._table(t)
+        if why is not None: return t, "a dispatch from %s, %s" % (t, why)
+        for x in self.consts[t].values:
+            got = self._def_shape(self.funcs[x.id]) or self._def_uses(self.funcs[x.id], None)
+            if got is not None: return t, "a dispatch from %s to %s: %s" % (t, x.id, got)
+        return t, None
+
+    def _std_module(self, name, ctx):
+        """The module the name is bound to by binding where that module is the one every module-level binding of the name imports
+        plainly (`import <module>` or `import <module> as <name>`: _plain_imports, compared with the name's count of module-level
+        bindings, _module_bound), nothing rebinds it (Result.rebinds), the module holds no star import and the file writes no name of
+        its module namespace through a computed name and may not rewrite it at run time; and, given the context the name is read in,
+        no function scope around it binds the name (_scoped); None otherwise. The proof of a digest leaf's and a base64 encoding's
+        module (_leaf) and of a compiled pattern's re (_pattern)."""
+        if (ctx is not None and self._scoped(name, ctx) is not None) or self.star or self.computed or name in self.rebound: return None
+        mods, n = self.std_imports.get(name, ()), self.bound.get(name, 0)
+        return mods[0] if n and len(mods) == n and len(set(mods)) == 1 else None
+
+    def _pattern(self, name):
+        """Whether the module name `name`, read where no function scope binds it, is a compiled pattern (A(i) of the reviewer's 06:26Z
+        ruling of 2026-10-01): the module binds it once, by one top-level plain assignment (_module_consts), to a call of compile on a
+        name the module binds to re by binding (_re_compile, _std_module), and the file changes it no other way (a write
+        Result.writes records, or a change Scan's module side records, the methods of _PATTERN_READS being none: self.memos,
+        self.cmemos). receiver reads such a call through, its arguments read as text."""
+        if name in self.memos or name in self.cmemos: return False
+        m = _re_compile(self.consts.get(name))
+        return m is not None and self._std_module(m, None) == "re"
+
+    _leaf_step = staticmethod(list)   # _leaf's expansion of one key, called once for each key it expands (a builtin, as _resolve_step is)
+
+    def _leaf(self, e, ctx):
+        """(whether the expression `e`, read in ctx, is a digest leaf, the reason it is refused or None): A(ii) of the reviewer's
+        06:26Z ruling of 2026-10-01 (_DIGEST_CALLS states the shapes). A walk over the names and the functions those shapes reach,
+        keyed on what each expands (a local, by the map of the scope that binds it; a module constant; a function defined in the page
+        function; a module function), one visited set per query, each key expanded once through _leaf_step, handed the values it
+        reads for that key (a local's values, a constant's one value, a function's returns), which it hands back in their order; the
+        query ends at the first value that is no leaf. A function is expanded only where the census follows it (a module function
+        or a function defined in the page function, the name's one binding, proven a plain def: _def_shape, _def_uses), each of its
+        returns read in its own context; a local only where every binding of it in its scope is a value form (_locals: an assignment,
+        a loop, with or unpacking target, a walrus; a parameter is none), each value read in the context Python evaluates it in; a
+        module constant only where no code writes it at run time. A shape through hmac, hashlib or base64 bound other than to the
+        standard library module of that name is refused by name (_LEAF_REBOUND) where it stands in `e` itself, outside every name or
+        function the walk expands; reached through one of those, it is no leaf, and resolve meets it where it reads that value."""
+        seen, todo = set(), [(e, ctx, True)]
+        while todo:
+            x, c, own = todo.pop()
+            if isinstance(x, ast.Subscript):   # a slice of a leaf
+                if not (isinstance(x.ctx, ast.Load) and isinstance(x.slice, ast.Slice)): return False, None
+                todo.append((x.value, c, own)); continue
+            if isinstance(x, ast.Name):   # a name the census reads by binding, every value of it a leaf
+                v = self._scoped(x.id, c)
+                if v is not None:
+                    forms = c[5].get(x.id)
+                    if v[0] != "local" or set(forms) != {"value"}: return False, None
+                    oc = self._value_ctx(x.id, c)
+                    key, vals = ("local", id(oc[1]), x.id), oc[1].get(x.id, ())
+                elif x.id in c[0] or x.id not in self.consts or x.id in self.memos or x.id in self.cmemos: return False, None
+                else: oc, key, vals = None, ("const", x.id), (self.consts[x.id],)
+                if key in seen: continue
+                seen.add(key)
+                vals = self._leaf_step(vals)
+                if not vals: return False, None
+                todo.extend((y, self.comp_at.get(id(y), oc) if oc is not None else (set(), {}, None, {}, x.id, {}), False) for y in vals)
+                continue
+            if not isinstance(x, ast.Call): return False, None
+            f = x.func
+            if isinstance(f, ast.Name):   # a call of a function the census follows, every return of it a leaf
+                sc = self._scoped(f.id, c, callee=True)
+                if sc is not None:
+                    if sc[0] != "follow": return False, None
+                    fn = c[3][f.id]
+                    held = self.def_ctx.get(id(fn))
+                    if held is None or self._def_shape(fn) or self._def_uses(fn, held[2]): return False, None
+                    key = ("nested", id(fn))
+                elif f.id in self.funcs and self._sole(f.id):
+                    fn, held = self.funcs[f.id], None
+                    if self._def_shape(fn) or self._def_uses(fn, None): return False, None
+                    key = ("func", f.id)
+                else: return False, None
+                if key in seen: continue
+                rets = self._returns(fn)
+                if not rets or not all(_leaf_shape(y) for y in rets): return False, None   # a return no leaf can be, before any expansion
+                seen.add(key)
+                rets = self._leaf_step(rets)
+                ck = (id(fn), id(held[1])) if held is not None else (id(fn), None)
+                fc = self.leaf_ctxs.get(ck)   # the function's context, built once per pass for this walk (_ctx)
+                if fc is None:
+                    fc = self.leaf_ctxs[ck] = (self._ctx(fn, c[2], held[1], c[4] + "." + f.id) if held is not None else self._ctx(fn, None, None, f.id))
+                todo.extend((y, fc, False) for y in rets)
+                continue
+            if not isinstance(f, ast.Attribute): return False, None
+            if f.attr in _DIGEST_METHODS and isinstance(f.value, ast.Call) and isinstance(f.value.func, ast.Attribute) and isinstance(f.value.func.value, ast.Name):
+                g = f.value.func
+                m = self._std_module(g.value.id, c)
+                if m in _DIGEST_CALLS and g.attr in _DIGEST_CALLS[m]:
+                    if x.args or x.keywords: return False, None
+                    continue   # the leaf itself: what it is computed from is not read
+                if g.value.id in _DIGEST_CALLS and g.attr in _DIGEST_CALLS[g.value.id] and m != g.value.id:   # bound otherwise
+                    return False, (_LEAF_REBOUND % g.value.id if own else None)
+                return False, None
+            if f.attr in _B64_ENCODERS and isinstance(f.value, ast.Name):
+                m = self._std_module(f.value.id, c)
+                if m != "base64": return False, (_LEAF_REBOUND % "base64" if own and f.value.id == "base64" else None)
+                if len(x.args) != 1 or x.keywords or isinstance(x.args[0], ast.Starred): return False, None
+                todo.append((x.args[0], c, own)); continue
+            if f.attr == "decode" and not x.args and not x.keywords: todo.append((f.value, c, own)); continue
+            if f.attr in _LEAF_STRIPS and not x.keywords and (not x.args or len(x.args) == 1 and isinstance(x.args[0], ast.Constant)
+                                                             and type(x.args[0].value) is str):
+                todo.append((f.value, c, own)); continue
+            return False, None
+        return True, None
 
     def _memo(self, name, whole, where):
         """A module container some code writes after binding it, read in a page: SERVED_ALLOW names the place, or a SERVED line."""
@@ -7300,6 +7815,8 @@ class _Served(object):
                 if call and self._undrawn(whole, where): return   # a method whose return is not drawn from the local's text
                 self.resolve(r, ctx, label, done); return
             if v is None and r.id in self.consts and r.id not in params:
+                if call and whole.func.attr in _PATTERN_READS and self._pattern(r.id): return   # a compiled pattern read through: its
+                # call's arguments are read as text where resolve's Call arm reads them (A(i))
                 if r.id in self.memos or r.id in self.cmemos: self._memo(r.id, whole, where); return
                 if call and self._undrawn(whole, where): return   # the same on a module constant's
                 self.resolve(r, ctx, label, done); return
@@ -8071,10 +8588,13 @@ class _Served(object):
         params, local, cls, nested, where, scope = ctx
         if isinstance(e, ast.Constant):
             if isinstance(e.value, str): self.pieces.append((label, e.lineno, e.value, (e.lineno, e.col_offset, -1)))
-            elif e.value is None or type(e.value) in (bool, int) or e.value == b"" and isinstance(e.value, bytes):
-                # a value slot read as no text: None, a bool, an int or the empty bytes, refused by name where it stands
-                # directly as the right operand of a `%`, a `.format` argument or a `.format_map` dict literal's value, whether
-                # or not a conversion takes it (_format_slots)
+            elif isinstance(e.value, bytes):   # page text, scanned like a string's (A(i) of the reviewer's 06:26Z ruling of 2026-10-01),
+                # each byte its own character, so no byte is lost to a decoding
+                self.pieces.append((label, e.lineno, e.value.decode("latin-1"), (e.lineno, e.col_offset, -1)))
+            elif e.value is None or type(e.value) in (bool, int):
+                # a value slot read as no text: None, a bool or an int, refused by name where it stands directly as the right operand
+                # of a `%`, a `.format` argument or a `.format_map` dict literal's value, whether or not a conversion takes it
+                # (_format_slots)
                 pass
             else: self._unread(e, _CONSTANT_KINDS.get(type(e.value), "a %s Constant" % type(e.value).__name__), where)
         elif isinstance(e, ast.JoinedStr):   # each part keyed at its own line: the part's on 3.12 and later, else where the expression before it ends
@@ -8194,6 +8714,9 @@ class _Served(object):
             if isinstance(f, ast.Name) and f.id == "__file__" and self.file_bound: return self._unread(e, _FILE_BOUND, where)   # a callee so bound
             if isinstance(f, ast.Name) and f.id in _NUMBER_LEAVES and self._scoped(f.id, ctx, callee=True) is None and self._builtin(f.id):
                 return   # int or float, the builtin: a number-valued leaf, its argument not read here (the 14:42Z ruling)
+            leaf, why = self._leaf(e, ctx)   # a digest leaf: nothing it is computed from is read (A(ii) of the reviewer's 06:26Z ruling of
+            if leaf: return   # 2026-10-01), and one through hmac, hashlib or base64 bound otherwise is refused by name
+            if why is not None: return self._unread(e, why, where)
             # decision 2, before the file-read and text-call arms: every call _method_call takes is refused by name (a method called
             # on the calling method's own first parameter, which a subclass another file defines may override, with the reason that
             # names what the census found first; a route class's method on self through anything else or on a parameter; a name the
@@ -8228,6 +8751,16 @@ class _Served(object):
                     n = len(self.problems)
                     self.resolve(f.value, ctx, label, done)
                     if why == _TEMPLATE and id(f.value) not in self.op_refused and len(self.problems) == n: self._unread(e, _TEMPLATE, where)
+            elif self._dispatch(f, ctx) is not None:   # a dispatch from a module dict (rule B): each value followed as a renderer
+                t, why = self._dispatch(f, ctx)
+                if why is not None: self._unread(e, why, where)
+                else:
+                    for x in self.consts[t].values:
+                        fn = self.funcs[x.id]
+                        if x.id not in done:
+                            done.add(x.id)
+                            for r in self._resolve_step(self._returns(fn)): self.resolve(r, self._ctx(fn, None, None, x.id), x.id, done)
+                        self._defaults(e, fn, (set(), {}, None, {}, x.id, {}), x.id, done)
             elif isinstance(f, ast.Name) and self._scoped(f.id, ctx, callee=True) is not None:   # a callee the scope binds: never the module's
                 kind, why = self._scoped(f.id, ctx, callee=True)
                 if kind == "follow":   # a function defined inside the page function, the name's one binding there, over its names
@@ -8265,6 +8798,9 @@ class _Served(object):
             # already refused by name as an operand of a +, %, f-string or join whose joined text the pass does not compute
             # (_refuse_operands, _SUB_OPERAND): read nothing, so the container's pieces the join selects are not scanned apart
             if id(e) in self.op_refused: return
+            leaf, why = self._leaf(e, ctx)   # a slice of a digest leaf is one (A(ii)): nothing it is computed from is read
+            if leaf: return
+            if why is not None: return self._unread(e, why, where)
             # a slice of any shape, or an index that is no constant (a name, a call, a tuple, a negative number, which parses as a
             # UnaryOp), over a container whose text the pass reads (_carries_text) is refused by name: the pass reads the container
             # whole and does not compute what the index selects, so only a constant index reads it; a value slot passes (receiver)
@@ -8307,14 +8843,20 @@ class _Served(object):
         # the route classes' method names, once per file (_method_call), from each route class's class statement (routes_of hands the
         # statement, never its name alone: choice 1 of the eleventh round's rulings)
         self.route_methods = self._route_methods(list({id(r[2]): r[2] for r in routes if r[2] is not None}.values()))
-        for call, fn, cls, ctype, body in routes:   # the body routes_of read: the call's second positional argument
+        for r in routes:   # the body routes_of read: the call's second positional argument; or a text the `_send` definition puts in
+            # the page itself (a "writer" entry: _send_preamble), read in the definition's own scope, its first parameter self by binding
+            call, fn, cls, ctype, body = r[:5]
+            writer = len(r) > 5
             before = len(self.pieces), len(self.files)
             where = ((cls.name + ".") if cls is not None else "") + fn.name if fn is not None else "<module>"   # the class's own spelling
-            ctx = self._ctx(fn, cls, None, where, True) if fn is not None else (set(), {}, cls, {}, "<module>", {})
+            ctx = self._ctx(fn, cls, None, where, not writer) if fn is not None else (set(), {}, cls, {}, "<module>", {})
+            if writer:   # the page parameter is the page each call passes, read at the call: a value slot here, never its own rebindings
+                local = dict(ctx[1]); local.pop(r[5], None); self.held.append(local)
+                ctx = (ctx[0] | {r[5]}, local, ctx[2], ctx[3], ctx[4], dict(ctx[5], **{r[5]: ["param"]}))
             self.resolve(body, ctx, fn.name if fn is not None else "<module>", self._route_done())   # the route's own visited set
             if (len(self.pieces), len(self.files)) == before:
                 self.problems.append("SERVED %s:%d serves %s from %s, text the census did not read"
-                                     % (self.rel, call.lineno, ctype.split(";")[0], ast.unparse(body)[:60]))
+                                     % (self.rel, body.lineno if writer else call.lineno, ctype.split(";")[0], ast.unparse(body)[:60]))
 
 
 def _read_once(r, rel):

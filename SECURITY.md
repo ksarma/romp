@@ -195,7 +195,15 @@ its service worker's script, from its own string constants (the dashboard shell,
 the seven pane pages, the token login page, the too-large page and /sw.js, with
 the shim, the timeline boot and the shell scripts they inline), are read from
 kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus
-tool, with the DOM loads counted. The routes are derived from the calls of
+tool, with the DOM loads counted. A string constant is scanned whole; a bytes
+constant is scanned the same way, each byte its own character; and a name bound
+once, by one top-level plain assignment, to a call of `compile` handed a string
+or bytes constant (and at most a flags argument that is an int constant, an
+attribute of that name, or their `|`) on a name the module binds to the standard
+library's `re` by binding is read through its `.sub`, `.search`, `.match`,
+`.fullmatch` and `.findall`, which change nothing, so such a call's arguments
+are the page text and the compiled name holds none of its own. The routes are
+derived from the calls of
 `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through
 a name computed at run time is not read) and every Content-Type header written
 outside `_send`, in every scanned Python file. A `_send` call's content type is
@@ -293,7 +301,22 @@ test (`body = body.encode("utf-8") if isinstance(body, str) else body`); a loop 
 calls; header values built from string constants holding no CR or LF,
 parameters, the loop's targets, attributes read on self, str, len and a `%`
 format on a string constant; and a signature of positional parameters, none
-positional-only, with None defaults and no annotation. Any other script-running
+positional-only, with None defaults and no annotation. The definition may run,
+before that one rebinding of the page, statements that build the page it writes,
+each read for the text it puts there and refused by name in any other shape: a
+stamp `<page> = F(<the definition's own parameters, positional, none starred and
+no keyword>)`, F a bare name the served pass follows only where it proves a
+module function a plain def and reads its returns; an injection `<page> =
+<page>.replace(<a string constant>, <value>)`, or with a third argument an int
+constant, whose value the served pass reads as page text; a name `<name> =
+<value>` no parameter, the page or self names, read where an injection's value
+reads it; a flag `<name> = True` or `= False` read only as an if's test; a
+non-body header write `<parameter> = <a string constant holding no CR or LF>`;
+and an if with no else whose test is a flag, a parameter, getattr of self with a
+string-constant name and a None or bool default, `isinstance(<page>, str)`,
+`<parameter>.startswith(<a string constant>)`, `<a string constant> in <page>`,
+or the `and` of those, whose body holds these statements. Any other
+script-running
 call fails the run by name,
 its reason naming the road (a second write, a write through an alias, a print to
 a stream and, for any other statement or expression, its node kind and line
@@ -400,6 +423,19 @@ that container among gc.get_objects() by its content and appends a fetch to it);
 a content type the census reads other than as a
 string constant or a name bound once to one is refused by name too, on every
 version, so no frame can rewrite an intermediate the census had read. Beside
+that precondition stands a second one, for the functions the census follows: the
+census reads a function as its text defines it, so a change at run time to a
+function's code, its defaults, its keyword defaults, its closure cells or its
+globals (`__code__`, `__defaults__`, `__kwdefaults__`, `__closure__` cell
+contents, `__globals__`), by any reach, is outside what it reads and passes
+silently, one witness for each road the reviews of this census found: a function
+the page function defines, reached by `locals().get` with its literal name and
+its `__code__` rewritten; a module function reached as an attribute of the
+module object by its literal name; a module function found on the garbage
+collector's heap by its name; and a module function found among
+`inspect.getmembers` over the module object (a lookup by name on a namespace
+mapping whose key is not constant text, which may spell any module function's
+name at run time, is refused instead, where one check does it, as above). Beside
 that precondition stands the item limit, for the local container proof below:
 what code does with an item of a container the proof reads, or with the object
 that a name bound other than to a literal or a call of parse_qs holds, after the
@@ -583,7 +619,21 @@ by name, an honest decode of bytes failing closed with it; int and float, a
 number, which carries no host, so a call of either that is the builtin is a leaf
 whose argument the pass does not read, save where the call is the base of a
 receiver, a container or an attribute, where the argument is read as any call's
-is (the leaf rests on the builtin's return,
+is; and a digest, a leaf of the same kind, carrying no host: a call, with no
+argument, of the `.digest()` or `.hexdigest()` method of a call of `hmac`'s
+`new` or of one of `hashlib`'s constructors, each module name the standard
+library's by binding, is a value the census reads none of what it is computed
+from, and a base64 encoding of such a leaf (one of base64's encoders on the name
+base64 so bound, handed the leaf alone), a `.decode()` of one with no argument,
+a slice of one, and a strip of one (`.strip`, `.lstrip` or `.rstrip` with no
+argument or one string constant) stay leaves, as do a name the census reads by
+binding whose every value is a leaf and a call of a function the census follows
+as a plain def every return of which is a leaf (whose arguments are then not
+read either); a base64 encoding alone is no leaf and is read as before, and a
+digest or base64 encoding through `hmac`, `hashlib` or `base64` bound other than
+to the standard library's module is refused by name (the escape-only limit, a
+digest or constructor whose code is replaced at run time, stated with its
+witness) (the leaf rests on the builtin's return,
 which the census does not read: an `__int__` or an `__index__` returning an int
 subclass, or a `__float__` returning a float subclass, whose `__str__` or
 `__format__` is overridden is the escape shape that could put text there, the
@@ -702,9 +752,14 @@ plain single-name assignment to a list, dict, set or tuple literal or to a call
 whose return the census reads as a value slot, an import's, one of the seven
 builtins a page may name, a parameter's or a method's on one of those); the
 base of a subscript store by a str or int constant key as the one target of a
-plain assignment, whose stored value the census reads; the receiver of an
-append or extend of one plain argument the census reads; and the fourth form, a
-read that hands the container to no other code: the receiver of one of the read
+plain assignment, whose stored value the census reads; the receiver of an append
+or extend of one plain argument the census reads; a `.pop` on a dict of a
+constant key, or of a key a for target over a tuple of string constants proves
+constant by binding (the name no parameter and bound no other way in the
+function), with at most a constant default and no keyword or starred argument,
+which can only remove and hands the container's method no object of its own; and
+the fourth form, a read that hands the container to no other code: the receiver
+of one of the read
 methods of the type its one binding gives it, or the base of a subscript load on
 a type that has one, wherever it stands, tests included. The read methods are a
 closed set per type: a dict's get, keys, values, items and copy and a subscript
@@ -1062,8 +1117,19 @@ module reached through sys.modules, import_module, a parameter or any other way)
 is not seen, a stated limit, since the census does not read which object a
 lookup's receiver is (its witness: a module function that getattr on
 `sys.modules[__name__]` reaches by a module helper's return and whose `__code__`
-the file rewrites). Any other callee of those two kinds is refused by name, the
-reason naming the condition it fails; a
+the file rewrites). It follows a call whose callee reads a dispatch table, a
+module name one top-level plain assignment binds once to a dict literal whose
+keys are string constants and whose values are bare names of module functions
+the module binds once, no code changing it after that binding and every other
+occurrence of the name a `.get` callee's receiver, a subscript load's base, or a
+membership test's right operand (a read, since such a dict's `__contains__` is
+the builtin's, which hands the dict to no other code): the callee is a `.get` of
+the table with one argument, a subscript load of it, or a name a function binds
+once by a plain assignment to one of those whose every occurrence in the
+function is that binding, a callee or an identity test against None, and each
+value of the table is followed as a page renderer under the same proof. Any
+other callee of those two kinds is refused by name, the reason naming the
+condition it fails; a
 module-level def of int or float is not followed but refused as a call of int or
 float bound other than to the builtin (above). It
 also follows a text method or a file read, and any other method through its
@@ -1280,8 +1346,8 @@ other form inside such a block's body, a name a star import may rebind, a module
 name in a file that writes its module namespace through a computed name or may
 rewrite it at run time (the reason naming the form and its line), a builtin in a
 file that may rewrite the builtins, and a rebound import, builtin,
-function or class among them), any other kind of expression in a page (a
-non-empty bytes, float, complex or Ellipsis constant, an f-string's format spec,
+function or class among them), any other kind of expression in a page (a float,
+complex or Ellipsis constant, an f-string's format spec,
 any other operator, a comparison and a unary expression among them, and a yield,
 a yield from or an await, whose value is what the generator is sent, what the
 iterator it delegates to returns or what the awaited object returns, not its
