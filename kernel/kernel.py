@@ -51,6 +51,216 @@ _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
 em = load_source("romp_event_model", HERE / "event_model.py")
 jd = load_source("romp_judge", HERE / "judge.py")
+
+
+# The kernel instance lock: one serving kernel per state root.
+# Loading judge.py (just above) fixed the state root and created it, and nothing this module does
+# before this point writes under it. Everything below does: the serve-token mint and the fold
+# checkpoint sweep at import, main()'s boot passes, migrations, prunes and mirrors, and every thread
+# it starts. A second kernel on the same root used to run all of that beside the first (a successor
+# racing a draining kernel, a kernels.json profile with no stateDir, an /ensure for a port no profile
+# names). So a kernel run as __main__ takes an exclusive flock on <state>/kernel.lock HERE, before
+# any of it, and holds it until the process exits; an in-process load of this module (a test, a
+# bench) never locks.
+#
+# The file's one line names the holder: "<pid> serving", rewritten to "<pid> draining <deadline>"
+# (wall-clock epoch seconds) when _drain_and_exit starts. A kernel that finds the lock held by a
+# draining owner waits for it, bounded by that deadline: the owner's exit releases the lock, which
+# is the event the wait keys on. Any other holder (a serving line, a line naming a pid that is not
+# running, an empty or unreadable line, a deadline already past, or a wait that reached the
+# deadline) refuses this kernel: one stderr line,
+# then os._exit(KERNEL_LOCK_EXIT) with nothing written, so the manager's crash backoff retries it.
+# The file is opened without O_TRUNC (a loser truncating it would erase the holder's line), never
+# unlinked and never unlocked: the process exit releases it, a SIGKILL included. os.open makes the
+# descriptor non-inheritable, so no child (an SDK session, the judges' child, the detached update
+# shell) holds the lock past this process; a future self-re-exec would have to pass it on and take
+# it again.
+KERNEL_LOCK_EXIT = 75          # EX_TEMPFAIL: another kernel holds this state root; retrying later is the remedy
+KERNEL_LOCK_LINE_MAX = 256     # the most of the file's first line a reader reads
+_KERNEL_LOCK_FD = None         # the held lock's descriptor in a kernel run as __main__; None in every in-process load
+_KERNEL_LOCK_SERVING_RE = re.compile(r"(\d+) serving")
+_KERNEL_LOCK_DRAINING_RE = re.compile(r"(\d+) draining (\d+(?:\.\d+)?)")
+
+
+class _KernelLockWaitExpired(Exception):
+    """Raised by the SIGALRM handler that bounds the wait for a draining owner (_kernel_lock_wait)."""
+
+
+def _kernel_lock_path():
+    """The instance lock's path under this kernel's state root."""
+    return jd.STATE / "kernel.lock"
+
+
+def _kernel_lock_write(fd, line):
+    """Make `line` (newline included) the lock file's whole content: pwrite at offset 0, then ftruncate to the line's
+    length. pwrite first, so a reader of the first line never finds an empty file mid-rewrite: until the truncate, a
+    longer old line's tail sits after the new line's newline, beyond the first line."""
+    data = line.encode("ascii")
+    os.pwrite(fd, data, 0)
+    os.ftruncate(fd, len(data))
+
+
+def _kernel_lock_read(fd):
+    """The lock file's first line as read through `fd` (at most KERNEL_LOCK_LINE_MAX bytes, newline dropped), "" for
+    an empty file; undecodable bytes are replaced, never raised on, so the reader still names what it found."""
+    data = os.pread(fd, KERNEL_LOCK_LINE_MAX, 0)
+    return data.split(b"\n", 1)[0].decode("ascii", "replace").strip()
+
+
+def _kernel_lock_pid_alive(pid):
+    """True unless kill(pid, 0) says no such process: EPERM is a live process of another user, which counts."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OverflowError, ValueError, OSError):
+        return False
+    return True
+
+
+def _kernel_lock_when(t):
+    """An epoch time as the refusal and waiting lines print it: UTC, to the second."""
+    try:
+        return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, OSError, ValueError):
+        return "%.3f" % t
+
+
+def _kernel_lock_wait(fd, remaining):
+    """Block in flock(LOCK_EX) on `fd` for at most `remaining` seconds; True once the lock is held. Bounded by a one-shot
+    ITIMER_REAL whose SIGALRM handler raises _KernelLockWaitExpired out of the blocking flock (PEP 475 retries an
+    interrupted flock unless the handler raises). The handler raises only while the wait is armed, and the arm drops
+    the moment flock returns, so the one alarm cannot land anywhere but inside the wait or right after it, where it is
+    caught and read as the deadline reached (the lock is then released by this process's exit). The finally cancels the
+    timer and restores the previous SIGALRM handler.
+
+    Safe only because this process runs one thread here: CPython runs a Python signal handler on the main thread, but a
+    process-directed SIGALRM interrupts the blocking flock only when it is delivered to the thread making that call, and
+    with other threads alive the kernel may hand it to one of them, leaving the wait unbounded. No module loaded before
+    this point (loadsource.py, event_model.py, judge.py and what judge.py loads, credentials.py and logins.py) starts a
+    thread at import; their module-level statements build locks, compiled patterns and paths only, and
+    tests/test_kernel_instance_lock.py reads the waiting kernel's thread count from /proc while it waits.
+    _kernel_lock_acquire refuses rather than wait when threading.active_count() says otherwise."""
+    armed = [True]
+
+    def _expired(signum, frame):
+        if armed[0]:
+            armed[0] = False
+            raise _KernelLockWaitExpired()
+
+    held = False
+    prev = signal.signal(signal.SIGALRM, _expired)
+    try:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, max(0.001, float(remaining)))
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            armed[0] = False
+            held = True
+        except _KernelLockWaitExpired:
+            held = False
+        armed[0] = False
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, prev)
+    return held
+
+
+def _kernel_lock_refusal(why):
+    """The one stderr line a refused kernel prints: `why` (what holds the lock, naming the owner's pid as read and the
+    lock's path), that this kernel wrote nothing, its exit status, and the remedy when this is a second kernel by
+    configuration."""
+    return ("romp-kernel: %s; this kernel wrote nothing and exits %d. If this is a second kernel by configuration, give "
+            "its kernels.json profile a stateDir (or set ROMP_STATE_DIR) so it has its own state root.\n"
+            % (why, KERNEL_LOCK_EXIT))
+
+
+def _kernel_lock_holder_why(path, line):
+    """The refusal's account of the process holding `path`, from the file's first `line`, for every holder this kernel
+    does not wait for. A pid that is not running holds nothing any more, so the holder is a new owner that took the
+    lock and has not yet written its own line (an empty file reads the same way)."""
+    m = _KERNEL_LOCK_SERVING_RE.fullmatch(line) or _KERNEL_LOCK_DRAINING_RE.fullmatch(line)
+    if not line:
+        return ("%s is held by a new owner that has not yet written its line (the file is empty), so another kernel "
+                "is starting on this state root" % path)
+    if not m:
+        return ("%s is held by a process whose line reads %r, which names no owner, so another kernel holds this state "
+                "root" % (path, line[:80]))
+    pid = int(m.group(1))
+    if not _kernel_lock_pid_alive(pid):
+        return ("%s is held by a new owner that has not yet written its line (the line still names pid %d, which is "
+                "not running), so another kernel is starting on this state root" % (path, pid))
+    return "another kernel (pid %d) is serving from this state root and holds %s" % (pid, path)
+
+
+def _kernel_lock_acquire(path, now=time.time):
+    """Take the instance lock at `path`: (fd, None) once held, with "<this pid> serving" written; (None, refusal line)
+    when another process holds it and this kernel must not run. A draining owner whose deadline is still ahead is
+    waited for (_kernel_lock_wait), with one stderr line saying so; an owner that releases in time hands the lock over,
+    one that does not is refused as a drain past its deadline. Never raises for a held lock; an OSError opening the
+    file propagates, a fault the kernel cannot start past."""
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        line = _kernel_lock_read(fd)
+        m = _KERNEL_LOCK_DRAINING_RE.fullmatch(line)
+        if not (m and _kernel_lock_pid_alive(int(m.group(1)))):
+            os.close(fd)
+            return None, _kernel_lock_refusal(_kernel_lock_holder_why(path, line))
+        pid, deadline = int(m.group(1)), float(m.group(2))
+        remaining = deadline - now()
+        if remaining <= 0:
+            os.close(fd)
+            return None, _kernel_lock_refusal((
+                "pid %d holds %s and announced its drain with a deadline of %s, which has passed, so its drain is past "
+                "its deadline" % (pid, path, _kernel_lock_when(deadline))))
+        if threading.active_count() != 1:
+            os.close(fd)
+            return None, _kernel_lock_refusal((
+                "pid %d holds %s and is draining until %s, but this process already runs %d threads, so a wait for it "
+                "could not be bounded" % (pid, path, _kernel_lock_when(deadline), threading.active_count())))
+        sys.stderr.write("romp-kernel: pid %d holds %s and is draining; this kernel waits for its drain until %s "
+                         "(%.1f s)\n" % (pid, path, _kernel_lock_when(deadline), remaining))
+        sys.stderr.flush()
+        if not _kernel_lock_wait(fd, remaining):
+            os.close(fd)
+            return None, _kernel_lock_refusal((
+                "pid %d did not release %s by its drain's deadline of %s, so its drain is past its deadline"
+                % (pid, path, _kernel_lock_when(deadline))))
+        waited = pid
+    else:
+        waited = None
+    try:
+        _kernel_lock_write(fd, "%d serving\n" % os.getpid())
+    except OSError as e:
+        # the lock is the mechanism and the line its label: a kernel that holds the lock serves without the label, and
+        # a kernel refused meanwhile names the stale line's pid as not running, a new owner not yet written
+        sys.stderr.write("romp-kernel: holding %s, but its serving line was not written: %s: %s\n"
+                         % (path, type(e).__name__, str(e)[:120]))
+    if waited is not None:      # the wait's outcome, beside the line that announced it
+        sys.stderr.write("romp-kernel: pid %d released %s; this kernel holds it now\n" % (waited, path))
+        sys.stderr.flush()
+    return fd, None
+
+
+def _kernel_lock_refuse(refusal):
+    """Print the refusal and leave at once: os._exit, not sys.exit, so no atexit handler runs and writes."""
+    try:
+        sys.stderr.write(refusal)
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(KERNEL_LOCK_EXIT)
+
+
+if __name__ == "__main__":
+    _KERNEL_LOCK_FD, _kernel_lock_refused = _kernel_lock_acquire(_kernel_lock_path())
+    if _KERNEL_LOCK_FD is None:
+        _kernel_lock_refuse(_kernel_lock_refused)
+
+
 cm = load_source("romp_colormap", HERE / "colormap.py")  # age → recency tint
 pal = load_source("romp_palette", HERE / "palette.py")  # session-identity palettes (selectable)
 sb = load_source("romp_session_backend", HERE / "session_backend.py")  # the SessionBackend ABC
@@ -4071,14 +4281,16 @@ def _persist_repo_root():
     file over ssh FIRST instead of guessing conventional dirs — the guess list missed a clone at
     ~/projects/romp while that machine's kernel was literally up, reporting "romp not installed"
     (the user 2026-08-11). Best-effort, unlike the serve-token mint above, which refuses rather
-    than degrade: a wrong repo-root misleads a probe, a wrong token strands every client."""
+    than degrade: a wrong repo-root misleads a probe, a wrong token strands every client.
+    Written by main() once the bind succeeded and the instance lock is held, beside the serve-port
+    record (_persist_serve_port), never at import: a kernel refused by the lock writes nothing, and
+    an in-process load of this module (a test, a bench against a state copy) leaves no record
+    naming its checkout."""
     try:
         jd.STATE.mkdir(parents=True, exist_ok=True)
         (jd.STATE / "repo-root").write_text(str(ROOT) + "\n")
     except OSError:
         pass
-
-_persist_repo_root()
 
 
 def _persist_serve_port(port):
@@ -82472,6 +82684,22 @@ def _graceful_term(signum, frame):
     _drain_and_exit(_audit_reason_text(rec), signum=signum, what="SIGTERM", audit=rec)
 
 
+def _kernel_lock_announce_drain():
+    """Rewrite the instance lock's line to "<pid> draining <deadline>", the deadline being now plus EXIT_GRACE_S, the
+    grace every exit budget below is a share of: a successor that finds the lock held waits for this kernel's exit up
+    to that deadline instead of refusing (_kernel_lock_acquire). A no-op with no lock held (every in-process load of
+    this module). Never raises: a failed write is one _exit_log line and the drain goes on, its successor then refused
+    and retried by the manager's backoff as before the lock existed."""
+    fd = _KERNEL_LOCK_FD
+    if fd is None:
+        return
+    try:
+        _kernel_lock_write(fd, "%d draining %.3f\n" % (os.getpid(), time.time() + float(EXIT_GRACE_S)))
+    except Exception as e:
+        _exit_log("romp-kernel: the instance lock's draining line was not written: %s: %s\n"
+                  % (type(e).__name__, str(e)[:120]))
+
+
 def _drain_and_exit(reason, signum=None, what="SIGTERM", audit=None):
     """Drain the SDK sessions, write the restart-cut row, exit: the tail every kernel exit shares
     (_graceful_term, _parent_watch). `reason` is the request on record when the exit was decided, and
@@ -82481,7 +82709,9 @@ def _drain_and_exit(reason, signum=None, what="SIGTERM", audit=None):
     (_unrequested_signal_reason: an empty reason used to be all restart-cuts.jsonl had for such a restart).
     Every stderr line here goes through _exit_log, and so does every line the backend logs during the drain
     (_backend_log; its summary line follows the drain's work), so a stderr that raises can neither skip the
-    drain, be recorded as the drain's error, nor skip the exit."""
+    drain, be recorded as the drain's error, nor skip the exit. Its first act announces the drain on the
+    instance lock (_kernel_lock_announce_drain), so a successor started from here on waits for this exit."""
+    _kernel_lock_announce_drain()
     res = {}
     err = ""
     reason_err = ""
@@ -82695,6 +82925,8 @@ def main():
     srv = _LoopbackServer((BIND, PORT), Handler)      # no reverse lookup at the bind (the class's docstring)
     _persist_serve_port(srv.server_address[1])     # the port record the Obsidian panel posts to, written
     #                                                once the bind SUCCEEDED (a failed bind leaves no lie)
+    _persist_repo_root()                           # the clone-discovery record, likewise after the bind and under the
+    #                                                instance lock (never at import: _persist_repo_root's docstring)
     url = "http://127.0.0.1:%d" % PORT
     sys.stderr.write("romp-kernel: serving the ported UI at %s  (Ctrl-C to stop)\n" % url)
     sys.stderr.write("romp-kernel: records under %s ; bundles from %s\n" % (jd.STATE, DIST))
