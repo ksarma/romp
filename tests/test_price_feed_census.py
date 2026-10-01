@@ -101,7 +101,7 @@ memory, that text parsed once, the script's Scan over it for the routes and serv
 one result in place of kernel.py's own contributions, then the script's figures, problems and render_sites; its import
 plant would otherwise join the credentials run's IMPORT set), plants in kernel/kernel.py a third-party
 fetch, a socket, an opener, a brace-led alert and an import statement in _TIMELINE_BOOT, a sendBeacon in the settings page's
-template, three routes before the /chat branch (a page read from a file the walk does not scan, an f-string page, a page whose
+template, three routes before the page dispatch (a page read from a file the walk does not scan, an f-string page, a page whose
 fetch URL is a Python format slot) and a method serving text/html from a parameter, and holds the shim's and the shell's
 sockets, the boot's dead opener, the worker's clients.openWindow, the four computed fetches and the four pane stylesheets to
 their listing by content (M21: the served pass replaced by pass, the plants unlisted and the three served rows stale).
@@ -2607,8 +2607,9 @@ BOOT_PLANTS = ('fetch("https://example.invalid/probe");\n'
                "import w from /* c */ 'example-comment-pkg';\n")
 SETTINGS_ANCHOR = '            "<script src=/dist/settings-page.js?v=%d></script></body></html>"'
 SETTINGS_PLANT = '            "<script>navigator.sendBeacon(\'https://example.invalid/t\',\'x\')</script>"\n'
-CHAT_BRANCH = ('            if p == "/chat":\n                _client_seen[0] = time.time()\n'
-               '                return self._send(200, _chat_page(), "text/html; charset=utf-8", cache="no-cache")\n')
+PAGE_DISPATCH = ('            _page = _PAGE_RENDERERS.get(p)\n            if _page is not None:\n'
+                 '                _client_seen[0] = time.time()\n'
+                 '                return self._send(200, _page(), "text/html; charset=utf-8", cache="no-cache")\n')
 ROUTE_PLANTS = ('            if p == "/probe":\n                return self._send(200, _probe_page(), "text/html; charset=utf-8")\n'
                 '            if p == "/probe-f":\n                return self._send(200, f"<html>{p}<script>fetch(\'https://example.invalid/f\')</script></html>", "text/html")\n'
                 '            if p == "/probe-slot":\n                return self._send(200, "<script>fetch(\'%s\')</script>" % p, "text/html")\n')
@@ -3120,7 +3121,7 @@ def _script_comments(root):
 
 # F, G and H of the fifth round, planted in the same served pass: a route's content type (F), the receivers and containers a
 # page's text is read through (G) and how served text is read per line (H). Every plant but three is a do_GET branch landed
-# before the /chat branch (FGH_ROUTES) with what it reads appended at the module's end (FGH_DEFS) or bound in Handler's body
+# before the page dispatch (FGH_ROUTES) with what it reads appended at the module's end (FGH_DEFS) or bound in Handler's body
 # (FGH_HANDLER); H1 and H2 are parts of the drift banner's joined constants, and F11 respells the one place an allowlist entry
 # covers. A plant's page is one fetch naming the plant by its tag (FGH_PAGE), located by the URL with its closing quote
 # (_fgh_mark), so f1 never matches f10.
@@ -3128,7 +3129,7 @@ FGH_PAGE = "<script>fetch('https://example.invalid/%s')</script>"
 
 
 def _fgh_route(tag, *body):
-    """A do_GET branch serving /probe-<tag> with the given body lines, in the shape ROUTE_PLANTS lands before the /chat branch."""
+    """A do_GET branch serving /probe-<tag> with the given body lines, in the shape ROUTE_PLANTS lands before the page dispatch."""
     return '            if p == "/probe-%s":\n' % tag + "".join("                %s\n" % ln for ln in body)
 
 
@@ -3245,7 +3246,7 @@ FGH_PLANT_LINES = (tuple((tag, _fgh_mark(tag)) for tag in [t for _, t in FGH_TYP
 SERVED_COMPUTED_PLANTS = ("slot", "h4")   # the plants whose one site is the computed class: the format slot and H4's second import(
 
 # B and C of the sixth round (2026-09-24), the served routes' and the served text's refusals, planted in the same pass: do_GET
-# branches before the /chat branch (BC_ROUTES) with what they read appended at the module's end (BC_DEFS). Each plant is silent at
+# branches before the page dispatch (BC_ROUTES) with what they read appended at the module's end (BC_DEFS). Each plant is silent at
 # the sixth round's head but five (c3s and c3d, read there at call.args[1], and rbi and rbd, read there as the text their names
 # hold, each page's fetch UNCLASSIFIED, and c3k, whose keyword body crashes the run with an IndexError and no line) and a SERVED
 # line by name here, each line held at the plant's own line (BC_PLANT_LINES, by content), save grl, held at no line. B: a route
@@ -3441,7 +3442,7 @@ BC_PLANT_LINES = (("c1s", '_PROBE_C1S["page"])'), ("c1g", "_PROBE_C1G)"), ("c2ct
 
 # A of the seventh round (2026-09-25), the Python readers failing closed, planted in the same pass. The shapes a reader does not
 # read each refuse by name with the reason the ruling's table gives; the two limits each hold a witness at its outcome. In
-# kernel/kernel.py's text: do_GET branches before the /chat branch (A_ROUTES) with what they read appended at the module's end
+# kernel/kernel.py's text: do_GET branches before the page dispatch (A_ROUTES) with what they read appended at the module's end
 # (A_DEFS): (a) a walrus in each part of a module-level def's or class's header, and in a def inside a module-level if, beside the
 # name's one assignment, as a page's name and as a route's type; (c) a walrus in a nested def's, class's or lambda's header inside a
 # page function (read as a local with its value) and inside do_GET (a route's type unresolved); (d) a callee, a bare name and a
@@ -9898,10 +9899,10 @@ SERVED_PLANT_LINES = ((("fetch", 'fetch("https://example.invalid/probe");'), ("a
                        ("body_param", 'return self._send(200, body, "text/html")'))
                       + FGH_PLANT_LINES + BC_PLANT_LINES + A_KERNEL_LINES)   # the plants' lines, located by content once all have landed; a tuple of names, one per occurrence
 SERVED_PLANTS = ((BOOT_ANCHOR, BOOT_ANCHOR + BOOT_PLANTS), (SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR),
-                 (CHAT_BRANCH, ROUTE_PLANTS + CHAT_BRANCH), (SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR),
-                 (CHAT_BRANCH, FGH_ROUTES + CHAT_BRANCH), (SEND_ANCHOR, FGH_HANDLER + SEND_ANCHOR),
+                 (PAGE_DISPATCH, ROUTE_PLANTS + PAGE_DISPATCH), (SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR),
+                 (PAGE_DISPATCH, FGH_ROUTES + PAGE_DISPATCH), (SEND_ANCHOR, FGH_HANDLER + SEND_ANCHOR),
                  (DRIFT_JS_ANCHOR, H1_PLANT + DRIFT_JS_ANCHOR), (DRIFT_CSS_ANCHOR, DRIFT_CSS_ANCHOR + H2_PLANT),
-                 (SLICE_SEND, SLICE_LITERAL), (CHAT_BRANCH, BC_ROUTES + CHAT_BRANCH), (CHAT_BRANCH, A_ROUTES + CHAT_BRANCH))   # (anchor, text), in the order they land
+                 (SLICE_SEND, SLICE_LITERAL), (PAGE_DISPATCH, BC_ROUTES + PAGE_DISPATCH), (PAGE_DISPATCH, A_ROUTES + PAGE_DISPATCH))   # (anchor, text), in the order they land
 
 
 def _served_text(text):
@@ -10854,7 +10855,7 @@ class TheServedPagesAreScanned(_Scope):
         and UnaryOp passed again; a subscript's slice never reaches resolve, so that arm refuses none, the (z) case's refusal deciding
         it), and its reason for vdc; the lambda's read for vlm and vld, the method allowlist's check at a module constant for vkc
         (then refused as a lambda through a name's value), its defaults' read for
-        vld, and its parameters' scope for vlp (the live lambda at kernel/kernel.py:72294 is not among its reds:
+        vld, and its parameters' scope for vlp (the live lambda at kernel/kernel.py:75779 is not among its reds:
         its `mm.group(1)` stands in int's argument, which resolve does not read);
         the Div's read for vdv (a value slot again, which also leaves SERVED_ALLOW's _MENTION_PINS entry naming nothing); the check
         at every call on the path for vdvr (the (eb) case's mutants that drop it); the `__file__` value slot for no plant of this
@@ -11742,7 +11743,7 @@ class TheServedPagesAreScanned(_Scope):
         _own_self's mark for rmh, rmhp, rmhs, rmsp and rmhb (a parameter then taken for the calling method's first parameter, the
         tree's seven calls on a parameter among them, each refused as a method no def statement defines first, having no route
         class); the refuse arm's name set for i3a (then refused as a route class's method) and the tree's seven calls on a parameter,
-        `q.get` and `raw.decode` (each then refused; `mm.group` in the lambda at kernel/kernel.py:72294 is not among
+        `q.get` and `raw.decode` (each then refused; `mm.group` in the lambda at kernel/kernel.py:75779 is not among
         them, standing in int's argument, which resolve does not read), its self root for the self plants (each then refused as a method
         called on self that no def statement defines first), its parameter root for rmh, rmhd, rmpa, rmhp, rmhs and rmhb (each then
         silent), its spelling test for rmss (then read), and the refusal of any other name on self through a binding for i3a (then
