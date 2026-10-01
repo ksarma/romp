@@ -197,7 +197,9 @@ string constant is scanned whole; a bytes constant is scanned the same way, each
 one top-level plain assignment, to a call of `compile` handed a string or bytes constant (and at most a flags argument that is an
 int constant, an attribute of that name, or their `|`) on a name the module binds to the standard library's `re` by binding is
 read through its `.sub`, `.search`, `.match`, `.fullmatch` and `.findall`, which change nothing, so such a call's arguments are
-the page text and the compiled name holds none of its own.
+the page text and the compiled name holds none of its own; the proof by binding is the digest leaf's (below), with its limit, so a
+module object stored in sys.modules under that name before the import binds it, or a function of the module replaced by an
+attribute store, is not seen.
 The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a name
 computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A `_send`
 call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in its
@@ -250,20 +252,26 @@ the call passes it positionally, with no starred argument before it and no `**`,
 `self.wfile.write(<its second positional parameter>)`, with nothing in its signature or body outside the node kinds, in their
 roles, of the kernel's Handler._send: that write, the definition's last statement, directly after its one `self.end_headers()`,
 and before them send_response with its one argument and send_header, called on self as statements; isinstance, str, len, and
-getattr of self with a string-constant name and a None default, where neither the definition nor the module binds the name,
+getattr of self with a string-constant name and a None or bool default, where neither the definition nor the module binds the
+name,
 nothing rebinds it (no function binds it under a `global` declaration, no module-level statement writes it, and the file does none
 of the writes listed below that rebind every builtin) and the module holds no star import; the one rebinding of the page parameter
 to itself or to itself encoded by `.encode("utf-8")`, alone or as the branches of an `isinstance(<page>, str)` test (`body =
 body.encode("utf-8") if isinstance(body, str) else body`); a loop over a parameter's items (`for k, v in (headers or
 {}).items():`) and an if on a parameter or on that getattr, each into header calls; header values built from string constants
-holding no CR or LF, parameters, the loop's targets, attributes read on self, str, len and a `%` format on a string constant; and
-a signature of positional parameters, none positional-only, with None defaults and no annotation. The definition may run, before
+holding no CR or LF, parameters, the loop's targets, attributes read on self, module constants (a name one top-level plain
+assignment binds and nothing else at module level, that nothing rebinds and no local or parameter of the definition names, in a
+module with no star import that writes no name of its module namespace through a computed name and may not rewrite it at run time)
+whose bound text holds no CR or LF as the census reads it (below), str, len and a `%` format on a string constant whose right
+operand is one of those or a tuple of them; and a signature of positional parameters, none positional-only, with None defaults and
+no annotation. The definition may run, before
 that one rebinding of the page, statements that build the page it writes, each read for the text it puts there and refused by name
 in any other shape: a stamp `<page> = F(<the definition's own parameters, positional, none starred and no keyword>)`, F a bare
 name the served pass follows only where it proves a module function a plain def and reads its returns; an injection `<page> =
 <page>.replace(<a string constant>, <value>)`, or with a third argument an int constant, whose value the served pass reads as page
 text; a name `<name> = <value>` no parameter, the page or self names, read where an injection's value reads it; a flag `<name> =
-True` or `= False` read only as an if's test; a non-body header write `<parameter> = <a string constant holding no CR or LF>`; and
+True` or `= False` read only as an if's test, any other assignment of it refused; a non-body header write `<parameter> = <a string
+constant holding no CR or LF>`; and
 an if with no else whose test is a flag, a parameter, getattr of self with a string-constant name and a None or bool default,
 `isinstance(<page>, str)`, `<parameter>.startswith(<a string constant>)`, `<a string constant> in <page>`, or the `and` of those,
 whose body holds these statements. Any other script-running call
@@ -276,9 +284,15 @@ any form (a lambda's or a nested def's parameter among them), or declares it glo
 reference to the write's receiver other than as its receiver, and in the definition a statement after the end_headers (which
 writes the header buffer to the stream, so a header call after it would reach the body), a second end_headers or none, any other
 rebinding of the page parameter, another codec name or a second argument to `.encode` (either can name a codec or an error handler
-the file registers at run time), a store or delete of an attribute or a subscript, a read of a name the module binds, a call not
-listed above, and a nested def, class or lambda. The reader governs the definition's own text, and code the definition runs from
-outside that text is not read: a header value is not scanned, and a response that a Content-Type in its headers argument, passed
+the file registers at run time), a store or delete of an attribute or a subscript, a read of a name the module binds other than a
+header value's module constant or in the text the page-building statements read, a module constant as a header value whose bound
+text holds a CR or LF or reads a name the census does not follow by binding (by name), a call not listed above, and a nested def,
+class or lambda. The reader governs the definition's own text, and code the definition runs from
+outside that text is not read: a header value is not scanned (a module constant used as one is read only for a CR or LF: each
+string or bytes constant in its value and in the value of each module constant that value names, followed by binding, any other
+name there but a call's callee refusing it; a CR or LF the value computes at run time, a call's return or a number formatted as a
+character, is not read, its witnesses a CR LF from chr and one from a `%c` of an int), and a response that a Content-Type in its
+headers argument, passed
 or defaulted, makes a page is outside the served pass, the call being typed by its content-type argument; nor is code the
 definition runs through an object it is handed (a parameter's methods, its mapping's items, its __str__), code behind a name the
 definition calls or reads on self (a header method, a property or `__getattr__`, however the class, a base or other code defines
@@ -457,16 +471,7 @@ the seven builtins a page may name, each for what its result is (str, its argume
 with more than one positional argument, a starred argument or a keyword other than `object`, any of which may be an encoding or an
 errors argument that decodes its first, refused by name, an honest decode of bytes failing closed with it; int and float, a
 number, which carries no host, so a call of either that is the builtin is a leaf whose argument the pass does not read, save where
-the call is the base of a receiver, a container or an attribute, where the argument is read as any call's is; and a digest, a leaf
-of the same kind, carrying no host: a call, with no argument, of the `.digest()` or `.hexdigest()` method of a call of `hmac`'s
-`new` or of one of `hashlib`'s constructors, each module name the standard library's by binding, is a value the census reads none
-of what it is computed from, and a base64 encoding of such a leaf (one of base64's encoders on the name base64 so bound, handed
-the leaf alone), a `.decode()` of one with no argument, a slice of one, and a strip of one (`.strip`, `.lstrip` or `.rstrip` with
-no argument or one string constant) stay leaves, as do a name the census reads by binding whose every value is a leaf and a call
-of a function the census follows as a plain def every return of which is a leaf (whose arguments are then not read either); a
-base64 encoding alone is no leaf and is read as before, and a digest or base64 encoding through `hmac`, `hashlib` or `base64`
-bound other than to the standard library's module is refused by name (the escape-only limit, a digest or constructor whose code is
-replaced at run time, stated with its witness) (the leaf rests on
+the call is the base of a receiver, a container or an attribute, where the argument is read as any call's is (the leaf rests on
 the builtin's return, which the census does not read: an `__int__` or an `__index__` returning an int subclass, or a
 `__float__` returning a float subclass, whose `__str__` or `__format__` is overridden is the escape shape that could put text
 there, the stated limit, and the interpreters the census runs on copy such a return to an exact int or float, so its witness
@@ -480,7 +485,20 @@ that is not rebound, any other builtin refused by name, and a call of super() re
 class's (the names the import system binds in every module, `__doc__`, `__name__`, `__package__`, `__spec__` and `__loader__`, are
 no builtins here: a page that reads one the file does not bind is refused by name wherever the pass reads it, as a bare name, the
 base of a receiver, a container or an attribute, a callee or a call's argument, but never inside the index of a subscript over a
-container whose text the pass does not read: below); a parameter, an except name, or a name the function
+container whose text the pass does not read: below); a digest, which carries no host either, a leaf as int's and float's call is:
+a call, with no argument, of the `.digest()` or `.hexdigest()` method of a call of `hmac`'s `new` or of one of `hashlib`'s
+constructors, each module name the standard library's by binding, is a value the census reads none of what it is computed from,
+and a base64 encoding of such a leaf (one of base64's encoders on the name base64 so bound, handed the leaf alone), a `.decode()`
+of one with no argument, a slice of one, and a strip of one (`.strip`, `.lstrip` or `.rstrip` with no argument or one string
+constant) stay leaves, as do a name the census reads by binding whose every value is a leaf and a call of a function the census
+follows as a plain def every return of which is a leaf (whose arguments are then not read either); a base64 encoding alone is no
+leaf and is read as before, as is a `.decode()`, a slice or a strip of anything but a leaf, and a digest or base64 encoding
+through `hmac`, `hashlib` or `base64` bound other than to the standard library's module is refused by name, a module name a
+function rebinds under a `global` declaration or binds as its own local among them; the proof by binding reads the file's import
+statements and no more, so a digest or a constructor whose code is replaced at run time (by an assignment to a method of the
+module's class, or by an attribute store on the module object) and a module object stored in sys.modules under the standard
+library's name before the import binds it are the escape-only limit, a witness for each; a parameter, an except name, or a name
+the function
 binds from one of those, where no attribute is read on the path to it: `q.get(k)` passes, and `q.X` is refused, below), reading as
 text the arguments a call of such a base or of a method on one is handed, never the text it computes from them (a method whose
 return is not drawn from its receiver's text, called on such a base where it derives through a call handed arguments the pass
@@ -980,8 +998,12 @@ attribute, a subscript whose join the pass does not compute, refused as that, or
 as it reads it (`self.X.format(...)`, `Handler.X.format(...)`), that line standing for the text the receiver holds. Text a page
 joins through anything but a string constant (a name,
 a call, an attribute, a
-subscript of a container whose text the pass does not read, or a field or a `%` slot holding one) is read piece by piece: a tool's name, a tag or an attribute split there is not seen, and a fetch URL cut there is
-classed by the part before the cut. A subscript by a constant index over a container whose text the pass reads (the containers
+subscript of a container whose text the pass does not read, or a field or a `%` slot holding one) is read piece by piece: a tool's
+name, a tag or an attribute split there is not seen, and a fetch URL cut there is classed by the part before the cut. An
+injection, which puts its value into the page at its marker, and a compiled pattern's `.sub`, which puts its replacement into its
+subject at each match, are such joins: the census reads the page or the subject whole, the marker or the match in place, and the
+inserted text apart, so a fetch URL the insertion completes is classed by what the page or the subject holds around it, as a cut
+URL is. A subscript by a constant index over a container whose text the pass reads (the containers
 named above for a slice) that stands as an operand of one of these joins, a `+`, a `%` or an f-string, or the receiver or an
 argument of a `.join`, `.format`, `.format_map` or `.replace` (an element of a list, tuple or set literal or a key of a dict
 literal handed to `.join`, an element of a starred list or tuple literal handed to `.format`, and a value of a dict literal handed
@@ -3694,9 +3716,12 @@ _NUMBER_REBOUND = "a call of int or float bound other than to the builtin, whose
 # a leaf, whose arguments are then not read either (_Served._leaf, a walk over those names and functions with one visited set per
 # query, _leaf_step its expansion). A base64 encoding alone is no leaf: it carries what it encodes, and resolve reads it as before. A
 # call of those shapes through hmac, hashlib or base64 bound other than to the standard library module of that name is refused by
-# name (_LEAF_REBOUND). The leaf rests on the standard library's digest, which the census does not read: a digest or a constructor
-# whose code is replaced at run time (an assignment to a method of hmac's or hashlib's classes, or to the module's own function) is the
-# stated limit, reached only by such an escape (its witness ldgw).
+# name (_LEAF_REBOUND). The leaf rests on the standard library's digest, which the census does not read, and on the proof by binding,
+# which reads the file's import statements and no more: a digest or a constructor whose code is replaced at run time (an assignment to
+# a method of hmac's or hashlib's classes, its witness ldgw, or an attribute store on the module object, `hmac.new = f`, its witness
+# lsma), and a module object stored in sys.modules under the standard library's name before the import binds it (its witness lsmh),
+# are the stated limit, reached only by such an escape; a compiled pattern's re rests on the same proof, with the same limit (its
+# witness lsmr).
 _DIGEST_CALLS = {"hmac": frozenset(("new",)),
                  "hashlib": frozenset(("new", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_384",
                                        "sha3_512", "blake2b", "blake2s"))}
@@ -3710,6 +3735,8 @@ _LEAF_REBOUND = "a digest or a base64 encoding through %s, bound other than to t
 # returns is drawn from its arguments (a substitution's replacement and its subject), which resolve reads as text, so the receiver
 # holds no page text of its own. Scan's module side takes those methods on such a name for no change of it (Scan._pattern_call), and
 # receiver reads the call through where no scope around it binds the name and the file changes the name no other way (_Served._pattern).
+# The proof by binding reads the import statements alone: a module object stored in sys.modules under the name re before the import
+# binds it, or a function of re replaced by an attribute store, is the digest leaf's stated limit (above; its witness lsmr).
 _PATTERN_READS = ("sub", "search", "match", "fullmatch", "findall")
 # The text-method arm's shapes (the eleventh round's rulings: the reviewer's 14:42Z item 2, and his 16:33Z E1 and E3): a .replace,
 # .format, .join, .format_map or .encode in a shape _const_text does not fold is refused by name (_text_shape gives the clause), never
@@ -4163,7 +4190,8 @@ def _send_preamble(d, me, page, params, codec):
       the served pass reads <value> as page text in the definition's scope, the names it reads through among it;
     - a text name: `<name> = <value>`, the name no parameter, the page or self, read in an injection's value: its value is read
       where the injection's value reads the name;
-    - a flag: `<name> = True` or `= False`, the name no parameter, the page or self, read only as an if's test;
+    - a flag: `<name> = True` or `= False`, the name no parameter, the page or self, read only as an if's test; the role is the
+      assignment's whose value is that bool constant, so any other assignment of the name has none and the gate refuses it;
     - the cache header: `<parameter> = <a str constant holding no CR or LF>`, the parameter neither the page nor self, a
       non-body write (the definition reads that parameter as a header value or a test);
     - an if with no else, its body these statements, its test a flag, a parameter, getattr of self with a str constant name and a
@@ -4240,13 +4268,44 @@ def _send_preamble(d, me, page, params, codec):
         elif t == page and isinstance(v, ast.Call) and name(v.func) and not v.keywords and all(name(a) and a.id in params for a in v.args):
             roles.update({id(s): "stamp", id(s.targets[0]): "page"})
             texts.append(v); roles.update((id(x), "text") for x in ast.walk(v))
-        elif own(t) and t in flags and t not in read_in:
+        elif own(t) and t in flags and t not in read_in and isinstance(v, ast.Constant) and type(v.value) is bool:
             roles.update({id(s): "flag", id(s.targets[0]): "flag", id(v): "const"})
         elif own(t) and t in read_in and t not in flags:
             roles.update({id(s): "textname", id(s.targets[0]): "textname"}); roles.update((id(x), "text") for x in ast.walk(v))
         elif t in params and t != page and t != me and is_str(v) and "\r" not in v.value and "\n" not in v.value:
             roles.update({id(s): "cache", id(s.targets[0]): "cache", id(v): "const"})
     return roles, texts
+
+
+def _header_const(consts, rebinds, name):
+    """Why a module constant a `_send` definition uses as a header value is refused (_send_gate), or None: the gate's guard on a
+    string constant holding a CR or LF in a header call, applied where the value is bound. The census reads the constant's value
+    and, through it, the value of each module constant that value names (a name one top-level plain assignment binds and nothing
+    else at module level, _module_consts, that nothing rebinds: Result.rebinds), each once: a string or bytes constant there that
+    holds a CR or LF refuses the header value, and so does a name read there that is no such constant, save a call's callee or the
+    name at the base of a callee's attribute chain, whose return the census does not read (a name the module binds twice, or that
+    a function rebinds under a `global` declaration, among the refused). A CR or LF the value computes at run time from anything
+    else, a call's return or a number formatted as a character, is not read: the stated limit, as a header value's text is not
+    scanned, its witnesses aew (a call of chr) and aeq (a `%c` of an int)."""
+    seen, todo = set(), [name]
+    while todo:
+        k = todo.pop()
+        if k in seen: continue
+        seen.add(k)
+        callee = set()
+        for x in ast.walk(consts[k]):
+            if isinstance(x, ast.Call):
+                f = x.func
+                while isinstance(f, ast.Attribute): f = f.value
+                callee.add(id(f))
+        for x in ast.walk(consts[k]):
+            if isinstance(x, ast.Constant) and isinstance(x.value, (str, bytes)):
+                if any(c in x.value for c in ((b"\r", b"\n") if isinstance(x.value, bytes) else ("\r", "\n"))):
+                    return "whose bound text holds a CR or LF"
+            elif isinstance(x, ast.Name):
+                if x.id in consts and x.id not in rebinds: todo.append(x.id)
+                elif id(x) not in callee: return "whose bound value reads %s, no module constant the census follows by binding" % x.id
+    return None
 
 
 def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, consts=None, out=None):
@@ -4269,30 +4328,45 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, co
     - Assign: one, a statement of the definition's own body, its one target the page parameter by name and its value the codec
       shape: the page parameter, `.encode("utf-8")` on it with exactly that one argument, or an IfExp whose test is
       `isinstance(<page>, str)` and whose branches are those (`body = body.encode("utf-8") if isinstance(body, str) else body`);
+      and, before that codec, an assignment in a preamble role (_send_preamble: the stamp, an injection, a text name, a flag
+      assigned a bool constant, the cache header), every node of the stamp's call, of an injection's value and of a text name's
+      value page text the served pass reads;
     - For: one, a statement of the definition's own body with no else, its target a name or a tuple of names that are no parameter
       and not self, its iterable `(<a parameter> or {}).items()`;
-    - If: a statement of the definition's own body with no else, its test a parameter or the getattr call below;
+    - If: a statement of the definition's own body with no else, its test a parameter or the getattr call below; and a preamble
+      if in its role (_send_preamble);
     - Call: `send_response` with its one argument and `send_header` with two, called on self as statements, and `end_headers` with
       none, the one statement above; the write; `isinstance(<page>, str)` as the codec's test; `len(<page>)` and `str(<one value>)` as header values;
-      `getattr(<self>, <a str constant>, None)` as an if's test; `.encode("utf-8")` in the codec; `.items()` as the loop's iterable;
-      none with a keyword;
+      `getattr(<self>, <a str constant>, None)`, or with a bool constant default, as an if's test; `.encode("utf-8")` in the codec;
+      `.items()` as the loop's iterable; and a preamble role's calls (the stamp, an injection's `.replace`, and a preamble if's
+      getattr, isinstance and `.startswith` tests); none with a keyword;
     - Attribute, loaded: on self, a header method as its call's callee, `wfile` as the write's receiver and nowhere else, and any
       other name but a write method's as a header value; `.write` on `self.wfile` as the write's callee; `.encode` on the page
       parameter and `.items` on the loop's iterable, each its call's callee;
     - Name: loaded, a parameter; self as an attribute's base or getattr's first argument; the loop's targets inside its body; a
       builtin above as its call's callee, and `str` as isinstance's second argument, each only where neither the definition nor the
       module binds the name, nothing rebinds it, the module holds no star import and the file writes no builtin and no name of its
-      module namespace through a computed name and may rewrite neither at run time (`shadow`); stored, the page parameter as the
-      codec's target and the loop's targets;
-    - Tuple, stored: the loop's target; Constant: a str or None, a str in a header call's arguments holding no CR or LF;
+      module namespace through a computed name and may rewrite neither at run time (`shadow`); a module constant (one top-level
+      plain assignment and nothing else binding it at module level, nothing rebinding it, no local or parameter of its name, in a
+      module with no star import) as a header value, save where its bound text holds a CR or LF or reads a name the census does
+      not follow by binding (_header_const); a flag or a parameter as a preamble if's test; stored, the page parameter as the
+      codec's target, the loop's targets and a name a preamble role binds;
+    - Tuple: stored, the loop's target; loaded, the right operand of a header value's `%` whose left operand is a str constant, its
+      elements header values;
+    - Constant: a str or None, a str in a header call's arguments holding no CR or LF, and a bool only as getattr's default; an
+      int as an injection's count;
     - BinOp: a `%` whose left operand is a str constant, as a header value; BoolOp: the `or` of a parameter and an empty dict in the
-      loop's iterable; Dict: that empty dict; IfExp: the codec's value.
-    A header value is an argument of a header call or of str(), or the right operand of that `%`. Every other statement or
+      loop's iterable, and the `and` of a preamble if's tests; Compare: `<a str constant> in <page>` as a preamble if's test; Dict:
+      that empty dict; IfExp: the codec's value.
+    A header value is an argument of a header call or of str(), the right operand of that `%`, or an element of a tuple that is
+    that right operand. Every other statement or
     expression refuses by its kind and line ("a With statement at line N", "a Subscript expression at line N"), a listed kind in
     any other role by its kind and line too ("a Call expression outside its listed roles at line N"), a builtin whose allowance a
     run-time form of the file takes away by the builtin and that form ("getattr at line N, a builtin in a file that calls exec at
     line M, which may rewrite the builtins at run time"), a string constant holding a CR or LF in a header call's arguments by
-    name, and the signature by what it holds, the first in the definition's order."""
+    name, a module constant used as a header value whose bound text holds a CR or LF, or reads a name the census does not follow,
+    by name and line ("the module constant X, whose bound text holds a CR or LF, as a header value at line N"), and the signature
+    by what it holds, the first in the definition's order."""
     a = d.args
     sig = ([(x, "a positional-only parameter") for x in a.posonlyargs] + [(x, "a keyword-only parameter") for x in a.kwonlyargs]
            + [(x, w) for x, w in ((a.vararg, "a *args parameter"), (a.kwarg, "a **kwargs parameter")) if x is not None]
@@ -4427,9 +4501,14 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, co
                 if allowed and isinstance(shadow, str): run_why[id(n)] = "%s at line %d, %s" % (n.id, n.lineno, _RUNTIME_BUILTIN % shadow)
                 return allowed and not shadow
             if me is not None and n.id == me: return (isinstance(p, ast.Attribute) and p.value is n) or (gets(p) and p.args[0] is n)
-            # a module constant (one top-level plain assignment, nothing rebinding it) as a header value: a non-body write
+            # a module constant (one top-level plain assignment, nothing rebinding it) as a header value: a non-body write, refused by
+            # name where its bound text holds a CR or LF or reads a name the census does not follow (_header_const)
             if (consts and n.id in consts and n.id not in local and n.id not in rebinds and not star and n.id not in params
-                    and value(n, p)): return True
+                    and value(n, p)):
+                bad_text = _header_const(consts, rebinds, n.id)
+                if bad_text is None: return True
+                run_why[id(n)] = "the module constant %s, %s, as a header value at line %d" % (n.id, bad_text, n.lineno)
+                return False
             return n.id in params or (n.id in targets and id(n) in in_loop)
         if isinstance(n, ast.Tuple):
             if isinstance(n.ctx, ast.Load):   # the right operand of a header value's `%`, its elements header values
@@ -4468,7 +4547,7 @@ def _body_param(d, pos, me, tree, rebinds=(), shadow=False, texts=None):
     or body lies outside the kinds and roles of the kernel's Handler._send (_send_gate, which names them): the one write of the
     page parameter, the definition's last statement, directly after its one `self.end_headers()`, and before them send_response
     with its one argument and send_header, called on self as statements; isinstance, str, len, and getattr of self with a
-    string-constant name and a None default, each only where neither the definition nor the module binds the name, nothing rebinds
+    string-constant name and a None or bool default, each only where neither the definition nor the module binds the name, nothing rebinds
     it (no function binds it under a `global` declaration and no module-level statement writes it: Result.rebinds, `rebinds`; and
     the file names no `__builtins__` as a name, imports no builtins module (`import builtins[.x]`, `from builtins[.x] import ...`
     at any level, `from X import builtins` or `from X import __builtins__`, any X at any level), writes no module that may be the
@@ -4493,7 +4572,9 @@ def _body_param(d, pos, me, tree, rebinds=(), shadow=False, texts=None):
     of the page parameter to itself or to itself encoded by `.encode("utf-8")`, alone or as the branches of an
     `isinstance(<page>, str)` test (`body = body.encode("utf-8") if isinstance(body, str) else body`); a loop over a parameter's items (`for k, v in (headers or {}).items():`) and an if on a
     parameter or on that getattr, each into header calls; header values built from string constants holding no CR or LF,
-    parameters, the loop's targets, attributes read on self, str, len and a `%` format on a string constant; and a signature of
+    parameters, the loop's targets, attributes read on self, module constants whose bound text holds no CR or LF and reads no name
+    the census does not follow (_header_const), str, len and a `%` format on a string constant, its right operand one of those or a
+    tuple of them; before the codec, the statements that build the page in their roles (_send_preamble); and a signature of
     positional parameters, none positional-only, with None defaults and no annotation. Any other statement or expression refuses
     by its kind and line ("a With statement at line N"; a listed kind in another role, "a Call expression outside its listed roles
     at line N"): among them a statement after the end_headers (end_headers writes the header buffer to the stream, so a header
@@ -7125,7 +7206,9 @@ class _Served(object):
         bindings, _module_bound), nothing rebinds it (Result.rebinds), the module holds no star import and the file writes no name of
         its module namespace through a computed name and may not rewrite it at run time; and, given the context the name is read in,
         no function scope around it binds the name (_scoped); None otherwise. The proof of a digest leaf's and a base64 encoding's
-        module (_leaf) and of a compiled pattern's re (_pattern)."""
+        module (_leaf) and of a compiled pattern's re (_pattern). It reads the import statements alone: a module object stored in
+        sys.modules under the name before the import binds it, and an attribute store on the module object, are outside it, the
+        stated limit beside _DIGEST_CALLS (its witnesses lsmh, lsmr and lsma)."""
         if (ctx is not None and self._scoped(name, ctx) is not None) or self.star or self.computed or name in self.rebound: return None
         mods, n = self.std_imports.get(name, ()), self.bound.get(name, 0)
         return mods[0] if n and len(mods) == n and len(set(mods)) == 1 else None
