@@ -363,11 +363,13 @@ to those locals at run time through a frame object, exec or eval reached in any
 other spelling (among them: the name `locals` or `vars` as an attribute on a
 receiver; exec or eval reached as an attribute; `f_locals` as a bare name; one
 of the four attributes named by a string, as `getattr(frame, "f_locals")`; and
-any binding of a name to a primitive that the resolution above does not read, a
-plain name among the targets of an unpacking whose targets are not as many as
-its values, a name a nested unpacking target binds, an alias whose bound value
-is any other expression (an if-expression, a call), and a binding in the header
-or the body of a def, class or lambda statement) is the stated precondition,
+any binding of a name to a primitive that the resolution above does not read,
+among them a plain name among the targets of an unpacking whose targets are not
+as many as its values, a name a nested unpacking target binds, an alias whose
+bound value is any other expression (an if-expression, a call), a module-level
+for loop's target, a match statement's capture, a with statement's target (bound
+to what `__enter__` returns), and a binding in the header or the body of a def,
+class or lambda statement) is the stated precondition,
 outside what
 the census reads, and passes silently (its
 witnesses, one for each road named: `locals` reached as an attribute on a
@@ -377,30 +379,47 @@ plain name beside a starred target that takes two values, and a name in a nested
 target; a module alias bound to an if-expression and one bound to a call's
 return; a walrus in a module-level def's default, a `from ... import` in a def
 nested in the function, an assignment inside a module-level def's body, an
-assignment in a module-level class's body, read as the class's attribute, and a
-walrus in a module-level lambda's default), while a name a nested scope binds to
+assignment in a module-level class's body, read as the class's attribute, a
+walrus in a module-level lambda's default, a module-level for loop's target over
+a tuple holding `locals`, a module-level match statement's capture of `locals`,
+and a module-level with statement's target bound to `locals` through
+`contextlib.nullcontext`), while a name a nested scope binds to
 a primitive by an
 assignment
 carries the spelling in the function's subtree and refuses; code the function
 runs that the census does not read (a helper it calls as a statement, a method
-on self, a context manager it enters), reaching the caller's frame to change
-such a container, is a stated limit instead, the census reading no such code's
-body for its frame reach as the call limit reads none for what a callee does
-with a container it is handed; a content type the census reads other than as a
+on self, a context manager it enters), reaching such a container to change it by
+a road other than a hand-off, among them the caller's frame and the garbage
+collector's heap (gc.get_objects or gc.get_referrers, with no frame, no hand-off
+and no occurrence of the container's name), is a stated limit instead, the
+census reading no such code's body for its reach as the call limit reads none
+for what a callee does with a container it is handed (its witnesses, one for
+each road named: a module helper the handler calls as a statement that appends a
+fetch to the handler's container through its caller's frame, and one that finds
+that container among gc.get_objects() by its content and appends a fetch to it);
+a content type the census reads other than as a
 string constant or a name bound once to one is refused by name too, on every
 version, so no frame can rewrite an intermediate the census had read. Beside
 that precondition stands the item limit, for the local container proof below:
 what code does with an item of a container the proof reads, or with the object
 that a name bound other than to a literal or a call of parse_qs holds, after the
 census has read it, in a spelling the proof does not refuse, is outside what the
-census reads and passes silently, one witness for each road the checks found: a
-name an unpacking binds from a tuple or list display that holds the item, which
-takes that display's level, so a change through it is read as a change of a new
-object holding the item (its witnesses: a list read out of a local dict of
-lists, bound
-so and appended to, and bound so and extended by an augmented assignment; and a
-queue bound through a boolean operation, bound so, its put read off that name
-unbound and called); a subscript of a new object holding the item as an
+census reads and passes silently, one witness for each road the reviews of this
+census found, each named here: a name an unpacking binds from a new object that
+holds the item, a tuple or list display, a comprehension, or a slice or a copy
+of the container or of an item, which takes that object's level, so a change
+through it is read as a change of a new object holding the item (its witnesses:
+a list read out of a local dict of lists, bound so from a display and appended
+to, bound so and extended by an augmented assignment, and bound so from a list
+comprehension holding it and appended to; a list of a local list of lists, bound
+so from a slice of it and from a copy of it, each appended to; and a queue bound
+through a boolean operation, bound so, its put read off that name unbound and
+called); a name bound to an item of a name bound other than to a literal or a
+call of parse_qs, returned by a lambda or a def nested in the function, which
+changes that return (its witnesses: a list of a dict of lists bound through a
+boolean operation, bound to a name that a nested lambda returns and to one that
+a nested def returns, each return appended to); a subscript of a new object
+holding the item as an
 augmented assignment's target, read as a store into that object (its witness:
 that list held in a new list and extended through a subscript of it); a match
 statement's capture of the item, or of the name itself, for a name bound other
@@ -410,9 +429,15 @@ pattern and appended to, and the dict captured whole and stored into); an item
 of such a name stored into another object and changed there (its witness: a list
 of that dict stored as another object's attribute and appended to there), and an
 item of a name bound only to calls held in a new object that is stored into
-another object, called or matched (its witness: a list read out of a dict bound
-to a call of dict, held in a new list stored into another object through which a
-fetch is stored into it); on a name bound other than only by plain assignments
+another object or matched by a match statement (its witnesses: a list read out
+of a dict bound to a call of dict, held in a new list stored into another object
+through which a fetch is stored into it, and held in a new list that a match
+statement's sequence pattern captures it from, appended to through the capture),
+a new object that is called being no road: a display, a comprehension, a slice
+or a copy is no callable, so Python raises before any code runs, and a binary
+operation's result is callable only through the item's own type, whose text the
+census does not read as a page's (a class's call refused, a value slot's text
+unread); on a name bound other than only by plain assignments
 of calls (an expression, a loop, with or unpacking target, or a second binding),
 a method outside the in-place changers with its return used, the name stored
 into another object, or an item of it handed to another object's method by an
@@ -746,8 +771,10 @@ than one plain argument; an augmented assignment to a name bound to it or to an
 item of it; or any occurrence, whatever the use, in a def or class statement
 nested in the function (its decorators; its header, a def's defaults and
 annotations and a class's bases and keywords among them; and its body, where an
-occurrence is a closure capture whose code the census does not read, or makes a
-class attribute) or in the body of a lambda nested in the function (a lambda's
+occurrence in a def's body is a closure capture whose code the census does not
+read, and one in a class's body runs where the class statement stands, as an
+expression of the class's own code or a class attribute it makes) or in the body
+of a lambda nested in the function (a lambda's
 defaults, which run where it stands, excepted); a comprehension is read where it
 stands, as the function's own body is: a read of the fourth form and an append
 of a read value there pass, the container as a comprehension's source, in its
@@ -1021,7 +1048,10 @@ yield from in its own body (its call would return a generator), whose name the
 file reads nowhere but as a call's callee (an alias, an argument, and a store or
 delete of the function or of one of its attributes, `f.__code__ = ...` among
 them, may run code the census does not read) and, for a module function, spells
-in no string constant (which a lookup by name may reach). Any other callee of
+in no string constant and in no constants the census folds to text, a `+`, an
+f-string, a `%`, or a `.join`, `.format`, `.format_map` or `.replace` of string
+constants, anywhere in the file (which a lookup by name may reach). Any other
+callee of
 those two kinds is refused by name, the reason naming the condition it fails; a
 module-level def of int or float is not followed but refused as a call of int or
 float bound other than to the builtin (above). It
@@ -1116,13 +1146,15 @@ open is the builtin, neither bound by a function scope around the read, each
 handed one positional argument and no keyword; its steps a `/` with a string
 constant, `.parent` and `.resolve()`; a module constant read in the module's own
 scope, and a local only where it is a plain local of the page function bound
-once. A path whose callee fails those conditions, that reads a name a function
+once that the container proof does not refuse. A path whose callee fails those
+conditions, that reads a name a function
 scope around the read binds where the module binds a constant of that name or a
 module constant the file writes at run time, or that is a relative path spelled
 as a string constant, which Python resolves from the working directory, is
 refused by name as a path the census does not prove by binding, the line naming
-the condition it fails; any other path the census does not read is a file the
-walk does not scan. It reads a lambda's
+the condition it fails; a local the container proof refuses is refused with that
+proof's reason where no module constant shares its name; any other path the
+census does not read is a file the walk does not scan. It reads a lambda's
 body, its parameters
 value slots, and its defaults where the lambda stands in the page; a lambda
 reached through a name's value (a local's, a module constant's or a followed
@@ -1184,7 +1216,8 @@ read as a value, a lambda reached through a name's value, a module function or a
 function defined in the page function that is no plain def (an async def, one
 carrying a decorator, one whose own body yields, one whose name the file reads
 other than as a call's callee or, for a module function, spells in a string
-constant), a method called on self, whatever its def, a route class's method
+constant or in constants the census folds to text), a method called on self,
+whatever its def, a route class's method
 called other than on the calling method's own first parameter, a method called
 on any other parameter, or on a name spelled self that is not that parameter,
 whose name the file stores, deletes or names to a setter as an attribute, a call
@@ -1250,8 +1283,11 @@ run, or covers a different number of places, fails the run too. A method call
 the method allowlist refuses whose page is honest is named instead in the served
 listing, SERVED_LISTED, keyed the same way: its place is not excused but listed,
 one line after the stylesheets the listing names, with the entry's reason, and
-the run does not fail on it; an entry there that names nothing in the run, or
-covers a different number of places, fails the run too. One place is so listed:
+the run does not fail on it; its places are recorded apart from SERVED_ALLOW's,
+and each list's checks read only its own; an entry there that names nothing in
+the run, or covers a different number of places, fails the run too, and so does
+a key both lists hold, since a place is excused or listed, never both. One place
+is so listed:
 `str(app or "").capitalize()` in the kernel's `_pane_label`, called from
 `_shim`, whose callers are the seven page routes, each passing a constant
 lowercase pane key, and `_shim_core_js`, which passes its own parameter (default
@@ -1350,8 +1386,14 @@ at run time is covered
 by the walk only where the walk scans it as browser text, its DOM loads counted
 as a page's are (a JavaScript file under ui/ or vscode-extension/src), and only
 where the page reads it with an encoding the census reads as utf-8, utf_8 or
-utf8, or with none: the walk scans each file once as UTF-8, so a page that reads
-such a file with any other encoding, or through a `**` keyword whose mapping the census cannot read, is refused by name, since that one scan may not be the text the page serves, and a read that names no encoding takes the locale's default, a stated limit the census cannot prove is UTF-8; one the walk
+utf8, or with none, and hands the read no other argument: the walk scans each
+file once as UTF-8, a byte it cannot decode replaced, so a page that reads such
+a file with any other encoding, with an errors handler (in either spelling,
+beside a UTF-8 name or with no encoding), or with any other argument besides the
+one encoding, a `**` keyword whose mapping the census cannot read among them, is
+refused by name, since that one scan may not be the text the page serves, and a
+read that names no encoding and hands nothing else takes the locale's default, a
+stated limit the census cannot prove is UTF-8; one the walk
 scans as Python, as shell, or as JavaScript elsewhere, its DOM loads not
 counted, is refused by name, the kind named, since the walk reads none of its
 text as a page's; a stylesheet the walk does not scan is named, not scanned; and

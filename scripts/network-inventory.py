@@ -298,38 +298,54 @@ in the function, called or not, so a name merely spelled like a primitive is ref
 not a frame reached; a change to those locals at run time through a frame object, exec or eval reached in any other spelling
 (among them: the name `locals` or `vars` as an attribute on a receiver; exec or eval reached as an attribute; `f_locals` as a bare
 name; one of the four attributes named by a string, as `getattr(frame, "f_locals")`; and any binding of a name to a primitive that
-the resolution above does not read, a plain name among the targets of an unpacking whose targets are not as many as its values, a
-name a nested unpacking target binds, an alias whose bound value is any other expression (an if-expression, a call), and a binding
-in the header or the body of a def, class or lambda statement) is the stated precondition,
+the resolution above does not read, among them a plain name among the targets of an unpacking whose targets are not as many as its
+values, a name a nested unpacking target binds, an alias whose bound value is any other expression (an if-expression, a call), a
+module-level for loop's target, a match statement's capture, a with statement's target (bound to what `__enter__` returns), and a
+binding in the header or the body of a def, class or lambda statement) is the stated precondition,
 outside what the census reads, and passes silently (its witnesses, one for each road named: `locals`
 reached as an attribute on a receiver; `builtins.exec`; `builtins.eval`; `f_locals` called as a bare name; `getattr` handed a
 frame from `inspect.stack()` and the string `f_locals`; a plain name beside a starred target that takes two values, and a name in
 a nested target; a module alias bound to an if-expression and one bound to a call's return; a walrus in a module-level def's
 default, a `from ... import` in a def nested in the function, an assignment inside a module-level def's body, an assignment in a
-module-level class's body, read as the class's attribute, and a walrus in a module-level lambda's default), while a name a
+module-level class's body, read as the class's attribute, a walrus in a module-level lambda's default, a module-level for loop's
+target over a tuple holding `locals`, a module-level match statement's capture of `locals`, and a module-level with statement's
+target bound to `locals` through `contextlib.nullcontext`), while a name a
 nested
 scope binds to
 a primitive by an assignment carries the spelling in the function's subtree and refuses; code the function runs that the census does
 not read (a helper it calls as a
-statement, a method on self, a context manager it enters), reaching the caller's frame to change such a container, is a stated limit instead,
-the census reading no such code's body for its frame reach as the call limit reads none for what a callee does with a container it
-is handed; a content type the census reads other than as a string constant or a name bound once to one is refused by name too, on
+statement, a method on self, a context manager it enters), reaching such a container to change it by a road other than a hand-off,
+among them the caller's frame and the garbage collector's heap (gc.get_objects or gc.get_referrers, with no frame, no hand-off and
+no occurrence of the container's name), is a stated limit instead, the census reading no such code's body for its reach as the
+call limit reads none for what a callee does with a container it is handed (its witnesses, one for each road named: a module
+helper the handler calls as a statement that appends a fetch to the handler's container through its caller's frame, and one that
+finds that container among gc.get_objects() by its content and appends a fetch to it); a content type the census reads other than
+as a string constant or a name bound once to one is refused by name too, on
 every version, so no frame can rewrite an intermediate the census had read. Beside that precondition stands the item limit, for
 the local container proof below: what code does with an item of a container the proof reads, or with the object that a name bound
 other than to a literal or a call of parse_qs holds, after the census has read it, in a spelling the proof does not refuse, is
-outside what the census reads and passes silently, one witness for each road the checks found: a name an unpacking binds from a
-tuple or list display that holds the item, which takes that display's level, so a change through it is read as a change of a new
-object holding the item (its witnesses: a list read out of a local dict of lists, bound so and appended to, and bound so and
-extended by an
-augmented assignment; and a queue bound through a boolean operation, bound so, its put read off that name unbound and called); a
+outside what the census reads and passes silently, one witness for each road the reviews of this census found, each named here: a
+name an unpacking binds from a new object that holds the item, a tuple or list display, a comprehension, or a slice or a copy of
+the container or of an item, which takes that object's level, so a change through it is read as a change of a new object holding
+the item (its witnesses: a list read out of a local dict of lists, bound so from a display and appended to, bound so and extended
+by an augmented assignment, and bound so from a list comprehension holding it and appended to; a list of a local list of lists,
+bound so from a slice of it and from a copy of it, each appended to; and a queue bound through a boolean operation, bound so, its
+put read off that name unbound and called); a name bound to an item of a name bound other than to a literal or a call of parse_qs,
+returned by a lambda or a def nested in the function, which changes that return (its witnesses: a list of a dict of lists bound
+through a boolean operation, bound to a name that a nested lambda returns and to one that a nested def returns, each return
+appended to); a
 subscript of a new object holding the item as an augmented assignment's target, read as a store into that object (its witness:
 that list held in a new list and extended through a subscript of it); a match statement's capture of the item, or of the name
 itself, for a name bound other than to a literal, a call of parse_qs or calls alone (its witnesses: a dict of lists bound through
 a boolean operation, a list of it captured by a mapping pattern and appended to, and the dict captured whole and stored into); an
 item of such a name stored into another object and changed there (its witness: a list of that dict stored as another object's
 attribute and appended to there), and an item of a name bound only to calls held in a new object that is stored into another
-object, called or matched (its witness: a list read out of a dict bound to a call of dict, held in a new list stored into another
-object through which a fetch is stored into it); on a name bound other than only by plain assignments of calls (an expression, a
+object or matched by a match statement (its witnesses: a list read out of a dict bound to a call of dict, held in a new list
+stored into another object through which a fetch is stored into it, and held in a new list that a match statement's sequence
+pattern captures it from, appended to through the capture), a new object that is called being no road: a display, a comprehension,
+a slice or a copy is no callable, so Python raises before any code runs, and a binary operation's result is callable only through
+the item's own type, whose text the census does not read as a page's (a class's call refused, a value slot's text unread); on a
+name bound other than only by plain assignments of calls (an expression, a
 loop, with or unpacking target, or a second binding), a method outside the in-place changers with its return used, the name stored
 into another object, or an item of it handed to another object's method by an operator (its witnesses: a queue bound through a
 boolean operation that a fetch is put into, the put's return used; a dict of lists so bound, stored into another object through
@@ -539,7 +555,8 @@ on a class (a builtin class, or a class of collections imported as the module or
 store by a key that is no constant; an append or extend of other than one plain argument; an augmented assignment to a name bound
 to it or to an item of it; or any occurrence, whatever the use, in a def or class statement nested in the function (its
 decorators; its header, a def's defaults and annotations and a class's bases and keywords among them; and its body, where an
-occurrence is a closure capture whose code the census does not read, or makes a class attribute) or in the body of a lambda nested
+occurrence in a def's body is a closure capture whose code the census does not read, and one in a class's body runs where the
+class statement stands, as an expression of the class's own code or a class attribute it makes) or in the body of a lambda nested
 in the function (a lambda's defaults, which run where it stands, excepted); a comprehension is read where it stands, as the
 function's own body is: a read of the fourth form and an append of a read value there pass, the container as a comprehension's
 source, in its condition or as its element refuses as any other read does, and a change the census cannot fold, a comprehension
@@ -720,7 +737,9 @@ an async def, whose call returns a coroutine) carrying no decorator (staticmetho
 decorator's return in the def's place), with no yield or yield from in its own body (its call would return a generator), whose name
 the file reads nowhere but as a call's callee (an alias, an argument, and a store or delete of the function or of one of its
 attributes, `f.__code__ = ...` among them, may run code the census does not read) and, for a module function, spells in no string
-constant (which a lookup by name may reach). Any other callee of those two kinds is refused by name, the reason naming the
+constant and in no constants the census folds to text, a `+`, an f-string, a `%`, or a `.join`, `.format`, `.format_map` or
+`.replace` of string constants, anywhere in the file (which a lookup by name may reach). Any other callee of those two kinds is
+refused by name, the reason naming the
 condition it fails; a module-level def of int or float is not followed but refused as a call of int or float bound other than to
 the builtin (above). It also follows a text method or a file read, and any other method through its receiver, as above, and it
 reads every call's arguments but those of a call of int or float that is the builtin, a leaf, save where the call is a base
@@ -778,11 +797,13 @@ may rewrite it at run time and with no reason otherwise, and such a file read is
 file where a statement binds it. A file read's path is accepted only as the census proves it by binding: `Path(...)` only where Path
 is the file's one top-level `from pathlib import Path`, never rebound, and `open(...)` only where open is the builtin, neither bound
 by a function scope around the read, each handed one positional argument and no keyword; its steps a `/` with a string constant,
-`.parent` and `.resolve()`; a module constant read in the module's own scope, and a local only where it is a plain local of the page
-function bound once. A path whose callee fails those conditions, that reads a name a function scope around the read binds where the
+`.parent` and `.resolve()`; a module constant read in the module's own scope, and a local only where it is a plain local of the
+page function bound once that the container proof does not refuse. A path whose callee fails those conditions, that reads a name a
+function scope around the read binds where the
 module binds a constant of that name or a module constant the file writes at run time, or that is a relative path spelled as a
 string constant, which Python resolves from the working directory, is refused by name as a path the census does not prove by
-binding, the line naming the condition it fails; any other path the census does not read is a file the walk does not scan. It
+binding, the line naming the condition it fails; a local the container proof refuses is refused with that proof's reason where no
+module constant shares its name; any other path the census does not read is a file the walk does not scan. It
 reads a lambda's body, its parameters value slots, and its defaults where the lambda stands in
 the page; a lambda reached through a name's value (a local's, a module constant's or a followed function's default, directly or
 inside an if-expression, a boolean operation, a walrus, a starred value or a literal) is refused by name where the name is read, a
@@ -821,7 +842,8 @@ a class, a method called on one among them, through the class's own name, a name
 subscript of a name whose value holds it or of such a value itself, or any other base whose root by binding is a class), a function
 or class object read as a value, a lambda reached through a name's value, a module function or a function defined in the page
 function that is no plain def (an async def, one carrying a decorator, one whose own body yields, one whose name the file reads
-other than as a call's callee or, for a module function, spells in a string constant), a method called on self, whatever its def, a
+other than as a call's callee or, for a module function, spells in a string constant or in constants the census folds to text), a
+method called on self, whatever its def, a
 route class's method called other than on the calling method's own first parameter, a method called on any other parameter, or on a
 name spelled self that is not that parameter, whose name the file stores, deletes or names to a setter as an attribute, a call of,
 or a method
@@ -866,8 +888,10 @@ number of places the entry
 covers and the reason (the two answers with no body, the CORS preflight's 204 and the websocket upgrade's 101, are named there);
 an entry that names nothing in the run, or covers a different number of places, fails the run too. A method call the method
 allowlist refuses whose page is honest is named instead in the served listing, SERVED_LISTED, keyed the same way: its place is not
-excused but listed, one line after the stylesheets the listing names, with the entry's reason, and the run does not fail on it; an
-entry there that names nothing in the run, or covers a different number of places, fails the run too. One place is so listed:
+excused but listed, one line after the stylesheets the listing names, with the entry's reason, and the run does not fail on it;
+its places are recorded apart from SERVED_ALLOW's, and each list's checks read only its own; an entry there that names nothing in
+the run, or covers a different number of places, fails the run too, and so does a key both lists hold, since a place is excused or
+listed, never both. One place is so listed:
 `str(app or "").capitalize()` in the kernel's `_pane_label`, called from `_shim`, whose callers are the seven page routes, each
 passing a constant lowercase pane key, and `_shim_core_js`, which passes its own parameter (default `"test"`). In served text
 every `fetch(`
@@ -929,7 +953,12 @@ returns, and a set a module function's parameter takes as its argument and one i
 across its elements). A file the page
 reads at run time is covered by the walk only where the walk scans it as browser text, its DOM loads counted as a page's are (a
 JavaScript file under ui/ or vscode-extension/src), and only where the page reads it with an encoding the census reads as utf-8,
-utf_8 or utf8, or with none: the walk scans each file once as UTF-8, so a page that reads such a file with any other encoding, or through a `**` keyword whose mapping the census cannot read, is refused by name, since that one scan may not be the text the page serves, and a read that names no encoding takes the locale's default, a stated limit the census cannot prove is UTF-8; one the walk scans as Python, as shell, or as JavaScript elsewhere, its
+utf_8 or utf8, or with none, and hands the read no other argument: the walk scans each file once as UTF-8, a byte it cannot decode
+replaced, so a page that reads such a file with any other encoding, with an errors handler (in either spelling, beside a UTF-8
+name or with no encoding), or with any other argument besides the one encoding, a `**` keyword whose mapping the census cannot
+read among them, is refused by name, since that one scan may not be the text the page serves, and a read that names no encoding
+and hands nothing else takes the locale's default, a stated limit the census cannot prove is UTF-8; one the walk scans as Python,
+as shell, or as JavaScript elsewhere, its
 DOM loads not
 counted, is refused by name, the kind named, since the walk reads none of its text as a page's; a stylesheet the walk does not scan
 is named, not scanned; and any other file is refused by name, as a path the census does not prove (above) or as a file the walk does
@@ -1359,8 +1388,10 @@ class Result(object):
     def __init__(self):
         self.sites, self.dom, self.problems, self.files, self.skipped = [], [], [], [], 0
         self.served, self.served_files = [], []   # the Python files whose served pages were scanned; the stylesheets a page reads at run time
-        # SERVED_ALLOW's, SERVED_LISTED's, FRAME_WRITERS's and JS_ALLOW's matches this run (key -> the source positions it covered; a JS_ALLOW key is
-        # (file, expression), a file with no colon, so no key of one list is a key of another), and per Python file the module
+        # SERVED_ALLOW's, FRAME_WRITERS's and JS_ALLOW's matches this run (key -> the source positions it covered; a JS_ALLOW key is
+        # (file, expression), a file with no colon, so no key of one list is a key of another), SERVED_LISTED's in a map of their own
+        # (listed_hits, below: a key SERVED_LISTED holds has SERVED_ALLOW's shape, and each gate reads only its own map, so no key passes
+        # one gate on the other's hits; the reviewer's 03:08Z ruling of 2026-10-01, regression-1), and per Python file the module
         # names some code writes after binding them (a subscript store or delete, a mutating call, a binding under `global`): the
         # run-time memos; and per Python file the rebinds, the names a function binds under `global` or a statement at module level
         # writes, each of which costs an import, a function, a class or a builtin its exemption in the served pass (_Served._sole); and
@@ -1368,6 +1399,7 @@ class Result(object):
         # _global_binder reads to name the body that binds a declared name (routes_of's file-wide refusal of a `_send` so bound, and
         # _Served._module_why's reason for a module name only such a body binds)
         self.allow_hits, self.writes, self.rebinds, self.global_decls = {}, {}, {}, {}
+        self.listed_hits = {}   # SERVED_LISTED's matches this run, as allow_hits holds SERVED_ALLOW's (_Served._listed)
         # line_scan's import gate: each specifier its forms loop reads, (file, line, specifier), and each walked line where the
         # refusal of a require or import the gate cannot read fires, excused by JS_ALLOW or not, (file, line); js_reads hands both out
         self.reads, self.unread = [], []
@@ -1375,9 +1407,10 @@ class Result(object):
         # statement binds `__file__`, and the first run-time form by which it may rewrite either (_namespace_flags over Scan's
         # facts): the served pass and the `_send` gate read it
         self.ns = {}
-        # per Python file, what the served pass's follow proof reads of the names its top-level def statements bind (_Served._plain_def):
-        # each such name read other than as a call's callee, name -> [(its position, the scopes around it as Scan.kscopes holds them)],
-        # and the set of those names a string constant of the file spells (Scan.visit_Name, Scan.visit_Constant)
+        # per Python file, what the served pass's follow proof reads of the names its top-level def statements bind
+        # (_Served._def_uses): each such name read other than as a call's callee, name -> [(its position, the scopes around it as
+        # Scan.kscopes holds them)], and the set of those names a string constant of the file, or constants _Served._const_text folds
+        # to text, spells (Scan.visit_Name, Scan.visit_Constant, Scan.fold_def)
         self.fn_refs = {}
         # per Python file, the names layer iv's module side finds changed other than by the forms Result.writes records (Scan.cwrites):
         # the served pass reads a module name bound to a call that is one of them as a run-time memo (_Served.cmemos)
@@ -1513,9 +1546,11 @@ class Scan(ast.NodeVisitor):
         # _key_settle), the names a key's acceptance read at module level or as a builtin (kheld), and the file's facts _key_const
         # and _key_attr read, gathered once (kindex: _key_index)
         self.kscopes, self.ktree, self.klocals, self.kdefer, self.kheld, self.kindex = [], None, {}, [], [], None
-        # the served pass's follow proof (Result.fn_refs): the names the module's top-level def statements bind, each read of one other
-        # than as a call's callee with the scopes around it (kscopes), and those a string constant spells
+        # the served pass's follow proof (Result.fn_refs): the names the module's top-level def statements bind, each read of one
+        # other than as a call's callee with the scopes around it (kscopes), and those a string constant, or constants
+        # _Served._const_text folds to text, spells
         self.fn_names, self.fn_uses, self.fn_strs = frozenset(), {}, set()
+        self.fold_parts = set()   # the nodes inside a fold fold_def has read whole, each not read apart
         # layer iv's module side (cflows): each change's depth below the name it reaches (cdepth, name -> depths: a store or delete
         # through it, a call that changes it in place or drops a method's return, a bound changer read off it, a setattr or delattr on
         # it), each name another name is bound to (cedges, root -> [(the bound name, the steps from the root's value to the bound
@@ -2397,6 +2432,24 @@ class Scan(ast.NodeVisitor):
         if isinstance(n.value, str) and _PROGRAM_PATH.match(n.value): self.program_ref(n, n.value)
         if n.value == "_send" and id(n) not in self.send_funcs: self.send_ref(n)   # `builtins.getattr(self, "_send")`, attrgetter("_send")
         if isinstance(n.value, str) and n.value in self.fn_names: self.fn_strs.add(n.value)   # a top-level def's name spelled as a string
+    def fold_def(self, n):
+        """The follow proof's string conjunct (_Served._def_uses, _DEF_STRING) beyond one string constant (visit_Constant): a
+        top-level def's name that constants _Served._const_text folds to text spell (a `+`, an f-string, a `%`, or a .join, .format,
+        .format_map or .replace of string constants), read at every BinOp, JoinedStr and Call the walk visits that folds, wherever it
+        stands in the file, so a lookup by a folded key (`globals().get("_f" + "x")`) refuses the follow as one by a string constant
+        does (the reviewer's 03:08Z ruling of 2026-10-01, correctness-3). The parts of a fold read whole are not read apart
+        (fold_parts): a part's text is an operand the fold consumes, no value the program holds, so it can be no key. A call of any
+        other method, or a binary operation other than `+` and `%`, folds to nothing (_Served._fold), so it is not asked, and neither
+        is a file that has no top-level def."""
+        if not self.fn_names or id(n) in self.fold_parts: return
+        if isinstance(n, ast.Call) and not (isinstance(n.func, ast.Attribute) and n.func.attr in ("join", "format", "format_map", "replace")): return
+        if isinstance(n, ast.BinOp) and not isinstance(n.op, (ast.Add, ast.Mod)): return
+        c = _Served._const_text(n)
+        if c is None or type(c[0]) is not str: return
+        if c[0] in self.fn_names: self.fn_strs.add(c[0])
+        self.fold_parts.update(id(x) for x in ast.walk(n) if x is not n)
+    def visit_JoinedStr(self, n):   # an f-string: its folded text, for the follow proof's string conjunct (fold_def)
+        self.fold_def(n); self.generic_visit(n)
     def coperands(self, ops):   # layer iv's module side: an operand handed to another operand's method (whose other operand is no
         for o in ops:   # constant), a change of the name it reaches (the dunder hand-off; the 07:37Z ruling's condition 2 on an item)
             if any(type(q) is not ast.Constant for q in ops if q is not o): self.cwrite(o, getattr(o, "lineno", 0))
@@ -2404,6 +2457,7 @@ class Scan(ast.NodeVisitor):
         if not all(isinstance(o, (ast.Is, ast.IsNot)) for o in n.ops): self.coperands([n.left] + n.comparators)
         self.generic_visit(n)
     def visit_BinOp(self, n):   # a program path built with pathlib: ROOT / "tools" / "x.mjs"; and layer iv's operand hand-off
+        self.fold_def(n)   # a `+` or a `%` of string constants: its folded text, for the follow proof's string conjunct
         self.coperands([n.left, n.right])
         if (isinstance(n.op, ast.Div) and isinstance(n.right, ast.Constant) and isinstance(n.right.value, str) and isinstance(n.left, ast.BinOp)
                 and isinstance(n.left.right, ast.Constant) and n.left.right.value in ("tools", "scripts")):
@@ -2444,6 +2498,7 @@ class Scan(ast.NodeVisitor):
             return "%s or %s" % (a.args[0].value, ast.unparse(a.args[1]) if len(a.args) > 1 else "''"), sub, follow   # SSH_BIN = os.environ.get(..., "ssh")
         return "RUNTIME-SUPPLIED(%s)" % (ast.unparse(a)[:48] if a is not None else ""), sub, follow
     def visit_Call(self, n):
+        self.fold_def(n)   # a .join, .format, .format_map or .replace of string constants: its folded text, for the string conjunct
         d = self.dotted(n.func); p = SUB.get(d) or NET.get(d); attr = getattr(n.func, "attr", "")
         f = n.func; listed = self.ns_listed(f)   # the listed callable, computed-name writer or setter the callee reaches (ns_listed, arm ii)
         if (f.id if isinstance(f, ast.Name) else attr) in _SETTERS: self.setter_calls.append(n)   # _stored_attrs reads their names
@@ -3027,20 +3082,31 @@ def _browser_text(rel, kind):
 def _read_codec(expr):
     """The encoding argument of a file read (_READ_CALLS), or None where the read names none (the locale's default): `.read_text`'s
     own first positional argument or its `encoding=` keyword, and for `.read` the `encoding=` (or fourth positional) of the
-    `open(...)` its receiver is. Returns (whether an encoding is named, the encoding node or None): a read whose encoding is named
-    and is not a string constant the census reads as one of _UTF8_NAMES is not covered by the walk's UTF-8 scan (served_texts refuses
-    it, _READ_CODEC), while a read that names none is the stated limit. A `**` keyword to `.read_text` may name the encoding in a
-    mapping the census does not read, so it counts as an encoding named and unread (True, None), refused on the safe side; a `**` to
-    the `open(...)` of a `.read` is refused before this, by _path (open handed a keyword)."""
+    `open(...)` its receiver is. Returns (whether an encoding is named, the encoding node or None): a read whose encoding is named and
+    is not a string constant the census reads as one of _UTF8_NAMES is not covered by the walk's UTF-8 scan (served_texts refuses it,
+    _READ_CODEC), while a read that names none, and hands no other argument, is the stated limit. Any argument to `.read_text` besides
+    its one encoding counts as an encoding named and unread (True, None), refused on the safe side whatever the encoding: a second
+    positional argument or a keyword other than `encoding=`, an errors handler among them in either spelling, with an encoding or
+    without one (the walk decodes the file once with errors="replace", and a page that decodes it with another handler, `ignore` or
+    one codecs.register_error names, may serve text that scan did not read), a `newline=`, and a `**` keyword, which may name the
+    encoding in a mapping the census does not read. A starred argument to `.read_text` needs no test of its own: alone it is the
+    encoding argument, named and no string constant, and beside another it is a second positional argument. The `.read` arm is
+    dominated whole: _path refuses an `open(...)` handed other than one positional argument and no keyword before served_texts asks
+    this, so neither the arm's tests (a fifth positional argument or later, errors among them, and any keyword but `encoding=`,
+    errors= and a `**` among them) nor its encoding reads are reached; the arm is kept as the reviewer's 03:08Z ruling of 2026-10-01
+    words the read (correctness-2)."""
     if not (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute)): return False, None
     attr = expr.func.attr
     if attr == "read_text":
-        if any(k.arg is None for k in expr.keywords): return True, None   # a ** keyword may name the encoding, in a mapping unread here
+        # any argument besides the one encoding: a second positional argument, or a keyword but encoding= (an errors handler, a
+        # newline, and a ** keyword, which may name the encoding in a mapping unread here)
+        if len(expr.args) > 1 or any(k.arg != "encoding" for k in expr.keywords): return True, None
         kw = next((k.value for k in expr.keywords if k.arg == "encoding"), None)
         if kw is not None: return True, kw
         return (True, expr.args[0]) if expr.args else (False, None)
     o = expr.func.value   # `.read`: the encoding of the open(...) its receiver is
     if isinstance(o, ast.Call) and isinstance(o.func, ast.Name) and o.func.id == "open":
+        if len(o.args) > 4 or any(k.arg != "encoding" for k in o.keywords): return True, None   # dominated by _path (above)
         kw = next((k.value for k in o.keywords if k.arg == "encoding"), None)
         if kw is not None: return True, kw
         return (True, o.args[3]) if len(o.args) > 3 else (False, None)
@@ -3318,8 +3384,10 @@ SERVED_ALLOW = {
 # map): a method call the method allowlist refuses (_Served._undrawn) whose page is honest, keyed as SERVED_ALLOW's entries are,
 # ("file:function", the expression as ast.unparse spells it) -> (the number of places the entry covers, the reason). Such a place is
 # not excused: it is listed, one line per place with its reason, after the stylesheets the listing names (render_sites), where
-# SERVED_ALLOW's places are not listed; an entry that names nothing in the run, or covers a different number of places (distinct
-# source positions), is a SERVED LISTED line, as a stale SERVED_ALLOW entry is.
+# SERVED_ALLOW's places are not listed; its matches are recorded in a map of their own (Result.listed_hits), which its gates and the
+# listing read, as SERVED_ALLOW's read allow_hits alone; an entry that names nothing in the run, or covers a different number of
+# places (distinct source positions), is a SERVED LISTED line, as a stale SERVED_ALLOW entry is, and so is a key SERVED_ALLOW holds
+# too (a place is excused or listed, never both).
 SERVED_LISTED = {
  ("kernel/kernel.py:_pane_label", "str(app or '').capitalize()"): (1,
   "a .capitalize() method whose return is not drawn from its receiver's text, on str() of the pane label's parameter: the seven "
@@ -3408,13 +3476,15 @@ _SELF_METHOD = ("a method called on self that no def statement of a class of the
 _DECORATED = ("a callee whose def statement carries a decorator, staticmethod and classmethod among them, whose return Python calls "
               "in its place, which the census does not follow")   # _Served._def_shape's, the follow proof's decorator conjunct (layer ii)
 # The follow proof's other conjuncts (_Served._def_shape, _Served._def_uses; layer ii of the eleventh round's rulings): a callee the census follows is a
-# plain def statement, bound once, with no decorator (_DECORATED), a def and not an async def, no yield in its own body, its name
-# read nowhere in the file but as a call's callee and spelled by no string constant, never rebound; any other callee refuses by name
+# plain def statement, bound once, with no decorator (_DECORATED), a def and not an async def, no yield in its own body, its name read
+# nowhere in the file but as a call's callee and spelled by no string constant and no constants the census folds to text, never
+# rebound; any other callee refuses by name
 _DEF_ASYNC = "a callee an async def statement defines, whose call returns a coroutine, not its return, which the census does not follow"
 _DEF_YIELD = "a callee whose def statement's body yields, whose call returns a generator, not its return, which the census does not follow"
 _DEF_ALIAS = ("a callee whose name the file reads other than as a call's callee (an alias, an argument, a store or a delete of it or of "
               "one of its attributes among them), which the census does not follow")
-_DEF_STRING = "a callee whose name a string constant of the file spells, which a lookup by name may reach, which the census does not follow"
+_DEF_STRING = ("a callee whose name a string constant of the file, or constants the census folds to text, spells, which a lookup by name "
+               "may reach, which the census does not follow")
 _LAMBDA_VALUE = "a lambda reached through a name's value, a callee no def statement defines, which the census does not follow"   # resolve's and _defaults's
 _FUNC_OBJECT = "a function or class object"   # _scoped's and _base's reason for such a name read as a value, refused wherever it stands
 # resolve's reasons for a yield, a yield from and an await read as a page value: each evaluates to a value other than its operand (what
@@ -3447,14 +3517,17 @@ _PATH_UNPROVEN = "a path the census does not prove by binding (%s)"
 _FILE_KINDS = {"py": "a file the walk reads as Python, not as browser text", "sh": "a file the walk reads as shell, not as browser text",
                "js": "a file the walk reads as JavaScript outside the browser and editor roots, with the DOM arm off"}
 # A page's read of a walked browser-text file counts as covered only because the walk scanned that file once as UTF-8 (scan, encoding
-# "utf-8"), so a page that reads it with an encoding the census does not read as one of _UTF8_NAMES may reveal a fetch the UTF-8 scan
-# did not: such a read is refused by name (served_texts, _read_codec). A `**` keyword to `.read_text` may name the encoding in a mapping
-# the census cannot read, so it counts as an encoding named and unread and is refused too, on the safe side (the reason names the form:
-# a codec the census does not read as utf-8). A read that names no encoding takes the locale's default, which
-# the census cannot prove is UTF-8; refusing it is not 0 live (a live page reads a walked .js with no encoding), so it is the stated
-# limit, its witness the (u7) plant u7c
-_READ_CODEC = ("a walked browser-text file a page reads with an encoding the census does not read as utf-8, utf_8 or utf8, so the "
-               "walk's one UTF-8 scan of it may not be the text the page serves")
+# "utf-8", errors "replace"), so a page that reads it with an encoding the census does not read as one of _UTF8_NAMES may reveal a
+# fetch the UTF-8 scan did not: such a read is refused by name (served_texts, _read_codec). So is a read that hands `.read_text` any
+# argument besides its one encoding, whatever the encoding: an errors handler, in either spelling (a page that decodes the file with
+# another handler than the walk's, `ignore` or one codecs.register_error names, may serve text the scan did not read; the reviewer's
+# 03:08Z ruling of 2026-10-01, correctness-2), a `newline=`, and a `**` keyword, which may name the encoding in a mapping the census
+# cannot read (each counts as an encoding named and unread, refused on the safe side; the reason names both forms). A read that names
+# no encoding and hands no other argument takes the locale's default, which the census cannot prove is UTF-8; refusing it is not 0
+# live (a live page reads a walked .js with no encoding), so it is the stated limit, its witness the (u7) plant u7c
+_READ_CODEC = ("a walked browser-text file a page reads with an encoding the census does not read as utf-8, utf_8 or utf8, or with "
+               "an argument besides one encoding (an errors handler among them), so the walk's one UTF-8 scan of it may not be the "
+               "text the page serves")
 _SLICED = "a subscript by a slice or an index other than a constant, whose result the census does not compute"   # _Served._carries_text's refusal
 _SLOT_FORMAT = "a value slot a % or a format call takes, which a conversion can turn into characters"   # _Served._format_slots's refusal
 _SUB_OPERAND = ("a subscript as an operand of +, %, an f-string, .join, .format, .format_map or .replace, whose joined text the census does "
@@ -4961,38 +5034,43 @@ _AS_DEFAULT = "a default of a function or a lambda"   # _flow's escape detail fo
 _CT_AUG = ("changed in place through %s, a name the function binds to it or to an item of it, by an augmented assignment, which runs "
            "the target's own method")   # _Served._containers's, at an augmented assignment to such a name ("aug")
 # A function whose frame's local mapping is reached, or run as code, hands out or mutates the real container object on every CPython
-# version (a mutation, not a rebind, so it needs no 3.13 write-through), so the container proof cannot prove a container it binds is read
-# whole: a page function whose own subtree holds, anywhere and whether called or not, one of the SEVEN bare names in _FRAME_NAMES (locals,
-# vars, exec, eval, _getframe, currentframe, getargvalues), one of the FOUR attributes in _FRAME_ATTRS (_getframe, currentframe,
-# getargvalues, f_locals) spelled as an attribute on any receiver, or a name that a statement of the module's or the function's own body,
-# outside every def, class or lambda statement it nests (header and body alike), binds to one of those primitives, its bound value the
-# primitive's own bare name or attribute (a plain or annotated assignment, a walrus, an unpacking of a list or tuple literal into a
-# target list of AS MANY elements, each plain name there bound to the value at its place, beside a starred or nested target too, or a
-# `from ... import` of one of the seven names), and any name such a statement binds to a name so bound (a chained
-# alias), resolved among those statements (_frame_alias_names), refuses every container it binds by name (_Served._containers,
-# _reaches_frame). The check is syntactic: it reads the spelling, not a call, so a name merely spelled like a primitive refuses too (the
-# safe side), and its reason names the spelling found (_FRAME_CONTAINER, `its function spells <the spelling>`), not a frame reached. One
-# check at 0 live (no live route function reaches its frame). A change to the locals at run time through a frame object, exec or eval
-# reached in ANY OTHER spelling is the stated precondition (the realm precondition's shape), outside what the census reads, each road
-# passing silently; among them: locals or vars reached as an ATTRIBUTE on a receiver (`x.locals`, `sys.modules["builtins"].locals()`), and
-# exec or eval reached as an attribute (`builtins.exec`), since none of locals, vars, exec, eval is in _FRAME_ATTRS (its witness fratr is
-# `locals` reached as an attribute, frxr is exec so reached, frev eval); f_locals as a bare NAME (`f_locals(fr)`), since f_locals is in
-# _FRAME_ATTRS alone, not _FRAME_NAMES (bfl2); one of the four attributes named by a STRING, `getattr(inspect.stack()[0].frame,
-# "f_locals")`, since the check matches an attribute node and inspect.stack and frame are in neither set (fgs2); and any binding of a name
-# to a primitive that _frame_alias_names does not read: a plain name among the targets of an unpacking whose targets are NOT AS MANY as
-# its values (fsst `_PS, *_pr = locals, 1, 2`, two targets and three values) and a name a NESTED target binds (fsnt `(_PN, _pz), _py =
-# (locals, 1), 2`), each of which the unpacking arm skips; an alias whose bound value is any other expression (tx4 a
-# module alias bound to an if-expression, `_TX4 = locals if True else None`; txc one bound to a call's return, `_TXC = _ident(locals)`);
-# and a binding in the header or the body of a def, class or lambda statement, which _own_stmts and _module_level_stmts skip whole: a
-# walrus in a module-level def's default (tx2), a `from ... import` a def nested in the function makes (nstb), whose imported spelling
-# sits in the alias node and whose alias name ast.walk does not match, an assignment inside a module-level def's body (tx3), an
-# assignment in a module-level class's body, read as the class's attribute (frcl `class _FrK: fl = locals`, `_FrK.fl()`), or a walrus in
-# a module-level lambda's default (flam `lambda z=(_LW := locals): z`). But a binding a
-# nested def, class or lambda makes by an ASSIGNMENT carries the primitive's spelling in the function's subtree, which ast.walk(fn) reads,
-# so it refuses (nsta), as does a name merely spelled like a primitive (lcsy binds `currentframe` to a string). Code the page function runs
-# that the census does not read (a helper it calls as a statement, a method on self, a context manager it enters), reaching the caller's
-# frame, is not read here (the census reads no such code's body for its frame reach): the frame-container stated limit, its witness fhlp. A
-# scalar a frame rewrites, not mutated, is a rebind Python 3.13 and later serve: the frame-local stated limit, its witnesses frwt and frwb
+# version (a mutation, not a rebind, so it needs no 3.13 write-through), so the container proof cannot prove a container it binds is
+# read whole: a page function whose own subtree holds, anywhere and whether called or not, one of the SEVEN bare names in _FRAME_NAMES
+# (locals, vars, exec, eval, _getframe, currentframe, getargvalues), one of the FOUR attributes in _FRAME_ATTRS (_getframe,
+# currentframe, getargvalues, f_locals) spelled as an attribute on any receiver, or a name that a statement of the module's or the
+# function's own body, outside every def, class or lambda statement it nests (header and body alike), binds to one of those
+# primitives, its bound value the primitive's own bare name or attribute (a plain or annotated assignment, a walrus, an unpacking of a
+# list or tuple literal into a target list of AS MANY elements, each plain name there bound to the value at its place, beside a
+# starred or nested target too, or a `from ... import` of one of the seven names), and any name such a statement binds to a name so
+# bound (a chained alias), resolved among those statements (_frame_alias_names), refuses every container it binds by name
+# (_Served._containers, _reaches_frame). The check is syntactic: it reads the spelling, not a call, so a name merely spelled like a
+# primitive refuses too (the safe side), and its reason names the spelling found (_FRAME_CONTAINER, `its function spells <the
+# spelling>`), not a frame reached. One check at 0 live (no live route function reaches its frame). A change to the locals at run time
+# through a frame object, exec or eval reached in ANY OTHER spelling is the stated precondition (the realm precondition's shape),
+# outside what the census reads, each road passing silently; among them: locals or vars reached as an ATTRIBUTE on a receiver
+# (`x.locals`, `sys.modules["builtins"].locals()`), and exec or eval reached as an attribute (`builtins.exec`), since none of locals,
+# vars, exec, eval is in _FRAME_ATTRS (its witness fratr is `locals` reached as an attribute, frxr is exec so reached, frev eval);
+# f_locals as a bare NAME (`f_locals(fr)`), since f_locals is in _FRAME_ATTRS alone, not _FRAME_NAMES (bfl2); one of the four
+# attributes named by a STRING, `getattr(inspect.stack()[0].frame, "f_locals")`, since the check matches an attribute node and
+# inspect.stack and frame are in neither set (fgs2); and any binding of a name to a primitive that _frame_alias_names does not read,
+# among them: a plain name among the targets of an unpacking whose targets are NOT AS MANY as its values (fsst `_PS, *_pr = locals, 1,
+# 2`, two targets and three values) and a name a NESTED target binds (fsnt `(_PN, _pz), _py = (locals, 1), 2`), each of which the
+# unpacking arm skips; an alias whose bound value is any other expression (tx4 a module alias bound to an if-expression, `_TX4 =
+# locals if True else None`; txc one bound to a call's return, `_TXC = _ident(locals)`); and a binding in the header or the body of a
+# def, class or lambda statement, which _own_stmts and _module_level_stmts skip whole: a walrus in a module-level def's default (tx2),
+# a `from ... import` a def nested in the function makes (nstb), whose imported spelling sits in the alias node and whose alias name
+# ast.walk does not match, an assignment inside a module-level def's body (tx3), an assignment in a module-level class's body, read as
+# the class's attribute (frcl `class _FrK: fl = locals`, `_FrK.fl()`), or a walrus in a module-level lambda's default (flam `lambda
+# z=(_LW := locals): z`); and a module-level for loop's target (flp `for _FLP in (locals,): pass`), a match statement's capture (fmcp
+# `match locals: case _MCP: pass`) and a with statement's target (fwth `with contextlib.nullcontext(locals) as _WTH: pass`, bound to
+# what `__enter__` returns), forms _frame_alias_names does not read. But a binding a nested def, class or lambda makes by an
+# ASSIGNMENT carries the primitive's spelling in the function's subtree, which ast.walk(fn) reads, so it refuses (nsta), as does a
+# name merely spelled like a primitive (lcsy binds `currentframe` to a string). Code the page function runs that the census does not
+# read (a helper it calls as a statement, a method on self, a context manager it enters), reaching the container by a road other than
+# a hand-off, among them the caller's frame and the garbage collector's heap (gc.get_objects or gc.get_referrers, with no frame, no
+# hand-off and no occurrence of the container's name), is not read here (the census reads no such code's body for its reach): the
+# frame-container stated limit, its witnesses fhlp (the frame) and gch (the gc heap). A scalar a frame rewrites, not mutated, is a
+# rebind Python 3.13 and later serve: the frame-local stated limit, its witnesses frwt and frwb
 _FRAME_NAMES = frozenset(("locals", "vars", "exec", "eval", "_getframe", "currentframe", "getargvalues"))   # a name that reaches or runs code in a frame's locals mapping
 _FRAME_ATTRS = frozenset(("_getframe", "currentframe", "getargvalues", "f_locals"))          # an attribute that reaches a frame, on any receiver
 _FRAME_CONTAINER = ("its function spells %s, which names a frame primitive or an alias of one, and a change through a frame's local mapping "
@@ -5578,7 +5656,8 @@ class _Served(object):
     by no function scope of the context, or a function defined in the page function, its name's one binding there (_scoped's
     ["def"]), each only where the census proves it a plain def (_def_shape: a def statement, not an async def, _DEF_ASYNC, carrying
     no decorator, _DECORATED, with no yield in its own body, _DEF_YIELD, _yields; _def_uses: its name read nowhere in the file but
-    as a call's callee, _DEF_ALIAS, and, for a module function, spelled by no string constant of the file, _DEF_STRING), each such
+    as a call's callee, _DEF_ALIAS, and, for a module function, spelled by no string constant of the file and no constants the census
+    folds to text, _DEF_STRING), each such
     function read to its own returns (_returns) and the default of each of its parameters the call omits read as that argument would
     be, in the scope its def statement runs in (_defaults: a default that holds a lambda refused, _LAMBDA_VALUE); any other method
     call through its receiver as above (a lambda a name's value holds is refused where the name is read, _LAMBDA_VALUE,
@@ -5680,20 +5759,23 @@ class _Served(object):
     is refused by name on every version, its reason naming the spelling found, not a frame reached (a mutation reaches the real object;
     _containers, _reaches_frame, _FRAME_CONTAINER); a change to those locals reached in any other spelling (among them locals or vars
     as an attribute on a receiver, exec or eval reached as an attribute, f_locals as a bare name, one of the four attributes named by a
-    string, `getattr(frame, "f_locals")`, and any binding of a name to a primitive the resolution does not read, a plain name among
-    the targets of an unpacking whose targets are not as many as its values and a name a nested unpacking target binds, an alias whose
-    bound value is any other expression (an if-expression, a call) and a binding in the header or the body of a def, class or lambda
-    statement) is the stated precondition, one witness for each road named (fratr, frxr and frev; bfl2; fgs2; fsst and fsnt; tx4 and
-    txc; tx2, nstb, tx3, frcl and flam), while a binding a
+    string, `getattr(frame, "f_locals")`, and any binding of a name to a primitive the resolution does not read, among them a plain
+    name among the targets of an unpacking whose targets are not as many as its values and a name a nested unpacking target binds, an
+    alias whose bound value is any other expression (an if-expression, a call), a module-level for loop's target, a match statement's
+    capture and a with statement's target, and a binding in the header or the body of a def, class or lambda statement) is the stated
+    precondition, one witness for each road named (fratr, frxr and frev; bfl2; fgs2; fsst and fsnt; tx4 and txc; flp, fmcp and fwth;
+    tx2, nstb, tx3, frcl and flam), while a binding a
     nested scope makes by an assignment carries the primitive's spelling in the function's subtree and refuses (nsta); code the
     function runs that the census does not read (a helper it calls as a statement, a method on self, a context manager it enters)
-    reaching the caller's frame instead is a stated limit, its witness fhlp. Beside that precondition stands the item limit (the
+    reaching the container by a road other than a hand-off instead, its caller's frame or the garbage collector's heap among them, is
+    a stated limit, its witnesses fhlp and gch. Beside that precondition stands the item limit (the
     19:33Z ruling, _containers): what code does with an item of a container the proof reads, or with the object a name bound other
     than to a literal or a call of parse_qs holds, after the census has read it, in a spelling the proof does not refuse, passes
-    silently, one witness for each road the checks found (iunp, iuag and iatr, a name an unpacking binds from a display that holds the
-    item; isag, a subscript of a new object holding it as an augmented assignment's target; imat and xmat, a match capture; xies and
-    cesw3, an item
-    stored into another object or held in a new object that leaves the function; dmcap, dmcapl, dxies and dcmp, a default taking the
+    silently, one witness for each road the reviews of this census found (iunp, iuag, iatr, uitk, uitb and uitc, a name an unpacking
+    binds from a new object that holds the item, a display, a comprehension, a slice or a copy; clam and cdef, a name bound to the
+    item that a nested lambda or def returns, the return changed; isag, a subscript of a new object holding it as an augmented
+    assignment's target; imat and xmat, a match capture; xies, cesw3 and cmtw, an item stored into another object, or held in a new
+    object that is stored into another object or matched; dmcap, dmcapl, dxies and dcmp, a default taking the
     item through a name the proof does not follow (a match capture, an attribute of another object, a comprehension's target in a
     def's default); dwal, a name a walrus in a def's default binds to the item, changed through after the def; xput, xesc and xiop, on
     a name bound
@@ -5937,14 +6019,17 @@ class _Served(object):
     def _def_uses(self, fn, holder):
         """The follow proof's conjuncts on the name fn's def statement binds (layer ii of the eleventh round's rulings): the reason the census does not
         follow a call of it, or None where no statement of the file reads that binding other than as a call's callee and, for a
-        module function, no string constant of the file spells its name. `holder` is None for a module function (a top-level def
+        module function, no string constant of the file, and no constants _const_text folds to text, spells its name. `holder` is None
+        for a module function (a top-level def
         statement, its name's one module-level binding, never rebound: _sole), and for a function defined in the page function the
         def statement whose body holds it (its name's one binding there: _scoped's forms ["def"]). A read that reaches the binding
         (_binding_scope over the scopes around the read: a scope that binds the name itself holds a binding of its own) other than as
         a call's callee is an alias, an argument, a store or a delete of the function or of one of its attributes (`f.__code__ =
         ...`, `f.__defaults__ = ...`, setattr(f, ...), a decorator applied by hand among them), each of which may run code the census
-        does not read as the callee (_DEF_ALIAS); a string constant that spells a module function's name is a key a lookup by name may
-        reach it through (`globals().get("f")`: _DEF_STRING). A module function's reads come from the scan of its whole file
+        does not read as the callee (_DEF_ALIAS); a string constant that spells a module function's name, or constants _const_text
+        folds to it (a `+`, an f-string, a `%`, or a .join, .format, .format_map or .replace of string constants, read wherever they
+        stand in the file: Scan.fold_def), is a key a lookup by name may reach it through (`globals().get("f")`,
+        `globals().get("_f" + "x")`: _DEF_STRING). A module function's reads come from the scan of its whole file
         (Result.fn_refs, from Scan's walk), where a file no scan read has none and refuses; a nested function's from a walk of the
         def that holds it (_name_reads), outside which its name binds nothing."""
         if holder is None:
@@ -6082,18 +6167,25 @@ class _Served(object):
         the walk follows, the name itself an operand, and a method of _READ_THROUGH with its return used): any other method, and an
         item of it leaving the function's sight or handed to another object's method by an operator (the 07:37Z ruling's condition 2);
         each directly or through a name it binds to it, to an item of it or to a new object holding one, at the levels of new objects
-        its binding holds it at (an unpacking's names take the level of the display it reads). What these uses do not mark, and what
+        its binding holds it at (an unpacking's names take the level of the new object it reads: a display, a comprehension, a slice
+        or a copy). What these uses do not mark, and what
         the rule below does not refuse, is the item limit (the 19:33Z ruling), which SERVED_PAGES and _Served's docstring state beside
         the frame precondition: what code does with an item of a container the proof reads, or with the object a name bound other than
         to a literal or a call of parse_qs holds, after the census has read it, in a spelling the proof does not refuse, passes
-        silently, one witness for each road the checks found: a name an unpacking binds from a display that holds the item, which
-        takes that display's level, so a change through it is read as done to a new object holding the item (iunp, appended to; iuag,
-        extended by an augmented assignment; iatr, a queue's put read off such a name unbound and called); a subscript of a new object
+        silently, one witness for each road the reviews of this census found: a name an unpacking binds from a new object that holds
+        the item, a display, a comprehension, or a slice or a copy of the container or of an item (_flow's levels), which takes that
+        object's level, so a change through it is read as done to a new object holding the item (iunp, appended to; iuag, extended by
+        an augmented assignment; iatr, a queue's put read off such a name unbound and called; uitk, bound from a list comprehension;
+        uitb, from a slice; uitc, from a copy); a name bound to an item of a name bound other than to a literal or a call of parse_qs,
+        returned by a lambda or a def nested in the function, which changes that return (clam, cdef); a subscript of a new object
         holding the
         item as an augmented assignment's target, a store into that object (isag); a match statement's capture of the item, or of the
         name itself, for a name bound other than to a literal, a call of parse_qs or only calls (imat, xmat); an item of such a name
-        stored into another object and changed there (xies), and an item of a name bound only to calls held in a new object that
-        leaves the function (cesw3); a default of a function or a lambda that takes the item through a name the walk does not follow
+        stored into another object and changed there (xies), and an item of a name bound only to calls held in a new object that is
+        stored into another object or matched (cesw3, cmtw), a new object that is called being no road (a display, a comprehension, a
+        slice or a copy is no callable, so Python raises before any code runs, and a binary operation's result is callable only
+        through the item's own type, whose text the census does not read as a page's); a default of a function or a lambda that takes
+        the item through a name the walk does not follow
         from the container, a match statement's capture (dmcap, a nested def's default; dmcapl, a lambda's), an attribute of another
         object the item is stored into (dxies) or a comprehension's target in a def's default (dcmp); a name a walrus in a def's
         default binds to the item, changed through after the def (dwal); on
@@ -6120,8 +6212,9 @@ class _Served(object):
         item through one is the item limit (dmcap, dmcapl, dxies). The roads a check was measured for are the limit because that one
         check refuses
         pages of the live tree: the closed set on a parameter (pput's road); a method outside the closed set, an escape and an item's
-        operand on a name bound to an expression (xput's, xesc's and xiop's); an item held in a new object that leaves the function,
-        on a name bound to a call (cesw3's: an item of such a name that an unpacking binds, a str, stored in a new list into a dict);
+        operand on a name bound to an expression (xput's, xesc's and xiop's); an item held in a new object that escapes the function's
+        sight (stored into another object, matched or called), on a name bound to a call (cesw3's: an item of such a name that an
+        unpacking binds, a str, stored in a new list into a dict);
         and the operand on a name bound to a call, itself or in a new object (oeqw's and cop1's: an int in a text concatenation); the
         unpacking's name, the subscript of a new object, the match capture, the item stored into another object and a default taking
         the item through a name the walk does not follow are the limit by the 19:33Z ruling. Any other
@@ -6134,8 +6227,9 @@ class _Served(object):
         than as the one target of a plain assignment; an append or extend of other than one plain argument; an augmented assignment to
         a name bound to it or to an item of it (_CT_AUG); and any occurrence, whatever the use, in a def or class statement nested in
         the function, as _scope_names chains the statement (its decorators; its header, a def's defaults and annotations and a class's
-        bases and keywords among them; and its body, where an occurrence is a closure capture whose code the census does not read, or
-        makes a class attribute), or in the body of a lambda nested in the function (a lambda's defaults, which run where it stands,
+        bases and keywords among them; and its body, where an occurrence in a def's body is a closure capture whose code the census
+        does not read, and one in a class's body runs where the class statement stands, as an expression of the class's own code or a
+        class attribute it makes), or in the body of a lambda nested in the function (a lambda's defaults, which run where it stands,
         excepted); a nested scope's own binding of the spelling is not an occurrence of this container. A comprehension is read where it
         stands, as the function's own body is: a read of the fourth form and an append of a read value there pass, the container as a
         comprehension's source, in its condition or as its element refuses as any other read does (_own_use, _role), and a change the
@@ -6179,8 +6273,9 @@ class _Served(object):
                 for n, c in self._container_step(xs if y == x and fr == 0 and not ins else names.get(y, ())):
                     nested = any(isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)) for s in c[1:])   # in a
                     # def or class statement nested in it, anywhere in the statement (_scope_names chains its decorators, header and body),
-                    # or in a lambda's body: a closure capture (code the census does not read), a class attribute, or a value the
-                    # statement's decorator or header hands on, so the container refuses whatever the use; a comprehension is read where it
+                    # or in a lambda's body: a closure capture (code the census does not read), a class body's own code where the
+                    # class statement stands (an expression, or a class attribute it makes), or a value the statement's decorator or
+                    # header hands on, so the container refuses whatever the use; a comprehension is read where it
                     # stands (_own_use)
                     if not isinstance(n.ctx, ast.Load):   # a binding, but an augmented assignment to a name bound to it or to an item of
                         # it, or to a new object holding one, runs the target's in-place method (`e += [v]` is list.__iadd__, `e |= {...}`
@@ -6264,7 +6359,8 @@ class _Served(object):
                 _l, _c, y, fr, n, c, kind, node, detail, fresh, nested, inside = e
                 why, recv = None, _item_recv(e)
                 if nested: why = "read or changed in a def or class statement, or a lambda's body, nested in it"   # _scope_names: a closure
-                # capture (code unread), a class attribute, or a value a nested statement's decorator or header hands on
+                # capture (code unread), a class body's own code (an expression, or a class attribute it makes), or a value a nested
+                # statement's decorator or header hands on
                 elif kind == "gescape": why = "bound to %s, a name the function declares global or nonlocal, whose uses leave it" % detail
                 elif kind == "escape": why = detail   # it, or an object holding it, stored elsewhere, handed as a default, matched or called
                 elif kind == "own": why = detail
@@ -6329,25 +6425,27 @@ class _Served(object):
         stands outside `fn`, and `fn`'s own `from ... import`, whose spelling sits in the alias node. The check is syntactic (the spelling,
         not a call), so a name merely spelled like a primitive is read too, on the safe side. One check at 0 live (no live route function
         reaches its frame): every container the function binds refuses (_containers, _FRAME_CONTAINER, whose reason names the form this
-        returns, the spelling found, and does not say a frame was reached). The census reads a page function's
-        locals as its text binds them; a change to them at run time through a frame object, exec or eval reached in any OTHER spelling is
-        the stated precondition (the realm precondition's shape), outside what it reads, each road passing silently; among them: locals
-        or vars reached as an ATTRIBUTE on a receiver (`sys.modules["builtins"].locals()`, `x.vars`), and exec or eval reached as an
-        attribute (`builtins.exec`), since none of locals, vars, exec, eval is in _FRAME_ATTRS (its witness fratr is `locals` reached as
-        an attribute, frxr exec so reached, frev eval); f_locals as a bare name, since f_locals is in _FRAME_ATTRS alone, not _FRAME_NAMES
-        (bfl2); one of the four attributes named by a string, since only an attribute node is matched (fgs2,
+        returns, the spelling found, and does not say a frame was reached). The census reads a page function's locals as its text
+        binds them; a change to them at run time through a frame object, exec or eval reached in any OTHER spelling is the stated
+        precondition (the realm precondition's shape), outside what it reads, each road passing silently; among them: locals or vars
+        reached as an ATTRIBUTE on a receiver (`sys.modules["builtins"].locals()`, `x.vars`), and exec or eval reached as an attribute
+        (`builtins.exec`), since none of locals, vars, exec, eval is in _FRAME_ATTRS (its witness fratr is `locals` reached as an
+        attribute, frxr exec so reached, frev eval); f_locals as a bare name, since f_locals is in _FRAME_ATTRS alone, not
+        _FRAME_NAMES (bfl2); one of the four attributes named by a string, since only an attribute node is matched (fgs2,
         `getattr(inspect.stack()[0].frame, "f_locals")`); and any binding of a name to a primitive that _frame_alias_names does not
-        read: a plain name among the targets of an unpacking whose targets are not as many as its values (fsst) and a name a nested
-        target binds (fsnt), each of which the unpacking arm skips, an alias whose bound value is any other expression (tx4 an
-        if-expression, txc a call's return), and a binding in the header or the body of a def, class or lambda statement, which
-        _own_stmts and _module_level_stmts skip whole (tx2 a walrus in a module-level def's default; nstb a `from ... import` a def nested
-        in `fn` makes, whose imported spelling sits in the alias node and whose alias name ast.walk does not match; tx3 an assignment
-        inside a module-level def's body; frcl an assignment in a module-level class's body, read as the class's attribute; flam a
-        walrus in a module-level lambda's default); a binding a nested scope makes by an ASSIGNMENT carries the primitive's spelling
-        in `fn`'s subtree and refuses (nsta). Code the
-        function runs that the census does not read (a helper it calls as a statement, a method on self, a context manager it enters),
-        reaching the CALLER's frame, is the stated limit too: the census reads no such code's body for its frame reach, as the call limit
-        reads none for what a callee does with a container it is handed."""
+        read, among them: a plain name among the targets of an unpacking whose targets are not as many as its values (fsst) and a name
+        a nested target binds (fsnt), each of which the unpacking arm skips, an alias whose bound value is any other expression (tx4
+        an if-expression, txc a call's return), and a binding in the header or the body of a def, class or lambda statement, which
+        _own_stmts and _module_level_stmts skip whole (tx2 a walrus in a module-level def's default; nstb a `from ... import` a def
+        nested in `fn` makes, whose imported spelling sits in the alias node and whose alias name ast.walk does not match; tx3 an
+        assignment inside a module-level def's body; frcl an assignment in a module-level class's body, read as the class's attribute;
+        flam a walrus in a module-level lambda's default), and a module-level for loop's target (flp), a match statement's capture
+        (fmcp) and a with statement's target (fwth), forms _frame_alias_names does not read; a binding a nested scope makes by an
+        ASSIGNMENT carries the primitive's spelling in `fn`'s subtree and refuses (nsta). Code the function runs that the census does
+        not read (a helper it calls as a statement, a method on self, a context manager it enters), reaching the container by a road
+        other than a hand-off, the CALLER's frame (fhlp) or the garbage collector's heap (gch: gc.get_objects or gc.get_referrers,
+        with no frame, no hand-off and no occurrence of the container's name) among them, is the stated limit too: the census reads no
+        such code's body for its reach, as the call limit reads none for what a callee does with a container it is handed."""
         if self.frame_aliases is None: self.frame_aliases = self._frame_alias_names(_module_level_stmts(self.tree))
         aliases = self._frame_alias_names(_own_stmts(fn), seed=self.frame_aliases)
         for n in ast.walk(fn):
@@ -6445,8 +6543,10 @@ class _Served(object):
         reads a function's own body). Layer iv, _Served._reaches_frame: a name so bound hands out a frame's locals mapping. Any other
         binding is not reached, the stated precondition and not a refusal: among them a binding in the header or the body of a def,
         class or lambda statement (tx2, nstb, tx3, frcl, flam), a name a nested target binds and a plain name among the targets of an
-        unpacking whose targets are not as many as its values, or of anything but a list or tuple literal (fsst, fsnt), and an alias
-        whose bound value is any other expression, an if-expression or a call (tx4, txc). The fixpoint is a worklist with
+        unpacking whose targets are not as many as its values, or of anything but a list or tuple literal (fsst, fsnt), an alias whose
+        bound value is any other expression, an if-expression or a call (tx4, txc), and a for loop's target, a match statement's
+        capture and a with statement's target, each a binding none of the four forms above makes (flp, fmcp, fwth: the reviewer's
+        03:08Z ruling of 2026-10-01, extra6-4). The fixpoint is a worklist with
         one visited set (`out`) that expands each alias name once, in _frame_alias_step (freeze ruling 2 of the eleventh round: its count
         pin reads that step from outside the script; without the visited set a cycle of aliases loops)."""
         prim, edges = set(seed), []   # names bound directly to a primitive; (target, source-name) edges, a chained or unpacked name alias
@@ -6533,24 +6633,27 @@ class _Served(object):
           directory no binding fixes;
         - a module constant the path reads is one the file writes at run time (a memo: rebound under a global declaration, or changed
           through its item or its attribute, _Served.memos and cmemos, as resolve reads them).
-        A local is followed only where it is a plain local of the page function bound once (its forms exactly one value form, one
-        value: never a parameter the body also assigns, whose incoming value the read may take), and only at the read itself, as
-        before; a name inside a local's value, or inside the path past its first step, that a function scope binds refuses where it
-        is a module constant's name the head would have read by spelling, and is None otherwise. A module constant's value is read
-        in the module's own scope. None with no reason where the census cannot read the expression at all, and for Path(__file__)
-        or open(__file__) wherever `__file__` may not be this file's own path (_file_slot: in a file where a statement binds it, in
-        any scope and by any form, _FILE_BOUND, one that writes a name of its module namespace through a computed name or may
-        rewrite it at run time, one where a function binds it under a `global` declaration or a module-level statement writes it,
-        and a module that holds a star import), decided before the callee's proof, so a file read through it is a file the walk
-        does not scan, as the tenth round's R1.2 has it."""
+        A local is followed only where _scoped resolves it as a local and it is a plain local of the page function bound once (its
+        forms exactly one value form, one value: never a parameter the body also assigns, whose incoming value the read may take), and
+        only at the read itself, as before; a local the container proof refuses (_Container, whose forms are list-equal to one value
+        form while _scoped reads it as unread) is never followed, and its read refuses with the container's own reason (the reviewer's
+        03:08Z ruling of 2026-10-01, correctness-1); a name inside a local's value, or inside the path past its first step, that a
+        function scope binds refuses where it is a module constant's name the head would have read by spelling, and is None otherwise.
+        A module constant's value is read in the module's own scope. None with no reason where the census cannot read the expression
+        at all, and for Path(__file__) or open(__file__) wherever `__file__` may not be this file's own path (_file_slot: in a file
+        where a statement binds it, in any scope and by any form, _FILE_BOUND, one that writes a name of its module namespace through
+        a computed name or may rewrite it at run time, one where a function binds it under a `global` declaration or a module-level
+        statement writes it, and a module that holds a star import), decided before the callee's proof, so a file read through it is a
+        file the walk does not scan, as the tenth round's R1.2 has it."""
         if depth > 32: return None, None   # a constant bound through itself (`X = X.parent`) is not a path the census reads
         if isinstance(e, ast.Name):
             v = self._scoped(e.id, ctx) if ctx is not None else None
             if v is not None:   # a function scope around the read binds it: followed only as a plain local bound once, at the read
                 oc = self._value_ctx(e.id, ctx)   # its one value read where the scope that binds it evaluates it
-                if local is not None and ctx[5].get(e.id) == ["value"] and len(oc[1].get(e.id, ())) == 1:
+                if local is not None and v[0] == "local" and ctx[5].get(e.id) == ["value"] and len(oc[1].get(e.id, ())) == 1:
                     return self._path(oc[1][e.id][0], self.comp_at.get(id(oc[1][e.id][0]), oc), None, depth + 1)
-                return (None, _PATH_UNPROVEN % ("a function scope around the read binds %s" % e.id)) if e.id in self.consts else (None, None)
+                if e.id in self.consts: return None, _PATH_UNPROVEN % ("a function scope around the read binds %s" % e.id)
+                return (None, v[1]) if isinstance(ctx[5].get(e.id), _Container) else (None, None)   # a refused container: its own reason
             if e.id not in self.consts: return None, None
             if e.id in self.memos or e.id in self.cmemos: return None, _PATH_UNPROVEN % ("%s, a module constant the file writes at run time" % e.id)
             return self._path(self.consts[e.id], None, None, depth + 1)   # its value is read in the module's scope
@@ -7229,11 +7332,12 @@ class _Served(object):
 
     def _listed(self, where, whole):
         """Whether SERVED_LISTED names the place of the refused method call `whole` (its function and its expression, as a
-        SERVED_ALLOW key does): then the place is recorded among the run's allowlist hits, and render_sites lists it with the
-        entry's reason, one line per place; the run does not fail on it."""
+        SERVED_ALLOW key does): then the place is recorded among the run's listed hits (Result.listed_hits, a map of its own:
+        problems() reads SERVED_LISTED's gates from it and SERVED_ALLOW's from allow_hits, so no key passes one gate on the other's
+        hits), and render_sites lists it with the entry's reason, one line per place; the run does not fail on it."""
         key = ("%s:%s" % (self.rel, where), ast.unparse(whole))
         if key not in SERVED_LISTED: return False
-        self.res.allow_hits.setdefault(key, set()).add((whole.lineno, whole.col_offset)); return True
+        self.res.listed_hits.setdefault(key, set()).add((whole.lineno, whole.col_offset)); return True
 
     @staticmethod
     def _path_attrs(e):
@@ -8214,7 +8318,9 @@ def served_texts(rel, tree, routes, res):
     or import() argument, or a program call's arguments, that run past a joined literal's end are left to the join's text, which
     reads them whole: line_scan's `cut`); a file
     a page reads at run time is covered by the walk only where the walk scanned it as browser text (_browser_text: JavaScript under
-    the browser and editor roots, the DOM arm on; not scanned again), named when it is a stylesheet the walk does not scan, excused
+    the browser and editor roots, the DOM arm on; not scanned again) and the page reads it with an encoding the census reads as UTF-8,
+    or none, and no other argument (_read_codec: an errors handler among the others; else _READ_CODEC), named when it is a stylesheet
+    the walk does not scan, excused
     when SERVED_ALLOW names the read, and a SERVED problem otherwise, its reason the kind the walk scanned the file as, Python, shell
     or JavaScript with the DOM arm off (_FILE_KINDS: layer v of the eleventh round's rulings, none counted as covered unread), or the conjunct of _path's
     proof by binding that fails (_PATH_UNPROVEN), or a file the walk does not scan."""
@@ -8243,7 +8349,8 @@ def served_texts(rel, tree, routes, res):
         if kind is not None:   # a walked file: covered where the walk scanned it as browser text, else refused by that kind
             if _browser_text(path, kind):
                 named, enc = _read_codec(expr)   # the walk scanned it once as UTF-8: a read with an encoding the census does not read
-                # as UTF-8 may serve text the scan did not (_READ_CODEC); a read that names no encoding is the stated limit (u7c)
+                # as UTF-8, or with another argument (an errors handler among them), may serve text the scan did not (_READ_CODEC); a
+                # read that names no encoding and hands no other argument is the stated limit (u7c)
                 if not named or (isinstance(enc, ast.Constant) and type(enc.value) is str and enc.value.lower() in _UTF8_NAMES): continue
                 why = _READ_CODEC
             else: why = _FILE_KINDS[kind]
@@ -8403,13 +8510,15 @@ def problems(root, res, fig, expected):
         if len(res.allow_hits[k]) != SERVED_ALLOW[k][0]:
             out.append("SERVED ALLOW %s %r covers %d places, the entry says %d: a new place under an entry's key is read or named, never excused "
                        "by the key" % (k + (len(res.allow_hits[k]), SERVED_ALLOW[k][0])))
-    for k in sorted(set(SERVED_LISTED) - set(res.allow_hits)):
+    for k in sorted(set(SERVED_ALLOW) & set(SERVED_LISTED)):   # a key both allowlists hold: excused or listed, never both (regression-1)
+        out.append("SERVED LISTED %s %r is held by SERVED_ALLOW too: a place is excused or listed, never both" % k)
+    for k in sorted(set(SERVED_LISTED) - set(res.listed_hits)):
         out.append("SERVED LISTED %s %r names nothing this run refuses: drop it from SERVED_LISTED (an entry for code that is gone is never "
                    "a pass)" % k)
-    for k in sorted(set(SERVED_LISTED) & set(res.allow_hits)):
-        if len(res.allow_hits[k]) != SERVED_LISTED[k][0]:
+    for k in sorted(set(SERVED_LISTED) & set(res.listed_hits)):
+        if len(res.listed_hits[k]) != SERVED_LISTED[k][0]:
             out.append("SERVED LISTED %s %r covers %d places, the entry says %d: a new place under an entry's key is read or refused, never "
-                       "listed by the key" % (k + (len(res.allow_hits[k]), SERVED_LISTED[k][0])))
+                       "listed by the key" % (k + (len(res.listed_hits[k]), SERVED_LISTED[k][0])))
     for k in sorted(set(FRAME_WRITERS) - {h[1] for h in res.allow_hits if h[0] == "frame"}):
         out.append("SERVED ALLOW %s is named in FRAME_WRITERS and no `_send` call reaches it: drop it (an entry for code that is gone is never "
                    "a pass)" % k)
@@ -8443,9 +8552,9 @@ def render_sites(res, fig, out):
         out.write("%s:%d  %s  %s  in %s  -> %s\n" % (s.file, s.line, s.prim, s.head, s.fn, tag))
     for rel, i, name, s in res.dom: out.write("%s:%d  dom-load  %s  %s  -> (browser-dom-loads)\n" % (rel, i, name, s))
     for rel, i, path in res.served_files: out.write("%s:%d  served-file  %s  -> (a stylesheet a served page reads: named, not scanned)\n" % (rel, i, path))
-    for k in sorted(k for k in SERVED_LISTED if k in res.allow_hits):   # refused, and listed with the entry's reason (SERVED_LISTED)
+    for k in sorted(k for k in SERVED_LISTED if k in res.listed_hits):   # refused, and listed with the entry's reason (SERVED_LISTED)
         rel, fn = k[0].split(":", 1)
-        for i, _col in sorted(res.allow_hits[k]):
+        for i, _col in sorted(res.listed_hits[k]):
             out.write("%s:%d  served-refused  %s  in %s  -> (refused and listed: %s)\n" % (rel, i, k[1], fn, SERVED_LISTED[k][1]))
     c = fig["classes"]
     out.write("--- %d sites, %d roads (%d of them local), %d local sites set aside, %d unclassified; %d external-program, %d runtime-program, "
