@@ -7153,14 +7153,19 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
       where until the hundred and nineteenth round-2 commit of fork PR #894 the composed value was folded only where a
       later operation or f-string read K), through names, each name resolved by its scope to the declarations that bind
       it (ast_bindings, through _anyio_resolution) and folded through EACH DECLARATION ONCE: a plain or annotated
-      assignment or a walrus, an augmented assignment, and a for or comprehension over a tuple, list or set display or
-      a name that folds to one. A NAME MET AGAIN while the fold is reading it (an augmented assignment's own name in
-      the value it composes, met again through that declaration) is read as the empty string, open, so a value a loop
-      builds by repeating one assignment is read over two of its passes at most (K = '' and then for p in ('an', 'y',
-      'io'): K += p, or K = K + p, folds K + p to 'any' and 'yio' among its values and never to 'anyio'); and a name a
-      for or a comprehension binds through a TUPLE OR LIST TARGET (for K, J in ...), or an unpacking binds from
-      anything but a tuple or list display of its own length with no starred element on either side (K, J = pair), is
-      read as the empty string, open (each a line of WHAT IT DOES NOT READ, the unfoldable key's). An operand the rule
+      assignment or a walrus, an augmented assignment, and a for over a tuple, list or set display or a name that folds
+      to one. A NAME A COMPREHENSION'S GENERATORS BIND is read, for each declaration they make of it, from the FIRST
+      GENERATOR WHOSE TARGET IS THAT PLAIN NAME, folded the same way where that generator iterates such a display or
+      name; a later generator that rebinds it, or one that binds it in a tuple or list target, is not read (so in
+      [K + 'yio' for K in ('zz',) for K in ('an',)] K + 'yio' folds to 'zzyio' where Python makes 'anyio', a line of
+      WHAT IT DOES NOT READ, the unfoldable key's). A NAME MET AGAIN while the fold is reading it (an augmented
+      assignment's own name in the value it composes, met again through that declaration) is read as the empty string,
+      open, so a value a loop builds by repeating one assignment is read over two of its passes at most (K = '' and
+      then for p in ('an', 'y', 'io'): K += p, or K = K + p, folds K + p to 'any' and 'yio' among its values and never
+      to 'anyio'); and a name a for binds through a TUPLE OR LIST TARGET (for K, J in ...), or a comprehension's
+      generators bind through such targets alone, or an unpacking binds from anything but a tuple or list display of
+      its own length with no starred element on either side (K, J = pair), is read as the empty string, open (each a
+      line of WHAT IT DOES NOT READ, the unfoldable key's). An operand the rule
       cannot fold (a parameter, an import, a call, a subscript, an
       attribute, a name no declaration binds, a star import's say) is read as the empty string beside the values it
       can, and so is a name read that may take no binding, beside its declarations' values (a class body's read whose
@@ -7546,15 +7551,19 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     'io'): K += p, or K = K + p, since the first clause reads each declaration once and a name met again as the empty
     string, so it composes two passes at most; bound by a TUPLE TARGET, for K, J in (('an', 'x'),): and then K +=
     'yio', or by an unpacking from a name, PAIR = ('an', 'x'), K, J = PAIR and then K += 'yio', since the first clause
-    reads such a name as the empty string; or brought from outside the module's text: a module outside the repository or
-    imported only transitively, the environment, a file, or a module of the repository the text imports directly,
-    whose binding an import brings into the text, from _ih import lineage or from _ih import * and then lineage +
-    'yio' where the module binds lineage = 'an', since the first clause reads a name an import binds, or a star import
-    may bring, as the empty string beside any value a declaration gives it), or one that matches anyio or the flag
-    without naming anyio (a prefix, "any" or "no:a", say), handed to a read that is no carrier and no keyed read
-    (sys.modules, a fixture's name); no live site (each lookup of sys.modules in tests/conftest.py is by a literal
-    name, and the tests it makes of the names there, the prefixes romp_kernel and romp_postal and the word
-    credentials, match neither anyio nor the flag), escape-only, witness
+    reads such a name as the empty string; BOUND BY MORE THAN ONE GENERATOR OF ONE COMPREHENSION, NAME = [K + 'yio'
+    for K in ('zz',) for K in ('an',)][0], or NAME = ['an' + K + 'yio' for K in ('zz',) for K, J in (('', 'x'),)][0],
+    since the first clause reads such a name from the first generator whose target is that plain name, 'zz' in both,
+    where Python's element reads the last generator's binding; or brought from outside the module's text: a module
+    outside the repository or imported only transitively, the environment, a file, or a module of the repository the
+    text imports directly, whose binding an import brings into the text, from _ih import lineage or from _ih import *
+    and then lineage + 'yio' where the module binds lineage = 'an', since the first clause reads a name an import
+    binds, or a star import may bring, as the empty string beside any value a declaration gives it), or one that
+    matches anyio or the flag without naming anyio (a prefix, "any" or "no:a", say), handed to a read that is no
+    carrier and no keyed read (sys.modules, a fixture's name); no live site (each lookup of sys.modules in
+    tests/conftest.py is by a literal name, and the tests it makes of the names there, the prefixes romp_kernel and
+    romp_postal and the word credentials, match neither anyio nor the flag; and no comprehension of tests/conftest.py
+    has more than one generator, so in none do two generators bind one name), escape-only, witness
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[unfoldable-key], whose plants (a key built by a call,
     a prefix, and a key split across a direct import, by a from import and by a star import, which the verification
     of the hundred and eighteenth round-2 commit found; and a key built through an attribute, composed by an augmented
@@ -7562,8 +7571,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     the four spellings above, which the re-verification of the hundred and nineteenth found; and B1 and B3, a key a
     loop accumulates by an augmented and by a plain assignment, and L1, a key a for's tuple target binds, which the
     reviewer's closing check at 4bb17d0eb found, with U1, a key an unpacking from a name binds, the same reading of a
-    tuple target) are not run, since the road reads the plugins the run loaded and not the command line. A name the
-    text WRITES INTO THE BUILTINS MODULE
+    tuple target; and C1 and C7, a key a comprehension's two generators bind, each by a plain name, or by a plain name
+    and then a tuple target, which the verification of the hundred and twenty-fifth and hundred and twenty-sixth
+    round-2 commits found) are not run, since the road reads the plugins the run loaded and not the command line.
+    A name the text WRITES INTO THE BUILTINS MODULE
     (builtins.X = ..., __builtins__[...] = ...), read where the module's own binding has not run (the binding in a
     branch not taken, read by a def, or a read at the module's level ahead of the binding), which Python reads from
     the builtins module while the rule, which reads a name as a builtin's only where the builtins module of the
@@ -7657,7 +7668,12 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
             return True
 
     def iterated(decl):
-        """The iterable a loop declaration of decl.name iterates, or None (a tuple target, or no loop)."""
+        """The iterable a loop declaration of decl.name is read from, or None: a for's own where its target is the
+        plain name; for a comprehension, the first of its generators whose target is that plain name, whichever of
+        its generators made the declaration (a later one that rebinds the name, or one that binds it in a tuple or
+        list target, is not read: the first clause, and the unfoldable key's line of WHAT IT DOES NOT READ); None for a
+        for's tuple or list target, a comprehension whose generators bind the name through such targets alone, or no
+        loop."""
         loops = [decl.node] if isinstance(decl.node, (ast.For, ast.AsyncFor)) else list(getattr(decl.node, "generators", ()))
         for loop in loops:
             if isinstance(loop.target, ast.Name) and loop.target.id == decl.name:
@@ -8757,7 +8773,15 @@ _ESCAPE_ONLY_KINDS = (
         ("L1: for K, J in (('an', 'x'),): K += 'yio', a key a for's tuple target binds",
          "import sys\n\nfor K, J in (('an', 'x'),):\n    K += 'yio'" + _ESCAPE_ONLY_SOUGHT % "K", {}, None),
         ("U1: PAIR = ('an', 'x'), K, J = PAIR, then K += 'yio', a key an unpacking from a name binds",
-         "import sys\n\nPAIR = ('an', 'x')\nK, J = PAIR\nK += 'yio'" + _ESCAPE_ONLY_SOUGHT % "K", {}, None))),
+         "import sys\n\nPAIR = ('an', 'x')\nK, J = PAIR\nK += 'yio'" + _ESCAPE_ONLY_SOUGHT % "K", {}, None),
+        ("C1: NAME = [K + 'yio' for K in ('zz',) for K in ('an',)][0], a key two generators of one comprehension bind, "
+         "each by a plain name",
+         "import sys\n\nNAME = [K + 'yio' for K in ('zz',) for K in ('an',)][0]" + _ESCAPE_ONLY_SOUGHT % "NAME", {},
+         None),
+        ("C7: NAME = ['an' + K + 'yio' for K in ('zz',) for K, J in (('', 'x'),)][0], a key a comprehension binds by a "
+         "plain name and then by a tuple target",
+         "import sys\n\nNAME = ['an' + K + 'yio' for K in ('zz',) for K, J in (('', 'x'),)][0]"
+         + _ESCAPE_ONLY_SOUGHT % "NAME", {}, None))),
     ("builtins-written", (
         ("B1: builtins.lineage = '', the module's lineage = 'zz' in a branch not taken, a def's 'an' + lineage + 'yio'",
          "import builtins\nimport sys\n\nif False:\n    lineage = 'zz'\nbuiltins.lineage = ''\n\n\ndef _read():\n"
