@@ -7,8 +7,9 @@ name: CI
 # LINUX runs on every push and PR — it is free on a public repo, no minute cap.
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (the bats
-# suite alone is about 16 minutes) and the runners are scarcer, so they do NOT run
-# on every push. They run once a week on a schedule (see `on:`) and
+# suite alone took 38 min 34 s in the dispatch of 2026-10-01, run 36807971909) and
+# the runners are scarcer, so they do NOT run on every push. They run once a week
+# on a schedule (see `on:`) and
 # by hand from the Actions tab ("Run workflow") when you want a cross-platform
 # check before a release or after touching a platform-sensitive surface (launchd,
 # the folder opener, the CLI scope).
@@ -387,6 +388,12 @@ jobs:
     # the same files), and that cell's bats step ended 273 s after its last case (most likely a
     # fake head's sleep 300 in tests/shell-portability.bats holding the output open: the step
     # ended 1.5 s after that sleep's 300 s), so the job projects to about 41 min 19 s, and 55.
+    # Measured at the PR's head d2091c2c1 (2026-10-01): Linux took 32 min 50 s in its dispatch
+    # (run 36807971909, job 110198463325) and 33 min 8 s on its PR run's rerun (run 36807976002,
+    # attempt 2, job 110209536820), 45 by the rule; macOS took 38 min 56 s (run 36807971909, job
+    # 110198463480), which gives 50 by the rule, so 55 stands on the projection above and the
+    # coordinator's ruling of 2026-09-30 (20:48Z). That macOS bats step again ended 272 s after
+    # its last case, and 298 s after the case whose fake head runs that sleep 300 ended.
     # The vendored tooling tests that ran after Run bats moved to a job of their own
     # (vendored-tooling, below) on 2026-09-28 instead of this cap being raised to hold them.
     timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 45 }}

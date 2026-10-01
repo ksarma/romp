@@ -843,6 +843,25 @@
 #       version and the form and saying its skip wording is not recognized.
 #       Its end: the closing line, the answer's last, which an answer cut
 #       anywhere loses or contradicts, refused naming the read
+#   the DENYLIST
+#       the BYTE COUNT of the denylist (wc -c), read apart: a capture whose
+#       bytes are another number refuses naming both, a NUL byte among the
+#       causes, since the capture drops one, so a cat silent with exit 0 over
+#       a file with bytes refuses, and only an empty file reads as empty
+#       (scan_identifiers, which reads the file whole, cat through the helper
+#       with -k, and parses its entries from the capture; until the focused
+#       re-check at d2091c2c1 a read loop took a read error after the open for
+#       the file's end, and a push published with the entries after it
+#       unscanned, or hung). Its end: an answer cut short holds fewer bytes
+#       than the count
+#   the BYTE COUNT of the denylist
+#       the first word of wc -c's answer, the file's path given as an argument
+#       (a shape no other read of the hook's has), a digit run compared with
+#       the bytes cat answered for the file, its trailing newlines kept
+#       (scan_identifiers): a non-count refuses naming both answers, and
+#       another number refuses naming both, a NUL byte among the causes, since
+#       the capture drops one. Its end: a cut count is a prefix of its digits,
+#       another number than the capture's
 # Reads whose empty answer is the object's own (own=):
 #   the ADDRESS DOMAIN grep
 #       safe: the answer is the status alone (-q) and exit 0 is the hit, so a
@@ -1759,6 +1778,39 @@
 # paragraph, below).
 # Bypass a false positive from either scan with `git push --no-verify`.
 #
+# What the pusher's own environment configures in bash before the hook's first
+# line runs (the focused re-check of fork PR 940 at d2091c2c1, ruled 05:31Z
+# 2026-10-01; onecmd re-examined for build 5 of item 40, ruled 09:58Z): bash
+# sources the file BASH_ENV names, and takes shell options from SHELLOPTS,
+# before it reads the hook. Under noexec (SHELLOPTS=noexec) bash runs no
+# command at all; under onecmd (SHELLOPTS=onecmd, or bash -t) it reads and
+# runs ONE command and exits, and the hook's first command is its #! line, a
+# comment, which runs nothing. Either way bash exits 0 and the push publishes
+# with nothing printed, under every bash: no command of the hook runs, so a
+# refusal written as its first command (case $- in *t*), the re-check's
+# proposal for onecmd) runs only where no comment comes before it, never under
+# the #! line a hook needs (by execution under bash 5.2.21 and 3.2.57,
+# 2026-10-01; tests/pre-push-hook.bats, the SHELLOPTS case, witnesses both
+# publishing). A startup file that BASH_ENV names runs ahead of the hook too,
+# and can do whatever the pusher's own shell can; where the gate re-runs the
+# hook, the re-run keeps BASH_ENV (the version question alone runs with it
+# empty), so the older bash sources the file before the gate's armed test and
+# the newer bash sources it again before the body, and a file that reads stdin
+# can take the ref list before the hook reads it. One #! line WOULD close all
+# three: #!/usr/bin/env -S bash -p, with -p on bash_gate's exec, runs bash in
+# privileged mode, which ignores SHELLOPTS and BASH_ENV (by execution, both
+# bashes). It is not adopted: env -S needs coreutils 8.30 or later and
+# BusyBox's env lacks it, so a hook that cannot start where env -S is missing
+# refuses every push; -p drops the exported functions the test seams rely on
+# (the split-no-end case's exported printf, the one exported function in
+# tests/, by execution: under -p that case fails and the armed test's case,
+# which cuts the hook's functions into its own shell, passes); and
+# tests/shell-portability.bats finds shell files by a shebang regex the -S
+# form would drop. So all three stay disclosed residuals of one class, the
+# same class as git push --no-verify: the pusher's own environment
+# configuring bash, which the hook as written does not defend against (the
+# declined #! line above would).
+#
 # Whether each scan WOULD run: the identifier scan unless the denylist's path
 # (ROMP_PRIVATE_STRINGS, else the XDG default) is absent, the credential scan
 # when it is not skipped (ROMP_NO_GITLEAKS) and a gitleaks binary resolves and
@@ -1941,7 +1993,7 @@ gitleaks_notice() {
 }
 #
 # The hook's body runs under bash 5.1 or later, and only there (the
-# coordinator's rulings, 2026-09-30: the gate at 11:02Z, its threshold raised
+# coordinator's rulings, 2026-09-30: the gate at 11:01Z, its threshold raised
 # from 4.4 to 5.1 at 13:37Z). git runs the hook under the bash first on PATH
 # (the shebang is env bash), a stock mac's /bin/bash 3.2.57 among them, and
 # each audit of the body under bash 3.2.57 found another way that bash ended
@@ -1981,7 +2033,9 @@ gitleaks_notice() {
 # (where Homebrew installs bash, on Apple silicon and on Intel) that reports
 # bash 5.1 or later: each candidate is asked for its version with stdin from
 # /dev/null, so the question cannot take the ref list, and with BASH_ENV empty,
-# so no startup file prints into the answer; an answer that is not two numbers,
+# so no startup file prints into the answer (what a startup file does across
+# the re-run, and what SHELLOPTS does, is the residual paragraph after the Env
+# paragraph above); an answer that is not two numbers,
 # one word among them, passes the candidate over. One function, bash_admitted,
 # compares the running bash's version and each candidate's, so the two
 # comparisons cannot come apart.
@@ -1991,6 +2045,12 @@ gitleaks_notice() {
 # rather than re-running again, so a candidate that reports 5.1 or later and
 # then runs the hook under an older bash ends in a refusal, not a loop; under
 # bash 5.1 or later the gate unsets it, so no program the hook runs sees it.
+# The guard assumes the candidate keeps the environment it is given: one that
+# reports 5.1 or later and then runs the hook under an older bash with
+# ROMP_HOOK_REEXEC removed from the environment makes each re-run hook re-run
+# again, without end, and the push hangs; it is never published (the focused
+# re-check at d2091c2c1, 2026-10-01, by such a wrapper: 1720 runs of the hook
+# in 20 s before its timeout, the remote unchanged).
 # An exec that fails ends the hook with bash's own status, which refuses the
 # push (no trap is set yet). The cost: a clone that asked for a scan, whose
 # bash first on PATH is older than 5.1 (a stock mac's 3.2, or a Linux release
@@ -1999,7 +2059,13 @@ gitleaks_notice() {
 # bash, on a mac) or put first on PATH, or pushes with --no-verify.
 # The test seam, ROMP_HOOK_BASHES, in the form the coordinator accepted on
 # 2026-09-30 (13:37Z): a colon-separated list of paths that replaces the two
-# candidates when it is set (set and empty, it names none). It changes which
+# candidates when it is set (set and empty, it names none). Each entry is an
+# absolute path, and one that does not start with / is passed over (the
+# focused re-check at d2091c2c1, ruled 05:31Z 2026-10-01): the candidate's
+# [ -f ] and [ -x ] tests read a relative name under the current directory,
+# the work tree's root, which the repository's own files can fill, while the
+# version question and the exec look a bare name up on PATH, so the file
+# tested was not the program run. It changes which
 # program runs the hook, so it is read only where the gate acts, under a bash
 # older than 5.1 with a scan armed; every candidate it names is asked its
 # version like the two and passed over unless it reports 5.1 or later; and it
@@ -2008,19 +2074,17 @@ gitleaks_notice() {
 # sets it, so that file run under a bash older than 5.1 on a machine whose two
 # paths hold no newer bash re-runs the hook under the newer bash the file
 # finds.
-# The empty-array guards, the EXIT trap and the denylist's descriptor 7 came
-# before the gate and are kept, since each holds under bash 5.1 and later too:
-# every array expansion with no operator is written ${a[@]+"${a[@]}"} (a count,
-# ${#a[@]}, and a substring, ${a[@]:1}, are left as they are), and the EXIT trap
-# refuses a push that the hook ends before its verdict while reporting success
-# (the trap's comment; tests/pre-push-hook.bats pins the guards, the trap and
-# the gate). What descriptor 7 guards since the threshold is 5.1: the
-# refusal's words, since under bash 5.1 and later a loop that read the
-# denylist through done < file would end the hook on bash's own line and no
-# romp line when the file cannot be opened, where the open ahead of the loop
-# refuses naming the file and the remedy; and the road bash 4.4 and 5.0 took,
-# should the body ever run under a bash that skips such a loop (scan_identifiers'
-# comment on it).
+# The empty-array guards and the EXIT trap came before the gate and are kept,
+# since each holds under bash 5.1 and later too: every array expansion with no
+# operator is written ${a[@]+"${a[@]}"} (a count, ${#a[@]}, and a substring,
+# ${a[@]:1}, are left as they are), and the EXIT trap refuses a push that the
+# hook ends before its verdict while reporting success (the trap's comment;
+# tests/pre-push-hook.bats pins the guards, the trap and the gate). The
+# denylist's descriptor 7, which came with them, is retired: since the focused
+# re-check at d2091c2c1 (ruled 05:31Z 2026-10-01) the denylist is read whole
+# through judged_read and no loop reads it, so a failed open, like a failed
+# read after it, refuses as the read's status, naming the file, under every
+# bash (scan_identifiers' comment).
 bash_admitted() {   # <major> <minor>: status 0 when the version is 5.1 or later; the one comparison bash_gate makes, for the running bash and for each candidate
     [ "$1" -gt 5 ] || { [ "$1" -eq 5 ] && [ "$2" -ge 1 ]; }
 }
@@ -2049,6 +2113,7 @@ bash_gate() {   # <the hook's arguments>: returns under bash 5.1 or later; under
             *:*) rest=${rest#*:} ;;
             *) rest="" ;;
         esac
+        case "$candidate" in /*) ;; *) continue ;; esac   # an absolute path alone (the seam's paragraph above)
         if [ -z "$candidate" ] || [ ! -f "$candidate" ] || [ ! -x "$candidate" ]; then continue; fi
         # shellcheck disable=SC2016  # the candidate expands the version, not this shell
         version=$(BASH_ENV='' "$candidate" -c 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"' < /dev/null) || continue
@@ -2072,6 +2137,47 @@ bash_gate() {   # <the hook's arguments>: returns under bash 5.1 or later; under
     exit 1
 }
 bash_gate "$@"
+# The C locale for the whole body (the coordinator's ruling on the audit of
+# item 40's build 4, 2026-10-01 09:58Z, its A), set here, ahead of the
+# body's first text tool and its first pattern operation, and reset by
+# nothing after it: in the C locale a character is a byte, so every grep,
+# awk, sed, trim and comparison below reads the bytes the push carries,
+# whatever the pusher's locale. Under a UTF-8 locale macOS's grep skips,
+# without a word, a line whose bytes before the match are not valid UTF-8
+# (its regexec answers REG_ILLSEQ and grep goes on to the next line), so a
+# banned string after a Latin-1 byte, in a line a later commit removed, went
+# unscanned there; and bash 5.2.21 trimmed a denylist entry that starts with
+# a byte that is not valid UTF-8 followed by a backslash to other bytes at
+# each run, so the scan grepped for bytes no line holds and a real push
+# published (the audit's H2 and the re-check's F2; tests/pre-push-hook.bats,
+# the locale cases of build 5). The cost, three ways a pusher in a UTF-8
+# locale is answered otherwise than at d2091c2c1, each pinned by a witness
+# case of its own in tests/pre-push-hook.bats (the cases titled "the C
+# locale's cost"): the denylist's case-insensitive matching folds ASCII
+# letters alone, so a banned string's letters outside ASCII match only as the
+# bytes the entry holds (an entry zzjos with e-acute against a line naming it
+# in capitals, E-acute among them, publishes); an entry's edges lose ASCII
+# whitespace alone to the trim (an entry edged by an ideographic space,
+# U+3000, is grepped with that space, and a line holding the bare string
+# publishes); and the chosen addresses are compared the same way (an address
+# that differs from a chosen one in the case of a letter outside ASCII is not
+# chosen, so its domain is grepped: the strict side, a push refused that
+# d2091c2c1 published). The LC_ALL=C prefixes and locals below came first
+# and stay, so a function the tests cut from this file and run alone reads
+# bytes too. Nothing after this line sets LC_ALL, LC_CTYPE, another LC_
+# variable, LANG or LANGUAGE to anything but C, unsets or un-exports one, or
+# runs env -i, env -u, env - or exec -c (the same file's census of the body's
+# locale words, after the export's pin, holds that). The gate above runs
+# before this line, in the pusher's locale: its pattern operations on bytes
+# the pusher supplies (the walk up the denylist's path in denylist_state,
+# bash_gate's split of ROMP_HOOK_BASHES and of a candidate's version answer,
+# lookup_answer's match on the open's message, whose open alone runs under
+# LC_ALL=C) split at the ASCII bytes /, : and the space, which UTF-8 never
+# uses inside a multibyte character, nor do EUC, GBK, GB18030, Big5 or
+# Shift_JIS, so each reads the same bytes in any of those locales (by
+# execution under bash 3.2.57 and 5.2.21 in a UTF-8 locale, the audit of
+# build 5: the same answers as in the C locale).
+export LC_ALL=C
 set -euo pipefail
 # Replacement off for every git below (the header's premise): the scans read
 # the objects the push transfers, never a substitute.
@@ -2086,20 +2192,24 @@ export GIT_NO_REPLACE_OBJECTS=1
 # and was retired in round 9, and a git that drained stdin on it, exit 0 and
 # nothing printed, emptied the list the same way through a real push; the
 # round 7 refuters, 2026-09-23). The
-# `|| [ -n "$line" ]` keeps a last line git wrote without a newline. line is
-# UNSET on purpose (the unset below guards against a name the environment
-# exported): read returns 1 at the end of the input and on a read error
-# alike, and on an error it assigns nothing, so the test on the unset name
-# ends the hook under set -u with a status, which refuses the push, where a
-# name set beforehand would read the error as the end of the list. An empty
-# list is git's own answer for a push with nothing to update, and passes as
-# it did.
+# `|| [ -n "${line-}" ]` keeps a last line git wrote without a newline. line
+# is UNSET before each read: read returns 1 at the end of the input and on a
+# read error alike, and assigns its variable at the end (the empty string
+# when nothing is left) and nothing on an error, so line unset after the loop
+# is a read error, refused where a scan is armed (refuse_unread_ref_list,
+# after the EXIT trap), where until build 5 of item 40 the name, set by the
+# line read before the error, read the error as one more line, and the loop
+# read the list again without end. git writes no count of the refs, so the
+# read's end is all there is to hold it against (the census of the read loops
+# in tests/pre-push-hook.bats; read_owed's paragraph). An empty list is git's
+# own answer for a push with nothing to update, and passes as it did.
 # outside judged_read: stdin, not a read of an object.
 refs=""
-unset line
-while IFS= read -r line || [ -n "$line" ]; do
+# read loop (ii) [end: line]: git writes no count of the refs; the read's end told from a read error (line set at the end, unset after an error), refused by refuse_unread_ref_list
+while unset line; IFS= read -r line || [ -n "${line-}" ]; do
     refs="$refs$line"$'\n'
 done
+refs_end=${line+set}
 refs=${refs%$'\n'}
 
 zero=0000000000000000000000000000000000000000
@@ -2245,9 +2355,15 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 # by -v): the caller compares it with the capture's line count and refuses a
 # difference, or no count at all, where an awk exiting 0 and printing
 # nothing was read as a commit adding no line and published its banned line
-# through a real push (the round 6 refuters, 2026-09-22).
+# through a real push (the round 6 refuters, 2026-09-22). The awk runs in
+# the C locale (the focused re-check of fork PR 940 at d2091c2c1, ruled 05:31Z
+# 2026-10-01): it compares and slices bytes, so its output is the same in any
+# locale, and Apple's awk-40, the awk macOS ships, built on Linux and run
+# under a UTF-8 locale, ended on a line that is not valid UTF-8 (a Latin-1
+# line) with "towc: multibyte conversion failure", which refused the push
+# naming the diff (an emulation, not reproduced on a Mac).
 added_lines() {   # <rev> <parent count> <count file: the count of lines printed, written at the end; the word unmarked when the diff never printed the commit's sha, untailed when it never printed it again after the diff>
-    git diff-tree -p -r -M -c --root --always --no-color --stdin <<< "$1"$'\n'"$1 $1" | ROMP_COUNT_FILE=$3 awk -v n="$2" -v sha="$1" '
+    git diff-tree -p -r -M -c --root --always --no-color --stdin <<< "$1"$'\n'"$1 $1" | ROMP_COUNT_FILE=$3 LC_ALL=C awk -v n="$2" -v sha="$1" '
         BEGIN { if (n < 1) n = 1; for (i = 0; i < n; i++) plus = plus "+"; count_file = ENVIRON["ROMP_COUNT_FILE"] }
         NR == 1 && $0 == sha             { marker = 1; next }
         tail                             { after = 1; next }
@@ -2304,13 +2420,16 @@ chosen_emails() {
 # among the chosen addresses matches no address, since both callers skip an
 # empty address before asking. Called as a condition.
 is_chosen() {   # <address> <chosen addresses, one per line>
-    local c was=0
+    local c was=0 n=0
     if shopt -q nocasematch; then was=1; fi
     shopt -s nocasematch
+    # read loop (ii) [tally: n]: when no address matched, the lines read against the lines the chosen addresses hold (read_owed_lines); a match returns at once, the permissive answer read whole up to it
     while IFS= read -r c; do
+        n=$((n + 1))
         case "$1" in "$c") [ "$was" -ne 0 ] || shopt -u nocasematch; return 0 ;; esac
     done <<< "$2"
     [ "$was" -ne 0 ] || shopt -u nocasematch
+    read_owed_lines "the capture of the CHOSEN ADDRESSES of this clone, compared with <$1>," "$n" "$2" || :
     return 1
 }
 
@@ -2346,6 +2465,114 @@ unscanned() {   # <what could not be read, as a clause> [<a note the line prints
     echo "romp pre-push: $1; the scan is incomplete, so the push is refused${2:+ ($2)}" >&2
     failed_scan=1; unscanned_n=$((unscanned_n + 1))
 }
+# Every loop that reads a file, a descriptor or a here-string a line (or a
+# NUL-terminated record) at a time holds what it read against what it was
+# owed, after its done (the coordinator's ruling on the audit of item 40's
+# build 4, 2026-10-01 09:58Z, its B). The read builtin returns 1 at the end
+# of its input and on a read error alike, and on an error assigns nothing, so
+# a loop that took the status alone for the end read an I/O error after the
+# open as the end: the lines after it went unread and a push published (the
+# denylist's loop until the focused re-check at d2091c2c1; the tag object's,
+# the hidden blobs' entries and a gitleaks config's until build 5; the tip
+# grep's error lines, a rename row's paths, until the audit of build 5), or a
+# loop that kept a last line without a newline read the line before the error
+# again, without end, and the push hung (the scanner's log until that audit).
+# A loop that only builds report text, on a push the verdict refuses
+# whatever it reads, is held the same way: a refusal more costs nothing
+# there, and no loop of this file is exempt. Four shapes, each named on a
+# comment line of its own just above the loop's keyword, read loop (ii) and
+# the shape in brackets with its names:
+#   tally    the loop counts what it reads (tally: the counter), and a
+#            read_owed or read_owed_lines call after its done holds the count
+#            against a count read apart from that read: the file's size,
+#            verified already, or, for a here-string, the lines the text
+#            holds (read_owed_lines). A here-string is no pipe for certain:
+#            bash 5.1 and later write one longer than the pipe's capacity to a
+#            temporary file in TMPDIR and read it back, a read that can fail
+#            like any other, so a loop over a capture checked whole before the
+#            loop still counts its own read;
+#   end      where no count exists to hold the read against (the ref list git
+#            writes on stdin, and git's and gitleaks' answers the hook writes
+#            to the scratch directory uncounted), the condition unsets the
+#            read's variable before each read (end: the variable, or the two
+#            of a condition that reads a pair of records), and the test after
+#            the done holds ${name+set} against set, since read assigns at the
+#            end of its input, the empty string included, and assigns nothing
+#            on an error (pair_end, below, for a pair); a read the body makes
+#            from the loop's own input unsets its variables first and holds
+#            them set after it, and on an error unsets the condition's
+#            variable and ends the loop;
+#   count    the loop counts what it reads (count: the counters, the word
+#            against, and the count its producer recorded), and a comparison
+#            after the done holds the two, the producer's figure read apart
+#            from the loop's read;
+#   marker   the producer writes a closing line or record last (marker: the
+#            variable the body sets from it), and the test after the done
+#            refuses when it is absent: the loop ends at its first failed
+#            read, so a read cut short loses the marker.
+# A condition that keeps a last line with no newline (|| [ -n "${name-}" ])
+# unsets that name before each read, so a read error ends the loop rather
+# than re-handling the line before it. tests/pre-push-hook.bats' census of
+# the read loops finds every LINE LOOP from the read builtin's every token in
+# the masked text (a loop whose condition runs a read, or whose body runs a
+# read from the loop's own input, whatever the loop's keyword or the
+# condition's layout; a read with an input redirection of its own reads its
+# input from the start and makes no line loop) and checks each tag against the
+# text: the counter counted in the body and named in a read_owed call after
+# the done; the end's variables those of the condition's reads, unset in the
+# condition and read as ${name+set} after the done; the count's counters
+# counted and compared with the recorded count; the marker set in the body and
+# tested after the done; and the || form and the body's reads as above. It
+# fails on a loop with no tag and on a tag the text does not hold. A token is
+# the word read at a command's start, after any assignments and redirections
+# and the prefix words builtin and command; a read spelled otherwise (quoted,
+# escaped, or run through eval or a variable's value) is none. The census
+# follows no call, so it fails, too, on a read OUTSIDE every loop that no
+# input redirection feeds (its own, or a compound's around it, as each
+# { IFS= read -r x || :; } < file below has) and no pipe, unless a tag just
+# above its line, # read (ii) [one-shot]: <why>, says why its input is no
+# loop's: a function a loop calls would run such a read on the loop's input.
+# Every read outside a loop in this file has such a redirection, and none is
+# tagged.
+read_owed() {   # <the refusal's clause: what was read (the file or the capture) and the two counts> <what the loop read> <what it was owed>: status 0 when the two agree; otherwise the push is refused with the clause (unscanned), status 1
+    [ "$2" = "$3" ] && return 0
+    unscanned "$1"
+    return 1
+}
+# The lines a here-string of a text gives a read loop: the read builtin takes
+# the text and a newline after it, so as many lines as the text holds newline
+# bytes, plus one. Counted by the read builtin over a here-string of its own,
+# its bytes held against the text's length (in the C locale, where a byte is a
+# character), so a count whose read came short refuses rather than standing
+# for the lines owed; bash's pattern substitution counts the same bytes in
+# time that grows with the square of the text (31 s for 1.3 MB). Sets owed,
+# the caller's; status 1, with owed empty, when its own read came short.
+here_lines() {   # <what the text is, for the refusal> <the text>
+    local LC_ALL=C l n=0 b=0
+    owed=""
+    # read loop (ii) [tally: b]: the bytes read against the text's length and the newline the here-string adds after it
+    while IFS= read -r l; do n=$((n + 1)); b=$((b + ${#l} + 1)); done <<< "$2"
+    read_owed "$1 could not be counted (the shell read $b bytes of its here-string, which holds $(( ${#2} + 1 )): a read error taken for its end)" "$b" "$(( ${#2} + 1 ))" || return 1
+    owed=$n
+}
+read_owed_lines() {   # <what the text is: the capture a loop just read, as a clause> <the lines the loop read> <the text>: here_lines, then read_owed; status 1 when either refused
+    local owed
+    here_lines "$1" "$3" || return 1
+    read_owed "$1 was read short (the shell read $2 of the $owed lines it holds: a read error taken for its end)" "$2" "$owed"
+}
+# The end of a loop whose condition reads a pair of NUL-terminated records,
+# IFS= read -r -d '' a && pair_whole=1 && IFS= read -r -d '' b, the three
+# names unset before each pair: its input's end when the first read assigned
+# and returned 1 (pair_whole unset: the second read never made, the first
+# holding the bytes after the last NUL, none for a whole answer), or when the
+# first read a whole record and the second assigned too (the end inside a
+# pair); a read error leaves the read it struck unassigned, so the first
+# unset, or pair_whole set with the second unset, is a read error. An answer
+# cut mid-record (bytes after the last NUL) reads as its end here, and the
+# check the loop feeds refuses it as short, as before the end test was added.
+pair_end() {   # <${a+set}> <${pair_whole+set}> <${b+set}>: prints set when the pair's loop ended at its input's end, nothing when a read error ended it
+    case "$1:$2:$3" in set::|set:set:set) printf set ;; esac
+}
 # The function below builds the CLAUSE judged_read is given for a type read
 # that fails (no status in the line: the read prints its own error line ahead
 # of it where it prints one).
@@ -2355,6 +2582,18 @@ unscanned() {   # <what could not be read, as a clause> [<a note the line prints
 # so the line names the object the ref pushes, not "the tag".
 type_unread() {   # <local_ref> <sha>: the clause
     printf '%s' "the TYPE of the object $1 pushes (${2:0:10}) could not be read, so whether it is an annotated tag is unknown"
+}
+
+# judged_read -k's marker byte, removed from the end of read_out in the C
+# locale, where each byte is one character, so the capture keeps its bytes
+# whatever the pusher's locale (the audit of item 40's build 4, 2026-10-01):
+# removed in a UTF-8 locale, bash 5.2.21 answered other bytes, and other
+# lengths, for a capture that starts with a byte that is not valid UTF-8
+# followed by a backslash (C3 5C), so a denylist so written refused every push
+# as read short, and a symlink target so written refused as short.
+strip_keep_marker() {   # read_out without its last byte, the marker x
+    local LC_ALL=C
+    read_out=${read_out%x}
 }
 
 # Every read the hook judges goes through here: the header's two classes,
@@ -2379,7 +2618,8 @@ type_unread() {   # <local_ref> <sha>: the clause
 # -q sends the command's stderr to /dev/null (the reads whose git error line
 # the hook does not show), -e merges it into the output (the tip's grep, which
 # tells its error lines apart), -k keeps the output's trailing newlines (a
-# symlink target of a newline alone is not an empty target), -o <file> and
+# symlink target of a newline alone is not an empty target; the marker byte
+# that keeps them is stripped in the C locale, strip_keep_marker), -o <file> and
 # -a <file> write or append the output to a file instead of read_out (the
 # file is opened ONCE, to a descriptor of this shell, before the command
 # runs, and the command writes to that descriptor: a failed open is refused
@@ -2448,7 +2688,7 @@ judged_read() {   # <gate="name"|own="name"> <expected statuses, comma-separated
             merge) read_out=$(set +e; "$@" 2>&1; s=$?; printf x; exit "$s") || read_rc=$? ;;
             *)     read_out=$(set +e; "$@"; s=$?; printf x; exit "$s") || read_rc=$? ;;
         esac
-        read_out=${read_out%x}
+        strip_keep_marker
     else
         case "$errs" in
             quiet) read_out=$("$@" 2>/dev/null) || read_rc=$? ;;
@@ -2489,16 +2729,27 @@ judged_read() {   # <gate="name"|own="name"> <expected statuses, comma-separated
 # where to look. A listing that failed refuses too: whether the reads and the
 # push agree is then unknown.
 refuse_replace_refs() {
-    local found ref
+    local found ref n=0
     identifier_scan_armed || credential_scan_armed || return 0
     judged_read own="the REPLACE REFS listing" 0 "the REPLACE REFS of this clone could not be listed (git for-each-ref exited {rc}), so whether the scans read what the push transfers is unknown" -- git for-each-ref --format='%(refname)' "${GIT_REPLACE_REF_BASE:-refs/replace/}" || :
     found=$read_out
     [ -n "$found" ] || return 0
+    # read loop (ii) [tally: n]: the lines read against the lines the listing's capture holds (read_owed_lines)
     while IFS= read -r ref; do
+        n=$((n + 1))
         echo "romp pre-push: this clone carries a replace ref ($ref): under it what a scan reads and what the push transfers can differ, so the push is refused rather than scanned" >&2
     done <<< "$found"
+    read_owed_lines "the capture of the REPLACE REFS listing" "$n" "$found" || :
     echo "  Delete it (git replace -d <object>) and push again, or push from a clone that carries none." >&2
     failed_scan=1
+}
+# The ref list's read (the loop after the gate) that ended on a read error,
+# read there as refs_end empty: refused where either scan is armed, as the
+# replace-ref gate refuses, since where neither runs there is no report to
+# make false and a clone that asked for neither scan is unaffected.
+refuse_unread_ref_list() {
+    credential_scan_armed || identifier_scan_armed || return 0
+    read_owed "the REF LIST git gave the hook on stdin could not be read to its end (a read error ended the read), so which refs the push updates is unknown" "$refs_end" set || :
 }
 
 # The scratch directory: for the added-lines capture (scan_identifiers), the
@@ -2544,13 +2795,19 @@ make_scratch() {
 # input's, is refused here too, naming the rewrite and both raw answers;
 # status 2 tells the caller a refusal was made.
 as_lines() {   # <prefix: "the LISTINGS of ... could not be rewritten for the BINARY VERDICT check"> <file>...: rewrites each as <file>.nl; status 1 when one holds a newline, 2 when the file could not be opened for the test, or a rewrite or a count failed or answered short (refused here)
-    local prefix="$1" f rec nl a b
+    local prefix="$1" f rec nl nb a b
     shift
     for f in "$@"; do
-        nl=0
-        while IFS= read -r -d '' rec || [ -n "$rec" ]; do
+        nl=0; nb=0
+        # read loop (ii) [tally: nb]: the bytes read against the file's byte count (wc -c, below), when no record holds a newline
+        while rec=""; IFS= read -r -d '' rec; do
+            nb=$((nb + ${#rec} + 1))
             case "$rec" in *$'\n'*) nl=1; break ;; esac
         done < "$f" || { unscanned "$prefix (the newline test could not open ${f##*/})"; return 2; }
+        if [ "$nl" -eq 0 ] && [ -n "$rec" ]; then     # the bytes after the last NUL, which read assigns at the end with status 1 (an error assigns nothing, and rec stays empty)
+            nb=$((nb + ${#rec}))
+            case "$rec" in *$'\n'*) nl=1 ;; esac
+        fi
         [ "$nl" -eq 0 ] || return 1
         judged_read gate="the REWRITE of a scratch listing" 0 "$prefix (tr exited {rc})" -o "$f.nl" -- tr '\0' '\n' < "$f" || return 2
         judged_read gate="the BYTE COUNT of a scratch listing" 0 "$prefix (the byte count's wc exited {rc} for ${f##*/})" -- wc -c < "$f" || return 2
@@ -2559,6 +2816,7 @@ as_lines() {   # <prefix: "the LISTINGS of ... could not be rewritten for the BI
         b=$read_out
         case "${a//[[:space:]]/}" in ''|*[!0-9]*) unscanned "$prefix (the byte count's wc answered \"$a\" for ${f##*/}, not a count)"; return 2 ;; esac
         case "${b//[[:space:]]/}" in ''|*[!0-9]*) unscanned "$prefix (the byte count's wc answered \"$b\" for the rewrite of ${f##*/}, not a count)"; return 2 ;; esac
+        read_owed "$prefix (the newline test read $nb bytes of ${f##*/}, whose byte count wc -c gives as ${a//[[:space:]]/}: a read error taken for its end)" "$nb" "${a//[[:space:]]/}" || return 2
         [ "${a//[[:space:]]/}" -eq "${b//[[:space:]]/}" ] || { unscanned "$prefix (the rewrite of ${f##*/} wrote ${b//[[:space:]]/} bytes for ${a//[[:space:]]/} read; tr exited 0)"; return 2; }
     done
 }
@@ -2567,11 +2825,17 @@ as_lines() {   # <prefix: "the LISTINGS of ... could not be rewritten for the BI
 # candidate joins in refuse_hidden_paths: the rows a join appended are counted
 # this way, before and after the call, and compared with a count in hand (the
 # tip) or the count the join's awk recorded (a commit). A last record with no
-# NUL is not counted, so a stage cut off mid-record answers short. Sets
-# records, the caller's.
+# NUL is not counted, so a stage cut off mid-record answers short. Its own
+# read is held against its end: a read error (rec unset after the loop) is
+# refused naming the file, and the count it cut short is the caller's to
+# compare, where it disagrees with the join's count as well. Sets records,
+# the caller's.
 nul_records() {   # <file>
+    local rec
     records=0
-    while IFS= read -r -d '' _; do records=$((records + 1)); done < "$1"
+    # read loop (ii) [end: rec]: the count is the callers' to hold against the joins' own counts; the read's end told from a read error (rec unset after an error)
+    while unset rec; IFS= read -r -d '' rec; do records=$((records + 1)); done < "$1"
+    read_owed "the scratch file ${1##*/} of the BINARY VERDICT check could not be read to its end for its count of records (a read error ended the read)" "${rec+set}" set || :
 }
 
 # One numstat, as NUL-delimited rows "<b or t><r or .>\t<path>": b for a
@@ -2585,15 +2849,29 @@ nul_records() {   # <file>
 # answer is the join's to judge: a post-image no row answers for is a short
 # read there.
 numstat_rows() {   # <clause for a diff-tree that failed, {rc} its status> <out> <diff-tree arguments...>
-    local clause=$1 out=$2 rc=0 row name kind
+    local clause=$1 out=$2 rc=0 row name kind src
     shift 2
     judged_read gate="the NUMSTAT of a commit" 0 "$clause" -o "$out.raw" -- git diff-tree -r --numstat -z --no-commit-id "$@" || rc=1
     : > "$out"
-    while IFS= read -r -d '' row; do
+    # A rename row's two paths are read in the body, each name unset before
+    # its read and held set after it (read assigns the empty string at the end
+    # and nothing on an error): a read error on either unsets row and ends the
+    # loop, so the end below refuses it. Until the audit of build 5 (its
+    # LOOPS-2) the two reads took an error as the end: one transient error on
+    # the new path's read wrote the row with an empty path, the next read took
+    # that path for a row of its own and wrote it a text verdict, and a hidden
+    # file renamed in the commit published through a real push.
+    # read loop (ii) [end: row]: git writes no count of the rows; the read's end told from a read error (row unset after an error, or after an error on a rename row's two path reads in the body), and a row lost before it is a post-image with no verdict, which the join refuses (its short read)
+    while unset row; IFS= read -r -d '' row; do
         name=${row#*$'\t'*$'\t'}; kind=.
-        if [ -z "$name" ]; then IFS= read -r -d '' _ || true; IFS= read -r -d '' name || name=""; kind=r; fi
+        if [ -z "$name" ]; then
+            unset src name; IFS= read -r -d '' src || :; IFS= read -r -d '' name || :
+            if [ -z "${src+set}" ] || [ -z "${name+set}" ]; then unset row; break; fi
+            kind=r
+        fi
         case "$row" in -$'\t'-$'\t'*) printf 'b%s\t%s\0' "$kind" "$name" ;; *) printf 't%s\t%s\0' "$kind" "$name" ;; esac >> "$out"
     done < "$out.raw"
+    read_owed "${clause%% (*} (git diff-tree --numstat exited 0, and the shell's read of its answer, the scratch file ${out##*/}.raw, ended on a read error)" "${row+set}" set || rc=1
     return "$rc"
 }
 
@@ -2873,9 +3151,9 @@ join_short_detail() {
 # peels to a blob has no path an attribute could name.
 refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent count>" per line> <tip listed: 1 or 0> <the symlink pass's entry count>
     local local_ref="$1" local_sha="$2" revs="$3" tip_listed="$4" tip_entries="$5"
-    local rc rev n entry meta path mode blob place fields k i how says size threshold apath attr value counts bytes nuls numstat_ok renamed
-    local status unchanged islink merge prior facts empty_tree="" listing_rc count typed prev where rsrc rdst at accounts unread
-    local records before appended joined files listed_read counted tip_agreed
+    local rc rev n entry meta path mode blob place fields k i how says size threshold apath attr value counts bytes nuls numstat_ok renamed revs_n
+    local status unchanged islink merge prior facts empty_tree="" listing_rc count typed prev where rsrc rdst at accounts unread pair_whole
+    local records before appended joined files listed_read counted tip_agreed owed_entries=0 entries_known=1 judged_n=0
     local -a tpaths
     make_scratch || { unscanned "the BINARY VERDICTS on the paths $local_ref (${local_sha:0:10}) publishes could not be checked (no scratch directory: mktemp failed)"; return 0; }
     : > "$scratch/entries"      # "<tip, or the commit's sha>\t<blob>\t<path>", one per NUL: the blobs git called binary
@@ -2972,19 +3250,27 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
                     counted=1; files=""; listed_read=""
                     if judged_read gate="the FILE COUNT of the -z listing" 0,1 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c over the -z listing exited {rc})" -- grep -c -E $'^(100644|100755) blob [0-9a-f]+ +[1-9][0-9]*\t' "$scratch/listing.nl"; then files=$read_out; else counted=0; fi
                     if judged_read gate="the LINE COUNT of the read list" 0,1 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c over the grep's read list exited {rc})" -- grep -c . "$scratch/read.nl"; then listed_read=$read_out; else counted=0; fi
+                    entries_known=0         # set again below when the rows appended agree with the count expected
                     if [ "$counted" -ne 0 ]; then
                         if [ -z "$files" ] || [ -n "${files//[0-9]/}" ] || [ -z "$listed_read" ] || [ -n "${listed_read//[0-9]/}" ]; then
                             unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c counted the -z listing's regular files with bytes as \"$files\" and the grep's read list as \"$listed_read\", not two counts)"
                         elif [ "$appended" -ne "$((files - listed_read))" ]; then
                             unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was joined short with the grep's read list for the BINARY VERDICT check (the join appended $appended candidate rows where the -z listing names $files regular files with bytes and the grep's read list $listed_read of them, so the count expected is $((files - listed_read)); awk and tr exited 0)"
+                        else
+                            entries_known=1; owed_entries=$((owed_entries + appended))
                         fi
                     fi
+                elif [ -s "$scratch/entries" ]; then
+                    entries_known=0         # rows a join refused above may stand in the file uncounted
                 fi
             fi
         fi
     fi
     : > "$scratch/pcount"       # "<sha> <parent count>", one per line: the count the report below reads a commit's previous versions by
+    revs_n=0
+    # read loop (ii) [tally: revs_n]: the lines read against the lines the caller's rev list holds (read_owed_lines); a commit the read lost would go unjudged for its hidden paths, so a shortfall refuses
     while read -r -u 3 rev n; do
+        revs_n=$((revs_n + 1))
         [ -n "$rev" ] || continue
         # The listing's empty answer is gated below against its verdicts: a path
         # a numstat row or a combined-patch section names that it did not is a
@@ -3012,7 +3298,8 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         # refused.
         merge=0; k=1
         case "$n" in ''|*[!0-9]*) n="" ;; *) [ "$n" -le 1 ] || merge=1 ;; esac
-        while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+        # read loop (ii) [end: meta path]: the reads' end told from a read error by the pair rule (pair_end, below); a record lost to one would drop a path from listed, post or gone, so a read error refuses naming the listing
+        while unset meta path pair_whole; IFS= read -r -d '' meta && pair_whole=1 && IFS= read -r -d '' path; do
             printf '%s\0' "$path" >> "$scratch/listed"
             k=${meta%%[^:]*}; k=${#k}
             [ -n "$n" ] || [ "$k" -le 1 ] || merge=1
@@ -3031,6 +3318,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
                 000000) for ((i = k + 1; i <= 2 * k; i++)); do printf '%s\0' "${fields[i]}" >> "$scratch/gone"; done ;;
             esac
         done < "$scratch/listing"
+        read_owed "the CHANGED PATHS of commit ${rev:0:10} could not be read to their end for the BINARY VERDICT check (git diff-tree exited 0, and the shell's read of the listing ended on a read error)" "$(pair_end "${meta+set}" "${pair_whole+set}" "${path+set}")" set || :
         printf '%s %s\n' "$rev" "${n:-$k}" >> "$scratch/pcount"
         # The verdicts are read for every commit, a deletion-only or mode-only
         # one included, since the listing is checked against them below before
@@ -3064,11 +3352,13 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             judged_read gate="the COMBINED PATCH of a merge" 0 "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, exited {rc})" -o "$scratch/patch" -- git diff-tree -p -r -M -c --root --no-commit-id --no-color "$rev" || numstat_ok=0
             judged_read gate="the SECTION ROWS of a combined patch" 0 "the BINARY VERDICTS of commit ${rev:0:10} could not be read (awk over the merge's combined patch exited {rc})" -o "$scratch/rows" -- combined_rows "$scratch/patch" || numstat_ok=0
             judged_read gate="the PER-PARENT listing of a merge" 0 "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --raw -m, the merge's changes against each parent, exited {rc})" -o "$scratch/parents" -- git diff-tree -r --raw --no-renames -m -z --no-commit-id "$rev" || numstat_ok=0
-            while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+            # read loop (ii) [end: meta path]: the reads' end told from a read error by the pair rule (pair_end); a deletion lost to one would drop a rename candidate and leave its post-image a short read for the join, but the end is read here too
+            while unset meta path pair_whole; IFS= read -r -d '' meta && pair_whole=1 && IFS= read -r -d '' path; do
                 # shellcheck disable=SC2206  # the record is deliberately word-split
                 fields=($meta)
                 [ "${fields[1]}" != 000000 ] || printf '%s\0' "${fields[2]}" >> "$scratch/gone"
             done < "$scratch/parents"
+            [ -n "$(pair_end "${meta+set}" "${pair_whole+set}" "${path+set}")" ] || { unscanned "the PER-PARENT listing of commit ${rev:0:10} could not be read to its end for the BINARY VERDICT check (git diff-tree --raw -m exited 0, and the shell's read of it ended on a read error)"; continue; }
             rc=0; as_lines "the LISTINGS of commit ${rev:0:10} could not be rewritten for the BINARY VERDICT check" "$scratch/post" "$scratch/gone" || rc=$?
             if [ "$rc" -eq 1 ]; then
                 unscanned "a path commit ${rev:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"
@@ -3116,7 +3406,12 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             fi
             if [ -n "$empty_tree" ]; then
                 tpaths=()
-                while IFS= read -r -d '' path; do tpaths+=(":(literal)$path"); done < "$scratch/tpaths"
+                # read loop (ii) [end: path]: the read's end told from a read error (path unset after one); a path lost to one would get no rows3 verdict and its post-image would go unjudged, so a read error refuses naming the read
+                while unset path; IFS= read -r -d '' path; do tpaths+=(":(literal)$path"); done < "$scratch/tpaths"
+                if [ -z "${path+set}" ]; then
+                    unscanned "the ADDED-OBJECT paths of commit ${rev:0:10} could not be read to their end for the BINARY VERDICT check (the shell's read of the scratch list ended on a read error), so a path judged by the addition of its new object would go unjudged"
+                    continue
+                fi
                 numstat_rows "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat against the empty tree exited {rc})" "$scratch/rows3" --no-renames "$empty_tree" "$rev" -- ${tpaths[@]+"${tpaths[@]}"} || numstat_ok=0
             fi
         fi
@@ -3216,9 +3511,15 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             count=""; { IFS= read -r count || :; } < "$scratch/count"
             if [ -z "$count" ] || [ -n "${count//[0-9]/}" ]; then
                 unscanned "the JOIN of commit ${rev:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited $rc and its awk recorded \"$count\" as the count of candidate rows it printed, not a count, so whether every candidate was appended is unknown)"
+                entries_known=0
             elif [ "$appended" -ne "$count" ]; then
                 unscanned "the JOIN of commit ${rev:0:10}'s verdicts appended $appended candidate rows for the BINARY VERDICT check where its awk recorded $count printed (its pipeline exited $rc), so the join answered short"
+                entries_known=0
+            else
+                owed_entries=$((owed_entries + count))
             fi
+        else
+            entries_known=0                 # the join refused above (its status): rows it appended stand in the file uncounted
         fi
         if { [ "$rc" -eq 3 ] || [ "$rc" -eq 4 ]; } && [ "$numstat_ok" -ne 0 ]; then
             # A short read: 3 for a pair numstat or the combined patch, 4 for the
@@ -3235,6 +3536,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             fi
         fi
     done 3<<< "$revs"
+    read_owed_lines "the REV LIST of the BINARY VERDICT check of $local_ref (${local_sha:0:10})" "$revs_n" "$revs" || :
     [ -s "$scratch/entries" ] || return 0
     # The entries are read on descriptor 6, never stdin: every tool the loop
     # runs (the byte judge, the report's reads) inherits stdin, and one that
@@ -3242,7 +3544,9 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
     # then judge (the header: a git silent on an empty blob's read, the blob's
     # own answer, that read its stdin left a hidden file unjudged and
     # published it; round 8b).
+    # read loop (ii) [tally: judged_n]: the entries read against the rows the joins appended, each join's count verified against its own (the tip's against the -z listing's files less the read list, a commit's against its awk's record), when every join's count was verified (a join refused or unverified has refused the push already)
     while IFS= read -r -u 6 -d '' entry; do
+        judged_n=$((judged_n + 1))
         place=${entry%%$'\t'*}; blob=${entry#*$'\t'}; blob=${blob%%$'\t'*}; path=${entry#*$'\t'*$'\t'}
         typed=0; case "$place" in *+typed) place=${place%+typed}; typed=1 ;; esac
         islink=0; case "$place" in *+link) place=${place%+link}; islink=1 ;; esac
@@ -3383,9 +3687,11 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
                     if [ -n "$renamed" ]; then
                         prev=""; rc=0; git diff-tree -r --raw -M -z --root --no-commit-id "$place" > "$scratch/renames" 2>/dev/null || rc=$?     # outside judged_read: for the report (above)
                         if [ "$rc" -eq 0 ]; then
-                            while IFS= read -r -d '' meta && IFS= read -r -d '' rsrc; do
-                                case "${meta##* }" in R*|C*) IFS= read -r -d '' rdst || rdst=""; [ "$rdst" != "$path" ] || prev=$rsrc ;; esac
+                            # read loop (ii) [end: meta rsrc]: the where= report clause's read, on a push this verdict refuses; the reads' end told from a read error by the pair rule (pair_end), an R or C row's third path read in the body unset before it and held set after it (an error there unsets meta), so a read error refuses naming the listing rather than drop the clause
+                            while unset meta rsrc pair_whole; IFS= read -r -d '' meta && pair_whole=1 && IFS= read -r -d '' rsrc; do
+                                case "${meta##* }" in R*|C*) unset rdst; IFS= read -r -d '' rdst || :; [ -n "${rdst+set}" ] || { unset meta; break; }; [ "$rdst" != "$path" ] || prev=$rsrc ;; esac
                             done < "$scratch/renames"
+                            [ -n "$(pair_end "${meta+set}" "${pair_whole+set}" "${rsrc+set}")" ] || { unscanned "the RENAMES of commit ${place:0:10} could not be read to their end for the report of $path (git diff-tree -M exited 0, and the shell's read of its answer ended on a read error), so the path the change was read from is unknown"; prev=""; }
                         fi
                     fi
                     if [ -n "$prev" ]; then
@@ -3418,6 +3724,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         hidden_paths=1
         failed_scan=1
     done 6< "$scratch/entries"
+    [ "$entries_known" -eq 0 ] || read_owed "the ENTRIES of the BINARY VERDICT check of $local_ref (${local_sha:0:10}), the scratch file the byte judge reads, were read short (the shell read $judged_n of the $owed_entries rows the joins appended: a read error taken for its end), so a blob git calls binary went unjudged" "$judged_n" "$owed_entries" || :
 }
 
 # ── identifiers ───────────────────────────────────────────────────────────
@@ -3472,7 +3779,7 @@ object_type() {   # <local_ref> <sha>
 # no shim; the empty-answer refusal above stays as the backstop). Called as a
 # condition: status 0 when the message carries a hit.
 message_hit_lines() {   # <subject: "the MESSAGE of commit <sha>" or "the MESSAGE of tag <ref> (<sha>)"> <message>
-    local hit
+    local hit hit_n=0
     lines=""
     judged_read gate="the MESSAGE grep" 0,1 "$1 could not be grepped (grep exited {rc})" -- grep -in -a -F ${grep_args[@]+"${grep_args[@]}"} <<< "$2" || return 1
     [ "$read_rc" -eq 0 ] || return 1
@@ -3480,8 +3787,10 @@ message_hit_lines() {   # <subject: "the MESSAGE of commit <sha>" or "the MESSAG
         unscanned "$1 was grepped with no hit line listed (grep exited 0, a match, and printed no line), so the answer is short"
         return 1
     fi
-    while IFS= read -r hit; do lines="$lines${hit%%:*},"; done <<< "$read_out"
+    # read loop (ii) [tally: hit_n]: the hit lines read against the lines the grep's capture holds (read_owed_lines); the grep exited 0 (a match), so a read that lost every hit must refuse, not read as no hit and publish
+    while IFS= read -r hit; do hit_n=$((hit_n + 1)); lines="$lines${hit%%:*},"; done <<< "$read_out"
     lines=${lines%,}
+    read_owed_lines "the capture of $1's hit lines" "$hit_n" "$read_out" || return 1
     [ -n "$lines" ]
 }
 # The commits this push publishes for one ref (rev_range), listed alike for
@@ -3789,6 +4098,7 @@ refuse_commit_encodings() {   # <the commits listed, whitespace-separated>
                 *[!0-9:]*|:*|*::*)
                     unscanned "the ENCODING LABELS of the pushed commits could not be read for the identifier scan (its awk exited 0 and recorded \"$record\", not two counts)" ;;
                 *)
+                    # read loop (ii) [count: nout against rout]: the refusals read against the count the awk recorded (nout != rout refuses below)
                     while IFS=$'\t' read -r fsha kind label; do
                         [ -n "$fsha" ] || continue
                         nout=$((nout + 1))
@@ -3806,12 +4116,19 @@ refuse_commit_encodings() {   # <the commits listed, whitespace-separated>
             esac ;;
     esac
 }
+# The length of a text in bytes, whatever the hook's locale: ${#} counts
+# characters, and the C locale makes each byte one (scan_identifiers compares
+# the denylist's capture with the file's byte count).
+byte_length() {   # <text>: prints its length in bytes
+    local LC_ALL=C
+    printf '%s' "${#1}"
+}
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen chosen_unread
-    local rc errs hits listing link blob link_path target size revs rev n msg addrs inner kind tip_listed tip_entries rev_counts
-    local peeled peeled_read paths count linecount tag_read hdr
-    local target_bytes read_as whole_what enc_revs=""
-    local -a words
+    local rc errs hits listing link blob link_path target size revs rev n msg addrs inner kind tip_listed tip_entries rev_counts iref_n cg_n errs_n hits_n
+    local peeled peeled_read paths count linecount tag_read hdr tag_bytes tag_nonl links_n addrs_n
+    local target_bytes read_as whole_what enc_revs="" text nb
+    local -a words deny_lines
     strings_file="$(private_strings_file)"
     identifier_scan_armed || return 0
     if [ "$denylist_is" != file ]; then
@@ -3823,42 +4140,98 @@ scan_identifiers() {
         return 0
     fi
 
-    # Banned strings: strip comments and surrounding whitespace, drop blanks. The
-    # `|| [ -n "$line" ]`: a last line with no trailing newline (an editor that
-    # adds none, a printf that wrote the file) comes back from read with status 1
-    # and the line in hand, and a plain `while read` dropped it: the entry on
-    # that line was scanned for by nothing, and a one-entry file so written armed
-    # no scan at all, nothing printed either way (found by execution, 2026-09-21).
-    # The file is opened once, to descriptor 7, before the loop reads it
-    # (gitleaks_config's shape), and a file that exists but cannot be opened is
-    # refused naming it, bash's own line for the failed open ahead of the
-    # refusal. The loop read it through done < file until 2026-09-30: bash
-    # 3.2.57, a stock mac's /bin/bash, skips a loop whose redirection fails and
-    # goes on under set -e, so a denylist with no read permission read as
+    # Banned strings: strip comments and surrounding whitespace, drop blanks.
+    # The file is read WHOLE, through judged_read (cat, its status judged), and
+    # its lines are split from that capture by the read builtin over a pipe
+    # from this shell's own printf, each then trimmed as the loop trimmed it,
+    # in the body's C locale (the focused re-check of fork PR 940 at d2091c2c1,
+    # ruled 05:31Z 2026-10-01; the ledger's fail-closed-read rule of
+    # 2026-09-20): a file that cannot be opened, or a read that fails after the
+    # open, makes cat exit non-zero, and the push is refused naming the file
+    # and the status. The capture keeps every byte but a NUL (-k keeps its
+    # trailing newlines), and is gated on the file's BYTE COUNT (wc -c, through
+    # judged_read, given the path as an argument, a shape of its own: the
+    # scratch listings and a gitleaks config are counted by a wc -c reading its
+    # stdin, and a tool keyed on one shape must not stand for another), its
+    # first word the count, so a cat that answers nothing, or less than the
+    # file, with exit 0 refuses naming both numbers, as a NUL byte in the file
+    # does, since the capture drops it: a cat on PATH answering nothing would
+    # otherwise read as an empty denylist and turn the scan off (the round 6
+    # refuters' road on the ref list, 2026-09-22). Until the re-check a loop
+    # read the file a line at a time with the read builtin, which returns 1 on
+    # a read error as at the end of the file and leaves its variable as it was:
+    # a read error after a successful open (an I/O error on a network or FUSE
+    # file system, or a failing disk) ended the loop, the entries after it
+    # unscanned, and the push published with bash's read error line alone; or,
+    # when the line last read was an entry, the loop handled that entry again
+    # without end and the push hung (by fault injection under bash 5.2.21:
+    # tests/pre-push-hook.bats, the DENYLIST's read error case). The shell has
+    # no read of its own that tells the two apart: bash 5.2's $(< file)
+    # answered the first 4096 bytes with status 0 under the same fault. A last
+    # line with no newline is an entry like any other, kept by the capture
+    # (until 2026-09-21 a plain `while read` dropped it, and a one-entry file
+    # so written armed no scan). The loop read the file through done < file
+    # until 2026-09-30, and from descriptor 7, opened ahead of it, until the
+    # re-check: bash 3.2.57, 4.4 and 5.0 skip a loop whose redirection fails
+    # and go on under set -e, so a denylist with no read permission read as
     # empty, the return below turned the whole identifier scan off, and the
-    # push published with bash's line alone (bash 5.2 ended the hook with
-    # status 1 and no romp line; found by execution). Bash 4.4 and 5.0 skip
-    # such a loop too: with the loop read through done < file again,
-    # tests/pre-push-hook.bats' case on the DENYLIST read published the push
-    # under bash 4.4.18 and 5.0 (the gate audit's mutant, 2026-09-30). Since
-    # the gate admits 5.1 and later (13:37Z) none of those bashes runs this
-    # loop, and bash 5.1 and later end the hook on such a redirection with
-    # bash's line alone, so what the descriptor guards now is the refusal's
-    # words, the file and the remedy named where bash would name only the
-    # file; it stays for any bash that skips such a loop, should the body ever
-    # run under one.
+    # push published (found by execution; tests/pre-push-hook.bats' case on the
+    # DENYLIST read). The capture has no loop to skip: a failed open is cat's
+    # status, which refuses under every bash. The split is the read builtin's,
+    # in the C locale with IFS a newline (the audit of item 40's build 4,
+    # 2026-10-01): it reads the capture back through a pipe from a printf of
+    # this shell's, as a command substitution reads, up to the NUL byte that
+    # printf ends it with, and splits it at each newline byte whatever the
+    # pusher's locale, with no globbing, in time linear in its size
+    # (d2091c2c1's loop read in the pusher's locale, where a line that ends in
+    # a byte UTF-8 reads as the first of several, a Latin-1 letter such as E9,
+    # took the newline after it, and the next line, into the line: a comment so
+    # ended took the entry after it, and with no other entry the scan was off
+    # and the push published, by a real push under C.UTF-8;
+    # tests/pre-push-hook.bats, the Latin-1 comment's case); a read that does
+    # not reach the NUL (a pipe cut short, a redirection that failed) refuses
+    # naming the split. That build split the capture by removing a pattern from
+    # the remainder at each line, which under a UTF-8 locale bash 5.2.21
+    # answered with other bytes for a line that starts with a byte that is not
+    # valid UTF-8 followed by a backslash, and which copied the remainder at
+    # each line, 99 s for a 20,000-entry file in the C locale where the read
+    # takes about a second; mapfile, which needs bash 4, is refused by
+    # tests/shell-portability.bats, and the shell's word splitting would need
+    # IFS set outside a read, which the guard's census in
+    # tests/pre-push-hook.bats refuses. The split and the trim run in the
+    # body's C locale (since build 5 of item 40, the export after the gate),
+    # so an entry's edges lose ASCII whitespace alone: an entry edged by a
+    # Unicode space keeps that space's bytes, the cost the export's paragraph
+    # states; and the trim keeps an entry's bytes whatever they are, where
+    # until build 5 it ran in the pusher's locale and bash 5.2.21 under a UTF-8
+    # locale trimmed a line that is not valid UTF-8 to other bytes (one fuzzed
+    # file of 809 in that audit's repair, the same at d2091c2c1's loop; the
+    # re-check's F2, tests/pre-push-hook.bats, the F2 case of build 5).
     grep_args=()
-    { exec 7< "$strings_file"; } || {
-        unscanned "the DENYLIST $strings_file could not be opened for reading, so which strings the identifier scan greps for is unknown; make it readable and push again"
+    judged_read gate="the DENYLIST" 0 "the DENYLIST $strings_file could not be read (cat exited {rc}), so which strings the identifier scan greps for is unknown; make it readable and push again" -k -- cat -- "$strings_file" || return 0
+    text=$read_out
+    judged_read gate="the BYTE COUNT of the denylist" 0 "the DENYLIST $strings_file was read while its BYTE COUNT could not be read (wc exited {rc}), so whether the read is whole is unknown" -- wc -c -- "$strings_file" || return 0
+    count=${read_out#"${read_out%%[![:space:]]*}"}
+    count=${count%%[[:space:]]*}
+    nb=$(byte_length "$text")
+    if [ -z "$count" ] || [ -n "${count//[0-9]/}" ]; then
+        unscanned "the DENYLIST $strings_file was read ($nb bytes) while its BYTE COUNT reads \"$count\" (wc -c), not a count, so whether the read is whole is unknown"
         return 0
-    }
-    while IFS= read -r -u 7 line || [ -n "$line" ]; do
+    fi
+    if [ "$count" != "$nb" ]; then
+        unscanned "the DENYLIST $strings_file was read short (cat answered $nb bytes of the $count wc -c counts: a read cut short, or a NUL byte, which the capture drops)"
+        return 0
+    fi
+    if ! LC_ALL=C IFS=$'\n' read -r -d '' -a deny_lines < <(printf '%s\0' "$text"); then
+        unscanned "the DENYLIST $strings_file was read ($nb bytes) while its lines could not be split from the capture (the read of the capture found no end), so which strings the identifier scan greps for is unknown"
+        return 0
+    fi
+    for line in ${deny_lines[@]+"${deny_lines[@]}"}; do
         line="${line%%#*}"
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
         [ -n "$line" ] && grep_args+=(-e "$line")
     done
-    exec 7<&-
     [ ${#grep_args[@]} -gt 0 ] || return 0
     chosen_emails                  # the same for every commit in the push: read once, in the shell (it sets chosen and chosen_unread)
 
@@ -3867,7 +4240,10 @@ scan_identifiers() {
     # refs after the current one, which no scan would then read (the header:
     # an awk silent with exit 0 that read its stdin during the first ref of a
     # two-ref push published the second; round 8b).
+    iref_n=0
+    # read loop (ii) [tally: iref_n]: the refs read against the lines "$refs" holds (read_owed_lines, after the ref loop); a ref the read lost would go unscanned, so a shortfall refuses
     while read -r -u 5 local_ref local_sha _remote_ref remote_sha; do
+        iref_n=$((iref_n + 1))
         [ -n "${local_sha:-}" ] || continue
         [ "$local_sha" = "$zero" ] && continue          # deleting a remote ref pushes nothing
 
@@ -3893,30 +4269,46 @@ scan_identifiers() {
         # refused as unscanned.
         peeled=""; peeled_read=0
         judged_read gate="the CONTENT grep of the tip" 0,1 "the CONTENT of the tip of $local_ref (${local_sha:0:10}) could not be fully scanned (git grep exited {rc})" -e -- git grep --no-color -i -I -l -F ${grep_args[@]+"${grep_args[@]}"} "$local_sha" -- || :
-        rc=$read_rc; hits=""; errs=""
+        rc=$read_rc; hits=""; errs=""; cg_n=0
+        # The hit lines and error lines are split by a loop over the grep's
+        # capture, its lines counted and held against the lines the capture
+        # holds: git grep exits 1 with error lines and no hit for a blob it
+        # cannot read, and a capture past the pipe's capacity is a temporary
+        # file bash reads back, so until the audit of build 5 (its LOOPS-1) one
+        # read error on it emptied errs, the status 1 read as no match, and the
+        # push published.
+        # read loop (ii) [tally: cg_n]: the lines read against the lines the grep's capture holds (read_owed_lines), whatever the grep's status, so a read that lost an error line or a hit refuses
         while IFS= read -r line; do
+            cg_n=$((cg_n + 1))
             case "$line" in
                 "$local_sha:"*|"$local_sha") hits="$hits$line"$'\n' ;;
                 '') ;;
                 *) errs="$errs$line"$'\n' ;;
             esac
         done <<< "$read_out"
+        read_owed_lines "the capture of the CONTENT grep of the tip of $local_ref (${local_sha:0:10})" "$cg_n" "$read_out" || :
         hits=${hits%$'\n'}; errs=${errs%$'\n'}
         if [ "$rc" -le 1 ] && [ -n "$errs" ]; then
             unscanned "the CONTENT of the tip of $local_ref (${local_sha:0:10}) could not be fully scanned (git grep exited $rc)"
         fi
         if [ -n "$errs" ]; then
-            while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <<< "$errs"
+            errs_n=0
+            # read loop (ii) [tally: errs_n]: the grep's error lines printed, on a push already refused as unscanned, held against the lines errs holds (read_owed_lines)
+            while IFS= read -r line; do errs_n=$((errs_n + 1)); printf '  %s\n' "$line" >&2; done <<< "$errs"
+            read_owed_lines "the list of the CONTENT grep's error lines for the tip of $local_ref (${local_sha:0:10}), printed above," "$errs_n" "$errs" || :
         fi
         if [ "$rc" -eq 0 ] && [ -z "$hits" ]; then
             unscanned "the CONTENT of the tip of $local_ref (${local_sha:0:10}) was scanned with no hit listed (git grep exited 0, a match, and printed no hit line), so the answer is short"
         fi
         if [ -n "$hits" ]; then
             echo "romp pre-push: the tip of $local_ref (${local_sha:0:10}) would publish a personal identifier in:" >&2
+            blocked_ids=1; hits_n=0
+            # read loop (ii) [tally: hits_n]: the hit paths printed, on a push this block refuses, held against the lines hits holds (read_owed_lines)
             while IFS= read -r line; do
+                hits_n=$((hits_n + 1))
                 case "$line" in "$local_sha:"*) printf '  %s\n' "${line#"$local_sha:"}" >&2 ;; *) printf '%s\n' "$line" >&2 ;; esac
             done <<< "$hits"
-            blocked_ids=1
+            read_owed_lines "the list of the paths the CONTENT grep of the tip of $local_ref (${local_sha:0:10}) named, printed above," "$hits_n" "$hits" || :
         fi
 
         # The tip's symlinks. git grep reads regular-file blobs only, so a link whose
@@ -3994,8 +4386,10 @@ scan_identifiers() {
         # link, its target unread, and the -z listing's count agreed, so a
         # banned target the remote already held published through a real push;
         # round 8b3, 2026-09-23).
-        tip_entries=0
+        tip_entries=0; links_n=0
+        # read loop (ii) [tally: links_n]: the lines read against the lines the symlink listing's capture holds (read_owed_lines); the tip's entry count is held against the -z listing's in refuse_hidden_paths too, but that gate does not run when the listing failed, so the loop holds its own read
         while IFS= read -r -u 6 link; do
+            links_n=$((links_n + 1))
             [ -n "$link" ] || continue
             tip_entries=$((tip_entries + 1))
             case "$link" in
@@ -4047,6 +4441,7 @@ scan_identifiers() {
                 blocked_ids=1
             fi
         done 6<<< "$listing"
+        read_owed_lines "the capture of the SYMLINK listing of the tip of $local_ref (${local_sha:0:10})" "$links_n" "$listing" || :
 
         # The lines each commit new to the remote adds. Each per-commit read below
         # (the parent count and the diff, the addresses, the message) is captured with its status before
@@ -4158,7 +4553,9 @@ scan_identifiers() {
                         unscanned "the ADDED LINES of commit ${rev:0:10} were grepped with no hit line listed (grep exited 0, a match, and printed no line), so the answer is short"
                     else
                         paths=""
-                        while IFS= read -r line; do paths="$paths${line%%$'\t'*}"$'\n'; done < "$scratch/hits"
+                        # read loop (ii) [end: line]: the grep's hit lines (its -o file, uncounted); the read's end told from a read error (line unset after one), refused naming the file, the paths read so far still reported
+                        while unset line; IFS= read -r line; do paths="$paths${line%%$'\t'*}"$'\n'; done < "$scratch/hits"
+                        [ -n "${line+set}" ] || unscanned "the ADDED LINES of commit ${rev:0:10} were grepped and the shell's read of the hit lines, the scratch file hits, ended on a read error, so which paths they name is unknown"
                         if judged_read gate="the SORT of the paths a grep named" 0 "the ADDED LINES of commit ${rev:0:10} could not be reported (sort exited {rc})" -- sort -u <<< "${paths%$'\n'}"; then
                             hits=$read_out
                             [ -n "$hits" ] || unscanned "the ADDED LINES of commit ${rev:0:10} could not be reported (sort exited 0 and answered nothing for the paths the grep named)"
@@ -4167,8 +4564,10 @@ scan_identifiers() {
                 fi
                 if [ -n "$hits" ]; then
                     echo "romp pre-push: commit ${rev:0:10} ADDS a personal identifier in:" >&2
-                    while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <<< "$hits"
-                    blocked_ids=1
+                    blocked_ids=1; hits_n=0
+                    # read loop (ii) [tally: hits_n]: the sorted hit paths printed, on a push this block refuses, held against the lines hits holds (read_owed_lines)
+                    while IFS= read -r line; do hits_n=$((hits_n + 1)); printf '  %s\n' "$line" >&2; done <<< "$hits"
+                    read_owed_lines "the list of the paths the ADDED LINES grep of commit ${rev:0:10} named, printed above," "$hits_n" "$hits" || :
                 fi
             else
                 unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (no scratch directory for the capture: mktemp failed)"
@@ -4229,7 +4628,10 @@ scan_identifiers() {
             # and a loop that reads its list on stdin runs none, directly, through
             # judged_read or through a function of this file (round 9b; the loop
             # census in tests/pre-push-hook.bats holds every loop to that).
+            addrs_n=0
+            # read loop (ii) [tally: addrs_n]: the role lines read against the lines the addresses capture holds (read_owed_lines); a role the read lost would leave its banned domain ungreped, so a shortfall refuses
             while IFS=$'\t' read -r -u 7 role email; do
+                addrs_n=$((addrs_n + 1))
                 [ -n "$email" ] || continue
                 is_chosen "$email" "$chosen" && continue
                 if judged_read own="the ADDRESS DOMAIN grep" 0,1 "the ADDRESS <$email> of commit ${rev:0:10} could not be grepped (grep exited {rc})" -- grep -qi -F ${grep_args[@]+"${grep_args[@]}"} <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
@@ -4247,6 +4649,7 @@ scan_identifiers() {
                     blocked_addresses=1
                 fi
             done 7<<< "$addrs"
+            read_owed_lines "the capture of the ADDRESSES of commit ${rev:0:10}" "$addrs_n" "$addrs" || :
             # Its message, subject and body, like lines of content. -n so the report
             # can point at the line (1 is the subject) without echoing the string;
             # --no-show-signature so the message is all it reads (above). Captured
@@ -4347,8 +4750,10 @@ scan_identifiers() {
                 fi
             fi
             if [ "$tag_read" -ne 0 ]; then
-                hdr=1
-                while IFS= read -r line || [ -n "$line" ]; do
+                hdr=1; tag_bytes=0; tag_nonl=0
+                # read loop (ii) [tally: tag_bytes]: the bytes read against the object's SIZE, verified equal to the capture's byte count above; a read error ends the read where set -e does not reach, so the tally is held against the size and a shortfall refuses naming the tag (the peel ended); a last line with no newline (git tag --cleanup=verbatim writes one) is kept by the condition, which records it in tag_nonl
+                while unset line; IFS= read -r line || { [ -n "${line-}" ] && tag_nonl=1; }; do
+                    tag_bytes=$((tag_bytes + ${#line} + 1))
                     if [ "$hdr" -ne 0 ]; then
                         # The header ends at the first BLANK line, one with no non-blank
                         # byte (the awk this parse replaced ended it at !NF; an empty-line
@@ -4365,6 +4770,18 @@ scan_identifiers() {
                         msg="$msg$line"$'\n'
                     fi
                 done < "$scratch/tag"
+                # A last line read with no newline after it counted a newline
+                # byte it lacks (tag_nonl, set by the condition when read met the
+                # end with the line in hand); until the audit of build 5 (its
+                # LOOPS-3) the correction read line after the loop, which the
+                # condition's last read leaves empty, so it never ran, and a
+                # porcelain tag made with --cleanup=verbatim was refused as read
+                # short. Then the bytes read are held against the size (the
+                # capture equalled it); a shortfall ends the peel with tag_read
+                # cleared, so the absent-field check below does not name an
+                # object line the read never reached as missing (LOOPS-8).
+                tag_bytes=$((tag_bytes - tag_nonl))
+                read_owed "the OBJECT of tag $local_ref (${obj:0:10}) was read short by the shell (it read $tag_bytes bytes of the $size git cat-file -s gives, a read error taken for its end), which ends the peel here, its tagger and message read only up to the error" "$tag_bytes" "$size" || { inner=""; tag_read=0; }
                 while [ "${msg%$'\n'}" != "$msg" ]; do msg=${msg%$'\n'}; done
             fi
             email=""
@@ -4401,6 +4818,7 @@ scan_identifiers() {
             object_type "$local_ref" "$obj"
         done
     done 5<<< "$refs"
+    read_owed_lines "the capture of the REF LIST the identifier scan reads" "$iref_n" "$refs" || :
 
     # The encoding label of every commit listed above, for every ref, in one
     # read (refuse_commit_encodings; the header's identifier paragraph): a
@@ -5087,11 +5505,11 @@ diff_settings() {   # sets feed_opts and drv_tc, the caller's
     if ! judged_read gate="the DIFF SETTINGS of this clone" 0 "the DIFF SETTINGS of this clone could not be read for the credential scan (git config exited {rc}), so whether its diff.algorithm, diff.interHunkContext, diff.renames or diff.submodule frames the pushed lines' hunks otherwise than git's defaults is unknown; $fixed" -o "$f" -- git -c romp-pre-push.tail=end config -z --get-regexp '^(diff\.algorithm|diff\.interhunkcontext|diff\.renames|diff\.submodule|diff\..*\.algorithm|diff\..*\.textconv|romp-pre-push\.tail)$'; then
         return 1
     fi
-    rec=""
-    while IFS= read -r -d '' -u 6 rec || [ -n "$rec" ]; do
+    # read loop (ii) [marker: last]: the entries end with romp-pre-push.tail, the record the command line adds after every value of the clone's, so a read cut short loses the marker and refuses (marks != 1 or last != the marker below); rec unset before each read, so a read error ends the loop rather than re-handling the record before it
+    while unset rec; IFS= read -r -d '' -u 6 rec || [ -n "${rec-}" ]; do
         n=$((n + 1)); key=${rec%%$'\n'*}
         if [ "$key" = "$rec" ]; then noval=1; val=""; shown="set with no value"; else noval=0; val=${rec#*$'\n'}; shown="set to \"$val\""; fi
-        last=$rec; rec=""
+        last=$rec
         if [ "$key" = romp-pre-push.tail ]; then marks=$((marks + 1)); continue; fi
         [ -z "$bad" ] || continue
         case "$key" in
@@ -5715,8 +6133,14 @@ gitleaks_config() {   # sets cfg, cfg_name and cfg_forms, the caller's
             unscanned "the gitleaks config ${chain_shown[d]} could not be opened for reading, so whether a rule in it carries a path condition is unknown; make it readable, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
             failed_creds=1; return 1
         fi
-        nb=0; l=""; chain_nonl[d]=0
-        while IFS= read -r -u 7 l; do tl_all+=("$l"); tl_n=$((tl_n + 1)); nb=$((nb + ${#l} + 1)); done
+        nb=0; chain_nonl[d]=0
+        # read loop (ii) [end: l]: the read's end told from a read error (l unset after one) and the bytes held against the file's byte count below (config_bytes, for a file; the end is the whole reconciliation for GITLEAKS_CONFIG_TOML's here-string, which has no file to count): read assigns the empty string at a clean EOF, the last line when it has no newline, and nothing on an error, where l stays unset
+        while unset l; IFS= read -r -u 7 l; do tl_all+=("$l"); tl_n=$((tl_n + 1)); nb=$((nb + ${#l} + 1)); done
+        if [ -z "${l+set}" ]; then
+            exec 7<&-
+            unscanned "the gitleaks config ${chain_shown[d]} could not be read to its end by the shell (a read error ended the read), so whether the read is whole is unknown; make it readable, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
+            failed_creds=1; return 1
+        fi
         if [ -n "$l" ]; then tl_all+=("$l"); tl_n=$((tl_n + 1)); nb=$((nb + ${#l})); chain_nonl[d]=1; fi
         exec 7<&-
         chain_end[d]=$tl_n
@@ -6264,10 +6688,21 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
     # canary mode none (the log is never read into the shell).
     log=""
     if [ -f "$logf" ] && [ "$mode" != canary ]; then
-        while IFS= read -r line || [ -n "$line" ]; do
+        # The log shown and the leaks-found backstop (the verdict reads, the
+        # ERR line and the byte figure, are separate awks over the file, each
+        # judged). line is unset before each read: until the audit of build 5
+        # (its LOOPS-4) the condition kept the line read before a read error,
+        # set by that read or by an earlier loop, and handled it again without
+        # end, and the push hung.
+        # read loop (ii) [end: line]: the scanner's log, uncounted; the read's end told from a read error (line unset after one), refused naming the log
+        while unset line; IFS= read -r line || [ -n "${line-}" ]; do
             if [ "$mode" = record ] && ! [[ "$line" =~ $shown ]]; then continue; fi
             log=$log$line$'\n'
         done < "$logf"
+        if [ -z "${line+set}" ]; then
+            unscanned "$what's LOG could not be read to its end by the shell (a read error ended the read of ${logf##*/}), so the log shown and its count of findings are short"
+            failed_creds=1
+        fi
         while [ "${log%$'\n'}" != "$log" ]; do log=${log%$'\n'}; done
     fi
     [ -z "$log" ] || [ "$mode" = probe ] || printf '%s\n' "$log" >&2
@@ -6331,6 +6766,7 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
         if [ "$mode" = record ]; then
             if judged_read gate="the PATH SKIPS in the trace log of the scan of record" 0 "$what could not be judged: its trace log could not be read for the rules a path allowlist skipped (awk exited {rc})" -- path_skips "$logf"; then
                 snamed=0; sd=0; send=""
+                # read loop (ii) [marker: send]: the closing line the awk prints last, its counts held against the skip lines read (send empty, or ${send#* } != snamed, refuses below)
                 while IFS=$'\t' read -r kind sa sb; do
                     case "$kind" in
                         skip)
@@ -6374,13 +6810,18 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
     run_rc=$rc
     if [ "$rc" -eq 2 ] && [ "$mode" != probe ] && [ "$mode" != canary ]; then
         nrec=0
-        while IFS=$'\t' read -r -u 6 start rule term; do
+        # read loop (ii) [end: start]: the findings named, on a push the exit-2 verdict above refuses; the report gitleaks wrote is uncounted, so the read's end is told from a read error (start unset after one), refused naming the report
+        while unset start; IFS=$'\t' read -r -u 6 start rule term; do
             [ "$term" = . ] || continue
             piece=${start%%/*}
             case "$piece" in ''|*[!0-9]*) continue ;; esac
             nrec=$((nrec + 1))
             credential_line "$piece" "$rule"
         done 6< "$rep"
+        if [ -z "${start+set}" ]; then
+            unscanned "$what's REPORT could not be read to its end by the shell (a read error ended the read of ${rep##*/}), so a finding may go unnamed above"
+            failed_creds=1
+        fi
         leaks=""
         [[ "$log" =~ leaks\ found:\ ([0-9]+) ]] && leaks=${BASH_REMATCH[1]}
         if [ -n "$leaks" ] && [ "$nrec" -lt "$leaks" ]; then
@@ -6527,6 +6968,7 @@ canary_form() {   # <rule|targeted|and>: cpiece and cword, the caller's
 canary_check() {   # <log file>
     local kind sa sb cnamed=0 sd=0 send="" seen=" " f cpiece cword
     if judged_read gate="the PATH SKIPS in the trace log of the skip canary" 0 "$what could not be judged: its trace log could not be read for the skip lines of the canary's allowlists (awk exited {rc})" -- path_skips "$1"; then
+        # read loop (ii) [marker: send]: the canary's closing line, printed last, its counts held against the skip lines read (send empty, or ${send#* } != cnamed, refuses below)
         while IFS=$'\t' read -r kind sa sb; do
             case "$kind" in
                 skip) cnamed=$((cnamed + 1)); [ "$sb" != romp-skip-canary ] || seen="$seen$sa " ;;
@@ -6637,8 +7079,9 @@ probe_check() {   # <path-scoped index file> <the probe run's report file>
 # refused already). Sets rpieces, rbytes, rpbytes and failed_creds, the
 # caller's.
 merge_binary_reads() {   # <count of routed paths the feed recorded>
-    local want="$1" seen_n=0 bsha bpath bterm lsha="" lread=0 listing="" line matches k rmode rblob size brec bgot bp bb bpb rest
+    local want="$1" seen_n=0 bsha bpath bterm lsha="" lread=0 listing="" line matches mlines k rmode rblob size brec bgot bp bb bpb rest
     local -a words
+    # read loop (ii) [count: seen_n against want]: the routed paths read against the count the feed's awk recorded (seen_n != want refuses below)
     while IFS=$'\t' read -r -u 6 bsha bpath bterm; do
         [ "$bterm" = . ] || continue
         seen_n=$((seen_n + 1))
@@ -6649,15 +7092,19 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
             fi
         fi
         if [ "$lread" -eq 0 ]; then failed_creds=1; continue; fi
-        matches=0; rmode=""; rblob=""
+        matches=0; rmode=""; rblob=""; mlines=0
+        # read loop (ii) [tally: mlines]: the listing's lines read against the lines its capture holds (read_owed_lines), so a record lost after the match, a second one among them, refuses rather than read as one
         while IFS= read -r line; do
+            mlines=$((mlines + 1))
             case "$line" in *$'\t'*) ;; *) continue ;; esac
             [ "${line#*$'\t'}" = "$bpath" ] || continue
             matches=$((matches + 1))
+            words=()
             read -r -a words <<< "${line%%$'\t'*}"
             k=${#words[@]}
             if [ "$k" -ge 7 ] && [ $((k % 2)) -eq 1 ]; then rmode=${words[$(( (k - 1) / 2 - 1 ))]}; rblob=${words[$((k - 2))]}; fi
         done <<< "$listing"
+        read_owed_lines "the capture of the RESULT listing of merge ${bsha:0:10}" "$mlines" "$listing" || { failed_creds=1; continue; }
         if [ "$matches" -ne 1 ]; then
             unscanned "the RESULT listing of merge ${bsha:0:10} names $matches records for $bpath, a path its combined diff calls binary, where a merge's listing holds one (git diff-tree exited 0), so that path cannot be read whole for the credential scan"
             failed_creds=1; continue
@@ -6822,6 +7269,7 @@ attr_reads() {   # <count of paths the NAME LISTING read recorded>
                 *[!0-9:]*|:*|*::*)
                     unscanned "the DIFF ATTRIBUTES of the pushed paths could not be read for the credential scan (its awk exited 0 and recorded \"$arec\", not two counts)" ;;
                 *)
+                    # read loop (ii) [count: np against aprinted]: the refusals read against the count the awk recorded (np != aprinted refuses below)
                     while IFS=$'\t' read -r akind adrv apath; do
                         case "$akind" in
                             textconv)
@@ -6939,7 +7387,7 @@ piece_dirs() {   # <directory>...: makes each; prints nothing on stdout
 scan_credentials() {
     local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what
     # shellcheck disable=SC2034  # cfg_name: set by gitleaks_config, for the lines that name the config the runs read
-    local rdone rpieces rbytes rpbytes rbin rmerge="" rlisted="" fwhole=0 rest piece fsha fpath fterm data pdone plisted pbig pmerge nbig pcount scanning dmade=0 dmiss dfirst d cfg_name="" cfg_forms="" gl_version="" drv_tc=""
+    local rdone rpieces rbytes rpbytes rbin rmerge="" rlisted="" fwhole=0 rest piece fsha fpath fterm data pdone plisted pbig pmerge nbig pcount scanning dmade=0 dmiss dfirst d cfg_name="" cfg_forms="" gl_version="" drv_tc="" cref_n
     local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend qseen seen_lines="" run_rc=0
     local -a cfg=() ix_sha ix_path pdirs feed_opts=()
     if ! credential_scan_armed; then
@@ -6958,8 +7406,10 @@ scan_credentials() {
         # on the range probe this loop ran until round 9, reading its stdin,
         # published a second ref's credential through a real push; round 8b).
         : > "$scratch/creds.list"; : > "$scratch/creds.revs"
-        nfed=0
+        nfed=0; cref_n=0
+        # read loop (ii) [tally: cref_n]: the refs read against the lines "$refs" holds (read_owed_lines); a ref the read lost would feed no commits to the credential scan and pass unscanned, so a shortfall refuses
         while read -r -u 5 local_ref local_sha _remote_ref remote_sha; do
+            cref_n=$((cref_n + 1))
             [ -n "${local_sha:-}" ] || continue
             [ "$local_sha" = "$zero" ] && continue      # deleting a remote ref pushes nothing
             peeled=""; peeled_read=0; revs=""
@@ -6970,6 +7420,7 @@ scan_credentials() {
                 nfed=$((nfed + 1))
             done >> "$scratch/creds.list" 4>> "$scratch/creds.revs"
         done 5<<< "$refs"
+        read_owed_lines "the capture of the REF LIST the credential scan reads" "$cref_n" "$refs" || failed_creds=1
         mkdir "$scratch/creds.d" "$scratch/creds.p" "$scratch/creds.q"
         : > "$scratch/creds.index"; : > "$scratch/creds.pindex"; : > "$scratch/creds.record"; : > "$scratch/creds.binary"; : > "$scratch/creds.parents"; : > "$scratch/creds.merges"; : > "$scratch/creds.paths"
         # The parent counts (parent_counts): a commit of 64 or more parents
@@ -7000,6 +7451,7 @@ scan_credentials() {
                                 failed_creds=1 ;;
                             *)
                                 rmerge=$pmerge; nbig=0
+                                # read loop (ii) [count: nbig against pbig]: the big-merge refusals read against the count the awk recorded (nbig != pbig refuses below)
                                 while read -r fsha pcount; do
                                     [ -n "$fsha" ] || continue
                                     nbig=$((nbig + 1))
@@ -7094,11 +7546,13 @@ scan_credentials() {
         # The index, read once by the shell: each piece's commit and file, for
         # the lines that name a finding (scanner_run).
         ix_sha=(); ix_path=()
-        while IFS=$'\t' read -r -u 6 piece fsha fpath fterm; do
+        # read loop (ii) [end: piece]: the names a finding is reported under; the read's end told from a read error (piece unset after one), which refuses rather than name a finding by its piece number alone
+        while unset piece; IFS=$'\t' read -r -u 6 piece fsha fpath fterm; do
             [ "$fterm" = . ] || continue
             case "$piece" in ''|*[!0-9]*) continue ;; esac
             ix_sha[piece]=$fsha; ix_path[piece]=$fpath
         done 6< "$scratch/creds.index"
+        [ -n "${piece+set}" ] || { unscanned "the INDEX of the credential feed's pieces could not be read to its end (a read error ended the read), so a finding's commit and file could not be named"; failed_creds=1; }
         printf '{{range .}}{{.File}}\t{{.RuleID}}\t.\n{{end}}' > "$scratch/creds.template"
         # The scanner's version (scanner_version) is read here, where a scan
         # runs, and nowhere else: a push with nothing to scan needs no
@@ -7193,12 +7647,17 @@ scan_credentials() {
         # left unmade, refuse the push naming them, and neither run is made.
         if [ "$scanning" -eq 1 ] && [ -s "$scratch/creds.pindex" ]; then
             pdirs=()
-            while IFS=$'\t' read -r -u 6 piece fpath sname prule fterm; do
+            # read loop (ii) [end: piece]: the read's end told from a read error (piece unset after one); a piece lost to one would be left unprobed for the path-scoped rules, so a read error refuses
+            while unset piece; IFS=$'\t' read -r -u 6 piece fpath sname prule fterm; do
                 [ "$fterm" = . ] || continue
                 case "$piece" in ''|*[!0-9]*) continue ;; esac
                 pdirs+=("$scratch/creds.p/$piece" "$scratch/creds.q/$piece")
             done 6< "$scratch/creds.pindex"
             dmade=0
+            if [ -z "${piece+set}" ]; then
+                unscanned "the PATH-SCOPED INDEX of the credential feed could not be read to its end for the path-scoped copies' directories (a read error ended the read), so a piece would go unprobed"
+                failed_creds=1
+            else
             if judged_read gate="the DIRECTORIES of the path-scoped copies" 0 "the DIRECTORIES of the path-scoped copies could not be made (xargs, running mkdir, exited {rc}, given ${#pdirs[@]} directories, creds.p/<piece> and creds.q/<piece> for each selected piece, under $scratch), so neither the additive run nor the probe run can read its copies; free space or inodes where TMPDIR points, or point TMPDIR at a writable directory, or set ROMP_NO_GITLEAKS=1 for one push" -- piece_dirs ${pdirs[@]+"${pdirs[@]}"}; then
                 dmiss=0; dfirst=""
                 for d in ${pdirs[@]+"${pdirs[@]}"}; do
@@ -7209,6 +7668,7 @@ scan_credentials() {
                 else
                     unscanned "the DIRECTORIES of the path-scoped copies were made short (xargs, running mkdir, exited 0, and $dmiss of the ${#pdirs[@]} directories it was given do not exist, the first $dfirst), so neither the additive run nor the probe run can read its copies; free space or inodes where TMPDIR points, or point TMPDIR at a writable directory, or set ROMP_NO_GITLEAKS=1 for one push"
                 fi
+            fi
             fi
             [ "$dmade" -eq 1 ] || failed_creds=1
         fi
@@ -7233,7 +7693,8 @@ scan_credentials() {
             printf -v qp_tf 'administrator_login_pass%s = "%s"\n' word rq7zp2wx9kd4tm8v
             printf -v qp_php "'secret_%s' => 'sk_%s%s'\n" key "$qv" Hy6Jf1Lg9
             qbytes=0; qn=0
-            while IFS=$'\t' read -r -u 6 piece fpath sname prule fterm; do
+            # read loop (ii) [end: piece]: the read's end told from a read error (piece unset after one); a piece lost to one would be probed by neither run, so a read error refuses
+            while unset piece; IFS=$'\t' read -r -u 6 piece fpath sname prule fterm; do
                 [ "$fterm" = . ] || continue
                 case "$piece" in ''|*[!0-9]*) continue ;; esac
                 data=""
@@ -7251,6 +7712,10 @@ scan_credentials() {
                 printf '%s' "$qtext" > "$scratch/creds.q/$piece/$fpath"
                 qbytes=$((qbytes + ${#qtext})); qn=$((qn + 1))
             done 6< "$scratch/creds.pindex"
+            if [ -z "${piece+set}" ]; then
+                unscanned "the PATH-SCOPED INDEX of the credential feed could not be read to its end for the probes (a read error ended the read), so a piece would go unprobed"
+                failed_creds=1
+            fi
             # handed the same cfg as the scan of record (gitleaks_config; the comment there)
             scanner_run "$gl" "the CREDENTIAL scan under the path-scoped rules" "$scratch/creds.p" "$rpbytes" "$scratch/creds.preport" names ${cfg[@]+"${cfg[@]}"} --enable-rule pkcs12-file,nuget-config-password,kubernetes-secret-yaml,hashicorp-tf-password,freemius-secret-key
             qwant=""; [ -z "$rpbytes" ] || qwant=$((qbytes + rpbytes))
@@ -7258,6 +7723,7 @@ scan_credentials() {
             if [ "$run_rc" -eq 0 ] || [ "$run_rc" -eq 2 ]; then
                 if judged_read gate="the PROBE CHECK of the path-scoped copies" 0 "the PROBE CHECK of the path-scoped copies could not be read (awk exited {rc}), so whether the config drops a path-scoped rule at a copy's name is unknown" -- probe_check "$scratch/creds.pindex" "$scratch/creds.qreport"; then
                     qnamed=0; qmiss=0; qfound=0; qother=0; qend=""; qd=0; qseen=$'\n'
+                    # read loop (ii) [marker: qend]: the awk's closing line, printed last, its counts and the probe lines read held against qn (qend empty, or qnamed+qmiss != qn, refuses below)
                     while IFS=$'\t' read -r kind qa qb qc; do
                         case "$kind" in
                             named) qnamed=$((qnamed + 1)) ;;
@@ -7318,6 +7784,7 @@ scan_credentials() {
 }
 
 refuse_replace_refs
+refuse_unread_ref_list
 scan_identifiers
 scan_credentials
 

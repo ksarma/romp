@@ -6,7 +6,14 @@ test deps.
   since the coordinator's ruling at 13:37Z, and the step's check compares the installed bash the same way. The threshold
   lives in two places, so this reads both numbers, the hook's from bash_admitted's body and the step's from its check, and
   fails when they differ: a threshold raised in the hook alone would let the step pass a Homebrew bottle the gate refuses,
-  and the cell would fail in the test's setup instead of in the step that names the cause.
+  and the cell would fail in the test's setup instead of in the step that names the cause. The same step keeps bash 3.2
+  first on PATH for the steps after it, the PATH order this cell exists for (bats and the tests run under the image's
+  /bin/bash, and the hook's gate finds the newer bash at its fixed path): a directory holding only a link to /bin/bash,
+  checked to report 3.2, through the Shell job's one GITHUB_PATH write. Each of the three is pinned (the focused
+  re-check of fork PR 940 at d2091c2c1, 2026-10-01, found two copies that put Homebrew's bash first passing every pin
+  until then: the link aimed at /opt/homebrew/bin/bash with the check deleted, and the write naming /opt/homebrew/bin),
+  and the job's lines naming the directory are those four, the mkdir first, in that order, so no line re-points the
+  link between the check and the write (the audit of that build: a copy relinking it to Homebrew's bash there passed).
 - Install gitleaks (macOS), added the same day (romp-manager, 13:50Z): the pinned release the Linux step and the secrets
   job install, as the darwin arm64 asset, checked against its own checksum, installed where `command -v gitleaks` finds
   it, after the bash step, so the link to /bin/bash stays first on PATH. The three installs carry one version; each asset
@@ -73,6 +80,22 @@ class MacosShellTools(unittest.TestCase):
         self.assertEqual(step_t, hook_t, "the step admits %d.%d where the hook's gate admits %d.%d" % (step_t + hook_t))
         self.assertIn("BASH_VERSINFO[0]", check[0])
         self.assertIn("BASH_VERSINFO[1]", check[0])
+
+    def test_the_bash_step_keeps_bash_3_2_first_on_path(self):
+        lines = self.bash_step.splitlines()
+        link = '          ln -sf /bin/bash "$RUNNER_TEMP/bash-3.2/bash"'
+        check = "          PATH=\"$RUNNER_TEMP/bash-3.2:$PATH\" bash -c '[ \"${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}\" = 3.2 ]'"
+        write = '          echo "$RUNNER_TEMP/bash-3.2" >> "$GITHUB_PATH"'
+        self.assertEqual(lines.count(link), 1, "the step links the directory's one bash to /bin/bash: %r" % [l for l in lines if " ln " in l])
+        self.assertEqual([l for l in lines if "= 3.2 ]" in l], [check], "the step checks that the first bash on PATH with the directory ahead reports 3.2")
+        writes = [l for l in self.shell.splitlines() if "GITHUB_PATH" in l]
+        self.assertEqual(writes, [write], "the Shell job writes GITHUB_PATH once, the directory holding the link to /bin/bash")
+        self.assertIn(write, lines, "the one GITHUB_PATH write is the bash step's")
+        self.assertLess(lines.index(link), lines.index(check), "the link is made before it is checked")
+        self.assertLess(lines.index(check), lines.index(write), "the directory goes on PATH only after its bash is checked")
+        mkdir = '          mkdir -p "$RUNNER_TEMP/bash-3.2"'
+        named = [l for l in self.shell.splitlines() if "bash-3.2" in l]
+        self.assertEqual(named, [mkdir, link, check, write], "the Shell job's lines naming the directory are its making, its link, its check and its write, in that order, so no line re-points the link after the check: %r" % named)
 
     def test_the_three_gitleaks_installs_pin_one_version(self):
         versions = [re.findall(r"(?m)^          GITLEAKS_VERSION: (\S+)$", b) for b in (self.gl_linux, self.gl_mac, self.gl_secrets)]

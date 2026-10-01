@@ -187,7 +187,10 @@ ON_LINES = (
 )
 # The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
 # the slowest measured or projected job plus 10 minutes, rounded up to a multiple of 5 (ci.yml's comment above the line
-# carries the measurement: fork PR 940 at be4c8e0ab, Linux 32 min 1 s, macOS projected at about 41 min 19 s).
+# carries the measurement: fork PR 940 at be4c8e0ab, Linux 32 min 1 s, macOS projected at about 41 min 19 s; at its head
+# d2091c2c1, Linux 32 min 50 s and 33 min 8 s, 45 by the rule, and macOS 38 min 56 s, 50 by the rule, so macOS's 55 rests
+# on be4c8e0ab's projection and the coordinator's ruling of 2026-09-30, 20:48Z; that macOS bats step's last 272 s followed
+# its last case, the orphaned sleep 300 of a fake head in tests/shell-portability.bats, most likely).
 SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 45 }}"
 # The Shell job's lines that name node as a word or hold --test: the manager handshake step's name and run lines (T224).
 SHELL_NODE_LINES = (
