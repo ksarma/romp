@@ -18,6 +18,29 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 pm = load_source("romp_postal_peers", os.path.join(BIN, "romp-postal-service"))
 
 
+def _end_dialer(host):
+    """A cleanup: end the dialer (a _peer_loop thread) that an up notify started for `host`, and fail if it is alive 10 s
+    later. PeerMode's tearDown clears PEERS but wakes no dialer, so one left running exits at its next backoff wake,
+    about 2 s after its test; until then the next tests run beside it, and on the free-threaded build a process-wide
+    gc.collect() in one of them can count objects its exchanges drop (the ParseCacheRetention pin in
+    tests/test_thread_stop_census.py). The stop is the product's, the kernel's down notify (write=False: no mirror file
+    is written), sent while the row is still there; a cleanup runs after tearDown, so in PeerMode the row is gone and
+    the wake alone ends the loop. The loop clears its wake after each exchange, so a notify that lands mid-exchange is
+    lost: the wake is set again on each 20 ms poll until the thread ends."""
+    t = pm._peer_threads.get(host)
+    if t is None:
+        return                                   # no dialer, or it already ended (the loop drops its entry on exit)
+    port = (pm.PEERS.get(host) or {}).get("port")
+    if port:
+        pm.peer_update({"host": host, "port": port, "up": False}, write=False)
+    deadline = time.monotonic() + 10
+    while t.is_alive() and time.monotonic() < deadline:
+        pm._peer_wake(host).set()
+        t.join(0.02)
+    if t.is_alive():
+        raise AssertionError("the dialer for %s is alive 10 s after its down notify" % host)
+
+
 class PeerMode(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("ROMP_POSTAL_PEERS", None)
@@ -48,6 +71,7 @@ class PeerMode(unittest.TestCase):
 
     def test_peer_update_and_snapshot(self):
         payload, status = pm.peer_update({"host": "TESTHOST", "port": 50002, "up": True})
+        self.addCleanup(_end_dialer, "TESTHOST")
         self.assertEqual(status, 200)
         self.assertEqual(payload["up"], 1)
         snap = pm.peers_snapshot()["peers"]["TESTHOST"]
@@ -92,6 +116,7 @@ class PeerMode(unittest.TestCase):
                          (None, False, "trusted", True))
         # applied to a CONNECTED row it touches only the trust — port/up/token survive
         pm.peer_update({"host": "HUB", "port": 50007, "up": True, "token": "tk", "trust": "trusted"})
+        self.addCleanup(_end_dialer, "HUB")
         pm.peer_update({"host": "HUB", "trust": "directed", "originOnly": True})
         row = pm.peers_snapshot()["peers"]["HUB"]
         self.assertEqual((row["port"], row["up"], row["token"], row["trust"], row.get("originOnly")),
@@ -114,6 +139,7 @@ class PeerMode(unittest.TestCase):
                 {"name": "d", "id": "4", "via": "PEERED"},      # directly peered here → excluded
             ], "seenAt": int(_t.time())}
             pm.peer_update({"host": "PEERED", "port": 50008, "up": True})
+            self.addCleanup(_end_dialer, "PEERED")
             pm.peer_update({"host": "FARBOX", "trust": "isolated", "originOnly": True})
             rows = pm.via_reach()
             self.assertEqual(len(rows), 1)

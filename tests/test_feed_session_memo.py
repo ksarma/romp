@@ -32,7 +32,10 @@ was attributed to, beside the card the moved input changes:
     the other sessions' cards ship, the failure is counted (`failed`, cumulative; `failing`, the sessions whose build is
     failing now) and said once per (session, cause) episode on stderr and as a bell row, the session's previous cards
     are served when the memo holds a decodable entry (never memoized; an entry that no longer decodes is dropped), and
-    a build that serves or derives the session ends the episode, so a later fault is said anew.
+    a build that serves or derives the session ends the episode, so a later fault is said anew;
+  * a subagents root whose own lstat fails for a reason other than absence (a real EACCES) moves the subagents
+    component into the unreadable marker and out of it: the session derives once at each edge of the fault, and the
+    awaiting rows derived under the fault are never served once the root reads again (FeedEntryDerivedUnderARootFault).
 
 Harness: tests/test_payload_dedup_invariant.py's world (a hermetic state root the kernel's judge is rebound to,
 names/ entries and projects/<launch dir>/<sid>.jsonl transcripts discover finds, a fixed live map, a warm first
@@ -1501,6 +1504,151 @@ class AWarmEntryIsNeverDerivedCold(_Board):
         c1 = km._feed_memo_report()
         self.assertEqual((c1["coldLive"] - c0["coldLive"], c1["coldFlip"] - c0["coldFlip"]), (3, 0),
                          "three living sessions read cold, none flipped")
+
+
+class FeedEntryDerivedUnderARootFault(_Board):
+    """The subagents component under a subagents root whose own lstat fails for a reason other than absence: a REAL
+    EACCES, web's session directory at mode 000 (skipped as root, whom permission bits do not bind). web is idle with
+    one live subagent whose own transcript launched a background command. Read, the awaiting fold attributes the
+    command to the agent (one awaiting row, the command nested under the agent); under the fault the fold reads nothing
+    and the command stands at the top level beside the agent. _subagent_dirs_ident answers the unreadable marker for the
+    fault (_TREE_UNREADABLE, whatever memo entry stands for the root), a value no readable tree's identities and no
+    absent root's (None,) equal, so the component moves when the fault begins and again when it clears, and an entry
+    derived under the fault is never served once the root reads again. The first two cases are keyed on what the user
+    sees: the awaiting rows served after the fault equal a from-scratch derivation, with another component (the live
+    row) moved during the fault so the entry is derived under it whatever the subagents component does. The third pins
+    the rule's cost by equality. All three are green at the code before this change, whose tree sample took the fault
+    for absence (the missing root's (None,), which moves the component at both edges too), and red under a mutant that
+    answers the memo's standing entry under the fault: the component then keeps its healthy value, the rows derived
+    under the fault are served after it clears, and neither edge derives. The racy window is closed (the memo module's
+    fixture idiom), so the tree the first build reads is stored with its identities and a standing entry exists to
+    answer. The rule covers a fault present when the key is taken; the road it leaves open is stated in
+    _subagent_dirs_ident's docstring."""
+
+    AID = "a2222222222222222"
+    TU_AGENT = "toolu_web_agent_0001"
+    TU_CMD = "toolu_web_cmd_0001"
+    SLOTS = ("subagent_trees", "subagent_stamps", "subagent_launches")   # the tree scope a pusher cycle opens
+
+    def setUp(self):
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        super().setUp()
+        tp = self.tpath[WEB]
+        self.sess_dir = tp.with_suffix("")
+        sub = self.sess_dir / "subagents"
+        sub.mkdir(parents=True)
+        (sub / ("agent-%s.meta.json" % self.AID)).write_text(json.dumps(
+            {"agentType": "general-purpose", "description": "trace the list endpoint", "spawnDepth": 1,
+             "toolUseId": self.TU_AGENT}))
+        launch = {"type": "assistant", "timestamp": iso(NOW - 70), "message": {"content": [
+            {"type": "tool_use", "id": self.TU_CMD, "name": "Bash",
+             "input": {"command": "sleep 1", "run_in_background": True, "description": "run the list endpoint tests"}}]}}
+        (sub / ("agent-%s.jsonl" % self.AID)).write_text(json.dumps(launch) + "\n")
+        self.root = str(sub)
+        self.resolution = (str(tp), self.AID)
+        self.addCleanup(km._SUBAGENT_TREES.pop, self.root, None)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, self.resolution, None)
+        rows = [{"tid": self.TU_AGENT, "desc": "trace the list endpoint", "t": NOW - 95, "type": "local_agent",
+                 "agentId": self.AID},
+                {"tid": self.TU_CMD, "desc": "run the list endpoint tests", "t": NOW - 60, "type": "local_bash"}]
+        for name, value in (("_bg_live_norm", lambda sid, path, live=None: list(rows) if sid == WEB else []),
+                            ("_bg_pending", lambda sid, path, tasks: tasks),
+                            ("_live_map", lambda: self.live),
+                            ("_SUBAGENT_DIR_RACY_NS", 0)):
+            p = mock.patch.object(km, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.live[WEB] = dict(self._row(), subagents=[{"type": "general-purpose", "since": NOW - 95, "agentId": self.AID}])
+        km._parse(str(tp), WEB, NOW)          # the chat's parse: the feed's cache-only read hits, so awaiting is derived
+
+    @staticmethod
+    def _awaiting(feed):
+        """web's cards as the user sees their awaiting rows: (column, count, [(kind, id, [nested ids])])."""
+        out = []
+        for c in feed["asks"]:
+            if c.get("sid") != WEB and not str(c.get("itemId", "")).startswith(WEB):
+                continue
+            aw = c.get("awaiting") or {}
+            out.append((c.get("column"), aw.get("count"),
+                        [(it.get("kind"), it.get("id"), [w.get("id") for w in it.get("waits", [])])
+                         for it in aw.get("items") or []]))
+        return out
+
+    def _cycle(self):
+        """One build inside the tree scope's three slots, opened empty and closed after, as a pusher cycle holds them."""
+        for s in self.SLOTS:
+            setattr(km._live_scope, s, {})
+        try:
+            return self._build()
+        finally:
+            for s in self.SLOTS:
+                setattr(km._live_scope, s, None)
+
+    @contextlib.contextmanager
+    def _fault(self):
+        """The session directory at mode 000 for the block, restored inside the case (never left to a cleanup that runs
+        after tearDown removed the tree)."""
+        os.chmod(str(self.sess_dir), 0o000)
+        try:
+            with self.assertRaises(PermissionError, msg="premise: the real fault on the root's own lstat"):
+                os.lstat(self.root)
+            yield
+        finally:
+            os.chmod(str(self.sess_dir), 0o755)
+
+    def _served_after_the_fault_equals_from_scratch(self, build, resolution_standing):
+        build()
+        healthy = self._awaiting(build())
+        self.assertEqual(healthy, [("working", 1, [("agents", self.TU_AGENT, [self.TU_CMD])])],
+                         "premise: read, the command is nested under the agent that launched it")
+        if not resolution_standing:
+            self.assertIsNotNone(km._SUBAGENT_FILE_CACHE.pop(self.resolution, None),
+                                 "premise: the agent file's resolution stood, and is popped (the memo cleared past its bound)")
+        with self._fault():
+            self.live[WEB] = dict(self.live[WEB], since=NOW - 50)          # another component moves during the fault
+            under, f_under = self._delta(build)
+        after, f_after = self._delta(build)
+        _reset_memo()
+        scratch = self._awaiting(build())
+        self.assertEqual(under["derived"], 1, "premise: the entry was derived under the fault: %r" % (under,))
+        self.assertNotEqual(self._awaiting(f_under), healthy,
+                            "premise: the rows derived under the fault differ (the command unattributed): %r"
+                            % (self._awaiting(f_under),))
+        self.assertEqual(self._awaiting(f_after), scratch,
+                         "the rows served once the fault clears equal a from-scratch derivation, never the entry derived "
+                         "under the fault: served %r, from scratch %r (the build after the clear: %r)"
+                         % (self._awaiting(f_after), scratch, after))
+
+    def test_an_entry_derived_under_a_root_fault_is_never_served_after_the_fault_clears(self):
+        """No resolution of the agent's file standing when the fault begins, and no tree scope: the lookup under the
+        fault answers None with the fault, so the fold reads nothing."""
+        self._served_after_the_fault_equals_from_scratch(self._build, resolution_standing=False)
+
+    def test_the_same_inside_the_tree_scope_as_a_pusher_cycle_holds_it_with_the_resolution_standing(self):
+        """Each build inside the tree scope's three slots, the agent file's resolution standing through the fault: the
+        lookup answers the standing path, which lies under the tree that faults, and the fold's read of it fails on the
+        same EACCES, so the fold reads nothing here too."""
+        self._served_after_the_fault_equals_from_scratch(self._cycle, resolution_standing=True)
+
+    def test_the_fault_beginning_and_clearing_each_re_derive_the_session_once_under_the_subagents_label(self):
+        """The cost, with nothing else moving: the first build under the fault derives web once, its miss attributed to
+        the subagents component alone; a second build under the fault serves that entry (the marker stands, and a tree
+        fault is not one of the body-read faults that keep a derivation out of the memo); the first build after the
+        clear derives web once more under the same label; the next serves. Red under the standing-entry mutant, where
+        neither edge derives."""
+        self._build()
+        self._build()
+        with self._fault():
+            begins, _ = self._delta(self._build)
+            during, _ = self._delta(self._build)
+        clears, _ = self._delta(self._build)
+        after, _ = self._delta(self._build)
+        self.assertEqual([(d["derived"], d["miss_by"]) for d in (begins, during, clears, after)],
+                         [(1, {"subagents": 1}), (0, {}), (1, {"subagents": 1}), (0, {})],
+                         "(derived, miss_by) at the fault's first build, a second build under it, the first build after "
+                         "the clear and the next: one derivation of web at each edge, under the subagents component, and "
+                         "none between")
 
 
 if __name__ == "__main__":
