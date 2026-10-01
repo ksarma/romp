@@ -68,6 +68,29 @@ TOK = ps.SERVE_TOKEN
 assert TOK == "bus-test-token-DO-NOT-USE", "the gate's constant is the invented token, never the runner's"
 
 
+def _end_dialer(host):
+    """A cleanup: end the dialer (a _peer_loop thread) that an up notify started for `host`, and fail if it is alive 10 s
+    later. PeerTokenPlumbing's test sends its own down notify and drops the row, but the loop clears its wake after each
+    exchange, so a notify that lands mid-exchange is lost and the dialer runs on to its next backoff wake, about 2 s
+    after its test; until then the next tests run beside it, and on the free-threaded build a process-wide
+    gc.collect() in one of them can count objects its exchanges drop (the ParseCacheRetention pin in
+    tests/test_thread_stop_census.py). The stop is the product's, the kernel's down notify (write=False: no mirror file
+    is written), sent only while the row is still there, as it is when the test fails before dropping it; the wake is
+    set again on each 20 ms poll until the thread ends."""
+    t = ps._peer_threads.get(host)
+    if t is None:
+        return                                   # no dialer, or it already ended (the loop drops its entry on exit)
+    port = (ps.PEERS.get(host) or {}).get("port")
+    if port:
+        ps.peer_update({"host": host, "port": port, "up": False}, write=False)
+    deadline = time.monotonic() + 10
+    while t.is_alive() and time.monotonic() < deadline:
+        ps._peer_wake(host).set()
+        t.join(0.02)
+    if t.is_alive():
+        raise AssertionError("the dialer for %s is alive 10 s after its down notify" % host)
+
+
 def _code(port, path, headers=None, method="GET", data=None):
     req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path),
                                  headers=dict(headers or {}), method=method, data=data)
@@ -129,6 +152,7 @@ class BusTokenGate(_Seam):
 class PeerTokenPlumbing(_Seam):
     def test_peer_update_stores_token_and_down_notify_keeps_it(self):
         ps.peer_update({"host": "TESTHOST", "port": 45001, "up": True, "token": "peer-tok"})
+        self.addCleanup(_end_dialer, "TESTHOST")
         self.assertEqual(ps.PEERS["TESTHOST"]["token"], "peer-tok")
         ps.peer_update({"host": "TESTHOST", "port": 45001, "up": False})   # down carries no token
         self.assertEqual(ps.PEERS["TESTHOST"]["token"], "peer-tok",

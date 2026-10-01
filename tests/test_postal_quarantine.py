@@ -10,6 +10,7 @@ import errno
 import json
 import os
 import tempfile
+import time
 import unittest
 from romp_load import load_source
 from pathlib import Path
@@ -26,6 +27,28 @@ _SESS = os.path.join(os.environ["XDG_STATE_HOME"], "sessions.json")
 Path(_SESS).write_text(json.dumps([{"id": "sess-web", "name": "web", "dir": "/tmp/notes-api",
                                     "state": "waiting", "working": ""}]))
 ps = load_source("romp_postal_quar", os.path.join(BIN, "romp-postal-service"))
+
+
+def _end_dialer(host):
+    """A cleanup: end the dialer (a _peer_loop thread) that an up notify started for `host`, and fail if it is alive 10 s
+    later. Left running, a dialer redials a port nothing listens on until a later setUp clears its row, which for the
+    rows of a module's last tests is the rest of the process, and on the free-threaded build a later test's
+    process-wide gc.collect() can count objects its exchanges drop (the ParseCacheRetention pin in
+    tests/test_thread_stop_census.py). The stop is the product's, the kernel's down notify (write=False: no mirror file
+    is written). The loop clears its wake after each exchange, so a notify that lands mid-exchange is lost: the wake is
+    set again on each 20 ms poll until the thread ends."""
+    t = ps._peer_threads.get(host)
+    if t is None:
+        return                                   # no dialer, or it already ended (the loop drops its entry on exit)
+    port = (ps.PEERS.get(host) or {}).get("port")
+    if port:
+        ps.peer_update({"host": host, "port": port, "up": False}, write=False)
+    deadline = time.monotonic() + 10
+    while t.is_alive() and time.monotonic() < deadline:
+        ps._peer_wake(host).set()
+        t.join(0.02)
+    if t.is_alive():
+        raise AssertionError("the dialer for %s is alive 10 s after its down notify" % host)
 
 
 def _relay(mid, body="ship it", frm="api", origin=None):
@@ -63,6 +86,7 @@ class InboundTrustGate(_Seam):
 
     def _set_trust(self, host, level, up=True):
         ps.peer_update({"host": host, "port": 47101, "up": up, "trust": level})
+        self.addCleanup(_end_dialer, host)
 
     def test_trusted_delivers(self):
         self._set_trust("TESTHOST", "trusted")
@@ -317,6 +341,7 @@ class ExchangeHandleIsTokenProven(_Seam):
                            "body": "forwarded along", "kind": "coordinate", "origin": "FARHOST"}],
                "acks": [], "bounces": [], "wait": False}
         ps.peer_update({"host": "FARHOST", "port": 47102, "up": True, "trust": "trusted"})
+        self.addCleanup(_end_dialer, "FARHOST")
         resp, status = ps.peer_exchange_handle(req)
         self.assertEqual(status, 200)
         box = {m["body"]: m for m in ps.read_box("sess-web", consume=False)}
@@ -333,6 +358,7 @@ class QuarantineDecide(_Seam):
         super().setUp()                              # OUR sessions seam (see InboundTrustGate.setUp)
         ps.PEERS.clear()
         ps.peer_update({"host": "TESTHOST", "port": 47101, "up": True, "trust": "directed"})
+        self.addCleanup(_end_dialer, "TESTHOST")
         for d in (ps.QUARANTINE, ps.MAILROOT / "sess-web" / "new"):
             try:
                 for f in d.glob("*"):
@@ -446,6 +472,7 @@ class PeerUpdateTrust(_Seam):
     def test_default_and_keep_last_known(self):
         ps.PEERS.clear()
         ps.peer_update({"host": "H", "port": 1, "up": True})                 # no trust → directed
+        self.addCleanup(_end_dialer, "H")
         self.assertEqual(ps.PEERS["H"]["trust"], "directed")
         ps.peer_update({"host": "H", "port": 1, "up": True, "trust": "trusted"})
         self.assertEqual(ps.PEERS["H"]["trust"], "trusted")
