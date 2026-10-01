@@ -1352,7 +1352,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "writes the header buffer to the stream, so a header call after it would reach the body), a second end_headers or none, any other "
                 "rebinding of the page parameter, another codec name or a second argument to `.encode` (either can name a codec or an error "
                 "handler the file registers at run time), a store or delete of an attribute or a subscript, a read of a name the module binds other than a header value's module constant or in the text the page-building statements read, a module constant as a header value whose bound text holds a CR or LF or reads a name the census does not follow by binding (by name), a call not listed above, and a nested def, class or lambda. The reader governs the definition's own text, and code the definition "
-                "runs from outside that text is not read: a header value is not scanned (a module constant used as one is read only for a CR or LF: each string or bytes constant in its value and in the value of each module constant that value names, followed by binding, any other name there but a call's callee refusing it; a CR or LF the value computes at run time, a call's return or a number formatted as a character, is not read, its witnesses a CR LF from chr and one from a `%c` of an int), and a response that a Content-Type in its headers "
+                "runs from outside that text is not read: a header value is not scanned (a module constant used as one is read only for a CR or LF: each string or bytes constant in its value and in the value of each module constant that value names, followed by binding (a method call's receiver, as `T` in `T.lower()`, among the names followed), any other name there refusing it, save a bare name a call calls (`f` in `f(...)`); a CR or LF the value computes at run time, a call's return or a number formatted as a character, is not read, its witnesses a CR LF from chr and one from a `%c` of an int), and a response that a Content-Type in its headers "
                 "argument, passed or defaulted, makes a page is outside the served pass, the call being typed by its content-type argument; nor is "
                 "code the definition runs through an object it is handed (a parameter's methods, its mapping's items, its __str__), code behind a "
                 "name the definition calls or reads on self (a header method, a property or `__getattr__`, however the class, a base or other code "
@@ -8335,8 +8335,11 @@ PC_WITNESSES = (("pcl", "a function the page function defines, reached by locals
 # aeb, such a constant as the bare header value; aet, a constant whose value names a module constant holding one; aey, a bytes
 # constant holding one, decoded; aeu, a constant whose value names a module name bound twice, the second binding holding one; aez, a
 # constant whose value names a module constant a function rebinds under a global declaration to one, called before the binding (each
-# silent at the reviewed head, a real handler writing the fetch into the response after the blank line the CR LF makes); aer, the
-# header constant itself rebound under a global declaration, refused as a Name outside its listed roles. The flag role is the
+# silent at the reviewed head, a real handler writing the fetch into the response after the blank line the CR LF makes); a method
+# call's receiver in the constant's value followed by binding like any other name it reads, no callee: aeh, a receiver bound twice,
+# the second binding holding one, and aeg, a receiver a function rebinds under a global declaration to one (each silent were the
+# receiver taken for a callee, a real handler writing the fetch into the response), and aek, a receiver whose literal holds one; aer,
+# the header constant itself rebound under a global declaration, refused as a Name outside its listed roles. The flag role is the
 # assignment's whose value is a bool constant: afs, afc and afa each assign aww's flag once more (a header call, str() of a parameter,
 # an attribute of self), each refused as an Assign outside its listed roles (silent at the reviewed head). The stated limit's
 # witnesses (AE_WITNESS), each silent while a real handler writes the fetch into the response: aew, a CR LF a call of chr computes,
@@ -8376,6 +8379,14 @@ AE_HEADER = (("aec", "a module constant holding a CR LF in a header's `%` tuple"
              ("aez", "a module constant whose value names a module constant a function rebinds under a global declaration",
               ((_AE_NAME, '_PROBE_AEZ_TAIL = ""\n\n\ndef _probe_aez_set():\n    global _PROBE_AEZ_TAIL\n    _PROBE_AEZ_TAIL = "' + _AE_CRLF + FGH_PAGE % "aez"
                 + '"\n\n\n_probe_aez_set()\n_PROBE_AWW_NAME = "probe_aww" + _PROBE_AEZ_TAIL'),), _AE_HDR, _AE_FOLLOW % "_PROBE_AEZ_TAIL"),
+             ("aeh", "a module constant whose value calls a method on a module name bound twice",
+              ((_AE_NAME, '_PROBE_AEH_T = ""\n_PROBE_AEH_T = "' + _AE_CRLF + FGH_PAGE % "aeh" + '"\n_PROBE_AWW_NAME = "probe_aww" + _PROBE_AEH_T.lower()'),),
+              _AE_HDR, _AE_FOLLOW % "_PROBE_AEH_T"),
+             ("aeg", "a module constant whose value calls a method on a module constant a function rebinds under a global declaration",
+              ((_AE_NAME, '_PROBE_AEG_T = ""\n\n\ndef _probe_aeg_set():\n    global _PROBE_AEG_T\n    _PROBE_AEG_T = "' + _AE_CRLF + FGH_PAGE % "aeg"
+                + '"\n\n\n_probe_aeg_set()\n_PROBE_AWW_NAME = "probe_aww" + _PROBE_AEG_T.lower()'),), _AE_HDR, _AE_FOLLOW % "_PROBE_AEG_T"),
+             ("aek", "a module constant whose value calls a method on a module constant holding a CR LF",
+              ((_AE_NAME, '_PROBE_AEK_T = "' + _AE_CRLF + FGH_PAGE % "aek" + '"\n_PROBE_AWW_NAME = "probe_aww" + _PROBE_AEK_T.lower()'),), _AE_HDR, _AE_GUARD),
              ("aer", "the header's module constant rebound under a global declaration",
               ((_AE_NAME, _AE_NAME + '\n\n\ndef _probe_aer_set():\n    global _PROBE_AWW_NAME\n    _PROBE_AWW_NAME = "probe_aer"'),), _AE_HDR,
               "a Name expression outside its listed roles at line %d"),
@@ -8396,7 +8407,8 @@ AE_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _a, _r in AE_HEADER
 # dropped, Python serving the fetch). (ap) apg, a compiled pattern's name rebound under a global declaration to an object whose sub
 # serves a fetch, refused as a container the module writes at run time. (ls) the proof by binding's stated limit, each silent while
 # Python serves the fetch: lsmh, a module object stored in sys.modules under hmac before the import binds it; lsmr, one under re,
-# its compile and sub serving a fetch; lsma, hmac's new replaced by an attribute store on the module object.
+# its compile and sub serving a fetch; lsma, hmac's new replaced by an attribute store on the module object; lsra, re's compile so
+# replaced by one returning an object whose sub serves a fetch.
 _AG_REBOUND = "a digest or a base64 encoding through %s, bound other than to the standard library's module"
 AG_BIND = (("agz", 'import hashlib\nimport hmac\n\n\ndef _probe_agz_dec(f):\n    return lambda: "%s"' % (FGH_PAGE % "agz"),
             ("agz", '@_probe_agz_dec\n            def _inner():\n                return hmac.new(b"k", b"m", hashlib.sha256).hexdigest()\n'
@@ -8423,7 +8435,11 @@ LS_WITNESSES = (("lsmh", 'import sys\n\n\nclass _ProbeLsmh(object):\n    def new
                  '_PROBE_LSMR.sub("x", "<p>x</p>")', "a module object stored in sys.modules under re before the import binds it"),
                 ("lsma", 'import hashlib\nimport hmac\n\n\nclass _ProbeLsma(object):\n    def digest(self):\n        return b"%s"\n\n\n'
                          'def _probe_lsma_new(*a):\n    return _ProbeLsma()\n\n\nhmac.new = _probe_lsma_new' % (FGH_PAGE % "lsma"),
-                 'hmac.new(b"k", b"m", hashlib.sha256).digest().decode()', "hmac's new replaced by an attribute store on the module object"))
+                 'hmac.new(b"k", b"m", hashlib.sha256).digest().decode()', "hmac's new replaced by an attribute store on the module object"),
+                ("lsra", 'import re\n\n\nclass _ProbeLsra(object):\n    def sub(self, r, s, count=0):\n        return s + "%s"\n\n\n'
+                         'def _probe_lsra_compile(p, f=0):\n    return _ProbeLsra()\n\n\nre.compile = _probe_lsra_compile\n_PROBE_LSRA = re.compile(r"<p>")'
+                         % (FGH_PAGE % "lsra"),
+                 '_PROBE_LSRA.sub("x", "<p>x</p>")', "re's compile replaced by an attribute store on the module object"))
 AE_FILES += tuple((t, _a_module(t, A_SEND % "", head=head, branches=(branch,))) for t, head, branch, _w, _r in AG_BIND) + (
     ("apg", _a_module("apg", A_SEND % "", head=APG_HEAD, branches=(_fo_page("apg", '_PROBE_APG.sub("x", "<p>x</p>")'),))),) + tuple(
     (t, _a_module(t, A_SEND % "", head=head, branches=(_fo_page(t, e),))) for t, head, e, _w in LS_WITNESSES)
@@ -14319,14 +14335,15 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
     at run time passes silently, one witness per road (pcl a nested def reached by locals().get, pcm the module object's attribute by
     its literal name, pcg the garbage collector's heap, pci inspect.getmembers). The check's fixes on them, each refusal asserted
     with its reason: a module constant used as a header value refused where its bound text holds a CR or LF or reads a name the
-    census does not follow (aec, aeb, aet, aey, aeu, aez; aer the header constant rebound), with the stated limit's witnesses aew and
-    aeq silent; a flag assigned anything but a bool constant refused (afs, afc, afa); the dispatch's every refusal by its reason (abh
-    a table handed to a function that stores into it, abm a lambda value, abg a .get with a default among them); agl's refusals by
-    their reasons (agbs a strip of no leaf and agk a leaf constant rewritten at run time among them); the leaf's and the pattern's
-    conjuncts by binding (agz a decorated nested def, agg and agj a module rebound under a global declaration, agq one bound by a
-    local, apg a pattern's name so rebound); and the proof by binding's stated limit, silent (lsmh and lsmr a module object stored
-    in sys.modules before the import, lsma an attribute store on the module). The reds, each over a mutant of the fix script with
-    one conjunct or arm dropped, are in the build record (r13/record.md)."""
+    census does not follow (aec, aeb, aet, aey, aeu, aez; aeh and aeg a method call's receiver the census does not follow, aek one
+    whose literal holds a CR LF; aer the header constant rebound), with the stated limit's witnesses aew and aeq silent; a flag
+    assigned anything but a bool constant refused (afs, afc, afa); the dispatch's every refusal by its reason (abh a table handed to a
+    function that stores into it, abm a lambda value, abg a .get with a default among them); agl's refusals by their reasons (agbs a
+    strip of no leaf and agk a leaf constant rewritten at run time among them); the leaf's and the pattern's conjuncts by binding (agz
+    a decorated nested def, agg and agj a module rebound under a global declaration, agq one bound by a local, apg a pattern's name so
+    rebound); and the proof by binding's stated limit, silent (lsmh and lsmr a module object stored in sys.modules before the import,
+    lsma and lsra an attribute store on the module, hmac's and re's). The reds, each over a mutant of the fix script with one conjunct
+    or arm dropped, are in the build record (r13/record.md)."""
 
     def setUp(self):
         self.at, (self.rc, self.out) = served_pass()

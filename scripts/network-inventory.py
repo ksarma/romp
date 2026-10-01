@@ -289,8 +289,9 @@ header value's module constant or in the text the page-building statements read,
 text holds a CR or LF or reads a name the census does not follow by binding (by name), a call not listed above, and a nested def,
 class or lambda. The reader governs the definition's own text, and code the definition runs from
 outside that text is not read: a header value is not scanned (a module constant used as one is read only for a CR or LF: each
-string or bytes constant in its value and in the value of each module constant that value names, followed by binding, any other
-name there but a call's callee refusing it; a CR or LF the value computes at run time, a call's return or a number formatted as a
+string or bytes constant in its value and in the value of each module constant that value names, followed by binding (a method
+call's receiver, as `T` in `T.lower()`, among the names followed), any other name there refusing it, save a bare name a call calls
+(`f` in `f(...)`); a CR or LF the value computes at run time, a call's return or a number formatted as a
 character, is not read, its witnesses a CR LF from chr and one from a `%c` of an int), and a response that a Content-Type in its
 headers argument, passed
 or defaulted, makes a page is outside the served pass, the call being typed by its content-type argument; nor is code the
@@ -3721,7 +3722,7 @@ _NUMBER_REBOUND = "a call of int or float bound other than to the builtin, whose
 # a method of hmac's or hashlib's classes, its witness ldgw, or an attribute store on the module object, `hmac.new = f`, its witness
 # lsma), and a module object stored in sys.modules under the standard library's name before the import binds it (its witness lsmh),
 # are the stated limit, reached only by such an escape; a compiled pattern's re rests on the same proof, with the same limit (its
-# witness lsmr).
+# witnesses lsmr, the module object stored in sys.modules under re, and lsra, an attribute store on re, `re.compile = f`).
 _DIGEST_CALLS = {"hmac": frozenset(("new",)),
                  "hashlib": frozenset(("new", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_384",
                                        "sha3_512", "blake2b", "blake2s"))}
@@ -3736,7 +3737,8 @@ _LEAF_REBOUND = "a digest or a base64 encoding through %s, bound other than to t
 # holds no page text of its own. Scan's module side takes those methods on such a name for no change of it (Scan._pattern_call), and
 # receiver reads the call through where no scope around it binds the name and the file changes the name no other way (_Served._pattern).
 # The proof by binding reads the import statements alone: a module object stored in sys.modules under the name re before the import
-# binds it, or a function of re replaced by an attribute store, is the digest leaf's stated limit (above; its witness lsmr).
+# binds it, or a function of re replaced by an attribute store, is the digest leaf's stated limit (above; its witnesses lsmr, a
+# module object stored in sys.modules under re, and lsra, re's compile replaced by an attribute store on the module object).
 _PATTERN_READS = ("sub", "search", "match", "fullmatch", "findall")
 # The text-method arm's shapes (the eleventh round's rulings: the reviewer's 14:42Z item 2, and his 16:33Z E1 and E3): a .replace,
 # .format, .join, .format_map or .encode in a shape _const_text does not fold is refused by name (_text_shape gives the clause), never
@@ -4281,23 +4283,20 @@ def _header_const(consts, rebinds, name):
     """Why a module constant a `_send` definition uses as a header value is refused (_send_gate), or None: the gate's guard on a
     string constant holding a CR or LF in a header call, applied where the value is bound. The census reads the constant's value
     and, through it, the value of each module constant that value names (a name one top-level plain assignment binds and nothing
-    else at module level, _module_consts, that nothing rebinds: Result.rebinds), each once: a string or bytes constant there that
-    holds a CR or LF refuses the header value, and so does a name read there that is no such constant, save a call's callee or the
-    name at the base of a callee's attribute chain, whose return the census does not read (a name the module binds twice, or that
-    a function rebinds under a `global` declaration, among the refused). A CR or LF the value computes at run time from anything
-    else, a call's return or a number formatted as a character, is not read: the stated limit, as a header value's text is not
-    scanned, its witnesses aew (a call of chr) and aeq (a `%c` of an int)."""
+    else at module level, _module_consts, that nothing rebinds: Result.rebinds), each once, a method call's receiver among those
+    names (`_T` in `_T.lower()`, a value the call reads): a string or bytes constant there that holds a CR or LF refuses the header
+    value, and so does a name read there that is no such constant (a name the module binds twice, or that a function rebinds under
+    a `global` declaration, a receiver among them), save a call's callee by its name alone (`f` in `f(...)`), whose return the
+    census does not read. A CR or LF the value computes at run time from anything else, a call's return or a number formatted as a
+    character, is not read: the stated limit, as a header value's text is not scanned, its witnesses aew (a call of chr) and aeq (a
+    `%c` of an int)."""
     seen, todo = set(), [name]
     while todo:
         k = todo.pop()
         if k in seen: continue
         seen.add(k)
-        callee = set()
-        for x in ast.walk(consts[k]):
-            if isinstance(x, ast.Call):
-                f = x.func
-                while isinstance(f, ast.Attribute): f = f.value
-                callee.add(id(f))
+        # a call's callee by its name alone: the base of a method call's callee (its receiver) is no callee but a value it reads
+        callee = {id(x.func) for x in ast.walk(consts[k]) if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)}
         for x in ast.walk(consts[k]):
             if isinstance(x, ast.Constant) and isinstance(x.value, (str, bytes)):
                 if any(c in x.value for c in ((b"\r", b"\n") if isinstance(x.value, bytes) else ("\r", "\n"))):
@@ -4353,8 +4352,9 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, co
       codec's target, the loop's targets and a name a preamble role binds;
     - Tuple: stored, the loop's target; loaded, the right operand of a header value's `%` whose left operand is a str constant, its
       elements header values;
-    - Constant: a str or None, a str in a header call's arguments holding no CR or LF, and a bool only as getattr's default; an
-      int as an injection's count;
+    - Constant: a str or None, a str in a header call's arguments holding no CR or LF, and a bool only as getattr's default or as
+      a flag's value (`<flag> = True` or `= False`); an int only as an injection's count; and any constant in the page text the
+      preamble's statements build (the stamp's call, an injection's value, a text name's value), which the served pass reads;
     - BinOp: a `%` whose left operand is a str constant, as a header value; BoolOp: the `or` of a parameter and an empty dict in the
       loop's iterable, and the `and` of a preamble if's tests; Compare: `<a str constant> in <page>` as a preamble if's test; Dict:
       that empty dict; IfExp: the codec's value.
@@ -7208,7 +7208,7 @@ class _Served(object):
         no function scope around it binds the name (_scoped); None otherwise. The proof of a digest leaf's and a base64 encoding's
         module (_leaf) and of a compiled pattern's re (_pattern). It reads the import statements alone: a module object stored in
         sys.modules under the name before the import binds it, and an attribute store on the module object, are outside it, the
-        stated limit beside _DIGEST_CALLS (its witnesses lsmh, lsmr and lsma)."""
+        stated limit beside _DIGEST_CALLS (its witnesses lsmh, lsmr, lsma and lsra)."""
         if (ctx is not None and self._scoped(name, ctx) is not None) or self.star or self.computed or name in self.rebound: return None
         mods, n = self.std_imports.get(name, ()), self.bound.get(name, 0)
         return mods[0] if n and len(mods) == n and len(set(mods)) == 1 else None

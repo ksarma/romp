@@ -351,8 +351,10 @@ nested def, class or lambda. The reader governs the definition's own text, and
 code the definition runs from outside that text is not read: a header value is
 not scanned (a module constant used as one is read only for a CR or LF: each
 string or bytes constant in its value and in the value of each module constant
-that value names, followed by binding, any other name there but a call's callee
-refusing it; a CR or LF the value computes at run time, a call's return or a
+that value names, followed by binding (a method call's receiver, as `T` in
+`T.lower()`, among the names followed), any other name there refusing it, save a
+bare name a call calls (`f` in `f(...)`); a CR or LF the value computes at run
+time, a call's return or a
 number formatted as a character, is not read, its witnesses a CR LF from chr and
 one from a `%c` of an int), and a response that a Content-Type in its headers
 argument, passed
