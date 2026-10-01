@@ -27,7 +27,9 @@ name: CI
 # test step without running a test (bats could not gather the tests: macOS's bash 3.2 rejected the
 # file-scope `declare -gA` that tests/pre-push-hook.bats had then; fork PR 937 has since moved it
 # into a helper, and the file now loads under bash 3.2), where a working run of the suite takes
-# about 16 minutes (below).
+# about 22 minutes: the macOS bats job ran all 1606 tests in 21 min 39 s in run 36807078533 (a
+# dispatch of 2026-10-01) and in 22 min 10 s in run 36714942087 (a dispatch of fork PR 937's
+# branch on 2026-09-30), each job's time from the jobs API.
 # Going private needs a change to this file before the first private batch push. The Linux Python
 # cells' two workers do not fit the private runner (they peak at 10.9 GB; the Run pytest step gives
 # the measurement), so the cells must run serially, and by the serial ratio measured there (1437 s
@@ -39,7 +41,7 @@ name: CI
 # other job at its public time; nothing has been run on 2 CPUs).
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (the bats
-# suite alone is about 16 minutes) and the runners are scarcer, so they do NOT run
+# suite alone is about 22 minutes, above) and the runners are scarcer, so they do NOT run
 # on every push. They run once a week on a schedule (see `on:`) and
 # by hand from the Actions tab ("Run workflow") when you want a cross-platform
 # check before a release or after touching a platform-sensitive surface (launchd,

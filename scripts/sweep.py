@@ -8,7 +8,9 @@ sweep of its exact head (docs/batching.md).
          sweep the commit the tree's HEAD names, in a private checkout of it; exit 0 pass, 1 red (a run that
          is itself invalid but leaves the sha unable to pass included), 2 refused to start, 3 invalid
   check  [SHA|HEAD] [--tree DIR] [--branch BR]
-         read the result for a commit as batch.py verify does; exit 0 on a pass, 1 otherwise
+         read the result for a commit as batch.py verify does; exit 0 on a pass, 1 otherwise, 2 refused,
+         naming why (among the reasons: a tree that is not a git working tree git recognizes, a SHA that names
+         no commit there, a shallow file that cannot be read, a git call that did not end within GIT_BOUND)
 
 The result is `<state dir>/sweeps/<full sha>.json`, the state dir resolved as bin/romp resolves it
 (ROMP_STATE_DIR, else XDG_STATE_HOME/romp, else ~/.local/state/romp); leg logs go under
@@ -22,7 +24,13 @@ private repository under <state dir>/sweeps/trees that reads the batcher's objec
 when the run started: the runner reads its shallow file before the first leg, and every checkout gets that copy, so a
 leg that writes the file changes no later job's checkout; the runner reads the file again after the last leg, below),
 checked out at the sha with hooks off (make_checkout),
-every runner git call made with GIT_* removed, git's global and system configuration off and refs/replace ignored. It
+every runner git call made with GIT_* removed, git's global and system configuration off and refs/replace ignored, and
+each call into a repository made with that repository named explicitly (GitRepo; the 02:43Z ruling, item 1(b)): GIT_DIR,
+GIT_COMMON_DIR and GIT_WORK_TREE set, and GIT_CEILING_DIRECTORIES at the directory above the work tree, so git looks for
+no repository of its own, and a .git it does not recognize (refs/ removed, objects/ a file, HEAD or .git removed) fails
+the call instead of sending git up to an enclosing repository, whose files it would read in its place (GitRepo says what
+each variable changes). The one call that looks for a repository is find_repo's in the batcher's tree, with the ceiling alone, at the
+parent of the directory holding .git; it reads the work tree, git dir and common dir once, before the first leg. It
 copies none of the batcher's repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or
 replace refs, so the legs see the sha's tree plus the tool installs, and
 nothing from the checkout's parents. Before any leg the runner verifies the first checkout against `git ls-tree -r
@@ -49,11 +57,53 @@ invalid, naming the paths, when a file there was added, changed or is gone. Afte
 repository's shallow file again and records the run invalid, naming the file, when it is not the copy read before the
 first leg (shallow_moved): no job of the run read what a leg wrote there, but the runner does not restore the file, and
 the next run's checkouts would read it. A shallow file that is not a regular file by os.lstat (a FIFO, a device, a
-symlink, whatever it points to) is never opened, by the runner or by a git it starts: one there when the run starts
-refuses it before the runner's first git call that parses commits, and one a leg leaves makes the run invalid at that
-re-read, each naming the file and its type (cannot_read; the closing check's item 1). That re-read after each leg, the verification of each later checkout and the
-shallow file's re-read after the last leg are the runner's producers of invalid; the legs after either of the first
-two do not run.
+symlink, whatever it points to) is never opened by the runner, and no git the runner starts reads one the check found:
+one there when the run starts refuses it before the runner's first git call that parses commits, and one a leg leaves
+makes the run invalid at that re-read, each naming the file and its type (cannot_read; the closing check's item 1).
+These lstat checks, of the shallow file and of the clone's .git, HEAD, config and info/exclude, see each file as it is
+when the runner checks it. One swapped in after the check, by a process still running then (one that outlived its leg,
+in the stated outside below, or any other process of the batcher's user), is still never read by the runner, whose own
+reads open with O_NONBLOCK and O_NOFOLLOW and read only a regular file (open_regular), but a git the runner starts
+after the check opens it by name and can wait on it; that wait ends at the bound below.
+
+The runner's own files that a leg can reach (it finds the state dir from its own log's path, and the pytest and served
+legs run inside their venvs) are created or opened without waiting too (the verify pass at PR 926's build head, its code
+finding 1). Each leg's log is a new file, created with O_EXCL and O_NOFOLLOW, under another name when anything is
+already at <leg>.<UTC second>.log (new_log), and its summary and counts are read back through the descriptor the runner
+created it with, so a FIFO, a symlink or another file a leg puts at a log's path is neither opened for writing nor read
+for the counts; deps_skipped reads the pytest leg's log by its path once that descriptor is closed, through
+open_regular, so a log the leg replaced with anything but a regular file reads as unreadable and the served leg is red,
+naming why, and one it replaced with another regular file is read as the leg's own output would be. A venv's build log
+opens only as a regular file, and the build is refused, naming it, otherwise (open_build_log). The results, the
+checkouts' markers and the venvs' markers are read through open_regular, so one that is not a regular file reads as
+unreadable (check and batch.py verify fail that result, naming the file, and the next run at its sha is refused), as no
+marker (its checkout is removed as stale) or as no finished build (the venv is built again); a lock file is opened
+without waiting, since it is only locked. The checkout's tracked and ignored files and a venv's files, which the runner
+checks with os.lstat before it reads them, are read through open_regular as well, so one swapped in after that check is a
+content fault, a file no excuse matches, or a venv that cannot be read, and is never waited on.
+
+Every git call the runner makes into a repository is made in run_git, the one helper that starts such a call
+(tests/test_git_call_census.py holds each one in this file to it; the one git started elsewhere, tool_versions' git
+--version, run in a leg's environment, reads no repository and has that function's 60 s bound), and has a bounded wait
+(the 02:43Z ruling, item 1(a)): GIT_BOUND, 120 s from its start. A git still running at the bound (waiting on a FIFO
+where git reads: one a leg left at a .gitignore, at a file an include.path names or at the batcher's repository's
+objects/info/alternates, or one swapped in after the runner's lstat) is killed with its process group, and the call
+raises GitBound naming it. Before the run is recorded (the reads of the batcher's repository, the first checkout, its
+verification and a --leg re-run's first setup), and in check, that is a refusal (exit 2, nothing recorded); during the
+run (a later job's checkout, the reads of the ignored files before the deps leg and before a setup, the re-read after a
+leg or a setup) it is the run's invalid mark, naming the step and the call, and the legs after it do not run. The bound
+is far above the slowest call a real run makes: a job's checkout took under a second when measured on 2026-10-01 (the
+comment at GIT_BOUND gives the figures). A FIFO a leg leaves in the batcher's repository where no git of its own run
+reads after it (its config or HEAD, which the runner's git calls in the batcher's tree, all made before the first leg,
+read; its index or info/exclude, which only git status there reads; or its objects/info/alternates once the run's last
+checkout is made and verified, since the re-reads after the legs, git check-ignore --no-index, read no object) leaves
+that run's verdict as it was recorded. The next run is refused at its first git call that reads the file (find_repo's for
+config and HEAD, git status for index, info/exclude and objects/info/alternates), naming the call; check is refused the
+same way at config and HEAD (find_repo's call) and at objects/info/alternates (its rev-parse of the commit), and reads
+neither index nor info/exclude, so it reports the recorded verdict. The re-read after each leg, the verification of each later checkout, a git call during the
+run that reaches the bound, and the shallow file's re-read after the last leg are the runner's producers of invalid; the
+legs after any of the first three do not run.
+
 The batcher's tree is read for its HEAD sha and branch only, so it need not be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
@@ -292,8 +342,9 @@ reparented to the runner. On Linux a prctl that fails refuses the run instead, a
 child and runs on into the next leg, until the next reap. A write by one of these makes the run invalid only when the
 re-read after a leg, or a later checkout's verification, checks the path it wrote, and the invalid mark then names the
 leg after which, or the checkout in which, the change was found, which need not be the leg that started the process,
-or when it changes the batcher's shallow file before the re-read after the last leg, whose mark names the file; any
-other write leaves the run valid.
+or when it changes the batcher's shallow file before the re-read after the last leg, whose mark names the file, or
+when a git call of the run waits on what it wrote until the bound, whose mark names the call; any other write leaves
+the run valid.
 
 The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
 the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
@@ -351,6 +402,7 @@ under such wrappers passes them with --wrap, which must keep the leg in the runn
 the standard library.
 """
 import argparse
+import collections
 import datetime as _dt
 import errno
 import fcntl
@@ -932,9 +984,20 @@ def no_checkout_runs(runs):
     return [i + 1 for i, r in enumerate(runs) if not checkout_recorded(r)]
 
 
+def _json_regular(path):
+    """The JSON document in the regular file at `path`, read through open_regular, so a FIFO or a symlink there (a leg
+    reaches the state dir: its own log's path, in /proc/self/fd/1, is under it; a venv's marker is inside the venv the
+    leg runs in) raises Unreadable, an OSError, naming what it is, and is never opened (the verify pass at PR 926's
+    build head, its code finding 1); FileNotFoundError when nothing is there, ValueError when the bytes are not UTF-8
+    JSON."""
+    data = read_regular(path)
+    if data is None:
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), path)
+    return json.loads(data.decode("utf-8"))
+
+
 def _load(path):
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+    data = _json_regular(path)
     if not isinstance(data, dict):
         raise ValueError("not a JSON object")
     if not isinstance(data.get("legs", {}), dict) or not all(isinstance(v, dict) for v in data.get("legs", {}).values()):
@@ -1117,21 +1180,23 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
         ("; " + "; ".join(notes)) if notes else "", path), rec)
 
 
-def excuse_contradiction(tree, result, sha, subject="HEAD"):
+def excuse_contradiction(repo, result, sha, subject="HEAD"):
     """The legs a result marks not owed for the one reason the runner gives for them (NOT_OWED_WHY: deps, the webview
     legs, pdf-smoke and served for having no vscode-extension/package.json, round 1's excuse rule, and the ledger for having no
     scripts/upstream-ledger.py, round 2's correctness-4) while the sha's tree does hold the file that reason names, as a
     line naming them and the file; None when none is so marked or the tree really has no such file. Read with the
-    runner's own git hygiene (no inherited GIT_*, no global or system config, refs/replace ignored). batch.py's verify,
-    plan and --repin and this script's check apply it after a pass."""
+    runner's own git hygiene (no inherited GIT_*, no global or system config, refs/replace ignored), in `repo`, a GitRepo
+    or the path of the tree, which find_repo then reads, through run_git: a cat-file that does not end within GIT_BOUND
+    raises GitBound. batch.py's verify, plan and --repin and this script's check apply it after a pass."""
     legs = (result or {}).get("legs") or {}
+    if isinstance(repo, str):
+        repo = find_repo(repo)
     clauses = []
     for why, rel in NOT_OWED_FILE.items():
         excused = [n for n in LEGS if not is_owed(n, legs.get(n)) and (legs.get(n) or {}).get("why") == why]
         if not excused:
             continue
-        p = subprocess.run(["git", "-C", tree, "cat-file", "-e", "%s:%s" % (sha, rel)], env=_git_env(),
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        p = run_git(repo, "cat-file", "-e", "%s:%s" % (sha, rel))
         if p.returncode == 0:
             clauses.append("marks %s not owed for having %s, but %s's tree holds %s" % (", ".join(excused), why, subject, rel))
     if not clauses:
@@ -1154,32 +1219,141 @@ GIT_NEUTRAL = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT
 GIT_NEUTRAL_CONFIG = (("core.attributesFile", os.devnull), ("core.excludesFile", os.devnull), ("core.fsmonitor", "false"),
                       ("core.untrackedCache", "false"))
 
+# The 02:43Z ruling, item 1(a): every git call the runner makes into a repository has a bounded wait, GIT_BOUND seconds,
+# and is made through run_git, the one helper that makes one (tool_versions' git --version, which reads no repository,
+# runs outside it, with that function's own 60 s bound). A git that has not ended by then is killed with its process
+# group (each starts in a session of its own) and the call raises GitBound naming it: a refusal before the run is
+# recorded (cmd_run's reads of the batcher's repository, the first checkout and its verification, and a --leg re-run's
+# first setup) and in check, and the run's invalid mark during the run (a later job's checkout, the reads of the ignored
+# files and the re-read after a leg or a setup). So a file a leg plants that a git opens and waits on (a FIFO at a repository's config, HEAD, index,
+# info/exclude or objects/info/alternates, a .gitignore, a file an include.path names, or one swapped in after the
+# runner's own lstat) ends the run at the bound, with the call named, rather than holding it without end. The bound is
+# far above the slowest call a real run makes: measured on this project's clone on 2026-10-01 (3317 tracked files, the
+# batcher's tree a shared clone with some 400 worktrees), a job's checkout took 0.57 to 0.58 s (0.63 to 0.72 s for the
+# whole clone in the record of that day's sweep at the PR's head), and every other call 0.02 s or less: git status in
+# the batcher's tree, ls-tree, cat-file and check-ignore over the 4626 ignored paths npm ci and the two builds leave.
+# tests/test_git_call_census.py holds every git argv and git launch in this file to run_git.
+GIT_BOUND = 120
 
-def _git_env():
+
+class GitRepo(collections.namedtuple("GitRepo", "work_tree git_dir common_dir ceiling")):
+    """The repository a runner git call means, named explicitly (the 02:43Z ruling, item 1(b)): its work tree, git dir
+    and common dir, each absolute, set as GIT_WORK_TREE, GIT_DIR and GIT_COMMON_DIR, and GIT_CEILING_DIRECTORIES at
+    `ceiling`, the directory above it. A .git git does not recognize (refs/ removed, objects/ a file, HEAD removed, .git
+    removed) is then "not a git repository" and the call fails, where a git left to find its own would walk up to an
+    enclosing repository and read that one (a false pass: an untracked file in the checkout excused by an enclosing
+    repository's .gitignore). The ceiling alone stops that walk at the work tree, for a call made there; the explicit
+    names, beside it, keep each call on the repository find_repo found: git reads no .git file again (so one rewritten
+    after the discovery, in the batcher's tree when it is a linked worktree, does not move a call to another repository:
+    GitBoundPins' git-file pin, red when the three are dropped), its setup reads no commondir file (so a FIFO .git/commondir
+    a leg leaves in its clone is not read by the re-read's git check-ignore, which reads no ref), and a core.worktree in the
+    repository's config moves no call's work tree. They do not keep every read off a commondir file: git 2.43 reads the
+    git dir's commondir file when a call reads a ref (rev-parse HEAD, symbolic-ref, status, cat-file of a revision),
+    whatever GIT_COMMON_DIR says (measured on 2026-10-01), so in a linked worktree's git dir that file is read by such a
+    call, and a FIFO there ends it at GIT_BOUND, naming it. git_dir None is the one discovery call (find_repo), which sets
+    only the ceiling."""
+
+
+class GitBound(Refused):
+    """A git call the runner started that did not end within GIT_BOUND seconds, killed with its process group. It is a
+    Refused, so before a run is recorded it refuses the run (exit 2), as it does check; during a run _run_locked records
+    it as the run's invalid mark, naming the call."""
+
+
+def checkout_repo(path):
+    """The GitRepo of a private clone at `path`: its own .git, the ceiling at <state dir>/sweeps/trees, its parent."""
+    return GitRepo(path, os.path.join(path, ".git"), os.path.join(path, ".git"), os.path.dirname(path))
+
+
+def _git_env(repo):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(GIT_NEUTRAL)
     env["GIT_CONFIG_COUNT"] = str(len(GIT_NEUTRAL_CONFIG))
     for i, (key, value) in enumerate(GIT_NEUTRAL_CONFIG):
         env["GIT_CONFIG_KEY_%d" % i], env["GIT_CONFIG_VALUE_%d" % i] = key, value
+    env["GIT_CEILING_DIRECTORIES"] = repo.ceiling
+    if repo.git_dir is not None:
+        env.update(GIT_DIR=repo.git_dir, GIT_COMMON_DIR=repo.common_dir, GIT_WORK_TREE=repo.work_tree)
     return env
 
 
-def git(tree, *args, check=True):
-    p = subprocess.run(["git", "-C", tree, *args], env=_git_env(), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def run_git(repo, *args, input=None, text=True, cwd=None):
+    """`git <args>` in the repository `repo` names (a GitRepo), as a CompletedProcess: the one way the runner starts git.
+    It runs with the runner's neutral git (_git_env), in `cwd` (default: the work tree), stdin closed unless `input` is
+    given, in a session of its own, and has GIT_BOUND seconds to end. One that has not (waiting on a FIFO, reading without
+    end) is killed with its process group and reaped, and GitBound is raised naming the call; a stop signal that arrives
+    while it runs kills it the same way before the stop propagates, so no git the runner started outlives the call."""
+    argv = ["git", *args]
+    p = subprocess.Popen(argv, cwd=cwd or repo.work_tree, env=_git_env(repo), text=text, start_new_session=True,
+                         stdin=subprocess.DEVNULL if input is None else subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE)
+    try:
+        out, err = p.communicate(input, timeout=GIT_BOUND)
+    except BaseException as e:
+        _end_git(p)
+        if isinstance(e, subprocess.TimeoutExpired):
+            raise GitBound("git %s in %s did not end within %d s and was killed" % (" ".join(args), cwd or repo.work_tree,
+                                                                                     GIT_BOUND)) from None
+        raise
+    return subprocess.CompletedProcess(argv, p.returncode, out, err)
+
+
+def _end_git(p):
+    """Kill the git `p` and its process group, reap it, and close its pipes, without reading them: a child of git still
+    holding one would otherwise keep the read waiting."""
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except OSError:
+        pass
+    p.wait()
+    for f in (p.stdin, p.stdout, p.stderr):
+        if f is not None:
+            try:
+                f.close()
+            except OSError:
+                pass
+
+
+def git(repo, *args, check=True):
+    """run_git with text output: the stripped stdout, and Refused naming the call when it fails; with check=False the
+    CompletedProcess."""
+    p = run_git(repo, *args)
     if check and p.returncode != 0:
-        raise Refused("git %s failed in %s: %s" % (" ".join(args), tree, (p.stderr or p.stdout).strip()))
+        raise Refused("git %s failed in %s: %s" % (" ".join(args), repo.work_tree, (p.stderr or p.stdout).strip()))
     return p.stdout.strip() if check else p
 
 
-def uncommitted_count(tree):
-    """How many entries `git status --porcelain=v1 --untracked-files=all` lists in the batcher's tree, or None when git
-    status fails. Only a notice reads it: the legs run in a private checkout of the sha, so these edits are not swept.
-    It runs with the runner's neutral git like every other runner git call (_git_env; round 2, fresh-4), so no
+def find_repo(start):
+    """The GitRepo of the repository holding the directory `start` (the batcher's tree): the nearest directory at or
+    above its real path that holds a .git entry (os.path.lexists, nothing opened), read by git there, `rev-parse
+    --show-toplevel --absolute-git-dir --git-common-dir` with GIT_CEILING_DIRECTORIES at that directory's parent, so a
+    .git that git does not recognize there is refused, naming the directory, and never sends git on to an enclosing
+    repository (a leg can reach the batcher's repository through its clone's alternates and remove its HEAD, for one;
+    the 02:43Z ruling, item 1(b)). Every later call into the repository names it explicitly (GitRepo)."""
+    d = os.path.realpath(start)
+    while not os.path.lexists(os.path.join(d, ".git")):
+        up = os.path.dirname(d)
+        if up == d:
+            raise Refused("%s is not a git working tree: no .git at or above it" % start)
+        d = up
+    p = run_git(GitRepo(d, None, None, os.path.dirname(d)), "rev-parse", "--path-format=absolute", "--show-toplevel",
+                "--absolute-git-dir", "--git-common-dir")
+    found = p.stdout.splitlines() if p.returncode == 0 else []
+    if len(found) != 3:
+        raise Refused("%s is not a git working tree that git recognizes (%s)" % (d, (p.stderr or p.stdout).strip()))
+    top, git_dir, common = found
+    return GitRepo(top, git_dir, common, os.path.dirname(top))
+
+
+def uncommitted_count(repo):
+    """How many entries `git status --porcelain=v1 --untracked-files=all` lists in the batcher's tree (`repo`), or None
+    when git status fails. Only a notice reads it: the legs run in a private checkout of the sha, so these edits are not
+    swept. It runs with the runner's neutral git like every other runner git call (_git_env; round 2, fresh-4), so no
     core.fsmonitor hook or untracked-cache setting of the batcher's configuration runs or writes in their repository;
     with the per-user excludes file off, the count includes files only the batcher's global excludes hide, which are
-    not swept either."""
-    p = subprocess.run(["git", "-C", tree, "status", "--porcelain=v1", "-z", "--untracked-files=all"], env=_git_env(),
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    not swept either. A git status that does not end within GIT_BOUND raises GitBound, which refuses the run (a FIFO a
+    leg of an earlier run left at the batcher's index or info/exclude, read by no git of that run)."""
+    p = run_git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all", text=False)
     if p.returncode != 0:
         return None
     return len(_status_entries(p.stdout))
@@ -1211,13 +1385,6 @@ def _random_tail(n=8):
     return "".join(rng.choice(string.ascii_lowercase + string.digits) for _ in range(n))
 
 
-def common_dir(tree):
-    """The batcher's repository's common dir (`git rev-parse --git-common-dir`), absolute: the objects every checkout
-    reads through its alternates, and the shallow file (shallow_snapshot)."""
-    common = git(tree, "rev-parse", "--git-common-dir")
-    return common if os.path.isabs(common) else os.path.abspath(os.path.join(tree, common))
-
-
 # What cannot_read calls each file type that is not a regular file.
 _FILE_TYPES = {stat.S_IFIFO: "a FIFO", stat.S_IFLNK: "a symlink", stat.S_IFDIR: "a directory", stat.S_IFCHR: "a character device",
                stat.S_IFBLK: "a block device", stat.S_IFSOCK: "a socket"}
@@ -1230,7 +1397,7 @@ def cannot_read(path):
     symlink included whatever it points to, and is named by its type ("a FIFO, not a regular file"), as is a path whose
     lstat fails for any reason but absence. Nothing at all is ENOENT, or ENOTDIR (a path under something that is not a
     directory, which no open() can reach either). Opening such a file could wait without end (open() waits on a FIFO
-    until a writer comes, and so does a git that reads one) or read without end (a symlink to /dev/zero)."""
+    until a writer comes; a git that reads one waits until GIT_BOUND) or read without end (a symlink to /dev/zero)."""
     try:
         st = os.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
@@ -1243,15 +1410,15 @@ def cannot_read(path):
 
 
 def _not_regular(mode):
-    """What cannot_read, and read_regular's fstat, call a file of `mode` that is not a regular file."""
+    """What cannot_read, and open_regular's fstat, call a file of `mode` that is not a regular file."""
     return "%s, not a regular file" % _FILE_TYPES.get(stat.S_IFMT(mode), "a file of another type")
 
 
 class Unreadable(OSError):
-    """A file read_regular will not read: cannot_read's verdict, or the fstat after the open finding no regular file."""
+    """A file open_regular will not open: cannot_read's verdict, or the fstat after the open finding no regular file."""
 
 
-# The flags read_regular opens a file with, once cannot_read has passed it: a symlink swapped in after that check fails
+# The flags open_regular opens a file with, once cannot_read has passed it: a symlink swapped in after that check fails
 # the open (O_NOFOLLOW), a FIFO opens without waiting for a writer (O_NONBLOCK), and a terminal does not become the
 # runner's controlling terminal (O_NOCTTY); the fstat after the open then refuses anything but a regular file. Each is
 # POSIX, as the fcntl the runner imports is, so each is named directly (a getattr on os reads to the launcher census,
@@ -1259,13 +1426,19 @@ class Unreadable(OSError):
 _READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY
 
 
-def read_regular(path):
-    """The bytes of the regular file at `path`, or None when there is none (ENOENT or ENOTDIR, as cannot_read reads
-    them). It is checked with cannot_read first, and one that is not a regular file raises Unreadable naming why, and is
-    never opened. One that passed is opened with _READ_FLAGS and read only when fstat finds a regular file, so a FIFO or
-    a symlink a process swapped in between the check and the open (docs/batching.md names the kinds of process that can
-    outlive their leg) raises Unreadable as well, without a wait, and is never read (the closing check's verify, code
-    finding 4). Any other OSError propagates."""
+def open_regular(path):
+    """The regular file at `path` opened for reading, as a binary file object, or None when there is none (ENOENT or
+    ENOTDIR, as cannot_read reads them): the way the runner opens every file it reads itself that a leg, or a process a
+    leg left running, can reach (the batcher's shallow file, a checkout's files and git state files, a venv's files, and
+    the runner's own files under the state dir: results, checkout markers, venv markers and leg logs; the verify pass at
+    PR 926's build head, its code finding 1). It is checked with cannot_read first, and one that is not a regular file
+    raises Unreadable naming why, and is never opened. One that passed is opened with _READ_FLAGS and returned only when
+    fstat finds a regular file, so a FIFO or a symlink a process swapped in between the check and the open
+    (docs/batching.md names the kinds of process that can outlive their leg) raises Unreadable as well, without a wait,
+    and is never read (the closing check's verify, code finding 4). The fstat is made on the raw descriptor, before
+    os.fdopen wraps it, and the descriptor is closed on every path that raises, so a directory swapped in (which
+    os.fdopen itself refuses, naming only a descriptor number, and leaves open) raises Unreadable naming it too, and no
+    descriptor is left open (the closing check wf_bbe8b843-8bf, its first low). Any other OSError propagates."""
     why = cannot_read(path)
     if why is not None:
         raise Unreadable(why)
@@ -1277,29 +1450,43 @@ def read_regular(path):
         if e.errno == errno.ELOOP:
             raise Unreadable(_not_regular(stat.S_IFLNK))
         raise
-    with os.fdopen(fd, "rb") as f:
-        mode = os.fstat(f.fileno()).st_mode
+    try:
+        mode = os.fstat(fd).st_mode
         if not stat.S_ISREG(mode):
             raise Unreadable(_not_regular(mode))
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def read_regular(path):
+    """The bytes of the regular file at `path`, or None when there is none, read through open_regular: one that is not a
+    regular file raises Unreadable naming why, and is never read; any other OSError propagates."""
+    f = open_regular(path)
+    if f is None:
+        return None
+    with f:
         return f.read()
 
 
-def shallow_path(tree):
-    """The batcher's repository's shallow file, <common dir>/shallow, which cmd_run and cmd_check check first (shallow_checked),
+def shallow_path(repo):
+    """The batcher's repository's shallow file, <common dir>/shallow (`repo`, a GitRepo, names the common dir find_repo
+    read once, so no git call reads it again during the run), which cmd_run and cmd_check check first (shallow_checked),
     shallow_snapshot reads before the first leg and shallow_moved reads again after the last."""
-    return os.path.join(common_dir(tree), "shallow")
+    return os.path.join(repo.common_dir, "shallow")
 
 
-def shallow_checked(tree):
+def shallow_checked(repo):
     """Refused, naming the file and its type, when the batcher's repository's shallow file exists and cannot_read says
     it cannot be read (the closing check's item 1). cmd_run calls this before any git call that parses commits, since git
     reads that file first: with a FIFO there, uncommitted_count's git status waited without end, before the per-sha lock
     and before shallow_snapshot could refuse it. cmd_check calls it first too, since its rev-parse of the commit read
     the FIFO and waited the same way (the closing check's verify)."""
-    path = shallow_path(tree)
+    path = shallow_path(repo)
     why = cannot_read(path)
     if why is not None:
-        raise Refused("the shallow file of the repository at %s cannot be read (%s: %s)" % (tree, path, why))
+        raise Refused("the shallow file of the repository at %s cannot be read (%s: %s)" % (repo.work_tree, path, why))
 
 
 def _read_shallow(path):
@@ -1309,7 +1496,7 @@ def _read_shallow(path):
     return read_regular(path)
 
 
-def shallow_snapshot(tree):
+def shallow_snapshot(repo):
     """The bytes of the batcher's repository's shallow file (<common dir>/shallow) as it stands now, or None when it has
     none. The runner takes this snapshot before the first leg and gives it to every job's checkout
     (make_checkout), never the live file: a leg can find the batcher's repository through its clone's alternates and
@@ -1318,11 +1505,11 @@ def shallow_snapshot(tree):
     again (shallow_moved), and a file that differs from this snapshot makes the run invalid. A shallow file that exists
     and cannot be read refuses the run, naming it: one that is not a regular file is never read (_read_shallow), and
     cmd_run has refused it already, before its first git call that reads it (shallow_checked)."""
-    path = shallow_path(tree)
+    path = shallow_path(repo)
     try:
         return _read_shallow(path)
     except OSError as e:
-        raise Refused("the shallow file of the repository at %s cannot be read (%s: %s)" % (tree, path, e))
+        raise Refused("the shallow file of the repository at %s cannot be read (%s: %s)" % (repo.work_tree, path, e))
 
 
 def _shallow_words(data):
@@ -1361,7 +1548,7 @@ def shallow_moved(path, snapshot):
             "then, %s now); the next run's checkouts would read it" % (path, _shallow_words(snapshot), _shallow_words(now_)))
 
 
-def make_checkout(tree, sha, shallow):
+def make_checkout(repo, sha, shallow):
     """(path, marker, seconds): a private repository at <state dir>/sweeps/trees/<sha12>-<random> that reads the
     batcher's objects (their common dir's objects, named in its objects/info/alternates, as `git clone --shared` names
     them) and holds none of their refs, with no remote, then `checkout -q --detach <sha>` there with hooks off: the sha
@@ -1379,10 +1566,13 @@ def make_checkout(tree, sha, shallow):
     leg's git writes land in it. The marker beside it, written first, holds the full sha,
     so a later run can tell whether that sha's lock is held (sweep_stale_checkouts). Any exception between the marker's
     create and the end of the checkout, the Stopped of a stop signal included, removes the partial checkout and its
-    marker before it propagates (round 2, extra5-2)."""
+    marker before it propagates (round 2, extra5-2). `repo` is the batcher's repository (a GitRepo), whose common dir
+    find_repo read before the run, so making a later job's checkout reads none of the batcher's repository files with
+    git (its config and HEAD among them; the closing check wf_bbe8b843-8bf, its finding 1); every git call here names the
+    checkout explicitly (checkout_repo), its init included, which writes the .git a plain `git init <path>` writes."""
     parent = trees_dir()
     os.makedirs(parent, mode=0o700, exist_ok=True)
-    common = common_dir(tree)
+    common = repo.common_dir
     t0 = time.monotonic()
     path = marker = None
     try:
@@ -1403,8 +1593,7 @@ def make_checkout(tree, sha, shallow):
         else:
             raise Refused("could not name a checkout under %s" % parent)
         path = os.path.join(parent, name)
-        p = subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q", path], env=_git_env(), text=True,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p = run_git(checkout_repo(path), "-c", "init.defaultBranch=main", "init", "-q", path, cwd=parent)
         if p.returncode == 0:
             # the batcher's objects, read where they are as --shared reads them, none of their refs and no remote naming
             # their repository, so no plain fetch in a later job copies a ref a leg wrote there (the land check of
@@ -1419,7 +1608,7 @@ def make_checkout(tree, sha, shallow):
                 with open(os.path.join(path, ".git", "shallow"), "wb") as f:
                     f.write(shallow)
         if p.returncode == 0:
-            p = git(path, "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
+            p = git(checkout_repo(path), "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
         if p.returncode != 0:
             raise Refused("could not check %s out into a private clone: %s" % (short(sha), (p.stderr or p.stdout).strip()))
     except BaseException:
@@ -1446,12 +1635,18 @@ def _lock_held(sha, own_sha):
     path = os.path.join(sweeps_dir(), sha + ".lock")
     if not os.path.exists(path):
         return False
-    with open(path) as f:
+    # Opened without waiting (O_NONBLOCK), since nothing is read from it, only locked: a FIFO a leg left at the name (a
+    # leg reaches the state dir from its log's path) opened for reading waited for a writer without end, before the
+    # stale checkouts' removal (the verify pass at PR 926's build head, its code finding 1).
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
+    try:
         try:
-            fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
         except BlockingIOError:
             return True
-        fcntl.flock(f, fcntl.LOCK_UN)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
     return False
 
 
@@ -1497,18 +1692,20 @@ def _listdir(d):
 
 
 def _read_marker(path):
+    """The sha a checkout's marker holds, or None when there is none, it holds no sha, or it cannot be read: read
+    through open_regular, so a FIFO or a symlink there (a leg reaches <state dir>/sweeps/trees from its log's path) is
+    not opened and reads as no marker (the verify pass at PR 926's build head, its code finding 1)."""
     try:
-        with open(path) as f:
-            text = f.read().strip()
+        data = read_regular(path)
     except OSError:
         return None
+    text = data.decode("utf-8", "replace").strip() if data is not None else ""
     return text if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", text) else None
 
 
 def tree_entries(path, sha):
     """{path bytes: (mode, oid)} of every entry `git ls-tree -r -z <sha>` lists (files, symlinks, gitlinks)."""
-    p = subprocess.run(["git", "-C", path, "ls-tree", "-r", "-z", sha], env=_git_env(), stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE)
+    p = run_git(checkout_repo(path), "ls-tree", "-r", "-z", sha, text=False)
     if p.returncode != 0:
         raise Refused("git ls-tree failed in the checkout of %s: %s" % (short(sha), p.stderr.decode("utf-8", "replace").strip()))
     entries = {}
@@ -1555,7 +1752,18 @@ def _entry_faults(path, entries):
             continue
         if bool(st.st_mode & 0o100) != (mode == b"100755"):
             out["mode"].append(name)
-        with open(full, "rb") as f:
+        # read through open_regular, so a FIFO or a symlink swapped in after the lstat above (by a process a leg left
+        # running) is a content fault, never a wait or a read without end (the verify pass at PR 926's build head, its
+        # code finding 5), and a file gone since is missing
+        try:
+            f = open_regular(full)
+        except Unreadable:
+            out["content"].append(name)
+            continue
+        if f is None:
+            out["missing"].append(name)
+            continue
+        with f:
             if _blob_id(f.read(), oid) != oid:
                 out["content"].append(name)
     return out
@@ -1659,8 +1867,8 @@ def tracked_ignored(path, entries, paths):
     # A path that starts with ":" reads to git as pathspec magic, which check-ignore refuses; "./" in front keeps it a
     # path, and the name git echoes back is mapped to the path walked.
     asked = {(b"./" + n if n.startswith(b":") else n): n for n in paths}
-    p = subprocess.run(["git", "-C", path, "check-ignore", "-v", "-z", "--no-index", "--stdin"], env=_git_env(),
-                       input=b"".join(n + b"\0" for n in asked), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p = run_git(checkout_repo(path), "check-ignore", "-v", "-z", "--no-index", "--stdin",
+                input=b"".join(n + b"\0" for n in asked), text=False)
     if p.returncode not in (0, 1):
         return None, p.stderr.decode("utf-8", "replace").strip()
     fields = p.stdout.split(b"\0")
@@ -1673,13 +1881,19 @@ def tracked_ignored(path, entries, paths):
 
 
 def _file_digest(path, rel):
-    """What a file under the checkout holds, to tell one a leg changed: a symlink's target, a file's sha256, or None."""
+    """What a file under the checkout holds, to tell one a leg changed: a symlink's target, a regular file's sha256, or
+    None, which no excuse matches: when it is gone, cannot be read, or is anything else (a FIFO, a device, a directory).
+    The file is read through open_regular, so none of those is opened and none can make the read wait (the verify pass
+    at PR 926's build head, its code finding 5: a FIFO there was opened and waited for a writer)."""
     full = os.path.join(os.fsencode(path), rel)
     try:
         if os.path.islink(full):
             return "link:" + os.fsdecode(os.readlink(full))
+        f = open_regular(full)
+        if f is None:
+            return None
         h = hashlib.sha256()
-        with open(full, "rb") as f:
+        with f:
             for chunk in iter(lambda: f.read(1 << 20), b""):
                 h.update(chunk)
         return h.hexdigest()
@@ -3027,13 +3241,37 @@ def build_env(python, tmpdir):
     return env
 
 
+def open_build_log(log, where):
+    """The venv build's log `log` (<venv>.log, beside the venv, where a leg running in the venv can reach it) opened for
+    appending, as a text file object: created when absent, and opened with O_NOFOLLOW and O_NONBLOCK and kept only when
+    fstat finds a regular file, so a FIFO a leg left there (an earlier run's pytest leg that also changed the venv, so
+    this run builds it again) is never opened for writing, which waits for a reader without end, and a symlink is not
+    followed (the verify pass at PR 926's build head, its code finding 1). Refused, naming the log, `where` and what is
+    there, otherwise; O_NONBLOCK, which changes nothing for a regular file, is cleared before the build's steps write
+    to it."""
+    try:
+        fd = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY, 0o666)
+    except OSError as e:
+        what = cannot_read(log) or (e.strerror or str(e))
+        raise Refused("%s: its build log %s cannot be opened (%s); remove it to build again" % (where, log, what))
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            raise Refused("%s: its build log %s cannot be opened (%s); remove it to build again" % (where, log, _not_regular(mode)))
+        fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+        return os.fdopen(fd, "a")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def _build_venv(venv, python, base, steps, env, log, tmpdir, where):
     """Create the venv from `python` (with --without-pip and PyPA's get-pip.py when it has no ensurepip) and run every
     (label, argv) of `steps` with the venv's python in place of the argv's `python`, each logged to `log`; Refused,
     naming the step, the command and the log, on the first that fails or times out. Returns {"url", "sha256"} of the
     get-pip.py it fetched and ran (the URL as url_shown shows it), or None when the interpreter has ensurepip."""
     vpy = os.path.join(venv, "bin", "python")
-    with open(log, "a") as out:
+    with open_build_log(log, where) as out:
         out.write("# build: %s\n# key: %s\n# python: %s (%s)\n" % (now(), os.path.basename(venv), python, base.get("version")))
         out.flush()
 
@@ -3097,8 +3335,13 @@ def venv_tree(venv):
             elif stat.S_ISDIR(st.st_mode):
                 out[key] = ["dir", stat.S_IMODE(st.st_mode)]
             elif stat.S_ISREG(st.st_mode):
+                # read through open_regular: a FIFO or a symlink swapped in after the lstat (by a process a leg left
+                # running) raises Unreadable, an OSError, rather than waiting or reading without end
+                f = open_regular(full)
+                if f is None:
+                    raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), full)
                 h = hashlib.sha256()
-                with open(full, "rb") as f:
+                with f:
                     for chunk in iter(lambda: f.read(1 << 20), b""):
                         h.update(chunk)
                 out[key] = ["file", stat.S_IMODE(st.st_mode), st.st_size, h.hexdigest()]
@@ -3324,8 +3567,7 @@ def _venv_check(spec, venv, vpy, key, base, env):
     """(None, probe, tree) when the venv is a finished build of `key` that nothing has changed since, else (why, None,
     None)."""
     try:
-        with open(os.path.join(venv, spec["marker"])) as f:
-            marker = json.load(f)
+        marker = _json_regular(os.path.join(venv, spec["marker"]))
     except (OSError, ValueError):
         return "no finished build", None, None
     if not isinstance(marker, dict) or marker.get("key") != key:
@@ -3409,8 +3651,7 @@ def _marker_get_pip(venv, marker):
     """The get-pip.py a finished build fetched ({"url", "sha256"}), as its marker records it, or None (the interpreter had
     ensurepip); read after _venv_check found the marker naming the key."""
     try:
-        with open(os.path.join(venv, marker)) as f:
-            doc = json.load(f)
+        doc = _json_regular(os.path.join(venv, marker))
     except (OSError, ValueError):
         return None
     return doc.get("get_pip") if isinstance(doc, dict) else None
@@ -3694,11 +3935,15 @@ NODE_COUNT = re.compile(r"^(?:#|\u2139) (pass|fail) (\d+)\s*$", re.M)
 
 
 def _read_log(path):
+    """The whole log at `path`, decoded, or None when it cannot be read: read through open_regular, so a log a leg
+    replaced with a FIFO or a symlink (a leg finds its own log's path in /proc/self/fd/1) is not read and reads as None,
+    never as a wait or a read without end (the verify pass at PR 926's build head, its code finding 1). deps_skipped
+    reads the pytest leg's log so, after run_leg has closed its own descriptor."""
     try:
-        with open(path, "rb") as f:
-            return f.read().decode("utf-8", "replace")
+        data = read_regular(path)
     except OSError:
         return None
+    return data.decode("utf-8", "replace") if data is not None else None
 
 
 # The leg-end reads of a leg's log (count_tests and summarize_log, which run_leg makes after the leg exits and before
@@ -3710,13 +3955,48 @@ LOG_TAIL = 1 << 20
 LOG_PIECE = 1 << 20
 
 
-def _log_tail(path):
+class _HeldLog:
+    """A reader of the log run_leg holds open, by its descriptor: each read is an os.pread at the reader's own position,
+    so the descriptor's file offset, which the leg's stdout shares, is never moved, and what is read is the file run_leg
+    created, whatever a leg has since put at its path (a FIFO, a symlink to /dev/zero, another file). Closing the
+    reader leaves the descriptor open; run_leg closes it."""
+
+    def __init__(self, fd):
+        self.fd, self.pos = fd, 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def seek(self, pos, whence=os.SEEK_SET):
+        self.pos = (os.fstat(self.fd).st_size + pos) if whence == os.SEEK_END else pos
+        return self.pos
+
+    def read(self, n):
+        data = os.pread(self.fd, n, self.pos)
+        self.pos += len(data)
+        return data
+
+
+def _log_reader(log):
+    """A binary reader of the log `log`: the descriptor run_leg holds (an int; _HeldLog), or a path, opened with
+    open_regular (None when nothing is there; Unreadable when a FIFO, a symlink or anything but a regular file is)."""
+    return _HeldLog(log) if isinstance(log, int) else open_regular(log)
+
+
+def _log_tail(log):
     """The log's last LOG_TAIL bytes, decoded, from the first line that starts inside them (the whole log when it is no
-    longer), so a line cut at the tail's start is never read as a line; None when the log cannot be read. A closing
-    summary line further than LOG_TAIL bytes from the log's end is not in it: the leg then counts no test, which the
-    verdict reads as red for a leg that exited 0, the safe side, and which changes nothing for a leg that failed."""
+    longer), so a line cut at the tail's start is never read as a line; None when the log cannot be read. `log` is the
+    descriptor run_leg holds or a path (_log_reader). A closing summary line further than LOG_TAIL bytes from the log's
+    end is not in it: the leg then counts no test, which the verdict reads as red for a leg that exited 0, the safe side,
+    and which changes nothing for a leg that failed."""
     try:
-        with open(path, "rb") as f:
+        f = _log_reader(log)
+        if f is None:
+            return None
+        with f:
             size = f.seek(0, os.SEEK_END)
             if size <= LOG_TAIL:
                 f.seek(0)
@@ -3732,15 +4012,19 @@ def _log_tail(path):
     return data.decode("utf-8", "replace")
 
 
-def _bats_counts(path):
+def _bats_counts(log):
     """(ok, not ok): the log's lines that start `ok ` and `not ok ` (bats' TAP results), counted while the log is read
     in pieces of LOG_PIECE bytes, each pattern searched with the bytes before the piece that could start a match
     carried over, so a line split across two pieces is counted once and memory stays bounded whatever the log's size;
-    None when the log cannot be read. The log's start counts as a line start, as `^` reads it in a multiline regex."""
+    None when the log cannot be read. `log` is the descriptor run_leg holds or a path (_log_reader). The log's start
+    counts as a line start, as `^` reads it in a multiline regex."""
     pats = {b"\nok ": 0, b"\nnot ok ": 0}
     carry = {p: b"\n" for p in pats}
     try:
-        with open(path, "rb") as f:
+        f = _log_reader(log)
+        if f is None:
+            return None
+        with f:
             while True:
                 piece = f.read(LOG_PIECE)
                 if not piece:
@@ -3755,16 +4039,17 @@ def _bats_counts(path):
     return pats[b"\nok "], pats[b"\nnot ok "]
 
 
-def count_tests(name, path):
+def count_tests(name, log):
     """(passed, failed) for a test leg, counted from its log: pytest's last summary line for the pytest and served legs
     (PYTEST_LEGS; failed counts failures and errors, so a skip the served step's switch turned into a failure counts),
     bats' `ok` and `not ok` lines, node's last `pass` and `fail` counts. (None, None) when the log holds no count, which
     the verdict reads as no test ran. Memory stays bounded whatever the log's size: pytest's and node's counts are read
-    from the log's tail (_log_tail), bats' lines counted while it streams (_bats_counts)."""
+    from the log's tail (_log_tail), bats' lines counted while it streams (_bats_counts). `log` is the descriptor
+    run_leg holds or a path."""
     if name == "bats":
-        counts = _bats_counts(path)
+        counts = _bats_counts(log)
         return counts if counts is not None else (None, None)
-    data = _log_tail(path)
+    data = _log_tail(log)
     if data is None:
         return None, None
     if name in PYTEST_LEGS:
@@ -3781,13 +4066,14 @@ def count_tests(name, path):
     return counts["pass"], counts.get("fail", 0)
 
 
-def summarize_log(name, path):
+def summarize_log(name, log):
     """A display-only summary: pytest's last result line (the pytest and served legs), bats' ok and not-ok counts,
-    node's pass and fail counts; read with the same bounded memory as count_tests."""
+    node's pass and fail counts; read with the same bounded memory as count_tests, from `log`, the descriptor run_leg
+    holds or a path."""
     if name == "bats":
-        counts = _bats_counts(path)
+        counts = _bats_counts(log)
         return "%d ok, %d not ok" % counts if counts is not None else None
-    data = _log_tail(path)
+    data = _log_tail(log)
     if data is None:
         return None
     if name in PYTEST_LEGS:
@@ -3806,10 +4092,29 @@ def leg_argv(wrap, env, cmd, shown=False):
     return list(wrap or []) + [ENV_BIN, "-i"] + pairs + list(cmd)
 
 
+def new_log(logdir, name, stamp):
+    """(path, descriptor) of a new log for the leg `name` under `logdir`, created with O_CREAT, O_EXCL and O_NOFOLLOW,
+    and O_RDWR, so run_leg reads the log back through the same descriptor: <name>.<stamp>.log, or when anything is
+    already at that name, <name>.<stamp>.<8 random characters>.log, up to 100 names. Nothing already at a name is
+    opened, so a FIFO a leg planted where a later leg's log would go (the names are the leg's and the UTC second's) is
+    never opened for writing, which waits for a reader without end (the verify pass at PR 926's build head, its code
+    finding 1; before it the runner opened the name with open(log, "w")), and two setups of one leg in one second each
+    get a log of their own. OSError when no name could be made, which run_leg records as the leg's error."""
+    for i in range(100):
+        path = os.path.join(logdir, "%s.%s%s.log" % (name, stamp, "." + _random_tail() if i else ""))
+        try:
+            return path, os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NOCTTY, 0o666)
+        except FileExistsError:
+            continue
+    raise OSError(errno.EEXIST, "every name tried for the %s leg's log under %s is taken" % (name, logdir))
+
+
 def run_leg(tree, name, rec, wraps, ctx, logdir):
     """Run one owed leg and fill in its record. A glob that matched nothing, a set of tests it must also run that is
     not known (`blocked`), a cwd that does not exist or a command that cannot start leaves rc empty with the reason in
-    `error`: the leg is red, never run bare."""
+    `error`: the leg is red, never run bare. The log is a new file (new_log), and its summary and counts are read back
+    through the descriptor the runner created it with, after the leg and what it left running are gone, so what a leg
+    puts at the log's path (a FIFO, a symlink to /dev/zero, another file) is not what is read, and no read waits on it."""
     env, dropped, extra = leg_env(name, ctx)
     wrap = wraps.get(name, wraps.get("*"))
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -3826,40 +4131,48 @@ def run_leg(tree, name, rec, wraps, ctx, logdir):
         rec["error"] = "no directory %s in the tree" % rec.get("cwd")
     else:
         argv = leg_argv(wrap, env, rec["cmd"])
+        held = None
         try:
-            with open(log, "w") as out:
-                out.write("# leg: %s\n# cwd: %s\n# argv: %s\n" % (
-                    name, rec.get("cwd") or ".", " ".join(shlex.quote(a) for a in leg_argv(wrap, env, rec["cmd"], shown=True))))
-                out.flush()
-                # The wrap (or env itself) runs with the runner's environment; the leg gets exactly `env`. The leg is
-                # its own process group, so a stop reaches all of it (stop_leg). A stop signal the runner kept ignored
-                # (install_stop_handlers) is set back to its default action in the leg's process before it execs, so no
-                # leg inherits the runner's caller's ignore (the owner's build question 5).
-                p = subprocess.Popen(argv, cwd=cwd, env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=out,
-                                     stderr=subprocess.STDOUT, start_new_session=True,
-                                     preexec_fn=_default_kept_signals if _kept_ignored else None)
-                try:
-                    rc = wait_leg(p)
-                except BaseException:
-                    stop_leg(p)
-                    raise
-                if rc is None:
-                    rec["error"] = "its exit status was lost: something other than the runner reaped it"
-                else:
-                    rec["rc"] = rc
-            # Whatever the leg left running (a daemon a test started, a detached browser) is killed before the next leg.
-            rec["left_running"] = reap_descendants()
-        except OSError as e:
-            rec["error"] = "could not start: %s" % e
-        rec["summary"] = summarize_log(name, log)
-        if name in TEST_LEGS:
-            rec["tests"], rec["failed"] = count_tests(name, log)
+            try:
+                rec["log"], held = new_log(logdir, name, stamp)
+                with os.fdopen(held, "w", closefd=False) as out:
+                    out.write("# leg: %s\n# cwd: %s\n# argv: %s\n" % (
+                        name, rec.get("cwd") or ".", " ".join(shlex.quote(a) for a in leg_argv(wrap, env, rec["cmd"], shown=True))))
+                    out.flush()
+                    # The wrap (or env itself) runs with the runner's environment; the leg gets exactly `env`. The leg is
+                    # its own process group, so a stop reaches all of it (stop_leg). A stop signal the runner kept ignored
+                    # (install_stop_handlers) is set back to its default action in the leg's process before it execs, so
+                    # no leg inherits the runner's caller's ignore (the owner's build question 5).
+                    p = subprocess.Popen(argv, cwd=cwd, env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=out,
+                                         stderr=subprocess.STDOUT, start_new_session=True,
+                                         preexec_fn=_default_kept_signals if _kept_ignored else None)
+                    try:
+                        rc = wait_leg(p)
+                    except BaseException:
+                        stop_leg(p)
+                        raise
+                    if rc is None:
+                        rec["error"] = "its exit status was lost: something other than the runner reaped it"
+                    else:
+                        rec["rc"] = rc
+                # Whatever the leg left running (a daemon a test started, a detached browser) is killed before the next
+                # leg.
+                rec["left_running"] = reap_descendants()
+            except OSError as e:
+                rec["error"] = "could not start: %s" % e
+            rec["summary"] = summarize_log(name, held) if held is not None else None
+            if name in TEST_LEGS:
+                rec["tests"], rec["failed"] = count_tests(name, held) if held is not None else (None, None)
+        finally:
+            if held is not None:
+                os.close(held)
     rec["finished"] = now()
 
 
-def script_blob():
-    p = subprocess.run(["git", "hash-object", os.path.realpath(__file__)], env=_git_env(), text=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def script_blob(repo):
+    """The blob id of this script's file, `git hash-object` run in the batcher's repository (`repo`), as the run records
+    it; None when git fails."""
+    p = run_git(repo, "hash-object", os.path.realpath(__file__))
     return p.stdout.strip() if p.returncode == 0 else None
 
 
@@ -3891,15 +4204,15 @@ def parse_flakes(values, only):
 def cmd_run(args):
     # Before TMPDIR or the checkout exists, so every exit path removes both (A5).
     install_stop_handlers()
-    tree = os.path.realpath(args.tree or git(os.getcwd(), "rev-parse", "--show-toplevel"))
-    if git(tree, "rev-parse", "--is-inside-work-tree", check=False).stdout.strip() != "true":
-        raise Refused("%s is not a git working tree" % tree)
-    tree = git(tree, "rev-parse", "--show-toplevel")
+    # The batcher's repository, found once (find_repo: a .git git does not recognize is refused, never walked past) and
+    # named explicitly in every later git call; its common dir is read here, once, for the run (the 02:43Z ruling, item 1).
+    batcher = find_repo(args.tree or os.getcwd())
+    tree = batcher.work_tree
     # The batcher's shallow file, checked here, before any git call that parses commits, since git reads it first (the
     # closing check's item 1): one that is not a regular file refuses the run, naming it.
-    shallow_checked(tree)
-    sha = git(tree, "rev-parse", "HEAD")
-    branch = git(tree, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
+    shallow_checked(batcher)
+    sha = git(batcher, "rev-parse", "HEAD")
+    branch = git(batcher, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
     wraps = parse_wraps(args.wrap)
     only = list(dict.fromkeys(args.leg or []))
     for name in only:
@@ -3913,7 +4226,7 @@ def cmd_run(args):
         raise Refused("--flake names %s, which this --leg re-run does not run" % ", ".join(sorted(set(flakes) - set(only))))
     # The batcher's tree is read for its HEAD sha and its branch only: the legs run in a private checkout of the sha,
     # so uncommitted edits there are not swept, and the batcher is told so.
-    dirty = uncommitted_count(tree)
+    dirty = uncommitted_count(batcher)
     if dirty:
         print("sweep %s: %s has %d uncommitted edit%s (git status); they are not swept: the legs run in a private "
               "checkout of %s" % (short(sha), tree, dirty, "" if dirty == 1 else "s", short(sha)), flush=True)
@@ -3931,7 +4244,7 @@ def cmd_run(args):
         lock.close()
         raise Refused("a sweep of %s is already running (%s)" % (short(sha), lock_path))
     try:
-        return _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes)
+        return _run_locked(args, batcher, sha, branch, python, wraps, only, path, flakes)
     finally:
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
@@ -4009,8 +4322,9 @@ def _retire_if_changed(hold, sha):
             else "%s, so remove the venv by hand" % why), flush=True)
 
 
-def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None):
+def _run_locked(args, batcher, sha, branch, python, wraps, only, path, flakes=None):
     flakes = dict(flakes or {})
+    tree = batcher.work_tree
     logdir = os.path.join(sweeps_dir(), "logs", sha)
     data = load_history(path, sha, bool(only))
     history = read_history(data["runs"]) if data else None
@@ -4021,7 +4335,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
     if history and history["dead"]:
         raise Refused("no run at %s can pass: %s; fix it and sweep the new head" % (short(sha), history["dead"]))
     run = {"kind": "leg" if only else "full", "sha": sha, "branch": branch, "tree": tree, "started": now(), "finished": None,
-           "flakes": flakes, "runner": {"script_blob": script_blob(), "python": python, "python_version": "",
+           "flakes": flakes, "runner": {"script_blob": script_blob(batcher), "python": python, "python_version": "",
                                         "subreaper": _subreaper},
            "legs": {}, "verdict": "running", "red": [], "invalid": None}
     if not _subreaper:
@@ -4147,9 +4461,9 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         # The batcher's shallow file, read before the first leg: every job's checkout gets this snapshot, so a
         # shallow file a leg writes into the batcher's repository reaches no later job (the narrow landing delta's ruling 8);
         # after the last leg it is read again at the same path against this snapshot (shallow_moved).
-        shallow_file = shallow_path(tree)
-        shallow = shallow_snapshot(tree)
-        checkout, marker, create_s = make_checkout(tree, sha, shallow)
+        shallow_file = shallow_path(batcher)
+        shallow = shallow_snapshot(batcher)
+        checkout, marker, create_s = make_checkout(batcher, sha, shallow)
         _plant_for_tests(checkout)
         t0 = time.monotonic()
         entries = tree_entries(checkout, sha)
@@ -4255,109 +4569,124 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         run["runner"]["home_left"] = home_left_by_leg = {}
         data["runs"].append(run)
         write_result(path, data)
-        for gi, g in enumerate(groups):
-            grec = grecs[gi]
-            if gi:
-                # Round 2, decision 13: a fresh checkout for this group, verified against the sha's tree as the first one
-                # was. Something is already recorded, so one that cannot be made or is not the sha's tree (a leg that
-                # rewrote an object of the sha in the batcher's repository, whose objects the clone reads) makes the run
-                # invalid rather than refusing it.
-                try:
-                    checkout, marker, create_s = make_checkout(tree, sha, shallow)
-                    t0 = time.monotonic()
-                    faults = verify_checkout(checkout, sha, entries)
-                    if faults:
-                        raise Refused("it is not the sha's tree: %s" % describe_faults(faults))
-                    above = ancestor_hits(checkout)
-                    if above:
-                        raise Refused("it has %s in an ancestor directory" % ", ".join(above[:3]))
-                except Refused as e:
-                    run["invalid"] = "the fresh checkout for %s cannot be used (%s); the legs after it did not run" % (
-                        group_label(grec), e)
-                    _write_under_stop(path, data)
-                    break
-                before = git_state(checkout)
-                grec.update(path=checkout, create_s=create_s, verify_s=round(time.monotonic() - t0, 2))
-            for name in g["legs"]:
-                rec = run["legs"][name]
-                if name == g["setup_before"] and not (gi == 0 and early):
-                    # npm ci where this group's job runs it (leg_groups), after the run is recorded. A setup that does not
-                    # pass blocks the group's legs from this one on: each is marked blocked, naming it, with a finished
-                    # stamp, and all are written as soon as the setup's run_leg returns, before its re-read (block_rest, the
-                    # owner's build question 1), so a stop in that re-read keeps them, and the group ends there. A setup
-                    # that changes the checkout makes the run invalid, as the deps leg's re-read does; the legs it blocked,
-                    # if it also failed, are that invalid run's failures, which count.
-                    rest = g["legs"][g["legs"].index(name):]
-                    after = run_setup(checkout, before, grec, ignored_now(checkout, entries),
-                                      on_fail=lambda s, where=checkout, grec=grec, rest=rest: block_rest(where, grec, rest, s))
-                    setup = grec["setup"]
-                    if after:
-                        run["invalid"] = ("after the setup (npm ci) of %s the checkout is not the sha's tree: %s; the legs "
-                                          "after it did not run" % (group_label(grec), describe_faults(after)))
+        # The 02:43Z ruling, item 1(a): a git call during the run that does not end within GIT_BOUND (a later job's
+        # checkout, which the except Refused below records as that checkout's, the reads of the ignored files, the
+        # re-read after a leg or a setup) raises GitBound, killed: the run is then invalid, naming the call and the step
+        # it was made in (stage), and the legs after it do not run.
+        stage = ("the run", "the legs after it did not run")
+        try:
+            for gi, g in enumerate(groups):
+                grec = grecs[gi]
+                if gi:
+                    # Round 2, decision 13: a fresh checkout for this group, verified against the sha's tree as the first one
+                    # was. Something is already recorded, so one that cannot be made or is not the sha's tree (a leg that
+                    # rewrote an object of the sha in the batcher's repository, whose objects the clone reads) makes the run
+                    # invalid rather than refusing it.
+                    try:
+                        checkout, marker, create_s = make_checkout(batcher, sha, shallow)
+                        t0 = time.monotonic()
+                        faults = verify_checkout(checkout, sha, entries)
+                        if faults:
+                            raise Refused("it is not the sha's tree: %s" % describe_faults(faults))
+                        above = ancestor_hits(checkout)
+                        if above:
+                            raise Refused("it has %s in an ancestor directory" % ", ".join(above[:3]))
+                    except Refused as e:
+                        run["invalid"] = "the fresh checkout for %s cannot be used (%s); the legs after it did not run" % (
+                            group_label(grec), e)
                         _write_under_stop(path, data)
                         break
-                    if not passed("deps", setup):
+                    before = git_state(checkout)
+                    grec.update(path=checkout, create_s=create_s, verify_s=round(time.monotonic() - t0, 2))
+                for name in g["legs"]:
+                    rec = run["legs"][name]
+                    if name == g["setup_before"] and not (gi == 0 and early):
+                        # npm ci where this group's job runs it (leg_groups), after the run is recorded. A setup that does not
+                        # pass blocks the group's legs from this one on: each is marked blocked, naming it, with a finished
+                        # stamp, and all are written as soon as the setup's run_leg returns, before its re-read (block_rest, the
+                        # owner's build question 1), so a stop in that re-read keeps them, and the group ends there. A setup
+                        # that changes the checkout makes the run invalid, as the deps leg's re-read does; the legs it blocked,
+                        # if it also failed, are that invalid run's failures, which count.
+                        rest = g["legs"][g["legs"].index(name):]
+                        stage = ("the setup (npm ci) of %s, its reads of the checkout" % group_label(grec),
+                                 "the legs after it did not run")
+                        after = run_setup(checkout, before, grec, ignored_now(checkout, entries),
+                                          on_fail=lambda s, where=checkout, grec=grec, rest=rest: block_rest(where, grec, rest, s))
+                        setup = grec["setup"]
+                        if after:
+                            run["invalid"] = ("after the setup (npm ci) of %s the checkout is not the sha's tree: %s; the legs "
+                                              "after it did not run" % (group_label(grec), describe_faults(after)))
+                            _write_under_stop(path, data)
+                            break
+                        if not passed("deps", setup):
+                            break
+                    if name == SERVED_LEG:
+                        also = plan_served(rec)
+                        if also is not None:
+                            print("sweep %s: served also runs %d test%s the pytest leg skipped for want of the deps"
+                                  % (short(sha), len(also), "" if len(also) == 1 else "s"), flush=True)
+                    # before deps, the ignored files the legs before it in its checkout left, which its re-read excuses as long
+                    # as it leaves them (none in a fresh checkout, where the deps leg is first)
+                    if name == "deps":
+                        stage = ("before the deps leg, the read of the ignored files in its checkout",
+                                 "the deps leg and the legs after it did not run")
+                    known = ignored_now(checkout, entries) if name == "deps" else None
+                    print("sweep %s: %s ..." % (short(sha), name), flush=True)
+                    # Round 2, Class B: each leg runs in a fresh TMPDIR of its own, with its private HOME and state root under
+                    # it (leg_scratch), removed when the leg ends, so nothing it leaves there reaches a later leg.
+                    lctx = scratch()
+                    run_leg(checkout, name, rec, wraps, lctx, logdir)
+                    if not passed(name, rec):
+                        # Round 2, decision 14 (A6): a leg that did not pass is on disk as soon as run_leg returns, before
+                        # deps_skipped, the re-read of the checkout and the venv's re-read below, so a stop during any of them
+                        # keeps the failure and the next run needs --flake naming it; an invalid mark after the re-read
+                        # rewrites the record. A pass is written only after its re-read, which could void it; and read_history
+                        # counts a stopped run's finished failures but none of its passes (the owner's build question 2), since
+                        # a later leg's re-read could still void them. A stop inside this write finishes it before the stop is
+                        # raised (_write_under_stop), so the failure
+                        # is on disk even then.
+                        _write_under_stop(path, data)
+                    left = scratch_end(lctx)
+                    if left:
+                        home_left_by_leg[name] = left
+                    if name == "pytest":
+                        unselected = []
+                        ids, why = deps_skipped(rec.get("log"), served_files, unselected)
+                        rec["deps_skipped"] = ({"tests": ids, "count": len(ids), "rule": DEPS_SKIP.pattern, "unselected": unselected}
+                                               if why is None else {"error": why})
+                    print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
+                    stage = ("the re-read after the %s leg" % name, "the legs after it did not run")
+                    changed = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS if name == "deps" else None,
+                                               known=known)
+                    # A4 reads the pytest and served legs' environments too: a leg that changed its venv changed what it, or
+                    # another run's leg using the same venv, ran in, as a leg that changed the checkout changed the tree later
+                    # legs run on. The run ends here, and on its way out, after the reap, the runner removes the venv's marker
+                    # (VenvHold.retire), so the next run that uses it builds it again whatever the leg wrote into the marker.
+                    own = {"pytest": hold, SERVED_LEG: served_hold}.get(name)
+                    moved = own.changes() if own is not None else []
+                    if changed or moved:
+                        # A4, the runner's producer of invalid: a leg changed the checkout, so later legs would not run on the
+                        # sha's tree, or its own environment, so it may not have run in what its build installed.
+                        parts = []
+                        if changed:
+                            parts.append("after the %s leg the checkout is not the sha's tree: %s" % (name, describe_faults(changed)))
+                        if moved:
+                            parts.append("after the %s leg its environment %s is not the tree its build wrote (%d path%s: %s%s); "
+                                         "the next run that uses it builds it again" % (name, own.venv, len(moved), "" if len(moved) == 1
+                                                                                         else "s", ", ".join(moved[:3]),
+                                                                                         ", ..." if len(moved) > 3 else ""))
+                        run["invalid"] = "; ".join(parts) + "; the legs after it did not run"
+                        _write_under_stop(path, data)
                         break
-                if name == SERVED_LEG:
-                    also = plan_served(rec)
-                    if also is not None:
-                        print("sweep %s: served also runs %d test%s the pytest leg skipped for want of the deps"
-                              % (short(sha), len(also), "" if len(also) == 1 else "s"), flush=True)
-                # before deps, the ignored files the legs before it in its checkout left, which its re-read excuses as long
-                # as it leaves them (none in a fresh checkout, where the deps leg is first)
-                known = ignored_now(checkout, entries) if name == "deps" else None
-                print("sweep %s: %s ..." % (short(sha), name), flush=True)
-                # Round 2, Class B: each leg runs in a fresh TMPDIR of its own, with its private HOME and state root under
-                # it (leg_scratch), removed when the leg ends, so nothing it leaves there reaches a later leg.
-                lctx = scratch()
-                run_leg(checkout, name, rec, wraps, lctx, logdir)
-                if not passed(name, rec):
-                    # Round 2, decision 14 (A6): a leg that did not pass is on disk as soon as run_leg returns, before
-                    # deps_skipped, the re-read of the checkout and the venv's re-read below, so a stop during any of them
-                    # keeps the failure and the next run needs --flake naming it; an invalid mark after the re-read
-                    # rewrites the record. A pass is written only after its re-read, which could void it; and read_history
-                    # counts a stopped run's finished failures but none of its passes (the owner's build question 2), since
-                    # a later leg's re-read could still void them. A stop inside this write finishes it before the stop is
-                    # raised (_write_under_stop), so the failure
-                    # is on disk even then.
-                    _write_under_stop(path, data)
-                left = scratch_end(lctx)
-                if left:
-                    home_left_by_leg[name] = left
-                if name == "pytest":
-                    unselected = []
-                    ids, why = deps_skipped(rec.get("log"), served_files, unselected)
-                    rec["deps_skipped"] = ({"tests": ids, "count": len(ids), "rule": DEPS_SKIP.pattern, "unselected": unselected}
-                                           if why is None else {"error": why})
-                print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
-                changed = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS if name == "deps" else None,
-                                           known=known)
-                # A4 reads the pytest and served legs' environments too: a leg that changed its venv changed what it, or
-                # another run's leg using the same venv, ran in, as a leg that changed the checkout changed the tree later
-                # legs run on. The run ends here, and on its way out, after the reap, the runner removes the venv's marker
-                # (VenvHold.retire), so the next run that uses it builds it again whatever the leg wrote into the marker.
-                own = {"pytest": hold, SERVED_LEG: served_hold}.get(name)
-                moved = own.changes() if own is not None else []
-                if changed or moved:
-                    # A4, the runner's producer of invalid: a leg changed the checkout, so later legs would not run on the
-                    # sha's tree, or its own environment, so it may not have run in what its build installed.
-                    parts = []
-                    if changed:
-                        parts.append("after the %s leg the checkout is not the sha's tree: %s" % (name, describe_faults(changed)))
-                    if moved:
-                        parts.append("after the %s leg its environment %s is not the tree its build wrote (%d path%s: %s%s); "
-                                     "the next run that uses it builds it again" % (name, own.venv, len(moved), "" if len(moved) == 1
-                                                                                     else "s", ", ".join(moved[:3]),
-                                                                                     ", ..." if len(moved) > 3 else ""))
-                    run["invalid"] = "; ".join(parts) + "; the legs after it did not run"
-                    _write_under_stop(path, data)
+                    write_result(path, data)
+                if run["invalid"]:
                     break
-                write_result(path, data)
-            if run["invalid"]:
-                break
-            # the group's checkout goes when its legs end; the next group starts from a fresh one
-            remove_checkout(checkout, marker)
-            checkout = marker = None
+                # the group's checkout goes when its legs end; the next group starts from a fresh one
+                remove_checkout(checkout, marker)
+                checkout = marker = None
+        except GitBound as e:
+            run["invalid"] = "%s: %s; %s" % (stage[0], e, stage[1])
+            _write_under_stop(path, data)
         # The owner's question 2 after the merge of main: the batcher's shallow file read again after the last leg (every
         # leg's own reap done), and a file that is not the snapshot read before the first leg makes the run invalid, naming
         # it (shallow_moved), beside any invalid mark a leg's re-read already wrote: no job of this run read it, but the
@@ -4404,20 +4733,21 @@ def cmd_check(args):
     """What verify reads for the batch head, and plan and --repin for a member's head: the reader's case, the branch
     told apart from the sha (a result for the tree's branch at another sha reads stale, not missing), then the excuse
     rule against the sha's tree."""
+    repo = find_repo(args.tree or os.getcwd())
     tree = os.path.realpath(args.tree or os.getcwd())
     # Before the first git call that parses a commit, as in cmd_run: rev-parse's ^{commit} reads the shallow file, so
     # one that is not a regular file refuses here, naming it, instead of waiting (the closing check's verify, code 2).
-    shallow_checked(tree)
-    sha = git(tree, "rev-parse", "--verify", (args.sha or "HEAD") + "^{commit}")
+    shallow_checked(repo)
+    sha = git(repo, "rev-parse", "--verify", (args.sha or "HEAD") + "^{commit}")
     subject = "HEAD" if not args.sha or args.sha == "HEAD" else sha[:10]
     branch = args.branch
-    if branch is None and sha == git(tree, "rev-parse", "--verify", "HEAD^{commit}"):
+    if branch is None and sha == git(repo, "rev-parse", "--verify", "HEAD^{commit}"):
         # verify names the batch branch and plan the member's head branch; for the tree's own HEAD that is its branch
-        branch = git(tree, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
+        branch = git(repo, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
     a = assess(sha, subject=subject, branch=branch, tree_hint=tree)
     line, ok = a["line"], a["case"] == "pass"
     if ok:
-        fault = excuse_contradiction(tree, a["result"], sha, subject=subject)
+        fault = excuse_contradiction(repo, a["result"], sha, subject=subject)
         if fault:
             line, ok = fault, False
     print(("ok   " if ok else "FAIL ") + line)
@@ -4488,7 +4818,9 @@ def main(argv=None):
                                    "reads it (and plan and assemble --repin for a member's head): pass, or missing, stale, "
                                    "unfinished, red, invalid, incomplete, unreadable; a pass that marks a leg not owed for "
                                    "having no vscode-extension/package.json while the sha's tree holds one reads invalid. "
-                                   "Exit 0 on a pass, 1 otherwise.")
+                                   "Exit 0 on a pass, 1 otherwise, 2 refused, naming why (among the reasons: a tree that "
+                                   "is not a git working tree git recognizes, a SHA that names no commit there, a shallow "
+                                   "file that cannot be read, a git call that did not end within GIT_BOUND).")
     p.add_argument("sha", nargs="?", metavar="SHA", help="the commit (default: HEAD of --tree)")
     p.add_argument("--tree", metavar="DIR", help="the repository to resolve SHA in (default: the current directory)")
     p.add_argument("--branch", metavar="BR", help="tell a missing result apart from a stale one recorded for this branch "

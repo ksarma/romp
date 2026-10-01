@@ -14,6 +14,19 @@ and the pytest interpreter (one script, told apart by its name) that record thei
 variable names and every file they can see in their checkout, and exit with the code the test sets. Each fake
 carries its world's control and log paths in its own text, since no variable a test sets is sure to reach a
 leg. The real suite never runs. Synthetic data only.
+
+This round's pins' off-Linux branches (the pins of the 02:43Z ruling and the closing check wf_bbe8b843-8bf, and of the
+verify pass after them) have not run on macOS, since no macOS run has reached this module. ci.yml's macOS Python
+cells run the whole suite in one process (-n 0), in collection order, and end at their 60-minute cap before it: in run
+36807078533 (a dispatch of 2026-10-01) neither macOS cell got past 56% of the suite (the 3.10 cell was cancelled at the
+cap, and the 3.13 cell's run ended when the per-test timeout stopped it on a test that hung), while this module's tests
+come at about 89% of it; and ci.yml has no input that runs one module alone. The branches not run there: the skips
+ZERO_SKIP names and zero_target's regular-file stand-in; the count of open descriptors in /dev/fd where /proc/self/fd is
+absent (test_a_file_swapped_in_after_the_check_is_refused_by_the_read_itself); and, where /proc is absent,
+stop_in_the_re_read's parent check, which then checks nothing, and the return in
+test_a_git_the_runner_starts_is_killed_with_its_process_group_at_the_bound that skips its check that the killed git and
+its child are gone, the skip of test_the_watchdog_kills_what_the_runner_started_in_a_session_of_its_own, and kill_tree's
+kill of the watched group alone.
 """
 import ast
 import fcntl
@@ -385,19 +398,29 @@ elif act == "shallow-gone":                      # the BATCHER's shallow file re
         common = os.path.dirname(fh.read().split("\n")[0].rstrip("/"))
     os.remove(os.path.join(common, "shallow"))
 elif act == "special":                           # a file the runner reads made a FIFO or a symlink to /dev/zero, as ctl's
-    # special says: "where" is "shallow" (the BATCHER's shallow file, found from the clone) or a path in the clone's .git,
-    # "kind" is "fifo", "zero" or "file" (a regular file, in place of a directory there too), and "leak" also leaves an
-    # untracked file, so the re-read after the leg runs git check-ignore
+    # special says: "where" is "shallow" (the BATCHER's shallow file, found from the clone), "batcher:<path>" (a path in
+    # the BATCHER's common dir, found the same way), "tree:<path>" (a path in the clone's work tree) or a path in the
+    # clone's .git, "kind" is "fifo", "zero", "file" (a regular file, in place of a directory there too), "link" (a
+    # symlink to a regular file, <path>.real, holding the bytes the file held, or where there was none the clone's HEAD
+    # sha on a line, a shallow line naming the sha), "fifolink" (a symlink to a FIFO, <path>.fifo) or "dir" (a
+    # directory), and "leak" also leaves an untracked file, so the re-read after the leg runs git check-ignore
     sp = ctl["special"]
-    if sp["where"] == "shallow":
+    if sp["where"] == "shallow" or sp["where"].startswith("batcher:"):
         with open(os.path.join(root, ".git", "objects", "info", "alternates")) as fh:
-            target = os.path.join(os.path.dirname(fh.read().split("\n")[0].rstrip("/")), "shallow")
+            common = os.path.dirname(fh.read().split("\n")[0].rstrip("/"))
+        target = os.path.join(common, "shallow" if sp["where"] == "shallow" else sp["where"][len("batcher:"):])
+    elif sp["where"].startswith("tree:"):
+        target = os.path.join(root, sp["where"][len("tree:"):])
     else:
         target = os.path.join(root, ".git", sp["where"])
     if sp.get("leak"):
         with open(os.path.join(root, "leaked.txt"), "w") as f:
             f.write("a test that wrote into the tree\n")
     os.makedirs(os.path.dirname(target), exist_ok=True)
+    held = None
+    if sp["kind"] == "link" and os.path.isfile(target) and not os.path.islink(target):
+        with open(target, "rb") as fh:
+            held = fh.read()
     if os.path.isdir(target) and not os.path.islink(target):
         shutil.rmtree(target)
     elif os.path.lexists(target):
@@ -407,8 +430,97 @@ elif act == "special":                           # a file the runner reads made 
     elif sp["kind"] == "file":
         with open(target, "w") as f:
             f.write("planted\n")
+    elif sp["kind"] == "link":
+        if held is None:
+            held = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], stdout=subprocess.PIPE, check=True).stdout
+        with open(target + ".real", "wb") as f:
+            f.write(held)
+        os.symlink(target + ".real", target)
+    elif sp["kind"] == "fifolink":
+        os.mkfifo(target + ".fifo")
+        os.symlink(target + ".fifo", target)
+    elif sp["kind"] == "dir":
+        os.makedirs(target)
     else:
         os.symlink("/dev/zero", target)
+elif act == "ownfiles":                          # a file of the runner's own, under its state dir or beside the venv, made
+    # a FIFO, a symlink to /dev/zero or another file, as ctl's ownfiles says: "log" (this leg's own log, the one file
+    # under ctl's "logs" directory whose name starts with the leg's; "kind" fifo, zero, or file, which holds a summary
+    # line no leg printed), "nextlog" (a FIFO at every name the log of a leg or setup in ctl's "legs" would take in the
+    # next 90 seconds), "venvlog" (a FIFO at the venv's build log, beside it, and a file left in the venv, so the run is
+    # invalid and the next run builds the venv again), "marker" (a FIFO at the venv's build marker), "result" (a FIFO at
+    # the result of the "sha" ctl's ownfiles names, under ctl's "sweeps" directory), "checkout-marker" (a FIFO at a
+    # checkout marker with no checkout) or "lock" (a marker naming that sha with no checkout, and a FIFO at its lock)
+    own = ctl["ownfiles"]
+    what = own["what"]
+
+    def put(path, kind):
+        if os.path.lexists(path):
+            os.remove(path)
+        if kind == "fifo":
+            os.mkfifo(path)
+        elif kind == "zero":
+            os.symlink("/dev/zero", path)
+        else:
+            with open(path, "w") as f:
+                f.write("99 passed in 0.01s\n")
+    if what == "log":
+        [mine] = [n for n in os.listdir(ctl["logs"]) if n.startswith(leg + ".")]
+        put(os.path.join(ctl["logs"], mine), own["kind"])
+    elif what == "nextlog":
+        import datetime
+        start = datetime.datetime.now(datetime.timezone.utc)
+        for s in range(90):
+            stamp = (start + datetime.timedelta(seconds=s)).strftime("%%Y%%m%%dT%%H%%M%%SZ")
+            for n in own["legs"]:
+                p = os.path.join(ctl["logs"], "%%s.%%s.log" %% (n, stamp))
+                if not os.path.lexists(p):
+                    os.mkfifo(p)
+    elif what == "venvlog":
+        put(venv_root + ".log", "fifo")
+        site = os.path.join(venv_root, "lib", "python3.99", "site-packages")
+        os.makedirs(site, exist_ok=True)
+        with open(os.path.join(site, "zz-left-by-a-test.pth"), "w") as f:
+            f.write("import os\n")
+    elif what == "marker":
+        put(os.path.join(venv_root, "sweep-sdk.json"), "fifo")
+    elif what == "result":
+        put(os.path.join(ctl["sweeps"], own["sha"] + ".json"), "fifo")
+    elif what == "checkout-marker":
+        put(os.path.join(ctl["sweeps"], "trees", "0123456789ab-planted.sha"), "fifo")
+    elif what == "lock":
+        with open(os.path.join(ctl["sweeps"], "trees", own["sha"][:12] + "-planted.sha"), "w") as f:
+            f.write(own["sha"] + "\n")
+        put(os.path.join(ctl["sweeps"], own["sha"] + ".lock"), "fifo")
+elif act == "gitbreak":                          # an untracked conftest.py left in the clone, then its .git made one git
+    # does not recognize, as ctl's gitbreak says: "refs" (refs/ removed), "objects" (objects/ a file), "HEAD" (removed),
+    # ".git" (removed) or "parent" (HEAD removed, and the checkout's parent directory given a .git that git takes for a
+    # repository, objects/ and refs/ in it, whose HEAD is a FIFO)
+    with open(os.path.join(root, "conftest.py"), "w") as f:
+        f.write("collect_ignore = ['tests']\n")
+    how, g = ctl["gitbreak"], os.path.join(root, ".git")
+    if how == "refs":
+        shutil.rmtree(os.path.join(g, "refs"))
+    elif how == "objects":
+        shutil.rmtree(os.path.join(g, "objects"))
+        open(os.path.join(g, "objects"), "w").close()
+    elif how in ("HEAD", "parent"):
+        os.remove(os.path.join(g, "HEAD"))
+    else:
+        shutil.rmtree(g)
+    if how == "parent":
+        up = os.path.join(os.path.dirname(root), ".git")
+        for d in ("objects", "refs"):
+            os.makedirs(os.path.join(up, d), exist_ok=True)
+        os.mkfifo(os.path.join(up, "HEAD"))
+elif act == "include":                           # the clone's config made to include a FIFO in its .git, and an
+    # untracked file left, so the re-read's git check-ignore reads the config, and through it the FIFO
+    fifo = os.path.join(root, ".git", "included")
+    os.mkfifo(fifo)
+    with open(os.path.join(root, ".git", "config"), "a") as f:
+        f.write("[include]\n\tpath = %%s\n" %% fifo)
+    with open(os.path.join(root, "leaked.txt"), "w") as f:
+        f.write("a test that wrote into the tree\n")
 elif act == "gitfile":                           # the clone's .git directory replaced by a .git file naming a directory
     # in the checkout whose HEAD is a FIFO, and an untracked file left, so a git that the re-read starts there, and that
     # follows the .git file, waits on that FIFO
@@ -1738,6 +1850,53 @@ def _alive(pid):
         return False
 
 
+def _descendants(pid):
+    """Every descendant of `pid` alive now, read from /proc/<pid>/task/*/children and down (Linux); [] where /proc has no
+    such file."""
+    found, todo = [], [pid]
+    while todo:
+        p = todo.pop()
+        try:
+            tasks = os.listdir("/proc/%d/task" % p)
+        except OSError:
+            continue
+        for t in tasks:
+            try:
+                with open("/proc/%d/task/%s/children" % (p, t)) as f:
+                    kids = [int(x) for x in f.read().split()]
+            except (OSError, ValueError):
+                continue
+            for k in kids:
+                if k not in found:
+                    found.append(k)
+                    todo.append(k)
+    return found
+
+
+def kill_tree(pid):
+    """SIGKILL the watched process `pid` (a runner the watchdog gave up on), its process group, and every descendant of
+    it with that descendant's own process group, the descendants read before any kill: each git the runner starts is in
+    a session of its own, so killing the runner's group alone left those waiting on a FIFO under a removed temp
+    directory, reparented to the user's service manager (the verify pass at PR 926's build head, its code finding 4).
+    The test's own process group is never signalled, and off Linux, with no /proc to read, the runner's group alone is."""
+    own = os.getpgrp()
+    for target in [pid] + _descendants(pid):
+        try:
+            group = os.getpgid(target)
+        except OSError:
+            continue
+        if group > 1 and group != own:
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except OSError:
+                pass
+        if target != os.getpid():
+            try:
+                os.kill(target, signal.SIGKILL)
+            except OSError:
+                pass
+
+
 # Starts a program with SIGHUP, SIGINT and SIGTERM at their default action, or ignored for the numbers in its first
 # argument (a comma-separated list), then execs the rest of its arguments in its own process, so the pid is the program's.
 SIGNAL_SHIM = ("import os, signal, sys\n"
@@ -1771,6 +1930,20 @@ CAP_SHIM = ("import os, resource, sys\n"
 # file type, so a read that follows the symlink fails on its value. On Linux, test_the_address_cap_is_live holds the cap
 # to its word.
 ZERO_CAPPED = sys.platform.startswith("linux")
+# Runs scripts/sweep.py's main (argv[3], then its argv) with GIT_BOUND at argv[1] seconds, and with argv[2] "lstat-passes"
+# its cannot_read passing every file, as a file swapped in after the runner's own lstat and before git's open would: the
+# 02:43Z ruling's pins (GitBoundPins), whose planted files a git waits on, end at that bound rather than 120 s.
+BOUND_DRIVER = r"""
+import importlib.util, sys
+bound, mode, path, argv = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+spec = importlib.util.spec_from_file_location("sweep_runner", path)
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+sweep.GIT_BOUND = int(bound)
+if mode == "lstat-passes":
+    sweep.cannot_read = lambda path: None
+sys.exit(sweep.main(argv))
+"""
 ZERO_SKIP = "a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is enforced: Linux"
 
 
@@ -2436,55 +2609,115 @@ class Checkout(_Base):
         self.assertTrue(p.stdout.startswith("refused: "), "a child under the address cap mapped twice the cap: the cap is not "
                                                           "live (%s)" % (p.stdout + p.stderr).strip())
 
-    def run_bounded(self, w, *extra, bound=90, argv=None):
+    def run_bounded(self, w, *extra, bound=90, argv=None, git_bound=None, lstat_passes=False, env=None):
         """The runner over `w` (with `extra`; or `argv`, a whole subcommand line, such as check's) under a watchdog, for the
         pins whose regression is a wait or a read without end (the closing check's items 1 and 2): it runs in a process
         group of its own, with its address space capped (CAP_SHIM), and has `bound` seconds to end. One still running
-        then (waiting on a FIFO, in its own open() or in a git it started) has its whole group killed and fails the case,
-        saying so, and never hangs it; one that reads a symlink to /dev/zero without end stops at the cap with a
+        then (waiting on a FIFO, in its own open() or in a git it started) has its whole group killed, and each of its
+        descendants with its own group (kill_tree), and fails the case, saying so, and never hangs it, and no git it
+        started is left running; one that reads a symlink to /dev/zero without end stops at the cap with a
         MemoryError (exit 1), and never takes the machine's memory: on Linux, the only place such a symlink is planted
-        (ZERO_CAPPED). pytest's --timeout is the outer bound. Returns (rc, stdout, stderr)."""
+        (ZERO_CAPPED). pytest's --timeout is the outer bound. With `git_bound` the runner is BOUND_DRIVER, its GIT_BOUND
+        that many seconds (and with `lstat_passes` its cannot_read passing every file). `env` replaces w.env. Returns (rc,
+        stdout, stderr)."""
         argv = argv or ["run", "--tree", w.tree, "--python", w.python, "--workers", "2", *extra]
-        proc = subprocess.Popen([sys.executable, "-c", CAP_SHIM, str(ADDRESS_CAP), sys.executable, str(SWEEP), *argv],
-                                env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
-                                start_new_session=True)
+        runner = [str(SWEEP)] if git_bound is None else ["-c", BOUND_DRIVER, str(git_bound), "lstat-passes" if lstat_passes
+                                                         else "plain", str(SWEEP)]
+        proc = subprocess.Popen([sys.executable, "-c", CAP_SHIM, str(ADDRESS_CAP), sys.executable, *runner, *argv],
+                                env=env or w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
 
-        def kill_group():
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-        self.addCleanup(lambda: proc.poll() is None and kill_group())
+        # kill_tree: the runner's group and each of its descendants with its own group, so no git it started in a
+        # session of its own outlives the case (the verify pass at PR 926's build head, its code finding 4)
+        self.addCleanup(lambda: proc.poll() is None and kill_tree(proc.pid))
         try:
             out, err = proc.communicate(timeout=bound)
         except subprocess.TimeoutExpired:
-            kill_group()
+            kill_tree(proc.pid)
             out, err = proc.communicate()
             self.fail("the runner was still running after %d s, waiting without end on a file it, or a git it started, "
                       "opened:\n%s%s" % (bound, out, err))
         return proc.returncode, out, err
 
+    # The kinds of file the shallow and git state file pins plant where a regular file belongs, and the type each is
+    # named by: a FIFO, a symlink to /dev/zero, a symlink to a regular file (whose target a read that follows the symlink
+    # reads without fault, so os.stat in place of os.lstat shows in what the runner then does, not only in the type word)
+    # and a directory (the closing check wf_bbe8b843-8bf, its second low).
+    SPECIAL_KINDS = (("fifo", "a FIFO"), ("zero", "a symlink"), ("link", "a symlink"), ("dir", "a directory"))
+
+    # The one git call run and check make before their check of the shallow file: find_repo's discovery.
+    DISCOVERY_CALL = "rev-parse --path-format=absolute --show-toplevel --absolute-git-dir --git-common-dir"
+
+    @staticmethod
+    def logging_git(w):
+        """(env, read): w.env with a git first on PATH that appends each call's argv, joined by spaces, to a log in w's
+        temp dir and runs the real git; read() returns the calls logged so far. The log's path and the real git reach it
+        in variables whose names do not start with GIT_, which the runner's git environment drops."""
+        d = os.path.join(w.tmp, "logging-git")
+        os.makedirs(d, exist_ok=True)
+        log = os.path.join(d, "calls.log")
+        with open(os.path.join(d, "git"), "w") as f:
+            f.write('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$LOGGED_GIT_CALLS"\nexec "$LOGGED_GIT_REAL" "$@"\n')
+        os.chmod(os.path.join(d, "git"), 0o755)
+        env = dict(w.env, PATH=d + os.pathsep + w.env["PATH"], LOGGED_GIT_CALLS=log,
+                   LOGGED_GIT_REAL=shutil.which("git", path=w.env["PATH"]))
+
+        def read():
+            if not os.path.exists(log):
+                return []
+            with open(log) as f:
+                return f.read().splitlines()
+        return env, read
+
+    @staticmethod
+    def plant_special(path, kind, held):
+        """Make `path` (absent) `kind` of SPECIAL_KINDS; "link" points at <path>.real, a regular file holding `held`. Returns
+        a cleanup that removes it, whatever its kind."""
+        if kind == "fifo":
+            os.mkfifo(path)
+        elif kind == "zero":
+            os.symlink("/dev/zero", path)
+        elif kind == "link":
+            with open(path + ".real", "wb") as f:
+                f.write(held)
+            os.symlink(path + ".real", path)
+        else:
+            os.makedirs(path)
+        return lambda: shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else (
+            os.path.lexists(path) and os.remove(path))
+
     def test_a_shallow_file_that_is_not_a_regular_file_refuses_the_run_before_any_git_reads_it(self):
-        """The closing check's item 1: the batcher's shallow file is a FIFO, or a symlink to /dev/zero, when the run
-        starts. The runner checks it with os.lstat at the top of its run, before any git call that parses commits, and
-        refuses the run: exit 2, naming the repository, the file and its type, no leg run, nothing recorded, no checkout
-        left, and no wait. Before, git read the file first: with the FIFO, uncommitted_count's git status waited without
-        end, before the per-sha lock and before the snapshot (this case then fails at its watchdog); with the symlink, git
-        failed, and the snapshot then read /dev/zero without end (a MemoryError at the case's address cap, exit 1)."""
-        for kind, what in (("fifo", "a FIFO"), ("zero", "a symlink")):
-            with self.subTest(kind=what):
+        """The closing check's item 1: the batcher's shallow file is a FIFO, a symlink to /dev/zero, a symlink to a
+        regular file naming the head commit, or a directory, when the run starts, and the batcher's tree holds an
+        uncommitted edit. The runner checks it with os.lstat at the top of its run, before any git call that parses
+        commits, and refuses the run: exit 2, naming the repository, the file and its type, no leg run, nothing recorded,
+        no checkout left, no wait, nothing printed (the notice of the uncommitted edit comes from git status, which reads
+        the shallow file and comes after the check), and no git call but find_repo's discovery made, as a git first on
+        PATH logs them (logging_git). Before, git read the file first: with the FIFO,
+        uncommitted_count's git status waited without end, before the per-sha lock and before the snapshot (this case then
+        fails at its watchdog); with the /dev/zero symlink, git failed, and the snapshot then read /dev/zero without end (a
+        MemoryError at the case's address cap, exit 1). With os.stat in place of os.lstat the symlink to a regular file
+        passes the check, git status reads through it and prints the notice, and the snapshot's read refuses later; and
+        with the check moved after git status, every kind is refused after git calls that parse commits (the closing
+        check wf_bbe8b843-8bf, its second low)."""
+        for kind, what in self.SPECIAL_KINDS:
+            with self.subTest(kind=kind):
                 if kind == "zero" and not ZERO_CAPPED:
                     self.skipTest(ZERO_SKIP)
                 w = World()
                 self.addCleanup(w.close)
                 tree = os.path.realpath(w.tree)
                 path = os.path.join(tree, ".git", "shallow")
-                os.mkfifo(path) if kind == "fifo" else os.symlink("/dev/zero", path)
-                self.addCleanup(lambda path=path: os.path.lexists(path) and os.remove(path))
-                rc, out, err = self.run_bounded(w)
+                self.addCleanup(self.plant_special(path, kind, (w.head() + "\n").encode()))
+                with open(os.path.join(tree, "notes-draft.txt"), "w") as f:
+                    f.write("an edit the batcher has not committed\n")
+                env, calls = self.logging_git(w)
+                rc, out, err = self.run_bounded(w, env=env)
                 self.assertEqual(rc, 2, out + err)
                 self.assertIn("the shallow file of the repository at %s cannot be read (%s: %s, not a regular file)"
                               % (tree, path, what), err)
+                self.assertEqual(out, "", "refused before git status: no notice of the uncommitted edit")
+                self.assertEqual(calls(), [self.DISCOVERY_CALL], "refused before any git call but find_repo's")
                 self.assertEqual(w.calls(), [], "no leg ran")
                 self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
                 trees = os.path.join(w.xdg, "romp", "sweeps", "trees")
@@ -2492,12 +2725,15 @@ class Checkout(_Base):
 
     def test_check_refuses_a_shallow_file_that_is_not_a_regular_file_instead_of_waiting(self):
         """The closing check's verify, code finding 2: `sweep.py check`, the read docs/batching.md gives a member, after a
-        passing run, with the batcher's shallow file then made a FIFO, or a symlink to /dev/zero. check reads the file
-        with os.lstat before its first git call that parses a commit and refuses, exit 2, naming the repository, the file
-        and its type, with no wait. Before, its rev-parse of the commit opened the FIFO and waited without end (this case
-        then fails at its watchdog)."""
-        for kind, what in (("fifo", "a FIFO"), ("zero", "a symlink")):
-            with self.subTest(kind=what):
+        passing run, with the batcher's shallow file then made a FIFO, a symlink to /dev/zero, a symlink to a regular file
+        naming the head commit, or a directory. check reads the file with os.lstat before its first git call that parses
+        a commit and refuses, exit 2, naming the repository, the file and its type, with no wait, no verdict, and no git
+        call but find_repo's discovery made (logging_git). Before,
+        its rev-parse of the commit opened the FIFO and waited without end (this case then fails at its watchdog). With
+        os.stat in place of os.lstat the symlink to a regular file passes, git reads through it, and check prints the
+        pass with exit 0 (the closing check wf_bbe8b843-8bf, its second low)."""
+        for kind, what in self.SPECIAL_KINDS:
+            with self.subTest(kind=kind):
                 if kind == "zero" and not ZERO_CAPPED:
                     self.skipTest(ZERO_SKIP)
                 w = World()
@@ -2505,30 +2741,35 @@ class Checkout(_Base):
                 w.run(check=0)
                 tree = os.path.realpath(w.tree)
                 path = os.path.join(tree, ".git", "shallow")
-                os.mkfifo(path) if kind == "fifo" else os.symlink("/dev/zero", path)
-                self.addCleanup(lambda path=path: os.path.lexists(path) and os.remove(path))
-                rc, out, err = self.run_bounded(w, bound=60, argv=["check", "--tree", w.tree])
+                self.addCleanup(self.plant_special(path, kind, (w.head() + "\n").encode()))
+                env, calls = self.logging_git(w)
+                rc, out, err = self.run_bounded(w, bound=60, argv=["check", "--tree", w.tree], env=env)
                 self.assertEqual(rc, 2, out + err)
                 self.assertIn("the shallow file of the repository at %s cannot be read (%s: %s, not a regular file)"
                               % (tree, path, what), err)
                 self.assertEqual(out, "", "no verdict printed")
+                self.assertEqual(calls(), [self.DISCOVERY_CALL], "refused before any git call but find_repo's")
 
     def test_a_shallow_file_a_leg_leaves_not_a_regular_file_makes_the_run_invalid_without_opening_it(self):
         """The closing check's item 1, the re-read: the pytest leg replaces the batcher's shallow file, absent when the run
-        started, with a FIFO, or with a symlink to /dev/zero. The re-read after the last leg checks it with the same
-        os.lstat and records the run invalid, naming the file and its type, without opening it: exit 3, every leg run.
-        Before, that re-read opened the FIFO and waited without end (this case then fails at its watchdog), and read the
-        symlink without end (a MemoryError at the case's address cap, exit 1, the record left running). The mark says
-        the next run is refused, and the next run is: exit 2 at the check at the top of its run, no leg run (before the
-        closing check's verify the mark said the next run's checkouts would read the file, which no checkout can)."""
-        for kind, what in (("fifo", "a FIFO"), ("zero", "a symlink")):
-            with self.subTest(kind=what):
+        started, with a FIFO, a symlink to /dev/zero, a symlink to a regular file naming the head commit, or a directory.
+        The re-read after the last leg checks it with the same os.lstat and records the run invalid, naming the file and
+        its type, without opening it: exit 3, every leg run. Before, that re-read opened the FIFO and waited without end
+        (this case then fails at its watchdog), and read the /dev/zero symlink without end (a MemoryError at the case's
+        address cap, exit 1, the record left running). The mark says the next run is refused, and the next run is: exit 2
+        at the check at the top of its run, no leg run (before the closing check's verify the mark said the next run's
+        checkouts would read the file, which no checkout can); and check is refused the same way, exit 2 with no verdict,
+        where with os.stat in place of os.lstat the symlink to a regular file passes its check and check prints the
+        invalid result's FAIL line, exit 1 (the closing check wf_bbe8b843-8bf, its second low)."""
+        for kind, what in self.SPECIAL_KINDS:
+            with self.subTest(kind=kind):
                 if kind == "zero" and not ZERO_CAPPED:
                     self.skipTest(ZERO_SKIP)
                 w = World()
                 self.addCleanup(w.close)
                 path = os.path.join(os.path.realpath(w.tree), ".git", "shallow")
-                self.addCleanup(lambda path=path: os.path.lexists(path) and os.remove(path))
+                self.addCleanup(lambda path=path: shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path)
+                                else (os.path.lexists(path) and os.remove(path)))
                 w.ctl({"action": {PYTEST_LEG: "special"}, "special": {"where": "shallow", "kind": kind}})
                 rc, out, err = self.run_bounded(w)
                 named = ("after the legs the batcher's repository's shallow file %s cannot be read (%s, not a regular file), "
@@ -2541,11 +2782,16 @@ class Checkout(_Base):
                 self.assertEqual(rc, 2, out + err)
                 self.assertIn("cannot be read (%s: %s, not a regular file)" % (path, what), err)
                 self.assertEqual(len(w.calls()), before, "the next run ran no leg")
+                rc, out, err = self.run_bounded(w, bound=60, argv=["check", "--tree", w.tree])
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn("cannot be read (%s: %s, not a regular file)" % (path, what), err)
+                self.assertEqual(out, "", "check printed no verdict")
 
     def git_state_file_cases(self, kind, what, leak=False):
-        """One subtest per GIT_STATE_FILES file: the pytest leg makes it `kind` in its clone's .git ("fifo", or "zero": a
-        symlink to /dev/zero), and with `leak` also leaves an untracked file. The re-read after the leg names the file
-        and its type and nothing else, the run exits 3, and no later leg runs. The "zero" cases run on Linux alone
+        """One subtest per GIT_STATE_FILES file: the pytest leg makes it `kind` in its clone's .git (of SPECIAL_KINDS:
+        "fifo"; "zero", a symlink to /dev/zero; "link", a symlink to a regular file holding the bytes the file held;
+        "dir", a directory; or "fifolink", a symlink to a FIFO), and with `leak` also leaves an untracked file. The re-read after the leg names the file and
+        its type and nothing else, the run exits 3, and no later leg runs. The "zero" cases run on Linux alone
         (ZERO_SKIP)."""
         if kind == "zero" and not ZERO_CAPPED:
             self.skipTest(ZERO_SKIP)
@@ -2579,6 +2825,38 @@ class Checkout(_Base):
         not follow it, and the run is invalid, naming the file as a symlink, with nothing read. Before, git_state read
         /dev/zero without end (a MemoryError at the case's address cap, exit 1, the record left running)."""
         self.git_state_file_cases("zero", "a symlink")
+
+    def test_a_git_state_file_a_leg_makes_a_symlink_to_dev_zero_beside_an_untracked_file_makes_the_run_invalid(self):
+        """The closing check wf_bbe8b843-8bf, its second low, git check-ignore's road for the symlink to /dev/zero: the
+        pytest leg makes one of the three files a symlink to /dev/zero and leaves an untracked file, so the re-read has a
+        path to ask git check-ignore about. The check before it names the symlink, and no git reads /dev/zero: the run is
+        invalid naming the file as a symlink, exit 3, no later leg run."""
+        self.git_state_file_cases("zero", "a symlink", leak=True)
+
+    def test_a_git_state_file_a_leg_makes_a_symlink_to_a_regular_file_makes_the_run_invalid_naming_it(self):
+        """The closing check wf_bbe8b843-8bf, its second low: the pytest leg replaces one of the three files with a symlink
+        to a regular file holding the same bytes. os.lstat names the symlink, and the run is invalid in the class "cannot be
+        read", naming the file and its type, with nothing read. With os.stat in place of os.lstat the check passes it,
+        and the run is invalid only in the git class, for git_state's read of a value no file's bytes equal (a read that
+        also followed the symlink would read the same bytes, and the run would pass)."""
+        self.git_state_file_cases("link", "a symlink")
+
+    def test_a_git_state_file_a_leg_makes_a_symlink_to_a_fifo_beside_an_untracked_file_makes_the_run_invalid_without_a_wait(self):
+        """The order of the re-read, a second witness by behaviour: the pytest leg replaces one of the three files with a
+        symlink to a FIFO and leaves an untracked file. The check before git check-ignore names the symlink, with no wait.
+        With that check moved after git check-ignore (the closing check's mutant mC), git follows the symlink at config
+        and at info/exclude and waits on the FIFO until the runner's bound, past this case's watchdog (git does not follow
+        a HEAD symlink that points outside refs/: it fails at once, so the HEAD subtest stays green there). The /dev/zero
+        symlink beside an untracked file cannot witness that order: git meets /dev/zero at once (a config of NUL bytes is
+        a bad config line, a HEAD of NUL bytes no repository, and an excludes file of size 0 empty), and the moved check
+        then gives the same verdict (the closing check wf_bbe8b843-8bf, its second low, measured with git 2.43)."""
+        self.git_state_file_cases("fifolink", "a symlink", leak=True)
+
+    def test_a_git_state_file_a_leg_makes_a_directory_makes_the_run_invalid_naming_it(self):
+        """The closing check wf_bbe8b843-8bf, its second low: the pytest leg replaces one of the three files with a
+        directory. os.lstat names it, and the run is invalid in the class "cannot be read", naming the file and its type,
+        exit 3, no later leg run."""
+        self.git_state_file_cases("dir", "a directory")
 
     def test_a_leg_that_replaces_its_clones_git_with_a_file_is_named_before_git_follows_it(self):
         """The closing check's verify, texts finding 3: the pytest leg replaces its clone's .git directory with a .git file
@@ -2645,23 +2923,28 @@ class Checkout(_Base):
 
     def test_a_file_swapped_in_after_the_check_is_refused_by_the_read_itself(self):
         """The closing check's verify, code finding 4: cannot_read checks with os.lstat, and a process a leg left running
-        can swap in a FIFO or a symlink before the read that follows opens the file. That read (read_regular, which
-        _read_shallow and git_state read through) opens without following a symlink or waiting for a FIFO's writer, and
-        reads only what fstat finds a regular file. The window is made certain here by stubbing cannot_read to pass
-        every file: a FIFO and a symlink to /dev/zero each read as not a regular file, named, with no wait; a regular file
-        still reads its bytes, and an absent one reads None; git_state names the FIFO and the symlink. It runs in a
-        child, with the address cap and a bound of 60 s, so a read that opens the FIFO and waits fails the case at the
-        bound, and one that follows the symlink fails on its value or at the cap (off Linux the symlinks point at a small
-        regular file, zero_target). At the build head both reads opened the file by name, and the FIFO case waited
-        without end."""
+        can swap in a FIFO, a symlink or a directory before the read that follows opens the file. That read (read_regular,
+        which _read_shallow and git_state read through) opens without following a symlink or waiting for a FIFO's writer,
+        and reads only what fstat on the raw descriptor finds a regular file, closing the descriptor on every refusal.
+        The window is made certain here by stubbing cannot_read to pass every file: a FIFO, a symlink to /dev/zero and a
+        directory each raise Unreadable naming what they are, with no wait; a regular file still reads its bytes, and an
+        absent one reads None; git_state names the FIFO, the symlink and the directory; and after each refused read is
+        made five times the process holds no more descriptors than before (counted in /proc/self/fd, or /dev/fd off
+        Linux). It runs in a child, with the address cap and a bound of 60 s, so a read that opens the FIFO and waits fails
+        the case at the bound, and one that follows the symlink fails on its value or at the cap (off Linux the symlinks
+        point at a small regular file, zero_target). At the build head both reads opened the file by name, and the FIFO
+        case waited without end. At the closing-check head a directory reached os.fdopen, which raised IsADirectoryError
+        naming a descriptor number and left that descriptor open, and git_state read it as absent (the closing check
+        wf_bbe8b843-8bf, its first low)."""
         tmp = tempfile.mkdtemp(prefix="sweeprr-")
         self.addCleanup(shutil.rmtree, tmp, True)
         os.mkfifo(os.path.join(tmp, "fifo"))
         os.symlink(zero_target(tmp), os.path.join(tmp, "zero"))
+        os.mkdir(os.path.join(tmp, "adir"))
         with open(os.path.join(tmp, "plain"), "w") as f:
             f.write("abc\n")
         g = os.path.join(tmp, ".git")
-        os.makedirs(os.path.join(g, "info"))
+        os.makedirs(os.path.join(g, "info", "exclude"))
         os.mkfifo(os.path.join(g, "HEAD"))
         os.symlink(zero_target(tmp), os.path.join(g, "config"))
         code = ("import importlib.util, json, os, sys\n"
@@ -2670,15 +2953,19 @@ class Checkout(_Base):
                 "spec.loader.exec_module(mod)\n"
                 "mod.cannot_read = lambda path: None\n"
                 "text = lambda v: v.decode('latin-1') if isinstance(v, bytes) else v\n"
+                "fds = '/proc/self/fd' if os.path.isdir('/proc/self/fd') else '/dev/fd'\n"
+                "held = len(os.listdir(fds))\n"
                 "out = {}\n"
-                "for name in ('fifo', 'zero', 'plain', 'absent'):\n"
-                "    try:\n"
-                "        out[name] = text(mod._read_shallow(os.path.join(sys.argv[2], name)))\n"
-                "    except OSError as e:\n"
-                "        out[name] = 'OSError: %s' % e\n"
-                "state = mod.git_state(sys.argv[2])\n"
+                "for _ in range(5):\n"
+                "    for name in ('fifo', 'zero', 'adir', 'plain', 'absent'):\n"
+                "        try:\n"
+                "            out[name] = text(mod._read_shallow(os.path.join(sys.argv[2], name)))\n"
+                "        except OSError as e:\n"
+                "            out[name] = '%s: %s' % (type(e).__name__, e)\n"
+                "    state = mod.git_state(sys.argv[2])\n"
                 "state.pop('.git')\n"
                 "out['git_state'] = {k: text(v) for k, v in state.items()}\n"
+                "out['descriptors left'] = len(os.listdir(fds)) - held\n"
                 "print(json.dumps(out, sort_keys=True))\n")
         try:
             p = subprocess.run([sys.executable, "-c", CAP_SHIM, str(ADDRESS_CAP), sys.executable, "-c", code, str(SWEEP), tmp],
@@ -2687,11 +2974,14 @@ class Checkout(_Base):
             self.fail("the read was still waiting after 60 s: it opened the FIFO swapped in after the check and waited for "
                       "a writer")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.maxDiff = None
         self.assertEqual(json.loads(p.stdout), {
-            "fifo": "OSError: a FIFO, not a regular file", "zero": "OSError: a symlink, not a regular file",
-            "plain": "abc\n", "absent": None,
+            "fifo": "Unreadable: a FIFO, not a regular file", "zero": "Unreadable: a symlink, not a regular file",
+            "adir": "Unreadable: a directory, not a regular file", "plain": "abc\n", "absent": None,
             "git_state": {".git/HEAD": "cannot be read: a FIFO, not a regular file",
-                          ".git/config": "cannot be read: a symlink, not a regular file", ".git/info/exclude": None}})
+                          ".git/config": "cannot be read: a symlink, not a regular file",
+                          ".git/info/exclude": "cannot be read: a directory, not a regular file"},
+            "descriptors left": 0})
 
     def test_a_stop_during_the_checkout_or_between_its_marker_and_the_clone_leaves_nothing_under_trees(self):
         """Round 2, extra5-2, keyed on events: the runner is stopped while its first clone waits, once after the real
@@ -3822,11 +4112,15 @@ class ReapWhileLegRuns(unittest.TestCase):
         """wait_leg reaps every child but the leg while a leg runs. That is right only while the leg is the one child
         the runner will wait for: the runner has no thread, and run_leg's Popen is its one launcher that returns before
         its child is reaped. A new such launcher, or a thread (whose subprocess.run child wait_leg could reap, leaving
-        its status read as 0), makes this red: wait_leg must then leave that child alone."""
+        its status read as 0), makes this red: wait_leg must then leave that child alone. run_git's Popen (the 02:43Z
+        ruling, item 1(a): Popen, so it can kill the git's process group at the bound) is the one other: its child is
+        reaped before run_git returns, by communicate or, on any exception, by _end_git's wait, and the runner starts no
+        git while a leg runs (test_a_git_the_runner_starts_is_killed_with_its_process_group_at_the_bound holds the reap)."""
         threads, launchers = child_launchers(SWEEP.read_text())
         self.assertEqual(threads, [], "the runner has one thread")
-        self.assertEqual(launchers, [("subprocess.Popen", "run_leg")],
-                         "the one launcher whose child outlives the call is run_leg's Popen, the leg wait_leg waits for")
+        self.assertEqual(launchers, [("subprocess.Popen", "run_git"), ("subprocess.Popen", "run_leg")],
+                         "the launchers whose child outlives the call are run_leg's Popen, the leg wait_leg waits for, and "
+                         "run_git's, whose git it reaps before it returns")
 
     def test_the_census_reads_a_launcher_however_it_is_spelled(self):
         """The census above is only as good as the spellings it reads: a module bound under another name, pty's forks,
@@ -4137,7 +4431,8 @@ class ShallowBatcher(unittest.TestCase):
                          "premise: the batcher's repository is shallow")
         self.assertNotEqual(g("cat-file", "-e", sha + "^", cwd=tree, check=False).returncode, 0,
                             "premise: the parent's object is absent from it")
-        path, marker, _s = sweep.make_checkout(tree, sha, sweep.shallow_snapshot(tree))
+        repo = sweep.find_repo(tree)
+        path, marker, _s = sweep.make_checkout(repo, sha, sweep.shallow_snapshot(repo))
         self.addCleanup(sweep.remove_checkout, path, marker)
         log = g("log", "--format=%H", cwd=path, check=False)
         self.assertEqual((log.returncode, log.stdout.split()), (0, [sha]),
@@ -4145,12 +4440,499 @@ class ShallowBatcher(unittest.TestCase):
         self.assertEqual(g("rev-parse", "--is-shallow-repository", cwd=path).stdout.strip(), "true",
                          "the checkout knows it is shallow")
         # the other side: over the batcher's repository that is not shallow, the checkout reads its whole history
-        self.assertIsNone(sweep.shallow_snapshot(full), "premise: that repository has no shallow file")
-        path2, marker2, _s = sweep.make_checkout(full, sha, sweep.shallow_snapshot(full))
+        full_repo = sweep.find_repo(full)
+        self.assertIsNone(sweep.shallow_snapshot(full_repo), "premise: that repository has no shallow file")
+        path2, marker2, _s = sweep.make_checkout(full_repo, sha, sweep.shallow_snapshot(full_repo))
         self.addCleanup(sweep.remove_checkout, path2, marker2)
         whole = g("log", "--format=%H", cwd=path2, check=False)
         self.assertEqual((whole.returncode, len(whole.stdout.split())), (0, 2), "the checkout reads the whole history")
         self.assertEqual(g("rev-parse", "--is-shallow-repository", cwd=path2).stdout.strip(), "false")
+
+
+class GitBoundPins(unittest.TestCase):
+    """The 02:43Z ruling on PR 926, item 1: every git process the runner starts has a bounded wait (GIT_BOUND; each pin
+    runs the runner with a bound of BOUND seconds, BOUND_DRIVER) and names the repository it means (GIT_DIR, GIT_COMMON_DIR
+    and GIT_WORK_TREE explicit, GIT_CEILING_DIRECTORIES above it). A git that waits on a file a leg planted is killed at
+    the bound and the run ends invalid naming the call, or the next run, or check, is refused naming it; a .git git
+    does not recognize fails the call instead of sending git to an enclosing repository. Each pin runs under the
+    watchdog of run_bounded, so a regression fails by name instead of hanging: before this change each of the waits
+    below ran past it, and each enclosing-repository case read as a pass or swept another repository."""
+
+    BOUND = 3
+    run_bounded = Checkout.run_bounded
+
+    def world(self):
+        w = World()
+        self.addCleanup(w.close)
+        return w
+
+    def bounded(self, w, *extra, argv=None, **kw):
+        return self.run_bounded(w, *extra, bound=60, argv=argv, git_bound=self.BOUND, **kw)
+
+    def killed(self, call, where):
+        return "git %s in %s did not end within %d s and was killed" % (call, where, self.BOUND)
+
+    @staticmethod
+    def enclose(w, d):
+        """Make `d`, a directory holding `w`'s tree or its state dir, a repository whose root .gitignore is '*'."""
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, ".gitignore"), "w") as f:
+            f.write("*\n")
+        for args in (["init", "-q"], ["add", "-f", ".gitignore"], ["commit", "-q", "-m", "an enclosing repository"]):
+            subprocess.run(["git", "-C", d, *args], env=w.env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    DISCOVERY = "rev-parse --path-format=absolute --show-toplevel --absolute-git-dir --git-common-dir"
+    STATUS = "status --porcelain=v1 -z --untracked-files=all"
+    CHECK_IGNORE = "check-ignore -v -z --no-index --stdin"
+
+    def test_a_fifo_at_the_batchers_config_refuses_the_run_and_check_naming_the_call(self):
+        """The batcher's .git/config is a FIFO when a run starts, and when check reads a passing result: the first git
+        call, find_repo's rev-parse, waits on it until the bound, is killed, and each is refused (exit 2) naming it, with
+        nothing run or recorded. Before this change each waited without end at its first git call."""
+        w = self.world()
+        w.run(check=0)
+        tree = os.path.realpath(w.tree)
+        before = len(w.calls())
+        os.remove(os.path.join(tree, ".git", "config"))
+        os.mkfifo(os.path.join(tree, ".git", "config"))
+        for argv in (None, ["check", "--tree", w.tree]):
+            with self.subTest(argv=argv and argv[0]):
+                rc, out, err = self.bounded(w, argv=argv)
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn(self.killed(self.DISCOVERY, tree), err)
+                self.assertEqual(len(w.calls()), before, "no leg ran")
+
+    def test_a_fifo_shallow_file_the_lstat_passed_refuses_the_run_and_check_naming_the_git_call(self):
+        """The 02:43Z ruling's fourth road, the gap between the runner's lstat and git's own open by name, at the batcher's
+        shallow file: a FIFO there that the check at the top of run and check passes (cannot_read stubbed to pass, as a
+        FIFO swapped in after it would be). The first git call that parses a commit opens it: run's git status
+        (uncommitted_count) and check's rev-parse of the commit each wait until the bound, are killed, and each is
+        refused (exit 2) naming the call, with no leg run and nothing printed. Before this change each waited without end
+        (the case then fails at the watchdog)."""
+        w = self.world()
+        w.run(check=0)
+        tree = os.path.realpath(w.tree)
+        before = len(w.calls())
+        os.mkfifo(os.path.join(tree, ".git", "shallow"))
+        for argv, call in ((None, self.STATUS), (["check", "--tree", w.tree], "rev-parse --verify HEAD^{commit}")):
+            with self.subTest(argv=argv and argv[0]):
+                rc, out, err = self.bounded(w, argv=argv, lstat_passes=True)
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn(self.killed(call, tree), err)
+                self.assertEqual(out, "", "no verdict and no notice printed")
+                self.assertEqual(len(w.calls()), before, "no leg ran")
+
+    # Where a leg plants a FIFO in the batcher's repository (found through its clone's alternates), and what each read
+    # meets: (where, the planting run's exit and invalid mark's pattern or None, the git call the next run is refused at,
+    # check's exit and the git call it is refused at or None). The planting run reads none of config, HEAD, index and
+    # info/exclude with git after the first job (find_repo read the common dir once), so it passes, and the next run,
+    # whose first git call that reads the file is find_repo's (config, HEAD) or uncommitted_count's git status (index,
+    # info/exclude), is refused; check reads config and HEAD at find_repo, and neither index nor info/exclude.
+    # objects/info/alternates is read by the next job's checkout, which makes the planting run invalid, by the next
+    # run's git status, which compares the index with HEAD's tree, and by check's rev-parse of the commit.
+    BATCHER_FIFOS = (
+        ("config", 0, None, DISCOVERY, (2, DISCOVERY)),
+        ("HEAD", 0, None, DISCOVERY, (2, DISCOVERY)),
+        ("index", 0, None, STATUS, (0, None)),
+        ("info/exclude", 0, None, STATUS, (0, None)),
+        ("objects/info/alternates", 3, r"the fresh checkout for .* cannot be used \(git -c core\.hooksPath=/dev/null checkout -q "
+                                       r"--detach [0-9a-f]{40} in \S+ did not end within 3 s and was killed\); the legs after "
+                                       r"it did not run", STATUS, (2, "rev-parse --verify HEAD^{commit}")),
+    )
+
+    def test_a_fifo_a_leg_plants_in_the_batchers_repository_ends_that_run_or_the_next_naming_the_call(self):
+        """The closing check wf_bbe8b843-8bf, its finding 1 (config, HEAD, objects/info/alternates) and its third medium
+        finding (index, info/exclude): the pytest leg plants a FIFO at each in the batcher's repository. Each read that
+        meets it is killed at the bound and named: the planting run is invalid when its next job's checkout meets it,
+        else it passes, since nothing reads the file then; the next run is refused, and check as BATCHER_FIFOS says.
+        Before this change the planting run waited without end for config, HEAD and alternates (group 2's rev-parse
+        --git-common-dir, its checkout), and for index and info/exclude the next run did, at its git status."""
+        for where, rc_plant, mark, next_call, (rc_check, check_call) in self.BATCHER_FIFOS:
+            with self.subTest(where=where):
+                w = self.world()
+                tree, sha = os.path.realpath(w.tree), w.head()     # read before the FIFO: the World's own git reads it too
+                w.ctl({"action": {PYTEST_LEG: "special"}, "special": {"where": "batcher:" + where, "kind": "fifo"}})
+                rc, out, err = self.bounded(w)
+                self.assertEqual(rc, rc_plant, out + err)
+                if mark is None:
+                    self.assertIsNone(w.result(sha)["invalid"])
+                else:
+                    self.assertRegex(w.result(sha)["invalid"], "^" + mark + "$")
+                ran = len(w.calls())
+                w.ctl({})
+                rc, out, err = self.bounded(w)
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn(self.killed(next_call, tree), err)
+                self.assertEqual(len(w.calls()), ran, "the next run ran no leg")
+                rc, out, err = self.bounded(w, argv=["check", "--tree", w.tree])
+                self.assertEqual(rc, rc_check, out + err)
+                if check_call is not None:
+                    self.assertIn(self.killed(check_call, tree), err)
+
+    def test_a_file_git_waits_on_in_the_clone_ends_the_reread_invalid_naming_the_call(self):
+        """The 02:43Z ruling's roads in a job's clone, each with an untracked file left so the re-read after the leg asks
+        git check-ignore about it: the tracked root .gitignore made a FIFO (git opens every .gitignore on the way to a
+        path it is asked about), a FIFO .gitignore in a directory the sha does not have (itself the untracked path, so
+        git opens it on the way to it), the clone's config made to include a FIFO (include.path), and .git/HEAD made a
+        FIFO after the runner's own lstat passed it (the gap between that lstat and git's open by name, made certain by
+        cannot_read stubbed to pass). git check-ignore waits until the bound, is killed, and the run is invalid naming
+        it, the legs after it not run. Before this change each waited without end in that git check-ignore."""
+        cases = (("a FIFO .gitignore", {"action": {PYTEST_LEG: "special"}, "special": {"where": "tree:.gitignore",
+                                                                                         "kind": "fifo", "leak": True}}, False),
+                 ("a FIFO .gitignore in a directory", {"action": {PYTEST_LEG: "special"},
+                                                       "special": {"where": "tree:sub/.gitignore", "kind": "fifo"}}, False),
+                 ("include.path to a FIFO", {"action": {PYTEST_LEG: "include"}}, False),
+                 ("a FIFO HEAD after the lstat", {"action": {PYTEST_LEG: "special"}, "special": {"where": "HEAD", "kind": "fifo",
+                                                                                                 "leak": True}}, True))
+        for label, ctl, lstat_passes in cases:
+            with self.subTest(road=label):
+                w = self.world()
+                w.ctl(ctl)
+                rc, out, err = self.bounded(w, lstat_passes=lstat_passes)
+                self.assertEqual(rc, 3, out + err)
+                self.assertRegex(w.result()["invalid"], r"^the re-read after the pytest leg: git %s in \S+ did not end within 3 s "
+                                                        r"and was killed; the legs after it did not run$" % self.CHECK_IGNORE)
+                self.assertEqual(w.legs_called(), [PYTEST_LEG], "the legs after pytest did not run")
+
+    def test_a_fifo_commondir_in_the_clone_is_not_read_and_the_reread_names_the_untracked_file(self):
+        """The 02:43Z ruling's first road: the pytest leg makes its clone's .git/commondir a FIFO and leaves an untracked
+        file. With GIT_COMMON_DIR set git's setup reads no commondir file, and the re-read's git check-ignore --no-index
+        reads no ref (git 2.43 reads a git dir's commondir file for a call that reads a ref, whatever GIT_COMMON_DIR says;
+        sweep.GitRepo), so it answers at once and the run is invalid naming the untracked file, with no wait. Before this change that git check-ignore read the commondir
+        FIFO and waited without end."""
+        w = self.world()
+        w.ctl({"action": {PYTEST_LEG: "special"}, "special": {"where": "commondir", "kind": "fifo", "leak": True}})
+        rc, out, err = self.bounded(w)
+        self.assertEqual((rc, w.result()["invalid"]), (3, "after the pytest leg the checkout is not the sha's tree: untracked 1 "
+                                                          "(leaked.txt); the legs after it did not run"), out + err)
+
+    def test_a_clone_git_does_not_recognize_inside_an_enclosing_repository_excuses_nothing(self):
+        """The closing check wf_bbe8b843-8bf, its second medium finding, and the 02:43Z ruling's sixth road: the state dir is
+        inside a repository whose root .gitignore is '*', and the pytest leg leaves an untracked conftest.py and makes its
+        clone's .git one git does not recognize (refs/ removed, objects/ a file, HEAD removed, .git removed, and HEAD
+        removed with the checkout's parent directory given a .git whose HEAD is a FIFO, the road the verify pass measured
+        waiting). With GIT_DIR explicit the re-read's git check-ignore fails ("not a git repository") instead of walking
+        up, so conftest.py is named and the run is invalid, with no wait. Before this change check-ignore walked up to the
+        enclosing repository, whose '.gitignore' has the tracked root .gitignore's name, and excused conftest.py: refs/
+        and objects/ read as a pass (rc 0), HEAD and .git were invalid only for the git state they changed, conftest.py
+        unnamed, and the parent's FIFO HEAD held it without end (that case then fails at the watchdog)."""
+        for how in ("refs", "objects", "HEAD", ".git", "parent"):
+            with self.subTest(how=how):
+                w = self.world()
+                self.enclose(w, w.xdg)
+                w.ctl({"action": {PYTEST_LEG: "gitbreak"}, "gitbreak": how})
+                rc, out, err = self.bounded(w)
+                self.assertEqual(rc, 3, out + err)
+                invalid = w.result()["invalid"]
+                self.assertIn("(git check-ignore failed: fatal: not a git repository: ", invalid)
+                self.assertIn("conftest.py", invalid)
+                self.assertEqual(w.legs_called(), [PYTEST_LEG], "the legs after pytest did not run")
+
+    def test_a_batchers_tree_git_does_not_recognize_inside_an_enclosing_repository_is_refused(self):
+        """The 02:43Z ruling, item 1(b), at the batcher's tree: it sits inside an enclosing repository and its .git/HEAD is
+        gone (a leg can remove it through its clone's alternates). find_repo reads the tree's .git with the ceiling at its
+        parent, so run and check are refused naming the tree, nothing recorded, and nothing of the enclosing repository
+        is read or swept. Before this change git walked up: the run took the enclosing repository for the batcher's and read its
+        HEAD (refused there for its missing ci.yml, about another tree), and check read that HEAD's result."""
+        w = self.world()
+        tree = os.path.realpath(w.tree)
+        sha = w.head()
+        self.enclose(w, os.path.dirname(tree))
+        os.remove(os.path.join(tree, ".git", "HEAD"))
+        for argv in (None, ["check", "--tree", w.tree]):
+            with self.subTest(argv=argv and argv[0]):
+                rc, out, err = self.bounded(w, argv=argv)
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn("sweep: %s is not a git working tree that git recognizes (fatal: not a git repository" % tree, err)
+                self.assertEqual(out, "")
+                self.assertEqual(w.calls(), [], "no leg ran")
+        self.assertFalse(os.path.exists(w.result_path(sha)), "nothing recorded")
+
+    def test_the_watchdog_kills_what_the_runner_started_in_a_session_of_its_own(self):
+        """kill_tree, the kill run_bounded makes when its bound runs out, takes a process the watched one started in a
+        session of its own, as run_git starts each git: here a stand-in for the runner, in a group of its own, starts such
+        a child and waits; kill_tree ends both. The watchdog before this change killed the watched group alone, and the
+        child ran on (the verify pass at PR 926's build head, its code finding 4: 18 git processes left waiting on FIFOs
+        after the bound mutants)."""
+        if not os.path.isdir("/proc"):
+            self.skipTest("kill_tree reads descendants from /proc; off Linux it kills the watched group alone")
+        code = ("import subprocess, sys, time\n"
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'], start_new_session=True,\n"
+                "                     stdin=subprocess.DEVNULL)\n"
+                "print(p.pid, flush=True)\n"
+                "time.sleep(300)\n")
+        proc = subprocess.Popen([sys.executable, "-c", code], text=True, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                start_new_session=True)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(lambda: proc.poll() is None and os.kill(proc.pid, signal.SIGKILL))
+        child = int(proc.stdout.readline())
+        self.addCleanup(lambda: _alive(child) and os.kill(child, signal.SIGKILL))
+        self.assertNotEqual(os.getpgid(child), os.getpgid(proc.pid), "premise: the child is in a group of its own")
+        kill_tree(proc.pid)
+        proc.wait(timeout=30)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and _alive(child):
+            time.sleep(0.05)
+        self.assertFalse(_alive(child), "the child in a session of its own outlived the watchdog's kill")
+
+    def test_a_batchers_linked_worktree_whose_git_file_is_swapped_after_discovery_is_still_the_one_swept(self):
+        """The 02:43Z ruling, item 1(b), its GIT_DIR (the verify pass at PR 926's build head, its code finding 3): the
+        batcher's tree is a linked worktree, whose .git file names its git dir under the common dir's worktrees/. find_repo
+        reads the repository once, with the ceiling alone, and every later call names it explicitly (GIT_DIR,
+        GIT_COMMON_DIR, GIT_WORK_TREE), so git does not read that .git file again. Here a git first on PATH rewrites it,
+        just before the run's rev-parse HEAD and after the discovery, to name another repository's git dir (as a process
+        outside the runner could): the run still sweeps the sha the batcher's tree has checked out, and passes, and nothing
+        is recorded for the other repository's head. A call that named only the ceiling and left git to find the
+        repository from its cwd (the mutant gb-sweep-nodir) followed the rewritten file, read the other repository's
+        head, and the run was refused when its checkout could not find that commit."""
+        w = self.world()
+        sha = w.head()
+        tree = os.path.join(w.tmp, "tree-linked")
+        w.git("worktree", "add", "--quiet", "--detach", tree, "main")
+        other = os.path.join(w.tmp, "other-repository")
+        w.git("init", "-q", other, cwd=w.tmp)
+        w.git("commit", "-q", "--allow-empty", "-m", "another repository", cwd=other)
+        other_sha = w.git("rev-parse", "HEAD", cwd=other)
+        plant = os.path.join(w.tmp, "plant-gitfile-bin")
+        os.makedirs(plant)
+        with open(os.path.join(plant, "git"), "w") as f:
+            f.write("#!/bin/sh\ncase \" $* \" in\n  *\"$PLANT_ON\"*) printf 'gitdir: %s\\n' \"$PLANT_GITDIR\" > \"$PLANT_GITFILE\" ;;\n"
+                    "esac\nexec \"$PLANT_REAL_GIT\" \"$@\"\n")
+        os.chmod(os.path.join(plant, "git"), 0o755)
+        gitfile = os.path.join(tree, ".git")
+        env = dict(w.env, PATH=plant + os.pathsep + w.env["PATH"], PLANT_REAL_GIT=shutil.which("git", path=w.env["PATH"]),
+                   PLANT_ON="rev-parse HEAD", PLANT_GITFILE=gitfile, PLANT_GITDIR=os.path.join(other, ".git"))
+        rc, out, err = self.bounded(w, argv=["run", "--tree", tree, "--python", w.python, "--workers", "2"], env=env)
+        with open(gitfile) as f:
+            self.assertEqual(f.read(), "gitdir: %s\n" % os.path.join(other, ".git"), "premise: the .git file was rewritten")
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(w.result(sha)["verdict"], "pass")
+        self.assertFalse(os.path.exists(w.result_path(other_sha)), "nothing recorded for the other repository's head")
+
+    def test_a_git_the_runner_starts_is_killed_with_its_process_group_at_the_bound(self):
+        """run_git itself, through a git on PATH that starts a child and waits: at the bound GitBound names the call,
+        and neither the git nor its child is left running (each git starts in a session of its own, which the kill
+        takes whole). Before this change both ran on: the runner had no bound."""
+        tmp = tempfile.mkdtemp(prefix="sweepgb-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        pids = os.path.join(tmp, "pids")
+        with open(os.path.join(tmp, "git"), "w") as f:
+            f.write("#!/bin/sh\nsleep 300 &\necho $$ $! > %s.tmp && mv %s.tmp %s\nwait\n" % (pids, pids, pids))
+        os.chmod(os.path.join(tmp, "git"), 0o755)
+        code = ("import importlib.util, os, sys, time\n"
+                "spec = importlib.util.spec_from_file_location('sweep_runner', sys.argv[1])\n"
+                "mod = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(mod)\n"
+                "mod.GIT_BOUND = 2\n"
+                "t0 = time.monotonic()\n"
+                "try:\n"
+                "    mod.run_git(mod.GitRepo(sys.argv[2], None, None, os.path.dirname(sys.argv[2])), 'status')\n"
+                "except mod.GitBound as e:\n"
+                "    print('bound after %.1f s: %s' % (time.monotonic() - t0, e))\n")
+        env = dict(os.environ, PATH=tmp + os.pathsep + os.environ.get("PATH", ""))
+        p = subprocess.run([sys.executable, "-c", code, str(SWEEP), tmp], env=env, text=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("git status in %s did not end within 2 s and was killed" % tmp, p.stdout)
+        self.assertLess(float(p.stdout.split("bound after ")[1].split()[0]), 30)
+        if not os.path.isdir("/proc"):
+            return                               # no /proc to tell a live process by (macOS): the bound alone is pinned
+        with open(pids) as f:
+            shell, child = (int(x) for x in f.read().split())
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and any(_alive(x) for x in (shell, child)):
+            time.sleep(0.05)
+        self.assertEqual([x for x in (shell, child) if _alive(x)], [], "the git and its child are gone")
+
+
+class RunnerOwnFiles(unittest.TestCase):
+    """The verify pass at PR 926's build head, its code finding 1 (and its finding 5): the files the runner opens itself,
+    not through git, and that a leg can reach (it finds the state dir from its own log's path, and runs inside the venv),
+    are created or read without waiting. A leg's log is created with O_EXCL and O_NOFOLLOW under a fresh name when one
+    is taken and read back through the runner's own descriptor; a venv's build log opens only as a regular file; and the
+    result files, the checkout markers, the venv markers and the checkouts' and venvs' files are read through
+    open_regular, the lock files opened without waiting. Each pin runs the runner under run_bounded's watchdog, so a
+    regression fails by name instead of hanging: before this change each of these waited without end on a FIFO (the
+    leg's own log, the next leg's, the venv's build log and marker, another sha's result, a checkout marker, a lock), and
+    a symlink to /dev/zero at the leg's own log was read without end."""
+
+    run_bounded = Checkout.run_bounded
+
+    def world(self):
+        w = World()
+        self.addCleanup(w.close)
+        return w
+
+    @staticmethod
+    def sweeps(w):
+        return os.path.join(w.xdg, "romp", "sweeps")
+
+    def logs(self, w):
+        return os.path.join(self.sweeps(w), "logs", w.head())
+
+    def test_a_leg_that_replaces_its_own_log_is_read_through_the_runners_descriptor(self):
+        """The pytest leg replaces its own log with a FIFO, a symlink to /dev/zero or a regular file holding a summary line
+        it never printed, then prints its own summary (3 passed) to its stdout. The runner reads the summary and the
+        count back through the descriptor it created the log with, so the record holds the leg's own 3 passed, with no
+        wait and no read without end. deps_skipped reads the log by its path afterwards, through open_regular: a FIFO or
+        a symlink there reads as unreadable, so the served leg is red naming why (the run red, exit 1); the regular file
+        is read as the leg's own output would be, and the run passes. At the build head summarize_log opened the FIFO and
+        waited without end, read /dev/zero until the address cap stopped it, and recorded the planted 99 passed."""
+        for kind in ("fifo", "zero", "file"):
+            with self.subTest(kind=kind):
+                if kind == "zero" and not ZERO_CAPPED:
+                    self.skipTest(ZERO_SKIP)
+                w = self.world()
+                w.ctl({"action": {PYTEST_LEG: "ownfiles"}, "ownfiles": {"what": "log", "kind": kind}, "logs": self.logs(w)})
+                rc, out, err = self.run_bounded(w, bound=60)
+                r = w.result()
+                leg = r["legs"][PYTEST_LEG]
+                self.assertEqual((leg["rc"], leg["summary"], leg["tests"], leg["failed"]), (0, "3 passed in 0.01s", 3, 0),
+                                 out + err)
+                if kind == "file":
+                    self.assertEqual((rc, r["red"], r["invalid"]), (0, [], None), out + err)
+                else:
+                    self.assertEqual((rc, r["red"]), (1, ["served"]), out + err)
+                    self.assertEqual(leg["deps_skipped"], {"error": "the pytest leg's log cannot be read"})
+
+    def test_a_fifo_where_a_later_legs_log_would_go_is_never_opened(self):
+        """The pytest leg, the run's first, plants a FIFO at every name a log of any leg or setup would take in the next 90
+        seconds (<leg>.<UTC second>.log). Each later leg's log is created with O_EXCL under another name, so nothing
+        waits: the run passes, and every leg's recorded log is a regular file of its own holding that leg's output. At the
+        build head the next leg's open(log, "w") waited for a reader without end."""
+        w = self.world()
+        w.ctl({"action": {PYTEST_LEG: "ownfiles"}, "ownfiles": {"what": "nextlog", "legs": list(sweep.LEGS)},
+               "logs": self.logs(w)})
+        rc, out, err = self.run_bounded(w, bound=60)
+        self.assertEqual(rc, 0, out + err)
+        r = w.result()
+        self.assertEqual(sorted(w.legs_called()), sorted(sweep.LEGS))
+        logs = [r["legs"][n]["log"] for n in sweep.LEGS]
+        self.assertEqual(len(set(logs)), len(logs), "each leg has a log of its own")
+        for n in sweep.LEGS:
+            with self.subTest(leg=n):
+                log = r["legs"][n]["log"]
+                self.assertTrue(stat.S_ISREG(os.lstat(log).st_mode), log)
+                with open(log) as f:
+                    self.assertIn("# leg: %s\n" % n, f.read())
+                if n != PYTEST_LEG:
+                    self.assertRegex(os.path.basename(log), r"^%s\.\d{8}T\d{6}Z\.[a-z0-9]{8}\.log$" % re.escape(n))
+
+    def test_a_fifo_at_the_venvs_build_log_refuses_the_next_build_naming_it(self):
+        """The pytest leg plants a FIFO at its venv's build log (<venv>.log, beside the venv) and leaves a file in the
+        venv: that run is invalid (the venv changed) and retires the venv, so the next run builds it again and opens the
+        build log first. It opens only a regular file, so the next run is refused (exit 2) naming the log and the FIFO,
+        no leg run. At the build head the next run's open(log, "a") waited for a reader without end."""
+        w = self.world()
+        w.ctl({"action": {PYTEST_LEG: "ownfiles"}, "ownfiles": {"what": "venvlog"}})
+        rc, out, err = self.run_bounded(w, bound=60)
+        self.assertEqual(rc, 3, out + err)
+        [log] = glob.glob(os.path.join(w.sdk_root(), "*.log"))
+        self.assertTrue(stat.S_ISFIFO(os.lstat(log).st_mode), "premise: the build log is a FIFO")
+        ran = len(w.calls())
+        w.ctl({})
+        rc, out, err = self.run_bounded(w, bound=60)
+        self.assertEqual(rc, 2, out + err)
+        self.assertIn("its build log %s cannot be opened (a FIFO, not a regular file); remove it to build again" % log, err)
+        self.assertEqual(len(w.calls()), ran, "no leg ran")
+
+    def test_a_fifo_at_the_venvs_marker_is_read_as_no_finished_build(self):
+        """The pytest leg makes its venv's build marker a FIFO. The marker is not part of the venv's tree the run compares,
+        so that run passes; the next run reads the marker through open_regular, finds no finished build, builds the venv
+        again (which removes the FIFO with the venv) and passes. At the build head the next run's _venv_check opened the
+        FIFO and waited without end."""
+        w = self.world()
+        w.ctl({"action": {PYTEST_LEG: "ownfiles"}, "ownfiles": {"what": "marker"}})
+        rc, out, err = self.run_bounded(w, bound=60)
+        self.assertEqual(rc, 0, out + err)
+        [marker] = glob.glob(os.path.join(w.sdk_root(), "*", sweep.SDK_MARKER))
+        self.assertTrue(stat.S_ISFIFO(os.lstat(marker).st_mode), "premise: the marker is a FIFO")
+        w.ctl({})
+        rc, out, err = self.run_bounded(w, bound=60)
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("(no finished build)", out)
+        self.assertTrue(stat.S_ISREG(os.lstat(marker).st_mode), "the rebuild wrote the marker again")
+
+    def test_a_fifo_at_another_shas_result_reads_unreadable_in_check(self):
+        """The pytest leg plants a FIFO at the result file of the seed commit, under the state dir. check of that commit
+        reads it through open_regular and fails it as unreadable, naming the file (exit 1), and check of a later commit
+        with no result, which reads every result file for the newest on its branch, skips it and names the stale one.
+        At the build head each check opened the FIFO and waited without end."""
+        w = self.world()
+        seed = w.head()
+        w.change({"README.md": "# notes-api, a second commit\n"})
+        result = os.path.join(self.sweeps(w), seed + ".json")
+        w.ctl({"action": {PYTEST_LEG: "ownfiles"}, "ownfiles": {"what": "result", "sha": seed}, "sweeps": self.sweeps(w)})
+        rc, out, err = self.run_bounded(w, bound=60)
+        self.assertEqual(rc, 0, out + err)
+        self.assertTrue(stat.S_ISFIFO(os.lstat(result).st_mode), "premise: the result is a FIFO")
+        swept = w.head()
+        rc, out, err = self.run_bounded(w, argv=["check", seed, "--tree", w.tree], bound=60)
+        self.assertEqual((rc, out), (1, "FAIL sweep unreadable: %s: a FIFO, not a regular file; sweep again\n" % result), err)
+        w.change({"README.md": "# notes-api, a third commit\n"})
+        rc, out, err = self.run_bounded(w, argv=["check", "--tree", w.tree], bound=60)
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("FAIL sweep stale: the newest result for work is at %s" % swept[:10], out)
+
+    def test_a_fifo_at_a_checkout_marker_or_a_lock_does_not_hold_the_next_run(self):
+        """The pytest leg plants, under the state dir, a FIFO at a checkout's marker with no checkout, or a marker naming
+        another sha with no checkout and a FIFO at that sha's lock. The next run's removal of stale checkouts reads the
+        marker through open_regular (a FIFO there reads as no marker) and opens the lock without waiting, so it removes
+        the marker and the run passes. At the build head the next run opened each FIFO for reading and waited without
+        end."""
+        other = "ab" * 20
+        for what, marker in (("checkout-marker", "0123456789ab-planted.sha"), ("lock", other[:12] + "-planted.sha")):
+            with self.subTest(what=what):
+                w = self.world()
+                w.ctl({"action": {PYTEST_LEG: "ownfiles"}, "ownfiles": {"what": what, "sha": other}, "sweeps": self.sweeps(w)})
+                rc, out, err = self.run_bounded(w, bound=60)
+                self.assertEqual(rc, 0, out + err)
+                path = os.path.join(self.sweeps(w), "trees", marker)
+                self.assertTrue(os.path.lexists(path), "premise: the marker was planted")
+                w.ctl({})
+                rc, out, err = self.run_bounded(w, bound=60)
+                self.assertEqual(rc, 0, out + err)
+                self.assertFalse(os.path.lexists(path), "the next run removed the marker of no checkout")
+
+    def test_the_checkouts_and_venvs_files_are_read_through_open_regular(self):
+        """The verify pass's code finding 5, by direct calls in a child with a bound of 60 s: _file_digest of a FIFO is
+        None, and the FIFO is never opened; _entry_faults and venv_tree, each of which checks a file with os.lstat before
+        it reads it, meet a FIFO swapped in after that check (made certain here by an os.lstat that reports the FIFO as
+        the regular file beside it): _entry_faults names it a content fault, and venv_tree raises Unreadable naming it, an
+        OSError its callers read as a venv that cannot be read. At the build head each opened the FIFO by name and
+        waited (the case then fails at the bound)."""
+        tmp = tempfile.mkdtemp(prefix="sweepof-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        os.mkfifo(os.path.join(tmp, "fifo"))
+        with open(os.path.join(tmp, "plain"), "w") as f:
+            f.write("abc\n")
+        code = ("import importlib.util, json, os, sys, types\n"
+                "spec = importlib.util.spec_from_file_location('sweep_runner', sys.argv[1])\n"
+                "mod = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(mod)\n"
+                "tmp = sys.argv[2]\n"
+                "out = {'digest': mod._file_digest(tmp, b'fifo')}\n"
+                "real, plain = os.lstat, os.lstat(os.path.join(tmp, 'plain'))\n"
+                "lying = types.ModuleType('os')\n"
+                "lying.__dict__.update(os.__dict__)\n"
+                "lying.lstat = lambda p, *a, **k: plain if os.fsdecode(p).endswith('fifo') else real(p, *a, **k)\n"
+                "mod.os = lying\n"
+                "faults = mod._entry_faults(tmp, {b'fifo': (b'100644', 'e' * 40)})\n"
+                "out['faults'] = {k: [n.decode() for n in v] for k, v in faults.items() if v}\n"
+                "try:\n"
+                "    mod.venv_tree(tmp)\n"
+                "    out['venv_tree'] = 'read'\n"
+                "except OSError as e:\n"
+                "    out['venv_tree'] = '%s: %s' % (type(e).__name__, e)\n"
+                "print(json.dumps(out, sort_keys=True))\n")
+        try:
+            p = subprocess.run([sys.executable, "-c", CAP_SHIM, str(ADDRESS_CAP), sys.executable, "-c", code, str(SWEEP), tmp],
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=60)
+        except subprocess.TimeoutExpired:
+            self.fail("a read was still waiting after 60 s: it opened the FIFO and waited for a writer")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(json.loads(p.stdout), {"digest": None, "faults": {"content": ["fifo"]},
+                                                "venv_tree": "Unreadable: a FIFO, not a regular file"})
 
 
 # The keys of leg_context, with placeholder values: leg_sets' NAMES do not depend on them.

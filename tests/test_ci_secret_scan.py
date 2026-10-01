@@ -8,13 +8,13 @@ left every branch before one (force-pushed over, or on a deleted branch) was nev
 serves it by its sha. secret-scan.yml runs ci.yml's secrets job on every push of a branch or a tag whose commit
 carries that file (the PR's narrow landing delta, ruling 1) and on a pull request's opened, synchronize and reopened
 events (the ruling of 2026-09-30 12:42Z, item 1): GitHub reads a push's workflows from the commit the push puts on its
-ref, and a pull request's from the merge commit it makes of the PR's head and its base, which carries the base's copy,
-so a PR's pushes are scanned on a branch cut before the file landed and on a PR from another repository, while a
-branch cut before the file with no open PR starts no run until it merges main (the file's header says which pushes start
-none). The two copies are held equal here instead of being written once as a reusable workflow that
-both call: GitHub renders a called job's check name as "<caller job> / <called job>", and scripts/batch.py land tells
-ci.yml's jobs by the names GitHub renders (ci_jobs, the coordinator's decision 18), as does the list of checks
-docs/batching.md's maintainer section gives.
+ref, and a pull request's from the merge commit it makes of the PR's head and its base, which carries the base's copy
+unless the branch edited or deleted it, so a PR's pushes are scanned on a branch cut before the file landed and on a PR
+from another repository, while a branch cut before the file with no open PR starts no run until it merges main (the
+file's header says which pushes start none). The two copies are held equal here instead of being written once as a
+reusable workflow that both call: GitHub renders a called job's check name as "<caller job> / <called job>", and
+scripts/batch.py land tells ci.yml's jobs by the names GitHub renders (ci_jobs, the coordinator's decision 18), as does
+the list of checks docs/batching.md's maintainer section gives.
 
 The checks, each over the files' text, read with tests/test_ci_vendored_job.py's readers (lines, job_block, content:
 comment-only lines dropped, a `#` line inside a block scalar kept, nothing else changed), so the modules read the workflow

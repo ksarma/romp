@@ -26,9 +26,11 @@ Subcommands, in the order a batch goes through them:
   finish     <name>                   confirm members read MERGED, retarget, delete branches, orphans
   bisect     <name> -- <cmd...>       first-parent bisect of the batch chain; names the member
 
-State lives in `<git common dir>/batch/<name>.json` (shared by every worktree of the clone). The
-tool needs git and the GitHub CLI (`gh`, or the binary named by ROMP_GH); it imports nothing beyond
-the standard library and its sibling scripts/sweep.py, whose reader verify uses for the sweep result
+State lives in `<git common dir>/batch/<name>.json` (shared by every worktree of the clone), read only as a
+regular file and without waiting (read_state: a FIFO or a symlink there, which a sweep's leg can leave through its
+checkout's alternates, stops the command, naming the file). The tool needs git and the GitHub CLI (`gh`, or the
+binary named by ROMP_GH); it imports nothing beyond the standard library and its sibling scripts/sweep.py, whose reader
+verify uses for the sweep result
 (`<state dir>/sweeps/<full sha>.json`, written by `scripts/sweep.py run`). It acts on the clone it
 lives in (or ROMP_BATCH_REPO), never on the shell's cwd, so a misnamed cwd cannot make it assemble the
 wrong repository.
@@ -88,17 +90,35 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     land's --flake names it (a red is not erased by a GitHub re-run or a second push either; one attempt
     across the runs at the head is excused), and land records the excused attempt in the state for finish;
   - pull N drops N's dependents, unless N already merged into main;
+  - every git process this tool starts itself goes through run_git (tests/test_git_call_census.py holds every git
+    call in this file to it), which names the repository the call means, GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE set
+    and GIT_CEILING_DIRECTORIES at the directory above the work tree (but for find_repo's discovery call, which sets the
+    ceiling alone, at the parent of the directory holding .git: repo_root makes it once for the clone, and repo_for
+    before every call made in a batch worktree), so a .git that git does not recognize fails the call instead of sending
+    git up to an enclosing repository (the 02:43Z ruling, item 1(b)), and bounds its wait at GIT_BOUND, 600 s (item
+    1(a)): a git still running then (waiting on a FIFO at the clone's shallow file, config or HEAD, which a sweep's leg
+    can plant through its checkout's alternates, say) is killed with its process group, and the command stops there with
+    GitBound, a Fail (exit 1) naming the call, except in finish's read of the landed head's CI run, which, the merge
+    having happened, reports any Fail there, GitBound included, as unread after the merge and carries on. The bound is far above the slowest call
+    measured (a member's merge, under a second; the comment at GIT_BOUND gives the figures), and larger than
+    scripts/sweep.py's because a push runs the pre-push hook and a fetch can bring new commits, neither measured.
+    verify's read of the excuse rule runs its git through scripts/sweep.py, at that script's bound. Not bounded:
+    bisect's test command, which it runs at the tip, at the base and at each step, and the processes the tool starts
+    that are not git (gh, the ledger script, scripts/pr-orphans.sh), with any git they start;
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
 """
 import argparse
 import datetime as _dt
+import errno
 import hashlib
 import importlib.util
 import json
 import os
 import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -156,6 +176,7 @@ class Fail(Exception):
 # ── process helpers ──────────────────────────────────────────────────────────
 
 def _run(cmd, cwd=None, check=True, env=None, input_text=None):
+    """A process that is not git (gh, the ledger script, pr-orphans.sh); every git call goes through run_git."""
     proc = subprocess.run(cmd, cwd=cwd, env=env, input=input_text, text=True,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if check and proc.returncode != 0:
@@ -163,12 +184,135 @@ def _run(cmd, cwd=None, check=True, env=None, input_text=None):
     return proc
 
 
+# The 02:43Z ruling, item 1(a): every git process this tool starts has a bounded wait, GIT_BOUND seconds, and starts
+# through run_git, the one helper that starts one. A git that has not ended by then is killed with its process group
+# (each starts in a session of its own, so it has no terminal to prompt on: a credential prompt fails at once instead of
+# waiting) and the call raises GitBound, a Fail naming the call, so plan, assemble, verify, land and finish refuse there
+# rather than hang on a file a leg left in the batcher's repository (a FIFO at its config, HEAD, index, info/exclude,
+# shallow file or objects/info/alternates), except finish's read of the landed head's CI run, which reports any Fail
+# there, GitBound included, as unread after the merge, and carries on.
+# The bound is far above the slowest call measured on this project's clone on 2026-10-01: a member's merge in the batch
+# worktree 0.74 s, a detached worktree add (the ledger check's) 0.58 s, ls-remote of origin 0.39 to 0.49 s, a fetch with
+# nothing new 0.22 s, merge-tree of a batch chain's merges at most 0.12 s, every other read 0.02 s or less. It is larger
+# than scripts/sweep.py's GIT_BOUND, whose calls are all local, because this tool's include a push through the clone's
+# pre-push hook, which scans the pushed commits, and a fetch that brings new commits, neither measured here.
+# tests/test_git_call_census.py holds every git argv and git launch in this file to run_git.
+GIT_BOUND = 600
+# The 02:43Z ruling, item 1(b): the variables that tell git where a repository is (git's own list of the repository's
+# local variables, less the configuration and replace-ref ones, plus the discovery ones). Each git call drops the inherited ones and
+# names the repository it means: GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE explicit, GIT_CEILING_DIRECTORIES above it.
+GIT_LOCATION_ENV = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_INDEX_FILE",
+                    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_SHALLOW_FILE",
+                    "GIT_GRAFT_FILE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM")
+
+
+class GitBound(Fail):
+    """A git call that did not end within GIT_BOUND seconds, killed with its process group: a refusal naming the call."""
+
+
+class GitRepo:
+    """The repository a git call means, named explicitly (the 02:43Z ruling, item 1(b)): its work tree, git dir and common
+    dir, each absolute, and the ceiling above it. A .git git does not recognize (refs/ removed, objects/ a file, HEAD
+    removed, .git removed) then fails the call as "not a git repository" instead of sending git up to an enclosing
+    repository. The ceiling alone stops that walk at the work tree, for a call made there; the explicit names, beside it,
+    keep each call on the repository find_repo found: git reads no .git file again (so one rewritten after repo_root's
+    discovery, in a clone that is a linked worktree, does not move a call to another repository: BatchGitBound's
+    git-file pin, red when the three are dropped), and a core.worktree in the repository's config moves no call's work
+    tree. They do not keep every read off a commondir file: git 2.43 reads the git dir's commondir file when a call
+    reads a ref, whatever GIT_COMMON_DIR says (measured on 2026-10-01), so in a linked worktree's git dir that file is read
+    by such a call, and a FIFO there ends it at GIT_BOUND, naming it. git_dir None is the discovery call (find_repo),
+    which sets only the ceiling."""
+
+    def __init__(self, work_tree, git_dir, common_dir, ceiling):
+        self.work_tree, self.git_dir, self.common_dir, self.ceiling = work_tree, git_dir, common_dir, ceiling
+
+
+# The repositories repo_root found, by the real path it returned: the batcher's clone, read once per process.
+_REPOS = {}
+
+
+def _git_env(repo, extra=None):
+    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION_ENV}
+    env.update(extra or {})
+    env["GIT_CEILING_DIRECTORIES"] = repo.ceiling
+    if repo.git_dir is not None:
+        env.update(GIT_DIR=repo.git_dir, GIT_COMMON_DIR=repo.common_dir, GIT_WORK_TREE=repo.work_tree)
+    return env
+
+
+def run_git(args, cwd, repo=None, env=None, text=True):
+    """`git <args>` in `cwd`, in the repository `repo` names (default: repo_for(cwd)), as a CompletedProcess: the one way
+    this tool starts git. stdin is closed, `env` is added to the environment, and the process starts in a session of its
+    own and has GIT_BOUND seconds to end; one that has not is killed with its process group and reaped, and GitBound is
+    raised naming the call. Any other exception while it runs (Ctrl-C's KeyboardInterrupt) kills it the same way first."""
+    repo = repo or repo_for(cwd)
+    argv = ["git", *args]
+    p = subprocess.Popen(argv, cwd=cwd, env=_git_env(repo, env), text=text, start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        out, err = p.communicate(timeout=GIT_BOUND)
+    except BaseException as e:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
+        for f in (p.stdout, p.stderr):
+            f.close()
+        if isinstance(e, subprocess.TimeoutExpired):
+            raise GitBound("git %s in %s did not end within %d s and was killed" % (" ".join(args), cwd, GIT_BOUND)) from None
+        raise
+    return subprocess.CompletedProcess(argv, p.returncode, out, err)
+
+
+def find_repo(start, walk):
+    """The GitRepo of the repository at `start`: with `walk`, the nearest directory at or above its real path that holds
+    a .git entry (the clone the script lives in, from its scripts/ directory); without, `start` itself, which must hold
+    one (a batch worktree, the ledger check's tree). git reads it there, `rev-parse --show-toplevel --absolute-git-dir
+    --git-common-dir` with GIT_CEILING_DIRECTORIES at that directory's parent, so a .git git does not recognize is a
+    Fail naming the directory and never sends git on to an enclosing repository."""
+    d = os.path.realpath(start)
+    while walk and not os.path.lexists(os.path.join(d, ".git")) and os.path.dirname(d) != d:
+        d = os.path.dirname(d)
+    if not os.path.lexists(os.path.join(d, ".git")):
+        raise Fail("%s is not a git working tree: no .git %s" % (start, "at or above it" if walk else "in it"))
+    p = run_git(["rev-parse", "--path-format=absolute", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"], d,
+                repo=GitRepo(d, None, None, os.path.dirname(d)))
+    found = p.stdout.splitlines() if p.returncode == 0 else []
+    if len(found) != 3:
+        raise Fail("%s is not a git working tree that git recognizes (%s)" % (d, (p.stderr or p.stdout).strip()))
+    top, git_dir, common = found
+    return GitRepo(top, git_dir, common, os.path.dirname(top))
+
+
+def repo_for(cwd):
+    """The GitRepo a call in `cwd` means: the batcher's clone as repo_root found it, else find_repo(cwd, walk=False),
+    read again on every call, since this tool adds and removes worktrees as it goes."""
+    return _REPOS.get(os.path.realpath(cwd)) or find_repo(cwd, walk=False)
+
+
+def git_proc(*args, cwd=None, check=True):
+    """run_git's CompletedProcess, and with `check` a Fail naming the call when it exits nonzero."""
+    proc = run_git(args, cwd)
+    if check and proc.returncode != 0:
+        raise Fail("git %s failed (%d):\n%s%s" % (" ".join(args), proc.returncode, proc.stdout, proc.stderr))
+    return proc
+
+
 def git(*args, cwd=None, check=True):
-    return _run(["git", *args], cwd=cwd, check=check).stdout.strip()
+    return git_proc(*args, cwd=cwd, check=check).stdout.strip()
 
 
 def git_ok(*args, cwd=None):
-    return _run(["git", *args], cwd=cwd, check=False).returncode == 0
+    """Whether `git <args>` exits 0; False too when `cwd` holds no repository git recognizes. A git that does not end
+    within GIT_BOUND still raises GitBound: a call that was killed is not an answer."""
+    try:
+        repo = repo_for(cwd)
+    except GitBound:
+        raise
+    except Fail:
+        return False
+    return run_git(args, cwd, repo=repo).returncode == 0
 
 
 def gh_bin():
@@ -196,13 +340,17 @@ def repo_root():
     """The clone this script acts on: ROMP_BATCH_REPO, else the clone the script file lives in."""
     override = os.environ.get("ROMP_BATCH_REPO")
     if override:
-        return os.path.realpath(override)
-    here = os.path.dirname(os.path.realpath(__file__))
-    return git("rev-parse", "--show-toplevel", cwd=here)
+        root = os.path.realpath(override)
+        repo = find_repo(root, walk=True)
+    else:
+        repo = find_repo(os.path.dirname(os.path.realpath(__file__)), walk=True)
+        root = repo.work_tree
+    _REPOS[root] = repo
+    return root
 
 
 def common_dir(root):
-    return git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=root)
+    return repo_for(root).common_dir
 
 
 def state_dir(root):
@@ -215,12 +363,56 @@ def state_path(root, name):
     return os.path.join(state_dir(root), name + ".json")
 
 
+# How read_state opens a state file: no symlink followed (O_NOFOLLOW), no wait for a FIFO's writer (O_NONBLOCK), and
+# no terminal made this process's controlling terminal (O_NOCTTY), as scripts/sweep.py's open_regular opens.
+_STATE_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY
+
+
+def read_state(path):
+    """The bytes of the batch state file at `path`, or None when nothing is there: os.lstat first, and anything but a
+    regular file (a FIFO, a symlink, a directory) is a Fail naming the path and what is there, never opened; then an open
+    with _STATE_READ_FLAGS, read only when fstat finds a regular file, so one swapped in after the lstat is refused the
+    same way. The state lives in the clone's common dir, which a sweep's leg reaches through its checkout's alternates:
+    a FIFO there, opened by name, held verify and assemble without end (the verify pass at PR 926's build head, its code
+    finding 1)."""
+    kinds = {stat.S_IFIFO: "a FIFO", stat.S_IFLNK: "a symlink", stat.S_IFDIR: "a directory", stat.S_IFCHR: "a character device",
+             stat.S_IFBLK: "a block device", stat.S_IFSOCK: "a socket"}
+
+    def refuse(mode):
+        raise Fail("the batch state %s cannot be read (%s, not a regular file); move it aside and plan again"
+                   % (path, kinds.get(stat.S_IFMT(mode), "a file of another type")))
+    try:
+        st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        refuse(st.st_mode)
+    try:
+        fd = os.open(path, _STATE_READ_FLAGS)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            refuse(stat.S_IFLNK)
+        raise
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            refuse(mode)
+        f = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with f:
+        return f.read()
+
+
 def load_state(root, name):
     p = state_path(root, name)
-    if not os.path.exists(p):
+    data = read_state(p)
+    if data is None:
         raise Fail("no plan named %s (%s); run `scripts/batch.py plan` first" % (name, p))
-    with open(p) as f:
-        return json.load(f)
+    return json.loads(data.decode("utf-8"))
 
 
 def save_state(root, state):
@@ -434,7 +626,7 @@ def predict_conflicts(root, base_sha, ordered, cands):
     acc = base_sha
     for n in ordered:
         m = cands[n]
-        proc = _run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", acc, m["head"]], cwd=root, check=False)
+        proc = git_proc("merge-tree", "--write-tree", "--name-only", "--no-messages", acc, m["head"], cwd=root, check=False)
         lines = proc.stdout.splitlines()
         if proc.returncode == 0 and lines:
             tree = lines[0]
@@ -662,7 +854,7 @@ def member_rows_added(root, base_sha, head, path=UPSTREAM_MD):
     """The table rows a member ADDS to UPSTREAM.md against its merge base, and whether that is all
     it does to the file. (added_rows, only_rows)."""
     mb = git("merge-base", base_sha, head, cwd=root)
-    diff = _run(["git", "--literal-pathspecs", "diff", "--unified=0", mb, head, "--", path], cwd=root, check=False).stdout
+    diff = git_proc("--literal-pathspecs", "diff", "--unified=0", mb, head, "--", path, cwd=root, check=False).stdout
     rows, other = [], False
     for line in diff.splitlines():
         if line.startswith(("+++", "---", "@@", "diff ", "index ")):
@@ -716,7 +908,7 @@ def staged_paths(wt, paths):
     if not paths:
         return []
     wanted, out = set(paths), []
-    for entry in _run(["git", "--literal-pathspecs", "ls-files", "--stage", "-z", "--", *paths], cwd=wt).stdout.split("\0"):
+    for entry in git_proc("--literal-pathspecs", "ls-files", "--stage", "-z", "--", *paths, cwd=wt).stdout.split("\0"):
         meta, _, path = entry.partition("\t")
         if path in wanted and meta.split()[2] == "0":
             out.append(path)
@@ -745,7 +937,7 @@ def resolution_diff(cwd, merge, paths):
     if mt is None:
         return None
     # --literal-pathspecs: a resolution path with [ * ? in its name is a file name, not a pattern.
-    return _run(["git", "--literal-pathspecs", "diff", "--no-color", mt, merge + "^{tree}", "--", *paths], cwd=cwd, check=False).stdout
+    return git_proc("--literal-pathspecs", "diff", "--no-color", mt, merge + "^{tree}", "--", *paths, cwd=cwd, check=False).stdout
 
 
 def resolution_hunks(cwd, merge, paths):
@@ -765,8 +957,7 @@ def hunk_lines(cwd, mt, tree, path):
     assemblies; each conflict marker line is cut back to the marker, since its label names a parent
     by SHA and the batch side is a different commit in each assembly. None when the diff has no text
     hunk (a binary file, an unchanged path), where the lines would identify nothing."""
-    proc = subprocess.run(["git", "--literal-pathspecs", "diff-tree", "-r", "-p", mt, tree, "--", path],
-                          cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = run_git(["--literal-pathspecs", "diff-tree", "-r", "-p", mt, tree, "--", path], cwd, text=False)
     if proc.returncode != 0:
         return None
     out, in_hunk, after_change = [], False, False
@@ -823,7 +1014,7 @@ def marker_paths(tree, paths, cwd):
     """The paths among `paths` whose blob in `tree` (a tree or commit) holds a conflict marker line."""
     out = []
     for p in paths:
-        proc = subprocess.run(["git", "cat-file", "-p", "%s:%s" % (tree, p)], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = run_git(["cat-file", "-p", "%s:%s" % (tree, p)], cwd, text=False)
         if proc.returncode == 0 and _CONFLICT_MARKER.search(proc.stdout.decode("utf-8", "replace")):
             out.append(p)
     return out
@@ -1004,9 +1195,7 @@ def merge_member(root, wt, state, m, resolve_set):
             % (n, by, short(m["head"]), "; add Depends-on or reorder" if by != remote_main() else ""))
         return "contained"
     msg = "Merge #%d: %s" % (n, m["title"])
-    env = dict(os.environ, GIT_MERGE_AUTOEDIT="no")
-    proc = subprocess.run(["git", "merge", "--no-ff", "--no-edit", "-m", msg, m["head"]], cwd=wt, env=env,
-                          text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = run_git(["merge", "--no-ff", "--no-edit", "-m", msg, m["head"]], wt, env={"GIT_MERGE_AUTOEDIT": "no"})
     if proc.returncode == 0:
         sha = git("rev-parse", "HEAD", cwd=wt)
         if sha == before or parents_of(sha, wt) != [before, m["head"]]:
@@ -1148,9 +1337,7 @@ def merge_main(root, wt, state):
         print("%s (%s) is already in %s" % (remote_main(), short(main_sha), branch_of(state["name"])))
         return True
     msg = "Merge %s into %s" % (remote_main(), branch_of(state["name"]))
-    env = dict(os.environ, GIT_MERGE_AUTOEDIT="no")
-    proc = subprocess.run(["git", "merge", "--no-ff", "--no-edit", "-m", msg, main_sha], cwd=wt, env=env,
-                          text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = run_git(["merge", "--no-ff", "--no-edit", "-m", msg, main_sha], wt, env={"GIT_MERGE_AUTOEDIT": "no"})
     resolved = None
     if proc.returncode == 0:
         sha = git("rev-parse", "HEAD", cwd=wt)
@@ -1350,7 +1537,7 @@ def merge_tree_of(p1, p2, cwd):
     the conflicted files. (None, "unsupported", None) when this git lacks `merge-tree --write-tree`
     (added in git 2.38). The markers are labeled with the identifiers given, so two callers get the
     same tree for the same merge only when both name the parents the same way: pass SHAs."""
-    proc = _run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", p1, p2], cwd=cwd, check=False)
+    proc = git_proc("merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", p1, p2, cwd=cwd, check=False)
     fields = proc.stdout.split("\0")
     if proc.returncode in (0, 1) and fields and fields[0].strip():
         if proc.returncode == 0:
@@ -1568,8 +1755,13 @@ def check_contains_main(root, name, head, lines):
 
 def excuse_contradiction(root, sweep, result, head, subject="the batch head"):
     """Round 1's excuse rule, read against the head's tree: scripts/sweep.py's excuse_contradiction, which its own
-    check applies too, so check prints what verify reads."""
-    return sweep.excuse_contradiction(root, result, head, subject=subject)
+    check applies too, so check prints what verify reads. Its git call is sweep.py's, bounded by that script's GIT_BOUND
+    in the repository its find_repo reads at `root`; a refusal there (sweep.py's Refused, its GitBound included) is a Fail
+    naming it."""
+    try:
+        return sweep.excuse_contradiction(root, result, head, subject=subject)
+    except sweep.Refused as e:
+        raise Fail("the sweep result's excuse rule could not be read: %s" % e)
 
 
 def sweep_record(sweep, a, head):
@@ -1835,7 +2027,7 @@ def gather_body_inputs(root, state):
             status, path = parts[0][0], parts[-1]
             title, st = "", ""
             if status != "D":
-                text = _run(["git", "show", "%s:%s" % (br, path)], cwd=root, check=False).stdout
+                text = git_proc("show", "%s:%s" % (br, path), cwd=root, check=False).stdout
                 hdr = {}
                 if text.startswith("---"):
                     for l in text.split("\n")[1:]:
@@ -2364,7 +2556,7 @@ def ci_jobs(root, head, tail):
     appends. Raises Fail (a read that cannot be made is not a green run) when the file cannot be read at the head, holds
     no job, or a name is written in a form this reads no further (a block scalar, an empty value)."""
     sweep = sweep_reader()
-    proc = _run(["git", "show", "%s:%s" % (head, CI_WORKFLOW_PATH)], cwd=root, check=False)
+    proc = git_proc("show", "%s:%s" % (head, CI_WORKFLOW_PATH), cwd=root, check=False)
     if proc.returncode != 0:
         raise Fail("could not read %s at %s to read which jobs the batch head's CI run must hold (%s)%s"
                    % (CI_WORKFLOW_PATH, short(head), (proc.stderr or proc.stdout).strip(), tail))
@@ -2897,12 +3089,30 @@ def cmd_bisect(args):
     if at_base != 0:
         raise Fail("the command fails at the base %s (%s) too; no member made it fail. Check the command and the environment before blaming a member"
                    % (short(base), remote_main()))
-    git("bisect", "start", "--first-parent", tip, base, cwd=wt)
+    # The steps `git bisect run` would take are driven here, with its rules for the command's exit (0 good, 125 skip, any
+    # other from 1 to 127 bad, anything else stops the bisect): bisect run runs the command inside git, so the bound on
+    # every git call (GIT_BOUND, the 02:43Z ruling, item 1(a)) would bound the command too, and a test command can rightly
+    # take longer.
+    # Each git step is bounded; the command is not, as the runs at the tip and the base above are not. Each step tests
+    # another commit of the chain, so there are at most as many as it has commits, plus one.
+    steps = int(git("rev-list", "--first-parent", "--count", "%s..%s" % (base, tip), cwd=wt)) + 1
+    proc = git_proc("bisect", "start", "--first-parent", tip, base, cwd=wt)
     try:
-        proc = _run(["git", "bisect", "run", *args.cmd], cwd=wt, check=False)
-        m = _FIRST_BAD.search(proc.stdout + proc.stderr)
-        if not m:
-            raise Fail("bisect did not name a first bad commit:\n%s" % (proc.stdout + proc.stderr)[-2000:])
+        out = proc.stdout + proc.stderr
+        m = _FIRST_BAD.search(out)
+        while not m:
+            steps -= 1
+            if steps < 0:
+                raise Fail("bisect took more steps than the chain has commits, at %s" % short(git("rev-parse", "HEAD", cwd=wt)))
+            rc = subprocess.run(args.cmd, cwd=wt).returncode
+            if rc not in range(0, 128):
+                raise Fail("bisect stopped at %s: the command exited %d, and git bisect run stops on an exit of 128 or more, or "
+                           "a signal" % (short(git("rev-parse", "HEAD", cwd=wt)), rc))
+            proc = git_proc("bisect", "skip" if rc == 125 else "good" if rc == 0 else "bad", cwd=wt, check=False)
+            out = proc.stdout + proc.stderr
+            m = _FIRST_BAD.search(out)
+            if not m and proc.returncode != 0:
+                raise Fail("bisect did not name a first bad commit:\n%s" % out[-2000:])
         bad = m.group(1)
     finally:
         git("bisect", "reset", cwd=wt, check=False)
@@ -3056,7 +3266,8 @@ def main(argv=None):
     p = sub.add_parser("bisect", help="first-parent bisect over the batch chain; names the member",
                        description="When the batch's CI is red: run the command at the tip and at the base first (a command that "
                                    "never fails, or fails everywhere, is reported instead of a member), then `git bisect "
-                                   "--first-parent` over the member merges with `git bisect run`, and name the member to pull.")
+                                   "--first-parent` over the member merges, each step taken as `git bisect run` takes it (exit "
+                                   "0 good, 125 skip, any other from 1 to 127 bad), and name the member to pull.")
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("cmd", nargs=argparse.REMAINDER, help="-- <command that fails on the bad tree>, run in the batch worktree")
     p.set_defaults(func=cmd_bisect)

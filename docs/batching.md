@@ -17,12 +17,13 @@ scan, also runs in a workflow of its own (`.github/workflows/secret-scan.yml`) o
 branch or a tag whose commit carries that file, a member PR's and the merge to main included, and
 on every push to an open PR's branch. GitHub reads a push's workflows from the commit the push puts
 on its ref, and a PR's from the merge commit it makes of the PR's head and its base, which carries
-main's copy of the file, so a member PR's pushes are scanned even on a branch cut from main before
-the file landed. Among the pushes that start no run: a push to such a branch that has no open PR,
-until it merges main; a tag on such a commit; and a push whose commit lacks the file because it or
-an earlier commit on its branch deleted it. A PR that conflicts with its base gets no run of its
-own until the conflict is resolved (CLAUDE.md, "Credentials", says what the scan reads, which
-pushes start no run and GitHub's other limits). Nothing in the landing reads that workflow's runs.
+the base's copy of the file unless the branch edited or deleted it, so a member PR's pushes are
+scanned even on a branch cut from main before the file landed. Among the pushes that start no run: a
+push to such a branch that has no open PR, until it merges main; a tag on such a commit; and a push
+whose commit lacks the file because it or an earlier commit on its branch deleted it. A PR that
+conflicts with its base gets no run of its own until the conflict is resolved (CLAUDE.md,
+"Credentials", says what the scan reads, which pushes start no run and GitHub's other limits).
+Nothing in the landing reads that workflow's runs.
 
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
 `land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps the commit a
@@ -349,10 +350,11 @@ subject; `verify` refuses the branch otherwise.
    or anything else did during the run) the run is invalid, naming the file: the sweep does not
    restore it, so the next sweep's clones read it as it now stands: cut where the file now says,
    or, when a leg removed it, not shallow at all. A shallow file that is not a regular file (a
-   FIFO, a device, or a symlink, which the sweep does not follow) is never opened: one there as the
-   sweep starts refuses the run before the sweep's first `git` call that would read it, and one a
-   leg leaves makes the run invalid, each naming the file; `scripts/sweep.py check` refuses one
-   the same way, before its first `git` call. The legs of one job share its
+   FIFO, a device, or a symlink, which the sweep does not follow) is never opened by the sweep, and
+   no `git` it starts reads one its check found: one there as the sweep starts refuses the run
+   before the sweep's first `git` call that would read it, and one a leg leaves makes the run
+   invalid, each naming the file; `scripts/sweep.py check` refuses one the same way, before its
+   first `git` call that would read it. The legs of one job share its
    checkout, as CI's steps do. The machine itself stays shared, and a leg can leave a file there
    that a later leg reads: `/tmp` outside each TMPDIR, `/dev/shm`, `/run/user/<uid>`, the npm and
    Playwright caches, your passwd home, tmux's socket directory (tmux ignores TMPDIR), `--python`'s
@@ -364,8 +366,42 @@ subject; `verify` refuses the branch otherwise.
    changed during the run (above). So does a clone's `.git` that a leg leaves as anything but a
    directory, or its `.git/HEAD`, `.git/config` or `.git/info/exclude` left as anything but a
    regular file (a FIFO, a device, a symlink): the sweep checks `.git` and then those three first,
-   names each one it finds, and opens none of them, since reading one could wait or read without
-   end, and `git` follows a `.git` file to the directory it names. A leg can also leave
+   names each one it finds, and neither it nor a `git` it starts opens one it found, since reading
+   one could wait or read without end, and `git` follows a `.git` file to the directory it names.
+   These checks see each file as it is when the sweep checks it: a file swapped in after the check
+   (by a process still running then, such as one of the four kinds below) is still never read by the
+   sweep itself, which reads only a regular file and opens without waiting, but a `git` it starts
+   next opens the file by name and can wait on it, until the bound below ends the wait. Every `git`
+   call the sweep makes into a repository names it explicitly (`GIT_DIR`, `GIT_COMMON_DIR` and
+   `GIT_WORK_TREE` set, `GIT_CEILING_DIRECTORIES` at the directory above it), but for the one call
+   that finds your repository, which sets the ceiling alone, at the parent of the directory holding
+   `.git`; so a clone's `.git` that `git` no longer recognizes (its `refs/` removed, say) fails the
+   call instead of sending `git` up to a repository that encloses the clone, and each call has 120 s
+   to end (`GIT_BOUND` in `scripts/sweep.py`; a job's checkout, the slowest call, took under a
+   second when measured on 2026-10-01). A `git` still running then, waiting on a FIFO a leg left
+   where `git` reads (a `.gitignore`, a file an `include.path` names, your repository's
+   `objects/info/alternates`) or on one swapped in after the sweep's check, is killed, and the run
+   is invalid, naming the call, or,
+   where that happens before anything is recorded or in `check`, refused, naming it. A FIFO a leg
+   leaves in your repository where no `git` of that run reads after it (its `config` or `HEAD`,
+   since the sweep's `git` calls in your repository all come before the first leg; its `index` or
+   `info/exclude`, which only `git status` there reads; or its `objects/info/alternates` once the
+   run's last checkout is made and verified, since the reads after the legs read no object) leaves
+   that run's verdict as recorded; the next run is refused at its first `git` call that reads the
+   file, naming the call, and so is `check` for `config`, `HEAD` and `objects/info/alternates` (it
+   reads neither `index` nor `info/exclude`). `scripts/batch.py` names the repository and bounds its
+   own `git` calls the same way (its discovery call, with the ceiling alone, runs again before each
+   call in a batch worktree), at 600 s, since it also pushes through the pre-push hook
+   and fetches, and stops with an error naming the call. The sweep's own files under the state dir,
+   which a leg can reach (each leg's log, the results, the checkouts' and the venvs' markers, a
+   venv's build log, the locks), are created or opened without waiting. A FIFO or a symlink a leg
+   leaves at a result or a marker is never read, and reads as unreadable (`check` and `verify` fail
+   that result, naming the file, and the next sweep at its sha is refused), as no marker (the
+   checkout is removed as stale) or as no finished build (the venv is built again); one at a venv's
+   build log refuses the venv's build, naming the log; and a lock is opened without waiting, since
+   it is only locked. A leg's log is created afresh, under another name when its name is taken, and
+   its counts are read through the file the sweep created. `scripts/batch.py` reads its state file
+   only as a regular file, without waiting, and otherwise stops, naming it. A leg can also leave
    a process running. The sweep reaps its own process tree: when a leg ends, it kills its children
    again and again until none is left or 30 s pass, and on Linux, where the sweep is a child
    subreaper and so adopts each orphaned descendant of a leg (a `setsid` child, a double-forked
@@ -384,7 +420,9 @@ subject; `verify` refuses the branch otherwise.
    run invalid only when the re-read after a leg, or the check of a later job's fresh checkout,
    reads the path it wrote, and the run then names the leg after which, or the checkout in which,
    the change was found, which need not be the leg that started the process; or when it changes
-   your shallow file before the re-read after the last leg, and the run then names the file. The sweep writes every
+   your shallow file before the re-read after the last leg, and the run then names the file; or
+   when a `git` call of the run waits on what it wrote until the bound, and the run then names the
+   call. The sweep writes every
    run to
    `<state dir>/sweeps/<full sha>.json`, which keeps every run at that sha. The state dir is
    `$ROMP_STATE_DIR`, else `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and

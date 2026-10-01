@@ -30,9 +30,11 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -1738,6 +1740,337 @@ class Verify(_Base):
         self.assertIn("FAIL ledger: UPSTREAM.md:", p.stdout)
         self.assertNotIn("pre-migration", p.stdout)
         self.assertEqual(fx.dev_git("worktree", "list", "--porcelain").count("worktree "), 1, "the temporary checkout is gone")
+
+
+# Runs a batch.py (argv[2], then its argv) with GIT_BOUND at argv[1] seconds: the 02:43Z ruling's pins (BatchGitBound),
+# whose planted files a git waits on, end at that bound rather than batch.py's.
+BATCH_BOUND_DRIVER = r"""
+import importlib.util, sys
+bound, path, argv = sys.argv[1], sys.argv[2], sys.argv[3:]
+spec = importlib.util.spec_from_file_location("batch_tool_bounded", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.GIT_BOUND = int(bound)
+sys.exit(mod.main(argv))
+"""
+def _descendants(pid):
+    """Every descendant of `pid` alive now, read from /proc/<pid>/task/*/children and down (Linux); [] where /proc has no
+    such file. The same helper as tests/test_sweep_runner.py's, which pins the pair's behaviour there too."""
+    found, todo = [], [pid]
+    while todo:
+        p = todo.pop()
+        try:
+            tasks = os.listdir("/proc/%d/task" % p)
+        except OSError:
+            continue
+        for t in tasks:
+            try:
+                with open("/proc/%d/task/%s/children" % (p, t)) as f:
+                    kids = [int(x) for x in f.read().split()]
+            except (OSError, ValueError):
+                continue
+            for k in kids:
+                if k not in found:
+                    found.append(k)
+                    todo.append(k)
+    return found
+
+
+def kill_tree(pid):
+    """SIGKILL the watched process `pid` (a batch.py the watchdog gave up on), its process group, and every descendant of
+    it with that descendant's own process group, the descendants read before any kill: each git run_git starts is in a
+    session of its own, so killing the watched group alone left those waiting (the verify pass at PR 926's build head,
+    its code finding 4). The test's own process group is never signalled, and off Linux, with no /proc to read, the
+    watched group alone is."""
+    own = os.getpgrp()
+    for target in [pid] + _descendants(pid):
+        try:
+            group = os.getpgid(target)
+        except OSError:
+            continue
+        if group > 1 and group != own:
+            try:
+                os.killpg(group, 9)
+            except OSError:
+                pass
+        if target != os.getpid():
+            try:
+                os.kill(target, 9)
+            except OSError:
+                pass
+
+
+# A git first on PATH for BatchGitBound's commit-read pins: it runs the real git (PLANT_REAL_GIT), except that just before
+# the first call whose argv, joined by spaces, holds PLANT_ON it makes PLANT_FIFO a FIFO, so that call, and no
+# earlier one, meets it, as a FIFO swapped in at the batcher's shallow file by a process outside the tool would be met.
+PLANT_GIT = r"""#!/bin/sh
+case " $* " in
+  *"$PLANT_ON"*) [ -e "$PLANT_FIFO" ] || mkfifo "$PLANT_FIFO" ;;
+esac
+exec "$PLANT_REAL_GIT" "$@"
+"""
+
+
+class BatchGitBound(_Base):
+    """The 02:43Z ruling on PR 926, item 1, in batch.py: every git it starts goes through run_git, which has a bounded wait
+    (GIT_BOUND; each pin runs batch.py with a bound of BOUND seconds, BATCH_BOUND_DRIVER) and names the repository it
+    means (GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE explicit, GIT_CEILING_DIRECTORIES above it). Each pin runs batch.py
+    in a process group of its own under a 60 s watchdog, so a regression fails by name instead of hanging."""
+
+    BOUND = 3
+
+    def bounded(self, *args, env=None):
+        fx = self.fx
+        proc = subprocess.Popen([sys.executable, "-c", BATCH_BOUND_DRIVER, str(self.BOUND),
+                                 os.path.join(fx.dev, "scripts", "batch.py"), *args], cwd=fx.tmp, env=env or fx.env, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True)
+
+        # kill_tree: batch.py's group and each of its descendants with its own group, so no git it started in a session
+        # of its own outlives the case (the verify pass at PR 926's build head, its code finding 4)
+        self.addCleanup(lambda: proc.poll() is None and kill_tree(proc.pid))
+        try:
+            out, err = proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc.pid)
+            out, err = proc.communicate()
+            self.fail("batch.py %s was still running after 60 s, waiting without end on a file a git it started opened:\n%s%s"
+                      % (" ".join(args), out, err))
+        return proc.returncode, out, err
+
+    def assembled(self):
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+        fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        fx.sweep("b1")
+
+    def test_a_fifo_at_the_shallow_file_refuses_verify_and_plan_naming_the_call(self):
+        """The 02:43Z ruling's fifth road: the batcher's .git/shallow is a FIFO (a leg reaches it through its clone's
+        alternates). verify's first git call that reads it, the fetch, or with --no-fetch the provenance check's rev-list,
+        and plan's fetch, wait until the bound, are killed, and each is refused (exit 1) naming the call. Before this
+        change each waited without end."""
+        fx = self.fx
+        self.assembled()
+        os.mkfifo(os.path.join(fx.dev, ".git", "shallow"))
+        for args, call in ((("verify", "b1"), "fetch --quiet --prune origin"),
+                           (("verify", "b1", "--no-fetch"), "rev-list batch/b1 ^origin/main ^"),
+                           (("plan", "--name", "b2"), "fetch --quiet --prune origin")):
+            with self.subTest(args=args):
+                rc, out, err = self.bounded(*args)
+                self.assertEqual(rc, 1, out + err)
+                self.assertIn("batch: git %s" % call, err)
+                self.assertIn(" in %s did not end within 3 s and was killed" % fx.dev, err)
+
+    def test_verifys_own_commit_reads_on_a_fifo_shallow_file_end_at_the_bound_naming_the_call(self):
+        """The 02:43Z ruling's fifth road as the verify pass measured it: batch.py verify's own git calls that parse a
+        commit, merge-base --is-ancestor (whether the batch head contains main as origin has it) and cat-file -e
+        <main>^{commit} (whether that commit is here, asked when the head does not contain it), each meeting a FIFO at
+        the batcher's shallow file. The FIFO is planted by a git first on PATH just before the call named (PLANT_GIT), so
+        the calls before it, the fetch and the provenance check's reads among them, meet none, and that one does, as it
+        would meet a FIFO a process outside the tool swapped in. Each waits until the bound, is killed, and verify is
+        refused (exit 1) naming it. Before this change each waited without end (the case then fails at the watchdog)."""
+        fx = self.fx
+        self.assembled()
+        head = fx.dev_git("rev-parse", "batch/b1")
+        plant = os.path.join(fx.tmp, "plant-bin")
+        os.makedirs(plant)
+        with open(os.path.join(plant, "git"), "w") as f:
+            f.write(PLANT_GIT)
+        os.chmod(os.path.join(plant, "git"), 0o755)
+        shallow = os.path.join(fx.dev, ".git", "shallow")
+        env = dict(fx.env, PATH=plant + os.pathsep + fx.env["PATH"], PLANT_REAL_GIT=shutil.which("git", path=fx.env["PATH"]),
+                   PLANT_FIFO=shallow)
+        for read in ("merge-base", "cat-file"):
+            with self.subTest(call=read):
+                if os.path.lexists(shallow):
+                    os.remove(shallow)
+                if read == "cat-file":
+                    fx.commit_main({"README.md": "main moved on after the assembly\n"})
+                main = fx.bare_rev("main")
+                call = ("merge-base --is-ancestor %s %s" % (main, head) if read == "merge-base"
+                        else "cat-file -e %s^{commit}" % main)
+                rc, out, err = self.bounded("verify", "b1", env=dict(env, PLANT_ON=call))
+                self.assertEqual(rc, 1, out + err)
+                self.assertTrue(stat.S_ISFIFO(os.lstat(shallow).st_mode), "premise: the FIFO was planted")
+                self.assertIn("batch: git %s in %s did not end within 3 s and was killed" % (call, fx.dev), err)
+
+    def test_a_batchers_clone_git_does_not_recognize_inside_an_enclosing_repository_is_refused_and_left_alone(self):
+        """The 02:43Z ruling, item 1(b), in batch.py: the clone it lives in sits inside an enclosing repository and its
+        .git/HEAD is gone. find_repo reads the clone's .git with the ceiling at its parent, so verify is refused naming
+        the clone, and nothing is read from or written to the enclosing repository. Before this change git walked up: the
+        enclosing repository was taken for the batcher's, its common dir got a batch/ directory, and verify said it had no
+        plan named b1."""
+        fx = self.fx
+        self.assembled()
+        with open(os.path.join(fx.tmp, ".gitignore"), "w") as f:
+            f.write("*\n")
+        for args in (["init", "-q"], ["add", "-f", ".gitignore"], ["commit", "-q", "-m", "an enclosing repository"]):
+            fx._git(*args, cwd=fx.tmp)
+        os.remove(os.path.join(fx.dev, ".git", "HEAD"))
+        rc, out, err = self.bounded("verify", "b1", "--no-fetch")
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("batch: %s is not a git working tree that git recognizes (fatal: not a git repository" % fx.dev, err)
+        self.assertFalse(os.path.exists(os.path.join(fx.tmp, ".git", "batch")), "the enclosing repository is left alone")
+
+    def test_a_batch_worktree_whose_git_file_is_gone_is_not_read_as_its_parent(self):
+        """The 02:43Z ruling, item 1(b), at a batch worktree: its .git file is gone and its parent directory is inside an
+        enclosing repository. bisect's reads there fail naming the worktree, and nothing is read from the enclosing
+        repository. Before this change git walked up and bisect read the enclosing repository's branches ("batch/b1" there is
+        no revision, an error about another repository)."""
+        fx = self.fx
+        self.assembled()
+        with open(os.path.join(fx.tmp, ".gitignore"), "w") as f:
+            f.write("*\n")
+        for args in (["init", "-q"], ["add", "-f", ".gitignore"], ["commit", "-q", "-m", "an enclosing repository"]):
+            fx._git(*args, cwd=fx.tmp)
+        os.remove(os.path.join(fx.wt("b1"), ".git"))
+        rc, out, err = self.bounded("bisect", "b1", "--", "true")
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("batch: %s is not a git working tree: no .git in it" % fx.wt("b1"), err)
+
+    def test_bisect_runs_its_command_without_the_bound_and_names_the_member(self):
+        """bisect takes the steps `git bisect run` would, with its exit rules, so the command runs outside git, without
+        the bound, as at the tip and the base, while each git step has it: a command that takes longer than the bound
+        (BOUND 3 s, the command 4 s) still names the member. A `git bisect run` started through run_git would bound the
+        command with it: killed at the bound, bisect would name nothing (the mutant gb-bisect-run-bounded)."""
+        fx = self.fx
+        self.two_members()
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", "sleep 4; grep -q 'return 1' postal/postal_service.py")
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("first bad: #102 postal: send two", out)
+
+    def test_a_linked_worktree_clone_whose_git_file_is_swapped_after_discovery_is_still_the_one_read(self):
+        """The 02:43Z ruling, item 1(b), its GIT_DIR (the verify pass at PR 926's build head, its code finding 3): the clone
+        batch.py acts on is a linked worktree (ROMP_BATCH_REPO), whose .git file names its git dir under the common dir's
+        worktrees/. repo_root reads the repository once, with the ceiling alone, and every later call names it explicitly
+        (GIT_DIR, GIT_COMMON_DIR, GIT_WORK_TREE), so git does not read that .git file again. Here a git first on PATH
+        rewrites it, just before verify's first rev-list and after the discovery, to name another repository's git dir
+        (as a process outside the tool could): verify still reads the clone it found, and passes. A call that named only
+        the ceiling and left git to find the repository from its cwd (the mutant gb-batch-nodir) followed the rewritten
+        file to the other repository, where batch/b1 is no revision, and verify failed there."""
+        fx = self.fx
+        self.assembled()
+        clone = os.path.join(fx.tmp, "dev-linked")
+        fx.dev_git("worktree", "add", "--quiet", "--detach", clone, "main")
+        other = os.path.join(fx.tmp, "other-repository")
+        fx._git("init", "-q", other, cwd=fx.tmp)
+        fx._git("commit", "-q", "--allow-empty", "-m", "another repository", cwd=other)
+        plant = os.path.join(fx.tmp, "plant-gitfile-bin")
+        os.makedirs(plant)
+        with open(os.path.join(plant, "git"), "w") as f:
+            f.write("#!/bin/sh\ncase \" $* \" in\n  *\"$PLANT_ON\"*) printf 'gitdir: %s\\n' \"$PLANT_GITDIR\" > \"$PLANT_GITFILE\" ;;\n"
+                    "esac\nexec \"$PLANT_REAL_GIT\" \"$@\"\n")
+        os.chmod(os.path.join(plant, "git"), 0o755)
+        gitfile = os.path.join(clone, ".git")
+        env = dict(fx.env, PATH=plant + os.pathsep + fx.env["PATH"], PLANT_REAL_GIT=shutil.which("git", path=fx.env["PATH"]),
+                   PLANT_ON="rev-list", PLANT_GITFILE=gitfile, PLANT_GITDIR=os.path.join(other, ".git"),
+                   ROMP_BATCH_REPO=clone)
+        rc, out, err = self.bounded("verify", "b1", "--no-fetch", env=env)
+        with open(gitfile) as f:
+            self.assertEqual(f.read(), "gitdir: %s\n" % os.path.join(other, ".git"), "premise: the .git file was rewritten")
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("ok   provenance", out)
+
+    def test_a_fifo_or_a_symlink_at_the_batch_state_refuses_verify_and_assemble_naming_it(self):
+        """The verify pass at PR 926's build head, its code finding 1: the batch's state file, <common dir>/batch/b1.json,
+        which a sweep's leg reaches through its checkout's alternates, is replaced by a FIFO, or by a symlink to a copy of
+        itself. load_state reads it as read_state reads (os.lstat, then an open that neither waits nor follows a
+        symlink, then fstat), so verify and assemble each refuse (exit 1) naming the file and what it is, with no wait.
+        At the build head both opened the FIFO by name and waited without end, and both read the symlink's target."""
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+        fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        state = os.path.join(fx.dev, ".git", "batch", "b1.json")
+        copy = state + ".copy"
+        shutil.copy(state, copy)
+        for kind, word in (("fifo", "a FIFO"), ("link", "a symlink")):
+            os.remove(state)
+            if kind == "fifo":
+                os.mkfifo(state)
+            else:
+                os.symlink(copy, state)
+            for args in (("verify", "b1", "--no-fetch"), ("assemble", "b1", "--no-fetch")):
+                with self.subTest(kind=kind, args=args):
+                    rc, out, err = self.bounded(*args)
+                    self.assertEqual(rc, 1, out + err)
+                    self.assertIn("batch: the batch state %s cannot be read (%s, not a regular file); move it aside and plan "
+                                  "again" % (state, word), err)
+
+    def test_the_watchdog_kills_what_batch_py_started_in_a_session_of_its_own(self):
+        """kill_tree, the kill bounded makes when its 60 s run out, takes a process the watched one started in a session of
+        its own, as run_git starts each git: a stand-in for batch.py, in a group of its own, starts such a child and
+        waits; kill_tree ends both. The watchdog before this change killed the watched group alone, and the child ran on
+        (the verify pass at PR 926's build head, its code finding 4)."""
+        if not os.path.isdir("/proc"):
+            self.skipTest("kill_tree reads descendants from /proc; off Linux it kills the watched group alone")
+        code = ("import subprocess, sys, time\n"
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'], start_new_session=True,\n"
+                "                     stdin=subprocess.DEVNULL)\n"
+                "print(p.pid, flush=True)\n"
+                "time.sleep(300)\n")
+        proc = subprocess.Popen([sys.executable, "-c", code], text=True, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                start_new_session=True)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(lambda: proc.poll() is None and os.kill(proc.pid, 9))
+        child = int(proc.stdout.readline())
+
+        def alive(pid):
+            try:
+                with open("/proc/%d/stat" % pid) as f:
+                    return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+            except OSError:
+                return False
+        self.addCleanup(lambda: alive(child) and os.kill(child, 9))
+        self.assertNotEqual(os.getpgid(child), os.getpgid(proc.pid), "premise: the child is in a group of its own")
+        kill_tree(proc.pid)
+        proc.wait(timeout=30)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and alive(child):
+            time.sleep(0.05)
+        self.assertFalse(alive(child), "the child in a session of its own outlived the watchdog's kill")
+
+    def test_a_git_the_tool_starts_is_killed_with_its_process_group_at_the_bound(self):
+        """run_git itself, through a git on PATH that starts a child and waits: at the bound GitBound, a Fail, names the
+        call, and neither the git nor its child is left running."""
+        tmp = tempfile.mkdtemp(prefix="batchgb-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        pids = os.path.join(tmp, "pids")
+        with open(os.path.join(tmp, "git"), "w") as f:
+            f.write("#!/bin/sh\nsleep 300 &\necho $$ $! > %s.tmp && mv %s.tmp %s\nwait\n" % (pids, pids, pids))
+        os.chmod(os.path.join(tmp, "git"), 0o755)
+        code = ("import importlib.util, os, sys\n"
+                "spec = importlib.util.spec_from_file_location('batch_tool_gb', sys.argv[1])\n"
+                "mod = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(mod)\n"
+                "mod.GIT_BOUND = 2\n"
+                "try:\n"
+                "    mod.run_git(['status'], sys.argv[2], repo=mod.GitRepo(sys.argv[2], None, None, os.path.dirname(sys.argv[2])))\n"
+                "except mod.Fail as e:\n"
+                "    print('%s: %s' % (type(e).__name__, e))\n")
+        env = dict(os.environ, PATH=tmp + os.pathsep + os.environ.get("PATH", ""))
+        p = subprocess.run([sys.executable, "-c", code, str(SCRIPTS / "batch.py"), tmp], env=env, text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("GitBound: git status in %s did not end within 2 s and was killed" % tmp, p.stdout)
+        if not os.path.isdir("/proc"):
+            return                               # no /proc to tell a live process by (macOS): the bound alone is pinned
+        with open(pids) as f:
+            shell, child = (int(x) for x in f.read().split())
+
+        def alive(pid):
+            try:
+                with open("/proc/%d/stat" % pid) as f:
+                    return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+            except OSError:
+                return False
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and any(alive(x) for x in (shell, child)):
+            time.sleep(0.05)
+        self.assertEqual([x for x in (shell, child) if alive(x)], [], "the git and its child are gone")
 
 
 class VerifyReadsTheSweep(_Base):
