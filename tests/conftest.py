@@ -185,8 +185,8 @@ atexit.register(_remove_run_dirs)
 # never shut down (an unclosed event loop's default executor is one), whose witness is
 # tests/test_run_end_leaked_processes.py's idle-pool case. The join never waits on a daemon thread (a server thread
 # left running would make every run pay the bound), and a thread whose own join raises is waited on no more
-# (_join_live_threads). The check names no thread (since fork PR #894's landing merge with
-# the fork's main, which brought fork PR #922's session-end thread guard, below): the guard names, at the teardown of
+# (_join_live_threads). The check names no thread (since fork PR #894's third landing merge, of the fork's main at
+# 46a9382c9, which brought fork PR #922's session-end thread guard, below): the guard names, at the teardown of
 # each process's last test, each thread it guards still alive at its cap (every non-daemon thread and every
 # concurrent.futures thread, pytest-timeout's timer aside), so a leaked thread is reported once, by the guard, and a
 # leaked process once, by this check. The idle worker above is
@@ -651,8 +651,8 @@ def _report_leaked_run_processes(session):
     meets that condition; and count the other unreadable ones, the tracker never among them. It names no thread: the
     session-end thread guard (below) names, at the teardown of each process's last test, each thread it guards still
     alive at its cap (every non-daemon thread and every concurrent.futures thread, pytest-timeout's timer aside), so a
-    leaked thread is reported once, by the guard, and a leaked process once, here (the hundredth round-2 commit of fork PR #894, at its landing merge with the fork's main,
-    which brought fork PR #922's guard; the comment above LEAK_EXIT_BOUND_S)."""
+    leaked thread is reported once, by the guard, and a leaked process once, here (the hundredth round-2 commit of fork
+    PR #894, at its third landing merge, of the fork's main at 46a9382c9, which brought fork PR #922's guard; the comment above LEAK_EXIT_BOUND_S)."""
     bound = _leak_exit_bound()
     _join_live_threads(bound)
     leaked, unjudged, ok = _run_end_holders(_run_roots(), bound)

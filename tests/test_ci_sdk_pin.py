@@ -4385,8 +4385,9 @@ FLAG_ONE_TOKEN = "-pno:anyio"
 
 # Launchers that lack the flag, each with the reason that makes that right, keyed (file relative to tests/, enclosing
 # function name). No launcher is here: pytest accepts the flag where anyio is absent, so no launcher has had a reason to
-# lack it. The one entry is a row the census reads that runs nothing (the reviewer's ruling at fork PR #894's landing
-# merge with main, (3), which lists it here rather than restructure the code to step around the census, so the case
+# lack it. The one entry is a row the census reads that runs nothing (the reviewer's ruling at fork PR #894's second
+# landing merge, of main at 1d591384e, (3), which lists it here rather than restructure the code to step around the
+# census, so the case
 # stays visible): tests/test_hermetic_kernel_postal.py's _PYTEST_OWN = ("pytest", "_pytest"), at module level, the
 # names of pytest's own top-level packages, which the census reads as pytest by name or path as argv[0]. Its key
 # covers every row at the module level of that file, where the tuple is the one row today. An entry must name a live

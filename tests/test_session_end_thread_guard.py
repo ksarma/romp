@@ -94,7 +94,8 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   concurrent.futures.process's _threads_wakeups (the module loaded by the scratch conftest). In this process
   (ExitJoinTables): each EXIT_JOIN_TABLES attribute exists on this Python and is a global its module's exit hook reads;
   the guard's read of each table by its literal names (tests/conftest.py's _exit_join_table_reads, since round 2 of
-  fork PR #894 at its landing merge with the fork's main) is, by execution, the table its EXIT_JOIN_TABLES pair names
+  fork PR #894 at its third landing merge, of the fork's main at 46a9382c9) is, by execution, the table its
+  EXIT_JOIN_TABLES pair names
   (a stand-in table put under each pair is the one the read labelled with it returns, and the guard reads its entry);
   the two hooks are the only ones the standard library registers with threading._register_atexit, derived from its
   source (a premise pin, which reads no guard); and a live daemon thread in either table (the busy worker of a pool a

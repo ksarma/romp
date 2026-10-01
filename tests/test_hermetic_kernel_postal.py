@@ -1534,6 +1534,7 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal.test_every_road_the_verifications_found_through_the_withdrawn_direct_import_key_proof_is_refused",
     "HermeticKernelPostal.test_every_road_through_the_withdrawn_def_local_proof_is_refused",
     "HermeticKernelPostal.test_every_shape_named_outside_the_scan_writes_when_run_and_the_scan_reads_none",
+    "HermeticKernelPostal.test_pluggys_hook_call_monitoring_and_tracing_are_refused_wherever_the_text_names_them",
     "HermeticKernelPostal.test_the_conftests_builtin_setattr_delattr_and_compile_defeat_a_literal_key",
     "HermeticKernelPostal.test_the_direct_import_positive_allowlist_refuses_a_false_proof_no_list_holds",
     "HermeticKernelPostal.test_the_fail_closed_anyio_rule_admits_a_key_only_where_it_proves_one_fixed_string_and_refuses_the_rest",
@@ -2284,11 +2285,11 @@ class _EnvNames:
     import, to its value expression when its one binding is an assignment and None otherwise, so a licence's value check
     reads a value written through a name (`_ROOT = tempfile.mkdtemp(); os.environ["XDG_STATE_HOME"] = _ROOT`,
     `_STATE_TD.name`), and a name rebound by any form above stays a name the check cannot read (_shown_value says so);
-    _resolved does the substitution. `imports` (the reviewer's ruling at fork PR #894's landing merge with main, (1))
-    is every name bound at import, to the module of that name when its one binding is a plain `import <name>`, with no
-    alias and no dot, and None otherwise, THE RULE holding it as it holds `bindings`, so a licence's value check reads
-    `secrets.token_hex(12)` as a call of the secrets module the module imported itself only while nothing else binds
-    secrets (_imported)."""
+    _resolved does the substitution. `imports` (the reviewer's ruling at fork PR #894's second landing merge, of main at
+    1d591384e, (1)) is every name bound at import, to the module of that name when its one binding is a plain `import
+    <name>`, with no alias and no dot, and None otherwise, THE RULE holding it as it holds `bindings`, so a licence's
+    value check reads `secrets.token_hex(12)` as a call of the secrets module the module imported itself only while
+    nothing else binds secrets (_imported)."""
 
     def __init__(self, tree=None):
         self.os_names = {"os"}
@@ -4974,11 +4975,11 @@ def _under_the_state_root(v, imported=()):
 
 def _a_serve_token(v, imported=()):
     """A synthetic serve token: a string literal; the shell's own value written back (test_postal_token.py); or, BY
-    PROVEN SHAPE (the reviewer's ruling at fork PR #894's landing merge with main, (1), after fork PR #919's
-    test_fetch_wrapper_census.py wrote `"census-" + secrets.token_hex(12)`), a string literal joined by + to a call
-    of secrets.token_hex with one int literal as its only argument, where secrets is in `imported`: the value reads it
-    through the module's own `import secrets`, its one binding, of the standard module (_imported, _record). That is a
-    random value the process mints, never a real token. REFUSED, each a near-miss of that shape
+    PROVEN SHAPE (the reviewer's ruling at fork PR #894's second landing merge, of main at 1d591384e, (1), after fork PR
+    #919's test_fetch_wrapper_census.py wrote `"census-" + secrets.token_hex(12)`), a string literal joined by + to a
+    call of secrets.token_hex with one int literal as its only argument, where secrets is in `imported`: the value reads
+    it through the module's own `import secrets`, its one binding, of the standard module (_imported, _record). That is
+    a random value the process mints, never a real token. REFUSED, each a near-miss of that shape
     (test_the_serve_token_licence_admits_a_literal_joined_to_secrets_token_hex_by_binding_and_refuses_each_near_miss):
     a name in place of the call, the callee a bare name (token_hex imported from secrets, or a def of the module of
     that name), a call of anything else (os.urandom(12).hex(), a read of a file), secrets bound to anything but that
@@ -5446,10 +5447,10 @@ _LISTED_HOOKS = {
 #   {spec: when pytest calls it and what it reads from it}: six of the seven hooks tests/conftest.py implements (the
 #   seventh, pytest_make_collect_report, is admitted by the shape the reader proves of its body, not by its name:
 #   _SHAPE_HOOKS). pytest_runtest_teardown joined the list at the hundredth round-2 commit of fork PR #894, when the
-#   landing merge with the fork's main brought fork PR #922's session-end thread guard, a pytest_runtest_teardown wrapper
-#   of tests/conftest.py, and the reader refused every fixture of the conftest for it: pytest ignores what the hook
-#   returns, and what its code can do to the test it is handed as nextitem (edit that test's fixtures) is a collected
-#   node edited, the kind of code below that a listed hook's body can hold.
+#   third landing merge, of the fork's main at 46a9382c9, brought fork PR #922's session-end thread guard, a
+#   pytest_runtest_teardown wrapper of tests/conftest.py, and the reader refused every fixture of the conftest for it:
+#   pytest ignores what the hook returns, and what its code can do to the test it is handed as nextitem (edit that
+#   test's fixtures) is a collected node edited, the kind of code below that a listed hook's body can hold.
 #   Pytest reads no result from any of them that decides whether a fixture runs before a test, where other hooks decide
 #   it (pytest_fixture_setup's result replaces the fixture's run, pytest_generate_tests can parametrize the fixture's name
 #   over it, pytest_collection_modifyitems can take it out of a test's fixtures, pytest_runtest_protocol and
@@ -5470,8 +5471,9 @@ _SHAPE_HOOKS = {
                                   "the collector's report: the items of a passed report (report.result) are the ones it "
                                   "collects further and runs, and a failed report is a collection error",
 }
-#   THE HOOKS A MODULE MAY IMPLEMENT BY A PROVEN SHAPE, NOT BY THEIR NAME (the reviewer's ruling at fork PR #894's landing
-#   merge with main, where fork PR #872's never-skips belt added a pytest_make_collect_report to tests/conftest.py and
+#   THE HOOKS A MODULE MAY IMPLEMENT BY A PROVEN SHAPE, NOT BY THEIR NAME (the reviewer's ruling at fork PR #894's
+#   second landing merge, of main at 1d591384e, where fork PR #872's never-skips belt added a pytest_make_collect_report
+#   to tests/conftest.py and
 #   the reader, which proved only the hooks of _LISTED_HOOKS, refused every fixture of the conftest), {spec: when pytest
 #   calls it and what it reads from it}. An implementation of pytest_make_collect_report can drop the test a fixture
 #   runs before, or make a failed collection pass or skip, so it is admitted only where the reader proves THE SHAPE
@@ -5642,10 +5644,10 @@ def _collect_report_shape_faults(hook, resolve):
     """[why] for each fact of THE SHAPE the reader cannot prove of the def `hook`, an implementation of
     pytest_make_collect_report its caller has read as registered as an old-style hookwrapper, each naming its line;
     empty when it proves them all. `resolve` resolves each call by its binding (_shape_resolver). THE SHAPE (the
-    reviewer's ruling at fork PR #894's landing merge with main): the result pytest reads is the report made by the
-    implementation the hook wraps, never replaced, none of that report's items dropped, and its outcome left as it was
-    or turned into "failed", never into a pass or a skip. The reader proves it by reading the hook's body and the body of
-    every def it calls, at any depth, by these rules; anything off them is a fault:
+    reviewer's ruling at fork PR #894's second landing merge, of main at 1d591384e): the result pytest reads is the
+    report made by the implementation the hook wraps, never replaced, none of that report's items dropped, and its
+    outcome left as it was or turned into "failed", never into a pass or a skip. The reader proves it by reading the
+    hook's body and the body of every def it calls, at any depth, by these rules; anything off them is a fault:
     - THE HOOK: a plain def (not async) whose parameters are collector or none (pytest passes an implementation its
       arguments by name, and collector is this hook's one), none defaulted, no *args, keyword-only or **kwargs; its body,
       after a docstring, begins `<name> = yield`, the one yield of the def, which binds the hookwrapper's outcome to a name
@@ -5965,10 +5967,10 @@ def _unproven_statements(tree, where=None):
     implementations it takes from a plugin, which _pytest_hook_impls reads on the module road) is bound once, by a def at
     the top of the module, whose spec (the string literal its one pytest.hookimpl decorator passes as specname=, else its
     name) is one of _LISTED_HOOKS, or one of _SHAPE_HOOKS whose shape _collect_report_text_faults proves of the def (by
-    that shape, never by its name: the reviewer's ruling at fork PR #894's landing merge with main), and whose own body
-    neither returns nor yields a value (_returns_a_value); a hookimpl that passes a positional argument, unpacked
-    keywords or a specname= that is not a literal is off the list, and so is pytest_plugins, which pytest reads to
-    import plugins.
+    that shape, never by its name: the reviewer's ruling at fork PR #894's second landing merge, of main at 1d591384e),
+    and whose own body neither returns nor yields a value (_returns_a_value); a hookimpl that passes a positional
+    argument, unpacked keywords or a specname= that is not a literal is off the list, and so is pytest_plugins, which
+    pytest reads to import plugins.
     What the list takes on trust, all of it outside the module's text: code that runs before the module whatever its text
     says (its package's __init__.py, which Python imports first, a plugin, the interpreter's startup), which may rebind
     pytest.fixture or an attribute of the standard library before the module's first line; a directory ahead of the
@@ -6499,6 +6501,28 @@ _ANYIO_INI_REGISTRARS = frozenset(("addini",))
 #   (_anyio_addini_refusal), and refuses it read other than as a call and a value naming it where a carrier's name is
 #   refused (getattr(parser, "addini")) (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 1;
 #   0 live, tests/conftest.py and tests/__init__.py name no addini)
+_ANYIO_HOOK_MONITORS = {
+    "add_hookcall_monitoring": "pluggy's hook-call monitoring, which calls the callback it is given ahead of every "
+                               "later hook call with the hook implementations it runs, each naming its plugin",
+    "enable_tracing": "pluggy's tracing, which hands the tracer a line for every later hook call and each of its "
+                      "arguments, the plugin_name pluggy replays to a later implementer of pytest_plugin_registered "
+                      "among them",
+    "setwriter": "the writer given the tracer's root (trace.root.setwriter), handed each line the tracer is given",
+    "setprocessor": "a processor given the tracer's root (trace.root.setprocessor), handed each traced call of its "
+                    "tags",
+    "HookRecorder": "pytester's HookRecorder, which gives pluggy's hook-call monitoring a recorder of every later hook "
+                    "call and its arguments",
+}
+#   THE ANYIO RULE's refusal of PLUGGY'S HOOK-CALL MONITORING AND TRACING, {name: what it hands the conftest's code}:
+#   each hands code of the conftest the plugins the run loaded, read in no way the rule can tell from a read of
+#   -p no:anyio, so the rule refuses each wherever the conftest's text names it (_anyio_channels' forms: a name, an
+#   attribute, an import, a def's or a parameter's name, a str literal's dotted-or-coloned part, so getattr(pm,
+#   "add_hookcall_monitoring") too). setwriter and setprocessor are refused beside enable_tracing since pytest turns
+#   the tracing on itself under --debug or PYTEST_DEBUG, where either alone receives the lines; HookRecorder calls
+#   add_hookcall_monitoring itself. The reviewer's ruling of 2026-10-01 00:35Z on round 2 of fork PR #894, item 1,
+#   corrects its ruling of 2026-09-30 12:50Z, item 3, which had listed the kind in WHAT IT DOES NOT READ, to the
+#   stopping rule: an escape-only kind is refused where one check does it at 0 live. 0 live: tests/conftest.py and
+#   tests/__init__.py name none of the five
 _ANYIO_BY_NAME = {"getattr": 1, "hasattr": 1, "getattr_static": 1, "__getattribute__": None, "__getattr__": None,
                   "methodcaller": 0, "attrgetter": None, "get": 0, "pop": 0, "setdefault": 0, "__getitem__": 0}
 #   the calls that read an attribute or an item by a name handed them, {function or method: the index of the argument
@@ -6927,9 +6951,9 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     tests/conftest.py sits, when None), from which the rule resolves the text's imports; `follow` false leaves the check
     out, as the check itself does when it reads an imported module, so a read reached only through an import of an
     import is not read; `nodes`, a list, is given (node, line, what) for each read. THE RULE (the reviewer's ruling at
-    fork PR #894's landing merge with main, on the proof's launcher: every child of the proof passes -p no:anyio
-    (_PROOF_CHILD_FLAG), so the execution proof refuses a hook keyed on the flag given and cannot refuse one keyed on it
-    not given): a module's code may neither name anyio
+    fork PR #894's second landing merge, of main at 1d591384e, on the proof's launcher: every child of the proof passes
+    -p no:anyio (_PROOF_CHILD_FLAG), so the execution proof refuses a hook keyed on the flag given and cannot refuse one
+    keyed on it not given): a module's code may neither name anyio
     nor read what carries the run's -p options, but by a key THE PROOF proves names something else, and a module whose
     code it finds doing either has every fixture refused on both roads (_registration_refusals).
     WHAT IT CLAIMS (the reviewer's fail-closed ruling of 2026-09-28 22:30Z on round 2 of fork PR #894, which makes the
@@ -7124,22 +7148,28 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     (_ANYIO_ATTRIBUTE_READERS) is admitted only as the callee of a call whose names THE PROOF proves, so one bound to
     another name is refused where it is read (the fifth clause):
     - A VALUE NAMING anyio, PYTEST_ADDOPTS or mainargv (_ANYIO_WORDS), case folded: every str or bytes literal, every
-      value the rule folds from literals by +, % or *, or by an f-string, and every value an augmented assignment to a
-      name binds, folded at its own statement (_anyio_fold_sites: K = 'an' and then K += 'yio' names anyio there, where
-      until the hundred and nineteenth round-2 commit of fork PR #894 the composed value was folded only where a later
-      operation or f-string read K), through names, each name resolved by its scope to the declarations that bind it
-      (ast_bindings, through _anyio_resolution) and folded to every value they give it: a plain or annotated assignment
-      or a walrus, an augmented assignment, and a for or comprehension over a tuple, list or set display or a name that
-      folds to one. An operand the rule cannot fold (a parameter, an import, a call, a subscript, an attribute, a name
-      no declaration binds, a star import's say) is read as the empty string beside the values it can, and so is a
-      name read that may take no binding, beside its declarations' values (a class body's read whose module binds
-      none, a builtin's name the module's scope binds, a name the module's scope binds in a text that holds a star
-      import: HOW IT FOLLOWS A ROAD), so "an" + x + "yio" names anyio, and a fold past _ANYIO_FOLD_CAP values is
-      refused. The fold reads no order among a scope's declarations: a name folds to the values each of them gives
-      it, and an augmented assignment's composed value reads the name through the others in turn, in every order, so
-      a few augmented assignments of one name can fold past the cap and be refused, whatever they name (msg = '' and
-      then msg += 'w0' to msg += 'w3' passes the cap and is refused, though nothing reads msg, since the walk folds
-      each at its statement; three are admitted); the fold
+      value the rule folds from literals by +, % or *, or by an f-string, and the value an augmented assignment to a
+      name composes, folded at its own statement (_anyio_fold_sites: K = 'an' and then K += 'yio' names anyio there,
+      where until the hundred and nineteenth round-2 commit of fork PR #894 the composed value was folded only where a
+      later operation or f-string read K), through names, each name resolved by its scope to the declarations that bind
+      it (ast_bindings, through _anyio_resolution) and folded through EACH DECLARATION ONCE: a plain or annotated
+      assignment or a walrus, an augmented assignment, and a for or comprehension over a tuple, list or set display or
+      a name that folds to one. A NAME MET AGAIN while the fold is reading it (an augmented assignment's own name in
+      the value it composes, met again through that declaration) is read as the empty string, open, so a value a loop
+      builds by repeating one assignment is read over two of its passes at most (K = '' and then for p in ('an', 'y',
+      'io'): K += p, or K = K + p, folds K + p to 'any' and 'yio' among its values and never to 'anyio'); and a name a
+      for or a comprehension binds through a TUPLE TARGET (for K, J in ...), or an unpacking binds from anything but a
+      display of its own length (K, J = pair), is read as the empty string, open (each a line of WHAT IT DOES NOT READ,
+      the unfoldable key's). An operand the rule cannot fold (a parameter, an import, a call, a subscript, an
+      attribute, a name no declaration binds, a star import's say) is read as the empty string beside the values it
+      can, and so is a name read that may take no binding, beside its declarations' values (a class body's read whose
+      module binds none, a builtin's name the module's scope binds, a name the module's scope binds in a text that
+      holds a star import: HOW IT FOLLOWS A ROAD), so "an" + x + "yio" names anyio, and a fold past _ANYIO_FOLD_CAP
+      values is refused. The fold reads no order among a scope's declarations: a name folds to the values each of them
+      gives it, and an augmented assignment's composed value reads the name through the others in turn, each once, in
+      every order, so a few augmented assignments of one name can fold past the cap and be refused, whatever they name
+      (msg = '' and then msg += 'w0' to msg += 'w3' passes the cap and is refused, though nothing reads msg, since the
+      walk folds each at its statement; three are admitted); the fold
       evaluates a name read once for each set of names it is folding at that moment (through's memo), so the
       evaluations k augmented assignments of one name cost grow as 2 to the k times a power of k, where until the
       hundred and twentieth round-2 commit of fork PR #894 they grew as k factorial (the re-verification of the
@@ -7161,7 +7191,22 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
       plugins load, config.option.plugins, the ini settings, and the plugin manager's listings. A carrier holds the
       flag among the run's other options or plugins, so its read is refused whatever the code does with it, which
       covers a key built at run time and a road that names no plugin: len(sys.argv), "-p" not in the invocation params,
-      an empty -p list.
+      an empty -p list. And PLUGGY'S HOOK-CALL MONITORING AND TRACING (_ANYIO_HOOK_MONITORS), refused wherever the
+      text names one of its five names, in the forms the rule reads names in (a name, an attribute, an import, a str
+      literal's dotted-or-coloned part, so getattr(pm, "add_hookcall_monitoring") too): the plugin manager's
+      add_hookcall_monitoring, whose callback is handed the hook implementations of every later hook call, each naming
+      its plugin; its enable_tracing, which hands the tracer every later hook call and its arguments; setwriter and
+      setprocessor, which give the tracer's root a writer or a processor that receives them (each refused alone, since
+      pytest turns the tracing on itself under --debug or PYTEST_DEBUG); and pytester's HookRecorder, which calls
+      add_hookcall_monitoring itself. Each hands code of the conftest each plugin a later hook call runs or is handed
+      (pluggy replays pytest_plugin_registered, plugin_name among its arguments, for every plugin already registered to
+      a plugin that implements it and registers later, pytest's fixture manager among them), the plugins the run
+      loaded read in no way the rule can tell from a read of -p no:anyio. The reviewer's light re-check at 298df9982
+      found the monitoring and the verification of the hundred and eighteenth round-2 commit of fork PR #894 the
+      tracing, each admitted while a child pytest handed the conftest's callback or writer the plugin -p loads and not
+      the one -p blocks; the reviewer's ruling of 2026-09-30 12:50Z, item 3, listed the kind in WHAT IT DOES NOT READ,
+      and its ruling of 2026-10-01 00:35Z, item 1, refuses it, one check at 0 live
+      (test_pluggys_hook_call_monitoring_and_tracing_are_refused_wherever_the_text_names_them).
     - A KEYED READ (_ANYIO_KEYED): the config's getoption, getvalue, getvalueorskip and getini and the plugin manager's
       lookups by name, each admitted only as a call whose key, its first argument or its name=, THE PROOF proves to be
       one fixed string that is no key of the method's entry (plugins, and -p, the option string pytest maps to it;
@@ -7283,8 +7328,8 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     2 of fork PR #894, where a loop over a tuple of the two names, a key THE PROOF does not prove, was the one site of
     the conftest the fail-closed rule refused, and the session-end thread guard's _exit_join_table_reads reads
     concurrent.futures' two exit-join tables by their literal module and attribute names since the hundredth, where a
-    loop over EXIT_JOIN_TABLES, fork PR #922's, was the one site the rule refused at the landing merge that brought that
-    guard); it reads config.workerinput only through hasattr, reads an item of what
+    loop over EXIT_JOIN_TABLES, fork PR #922's, was the one site the rule refused at the third landing merge, of main at
+    46a9382c9, which brought that guard); it reads config.workerinput only through hasattr, reads an item of what
     vars() returns only by a literal where it reads one directly (vars(km) bound to a name is a namespace held whole, a
     line of WHAT IT DOES NOT READ), writes no namespace through globals(), vars() or locals() at the module's level, and
     holds no value naming mainargv, and names none of the runtime-introspection channels gc, ctypes, _ctypes and __code__
@@ -7301,8 +7346,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     the proof does not prove are no keyed read: THE ENVIRONMENT, in WHAT IT DOES NOT READ). It calls no getoption,
     getvalue or getvalueorskip, so the refusal of an option string refuses nothing of it, and no argument parser's
     parse, nor does tests/__init__.py, and neither names addini, so the refusal of an ini registration refuses nothing
-    of them. No class body of either reads a name its class binds, neither binds a builtin's name in its module's
-    scope, and neither holds a star import, so the resolution's no binding for such reads (HOW IT FOLLOWS A ROAD)
+    of them, nor any of add_hookcall_monitoring, enable_tracing, setwriter, setprocessor and HookRecorder, so the
+    refusal of pluggy's hook-call monitoring and tracing refuses nothing of them. No class body of either reads a
+    name its class binds, neither binds a builtin's name in its module's scope, and neither holds a star import, so
+    the resolution's no binding for such reads (HOW IT FOLLOWS A ROAD)
     changes no reading of them; the six
     augmented assignments to a name tests/conftest.py makes and the one tests/__init__.py makes, which the first clause
     folds at their statements, fold to no word and within the cap. The
@@ -7336,8 +7383,9 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     'verbose' under -p no:planted and nothing without it), or, for a plant whose writer is a plugin, in a child pytest
     that loads the plugin by -p, where the
     conftest's read by a literal key is handed the run's -p list, or, for a plant whose conftest's own code is handed
-    the plugins the run loaded (a hook's parameters, or a callback or a writer it hands pluggy), in that child pytest,
-    where that code sees the plugin -p loads and not the one -p blocks; so a kind the rule starts refusing turns its
+    the plugins the run loaded (a hook's parameters, or a callback it hands pluggy's hook-call monitoring reached by a
+    name built at run time), in that child pytest, where that code sees the plugin -p loads and not the one -p
+    blocks; so a kind the rule starts refusing turns its
     own subtest red and this listing stays true;
     test_the_anyio_rules_listing_names_each_escape_only_witness_and_no_other holds the ids named here equal to that
     test's subtests, so a dangling id or an unlisted subtest is a red naming it. THE POSITIVE ALLOWLIST refuses a NAME,
@@ -7385,11 +7433,15 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     writes its name, is refused, and only a name assembled to hide it (built by a call, say) escapes, which no honest
     author writes; live site: tests/conftest.py makes 12 such reads, 10 lookups by a key the proof does not prove and 2
     reads of the whole environment, each a part of its state isolation (THE LIVE WITNESS).
-    THE COMMAND LINE AND THE PLUGINS, reached a way the rule does not read. A carrier reached through a function or
-    method that reads an attribute by a name handed it and that _ANYIO_BY_NAME does not list (pydoc.locate("sys.argv"),
-    pkgutil.resolve_name("sys:argv"), a field of a format string, "{0.argv}".format(sys), and a pickled global); no live
-    site (tests/conftest.py calls none of these), escape-only, witness
-    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[by-name-resolver], one plant each. Through a namespace
+    THE COMMAND LINE AND THE PLUGINS, reached a way the rule does not read. A carrier, or a name of pluggy's hook-call
+    monitoring and tracing that the third clause refuses where the text names it (_ANYIO_HOOK_MONITORS), reached
+    through a function or method that reads an attribute by a name handed it and that _ANYIO_BY_NAME does not list
+    (pydoc.locate("sys.argv"), pkgutil.resolve_name("sys:argv"), a field of a format string, "{0.argv}".format(sys), a
+    pickled global, and pydoc.locate handed a name built at run time, "pluggy.PluginManager.add_hook" +
+    "call_monitoring", which the text does not name); no live site (tests/conftest.py calls none of these),
+    escape-only, witness test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[by-name-resolver], one plant
+    each, the last run in a child pytest where the callback it hands the monitoring sees the plugin -p loads and not
+    the one -p blocks. Through a namespace
     held whole (vars() or __dict__ of the config, of sys, of a class or of a module, iterated, bound to a name, or read
     through a method of it bound to another name, _get = vars(sys).get say); live site: tests/conftest.py holds vars(km)
     whole in _sdk_read at line 1638, so the rule does not refuse vars() handed an object and held whole (THE LIVE
@@ -7424,24 +7476,7 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[plugin-registered-hook], whose plant collects the
     names the hook is handed and prints them, and in a child pytest that loads the plugin _outside by -p and blocks
     the cache plugin sees _outside and not cacheprovider (the verification of the hundred and fourteenth round-2
-    commit of fork PR #894 found the kind). The plugins the run loaded, handed to a callback or a writer the conftest
-    gives pluggy's hook-call monitoring or its tracing: config.pluginmanager.add_hookcall_monitoring(before, after) has
-    pluggy call before, ahead of every later hook call, with the hook implementations it runs, each naming its plugin
-    (plugin_name), so the callback sees each plugin that implements a hook called after it; and
-    config.pluginmanager.enable_tracing(), with a writer handed to the plugin manager's trace (trace.root.setwriter),
-    has pluggy hand the writer a line for each later hook call and each of its arguments, so the writer sees each
-    plugin a traced call is handed (plugin_name, the argument of pytest_plugin_registered, which pluggy replays for
-    every plugin already registered to a plugin that implements it and registers later, pytest's fixture manager
-    among them), and what a plugin's hook returns; each is what the rule refuses where it is read through the plugin
-    manager's get_plugins, list_name_plugin or get_hookimpls, and no read is refused (to key on anyio the callback or
-    the writer must name it, which the first two clauses refuse, spell it so the rule cannot fold it, or key on a
-    count or on another plugin); no live site (tests/conftest.py calls neither add_hookcall_monitoring nor
-    enable_tracing), escape-only, witness
-    test_every_escape_only_kind_the_anyio_rule_lists_is_admitted[hookcall-monitoring], whose two plants, one
-    collecting the plugin names its callback is handed and one those its writer's lines carry, each print them at the
-    session's end, and in a child pytest that loads by -p the plugin _outside and blocks the cache plugin see _outside
-    and not cacheprovider (the reviewer's light re-check at 298df9982 found the monitoring, and the verification of the
-    hundred and eighteenth round-2 commit the tracing).
+    commit of fork PR #894 found the kind).
     CODE THE RULE DOES NOT PARSE, AND BUILTINS REACHED A WAY IT DOES NOT SEE. Code the module runs from a string (exec,
     eval), whose reads the rule does not parse as code (a string naming anyio there is still refused as a value, and
     exec or eval named in the text defeats THE PROOF of a literal key, so any keyed read beside one is refused, and
@@ -7506,7 +7541,11 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     module's scope REBOUND THROUGH THE MODULE OBJECT, which no declaration records, stem = 'zz' and then
     sys.modules[__name__].stem = '', setattr(sys.modules[__name__], 'stem', ''), __import__(__name__).stem = '' or
     sys.modules[__name__].__dict__['stem'] = '', and then 'an' + stem + 'yio', which the rule folds from the
-    declaration's 'zz' alone; or brought from outside the module's text: a module outside the repository or
+    declaration's 'zz' alone; ACCUMULATED BY A LOOP over three passes or more, K = '' and then for p in ('an', 'y',
+    'io'): K += p, or K = K + p, since the first clause reads each declaration once and a name met again as the empty
+    string, so it composes two passes at most; bound by a TUPLE TARGET, for K, J in (('an', 'x'),): and then K +=
+    'yio', or by an unpacking from a name, PAIR = ('an', 'x'), K, J = PAIR and then K += 'yio', since the first clause
+    reads such a name as the empty string; or brought from outside the module's text: a module outside the repository or
     imported only transitively, the environment, a file, or a module of the repository the text imports directly,
     whose binding an import brings into the text, from _ih import lineage or from _ih import * and then lineage +
     'yio' where the module binds lineage = 'an', since the first clause reads a name an import binds, or a star import
@@ -7519,8 +7558,11 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     a prefix, and a key split across a direct import, by a from import and by a star import, which the verification
     of the hundred and eighteenth round-2 commit found; and a key built through an attribute, composed by an augmented
     and by a later assignment or read on a class, and one through a name rebound through the module object, in each of
-    the four spellings above, which the re-verification of the hundred and nineteenth found) are not run, since the
-    road reads the plugins the run loaded and not the command line. A name the text WRITES INTO THE BUILTINS MODULE
+    the four spellings above, which the re-verification of the hundred and nineteenth found; and B1 and B3, a key a
+    loop accumulates by an augmented and by a plain assignment, and L1, a key a for's tuple target binds, which the
+    reviewer's closing check at 4bb17d0eb found, with U1, a key an unpacking from a name binds, the same reading of a
+    tuple target) are not run, since the road reads the plugins the run loaded and not the command line. A name the
+    text WRITES INTO THE BUILTINS MODULE
     (builtins.X = ..., __builtins__[...] = ...), read where the module's own binding has not run (the binding in a
     branch not taken, read by a def, or a read at the module's level ahead of the binding), which Python reads from
     the builtins module while the rule, which reads a name as a builtin's only where the builtins module of the
@@ -7868,6 +7910,10 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
             for tok in sorted(_anyio_channels(n)):
                 off(n, "%s, a runtime-introspection channel THE ANYIO RULE refuses wholesale, since it reaches and "
                        "rewrites objects a proof over the text cannot bound" % _ANYIO_INTROSPECTION[tok])
+            for tok in sorted(_anyio_channels(n, _ANYIO_HOOK_MONITORS)):
+                off(n, "pluggy's hook-call monitoring or tracing named in the text, %s (%s), which hands code of the "
+                       "conftest the plugins the run loaded, read in no way the rule can tell from a read of "
+                       "-p no:anyio" % (tok, _ANYIO_HOOK_MONITORS[tok]))
             if isinstance(n, ast.Attribute) and n.attr in _ANYIO_CARRIERS:
                 off(n, "a read of the carrier %s, %s" % (n.attr, _ANYIO_CARRIERS[n.attr]))
             if (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
@@ -8536,16 +8582,24 @@ _ESCAPE_ONLY_PLUGIN_TEST = "def test_x():\n    pass\n"
 _ESCAPE_ONLY_SEEN_CONF = ("import json\n\n_SEEN = []\n\n\ndef pytest_plugin_registered(plugin, plugin_name, manager):\n"
                           "    _SEEN.append(plugin_name)\n\n\ndef pytest_configure(config):\n"
                           "    print(%r + json.dumps(sorted(set(map(str, _SEEN)))))\n" % _ESCAPE_ONLY_HANDED)
-_ESCAPE_ONLY_MONITOR_CONF = ("import json\n\n_SEEN = set()\n\n\ndef _before(hook_name, hook_impls, kwargs):\n"
-                             "    _SEEN.update(i.plugin_name for i in hook_impls)\n\n\ndef pytest_configure(config):\n"
-                             "    config.pluginmanager.add_hookcall_monitoring(_before, lambda *a: None)\n\n\n"
-                             "def pytest_sessionfinish(session):\n    print('\\n' + %r + json.dumps(sorted(map(str, _SEEN))))\n"
-                             % _ESCAPE_ONLY_HANDED)
-_ESCAPE_ONLY_TRACE_CONF = ("import json\nimport re\n\n_SEEN = []\n\n\ndef pytest_configure(config):\n"
-                           "    config.pluginmanager.trace.root.setwriter(_SEEN.append)\n"
-                           "    config.pluginmanager.enable_tracing()\n\n\ndef pytest_sessionfinish(session):\n"
-                           "    print('\\n' + %r + json.dumps(sorted(set(re.findall(r'plugin_name: (\\S+)', "
-                           "''.join(_SEEN))))))\n" % _ESCAPE_ONLY_HANDED)
+_HOOK_MONITOR_CONF = ("import json\n%s\n_SEEN = set()\n\n\ndef _before(hook_name, hook_impls, kwargs):\n"
+                      "    _SEEN.update(i.plugin_name for i in hook_impls)\n\n\ndef pytest_configure(config):\n"
+                      "    %s\n\n\ndef pytest_sessionfinish(session):\n"
+                      "    print('\\n' + " + repr(_ESCAPE_ONLY_HANDED) + " + json.dumps(sorted(map(str, _SEEN))))\n")
+_HOOK_TRACE_CONF = ("import json\nimport re\n\n_SEEN = []\n\n\ndef pytest_configure(config):\n"
+                    "    config.pluginmanager.trace.root.setwriter(_SEEN.append)\n"
+                    "    config.pluginmanager.enable_tracing()\n\n\ndef pytest_sessionfinish(session):\n"
+                    "    print('\\n' + %r + json.dumps(sorted(set(re.findall(r'plugin_name: (\\S+)', "
+                    "''.join(_SEEN))))))\n" % _ESCAPE_ONLY_HANDED)
+_HOOK_PROCESSOR_CONF = ("import json\n\n_SEEN = set()\n\n\ndef _proc(tags, args):\n"
+                        "    if len(args) > 1 and isinstance(args[1], dict):\n        _SEEN.add(args[1].get('plugin_name'))\n\n\n"
+                        "def pytest_configure(config):\n    config.pluginmanager.trace.root.setprocessor('hook', _proc)\n"
+                        "    config.pluginmanager.enable_tracing()\n\n\ndef pytest_sessionfinish(session):\n"
+                        "    print('\\n' + %r + json.dumps(sorted(map(str, _SEEN))))\n" % _ESCAPE_ONLY_HANDED)
+_HOOK_RECORDER_CONF = ("import json\n\nfrom _pytest.pytester import HookRecorder\n\n_R = []\n\n\n"
+                       "def pytest_configure(config):\n    _R.append(HookRecorder(config.pluginmanager, _ispytest=True))\n\n\n"
+                       "def pytest_sessionfinish(session):\n    print('\\n' + %r + json.dumps(sorted({str(c.plugin_name) for c in "
+                       "_R[0].getcalls('pytest_plugin_registered')})))\n" % _ESCAPE_ONLY_HANDED)
 #   the defeater plants' parts: the arguments of a compile whose first constant is a hook that hands getoption
 #   'plugins', and a hook whose key is a literal; a hook whose key is a def's local bound once (a road of
 #   test_every_road_through_the_withdrawn_def_local_proof_is_refused); the modules outside the conftest's text the child
@@ -8558,13 +8612,17 @@ _ESCAPE_ONLY_TRACE_CONF = ("import json\nimport re\n\n_SEEN = []\n\n\ndef pytest
 #   what its read by the literal key 'seen' is handed (_escape_only_pytest), the head of a plugin that adds the option
 #   --seen and whose pytest_configure runs first, and a test module for the child pytest to collect; and the HOOK
 #   plants' conftests: one whose own pytest_plugin_registered collects the name of each plugin it is handed and whose
-#   pytest_configure prints them, as one JSON line after _ESCAPE_ONLY_HANDED, and one whose pytest_configure hands
-#   pluggy's add_hookcall_monitoring a callback that collects the plugin name of each hook implementation every later
-#   hook call is handed, and whose pytest_sessionfinish prints them the same way (after a line break, since pytest's
-#   progress dot precedes it on the line), and one whose pytest_configure turns on pluggy's tracing with a writer given
-#   the plugin manager's trace, and whose pytest_sessionfinish prints the same way each plugin name the writer's lines
-#   carry (plugin_name: X, the argument pluggy traces for a call of pytest_plugin_registered, which pluggy replays to a
-#   plugin that implements it and registers later, pytest's fixture manager among them)
+#   pytest_configure prints them, as one JSON line after _ESCAPE_ONLY_HANDED; and the conftests of PLUGGY'S HOOK-CALL
+#   MONITORING AND TRACING (_ANYIO_HOOK_MONITORS), each printing at the session's end, the same way (after a line
+#   break, since pytest's progress dot precedes it on the line), the plugin names its code was handed: one whose
+#   pytest_configure hands the monitoring, through the callee it is given (config.pluginmanager.add_hookcall_monitoring,
+#   or that read by getattr with a literal name, both refused, or pydoc.locate of a name built at run time, the
+#   by-name-resolver kind's plant), a callback that collects the plugin name of each hook implementation every later
+#   hook call runs; one that turns on pluggy's tracing with a writer given the tracer's root, collecting each plugin
+#   name the writer's lines carry (plugin_name: X, the argument pluggy traces for a call of pytest_plugin_registered,
+#   which pluggy replays to a plugin that implements it and registers later, pytest's fixture manager among them); one
+#   that does so with a processor given the tracer's root for the hook calls' tag; and one that makes pytester's
+#   HookRecorder over the plugin manager and reads the plugin_name of each call of pytest_plugin_registered it recorded
 _ESCAPE_ONLY_KINDS = (
     ("filled-at-import", (
         ("G1b: lines.append(sys.argv) at the module's import", "import _ih" + _ESCAPE_ONLY_READ % "_ih.lines[0]",
@@ -8586,7 +8644,12 @@ _ESCAPE_ONLY_KINDS = (
          {}, "read"),
         ("a field of a format string, '{0.argv}'.format(sys)", "import sys" + _ESCAPE_ONLY_READ % "'{0.argv}'.format(sys)",
          {}, "read"),
-        ("a pickled global", "import pickle" + _ESCAPE_ONLY_READ % "pickle.loads(b'csys\\nargv\\n.')", {}, "read"))),
+        ("a pickled global", "import pickle" + _ESCAPE_ONLY_READ % "pickle.loads(b'csys\\nargv\\n.')", {}, "read"),
+        ("pluggy's add_hookcall_monitoring by pydoc.locate of a name built at run time, its callback collecting the "
+         "plugin of each hook implementation",
+         _HOOK_MONITOR_CONF % ("import pydoc\n", "pydoc.locate('pluggy.PluginManager.add_hook' + 'call_monitoring')"
+                               "(config.pluginmanager, _before, lambda *a: None)"),
+         {"_outside": "def pytest_sessionstart(session):\n    pass\n", "test_x": _ESCAPE_ONLY_PLUGIN_TEST}, "hook"))),
     ("namespace-by-another-spelling", (
         ("vars through the builtins module, builtins.vars(o)[k], in a helper handed the key",
          "import builtins\nimport sys\n\n\ndef _ns(o, k):\n    return builtins.vars(o)[k]"
@@ -8608,12 +8671,6 @@ _ESCAPE_ONLY_KINDS = (
     ("plugin-registered-hook", (
         ("the conftest's own pytest_plugin_registered collects the names of the plugins the run loaded",
          _ESCAPE_ONLY_SEEN_CONF, {"_outside": "X = 1\n", "test_x": _ESCAPE_ONLY_PLUGIN_TEST}, "hook"),)),
-    ("hookcall-monitoring", (
-        ("the conftest's callback to pluggy's add_hookcall_monitoring collects the plugin of each hook implementation",
-         _ESCAPE_ONLY_MONITOR_CONF, {"_outside": "def pytest_sessionstart(session):\n    pass\n",
-                                     "test_x": _ESCAPE_ONLY_PLUGIN_TEST}, "hook"),
-        ("the conftest's writer to pluggy's tracing collects the plugin names the traced hook calls are handed",
-         _ESCAPE_ONLY_TRACE_CONF, {"_outside": "X = 1\n", "test_x": _ESCAPE_ONLY_PLUGIN_TEST}, "hook"))),
     ("code-from-a-string", (
         ("the hook defined in a string exec runs",
          "exec(\"def pytest_configure(config):\\n    import sys\\n    if 'no:planted' in sys.argv:\\n"
@@ -8691,7 +8748,15 @@ _ESCAPE_ONLY_KINDS = (
          None),
         ("a key through a name rebound through the module object, sys.modules[__name__].__dict__['stem'] = ''",
          "import sys\n\nstem = 'zz'\nsys.modules[__name__].__dict__['stem'] = ''"
-         + _ESCAPE_ONLY_SOUGHT % "'an' + stem + 'yio'", {}, None))),
+         + _ESCAPE_ONLY_SOUGHT % "'an' + stem + 'yio'", {}, None),
+        ("B1: K = '', then for p in ('an', 'y', 'io'): K += p, a key a loop accumulates over three passes",
+         "import sys\n\nK = ''\nfor p in ('an', 'y', 'io'):\n    K += p" + _ESCAPE_ONLY_SOUGHT % "K", {}, None),
+        ("B3: K = '', then for p in ('an', 'y', 'io'): K = K + p, the same loop by a plain assignment",
+         "import sys\n\nK = ''\nfor p in ('an', 'y', 'io'):\n    K = K + p" + _ESCAPE_ONLY_SOUGHT % "K", {}, None),
+        ("L1: for K, J in (('an', 'x'),): K += 'yio', a key a for's tuple target binds",
+         "import sys\n\nfor K, J in (('an', 'x'),):\n    K += 'yio'" + _ESCAPE_ONLY_SOUGHT % "K", {}, None),
+        ("U1: PAIR = ('an', 'x'), K, J = PAIR, then K += 'yio', a key an unpacking from a name binds",
+         "import sys\n\nPAIR = ('an', 'x')\nK, J = PAIR\nK += 'yio'" + _ESCAPE_ONLY_SOUGHT % "K", {}, None))),
     ("builtins-written", (
         ("B1: builtins.lineage = '', the module's lineage = 'zz' in a branch not taken, a def's 'an' + lineage + 'yio'",
          "import builtins\nimport sys\n\nif False:\n    lineage = 'zz'\nbuiltins.lineage = ''\n\n\ndef _read():\n"
@@ -8728,7 +8793,8 @@ _ESCAPE_ONLY_KINDS = (
 #   conftest does not import and the child imports after it (code outside the conftest's text); "plugin" for one whose
 #   writer is the module _outside loaded as a plugin by -p in a child pytest (_escape_only_pytest), where the conftest's
 #   read by a literal key is handed the run's -p list; "hook" for one whose conftest's own code is handed the plugins
-#   the run loaded (a hook's parameters, or a callback or a writer it hands pluggy), run in that child pytest, where
+#   the run loaded (a hook's parameters, or a callback it hands pluggy's hook-call monitoring reached by a name built
+#   at run time), run in that child pytest, where
 #   the module _outside, a plugin that does nothing (or implements one hook that does nothing), is loaded by -p and the
 #   cache plugin is blocked, so the names the conftest prints hold _outside and not cacheprovider; None for one not
 #   run (the unfoldable keys and the names written into the builtins module, whose road reads the plugins the run
@@ -9272,6 +9338,37 @@ def _ini_alias_roads():
           + "\n\ndef pytest_configure(config):\n    config.getini('cmdopt')\n"}, None, None)]
 
 
+def _hook_monitor_roads():
+    """THE HOOK-CALL MONITORING ROADS (the reviewer's ruling of 2026-10-01 00:35Z on round 2 of fork PR #894, item 1:
+    pluggy's add_hookcall_monitoring and enable_tracing with trace.root.setwriter have a one-check refusal at 0 live, so
+    THE ANYIO RULE refuses those names in the conftest's text, and the witness its ruling of 2026-09-30 12:50Z, item 3,
+    had listed becomes a refusal plant), [(label, the conftest's text, the names of _ANYIO_HOOK_MONITORS it spells, an
+    empty set for the control the rule admits, whether it runs in a child pytest)], for
+    test_pluggys_hook_call_monitoring_and_tracing_are_refused_wherever_the_text_names_them. M1 and T1 are the two plants
+    of the retired [hookcall-monitoring] subtest, text for text: M1's callback given add_hookcall_monitoring, the
+    reviewer's light re-check at 298df9982's road, and T1's writer given the tracer's root beside enable_tracing, the
+    verification of the hundred and eighteenth round-2 commit's. M2 reads the monitoring by getattr with a literal name;
+    T2 gives the tracer's root a processor (setprocessor) for the hook calls' tag; R1 makes pytester's HookRecorder over
+    the plugin manager. Each that runs prints, at the session's end, the plugin names its code was handed, and in a
+    child pytest that loads the plugin _outside by -p and blocks the cache plugin (_escape_only_pytest) sees _outside
+    and not cacheprovider. The control calls pytest's own tracer, config.trace, and names none of the five. Synthetic:
+    every name invented."""
+    monitor = "config.pluginmanager.add_hookcall_monitoring(_before, lambda *a: None)"
+    return [
+        ("M1: a callback given config.pluginmanager.add_hookcall_monitoring", _HOOK_MONITOR_CONF % ("", monitor),
+         {"add_hookcall_monitoring"}, True),
+        ("M2: add_hookcall_monitoring read by getattr with a literal name",
+         _HOOK_MONITOR_CONF % ("", "getattr(config.pluginmanager, 'add_hookcall_monitoring')(_before, lambda *a: None)"),
+         {"add_hookcall_monitoring"}, True),
+        ("T1: a writer given the tracer's root, trace.root.setwriter, beside enable_tracing", _HOOK_TRACE_CONF,
+         {"setwriter", "enable_tracing"}, True),
+        ("T2: a processor given the tracer's root, trace.root.setprocessor, beside enable_tracing", _HOOK_PROCESSOR_CONF,
+         {"setprocessor", "enable_tracing"}, True),
+        ("R1: pytester's HookRecorder made over the plugin manager", _HOOK_RECORDER_CONF, {"HookRecorder"}, True),
+        ("control: pytest's own tracer called, config.trace, no writer, processor or tracing",
+         "def pytest_configure(config):\n    config.trace('configured')\n", set(), False)]
+
+
 def _class_body_value(d, expr):
     """The repr a child interpreter, isolated (-I) and writing no byte code (-B), prints for the expression `expr` after
     it imports the conftest in `d` (the directory first on its path): what Python binds, for the class-body roads and
@@ -9528,15 +9625,15 @@ _FOLD_MEMO_RESOLUTIONS = 20000
 def _registration_refusals(tree, candidates, real, where=None):
     """{id(def): None, or why the reader cannot prove pytest runs it} for each def of `candidates` (the function-scoped
     autouse fixture defs of `tree`): the refusals of the reader's two roads (_road_refusals), and on both roads THE
-    ANYIO RULE (_anyio_option_reads, the reviewer's ruling at fork PR #894's landing merge with main, on the proof's
-    launcher, a positive allowlist since the fail-closed ruling of 2026-09-28 22:30Z): a module whose code the rule
-    finds naming anyio or reading what carries the run's -p options, other than by a key its proof proves to be one
-    fixed string naming something else, has every fixture refused, naming each read. A read that can reach the option
-    is admitted only where the rule proves it, and everything else is refused, through the module's text and through a
-    module of the repository it imports directly in the shapes the rule's last clause reads, and for any identifier or
-    attribute name outside THE POSITIVE ALLOWLIST (_ANYIO_DIRECT_ALLOWED, the set tests/__init__.py names) anywhere in
-    such a module's text -- the twenty-eight names of _ANYIO_DIRECT_WHOLESALE given a category, any other name refused as
-    one tests/__init__.py does not hold; the rule's docstring says
+    ANYIO RULE (_anyio_option_reads, the reviewer's ruling at fork PR #894's second landing merge, of main at 1d591384e,
+    on the proof's launcher, a positive allowlist since the fail-closed ruling of 2026-09-28 22:30Z): a module whose
+    code the rule finds naming anyio or reading what carries the run's -p options, other than by a key its proof proves
+    to be one fixed string naming something else, has every fixture refused, naming each read. A read that can reach the
+    option is admitted only where the rule proves it, and everything else is refused, through the module's text and
+    through a module of the repository it imports directly in the shapes the rule's last clause reads, and for any
+    identifier or attribute name outside THE POSITIVE ALLOWLIST (_ANYIO_DIRECT_ALLOWED, the set tests/__init__.py names)
+    anywhere in such a module's text -- the twenty-eight names of _ANYIO_DIRECT_WHOLESALE given a category, any other
+    name refused as one tests/__init__.py does not hold; the rule's docstring says
     what it claims, and lists in WHAT IT DOES NOT READ the kinds of road no honest author writes that its wholesale
     checks leave unrefused, the environment lookups that ruling leaves listed, the read reached only through an import
     of an import, where it stops, and the roads of neither shape through a module it imports directly."""
@@ -9605,13 +9702,14 @@ def _conftest_reasserted_names(src=None, where=None):
     since its thirty-first): a function-scoped autouse fixture counts only when the reader proves that the fixture pytest
     runs under the name this def is registered by is this def and that no hook of the module but those on _LISTED_HOOKS,
     and those of _SHAPE_HOOKS whose shape it proves (never by their name, since the reviewer's ruling at the PR's
-    landing merge with main), can keep pytest from running it, and anything it cannot prove is refused, named in `refused`. It reads for
-    tests/conftest.py the fixtures and the hooks of the module Python imported, as pytest registers them, and for a
-    source handed in its text alone, where every statement, wherever it stands, and every hook implementation must be on
-    the proven list and every name the def could be registered under bound once in the module, by the def or its literal
-    name=, and registered by no other call; so a road not yet named is refused rather than counted
-    (_registration_refusals has the two roads, and _unproven_statements the list). On both roads, THE ANYIO RULE (the
-    reviewer's ruling at the PR's landing merge with main, on the proof's launcher, a positive allowlist since the
+    second landing merge, of main at 1d591384e), can keep pytest from running it, and anything it cannot prove is
+    refused, named in `refused`. It reads for tests/conftest.py the fixtures and the hooks of the module Python
+    imported, as pytest registers them, and for a source handed in its text alone, where every statement, wherever it
+    stands, and every hook implementation must be on the proven list and every name the def could be registered under
+    bound once in the module, by the def or its literal name=, and registered by no other call; so a road not yet named
+    is refused rather than counted (_registration_refusals has the two roads, and _unproven_statements the list). On
+    both roads, THE ANYIO RULE (the reviewer's ruling at the PR's second landing merge, of main at 1d591384e, on the
+    proof's launcher, a positive allowlist since the
     fail-closed ruling of 2026-09-28 22:30Z; _anyio_option_reads) refuses every fixture of a module whose code it finds
     naming anyio or reading what carries the run's -p options, other than by a key its proof proves to be one fixed
     string naming something else: a read that can reach the option is admitted only where the rule proves it, and
@@ -9978,7 +10076,8 @@ _PROOF_DEVELOPER_OPTIONS = (("-p", "no:cacheprovider"), ("-k", "reassert"))
 #   -p no:anyio after these, as every child of the proof does (_PROOF_CHILD_FLAG)
 _PROOF_CHILD_FLAG = ("-p", "no:anyio")
 #   THE FLAG EVERY CHILD OF THE PROOF PASSES, after its run's options (_reassert_proof's run; the reviewer's ruling at
-#   fork PR #894's landing merge with main, (3)). Fork PR #872 holds every pytest the suite starts to -p no:anyio
+#   fork PR #894's second landing merge, of main at 1d591384e, (3)). Fork PR #872 holds every pytest the suite starts to
+#   -p no:anyio
 #   (tests/test_ci_sdk_pin.py, ChildPytestLaunchers), so that no child in a CI cell loads the pytest plugin of anyio,
 #   which the SDK step installs there. CI's step passes the same flag among its options, and _proof_option_roads reads
 #   it there as one option of two words, as it reads the developer's -p no:cacheprovider (that ruling, (2);
@@ -13272,8 +13371,9 @@ class HermeticKernelPostal(unittest.TestCase):
                          ["ROMP_MODELS_URL is licensed but no test module writes it at module level any more: remove the licence"])
 
     def test_the_serve_token_licence_admits_a_literal_joined_to_secrets_token_hex_by_binding_and_refuses_each_near_miss(self):
-        """THE SERVE TOKEN'S LICENCE, WIDENED BY PROVEN SHAPE (the reviewer's ruling at fork PR #894's landing merge with
-        main, (1), after fork PR #919's test_fetch_wrapper_census.py wrote `"census-" + secrets.token_hex(12)` at module
+        """THE SERVE TOKEN'S LICENCE, WIDENED BY PROVEN SHAPE (the reviewer's ruling at fork PR #894's second landing
+        merge, of main at 1d591384e, (1), after fork PR #919's test_fetch_wrapper_census.py wrote `"census-" +
+        secrets.token_hex(12)` at module
         level and the licence check faulted it). ADMITTED: a string literal joined by + to secrets.token_hex with one int
         literal, where secrets is the module's own `import secrets`, its one binding, of the standard module (a module
         named secrets under the root the scan resolves imports in would be the one imported), written by setdefault or
@@ -14329,7 +14429,8 @@ class HermeticKernelPostal(unittest.TestCase):
                          "reader proves the shape of each of the latter, and it has no pytest_plugins")
 
     def test_a_collect_report_hook_is_admitted_by_the_shape_the_reader_proves_and_any_other_is_refused_naming_why(self):
-        """THE SHAPE (the reviewer's ruling at fork PR #894's landing merge with main: fork PR #872's never-skips belt added
+        """THE SHAPE (the reviewer's ruling at fork PR #894's second landing merge, of main at 1d591384e: fork PR #872's
+        never-skips belt added
         a pytest_make_collect_report to tests/conftest.py, the reader refused it by its name and with it every fixture of
         the conftest, and 13 tests of this module were red on the merge). A pytest_make_collect_report is admitted only
         where the reader proves the shape of its body (_collect_report_shape_faults: the report pytest reads is the one the
@@ -14491,14 +14592,14 @@ class HermeticKernelPostal(unittest.TestCase):
                                     "tree: a cycle the proof left holds them")
 
     def test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why(self):
-        """THE ANYIO RULE (the reviewer's ruling at fork PR #894's landing merge with main, on the proof's launcher: every
-        child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution proof refuses a hook keyed on the flag
-        given and grants one keyed on it not given; one syntactic check of the filter, _anyio_option_reads, now refuses
-        both wherever it finds the read the hook keys on, a positive allowlist since the reviewer's fail-closed ruling
-        of 2026-09-28 22:30Z: a read that can reach the option is admitted only where the rule proves it, through the
-        conftest's text and through a module of the repository it imports directly in the shapes its last clause reads,
-        and everything else is refused; its docstring says what it claims and lists in WHAT IT DOES NOT READ what it
-        leaves unrefused, and
+        """THE ANYIO RULE (the reviewer's ruling at fork PR #894's second landing merge, of main at 1d591384e, on the
+        proof's launcher: every child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution proof
+        refuses a hook keyed on the flag given and grants one keyed on it not given; one syntactic check of the filter,
+        _anyio_option_reads, now refuses both wherever it finds the read the hook keys on, a positive allowlist since
+        the reviewer's fail-closed ruling of 2026-09-28 22:30Z: a read that can reach the option is admitted only where
+        the rule proves it, through the conftest's text and through a module of the repository it imports directly in
+        the shapes its last clause reads, and everything else is refused; its docstring says what it claims and lists in
+        WHAT IT DOES NOT READ what it leaves unrefused, and
         test_the_fail_closed_anyio_rule_admits_a_key_only_where_it_proves_one_fixed_string_and_refuses_the_rest pins the
         allowlist's classes and THE PROOF). LIVE: over tests/conftest.py the rule finds no read, its direct-import check's
         reading of tests/__init__.py included (red with _shared_judge_paths put back to its getattr over a loop's name,
@@ -15855,8 +15956,8 @@ class HermeticKernelPostal(unittest.TestCase):
         # the conftest's module name through a def's __globals__ the conftest hands it, and through setattr on the
         # conftest's module, and the conftest's def-local cell through code compiled in mode 'single' and run through
         # types.FunctionType, and through setattr with attribute names built at run time); the rule admitted each at the
-        # landing merge, and at run time a config's getoption was handed "plugins" (the artifacts), and refuses each at
-        # the hundredth.
+        # third landing merge, of main at 46a9382c9, and at run time a config's getoption was handed "plugins" (the
+        # artifacts), and refuses each at the hundredth.
         write = ("a name that writes a namespace or an attribute by a name, or builds code, in a direct import (the rule "
                  "admitted it before the hundredth round-2 commit): ")
         refused += [
@@ -16254,6 +16355,67 @@ class HermeticKernelPostal(unittest.TestCase):
                     shown, holds = run
                     handed = _escape_only_pytest(d)
                     self.assertTrue(holds(handed), "%s: in a child pytest %s: %r" % (label, shown, handed))
+
+    def test_pluggys_hook_call_monitoring_and_tracing_are_refused_wherever_the_text_names_them(self):
+        """PLUGGY'S HOOK-CALL MONITORING AND TRACING (the reviewer's ruling of 2026-10-01 00:35Z on round 2 of fork
+        PR #894, item 1, which corrects its ruling of 2026-09-30 12:50Z, item 3, to the stopping rule: an escape-only
+        kind is refused where one check does it at 0 live): the plugin manager's add_hookcall_monitoring hands the
+        callback it is given the hook implementations of every later hook call, each naming its plugin, and its
+        enable_tracing hands the writer or the processor given the tracer's root every later hook call and its
+        arguments, so code of the conftest is handed the plugins the run loaded. THE ANYIO RULE refuses each name of
+        _ANYIO_HOOK_MONITORS wherever the conftest's text names it. Over _hook_monitor_roads, each written to a
+        directory of its own: each PLANT is REFUSED, every read naming the clause, and the names its reads name are
+        EQUAL to the names it spells; with any one of those names left out of the table, no read names it, and a plant
+        that spells that name alone is ADMITTED; with the check removed (_ANYIO_HOOK_MONITORS emptied) every plant is
+        ADMITTED, as each was at 4bb17d0eb, whose [hookcall-monitoring] subtest asserted M1 and T1 admitted; and each
+        plant that runs, in a child pytest (_escape_only_pytest), sees _outside, which -p loads, and pytest's python,
+        and not cacheprovider, which -p blocks. Every name of the table is spelled by a plant, and the control is
+        admitted. 0 LIVE: neither tests/conftest.py nor tests/__init__.py names any of the five (THE LIVE WITNESS
+        asserts 0 reads over both)."""
+        from unittest import mock
+        mod = sys.modules[__name__]
+        where = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, where, True)
+        roads = _hook_monitor_roads()
+        clause = "pluggy's hook-call monitoring or tracing named in the text"
+        self.assertEqual(set().union(*(names for _l, _c, names, _r in roads)), set(_ANYIO_HOOK_MONITORS),
+                         "every name of _ANYIO_HOOK_MONITORS is spelled by a plant")
+        self.assertEqual(sum(1 for _l, _c, names, _r in roads if not names), 1, "the one control")
+
+        def read_with(conf, d, table):
+            """The rule's reads of `conf` with `table` as _ANYIO_HOOK_MONITORS, and the names of `table` they name."""
+            with mock.patch.object(mod, "_ANYIO_HOOK_MONITORS", table):
+                reads = _anyio_option_reads(ast.parse(conf), where=d)
+            return reads, {t for t in table for _l, w in reads if "%s, %s (" % (clause, t) in w}
+        for i, (label, conf, names, run) in enumerate(roads):
+            with self.subTest(road=label) if names else self.subTest(control=label):
+                d = os.path.join(where, "h%02d" % i)
+                os.mkdir(d)
+                for name, text in (("conftest.py", conf), ("_outside.py", "def pytest_sessionstart(session):\n    pass\n"),
+                                   ("test_x.py", _ESCAPE_ONLY_PLUGIN_TEST)):
+                    with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                        f.write(text)
+                reads, named = read_with(conf, d, dict(_ANYIO_HOOK_MONITORS))
+                if not names:
+                    self.assertEqual(reads, [], "%s: admitted" % label)
+                    continue
+                self.assertTrue(reads and all(clause in w for _l, w in reads),
+                                "%s: refused, each read naming the clause: %s" % (label, reads))
+                self.assertEqual(named, names, "%s: the names its reads name are the names it spells" % label)
+                for t in sorted(names):
+                    less, named_less = read_with(conf, d, {k: v for k, v in _ANYIO_HOOK_MONITORS.items() if k != t})
+                    self.assertNotIn(t, named_less, "%s: with %s left out of the table, no read names it" % (label, t))
+                    if names == {t}:
+                        self.assertEqual(less, [], "%s: admitted with %s, the one name it spells, left out" % (label, t))
+                self.assertEqual(read_with(conf, d, {})[0], [],
+                                 "%s: admitted with the check removed, as at 4bb17d0eb" % label)
+                if run:
+                    seen = _escape_only_pytest(d)
+                    self.assertTrue(isinstance(seen, list) and "_outside" in seen and "python" in seen
+                                    and "cacheprovider" not in seen,
+                                    "%s: its code is handed the plugins the run loaded, _outside (-p _outside) and "
+                                    "pytest's python among them, and not cacheprovider (-p no:cacheprovider): %r"
+                                    % (label, seen))
 
     def test_a_class_body_read_takes_the_modules_binding_where_python_reads_it(self):
         """THE CLASS BODY (the reviewer's ruling of 2026-09-30 12:50Z on round 2 of fork PR #894, item 2, on its light
@@ -16687,9 +16849,9 @@ class HermeticKernelPostal(unittest.TestCase):
         it, so the plant is a road to the command line and not a text that reads nothing; and a PLUGIN plant, whose
         writer is the module _outside loaded as a plugin by -p in a child pytest (_escape_only_pytest), hands the
         conftest's read by a literal key the run's -p list, -p no:planted among it; and a HOOK plant, whose conftest's
-        own code collects the names of the plugins it is handed (its pytest_plugin_registered's parameters, the hook
-        implementations pluggy hands the callback its pytest_configure gives add_hookcall_monitoring, or the lines
-        pluggy's tracing hands the writer it gives the plugin manager's trace), run in that child pytest, sees
+        own code collects the names of the plugins it is handed (its pytest_plugin_registered's parameters, or the hook
+        implementations pluggy hands the callback its pytest_configure gives the hook-call monitoring it reaches through
+        pydoc.locate by a name built at run time), run in that child pytest, sees
         _outside, which the command line loads by -p, and pytest's python, and not cacheprovider, which it blocks. The
         unfoldable keys' plants and the builtins-written names' are not run: their road reads the plugins the run
         loaded, not the command line. So a
@@ -17076,7 +17238,8 @@ class HermeticKernelPostal(unittest.TestCase):
                       "with pytest-xdist out of reach, -n0 is refused by name")
 
     def test_the_proofs_option_roads_read_cis_anyio_flag_as_one_option_and_any_other_p_as_the_word_it_was(self):
-        """CI'S -p no:anyio, ONE OPTION (the reviewer's ruling at fork PR #894's landing merge with main, (2), after fork
+        """CI'S -p no:anyio, ONE OPTION (the reviewer's ruling at fork PR #894's second landing merge, of main at
+        1d591384e, (2), after fork
         PR #872 put -p no:anyio in CI's pytest step: the proof read -p there as a word, which every run gives, so its
         road on -p not given fired in no run and the pair-of-forms test failed). From the real ci.yml,
         _proof_ci_option_units reads the flag as one option in each of CI's forms, and _proof_option_roads plants on it
@@ -21187,7 +21350,8 @@ def _proof_copy_roads(checkout=None):
 def _proof_ci_option_units(words):
     """CI's options as _proof_option_roads reads them, from `words`, the options of a run in CI's form, in their order:
     each word that begins with a dash, but -p followed by no:anyio, which is one option of two words (_PROOF_CHILD_FLAG)
-    read as the developer's -p no:cacheprovider is (the reviewer's ruling at fork PR #894's landing merge with main,
+    read as the developer's -p no:cacheprovider is (the reviewer's ruling at fork PR #894's second landing merge, of
+    main at 1d591384e,
     (2), after fork PR #872 put the flag in CI's pytest step, where the word -p, given by every run, made its road on
     -p not given fire in none). Any other -p, alone or before another plugin, is the word -p, as it was read before that
     ruling (test_the_proofs_option_roads_read_cis_anyio_flag_as_one_option_and_any_other_p_as_the_word_it_was)."""
