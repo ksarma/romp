@@ -204,8 +204,11 @@ class Plumbing(unittest.TestCase):
         self.assertIn("/dist/waiting.js", page)
         self.assertLess(page.index("/dist/federation.js"), page.index("/dist/waiting.js"), "manager before the bundle")
         self.assertIn('_pane_spin("waiting-list")', SRC)
-        self.assertIn('if p == "/waiting":', SRC)
-        self.assertIn("_waiting_page()", SRC)
+        # the page is dispatched off the shared route table (_PAGE_RENDERERS) do_GET reads, which the
+        # auth classifier reads too, so the route maps to its renderer and do_GET serves it from there
+        self.assertIs(km._PAGE_RENDERERS.get("/waiting"), km._waiting_page,
+                      "the /waiting route maps to _waiting_page in the shared route table")
+        self.assertIn("_PAGE_RENDERERS.get(p)", SRC, "do_GET serves a page off that table")
         # the sheet is read live, like fleet-pane.css; a missing one fails loudly on the page, never blank
         css = (Path(BIN).parent / "ui" / "webview" / "waiting-pane.css").read_text()
         self.assertIn(css.splitlines()[-1], page)
@@ -228,7 +231,8 @@ class Shell(unittest.TestCase):
         self.assertIn("<button data-pane=waiting>Waiting</button>", self.html)
 
     def test_the_column_sits_after_feed_with_its_gutter_and_grow_var(self):
-        self.assertIn('<div class=gv id=gv-c></div><div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>',
+        # data-src since stage 0 (2026-09-18): _LANDING_DESKTOP_PANES_JS promotes it at boot on the desktop, the mobile script on its first tap on the phone
+        self.assertIn('<div class=gv id=gv-c></div><div class=pane id=waiting-pane><iframe id=f-waiting data-src=/waiting></iframe></div>',
                       self.html.replace('"\n            "', ""))
         self.assertLess(self.html.index("id=feed-pane"), self.html.index("id=gv-c"))
         self.assertLess(self.html.index("id=gv-c"), self.html.index("id=waiting-pane"))

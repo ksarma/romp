@@ -1348,7 +1348,7 @@ class HookEndToEnd(unittest.TestCase):
         # even when the child is killed before its unconfigure runs (the timeout below).
         child["PYTHONPATH"] = os.pathsep.join(p for p in (os.path.dirname(HERE), child.get("PYTHONPATH")) if p)
         child["TMPDIR"] = d
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", d] + list(args),
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--rootdir", d] + list(args),
                            cwd=d, env=child, capture_output=True, text=True, timeout=180)
         return r.returncode, r.stdout + r.stderr
 

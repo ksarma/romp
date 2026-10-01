@@ -872,7 +872,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.match(RENDER, /function syncViewInner\(id: string, atBottom\?: boolean, anchored: boolean = atBottom !== undefined\): View \{/, "the flag defaults to 'atBottom was passed'");
   assert.match(RENDER, /if \(anchored && applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}/, "syncViewInner takes the figures inside an anchoring paint alone");
   assert.match(RENDER, /function renderWindowItems\([^\n]*anchored = false\): void \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(anchored\) applyMeasure\(v\);/, "a window build takes them only when its caller anchors");
-  const land = RENDER.slice(RENDER.indexOf("function landActive(content: HTMLElement | null, v: View): void {"), RENDER.indexOf("\n}\n", RENDER.indexOf("function landActive(content: HTMLElement | null, v: View): void {")));
+  const land = RENDER.slice(RENDER.indexOf("function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean = false): void {"), RENDER.indexOf("\n}\n", RENDER.indexOf("function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean = false): void {")));
   assert.match(land, /const saved = !pendingAnchor && pendingAnchorT == null && !\(seek && seek\.sid === activeId\) && v\.shown && !v\.stick && takeReloadScroll\(pendingReloadScroll, activeId\) == null;\s*\n\s*const held = !saved && v\.shown && !v\.stick \? captureScrollAnchor\(content, v, v\.scrollTop\) : null;[^\n]*\n\s*const figures = figuresBefore\(v\);[^\n]*\n\s*if \(!saved && applyMeasure\(v\)\) redrawGapUnits\(v\);\s*\n\s*sizeSpacers\(v\);/,
     "landActive takes on every road but the nothing-armed re-show, BEFORE its landing attempt (the gate reads what is armed), captures the row at the saved place and reads the figures first, and sizes the spacers after the take; the outcome decides what stands (the fallback below, executed in land-active-keep.test.ts)");
   assert.match(land, /else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) \{ untakeMeasure\(v, figures\); writeScroll\(content, v\.scrollTop, "land-saved"\); \}/, "the saved-place fallback restores the captured row; where that restore finds no row to put back the take is given back and the raw write follows, exact in the layout it was saved in: nothing armed (nothing taken, nothing given back), no row at the saved place, or the captured row gone with the attempt's window build (land-active-keep.test.ts executes the three)");
@@ -1136,10 +1136,10 @@ test("every module the page bundles load, read with the compiler: the only write
   // PARTITIONED (never filtered) into modules, every suffix the compiler parses (`.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs`,
   // `.jsx`; a .tsx or .jsx parsed under its own ScriptKind), and styles (the `.css` inputs), the remainder asserted empty naming any other
   // suffix (the maintainer's round 7 ruling, extra7-1), so it reaches the two `.js` modules in ui/webview and the five modules outside it named
-  // below, which tsconfig's file list (no allowJs; the test helpers under ui/ included) misses, and it leaves out the seven modules in the
+  // below, which tsconfig's file list (no allowJs; the test helpers under ui/ included) misses, and it leaves out the eight modules in the
   // directory no page loads, which a listing counts. The directory is read too, recursively and through the same partition (the anchor map's
   // fixture directory first, then tests and types, modules and styles, the remainder asserted empty), and the two are tied by EQUALITY both ways,
-  // never a floor: the directory's modules no page bundle loads are exactly the seven named below (reached from tests, from one another and
+  // never a floor: the directory's modules no page bundle loads are exactly the eight named below (reached from tests, from one another and
   // from the viewer bench under tools/, never from a page entry), and the loaded modules outside the directory are exactly the five named
   // below (the timeline panel's prebuilt bundle and four vendored track-changents modules, display.js reached from track-logic.js through
   // the vendored package's own exports map), so a module that starts or stops being loaded, appears outside the directory or leaves it, is
@@ -1147,7 +1147,7 @@ test("every module the page bundles load, read with the compiler: the only write
   // fixtures or under tests and types (a module-suffix file under the fixture directory, a test of any module suffix, a `.d.ts`) reds too.
   // The listing skips a symlink, to a file or to a directory (filesUnder), and esbuild under the shipped config (no preserveSymlinks key, so
   // off) keys a module a bundle loads through a symlink by the TARGET's real path, never the link's: a target inside the directory is a listed
-  // module, so a symlinked import of one of the seven unloaded modules is named by the unloaded equality (it stops being unloaded) and one of
+  // module, so a symlinked import of one of the eight unloaded modules is named by the unloaded equality (it stops being unloaded) and one of
   // a module already loaded changes nothing; a target outside the directory is named by the outside equality as a sixth module; a symlink no
   // bundle loads is neither listed nor loaded and is silent, the case the old docstring's "every file" hid (the maintainer's round 8 ruling,
   // tests-4 and extra7-3).
@@ -1192,10 +1192,11 @@ test("every module the page bundles load, read with the compiler: the only write
     "ui/webview/feed-flip.ts",                   // the feed's FLIP-pass predicate, executed by feed-flip.test.ts
     "ui/webview/file-view-outline-fixture.ts",   // the Outline's synthetic fixture, shared by file-view-outline.test.ts and its browser leg
     "ui/webview/md-wiki.ts",                     // wikilink and callout extensions to the markdown grammar, executed by md-wiki.test.ts
+    "ui/webview/pane-tree.ts",                   // the pane-docking layout tree (phase one, pure), executed by pane-tree.test.ts
     "ui/webview/real-viewer-leg.ts",             // the real viewer mounted in a served page for the browser legs (*-browser.test.ts), shell-drag-leg and the bench
     "ui/webview/scroll-journal-audit.ts",        // the scroll journal's reader, executed by scroll-journal-audit.test.ts
     "ui/webview/shell-drag-leg.ts",              // the dashboard shell's pane-row drag mounted in a page of its own, for its browser leg and the bench
-    "ui/webview/writer-census.ts",               // the scroll-write census over a source's tree, executed by writer-census.test.ts and landing-settle.test.ts
+    "ui/webview/writer-census.ts",               // two censuses: the scroll-write census over a source's tree, executed by writer-census.test.ts and landing-settle.test.ts; and the card-state census over file-comments.ts (cardStateCensus), executed by file-comments-changes-review2.test.ts
   ];
   const OUTSIDE = [   // loaded by a page bundle from outside ui/webview
     "ui/romp-timeline-view.js",                              // the timeline panel's prebuilt bundle, required by timeline-main.ts
@@ -1204,7 +1205,7 @@ test("every module the page bundles load, read with the compiler: the only write
     "vendor/track-changents/obsidian/src/track-cm.js",       // imported by editor-chunk.ts and track-decorations.ts
     "vendor/track-changents/obsidian/src/track-logic.js",    // imported by track-decorations.ts
   ];
-  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive; the listing's module class, every suffix the compiler parses, the anchor map's fixture directory and tests and types apart) that no page bundle loads are exactly the seven named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
+  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive; the listing's module class, every suffix the compiler parses, the anchor map's fixture directory and tests and types apart) that no page bundle loads are exactly the eight named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
   assert.deepEqual(loaded.filter((m) => !m.startsWith("ui/webview/")), OUTSIDE, "the modules a page bundle loads from outside ui/webview are exactly the five named: a sixth, or one gone from the bundles, reds here");
   const listedSet = new Set(listed);
   assert.deepEqual(loaded.filter((m) => m.startsWith("ui/webview/") && !listedSet.has(m)), [], "a module under ui/webview that a page bundle loads and the listing's partition files under the anchor map's fixtures or under tests and types (a module-suffix file under the fixture directory, a `.test.ts`, a `.test.tsx`, a `.test.js`, a `.d.ts`): the two equalities above compare the listed modules with the loaded ones, so a production import of a test module or of a fixture is named here or reds (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a))");
@@ -1322,7 +1323,7 @@ function parseValuesTable(body: string): { entries: Array<{ surface: string; key
   return { entries, frozensets: (stripped.match(/frozenset\s*\(/g) || []).length };
 }
 
-test("the page's guard literal is a member of the set the kernel admits for the marker, both read from their sources: kernel.py states the set once (CLIENT_DIAG_VALUES, one entry, chat's `view`, one word) and scroll-write.ts's spacerRow compares its `view` parameter with that word and types the parameter by it, so a change to either side alone reds here (the author's fixer pass over the pass after the maintainer's round 5, its verifier (b): until then the tie between the page's spelling and the kernel's set was two hand-written literals, the allowlist module's fixture row and the census's guard pin above)", () => {
+test("the page's guard literal is a member of the set the kernel admits for the marker, both read from their sources: kernel.py states the set once (CLIENT_DIAG_VALUES, chat's `view` entry, one word) and scroll-write.ts's spacerRow compares its `view` parameter with that word and types the parameter by it, so a change to either side alone reds here (the author's fixer pass over the pass after the maintainer's round 5, its verifier (b): until then the tie between the page's spelling and the kernel's set was two hand-written literals, the allowlist module's fixture row and the census's guard pin above)", () => {
   // WHAT IS READ: kernel.py's CLIENT_DIAG_VALUES table literal, by text (every `(surface, key): frozenset((words,))` entry between its
   // braces, the way the webview tests that read kernel.py read it), and scroll-write.ts's tree (the string literal spacerRow's guard
   // compares `view` with, and the parameter's literal type). Neither word is spelled here: the kernel's set is the one statement.
@@ -1336,7 +1337,7 @@ test("the page's guard literal is a member of the set the kernel admits for the 
   // count of `frozenset(` in the body, and the two reads must agree entry for entry, so an entry the regex cannot read (a hyphenated surface
   // or key, a surface or key that is not a string literal, named by position, a set or list literal, a single word in parentheses with no
   // trailing comma) is a red here NAMING the entry, never a silent miss
-  // that leaves the one-entry assertion below green. tests/test_client_diag_allowlist.py reads the runtime object and reds on a second entry
+  // that leaves the entries assertion below green. tests/test_client_diag_allowlist.py reads the runtime object and reds on a third entry
   // whatever its spelling (its sorted-keys equality), on a value that is not a frozenset (its assertIsInstance) and on a frozenset of a bare
   // string, whose members are the string's letters, by its one-word length assertion; the spelling of a frozenset's argument (a tuple, a
   // list, a set) is the same runtime object and reds nowhere in Python, which is why this cell reads the text.
@@ -1348,8 +1349,10 @@ test("the page's guard literal is a member of the set the kernel admits for the 
     assert.ok(r && p, "the regex and the balanced parse disagree on the entry " + nm + ": the regex read " + (r ? JSON.stringify(r.words) : "nothing") + ", the parse read " + (p ? JSON.stringify(p.words) + " in " + p.container : "nothing") + " (a spelling one read cannot see: a hyphenated surface or key, a surface or key that is not a string literal, a set or list literal, a tuple with no trailing comma, a bare string)");
     assert.deepEqual(r!.words, p!.words, "the entry " + nm + ": the two reads agree on its words (" + p!.container + ")");
   }
-  assert.deepEqual(entries.map((e) => e.surface + "/" + e.key), ["chat/view"], "one bounded key, chat's `view` (every entry of the table is read: a second is named here)");
-  const words = entries[0].words;
+  // two bounded keys: chat's `view` and federation's `road` (the coordinator's ruling at the merge of main 1d591384e), whose words
+  // tests/test_client_diag_allowlist.py holds to federation.ts's writers; this cell reads the `view` entry
+  assert.deepEqual(entries.map((e) => e.surface + "/" + e.key), ["chat/view", "federation/road"], "two bounded keys, chat's `view` and federation's `road` (every entry of the table is read: a third is named here)");
+  const words = entries.find((e) => e.surface === "chat" && e.key === "view")!.words;
   assert.equal(words.length, 1, "one fixed word, no host name (the owner 2026-09-21, who approved the field): " + JSON.stringify(words));
   const sw = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "scroll-write.ts"), "utf8");
   const swf = ts.createSourceFile("scroll-write.ts", sw, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);

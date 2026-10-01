@@ -183,7 +183,7 @@ test("a flaky link finishes the picture ACROSS retries: resume, narrate progress
   assert.match(pf, /if \(r\.status === 206\)/);
   assert.match(pf, /parts = \[\]; got = 0;/, "a full-body reply resets the partial, never appends");
   // an attempt that made progress refills the retry budget — forward motion proves the link works
-  assert.match(pf, /if \(got > gotBefore\) autoRetries = 3;/);
+  assert.match(pf, /if \(got > gotBefore && !picFailed\) autoRetries = 3;/, "progress refills the budget, unless a picture at the preview's own address failed after its fetch: a source pin; executed in preview-retry-pace.test.ts, the svg picture whose load fails after the resumed fetch (six fetches, then the chip) and the relay's 502 after a memo'd success");
   // a cut stream is an error that resumes next attempt, never a truncated picture
   assert.match(pf, /if \(total && got < total\) throw new Error\("cut at " \+ got\);/);
   // the finished bytes are remembered for the page life — re-renders must not re-pull them over

@@ -37,7 +37,7 @@ test("a predicted card is kept in Working at render, styled like the kernel's re
   assert.ok(gateEnd > 0, "applyFollowMove(asks) follows the list lookup");
   const between = head.slice(0, gateEnd);
   assert.ok(between.split("\n").length <= 16, "only the paint gate, its observer install and pruneTip may sit before it");
-  assert.match(between, /paintHeld\(document\.hidden, feedIntersecting, list\.childElementCount > 0\)/, "the gate");
+  assert.match(between, /paintHeld\(document\.hidden, seenNow\(\), list\.childElementCount > 0\)/, "the gate (its measure is seenNow(), the observer's word or the show override, since review round 2 of the lazy panes, 2026-09-19; feed-hidden-paint.test.ts pins the line whole)");
   assert.match(between, /pruneTip\(\);[^\n]*\n\s*$/, "pruneTip immediately precedes it");
   // the removed drag machinery must not creep back in front of it
   assert.doesNotMatch(FEED, /dragAskId|DRAG_CARDS_ENABLED|fdrop-slot/);
@@ -59,7 +59,7 @@ test("the kernel is authoritative: a confirming push clears the prediction, an u
   assert.match(FEED, /reconcileFollowMove\(incomingAsks, lastPayloadBuildId, perHostBuildIds, !!cardsUnknown\);/);   // the fourth argument: the payload\'s reading of its cards (T404 round seven)
   // CONFIRMED = the kernel now lists the card as working, OR no longer lists it (cleared/absorbed).
   // (An ANSWER-kind prediction additionally yields to the first payload either way — feed-card-predict.)
-  assert.match(FEED, /if \(!a \|\| a\.column === "working" \|\| pendingMoveKind\.get\(id\) === "answer"\) \{/);
+  assert.match(FEED, /if \(!a \|\| askColumn\(a\) === "asks" \|\| pendingMoveKind\.get\(id\) === "answer"\) \{/);   // Working by the kernel's category since the boards' phase two (askColumn reads it first, the column from an older kernel)
 });
 
 test("an UNANSWERED prediction reverts AND toasts after the backstop (so a behavior change is visible)", () => {

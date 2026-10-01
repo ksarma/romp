@@ -14,6 +14,7 @@ Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 import collections
 import copy
 import gc
+import hashlib
 import math
 import tracemalloc
 import zlib
@@ -956,7 +957,12 @@ class _PerfStats:
                                    off made wake-only: the awaiting dead-man, plus the debt reminders
                                    while the nudge toggle is on; such a look records and skips under
                                    its own mode tag since jobs stage 1),
-                                   wakeOnlyRecorded (the memo rows those looks recorded), and
+                                   wakeOnlyRecorded (the memo rows those looks recorded), loads
+                                   (the walk's shared goal-store reads: one per look that reaches
+                                   its decision read, whether the read returns a store, returns a
+                                   fault or raises out of the look, none on a skip or a state-gate
+                                   exit, the count fold ruling A condition 7 bounds at one per
+                                   alive session per pass), and
                                    unboundedBy (the refusals per leg); nudgeGate
                                    (the walk's placement gate, _nudge_placement_gate) -> served /
                                    derived (answers served from the memo vs re-derived) / failed
@@ -1026,9 +1032,15 @@ class _PerfStats:
                                    (per key input that moved: rows, names, notes, registry);
                                    subagentTree (the subagents directory tree memo the builds read,
                                    _subagent_tree_memo_report) -> hit / miss (trees vouched for by
-                                   their directories' stats vs walked), evict (roots dropped as
-                                   unowned), dirStats, walkMs / validateMs and the gauges roots /
-                                   dirs; judgingBand (the timeline's judging band memo,
+                                   their directories' stats vs walked; what each counts, a failed
+                                   validation included, is stated at _SUBAGENT_TREE_STATS)
+                                   / scoped (reads served from the cycle's sample with no stat;
+                                   a read answered a tree lands in exactly one of the three, a
+                                   read answered no tree in none: the comment at
+                                   _SUBAGENT_TREE_STATS), evict (roots dropped as unowned),
+                                   dirStats (what it counts, and the day its meaning changed: the
+                                   comment at _SUBAGENT_TREE_STATS),
+                                   walkMs / validateMs and the gauges roots / dirs; judgingBand (the timeline's judging band memo,
                                    _judging_band_report) -> builds / ms, rows_skipped /
                                    rows_visited, entries_reused / entries_minted, resets (a rotated
                                    log, an uncounted left prune, a horizon moved back),
@@ -1036,6 +1048,9 @@ class _PerfStats:
                                    entries / compact / bytes / bound; notices (the notice files'
                                    parsed rows and revision indexes, _notice_memo_report; T370) ->
                                    hit / miss / evicted and the gauges entries / bytes / bound;
+                                   parkedHandoffs: the feed's parked-handoff fold over the postal log
+                                   (_parked_fold_report: hit, append, refold, restore, cold, fail, and
+                                   the gauge entries, the parked sends not yet recalled or bounced);
                                    the chat build's fixed-cost memos: chatMergeSets (the live merge's
                                    transcript-side sets, one entry per sid on the parsed session's
                                    identity, see _merge_tx_sets) -> hit / miss and the gauge entries;
@@ -2040,8 +2055,9 @@ class _PerfStats:
         with self.lock:
             self.judge["orphansSwept"] += 1
     CHILD_NUMBERS = ("wallMs", "tierStarts", "tierCpuMs", "workerCpuMs")   # the done line's per-pass figures judge.child keeps
-    CHILD_BLOCKS = ("recordCache", "asmCheckpoint", "parses", "goalIo")    # its counter blocks (per-pass deltas, gauges current),
-    #                                                                          served under judge.child as the child sends them
+    CHILD_BLOCKS = ("recordCache", "asmCheckpoint", "parses", "goalIo",    # its counter blocks (per-pass deltas, gauges current),
+                    "tierGate")                                            #  served under judge.child as the child sends them: the
+    #                                                                          line's whole block set (judge.py's _serve_counter_blocks)
 
     def judge_child_done(self, done, pid=None, chars=None):
         """The child's done line (plans/judges-process.md rule 1): its tier starts and tier CPU join the in-process
@@ -2050,10 +2066,15 @@ class _PerfStats:
         to stand verbatim (2026-09-18): its failures.first is an exception message, which names paths and quotes session
         text, so a snapshot could not be pasted anywhere public. `chars` is the line's length as it arrived (the reader's
         count; the line re-encoded when none is given), `status` one of two fixed tokens (`ok`, `failed`), `failures` a
-        count, every other scalar a number or a boolean, and the four blocks (CHILD_BLOCKS: the record cache, the
-        assembly checkpoints, the parse store, the goal-store I/O, their counters as per-pass deltas and their gauges as
-        current values, the child's round three) as the child sent them: numbers are not a leak, and the kernel's own
-        blocks read zero for the child's work."""
+        count, every other scalar a number or a boolean, and the five blocks (CHILD_BLOCKS: the record cache, the
+        assembly checkpoints, the parse store, the goal-store I/O and the tiers' evidence gate, their counters as per-pass
+        deltas and their gauges as current values, the child's round three) as the child sent them: numbers are not a
+        leak, and the kernel's own blocks read zero for the child's work. The gate block, `tierGate`, is judge.py's
+        tier_stats on the child's side: per gated tier its ran, skipped, stamped, bypassed, incomplete and due_clock
+        counts, plus `stamps`, the stamps held (a gauge), fixed names over integers; judge.tiers reads this process's gate
+        counters, which stay at zero on the child road. The list is the done line's whole block set, as upstream serves
+        the line whole (fold 3 brought the gate block onto the line, and a list left at four dropped it;
+        tests/test_perf_stats.py holds the list to _serve_counter_blocks's keys)."""
         f = done.get("failures")
         failures = int(f.get("count") or 0) if isinstance(f, dict) else 0
 
@@ -2196,10 +2217,11 @@ class _PerfStats:
                           ("sessions_scope", _sessions_scope_report), ("caps", _caps_memo_report),
                           ("statesOverlay", _states_overlay_report),
                           ("thread_reg", _thread_reg_report),
+                          ("parkedHandoffs", _parked_fold_report),   # the feed's parked-handoff fold over the postal log (2026-09-18): its path counts and candidates held
                           ("lanes", _lanes_memo_report),   # the timeline's per-lane segment memo, live lanes; the dead lanes beside
                           ("judgingBand", _judging_band_report),   # the judging band's per-row memo and horizon cursor (2026-09-16)
                           ("spendTree", _spend_tree_memo_report),   # the spend guard's subagent-tree memos: bytes against their bound
-                          ("subagentTree", _subagent_tree_memo_report),   # the subagents directory walk memo (2026-09-16): served vs walked
+                          ("subagentTree", _subagent_tree_memo_report),   # the subagents directory walk memo (2026-09-16): served vs walked, scoped
                           ("summaryAnchor", _summary_anchor_memo_report),   # the brief line's text-atom landings (T388): bytes against their bound
                           # the chat build's fixed-cost memos (2026-09-09): the live merge's transcript-side
                           # sets, the fold's sealed postal cards, the ledger's goal-tree walk, the task fold
@@ -2473,7 +2495,7 @@ _PERF_HTTP_ROUTES = {
     "GET": (
         "/", "/analytics", "/api-health", "/api-health/frame", "/busy", "/chat", "/classify",
         "/commands", "/defaults", "/diag/sendvis", "/emoji", "/feed", "/feed.json", "/file", "/files",
-        "/fleet", "/followup-preview", "/handoff", "/healthz", "/logins", "/manifest.webmanifest",
+        "/fleet", "/followup-preview", "/handoff", "/healthz", "/login", "/logins", "/manifest.webmanifest",
         "/mcp", "/models", "/notify-all", "/notify-turns", "/palette", "/perf", "/push/pending",
         "/push/vapid-key", "/session-events", "/sessions", "/sessions/by-fsid", "/settings",
         "/spend/detail", "/ssh-hosts", "/sw.js", "/timeline", "/tunnels", "/tunnels/of",
@@ -3490,18 +3512,36 @@ def _client_diag_append(fp, line):
 # CLIENT_DIAG_ROW_SAY_MAX are named and one more line counts the rest, and the latch holds CLIENT_DIAG_SAID_MAX pairs in
 # all, then says so once and falls silent, so neither one wide row nor a poster with an unbounded key vocabulary can
 # grow it or silence the other surfaces (review finds, 2026-09-18). Every string value is cut at CLIENT_DIAG_STR_MAX
-# characters, at any depth. A row whose JSON runs past CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and
+# characters, at any depth, and a value nested past CLIENT_DIAG_DEPTH_MAX is stored as null; a row any value of which
+# was cut or nulled so carries CLIENT_DIAG_CUT_KEY, the admitted keys under which it happened (a kernel-written marker
+# beside `capped`, admitted by no surface, so a poster cannot forge one), and the kernel says so once per surface and key
+# on stderr, as it says a dropped key (the maintainer's round 3 of the wsBytesByHost field, 2026-09-20: a value-level loss was the
+# one silent loss on this road, and a cut string looked like a whole one to every reader). A row whose JSON runs past
+# CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and
 # carries {"capped": true, "bytes": N} as its data (said once per surface and what), except a perf minute row, which
-# sheds its per-minute figures first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line): the collector sends nav, res, marks
+# sheds keys in a fixed order first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line: the uncapped wsBytesByHost map, then its
+# per-minute figures): the collector sends nav, res, marks
 # and env exactly once per page, and a whole-row marker lost them for the page's life (review find, 2026-09-18). The
-# bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped:
+# bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped while
+# its wsBytesByHost map, the one key without a cap, is under the crossing derived below (a long-frame key past the
+# string cut is still stored cut to it, the row carrying the cut key naming loaf); past it the map alone is shed,
+# whole, as the ladder's first step, and the rest of the row is stored as the admit leaves it:
 # MAX_FRAME_TYPES named wire types plus their fold and as many `fed:` keys are 66 frame entries, the wire keys at most
 # 38 characters (the `delta:` prefix and a 32-character identifier) and the `fed:` keys at most 42 (`fed:delta:` and the
 # identifier, since federation.ts times a frame as `fed:` plus its classified type), each with a 14-bucket histogram,
-# 16.5 KB at six-digit counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the
-# envelope add about 1.4 KB (17.9 KB share off); the shared fields (MAX_RES named resources and the fold, nav, marks,
-# env, vis, wsBytes, rafGap) add about 3.4 KB (21.3 KB share on). 24 KiB holds both with margin (today's minute rows run
-# to 2.5 KB); above it the shed and the marker are the backstops for a row no collector builds. The table lists the
+# 16.5 KB at six-digit counts; MAX_TOP long-frame keys past the string cut (stored at it, so the row carries the cut
+# key naming loaf, 17 bytes), the free sample, the slow counts and the envelope add about 1.5 KB (18.0 KB share off,
+# the row as stored); the shared fields (MAX_RES named resources and the fold, nav, marks,
+# env, vis, wsBytes, wsBytesByHost at eight positions and rafGap) add about 3.5 KB (21.5 KB share on); the map has
+# no cap on positions: the worst-case row test states eight at nine digits each, 155 bytes, and reads the count, the
+# bytes and the share-on figure back from this comment against the row it builds. 24 KiB holds that row and leaves
+# 3093 bytes under the bound (today's minute rows run to 2.5 KB). Each further position adds 17 bytes at a one-digit
+# ordinal, 18 at two and 19 at three (the separator, the quoted key and a nine-digit count), so on that row the map
+# crosses the bound at 176 positions, and on a smaller row later; the ladder test derives the cost and
+# the crossing from the row it builds and reads them back here and from docs/reference.md's copy. Over the bound the ladder (CLIENT_DIAG_MINUTE_SHED)
+# sheds the map first and whole, which returns any row the collector builds to the figures above, under the bound;
+# the frames, the long-frame report, the free sample and the slow counts go next and the whole-row marker last,
+# backstops for a row no collector builds. The table lists the
 # keys as the posters build them: perf-telemetry.ts (minute, slowframe), the pane shim (staleDiag, the return rows,
 # wsclose, wsconnfail, page-load), the reload core's held row, the shell scripts, federation.ts, render.ts and
 # scroll-write.ts, strip.ts, feed.ts, fleet.ts, waiting.ts. The kernel's own rows (surface kernel: _note_ws_open and
@@ -3509,17 +3549,80 @@ def _client_diag_append(fp, line):
 # (said once per what), so a forged wsopen cannot land beside the kernel's; the entry names the kernel's own keys. A
 # surface not in the table keeps no key at all, and a data that is not an object is stored as null.
 CLIENT_DIAG_STR_MAX = 64
-CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.3 KB; the derivation above)
+CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on and eight positions (21.5 KB; the derivation above)
 CLIENT_DIAG_DEPTH_MAX = 8      # nesting past this reads null: the rows are flat or two deep
 CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at the bound one more line says so and nothing else is said
 CLIENT_DIAG_ROW_SAY_MAX = 8    # foreign keys of ONE row said by name; the rest are one counting line, so a row spends at most this many latch entries and one
-# a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits; the row's other keys (the
-# small per-minute figures and the once-per-page nav, res, marks and env) stay, and `capped` names what was shed
-CLIENT_DIAG_MINUTE_SHED = ("frames", "loaf", "free", "slow")
+CLIENT_DIAG_CUT_KEY = "cut"    # the marker a row carries when a value under an admitted key was cut or nulled by _client_diag_scrub: the list of those keys,
+                               # written by the kernel after the admit and admitted by no surface (a poster's key of this name is dropped as foreign),
+                               # so a reader can tell a stored value from a whole one (the maintainer's round 3 of wsBytesByHost, 2026-09-20)
+# a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits, and `capped` names what was
+# shed. wsBytesByHost goes first (the maintainer's round 1, regression-4, 2026-09-20): it is the one key the collector does not cap (one position
+# per attached host), so a row the collector builds is over the bound only through it, and shedding it whole returns the
+# row to the derived worst case, which fits; it is never cut to the positions that fit, so a stored map is never read as
+# a host count. The rest is the backstop for a row no collector builds: the frame histograms, then the long-frame report,
+# the free sample and the slow counts, largest first; the once-per-page nav, res, marks and env stay
+CLIENT_DIAG_MINUTE_SHED = ("wsBytesByHost", "frames", "loaf", "free", "slow")
 CLIENT_DIAG_KEYS = {
     "perf": frozenset(("app", "since", "span_ms", "frames", "free", "loaf", "slow", "dom", "visible", "hidden_pane", "ua", "heap_mb",   # minute
                        "type", "ms",                                                # slowframe (app, dom, loaf as above)
-                       "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap")),  # the shared fields, on when the gear says so
+                       "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap",     # the shared fields, on when the gear says so
+                       "wsBytesByHost")),   # the shared field the user approved on 2026-09-19 (the bytes each attached host sent, one number per host, no
+                                            # content): {h1: int, h2: int, ...}, one key per attached host and no cap,
+                                            # the text-frame characters each REMOTE host's sockets delivered in the
+                                            # minute (wsBytes's unit; the two are disjoint), keyed by the host's attach ORDINAL in the pane document that
+                                            # counts (one federation manager per pane document; the row's app names the pane): h1 the first remote host it
+                                            # attached, assigned when the host first attaches, kept for that document's life and never shifting on a
+                                            # detach (a re-attached host keeps its ordinal), so h2 names one host across every row that document files.
+                                            # A position is per pane document, so a page with several panes mints several positions for one machine (one per
+                                            # document; two panes of the same app are two documents), and the file then holds more rows per host than a per-page
+                                            # grain would give. Nothing on the row names the document, so rows from different panes of one wid are never folded
+                                            # or compared as one position space.
+                                            # The map's keys carry positions and no host name, a property the COLLECTOR holds: federation.ts mints each
+                                            # key as 'h' plus the attach ordinal (wsBytesByHost) and perf-telemetry.ts's bytesByHost keeps a key only in
+                                            # the h<n> form (a regular-expression test in the page bundle, the one enforcement of the property; the kernel has
+                                            # none); the kernel admits the top-level key and does not inspect the map's keys, as it inspects no
+                                            # nested key of any admitted object (marks, env, nav, res, frames, loaf and federation's counts alike): a
+                                            # nested string VALUE is cut at CLIENT_DIAG_STR_MAX, a nested key is stored as posted (_client_diag_admit,
+                                            # _client_diag_scrub), and a row a value of which was cut carries the cut marker naming the key
+                                            # (CLIENT_DIAG_CUT_KEY, said once on stderr). Host names reach this file wherever an admitted VALUE can hold
+                                            # one, in four forms, and tests/test_client_diag_allowlist.py classifies every admitted key of every surface by
+                                            # content, following each value to its producers (a field is a carrier if any producer chain can put a host name
+                                            # in it, classified by that chain's range and never by the field's typical content), so a new key fails there
+                                            # until classified: a bare name under a `host` key (the shell's push-test row; every federation row that carries
+                                            # its conn's host, the hostconn, feedDelta-nobase, feedDelta-stale, feedDelta-apply, sendqueue and senddrop rows
+                                            # (the poll rows carry an empty host, the local nobase and apply rows the word local), a set the same test
+                                            # derives from federation.ts's diag call sites; and the kernel's own
+                                            # wsopen row for a spliced relay, written by _note_ws_open); a host-prefixed session id, <host>:<uuid>, when the
+                                            # row concerns a remote session (the chat surface's sid, id, ids and active: federation.ts prefixes every remote
+                                            # session id the page holds, and the cut at CLIENT_DIAG_STR_MAX keeps the head, prefix included; and the shell's
+                                            # tap-pending-land and tap-vanish-land rows' sid8, the first 8 characters of the push ledger row's sid, which
+                                            # the test push files as the active tab's whole data-id and the relay prefixes with its origin, so a host name's
+                                            # first 8 characters or a short host whole, on every row of both kinds that concerns a remote session); a
+                                            # host-keyed map (federation's feedmerge counts); and a host name at the tail of a postal message id,
+                                            # <epoch>.<pid>_<hex>.<host> (postal_service.py _unique bakes the delivering kernel's postal host in): the feed
+                                            # surface's id, appeared and gone carry item ids, and a parked hand-off's card id is parked: plus that message
+                                            # id (the card's own kernel's postal host, on a single-kernel page the page's own machine's, of which 5 to 11
+                                            # characters survive the cut) and a quarantined relay's is quarantine: plus the held mail's id (its origin
+                                            # kernel's postal host, 0 to 4 characters surviving), on every row of the kind that names such a card, filed on
+                                            # routine use and not gated by the share switch; and the chat surface's anchor on one road, a landing miss for a
+                                            # deep link the timeline's message connector filled with a postal message id, the last 12 characters of it, a
+                                            # host of up to 11 characters whole. The chat road is older than this field, is not gated by the perf share
+                                            # switch, and is filed on routine use (a send, a scroll, a tab set: up to 40 scroll rows a minute per kind), so
+                                            # on a federated page it is the most frequent host-carrying row type; the position-to-name MAP itself follows
+                                            # from the rows that record a host at attach (federation's hostconn open rows of the same pane document), not
+                                            # from chat or feed rows alone, which name a host without its position. Two maps need no client-diag
+                                            # row at all: GET /tunnels, the authenticated route whose row order the positions are assigned in, a position-to-name
+                                            # map in its own right, and the state directory this file sits in, whose host registries sit beside this file:
+                                            # remotes.json holds the attached set, written in the /tunnels row order (list_remotes and _remotes_rows_for_save
+                                            # read one dict), so a holder of it maps any position to a name with no client-diag row and no page-life correlation,
+                                            # the order being the kernel's own attached-host order persisted in the same state directory as this file;
+                                            # remotes-known.json holds every host ever attached
+                                            # or trusted, attached ones included, each with a lastAttachedAt stamp refreshed by every writer (attach, detach,
+                                            # trust and share: _known_note), written with the newest stamp first (_known_save), so it names the hosts and not
+                                            # their order. Reading either is itself a join, and what any of these roads yields is exact for a pane life that attached
+                                            # one host; for several it is an order inference, holding while remotes.json still carries the row order the pane's
+                                            # /tunnels answer had. This entry says that and no more.
     "pane-shim": frozenset(("app", "why", "ready", "quietMs", "hidden",                                         # staleDiag rows
                             "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
                             "ms", "bytesSince", "redialed",                                                     # return-fresh
@@ -3533,7 +3636,8 @@ CLIENT_DIAG_KEYS = {
                         "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
                         "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms")),                    # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
     "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
-                             "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded")),
+                             "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded",
+                             "road")),   # feedDelta-apply (the maintainer's round 5 of wsBytesByHost, refusals-2): which road the throwing delta arrived on, wire or local, a fixed word; CLIENT_DIAG_VALUES below bounds it to the two
     "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
                        "id", "load", "first", "recovered", "hadRestore", "perMinute",
                        "writer", "before", "after", "delta", "stick", "gesture", "sh", "ch",
@@ -3551,13 +3655,18 @@ CLIENT_DIAG_KEYS = {
 }
 # The VALUE an admitted key is bounded to where the key carries one FIXED WORD and not a figure: (surface, key) -> the closed set of values
 # the kernel stores under it. A posted value outside the set is refused at the admit step, the way an unknown key is: the row is stored
-# without the key and one stderr line names the key and the reason, never the value. One entry today, chat's `view`, the spacer row's
+# without the key and one stderr line names the key and the reason, never the value. Two entries today. Chat's `view`, the spacer row's
 # marker of a view that was not the element the scroller measured in its frame: the one word the owner approved and no host name (the
-# owner 2026-09-21, who approved the field). The set is stated HERE once and read by tests/test_client_diag_allowlist.py, which spells the
-# word nowhere but its fixture row, the page's own spelling (the maintainer's round 5 ruling on PR E, tests-1: a key-only allowlist on a
-# page-to-kernel field admitted any text under the approved key).
+# owner 2026-09-21, who approved the field). Federation's `road` on the feedDelta-apply row: wire or local, the one word each of its two
+# writers posts (federation.ts refuseRemoteApply and refuseLocalApply; the coordinator's ruling at the merge of main 1d591384e, which
+# bounded the key as the table's rule states). Each set is stated HERE once and read by tests/test_client_diag_allowlist.py. That test
+# reads view's word from this table and posts it as a literal only in its fixture row, the page's own spelling; road's two words it
+# spells in its fixture rows, its census reason and its road-site assertion, and it holds road's set equal to the words federation.ts's
+# writers post (the maintainer's round 5 ruling on PR E, tests-1: a key-only allowlist on a page-to-kernel field admitted any text
+# under the approved key).
 CLIENT_DIAG_VALUES = {
     ("chat", "view"): frozenset(("inactive",)),
+    ("federation", "road"): frozenset(("wire", "local",)),
 }
 _client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel, CLIENT_DIAG_SAID_MAX of them
 _CLIENT_DIAG_SAID_FULL = (None, None)   # the latch's own entry once it is full: the one line past the bound
@@ -3579,19 +3688,38 @@ def _client_diag_say(surface, key, text):
     print("[client-diag] %s: surface %r, %s" % (text, surface, key), file=sys.stderr)
 
 
-def _client_diag_scrub(v, depth=0):
+# what _client_diag_scrub can do to a value short of keeping it whole, by the word it records in its `losses` list, and the
+# clause the one stderr line per (surface, key) says for it
+_CLIENT_DIAG_LOSS = {
+    "cut": "a string over %d characters is stored as its first %d" % (CLIENT_DIAG_STR_MAX, CLIENT_DIAG_STR_MAX),
+    "depth": "a value nested past depth %d is stored as null" % CLIENT_DIAG_DEPTH_MAX,
+    "type": "a value of no JSON type is stored as null",
+}
+
+
+def _client_diag_scrub(v, losses=None, depth=0):
     """A value as the file keeps it: strings cut at CLIENT_DIAG_STR_MAX, numbers, booleans and null as they are,
-    objects and lists walked to CLIENT_DIAG_DEPTH_MAX (deeper reads null), anything else null."""
+    objects and lists walked to CLIENT_DIAG_DEPTH_MAX (deeper reads null), anything else null. `losses`, when the caller
+    passes a list, gets a word from _CLIENT_DIAG_LOSS appended for every value this did not keep whole, at any depth, so
+    the caller can say the loss and mark the row (_client_diag_admit; the maintainer's round 3 of wsBytesByHost, 2026-09-20: a value
+    cut here looked like a whole one to every reader). The "type" arm is unreachable on the posted road, whose data is
+    json.loads output (every value is of a JSON type), and stands for a direct caller."""
     if isinstance(v, str):
+        if len(v) > CLIENT_DIAG_STR_MAX and losses is not None:
+            losses.append("cut")
         return v[:CLIENT_DIAG_STR_MAX]
     if v is None or isinstance(v, (bool, int, float)):
         return v
     if depth >= CLIENT_DIAG_DEPTH_MAX:
+        if losses is not None:
+            losses.append("depth")
         return None
     if isinstance(v, dict):
-        return {k: _client_diag_scrub(x, depth + 1) for k, x in v.items()}
+        return {k: _client_diag_scrub(x, losses, depth + 1) for k, x in v.items()}
     if isinstance(v, list):
-        return [_client_diag_scrub(x, depth + 1) for x in v]
+        return [_client_diag_scrub(x, losses, depth + 1) for x in v]
+    if losses is not None:
+        losses.append("type")
     return None
 
 
@@ -3610,20 +3738,35 @@ def _client_diag_admit(surface, data):
     object. Every foreign key is dropped; of one row's, at most CLIENT_DIAG_ROW_SAY_MAX
     are said by name (once each on stderr) and one more line counts the rest, so a single row carrying hundreds of
     foreign keys spends a handful of the kernel-wide latch's entries, not all of them, and the other surfaces are
-    still said afterwards (review find, 2026-09-18: one 600-key row used to silence the latch for the kernel's life)."""
+    still said afterwards (review find, 2026-09-18: one 600-key row used to silence the latch for the kernel's life).
+    A value the scrub did not keep whole (a string cut at CLIENT_DIAG_STR_MAX, a nesting past CLIENT_DIAG_DEPTH_MAX or a
+    value of no JSON type stored as null, at any depth under the key) is said once per surface and key too, and the row
+    carries CLIENT_DIAG_CUT_KEY naming the admitted keys it happened under, in the row's key order (attributed to the
+    top-level key: the scrub sees no key), so a stored value can be told from a whole one, which no reader could before
+    (the maintainer's round 3 of wsBytesByHost, 2026-09-20). The marker is written after the admit and admitted by no surface, so a
+    poster's own key of that name is dropped as foreign and never lands as a forged marker."""
     if not isinstance(data, dict):
         if data is not None:
             _client_diag_say(surface, "data", "a row's data is not an object and is stored as null")
         return None
     allowed = CLIENT_DIAG_KEYS.get(surface)
-    out, dropped, refused = {}, [], []
+    out, dropped, refused, cut = {}, [], [], []
     for k, v in data.items():
         if allowed is None or k not in allowed:
             dropped.append(k)
         elif (surface, k) in CLIENT_DIAG_VALUES and not _client_diag_value_admitted(CLIENT_DIAG_VALUES[(surface, k)], v):
             refused.append(k)   # an admitted key whose value is outside its closed set, compared as posted, before the scrub
         else:
-            out[k] = _client_diag_scrub(v)
+            losses = []
+            out[k] = _client_diag_scrub(v, losses)
+            if losses:
+                cut.append(k)
+                kinds = sorted(set(losses), key=list(_CLIENT_DIAG_LOSS).index)
+                _client_diag_say(surface, "key %r, cut" % str(k)[:CLIENT_DIAG_STR_MAX],
+                                 "a value under the key is not stored whole (%s; the row's %s key names it)"
+                                 % ("; ".join(_CLIENT_DIAG_LOSS[x] for x in kinds), CLIENT_DIAG_CUT_KEY))
+    if cut:
+        out[CLIENT_DIAG_CUT_KEY] = cut
     # an admitted key whose value is outside the closed set CLIENT_DIAG_VALUES states for it takes the unknown key's shape: not stored, one
     # line naming the key and the reason and never the value (the latch is per surface and key, and the value could be any text); at most
     # one such key per entry of that table, so the per-row bound the dropped keys take below is not needed here (the maintainer's round 5
@@ -3643,10 +3786,12 @@ def _client_diag_admit(surface, data):
 
 def _client_diag_line(rec):
     """The row's line for the file. Past CLIENT_DIAG_ROW_MAX bytes of JSON its data is replaced by the cap marker
-    {"capped": true, "bytes": N} plus the row's `app` where it has one, except in a perf minute row: that sheds its per-minute figures (CLIENT_DIAG_MINUTE_SHED,
-    in that order) until the line fits and carries what it shed under `capped` ({"bytes": N, "dropped": [...]}, N the
-    line's bytes before the shed), so the once-per-page fields the collector sends exactly once (nav, res, marks, env)
-    reach the file however many frame types the minute saw; a minute row that does not fit even then takes the marker.
+    {"capped": true, "bytes": N} plus the row's `app` where it has one, except in a perf minute row: that sheds
+    CLIENT_DIAG_MINUTE_SHED's keys in that order, the uncapped wsBytesByHost map first and whole (never cut to the
+    positions that fit), then its per-minute figures, until the line fits, and carries what it shed under `capped`
+    ({"bytes": N, "dropped": [...]}, N the line's bytes before the shed), so the once-per-page fields the collector sends
+    exactly once (nav, res, marks, env) reach the file however many hosts the pane attached or frame types the minute
+    saw; a minute row that does not fit even then takes the marker.
     Deterministic on the kernel's side alone: the collector never learns which rows were capped."""
     line = json.dumps(rec)
     if len(line) <= CLIENT_DIAG_ROW_MAX:    # ASCII-escaped JSON: one byte per character
@@ -3663,7 +3808,7 @@ def _client_diag_line(rec):
             trimmed = json.dumps(dict(rec, data=dict(kept, capped={"bytes": n, "dropped": shed})))
             if len(trimmed) <= CLIENT_DIAG_ROW_MAX:
                 _client_diag_say(rec.get("surface"), "what %r, shed" % rec.get("what"),
-                                 "a minute row over %d bytes is stored without some of its per-minute figures (its capped key names them)" % CLIENT_DIAG_ROW_MAX)
+                                 "a minute row over %d bytes is stored without some of its keys (its capped key names them)" % CLIENT_DIAG_ROW_MAX)
                 return trimmed + "\n"
     _client_diag_say(rec.get("surface"), "what %r" % rec.get("what"), "a row over %d bytes is stored capped" % CLIENT_DIAG_ROW_MAX)
     marker = {"capped": True, "bytes": n}
@@ -3859,11 +4004,14 @@ def _serve_token_read_or_mint(f, who):
 
 def _load_token():
     """The serve token, baked into launch so the human never passes --token: ROMP_SERVE_TOKEN if
-    set, else a stable random token persisted under the state dir at 0600 — file perms are the
-    same-user gate (Jupyter's model). Required on EVERY request, loopback included: loopback is
-    reachable by any local user, so a token-free loopback would let a same-host co-tenant drive
-    sessions. Local clients read the file (same user) and send X-Romp-Token; browsers carry
-    ?token= once and ride the auto-set cookie. The file is read or minted by
+    set, else a stable random token persisted under the state dir at 0600: file perms are the
+    same-user gate (Jupyter's model). Required on EVERY request, loopback included, presented
+    directly or through a browser sign-in made with it: loopback is reachable by any local user, so
+    a token-free loopback would let a same-host co-tenant drive sessions. Local clients read the
+    file (same user) and send X-Romp-Token; a browser presents ?token= (or a one-time ?c= code)
+    once, on a page navigation, which signs it in with a session cookie that opens the page
+    documents and static files, and a page key for every other request (a /file load carries a
+    capability made from it; Handler._authorize). The file is read or minted by
     _serve_token_read_or_mint (locked, born 0600, never rotated by a read fault); a fault there at
     import refuses to start the kernel rather than hand out a token no client holds (under
     bin/romp-manager the respawn backoff repeats that refusal until the file is repaired, then the
@@ -3897,9 +4045,9 @@ def _mint_handoff():
         for k, exp in list(_HANDOFF.items()):    # a browser that never opened must not accumulate
             if exp <= now:
                 _HANDOFF.pop(k, None)
-        # Mint is gated (you must already hold the token/cookie), but the cookie rides from any
-        # same-site loopback page, so a hostile dev server can mint without bound INSIDE the TTL
-        # window — unbounded memory, and an O(n)-under-lock sweep that turns quadratic under a flood.
+        # Mint is gated (the caller presents the serve token, or a signed-in page's session cookie and
+        # page key), but a gated caller can still mint without bound INSIDE the TTL window: unbounded
+        # memory, and an O(n)-under-lock sweep that turns quadratic under a flood.
         # Cap it: drop the soonest-to-expire (oldest, and a real open never leaves one unspent) so the
         # live set never exceeds _HANDOFF_MAX (found on re-review 2026-08-06).
         if len(_HANDOFF) >= _HANDOFF_MAX:
@@ -3968,10 +4116,225 @@ def _ct_eq(a, b):
         return False
 
 
-# Unauthorized browser GET of "/" gets this instead of a bare 403 — Jupyter's login-page flow: paste
-# the token once, the redirect's ?token= sets the year-long cookie, never see this page again. Static,
-# self-contained (every other asset route is token-gated), leaks nothing. Colors follow the UI: the
-# accent button is --accent #9cd2ff on --accent-fg #0c1a2e.
+# ── browser sessions: the login cookie holds a session id, never the serve token ──────────────────
+# The browser's login cookie carries a per-kernel SESSION ID. The kernel accepts that id, on its own,
+# for the PAGE class (the page documents) and the STATIC class (/dist, /media, /sw.js): code, no
+# session data. Every other request needs a second value the cookie never carries. For the full and
+# socket classes that is the PAGE KEY K, held in this origin's localStorage and presented as the
+# X-Romp-Key header (or as k= on a socket dial). For a header-less /file load that is a per-file CAP
+# in the URL. The four values are domain-separated HMACs, each under a DISTINCT FIXED LABEL so a value
+# minted for one role never validates for another: the cookie name, the session id and K derive from
+# the serve token, the cap from K. Nothing is stored, so a restart keeps every browser signed in and
+# rotating the serve token retires every session at once. The serve token itself (X-Romp-Token, the
+# ?token= query, the one-time ?c= code, the 0600 file) authenticates the CLI, hooks, the extension
+# host, the VS Code webview and kernel-to-kernel calls exactly as before. Every credential compare
+# below is constant time (_ct_eq / hmac.compare_digest).
+_SESSION_LABEL = "romp-session\0"       # the session id's HMAC label
+_PAGE_KEY_LABEL = "romp-page-key\0"     # the page key's HMAC label
+_FILE_CAP_LABEL = "romp-file-cap\0"     # the file cap's HMAC label
+_COOKIE_NAME_LABEL = "romp-cookie-name\0"   # the per-kernel cookie name's HMAC label
+_MIGRATION_LABEL = "romp-migration\0"   # the legacy cookie's migration session's HMAC label
+
+
+def _hmac_b64(key, msg, n=32):
+    """base64url(HMAC-SHA256(key, msg)[:n]) with no padding. The one primitive the four derivations
+    below share; ui/webview/file-cap.ts recomputes the cap half of it, and the two are pinned to one
+    shared vector so they cannot drift."""
+    d = hmac.new(key.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).digest()[:n]
+    return base64.urlsafe_b64encode(d).decode().rstrip("=")
+
+
+# The cookie's name is this kernel's own, a function of its serve token that reveals nothing of it:
+# so a second kernel on this host (a kernels.json profile, a peer reached over an ssh forward) keeps
+# its own session under its own name rather than one shared cookie slot.
+_SESSION_COOKIE = "romp_s_" + _hmac_b64(TOKEN or "-", _COOKIE_NAME_LABEL)[:10]
+
+# The header value that clears the legacy romp_token cookie, which a kernel before the session-id design
+# set to the serve token itself. Handler._clears_legacy_cookie decides which responses carry it.
+_LEGACY_COOKIE_CLEAR = "romp_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly"
+
+
+def _mint_session():
+    """A fresh session id: 144 random bits, and their tag under the serve token. The tag is what the
+    kernel checks; the random half only keys the tag so two logins differ."""
+    n = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
+    return n + "." + _hmac_b64(TOKEN, _SESSION_LABEL + n)
+
+
+def _migration_session():
+    """The session a browser signing in with the legacy romp_token cookie gets: one fixed id per serve
+    token. Tabs of one browser that migrate at the same moment (the tabs a browser restores after the
+    upgrade, each request carrying the old cookie) are all handed the same cookie and the same page key,
+    so whichever response lands last leaves the cookie and the stored key in step. Every browser that
+    migrates gets this id; each of them held the serve token itself, so sharing one session grants none
+    of them anything new. Its random half is an HMAC under the serve token under its own label, it
+    validates like any other session id (_session_ok), and it ends, like every session, when the token
+    is rotated."""
+    n = _hmac_b64(TOKEN, _MIGRATION_LABEL, 18)
+    return n + "." + _hmac_b64(TOKEN, _SESSION_LABEL + n)
+
+
+def _session_ok(sess):
+    """True when `sess` is a session id this kernel minted (its tag matches, in constant time)."""
+    n, dot, tag = (sess or "").partition(".")
+    return bool(TOKEN and n and dot and tag) and _ct_eq(tag, _hmac_b64(TOKEN, _SESSION_LABEL + n))
+
+
+def _page_key(sess):
+    """The page key K for one session: the full-class and socket-class credential, handed to the page
+    once at login and kept in its localStorage. Derived from the serve token under its own label, so
+    the session id (which the cookie carries) never equals it."""
+    return _hmac_b64(TOKEN, _PAGE_KEY_LABEL + sess)
+
+
+def _cap_input(host, path, sid):
+    """The cap's MAC message, length-prefixed so the map from (host, path, sid) to bytes is INJECTIVE:
+    each field is its UTF-8 byte length in decimal, a NUL, then the field's bytes. No other triple can
+    produce the same message (a separator moved into a field, a byte shifted across a boundary, or a
+    NUL inside a value all change a declared length), so the cap binds one triple and one only. The
+    fixed label leads, keeping the cap's domain distinct from the session id's and the page key's.
+    ui/webview/file-cap.ts builds the identical bytes; tests/fixtures/file-cap-vectors.json pins the
+    two to one constant so they cannot drift."""
+    return _FILE_CAP_LABEL + "".join(
+        "%d\0%s" % (len(p.encode("utf-8")), p) for p in (host, path, sid))
+
+
+def _file_cap(sess, host, path, sid):
+    """The cap for one /file URL: an HMAC under the session's page key K, bound to exactly this
+    (host, path, sid). `host` is "" for the local /file route and the attached host for a
+    /remote/<host>/file URL; `path` and `sid` are the request's decoded query values. Bound to the
+    decoded spelling through an injective input (_cap_input), so any other host or sid, and any
+    spelling whose decoded path differs (a trailing slash, a dot segment, a percent-encoded dot
+    segment, a symlink to the same file), needs its own cap and this one does not validate for it.
+    Percent-encoding that decodes to the same string is the same path and validates."""
+    return _hmac_b64(_page_key(sess), _cap_input(host, path, sid), 16)
+
+
+def _one_file_term_each(q):
+    """True when a parsed /file query names path, sid and cap at most once each. A cap binds the one
+    (host, path, sid) it was made for, and the route resolves the first path and sid it is given, so a
+    cap-authorized load with a second value of any of the three is refused rather than left to which
+    occurrence each reader takes (parse_qs has already dropped a blank value such as `path=`)."""
+    return all(len(q.get(k) or ()) <= 1 for k in ("path", "sid", "cap"))
+
+
+# The localStorage slot for THIS kernel's page key, named after the session cookie, whose name is a
+# function of the serve token. Site storage is partitioned by origin, port included, so kernels on two
+# ports never share a slot whatever it is named. The name is for one address over time: the same kernel
+# finds its key again after a restart (the same token names the same slot), and a key minted under one
+# serve token is never read under another at the same address (after a rotation, or when a reused port
+# or an ssh forward is answered by another kernel).
+_PAGE_KEY_SLOT = "romp.pageKey." + _SESSION_COOKIE
+
+# The first script in every authorized page document, injected at serve time by _send (so the page
+# renderers are not edited). It reads K from this origin's localStorage (the per-kernel slot above);
+# wraps window.fetch so a request to this origin carries K as X-Romp-Key and a request to any other
+# origin is left untouched; exposes __rompKeyQ() for the socket dials and __rompPageKey() for
+# ui/webview/file-cap.ts. It sends the TOP frame to /login (a pane never navigates itself) in two
+# cases. First, this origin holds no key at all (site data cleared), which the top frame checks as it
+# loads. Second, a same-origin fetch in ANY frame, the top or a pane, comes back with the kernel's
+# distinct re-sign-in 403 (X-Romp-Reauth: a valid session whose stored key no longer matches, as when
+# two sign-ins race and leave the cookie of one beside the key of the other, or a session with no key
+# stored at all), in which case it drops the stale key and hops the top frame. Before either hop it
+# checks that this origin's storage takes a write (stores()). The re-sign-in branch drops the key
+# before that check, so on an origin whose storage is full the check's write fits in the room the key
+# held and the tab still reaches /login, where a sign-in seeds the key into that room again. A browser
+# that keeps cookies but refuses site storage cannot keep the key a sign-in hands it, so each sign-in
+# would come back keyless, be refused and hop to /login again; that browser gets a sentence in the top
+# frame's document instead (refused()) and no hop. The sentence is styled like /login and sets its own
+# background, since this script runs in every top-level page. Neither hop can loop: nothing is sent
+# from /login itself, and /login navigates only when the person submits it.
+_PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dumps(_PAGE_KEY_SLOT) + ";"
+    "function key(){try{return localStorage.getItem(KN)||''}catch(e){return ''}}"
+    "function stores(){try{localStorage.setItem(KN+'.probe','1');localStorage.removeItem(KN+'.probe');return true}catch(e){return false}}"
+    "function refused(d){var w=function(){var b=d.body;if(!b)return;d.documentElement.style.background='#101418';"
+    "b.setAttribute('style','margin:0 auto;max-width:30em;min-height:100vh;box-sizing:border-box;display:flex;"
+    "align-items:center;justify-content:center;padding:2em;background:#101418;color:#dfe7ee;"
+    "font:15px/1.5 system-ui,-apple-system,sans-serif;text-align:center');"
+    "b.textContent='romp keeps its sign-in in this site\\'s storage, which this browser refuses: allow site data for this address, then reload.';};"
+    "if(d.readyState==='loading')d.addEventListener('DOMContentLoaded',w);else w();}"
+    "window.__rompPageKey=key;window.__rompKeyQ=function(){var k=key();return k?'&k='+encodeURIComponent(k):''};"
+    "var f=window.fetch;if(f)window.fetch=function(input,init){try{var k=key();if(k){"
+    "var isReq=(typeof Request!=='undefined')&&(input instanceof Request);"
+    "var u=new URL(isReq?input.url:String(input),location.href);"
+    "if(u.origin===location.origin){var h=new Headers((init&&init.headers)||(isReq?input.headers:undefined));"
+    "h.set('X-Romp-Key',k);init=Object.assign({},init||{},{headers:h});}}}catch(e){}"
+    "return f.call(window,input,init).then(function(r){try{"
+    "if(r&&r.status===403&&r.headers&&r.headers.get('X-Romp-Reauth')){var t=window.top;"
+    "if(t.location.pathname!=='/login'){try{localStorage.removeItem(KN)}catch(e){}"
+    "if(stores())t.location.replace('/login');else refused(t.document);}}}catch(e){}return r;});};"
+    "if(!key()&&window===window.top&&location.pathname!=='/login'){if(stores())location.replace('/login');else refused(document);}})();")
+
+
+# The WebSocket handshake headers a peer's 101 may pass back to the browser, each with the spelling
+# this kernel writes it in. The relay rebuilds the peer's response head from THIS allowlist rather than
+# trusting it to send nothing extra: the browser talks to this kernel's origin through the relay, so a
+# Set-Cookie the peer writes would land here, and a Clear-Site-Data or a cache directive would act on
+# this origin too.
+_WS_MIRROR_HEADERS = {b"upgrade": b"Upgrade", b"connection": b"Connection",
+                      b"sec-websocket-accept": b"Sec-WebSocket-Accept",
+                      b"sec-websocket-protocol": b"Sec-WebSocket-Protocol",
+                      b"sec-websocket-extensions": b"Sec-WebSocket-Extensions"}
+# The bounds on reading a peer's 101 head: its status line, its headers and the blank line after them
+# arrive within _WS_HEAD_MAX bytes and within _WS_HEAD_TIMEOUT_S seconds of the relay's first read (one
+# deadline for the whole read, not one per read), or the relay answers 502 and the browser gets none of it.
+# Module constants so a test can lower the time bound.
+_WS_HEAD_MAX = 65536
+_WS_HEAD_TIMEOUT_S = 15.0
+# A control byte: C0 (NUL to US, which takes in CR, LF and HTAB) and DEL. A genuine peer writes none in
+# a header block beyond the CRLF that ends each line, so a head or a mirrored value holding one is
+# refused, not cleaned: browsers differ in which of these bytes they read as the end of a line.
+_CONTROL_BYTE = re.compile(rb"[\x00-\x1f\x7f]")
+_CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")
+_WS_STATUS_101 = re.compile(rb"HTTP/1\.1 101(?: .*)?\Z")
+
+
+def _ws_head_allowlist(head, extra=()):
+    """Rebuild a peer's raw 101 response head for the browser, or None to refuse it. The head is read
+    the way a browser reads one and only what this kernel writes itself goes out: its own status line,
+    each allowlisted handshake header (_WS_MIRROR_HEADERS) as `Name: value` in this kernel's spelling,
+    then the `extra` lines (this kernel's own, such as the legacy cookie's clear), the blank line, and
+    the bytes that came past the peer's blank line (its first frames) unchanged. Every other header line
+    (a Set-Cookie, a Clear-Site-Data, a cache directive) is dropped, and so is a line that starts with
+    whitespace (a folded continuation) or has anything but the bare name before its colon.
+    None, and none of it reaches the browser, when: no blank line (CRLF CRLF) ends the head within
+    _WS_HEAD_MAX bytes; the status line or any header line holds a bare LF, a bare CR or another
+    control byte (_CONTROL_BYTE); or the status is not HTTP/1.1 101. A genuine peer (a romp kernel,
+    whose BaseHTTPRequestHandler writes strict CRLF) is refused by none of these."""
+    sep = head.find(b"\r\n\r\n")
+    if sep < 0 or sep + 4 > _WS_HEAD_MAX:
+        return None
+    lines = head[:sep].split(b"\r\n")
+    if any(_CONTROL_BYTE.search(ln) for ln in lines) or not _WS_STATUS_101.match(lines[0]):
+        return None
+    kept = []
+    for ln in lines[1:]:
+        name, colon, value = ln.partition(b":")
+        spelled = _WS_MIRROR_HEADERS.get(name.lower()) if colon else None
+        if spelled:
+            kept.append(spelled + b": " + value.strip(b" "))
+    return (b"\r\n".join([b"HTTP/1.1 101 Switching Protocols"] + kept + list(extra))
+            + b"\r\n\r\n" + head[sep + 4:])
+
+
+def _peer_header_value_ok(value):
+    """False when a header value a relay read from a peer's reply holds a CR, an LF or another control
+    character (_CONTROL_CHAR). http.client keeps a folded line's CRLF inside the value it returns, and
+    BaseHTTPRequestHandler.send_header writes a value as it is given, so a relay that mirrors such a
+    value would write the peer's line break, and whatever follows it, into this kernel's own response.
+    A relay refuses the reply (502) instead of mirroring it."""
+    return not _CONTROL_CHAR.search(value)
+
+
+# Unauthorized browser GET of "/" gets this instead of a bare 403, Jupyter's login-page flow: paste
+# the token once, and the redirect's ?token= signs this browser in (the session cookie, and the page
+# key in this origin's storage). It is also /login, where the page-key script sends a browser whose
+# saved sign-in is gone: the key lives in site storage, which a browser can lose while the cookie
+# stays, and only the token (or a fresh `romp url` link, or a window `romp` opens) mints a new one.
+# Static and self-contained (every other asset route is token-gated), and it carries no credential.
+# Colors follow the UI: the accent button is --accent #9cd2ff on --accent-fg #0c1a2e. The default view
+# is the one sentence, the form and the `romp url` / `romp` pointer; why a browser is signed out, and
+# what to do when `romp` is not found, sit behind two <details> folds, which open with no script.
 # The login page stays on the SYSTEM stack, deliberately: it renders pre-auth and /media is
 # token-gated (only the install icons ride exempt), so an 'Inter' lead could never load here —
 # it would just misstate the stack (PR-730 review, 2026-08-27).
@@ -3983,18 +4346,26 @@ background:#101418;color:#dfe7ee;font:15px/1.5 system-ui,-apple-system,sans-seri
 <form style="text-align:center;max-width:26em;padding:2em" onsubmit="\
 location.replace('/?token='+encodeURIComponent(document.getElementById('t').value.trim()));return false">
   <div style="font-size:1.6em;letter-spacing:.04em;margin-bottom:.4em">romp</div>
-  <div style="opacity:.8;margin-bottom:1.2em">This dashboard needs its access token &mdash; every
-  request is token-gated, loopback included. If this tab worked before, romp was reinstalled and
-  minted a new token: you are signed out, not broken.</div>
+  <div style="opacity:.8;margin-bottom:1.2em">Sign in with this dashboard's access token. If this
+  tab worked before, you are signed out, not broken.</div>
   <input id="t" autofocus placeholder="paste token"
     style="width:100%;box-sizing:border-box;padding:.55em .7em;border:1px solid #35414d;\
 border-radius:6px;background:#0c1117;color:#dfe7ee">
   <button style="margin-top:.9em;padding:.5em 1.4em;border:0;border-radius:6px;\
 background:#9cd2ff;color:#0c1a2e;font-weight:600;cursor:pointer">Open</button>
-  <div style="opacity:.6;margin-top:1.2em;font-size:.9em">Get a ready-made link with
-  <code>romp url</code> &mdash; in a NEW terminal if romp was just installed, since the old one
-  has a stale <code>PATH</code>. No <code>romp</code> yet?
-  <code>cat ~/.local/state/romp/serve-token</code></div>
+  <div style="opacity:.6;margin-top:1.2em;font-size:.9em">To skip pasting, run <code>romp url</code>
+  on the machine romp runs on and open the link it prints, or run <code>romp</code> there to open a
+  signed-in window.</div>
+  <details style="opacity:.6;margin-top:1em;font-size:.9em;text-align:left">
+  <summary style="cursor:pointer;text-align:center">Why am I signed out?</summary>
+  <p>Either this browser lost its saved sign-in (cleared site data, a private window, a browser that
+  clears a site's storage after a week without a visit, or an app just added to the Home Screen, which
+  keeps storage of its own), or romp's token changed because romp was reinstalled or its token file
+  was replaced. In an app on the Home Screen, paste the token here.</p></details>
+  <details style="opacity:.6;margin-top:.4em;font-size:.9em;text-align:left">
+  <summary style="cursor:pointer;text-align:center"><code>romp</code> not found?</summary>
+  <p>If romp was just installed, use a new terminal: an older one has a stale <code>PATH</code>. No
+  <code>romp</code> yet? <code>cat ~/.local/state/romp/serve-token</code></p></details>
 </form>
 """
 
@@ -5792,7 +6163,7 @@ def _bus_send_relay(payload):
     mailbox), so a retry cannot help; a bus that could not be reached or failed (a 5xx) is not definitive. The
     response carries the bus's id and, for a far host, "parked"."""
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=12)
+        conn = http.client.HTTPConnection("127.0.0.1", _bus_port(), timeout=12)
         try:                                           # UTF-8 on the wire: an escaped non-ASCII body would be six times its
             conn.request("POST", "/send", json.dumps(payload, ensure_ascii=False).encode("utf-8"),   # bytes, past the bus's
                          {"Content-Type": "application/json; charset=utf-8", "X-Romp-Token": TOKEN})   # limit the excerpt's cap
@@ -5820,7 +6191,7 @@ def _bus_recall_relay(sid, mid):
     host delivered): as the worker, by id. Returns "withdrawn" (the unread message is gone), "carried" (it left with an
     exchange and can no longer be withdrawn, or was read), or "unknown" (the bus could not be asked)."""
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=12)
+        conn = http.client.HTTPConnection("127.0.0.1", _bus_port(), timeout=12)
         conn.request("POST", "/recall", json.dumps({"from_id": sid, "to": "", "id": mid}),
                      {"Content-Type": "application/json", "X-Romp-Token": TOKEN})
         resp = conn.getresponse()
@@ -5843,7 +6214,7 @@ def _bus_restore_mail(sid, mids):
     this side's say-so. Authoritative about the bus's files (an id missing from the set is gone from cur/); RAISES
     when the bus could not be asked or refused, so the caller re-heads the banner rather than drop it: a quiet False
     here would be the loss this exists to end."""
-    conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=5)
+    conn = http.client.HTTPConnection("127.0.0.1", _bus_port(), timeout=5)
     try:
         conn.request("POST", "/restore", json.dumps({"id": sid, "mids": list(mids)}),
                      {"Content-Type": "application/json", "X-Romp-Token": TOKEN})
@@ -7035,14 +7406,20 @@ def _refuse_setting(client, exc, what, gesture, sid="", item_id="", flag="", val
     REFUSED because the store it edits could not be read -- or, since the maintainer's fold on PR
     #1019, WRITTEN (_StateUnwritable: the publish itself failed): one stderr line, and the refusal answered
     on the DELIVERING socket as a `settingRefused` frame -- the same targeted _reply idiom the
-    settingStale stand-down and the saveFile acks use, never a broadcast. The frame names the
+    settingStale stand-down and the saveFile acks use, never a broadcast. Two ops answer more causes on
+    this frame, each before a setter runs: a value that is not a JSON boolean, on the setSessionFlag op
+    and on the cardNotify op (the validator's complaint, `value` what the display path paints for that
+    flag or bell), and, on the setSessionFlag op, a flag name outside _LANE_FLAGS (_lane_flag_refusal's
+    sentence, `value` None since no pane paints an unlisted flag, and `flag` the name as str() spells it,
+    the empty string for a falsy name, which never equals a listed name). The frame names the
     `gesture` ("flag" / "bell" / "order" -- the views store's doors answer on their own acks, _ack_views_write, and
     never draw this frame -- so a pane never infers it from which fields are
     empty), the gesture's own address (sid / itemId / flag), and `value`: what the kernel's display
     path still paints for that flag or bell -- the value the next push carries -- so the pane
     repaints the refused toggle to it on THIS event rather than to a value it recorded at the click
     (two clicks before the first refusal made such a record wrong until the next push). None for a
-    gesture with no single value (an order, a whole-blob view write). A `warn` frame did none of
+    gesture with no single value (an order, a whole-blob view write) and for a flag refused by name.
+    A `warn` frame did none of
     this: only the chat page renders `warn`, so a refused bell on the feed page and a refused lane
     flag on the timeline page stayed painted as if they had landed until a reload. A dead socket is
     the client's problem: the refusal already stands. `log`, when given, is what stderr gets INSTEAD of
@@ -15233,9 +15610,12 @@ def _tick_job_skips(job, s):
 # 63 s first cycle in this walk, parsing every alive session cold before a single nudge could be due.
 _NUDGE_HORIZON = threading.local()    # the walking thread's collector: .notes (the flips a look's clock legs declined on)
 _NUDGE_WALK_STATS = {"looks": 0, "stats": 0, "served": 0, "skippedParses": 0, "parses": 0, "coldParses": 0, "deferredSessions": 0, "unbounded": 0,
-                     "clockDue": 0, "wakeOnly": 0, "wakeOnlyRecorded": 0, "unboundedBy": {}}   # unboundedBy: the None notes per leg (T401
+                     "clockDue": 0, "wakeOnly": 0, "wakeOnlyRecorded": 0, "loads": 0, "unboundedBy": {}}   # unboundedBy: the None notes per leg (T401
 #                                       follow-up); wakeOnlyRecorded: the memo rows wake-only looks recorded (jobs stage 1), read against
-#                                       wakeOnly and skippedParses on a quiet board with the gear off
+#                                       wakeOnly and skippedParses on a quiet board with the gear off; loads: the walk's shared goal-store
+#                                       reads, one per look that reaches its decision read whatever the read does (a store, a fault or
+#                                       a raise out of the look) and none on a skip or a state-gate exit (fold ruling A condition 7
+#                                       as ruled 2026-09-19: at most one per alive session per pass)
 _NUDGE_LOOK_STATS = {}                # sid -> the stat the pass took before its snapshots, for the look (a side map: the session
 #                                       rows are shared, read-only and memoised per cycle, never written into)
 _NUDGE_LOOK_ASKERS = {}               # sid -> (the asker sids whose registry rows the key carries, the ones beyond the bound)
@@ -15552,10 +15932,525 @@ def _begin_checkpoint_cycle():
     """The pusher cycle's START (T362 round one, lows 2 and 3): the cycle's checkpoint byte budget is whole again, shared by the
     builds' quiescence-drop writes and the converge pass near the cycle's end (the boot's first builds are capped where the
     volume is; before, the pass began the cycle and the first cycle's drops ran uncapped), and the drops an earlier cycle
-    deferred are paid with this cycle's room, oldest first, no fold over their files needed. The pass's off switch
-    (ROMP_CKPT_CONVERGE_MS=0) covers the drop write: the cycle begins with no budget, and the drop pops as before T362."""
+    deferred are paid with this cycle's room, oldest first, no fold over their files needed; then the releases at an agent's
+    end, against the same room (_release_ended_agents: the cycle's live-set events drained, the owed release of an agent whose
+    start that drain carries cancelled while the kernel holds the agent's end, the owed releases paid, the ends an earlier
+    cycle saw while nothing was held released again, the ends whose file lookup could not be made looked up again, one a
+    cycle, once a place their walk could not read reads again or the walk no longer reaches it, then the batch's ends).
+    The order carries a property: each cycle pays what an earlier cycle deferred before any end that is new to it, so the
+    owed quiescent drops and the owed releases are each paid before the batch's ends. They take their writes from one budget,
+    each in one step (em.checkpoint_cycle_take), so whichever runs first gets the room when only one document fits. An owed
+    drop's only other payer is a later fold over its file, which may never come; with the new ends first, a steady stream
+    of them could defer an owed drop or an owed release at every cycle and leave its records resident. The pass's off
+    switch (ROMP_CKPT_CONVERGE_MS=0)
+    covers the drop write: the cycle begins with no budget, and the drop pops as before T362 (with the drop writes off, a
+    release at an agent's end keeps the entry of a file still on disk instead of popping it unwritten)."""
     em.checkpoint_cycle_begin(CKPT_CONVERGE_BYTES if CKPT_CONVERGE_MS > 0 else 0)
     em.checkpoint_pay_owed_drops()
+    _release_ended_agents()
+
+
+_AGENT_RELEASED = {}                # (sid, agent id) -> [path, taken] for the ends _release_ended_agents released an entry for
+#                                     (taken True) or owed a release (taken False until checkpoint_pay_owed_releases takes it; at a
+#                                     cycle that paid any owed release, an owed end whose release was not taken and is no longer
+#                                     owed is dropped, or moved to _AGENT_ENDED_UNHELD when the pay found nothing held), oldest
+#                                     first, at most _AGENT_RELEASED_MAX: a start of the agent that a cycle drains after its
+#                                     release was taken is a false end (recordCache.falseEnds), after a release still owed it
+#                                     cancels that release, and after one never taken it counts nothing. A start dropped past the
+#                                     queue's bound is never drained, and one drained after the end left this table finds nothing,
+#                                     so neither cancels an owed release nor counts a false end. The pusher thread's alone
+_AGENT_RELEASED_MAX = 4096
+_AGENT_ENDED_UNHELD = {}            # (sid, agent id) -> path for the ends seen while the record cache held nothing for the agent's
+#                                     file (release_entry answered "absent", at the batch or at the owed releases' pay: no entry
+#                                     with weight stood for the file, among them an end drained before any read held it, an entry
+#                                     evicted or popped before the release finished, and an agent's later end after its earlier
+#                                     release was taken, as its task's end or its workflow slot's done state after its stop, so
+#                                     the first whole re-read after that end is released at the next cycle), oldest first, at most
+#                                     _AGENT_RELEASED_MAX (past it the oldest is forgotten and not counted: it held nothing when it
+#                                     was last paid). Released again at each cycle, so a read that holds the file after the end is
+#                                     released at the first cycle after it; a start of the agent that a cycle drains, a release
+#                                     that pops the path, and every outcome but absent of the pair's own release forget it (a start
+#                                     queued after the drain of the cycle that releases the file, or dropped past the queue's
+#                                     bound, does not, and a release taken then pops the running agent's entry). The pusher
+#                                     thread's alone
+_AGENT_ENDED_FAULTED = {}           # (sid, agent id) -> ((place, kind), ...) for the ends whose file lookup could not be made
+#                                     (_subagent_file reported a fault: the file found nowhere while a place the walk needed
+#                                     could not be read, or a standing resolution answered under such a place), each place the
+#                                     walk could not read once, with the kind of read the walk makes of it
+#                                     (_unread_place_kind), oldest first, at most _AGENT_RELEASED_MAX (past it the oldest is
+#                                     given up, counted in releaseLost). Not yet: the end is looked up again at the first cycle
+#                                     at which one of its places reads again or the walk no longer reaches it, or at a later
+#                                     one when more such ends are due (_AGENT_FAULTED_LOOKUPS_MAX), each place read once per
+#                                     cycle until then and no walk (the reads: _unread_place_reads' docstring), and forgotten
+#                                     when a lookup is made, a start of the agent is drained, a release of the agent's file
+#                                     made with no lookup (its remembered unheld end's, or its owed release at the pay) is
+#                                     taken while the file is there to it (it covered the file; that is a second read after
+#                                     the release's own, and the window between the two is a residual _release_ended_agents'
+#                                     docstring states, which the held em.release_entry follow-up closes: release_entry reports
+#                                     whether its own read found the file, and the pops key on that), or the resolution or the
+#                                     release raises. The pusher thread's alone
+_AGENT_FAULTED_LOOKUPS_MAX = 1      # the faulted ends _release_ended_agents looks up again in one cycle, a count and not a time:
+#                                     the oldest whose place reads again, the rest read again and looked up at the next cycles
+#                                     (a lookup forgets its end or remembers it again as the newest, so the ends waiting take
+#                                     turns: tests/test_record_cache_agent_end.py AgentEnd
+#                                     test_the_ends_due_take_turns_when_the_oldest_ones_lookup_faults_again_at_each_cycle).
+#                                     One, since a lookup can walk every sibling session's subagents tree in the
+#                                     project directory, and the 50 ms bound for one cycle's resolution holds at the median for
+#                                     one such walk (docs/reference.md's bound text); the measured figures are the faulted-end
+#                                     entry of _subagent_tree_memo_report's docstring. An end due behind others waits a cycle
+#                                     for each of them, and the residual of an owed release paid as absent beside it stays open
+#                                     that much longer; a release the unheld road or the owed releases' pay takes for the
+#                                     agent meanwhile, with the file there to it, forgets the faulted end too, since it
+#                                     covered the agent's file (_release_ended_agents' docstring; whether the file is
+#                                     there is a second os.path.exists after the release's own read, and a fault's edge
+#                                     between the two is a residual it states, which the held em.release_entry follow-up
+#                                     closes: release_entry reports whether its own read found the file, and the pops key
+#                                     on that)
+
+
+def _remember_faulted_end(pair, places):
+    """Remember `pair`'s end, whose file lookup could not be made, newest last, with the places its walk could not read
+    (_AGENT_ENDED_FAULTED). Past the table's bound the oldest end is given up: its records stay until the cache's own
+    bounds or a quiescent drop reach them, counted in releaseLost."""
+    _AGENT_ENDED_FAULTED.pop(pair, None)
+    _AGENT_ENDED_FAULTED[pair] = places
+    while len(_AGENT_ENDED_FAULTED) > _AGENT_RELEASED_MAX:
+        _AGENT_ENDED_FAULTED.pop(next(iter(_AGENT_ENDED_FAULTED)), None)
+        em.note_release_lost(1, "the table of finished agents whose file lookup could not be made passed its bound")
+
+
+def _unread_place_kind(p, project):
+    """The kind of read an agent-file walk makes of the place `p` it could not read, `project` being the project
+    directory the walk listed (the parent transcript's directory): "project" for that directory, which the walk stats and
+    lists, following a link; "entry" for an entry of it, which the walk reads by os.stat, following a link; "tree" for a
+    place in a subagents tree (a root, a place below it, a candidate file), which the walk reads by os.lstat, and a
+    directory there by its listing too (_subagent_file_walk's docstring states every place a fault excludes)."""
+    return "project" if p == project else "entry" if os.path.dirname(p) == project else "tree"
+
+
+def _unread_place_reads(p, kind, sid):
+    """Whether the place `p`, which an agent-file walk could not read (_subagent_file's `unread`), reads again, by the read
+    the walk makes of it (`kind`, _unread_place_kind), for an end of the session `sid`: the project directory by one
+    os.stat and the first entry of its listing; a project-directory entry by one os.stat, _REG_MISSING_ERRNOS read as not
+    a directory, as the walk reads them; a place in a subagents tree by one os.lstat, and a directory there by the first
+    entry of its listing too, since a directory whose own lstat succeeds can still refuse its listing (its read bit off,
+    EMFILE); ENOENT and ENOTDIR are absence. True when the read answers, with what is there or with nothing there; False
+    on any other error, the fault lasting, unless the walk the lookup makes now does not reach the place: True then, so
+    the end is looked up. Where that walk goes is read only once the place's read has failed, from the session's
+    transcript as the lookup resolves it (_path_of). The walk lists that transcript's project directory and no other, so
+    a project directory that is not it, an entry of another directory and a place in a tree outside it are not reached.
+    Inside it, a place in a subagents tree can still lie off the walk's way, since its os.lstat follows a link at every
+    component of the path but the last, while the walk enters a sibling session directory only when its os.stat reads a
+    directory and goes below a tree's root only through real directories, never a link. So for such a place the way the
+    walk would take to it is read: an os.lstat of each directory from the tree's root down to the place's parent, where
+    a link, a file or nothing is a way the walk does not go and any other error a fault the walk meets there too; and
+    first, when the failure was ELOOP or EBADF and the place's session directory is not the session's own, an os.stat of
+    that directory, where _REG_MISSING_ERRNOS or anything but a directory is one the walk does not enter (an lstat of the
+    place resolves that directory as the os.stat does, so the two disagree only on those errnos; the own session
+    directory is reached by the walk's own lstat, whose ELOOP is a fault). A session with no transcript and a resolution
+    that raises say nothing of where the walk goes, so the fault lasts (tests/test_record_cache_agent_end.py AgentEnd
+    test_a_failed_place_answers_where_the_transcript_lies_in_another_project_and_waits_with_no_transcript_or_a_raise).
+    With no transcript, an answer would have the lookup forget the end uncounted while the place still cannot be read.
+    The fault is kept there because this read cannot tell a transcript that is gone from one that _path_of answers None
+    for because a fault covers the transcript's project directory while discover walks again (a residual _release_end
+    states), and keeping fails safe: the end waits until one of its places reads and is then looked up, and forgotten
+    uncounted if the transcript is still gone, or until the table's bound gives it up, counted in releaseLost. The wait
+    never forgets it uncounted while none of its places reads; the batch's events about the agent can (a start forgets
+    it, the file live again, and a later end is looked up as the batch's end is, which with no transcript forgets it
+    uncounted, as _release_end states). The follow-up that has _path_of report such a fault would let this read answer
+    for a transcript that is gone. On a raise, an answer would have the lookup give the end up at once, counted; the
+    wait gives it up counted as well, when a place reads and the resolution still raises or at the bound, so the two
+    differ only in when. A read that took every failed place as lasting would keep an end whose places the walk no
+    longer reaches until the table's bound gave it up (AgentEnd, the cases whose names say a place is read as the walk
+    reads it, each red at its last step under that read). Two faults are not seen here, and the end of each is looked up
+    again at each cycle while it lasts, in turn with the other ends due under _AGENT_FAULTED_LOOKUPS_MAX (AgentEnd, a
+    residual witness each, the second's in its root and its candidate form): a listing that fails only past its first
+    entry, and a strict os.path.realpath of the place (_find_agent_file's resolution of a tree's root or a candidate)
+    that fails while the place's own lstat answers, which on Linux takes a race or a failure the kernel's own resolution
+    of the path does not meet, since an lstat of the whole path reads every component the realpath reads. And the end
+    waits only for a recorded place to read again or leave the walk's way: a file of the agent's that appears under a
+    place the faulted walk already read (a tree it searched, or the project directory it listed), while every recorded
+    place still fails, would be found by a walk, but its end waits until a recorded place reads or the table's bound
+    gives it up (a residual, outside what the CLI is known to do: the file copied or restored there by hand, or written
+    after its end was drained)."""
+    try:
+        if kind == "tree":
+            listed = stat.S_ISDIR(os.lstat(p).st_mode)     # the walk's own lstat, which never follows a link at the place
+        else:
+            os.stat(p)                                     # the project directory or an entry, through a link as the walk
+            listed = kind == "project"                     #  reads them; only the project directory is listed
+        if listed:
+            with os.scandir(p) as it:
+                next(it, None)
+        return True
+    except (FileNotFoundError, NotADirectoryError):
+        return True                                        # nothing there now: the walk reads that as it reads any absence
+    except OSError as e:
+        if kind == "entry" and e.errno in _REG_MISSING_ERRNOS:
+            return True                                    # an entry the walk reads as not a directory
+        failed = e.errno
+    try:                                                   # a place whose read failed: lasting only where the walk from the
+        path = _path_of(sid)                               #  session's transcript now reaches it
+    except Exception:
+        return False                                       # nothing says where the walk goes: the fault lasts
+    if not path:
+        return False                                       # no transcript: likewise
+    project = str(Path(str(path)).parent)
+    if kind == "project":
+        return p != project                                # the walk lists that transcript's project directory, no other
+    if kind == "entry":
+        return os.path.dirname(p) != project               # and reads the entries of that one alone
+    if not p.startswith(project + os.sep):
+        return True                                        # a place in a tree outside the project the walk lists
+    parts = p[len(project) + 1:].split(os.sep)
+    if len(parts) < 2 or parts[1] != "subagents":
+        return False                                       # not a place in the walk's trees: its own read decides
+    entry = os.path.join(project, parts[0])
+    if failed in _REG_MISSING_ERRNOS and entry != str(_subagents_dir(path).parent):
+        try:                                               # a sibling session directory, read by os.stat as the walk reads it
+            if not stat.S_ISDIR(os.stat(entry).st_mode):
+                return True
+        except OSError as e:
+            return e.errno in _REG_MISSING_ERRNOS          # not a directory to the walk, which enters nothing; else its fault
+    d = os.path.join(entry, "subagents")
+    for name in parts[2:]:                                 # each directory from the tree's root down to the place's parent
+        try:
+            if not stat.S_ISDIR(os.lstat(d).st_mode):
+                return True                                # a link or a file on the way: the walk never goes through it
+        except (FileNotFoundError, NotADirectoryError):
+            return True
+        except OSError:
+            return False                                   # the walk's own read of that directory fails there too
+        d = os.path.join(d, name)
+    return False
+
+
+def _release_end(pair, popped):
+    """Resolve `pair`'s agent file as the folds resolve it (_path_of, _subagent_file) and release it for the agent's end, a
+    batch's end or a faulted end looked up again (_release_ended_agents): the release's outcome, a release that pops the
+    path adding it to `popped`. "faulted" when the lookup could not be made: nothing is released, the end is remembered
+    with the places its walk could not read (_AGENT_ENDED_FAULTED) and its unheld end forgotten, so the unheld releases,
+    which release a path with no lookup, do not take the file for this end while its tree cannot be read, where
+    em.release_entry's os.path.exists would read a fault as the file gone and pop its records unwritten, unless an owed
+    release of the pair paid as absent remembers the end as unheld again (a residual _release_ended_agents states); a
+    standing resolution answered under such a place defers the same way. None when the session has no transcript or the
+    agent no file, or when the resolution or the release raised (given up, counted in releaseLost and written to
+    stderr). A fault on the transcript's project directory can read as no transcript: _path_of can answer None when
+    discover walks again while the fault lasts and finds that directory's listing, or the stat of the transcript's entry
+    in it, refused, which the walk reads as a directory with no transcript in it. Until then discover's cache answers
+    the transcript it listed (it walks again when its fingerprint moves: as when a session is added or renamed or a new
+    transcript lands in a session's project directory, in a fresh kernel, and at once when the fault refuses the stat of
+    that directory itself, as a parent that cannot be searched or an I/O error does, since the fingerprint stats it),
+    and an SDK session's registry road, which stats the transcript itself, falls to that same walk when the stat is
+    refused. The end is then forgotten uncounted and not looked up again, its records left to the cache's own bounds.
+    That residual predates this change and is not reached by it (the code before it forgot such an end the same way);
+    the follow-up has _path_of report a fault other than ENOENT or ENOTDIR, and this function remember such an end as
+    faulted, as it does a lookup that could not be made. Every outcome but "faulted" forgets a faulted end of the pair;
+    "absent" remembers the end as unheld, and every other outcome forgets an unheld end of the pair except a None for a
+    session with no transcript or an agent with no file, which leaves it (a raise forgets it)."""
+    sid, aid = pair
+    ap = None
+    try:
+        path = _path_of(sid)
+        faults, unread = [], []
+        ap = _subagent_file(path, aid, faults, unread=unread) if path else None
+        if faults:                                     # not yet: a lookup that could not be made is not "no file"
+            project = str(Path(str(path)).parent)
+            _remember_faulted_end(pair, tuple((p, _unread_place_kind(p, project)) for p in unread))
+            _AGENT_ENDED_UNHELD.pop(pair, None)
+            return "faulted"
+        got = em.release_entry(str(ap), "agentEnded") if ap is not None else None
+    except Exception as e:                             # one event that raises must not lose the rest of the drained batch
+        em.say_release_raised("the release of session %s's agent %s (%s)"
+                              % (sid, aid, "file %s" % ap if ap is not None else "its file not resolved"))
+        em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=None if ap is None else str(ap))
+        _AGENT_ENDED_UNHELD.pop(pair, None)
+        _AGENT_ENDED_FAULTED.pop(pair, None)
+        return None
+    _AGENT_ENDED_FAULTED.pop(pair, None)
+    if got is None:
+        return None                                    # no transcript for the session or no file for the agent
+    if got == "absent":
+        _remember_unheld_end(pair, str(ap))            # nothing held yet: a read that holds the file is released later
+        return got
+    _AGENT_ENDED_UNHELD.pop(pair, None)
+    if got in ("released", "deferred", "raced"):
+        _note_agent_released(pair, str(ap), got == "released")
+        if got == "released":
+            popped.add(str(ap))
+    return got
+
+
+def _note_agent_released(pair, path, taken):
+    """Record `pair`'s end in _AGENT_RELEASED as a release taken (a start a later cycle drains while the end is still here
+    is a false end) or owed, newest last."""
+    _AGENT_RELEASED.pop(pair, None)
+    _AGENT_RELEASED[pair] = [path, taken]
+    while len(_AGENT_RELEASED) > _AGENT_RELEASED_MAX:
+        _AGENT_RELEASED.pop(next(iter(_AGENT_RELEASED)), None)
+
+
+def _remember_unheld_end(pair, path):
+    """Remember `pair`'s end, which found nothing held for `path`, newest last (_AGENT_ENDED_UNHELD)."""
+    _AGENT_ENDED_UNHELD.pop(pair, None)
+    _AGENT_ENDED_UNHELD[pair] = path
+    while len(_AGENT_ENDED_UNHELD) > _AGENT_RELEASED_MAX:
+        _AGENT_ENDED_UNHELD.pop(next(iter(_AGENT_ENDED_UNHELD)), None)
+
+
+def _forget_unheld_paths(paths):
+    """Forget every remembered end whose path is in `paths`: a release popped the path."""
+    if paths and _AGENT_ENDED_UNHELD:
+        for pair, p in list(_AGENT_ENDED_UNHELD.items()):
+            if p in paths:
+                _AGENT_ENDED_UNHELD.pop(pair, None)
+
+
+def _release_ended_agents():
+    """The pusher cycle's start (2026-09-24): each agent that left its session's live set since the last cycle has its parsed
+    transcript released from the record cache (em.release_entry, reason agentEnded: the file's checkpoint document written
+    when it lacks what the cache holds, then the records dropped), so a later fold whose cursor the document records restores
+    a tail and reads nothing whole. The events come from the SDK backend's own add and removal sites, queued in arrival order
+    (SdkBackend.drain_agent_live_events), never from a difference of liveness snapshots: three threads take those
+    independently, and a staler one would end an agent a fresher one listed. In order:
+    - The batch is drained. An agent whose last event dropped past the queue's bound was an end comes back as an end ahead
+      of the queued events, so it is released like the batch's own ends below when the batch holds no later event for it;
+      only the ends dropped past the bound of the list the backend keeps them in are releases given up here
+      (recordCache.releaseLost). An end whose file lookup could not be made is not given up but remembered (below), and is
+      given up only past its table's bound. A dropped start is not counted.
+    - An agent that entered the live set in this batch and whose earlier end is still owed its release (an earlier cycle's
+      budget refused the document, or a read raced the pop) has that release cancelled (em.cancel_owed_release, under the
+      path the release was owed for). Its entry was never popped, so that start is not a false end, as for an end and a
+      start in one batch. Its end remembered as unheld or as faulted (below) is forgotten: the file is live again. A start
+      that is not in the batch (queued after the drain of the cycle that pays the owed release, or dropped past the
+      queue's bound), or one drained after the end left _AGENT_RELEASED, cancels nothing, and a release taken then pops
+      the running agent's entry (em.checkpoint_pay_owed_releases).
+    - The releases still owed are paid (em.checkpoint_pay_owed_releases). An owed end whose release is taken now is
+      marked taken, and every end remembered as unheld for that path is forgotten; a faulted end of the agent is
+      forgotten too when the file is there after the release (a second os.path.exists, made after em.release_entry
+      returned, not the read the release itself made: a residual below), since that release covered the agent's file,
+      as on the unheld road below (AgentEnd
+      test_an_owed_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too), and kept when it is not: the
+      release was then the residual's own pop with no document (below; AgentEnd
+      test_an_owed_release_that_pops_the_records_under_a_fault_keeps_the_agents_faulted_end), or the pop of a file that
+      is gone, with no fault, whose faulted end's lookup finds no file and forgets it, or, when a fault began between
+      the two reads, a release that saw the file (below). When any was paid, an owed
+      end whose release was not taken and is no longer owed (paid as absent or lost, raised, given up at the owed
+      table's bound, forgotten at a checkpoint-directory rebind, or cancelled above) is dropped, and one paid as absent
+      is remembered as unheld, a faulted end of the pair left as it is (the residual below); one left in the table is
+      still never counted, since its entry was not popped.
+    - Each end remembered as unheld (_AGENT_ENDED_UNHELD: an end seen while the cache held nothing for the file) that
+      this batch does not speak for is released again, oldest first: still absent, it stays remembered; taken, it is
+      recorded as a taken release (a start a later cycle drains while _AGENT_RELEASED still holds the end is a false
+      end), and a faulted end of the agent is forgotten too when the file is there after the release (the same second
+      os.path.exists as the pay's: a residual below), since that release covered the agent's file (the faulted end's
+      lookup, due at a later cycle under the cap, would find nothing held and remember the agent as unheld again:
+      AgentEnd test_an_unheld_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too); deferred or
+      raced, as an owed one; lost, or raising (counted in releaseLost), it is given up. Every outcome but absent forgets
+      it. Every outcome but a release taken with the file there keeps the agent's faulted end: nothing held, since the
+      faulted end still carries the agent's release (AgentEnd
+      test_an_unheld_release_that_finds_nothing_held_keeps_the_agents_faulted_end); a loss or a raise, after which the
+      faulted end carries that release the same way; a deferral or a race, which covers nothing yet (the pay, above,
+      forgets it once it takes the release); and a release taken with the file not there:
+      the residual's own pop with no document (below), after which the next fold reads the file whole, so the faulted
+      end's lookup after the fault remembers the agent as unheld and that whole read is released at the cycle after it
+      (AgentEnd test_an_unheld_release_that_pops_the_records_under_a_fault_keeps_the_agents_faulted_end), or a file that
+      is gone, whose faulted end's lookup finds no file and forgets it, or, when a fault began between the two reads, a
+      release that saw the file (below). So a read that holds the file after the end,
+      before any other event about the agent, is released at the first cycle after the read.
+    - Each faulted end (_AGENT_ENDED_FAULTED: an end whose file lookup could not be made, below) that this batch does
+      not speak for waits for one of the places its lookup's walk could not read to read again: each is read once per
+      cycle, by the read the walk makes of it (_unread_place_reads), until one answers, and no walk is made until then;
+      the read is memoized for the cycle on the place, its kind and the session, so the ends of a session waiting on one
+      place cost one read of it per cycle, not one each. A place whose read fails answers too where the walk the lookup
+      makes now no longer reaches it (a place outside the project directory of the session's current transcript, or, for
+      a place in a subagents tree, a link, a file or nothing at or below the subagents directory on its way there, or a
+      sibling session directory the walk does not take for a directory), which the same call reads only on that failure;
+      a session with no transcript, or a resolution of it that raises, leaves the fault lasting (why, and how such an
+      end's wait ends: _unread_place_reads). Once one answers, the end is looked up again and released as a batch's end
+      is (below), or, when that lookup could not be made either, remembered with the places its walk could not read this
+      time; at most _AGENT_FAULTED_LOOKUPS_MAX (one) such lookups are made in a cycle, oldest first, and the other ends
+      whose places read are read again and looked up at the next cycles; an end remembered again goes in as the newest,
+      so an end whose lookup faults again at every cycle does not hold the cycle's lookup (AgentEnd
+      test_the_ends_due_take_turns_when_the_oldest_ones_lookup_faults_again_at_each_cycle). So a fault's end is looked
+      up at the first cycle after the fault clears, or, when more ends are due than the cap, at one of the cycles after
+      it, one end a cycle, not at every cycle while it lasts; what the wait and the lookups cost is the faulted-end
+      entry of _subagent_tree_memo_report's docstring. A place whose read answers while the walk's read of it still
+      fails (a listing that fails past its first entry, or a strict realpath of the place that fails while its lstat
+      answers: _unread_place_reads) gets its end looked up at each cycle while that fault lasts, in turn with the other
+      ends due when there are more than the cap (the witnesses: tests/test_record_cache_agent_end.py AgentEnd
+      test_residual_a_listing_that_fails_past_its_first_entry_has_its_end_looked_up_at_each_cycle_while_it_lasts,
+      test_residual_a_resolution_that_fails_where_its_places_lstat_answers_has_its_end_looked_up_at_each_cycle_while_it_lasts
+      for a candidate's resolution, and
+      test_residual_a_resolution_of_a_trees_root_that_fails_where_its_lstat_answers_has_its_end_looked_up_at_each_cycle
+      for a root's).
+    - Each agent whose last event in the batch is an end is released. An end followed in the same batch by the agent
+      entering the live set again releases nothing. A start in the batch for an agent whose release was taken, while
+      _AGENT_RELEASED still holds that end, is a false end, counted (recordCache.falseEnds); after a release that was only
+      owed, it is not. An end that finds nothing held is remembered as unheld; any other outcome forgets a remembered end of
+      the agent. That includes an agent's later end acted on after its earlier release was taken (its task's end or its
+      workflow slot's done state after its stop, in a later cycle, or in this cycle after the owed pay took a deferred
+      release): if a re-read holds the file at that end, the end releases it; if nothing is held, the end is remembered, so
+      the first whole re-read after it is released at the next cycle. A whole re-read after that release, with no later end
+      of the agent, stays whole until the count cap, the byte budget or a quiescent drop reaches it (the residual stated
+      beside em.RECORD_CACHE_BUDGET_FLOOR_BYTES). An end whose file lookup could not be made (_subagent_file reported a
+      fault: the file found nowhere while a place the walk needed could not be read for a reason other than absence, or a
+      standing resolution answered under such a place) releases nothing, is remembered as faulted (above), and forgets
+      the agent's unheld end, so the unheld releases do not take the file for this end while its tree cannot be read,
+      unless the owed releases' pay remembers it again (the residual below).
+      Not yet: the code before this change passed no faults list, so it read the lookup's bare None as no file for the
+      agent and gave the end up, counted nowhere and never looked up again after the fault cleared, and with a resolution
+      standing it released under the fault, where em.release_entry's os.path.exists read the fault as the file gone and
+      popped the records with no checkpoint document (tests/test_record_cache_agent_end.py AgentEnd, the cases of an end
+      whose file lookup could not be made).
+    The deferral covers the ends this function looks up. The two roads that release a remembered path with no lookup are
+    not deferred by a fault: the unheld ends whose pair holds no faulted end (a faulted end forgets its pair's unheld
+    end and carries the pair's release, which the lookup it makes once a place reads again releases or remembers as
+    unheld again), and the owed releases' pay. On both, em.release_entry's own os.path.exists reads a fault on the path
+    as the file gone and pops the records with no document. The pay also leaves an unheld end beside a faulted end of
+    the same pair: an owed release paid as absent (its entry evicted or popped between the deferral and the pay) is
+    remembered as unheld with the pair's faulted end left in place, so the unheld releases take that path at each cycle
+    with no lookup while the faulted end waits, which can go on for cycles after its fault clears, one for each end due
+    ahead of it (_AGENT_FAULTED_LOOKUPS_MAX), and a read that holds the file while a fault covers its path is popped
+    with no document (as when the fault that deferred the pair's later end refused a listing, and the directory's search
+    bit then goes too). A release taken on either road with the file there forgets the faulted end too (above), so the
+    pair's later lookup does not remember the agent as unheld again; a release that is that pop with no document keeps
+    it, so the pair's lookup after the fault remembers the agent as unheld and the next fold's whole read is released
+    with its document. That residual predates this change (fork PR #913's code, not reached through the lookup), and its
+    witnesses are AgentEnd
+    test_residual_an_unheld_end_paid_under_an_unreadable_tree_pops_the_records_without_their_document, whose release is
+    also the last step of the road through an owed release paid as absent, and
+    test_residual_an_owed_release_paid_under_an_unreadable_tree_pops_the_records_without_their_document; the follow-up
+    reads only ENOENT and ENOTDIR as the file gone and defers the release on any other error, which closes it on each of
+    those roads. Whether the file is there after a release is, on both roads, a second os.path.exists made after
+    em.release_entry returned (the pay's `os.path.exists(rec[0])`, the unheld road's `os.path.exists(p)`), not the read
+    the release itself made, and a fault's edge between the two reads is a residual of this change (the window, on the
+    pusher thread, holds the release's own work after its read, the document's write when it saw the file and the pop,
+    which can wait out a read in flight on a path sharing its stripe, and at the pay every owed release paid after it in
+    that cycle, since the pay's second reads follow em.checkpoint_pay_owed_releases' return): a fault that clears there
+    follows a pop with no document and forgets the faulted end, so nothing remembers the agent after the fault and the
+    next fold's whole read stays held until the cache's own bounds reach it (the case the kept end exists for); a fault
+    that begins there keeps the faulted end after a release that saw the file and covered it, so the end's lookup after
+    the fault finds nothing held and remembers the agent as unheld again (the case the forgetting exists for). No case
+    in the suite places a fault's edge between the two reads. The window is folded into the same held follow-up of
+    em.release_entry (the one above that reads only ENOENT and ENOTDIR as the file gone), which closes it too:
+    release_entry reports whether its own read found the file, and the pops key on that, in place of the second
+    os.path.exists.
+    An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
+    written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
+    (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters
+    count a path once per cycle, so an agent's second end in the cycle adds nothing to them.
+    The file is resolved as the folds resolve it (_path_of, _subagent_file, with a faults list and `unread`: _release_end),
+    so the release names the cache key the folds read and tells a lookup that could not be made from an agent with no
+    file. It does not tell a fault on the transcript's project directory from a session with no transcript, since
+    _path_of can answer None for both (for the fault, when discover walks again while it lasts), so such an end is
+    forgotten uncounted and not looked up again: a residual that predates this change and is not reached by it, stated
+    with its follow-up in _release_end's docstring. Returns the releases taken or owed for this batch's ends."""
+    be = _sdk_backend
+    drain = getattr(be, "drain_agent_live_events", None) if be else None
+    events, lost = drain() if drain is not None else ([], 0)
+    if lost:
+        em.note_release_lost(lost, "overflow")          # ends given up past the backend's bound on the ends it keeps
+    last = {}
+    for i, (sid, aid, _live) in enumerate(events):
+        last[(sid, aid)] = i
+    for sid, aid, live in events:
+        if not live:
+            continue
+        rec = _AGENT_RELEASED.get((sid, aid))
+        if rec is not None and not rec[1]:
+            em.cancel_owed_release(rec[0])             # an end whose release is still owed (the last _AGENT_RELEASED_MAX ends)
+        _AGENT_ENDED_UNHELD.pop((sid, aid), None)      # the agent's file turned live again: its unheld end is over
+        _AGENT_ENDED_FAULTED.pop((sid, aid), None)     # and so is its faulted end
+    paid = em.checkpoint_pay_owed_releases()           # {path: outcome} of the releases an earlier cycle owed
+    if paid:
+        owed = em.owed_release_paths()
+        for pair, rec in list(_AGENT_RELEASED.items()):
+            if rec[1]:
+                continue
+            got = paid.get(rec[0])
+            if got == "released":
+                rec[1] = True                          # the owed release was taken: a start a later cycle drains while
+                                                       # this table holds the end is a false end
+                if os.path.exists(rec[0]):
+                    _AGENT_ENDED_FAULTED.pop(pair, None)   # and, as on the unheld road below, it saw the file and
+                    #                                        covered it: the agent's faulted end is over too (a read
+                    #                                        after the release's own: a fault's edge between the two
+                    #                                        is a residual the docstring states, which the held
+                    #                                        em.release_entry follow-up closes: release_entry reports
+                    #                                        whether its own read found the file, and the pops key
+                    #                                        on that)
+            elif rec[0] not in owed:
+                _AGENT_RELEASED.pop(pair, None)        # not taken and no longer owed: no entry was popped for this end
+                if got == "absent":
+                    _remember_unheld_end(pair, rec[0])   # nothing held at the pay: a read that holds the file is released later
+        _forget_unheld_paths({p for p, got in paid.items() if got == "released"})
+    popped = set()                                     # the paths a release popped below: their remembered ends are over
+    for pair, p in list(_AGENT_ENDED_UNHELD.items()):
+        if pair in last:
+            continue                                   # the batch speaks for the agent: its own last event governs below
+        try:
+            got = em.release_entry(p, "agentEnded")
+        except Exception as e:                         # given up, like a batch end that raises; the rest are still paid
+            em.say_release_raised("the release of session %s's agent %s (remembered unheld; file %s)" % (pair[0], pair[1], p))
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=p)
+            _AGENT_ENDED_UNHELD.pop(pair, None)
+            continue
+        if got == "absent":
+            continue                                   # still nothing held: remembered for the next cycle
+        _AGENT_ENDED_UNHELD.pop(pair, None)
+        if got in ("released", "deferred", "raced"):
+            _note_agent_released(pair, p, got == "released")
+            if got == "released":
+                popped.add(p)
+                if os.path.exists(p):
+                    _AGENT_ENDED_FAULTED.pop(pair, None)   # that release saw the file and covered it: the agent's
+                    #                                        faulted end is over too, or its lookup, due later under the
+                    #                                        cap, would find nothing held and remember the agent as
+                    #                                        unheld again. A release that read a fault on the path as
+                    #                                        the file gone (the residual's pop with no document) keeps
+                    #                                        it, so its lookup after the fault remembers the agent as
+                    #                                        unheld and the first whole re-read is released (this read
+                    #                                        comes after the release's own: a fault's edge between the
+                    #                                        two is a residual the docstring states, which the held
+                    #                                        em.release_entry follow-up closes: release_entry reports
+                    #                                        whether its own read found the file, and the pops key
+                    #                                        on that)
+    reads, looked = {}, 0                              # (place, kind, sid) -> _unread_place_reads' answer, this cycle's: the
+    #                                                    ends waiting on one place cost one read of it per cycle, not one
+    #                                                    each; and the faulted ends looked up below, at most
+    #                                                    _AGENT_FAULTED_LOOKUPS_MAX
+    for pair, places in list(_AGENT_ENDED_FAULTED.items()):
+        if looked >= _AGENT_FAULTED_LOOKUPS_MAX:
+            break                                      # the rest are read and looked up at the next cycles, oldest first
+        if pair in last:
+            continue                                   # the batch speaks for the agent: its own last event governs below
+        waiting = bool(places)
+        for p, kind in places:
+            key = (p, kind, pair[0])
+            if key not in reads:
+                reads[key] = _unread_place_reads(p, kind, pair[0])
+            if reads[key]:
+                waiting = False
+                break
+        if waiting:
+            continue                                   # no place its lookup could not read reads yet: not yet, and no walk
+        looked += 1
+        _release_end(pair, popped)                     # one reads again: looked up again, released once the lookup is made
+    n = 0
+    for i, (sid, aid, live) in enumerate(events):
+        pair = (sid, aid)
+        if live:
+            rec = _AGENT_RELEASED.pop(pair, None)
+            if rec is not None and rec[1]:
+                em.note_false_end()
+            continue
+        if last[pair] != i:
+            continue                                   # the agent entered the live set again later in this batch
+        if _release_end(pair, popped) in ("released", "deferred", "raced"):
+            n += 1
+    _forget_unheld_paths(popped)
+    return n
 
 
 def _converge_checkpoints(now):
@@ -18883,6 +19778,12 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
     # jd.load_goals), and a write through the view raises FrozenStoreError rather than landing, files a
     # frozen-store-write row and switches the cache off for the process, so a writer that forgets is refused
     # and recorded rather than landing a write.
+    # The walk's one shared load of this look, served as memos.nudgeWalk.loads: fold ruling A condition 7 as ruled
+    # 2026-09-19 (at most one per alive session per pass, zero on a skip or a state-gate exit; the placement gate's
+    # currency re-read on a derive is the gate's own and is not counted here). Counted on the line before the read, so a
+    # look that reaches the read counts exactly once whatever the read does: returns a store, returns a fault, or raises
+    # out of the look (_or_fault turns an OSError into a fault and lets any other exception through).
+    _NUDGE_WALK_STATS["loads"] += 1
     store, fault = jd.load_goals_shared_or_fault(sid)
     if fault is not None:
         _nudge_clock(None, "storeFault")                           # a fault heals without a file write (EMFILE, EACCES, EIO): unbounded (round three)
@@ -20201,10 +21102,13 @@ def _env_error(env, auth=""):
     name outside it would be written silently and exported never. The first offender is NAMED and the
     whole request refused (fail-loudly, the user 2026-07-03): a skipped var is a session quietly
     running without the env it was asked to have. The backend validates AGAIN: spawn backs this
-    door with its loud ValueError, but set_env re-checks and refuses with a silent False its
-    callers discard — so on the existing:true path drift between the two copies would be a 200
-    with an env echo and nothing applied. This copy MUST stay in lockstep with
-    sdk_backend.env_request_error, pinned by test_session_env's ValidatorLockstep."""
+    door with its loud ValueError, but set_env re-checks and refuses with a False (logged as a
+    problem row since 2026-09-18; the /new echo and the parked-op drain read it since review round 2
+    of the env-pick door, 2026-09-19), so on the existing:true path drift between the two copies
+    would be a 200 with an `envRefused` echo and nothing applied. This copy MUST stay in lockstep with sdk_backend.env_request_error, pinned by
+    test_session_env's ValidatorLockstep. The credential-shape rule and its wording are read from
+    credentials.py (credential_env_names, credential_env_refusal), which both copies load, so that
+    part is one function rather than a mirrored spelling."""
     if not isinstance(env, dict):
         return "env must be an object of NAME: value pairs"
     for k, v in env.items():
@@ -20226,6 +21130,15 @@ def _env_error(env, auth=""):
             # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
             # way diverging from what /new echoed as applied.
             return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
+    # A credential-shaped name of any other spelling is refused too, by name (2026-09-18, found by the
+    # spawn.json fix's build; the box admin ruled the door the fix): the pick lands in the registry and the
+    # per-sid flag-settings file, against the fork's rule that no credential is written to a file. The three
+    # login names were refused above whatever their value, so credentials.py's rule over the rest of the pick
+    # is exactly what sdk_backend.spawn_env_secret_names flags for the backend's copy (ValidatorLockstep). The
+    # "env: " head is this door's, added once (review round 1 of the env-pick door, 2026-09-18).
+    secret = jd._cred.credential_env_names(env)
+    if secret:
+        return "env: " + jd._cred.credential_env_refusal(secret)
     return ""
 
 
@@ -20247,7 +21160,18 @@ def _apply_new_session_prefs(sid, body):
     for direct callers. A level the backend REFUSES (a Codex model whose catalog does not offer it) is
     echoed as `refused`, the setter's own words, never as `effort`: the verdict used to be dropped here,
     so `romp new` printed the level as applied and exited 0 while nothing changed (the catch-up fold's
-    review, 2026-09-18)."""
+    review, 2026-09-18). An env pick the backend refuses is echoed as `envRefused` (_env_refusal's
+    generic sentence, names nothing of the pick), never as `env`, for the same reason (review round 2 of
+    the env-pick door, 2026-09-19: the verdict was dropped here too, so a pick the backend refused, a
+    credential-shaped name its own door caught or a session whose registry it could not read, printed as
+    applied). Two refusal fields, one per leg, and this docstring is the one place
+    their relationship is stated (the round-2 addendum, 2026-09-19; the leg comments below point here). The
+    echo is read per asked key: `romp new` tells a refused ask from a dropped one (an older kernel that never
+    answered it) by the presence of that key's own echo, so each leg's refusal sits in its own slot beside the
+    key it answers, and the two differ in scope on purpose: `refused` is the setter's own sentence and names the
+    level, since a level is not a secret; `envRefused` is generic and names nothing of the pick, since its values
+    may be. A third leg that can refuse (model, say) should generalise the shape, one slot per leg under one
+    rule, rather than add a third sibling field with a spelling of its own (the reviewer's note, paraphrased)."""
     out = {}
     m = str((body or {}).get("model") or "").strip()
     e = str((body or {}).get("effort") or "").strip()
@@ -20273,12 +21197,24 @@ def _apply_new_session_prefs(sid, body):
         else:
             # refused (a Codex model whose catalog does not offer the level, or a catalog the backend could not
             # read): the echo carries the refusal in place of the level, so the caller is loud, and stderr says so
-            # once, as the typed route does
+            # once, as the typed route does. Its relationship to the env leg's `envRefused` below (two fields, two
+            # scopes) is stated in this function's docstring, the one place for it (the round-2 addendum, 2026-09-19)
             out["refused"] = _effort_refusal(be, e)
             sys.stderr.write("effort %r for %s refused by %s (POST /new)\n" % (e, sid, type(be).__name__))
     if ev is not None and hasattr(be, "set_env"):
-        _set_env_or_park(be, str(sid), dict(ev))
-        out["env"] = dict(ev)
+        took, _parked = _set_env_or_park(be, str(sid), dict(ev))
+        if took:
+            out["env"] = dict(ev)
+        else:
+            # refused (review round 2 of the env-pick door, 2026-09-19): the verdict used to be dropped here, so a
+            # pick the backend refused (its own door, or a session whose registry it could not read) was echoed as
+            # applied and `romp new` printed it so. The echo carries the refusal in
+            # its own slot, never the `env` key, and stderr says so once with the NAMES of the pick only (the dict
+            # carries values, and a credential-shaped one is what the door refuses). The relationship to the effort
+            # leg's `refused` above is the docstring's
+            out["envRefused"] = _env_refusal()
+            sys.stderr.write("env %s for %s refused by %s (POST /new)\n"
+                             % (" ".join(sorted(ev)) or "(cleared)", sid, type(be).__name__))
     _push_soon()
     return out
 
@@ -22740,7 +23676,15 @@ def _sdk_problem_count():
     return n
 
 
-def _sdk_problem_text(text, cap=400):
+# How many characters of a problem row's text the feed carries (the error centre cuts again at
+# sdk_backend.ERROR_CENTER_TEXT_CAP); what is cut is the ring text a backend row carries (_sdk_problem_rows reads
+# the ring, never the kernel log line), so a ring text under the error centre's cap is under this one too (review
+# round 1 of the env-pick door, 2026-09-18, which found set_env's refusal row 14 characters past it and clipped
+# mid-word; round 3, 2026-09-19, which found docstrings claiming this cap governed the log line).
+SDK_PROBLEM_TEXT_CAP = 400
+
+
+def _sdk_problem_text(text, cap=SDK_PROBLEM_TEXT_CAP):
     """One line naming what broke, out of a message that may be a whole traceback. The head says what
     romp was doing ("boot reconcile failed"), the LAST line says what actually raised ("KeyError: 'x'"),
     and the frames in between are the kernel log's business — so the entry reads as a cause, not as
@@ -22755,7 +23699,7 @@ def _sdk_problem_text(text, cap=400):
     return out[:cap - 1] + "…" if len(out) > cap else out
 
 
-def _sdk_problem_rows(limit=20, cap=400):
+def _sdk_problem_rows(limit=20, cap=SDK_PROBLEM_TEXT_CAP):
     """Recent SDK-backend problems for the feed payload, oldest first. The signature keys the OCCURRENCE
     (this kernel's start + the ring's own sequence number), so a re-render or a page reload never re-logs
     and a repeat of the same failure DOES log again — the bell coalesces a flood into one counted row.
@@ -24606,6 +25550,19 @@ class _UnownedBackend(sb.SessionBackend):
     def set_fast(self, sid, value):
         return False
 
+    def set_env(self, sid, value):
+        # the per-session env pick, refused like the other setters (round 9 of fork PR #781's review, kernel-1 and
+        # extra9-1): set_env is not on the ABC (SdkBackend alone takes a per-session env), so without this the
+        # parked-op drain's env arm reached an attribute this class lacked, and its blanket handler dropped the sid's
+        # whole parked queue; the drain guards the call too, and this makes the refusal UNIFORM with set_effort and
+        # set_fast, so the next arm added to that loop inherits the behaviour instead of needing its own guard.
+        # The reason line is send's shape (the closing commit of round 9, kernel-1): every refusal this answers is
+        # echoed with _env_refusal's sentence, which points the user at the backend's log line, and this route
+        # wrote none, so the user was pointed at a line that did not exist. Names nothing of the pick (its dict
+        # carries values) and not the setter's name: the drain's pin reads stderr for no AttributeError naming it
+        sys.stderr.write("per-session env for %s refused: no backend owns this session\n" % sid)
+        return False
+
     def spawn(self, name, cwd, bg="", fg="", sid=None, *a, **kw):
         return None
 
@@ -25067,12 +26024,13 @@ def _live_map():
 # of the child ssh procs). ONE ssh per host carries both directions:
 #     -L <local_port>:127.0.0.1:<remote_kernel_port>   this kernel → remote kernel  (dashboard relay)
 #     -R <bus_port>:127.0.0.1:<bus_port>               remote sessions → this bus (postal messaging)
-# The browser reaches a remote kernel via GET /remote/<host>/ws on THIS kernel, which splices the
-# connection onto the -L port byte-for-byte (_remote_ws). It has to be a relay: the forwarded port
+# The browser reaches a remote kernel via GET /remote/<host>/ws on THIS kernel, which relays the
+# connection onto the -L port (_remote_ws): it reads the remote's 101 head and writes the one it
+# rebuilds (_ws_head_allowlist), then splices the frames byte for byte. It has to be a relay: the forwarded port
 # lives on THIS machine's loopback, so when the browser dialed it directly, any dashboard viewed
 # from OFF this machine — the phone, through `tailscale serve` — reached its own loopback instead
 # and every remote host silently vanished, with no disconnected mark (the user 2026-07-30). The
-# kernel still reads nothing (no frame parsing; the remote enforces its own token per connection),
+# kernel parses no frames (the remote enforces its own token per connection),
 # and this registry still just opens the door + reports state. It persists to STATE/remotes.json
 # so attached hosts survive a kernel restart (the supervisor re-spawns their procs).
 
@@ -25247,7 +26205,68 @@ def _note_tunnel_teardown(r, now):
     r["fails"] = int(r.get("fails") or 0) + 1
     r["next_try"] = now + _tunnel_backoff(r["fails"])
     return r["fails"]
-BUS_PORT = int(os.environ.get("ROMP_POSTAL_PORT", "25302"))      # this laptop's postal bus (reverse-forwarded)
+BUS_PORT = int(os.environ.get("ROMP_POSTAL_PORT", "25302"))      # the environment's word for this machine's bus port: the tunnel's
+#                                                                    local side (the -L target, the legacy -R) and the FALLBACK of _bus_port()
+_BUS_PORT_SAID = [None]                                           # the census line's memory: (port, source) said once, a change said again
+_BUS_ROAD_SAID = [None]                                           # the unowned-road line's memory: the road said once, a change said again
+_BUS_ENSURED = [False]                                            # this kernel ENSURED a bus of its own (the ensure took the spawned or the up road,
+#                                                                    postal_service.ensure_road; never a client-only ping): the bus whose record it may trust
+
+
+def _bus_port():
+    """The port this machine's bus BOUND, for every loopback dial of it: the bus's own record STATE/postal/postal-port ({"port",
+    "pid", "tok"}, written after its bind, removed on a clean exit; postal_service.py PORTFILE) ahead of the environment, which is
+    the fallback for any record this kernel cannot trust as its own bus's (absent or unreadable, no positive port or pid,
+    stale with its pid no longer running, another bus's token mark),
+    or when this kernel ensured no bus of its own (_BUS_ENSURED: a client-only host, whose ensure only pings the tunnel, a
+    lab kernel, an in-process test kernel, an ensure that found a tunnel or another environment's bus answering the port; the
+    whole test suite showed a record one world left under the shared state root redirecting a later world's dial, and the
+    ensure that spawned the bus, or found the machine's own answering with its record live under this kernel's token, is
+    the event that makes a bus this kernel's: postal_service.ensure_road's `spawned` and `up`. The fold 3 review,
+    2026-09-21: any exit 0 armed the flag, a client-only host's ping of the tunnel included, and a live local record then
+    redirected the dials meant for the tunnel). Both processes read ROMP_POSTAL_PORT at import and
+    nothing bound them (2026-09-18): a unit or profile that set the port for one process and not the other, or a stale legacy
+    tunnel reverse-forwarding the hub's bus onto this loopback at the fixed port, had the kernel dial a bus that was not its
+    own, and a held message's approve came back "no held message" from a bus that never held it. The record is the bus's
+    answer to "which port are you on", read on every dial (a few hundred bytes, no memo: the bus may restart on another
+    port between dials); a mismatch with the environment is said once per change (_bus_port_census)."""
+    port, source = BUS_PORT, "environment"
+    try:
+        rec = json.loads((jd.STATE / "postal" / "postal-port").read_text())
+        rp, pid = int(rec.get("port") or 0), int(rec.get("pid") or 0)
+        # trusted only when it is THIS kernel's bus: this kernel ENSURED a bus (a kernel that ensured none, client-only or a
+        # lab's, dials the environment's port and no record can redirect it) and the record names a port, a pid that runs and
+        # a mark equal to this kernel's own (postal_service._own_bus_record's three tests, in its words; keep the two in step).
+        # A record that parses with no positive port or pid takes the environment's road like the rest: not a torn write,
+        # which postal_service._atomic_json_put's temp file then os.replace never shows a reader, but a foreign producer's
+        # or a hand-edited record; the condition and that road are upstream's text (the fold 3 review, 2026-09-21)
+        if _BUS_ENSURED[0] and rp > 0 and pid > 0 and _pid_alive(pid) and str(rec.get("tok") or "") == _bus_token_mark():
+            port, source = rp, "record"
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    _bus_port_census(port, source)
+    return port
+
+
+def _bus_token_mark():
+    """The mark the bus writes into its record (postal_service._token_mark): a sha256 prefix of the shared serve token, so a
+    kernel trusts only a record its own bus wrote (a record another bus, another state root's world or a reused pid left can
+    never redirect the dial)."""
+    try:
+        return hashlib.sha256(str(TOKEN or "").encode()).hexdigest()[:16]
+    except Exception:
+        return ""
+
+
+def _bus_port_census(port, source):
+    """One boot census line, and one more per change: the bus port the kernel dials, whether the record or the environment
+    named it, and the mismatch with the environment when there is one (the operator's pointer at the pair)."""
+    cur = (int(port), source)
+    if _BUS_PORT_SAID[0] == cur:
+        return
+    _BUS_PORT_SAID[0] = cur
+    note = "" if int(port) == BUS_PORT else " (ROMP_POSTAL_PORT says %d: the environment and the bus disagree; the record wins)" % BUS_PORT
+    sys.stderr.write("romp-kernel: postal bus dialed on 127.0.0.1:%d from the %s%s\n" % (int(port), source, note))
 SSH_BIN = os.environ.get("ROMP_SSH_BIN", "ssh")                  # overridable for tests
 SSH_CONFIG = Path(os.environ.get("ROMP_SSH_CONFIG") or (Path.home() / ".ssh" / "config"))
 _REMOTE_KERNEL_PORT = int(os.environ.get("ROMP_REMOTE_KERNEL_PORT", str(PORT)))   # remote kernels default to our port
@@ -25288,6 +26307,18 @@ _remotes_lock = threading.Lock()
 _tunnel_wake = threading.Event()
 
 
+_BUS_OWNED_ROADS = ("spawned", "up")   # postal_service.ENSURE_OWNED (KEEP IN SYNC): the ensure roads on which this machine owns a local bus
+
+
+def _ensure_road(out):
+    """The road the ensure took, from its stdout (`ensure: road=<road>`, postal_service main's ensure verb); "" when it named
+    none (an older service, a stdout something else wrote over)."""
+    for ln in (out or "").splitlines():
+        if ln.startswith("ensure: road="):
+            return ln[len("ensure: road="):].strip()
+    return ""
+
+
 def _ensure_postal_bus():
     """Start the local postal bus if nothing has yet (best-effort, off the boot path). The bus used to
     start only LAZILY — a session's postal MCP server runs `ensure` — so a freshly attach-bootstrapped
@@ -25295,12 +26326,28 @@ def _ensure_postal_bus():
     silently (the 2026-07-27 federation shakedown: the new box answered /sessions while every message
     to it sat parked). The postal service's own `ensure` is idempotent, respects client-only mode, and
     no-ops when the bus is already up, so the kernel can insist at every boot. Absolute paths: a
-    bootstrap-started kernel's non-login shell has neither the repo's bin/ nor a guaranteed PATH."""
+    bootstrap-started kernel's non-login shell has neither the repo's bin/ nor a guaranteed PATH.
+    The ensure says on stdout which ROAD it took (postal_service.ensure_road), and only a road on which
+    this machine owns a local bus (it spawned one, or found the machine's own answering) arms
+    _BUS_ENSURED, the trust _bus_port() puts in the bus's port record: a client-only host's ping of its
+    tunnel, or a tunnel or another environment's bus answering the port, arms nothing (the fold 3
+    review, 2026-09-21: any exit 0 armed it). An unowned road is said once in the kernel's log, a change said again
+    (_BUS_ROAD_SAID): _revive_postal_bus re-runs this ensure on every refused notify."""
     try:
         r = subprocess.run([sys.executable, str(BIN / "romp-postal-service"), "ensure"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=30)
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
         if r.returncode != 0:   # the bus said no (2026-09-10: it refuses the machine's fixed port under a test): say so here, where the kernel's log is
             sys.stderr.write("postal bus ensure refused (exit %d): %s\n" % (r.returncode, (r.stderr or "").strip()[-2000:]))
+        else:
+            road = _ensure_road(r.stdout)
+            if road in _BUS_OWNED_ROADS:
+                _BUS_ENSURED[0] = True   # a bus of this kernel's own: the one whose port record _bus_port() may trust
+            elif not _BUS_ENSURED[0]:
+                cur = road or "unnamed"
+                if _BUS_ROAD_SAID[0] != cur:     # said once per road, a change said again (the port census's memory, _BUS_PORT_SAID):
+                    _BUS_ROAD_SAID[0] = cur      # the revive re-runs this ensure on every refused notify (the fold 3 review, round 2)
+                    sys.stderr.write("postal bus ensure took the %s road: this kernel owns no bus, and its dials read ROMP_POSTAL_PORT\n"
+                                     % cur)
     except Exception:
         sys.stderr.write("postal bus ensure failed:\n%s" % traceback.format_exc())
 
@@ -25315,6 +26362,17 @@ def _revive_postal_bus():
     so a burst of refused notifies — one per tunnel per supervisor pass — coalesces into one ensure.
     A quiet hub went dark exactly this way twice on 2026-08-12: bus gone, kernel up, every /peer
     notify failing silently, cross-host mail parked until a manual ensure."""
+    no_bus_word = (os.environ.get("ROMP_POSTAL_CLIENT_ONLY") or "").strip().lower() in ("1", "on", "true", "yes")
+    if no_bus_word and not _BUS_ENSURED[0]:
+        # The environment's client-only word is read here as "this kernel must start no bus", a stricter gate than the
+        # service's own mode on purpose: postal_service.is_client_only() is peers OFF and (the word or the marker file), and
+        # mirroring it would let the suite's floor, the word with peers on, spawn a real bus off a refused notify on a daemon
+        # thread (2026-09-18: a revive kicked by a hermetic test's refused notify outran the test's environment restore and
+        # started a real bus). What the kernel knows of its own bus outranks the word: a kernel that ensured a bus of its own
+        # (_BUS_ENSURED, armed on the spawned and up roads alone) owns one to revive, word or no word (the fold 3 review,
+        # 2026-09-21: a kernel that set the word with peers on owned a real bus and silently refused to re-ensure it when it
+        # died). A client-only host never arms the flag (its ensure only pings the tunnel), so the skip holds there.
+        return
     with _bus_revive_lock:
         if _bus_reviving[0]:
             return
@@ -25664,7 +26722,7 @@ def _notify_bus_peer(host, port, up, peer_token="", trust="directed"):
     A refusal ALSO kicks _revive_postal_bus: a dead bus must not stay dead until the next kernel
     boot while the supervisor retries into it forever (the 2026-08-12 quiet-hub outage)."""
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=2)
+        conn = http.client.HTTPConnection("127.0.0.1", _bus_port(), timeout=2)
         conn.request("POST", "/peer", json.dumps({"host": host, "port": port, "up": bool(up),
                                                   "token": peer_token or "", "trust": trust or "directed"}),
                      {"Content-Type": "application/json", "X-Romp-Token": TOKEN})
@@ -25683,7 +26741,7 @@ def _notify_bus_origin_trust(host, trust):
     down never breaks the caller; the supervisor re-pushes, and a restarted bus re-seeds from
     /tunnels' `known` rows. A refusal kicks _revive_postal_bus, like _notify_bus_peer's."""
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=2)
+        conn = http.client.HTTPConnection("127.0.0.1", _bus_port(), timeout=2)
         conn.request("POST", "/peer", json.dumps({"host": host, "trust": trust or "directed",
                                                   "originOnly": True}),
                      {"Content-Type": "application/json", "X-Romp-Token": TOKEN})
@@ -25758,7 +26816,7 @@ def _bus_peers_snap(fresh=False):
         return _via_cache["snap"]
     snap = {}
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=2)
+        conn = http.client.HTTPConnection("127.0.0.1", _bus_port(), timeout=2)
         conn.request("GET", "/peers", None, {"X-Romp-Token": TOKEN})
         r = conn.getresponse()
         if r.status == 200:
@@ -25795,13 +26853,14 @@ def _bus_peer_tiers():
 def _bus_quarantine_act(body):
     """Proxy a quarantine verdict (approve/deny, optional edited text) to the bus, which OWNS postal
     delivery and the held-message store. On approve the bus re-runs the peer's deliver(), so an approved
-    message lands as normal postal mail. Returns (ok, error)."""
+    message lands as normal postal mail. Returns (ok, error). The body carries the recipient `sid` when the
+    pane named it, so a bus that holds nothing for a session it does not serve says so (2026-09-18)."""
     try:
         # 20s: the client half of the approve path's budget pair (2026-09-01). The bus-side approve
         # pays one checked kernel fetch (≤6s) plus the recipient's deliver push (≤12s), so a 6s cap
         # here gave up mid-approve — the delivery landed while the kernel reported the bus
         # unreachable. The halves move together (the 830 budget-pair discipline).
-        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=20)
+        conn = http.client.HTTPConnection("127.0.0.1", _bus_port(), timeout=20)
         conn.request("POST", "/quarantine/act", json.dumps(body),
                      {"Content-Type": "application/json", "X-Romp-Token": TOKEN})
         resp = conn.getresponse()
@@ -26300,7 +27359,8 @@ CHECKIN_REFRESH_S = 300      # the slow steady re-announce floor while checked i
 def _checkin_handshake(r):
     """Tell the hub (through our own -L to its kernel) where our reverse forwards landed and hand it
     our token — the PUSH that replaces the hub ever fetching credentials. Authorizes with the HUB's
-    token (r["token"], fetched at attach — the hub requires it on every request, loopback included).
+    token (r["token"], fetched at attach: the hub requires it, or a browser sign-in made with it, on every
+    request, loopback included).
     True on ack; the caller records success per tunnel incarnation and retries otherwise.
 
     A REFUSAL is read, said and held (review find, 2026-09-08: only the reply's status was read, so the
@@ -28764,6 +29824,7 @@ def _notice_cards(now, cleared):
                            "actions": r.get("actions") or [], "expiresAt": r.get("expiresAt"),
                            "dismissOnAction": bool(r.get("dismissOnAction")), "acted": bool(r.get("acted"))},
                 "column": "needs_input" if r.get("needsYou") else "completed",
+                "board": "feed", "category": "needs_input" if r.get("needsYou") else "completed",   # the board model's two fields (phase two)
                 "tree": []})
     out.sort(key=lambda c: (c["t"], c["itemId"]))
     return out
@@ -34109,13 +35170,82 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
             by_agent[aid] = it
     if not by_agent:
         return agents, commands
-    launch_sets = {}   # agentId → the launch tool_use ids in that agent's own transcript (read lazily, once)
+    # (transcript, agentId) → (the launch tool_use ids in that agent's own transcript, the (path, key) pairs its resolution
+    # reported to its build: _subagent_file's `notes`, the walk's dependency notes, and the agent file's own key as the
+    # fold read it, below), read lazily. The launch-fold slot,
+    # `_live_scope.subagent_launches`, is held by the pusher cycle, the jobs pass and a connect push's chat loop
+    # (_chat_push_scopes_open), each opening and clearing it with `subagent_trees`. On a thread that holds it the map is
+    # the slot, so each agent is resolved and folded once per cycle or pass, and once per push on a connect push, however
+    # many calls read it (_session_awaiting's and _session_background_items', each through _awaiting_live_rows; a
+    # call-local map resolves and folds every agent's file again on each call, at the cost the launch fold's entry in
+    # _subagent_tree_memo_report's docstring states). Only on a thread that holds no slot is the map this call's
+    # own, so each agent is resolved and folded once per call. The attribution then sees an agent's file as it stood at
+    # the fold; a launch appended after it nests at the slot's next fold (the next cycle, pass or push), the one-cycle lag
+    # the tree slot accepts. A fold that did not read the file (the reader's fail path, or a raise) answers set(). A fold
+    # whose resolution could not be made (the file found under no tree the walk could read while one could not be:
+    # _subagent_file's faults; a file found past such a tree is resolved, and faults nothing) answers what that
+    # resolution gave: set() when _subagent_file answered None, and the file's launch ids when it answered the standing
+    # resolution under a place the walk could not read (_subagent_walk_excluded). Either fold is held in `faulted`, this
+    # call's own map and never the slot, so the call's other owner lookups are served it (each of the A agents' lookups
+    # consults every other agent's launches, so a fault re-folded per lookup cost A x (A - 1) folds per call where the
+    # call-local map `launch_sets` (upstream's, and the code's before this change) cost A) and the next call reads again.
+    # A file that resolved to nothing (ap None) is a state, held. A held fold answers without calling _subagent_file, so
+    # it replays the pairs its entry stores to the build it answers, once per call however many of the call's owner
+    # lookups consult it (DependencyKey test_a_held_fold_replays_its_pairs_once_per_call_however_many_owner_lookups_consult_it),
+    # never the agent-file memo's entry,
+    # which can be gone or newer by then: that memo is cleared whole past 1024 entries by any thread's lookup
+    # (tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
+    # test_a_held_fold_replays_its_own_walks_notes_after_the_agent_file_memo_was_cleared), and a later lookup's walk
+    # replaces the entry with pairs the held ids never reflected: a lookup on a thread that holds no slot, whose walk reads
+    # the disk afresh (DependencyKey
+    # test_a_held_fold_replays_its_own_walks_notes_after_a_lookup_on_a_thread_with_no_scope_replaced_the_agent_file_memos_entry).
+    # A fold that read the file also reports the file's own key as its reader stat'd it before the read (_agent_launch_ids'
+    # `key`: the reader's entry for the read, so no stat of its own) to the build it runs in, and stores it with the
+    # walk's pairs, so every build the fold answers records the file as the fold saw it, whether or not the build stats
+    # the file itself. A launch appended between a fold held earlier in the scope (the feed's, which a pusher push derives
+    # before its chat loop: _feed_first) and a build that stats the file again (the Agent head's _agent_steps) is then
+    # recorded under the two keys, as their disagreement (_chat_build_deps), and the next cycle rebuilds the tab and nests
+    # the command: the one-cycle lag above, and no more. And a build that folds the file with no _agent_steps stat of it
+    # (an agent with no Agent event in the parent transcript: a Workflow agent, or an agent a subagent launched) records
+    # the file's key, where before this change it recorded none, so a launch appended after such a build moved no key the
+    # build recorded and its tab kept the stale nest until another recorded key moved. The key is added after
+    # _subagent_file stored its memo entry, so it reaches the fold entry and never the agent-file memo, whose replay of an
+    # older read's key would rebuild the tab every cycle. A fold on the reader's fail path (the file is there and its open
+    # or read raised, as at mode 000) records the file under None, which a re-stat that answers never equals, so while an
+    # awaited agent's file cannot be read the tab of each build that folds it is rebuilt at every cycle (with an Agent
+    # head too: the head's key and the fold's None disagree), and it settles at the first cycle after, whose build
+    # records the file's key. A fold that raised before its reader answered records no key; one that raised after it (in
+    # the provisional fold of a last line with no newline yet, or the quiescent drop) records the key it read, with the
+    # fault. Each road: tests/test_subagent_tree_stamps_per_cycle.py HeldFoldAgentFileKey.
+    launch_sets = getattr(_live_scope, "subagent_launches", None)
+    if launch_sets is None:
+        launch_sets = {}                                  # no launch-fold slot on this thread: this call's own map
+    faulted = {}
+    reported = set()                                      # agents whose resolution's keys this call's build holds (one call, one build)
+    pkey = str(path or "")
 
     def launches(aid):
-        if aid not in launch_sets:
-            ap = _subagent_file(path, aid) if path else None
-            launch_sets[aid] = _agent_launch_ids(ap) if ap else set()
-        return launch_sets[aid]
+        k = (pkey, aid)
+        held = launch_sets.get(k)
+        if held is not None:
+            if k not in reported:                         # the held fold answers without _subagent_file: its build records the
+                reported.add(k)                           #  keys of the walk behind the fold, replayed from the fold entry
+                _subagent_file_notes_replay(held[1])
+            return held[0]
+        if k in faulted:
+            return faulted[k]
+        faults, noted, akey = [], [], []
+        ap = _subagent_file(path, aid, faults, notes=noted) if path else None   # a resolution that could not be made faults too
+        ids = _agent_launch_ids(ap, faults, key=akey) if ap else set()   # (an unreadable tree, the file under no other): held for this call alone
+        if ap is not None and akey:                       # the agent file's key as the fold's own reader stat'd it before its read:
+            _chat_dep_note_taskout(str(ap), akey[0])      #  reported to this build and stored with the fold
+            noted.append((str(ap), akey[0]))
+        reported.add(k)                                   # _subagent_file reported the resolution's keys to this call's build
+        if faults:
+            faulted[k] = ids
+        else:
+            launch_sets[k] = (ids, tuple(noted))
+        return ids
 
     def owner_by_transcript(tuid, exclude=None):
         if not tuid:
@@ -35182,7 +36312,7 @@ def _heal_session_tops(path, nodes, status=None, keep=()):
     these: the judge's stamp (_latch_skill_load_anchors, off the parse's own report of the wrappers it skipped)
     marks it "machine" with askAnchorRecord {kind: skill-load, skill},
     re-stamping an older "human" latch once, so this reads the store alone, never a transcript (build_feed's
-    cold-start contract). Its why names the skill, and with no host in the store it is marked hidden
+    cold-start contract). Its why names the skill, and with no host current at its mint it is marked hidden
     (born.hidden: the feed shows no card, the session's own view keeps the work) rather than left as a root,
     and a block romp filed itself (a failed nudge, an interrupt) does not except it: the judge resolves such a top
     with romp's done verdict, and only a live floor or the agent's own question to the user (a block from the
@@ -35200,9 +36330,13 @@ def _heal_session_tops(path, nodes, status=None, keep=()):
     the dispatch and never overwritten by the completion's summary; never the brief or script) and shares by
     the smaller word set, more than half and at least two, so one stray word never carries it; it only picks
     WHICH launch supplies the why and, when several hosts are open, which is the parent; with no matching
-    launch the parent is the newest host minted before the node (else the oldest) and the why says the record
-    it is rooted in. Returns {nid: (parent nid or None, born)}; None for a top not nested (blocked, or no
-    host). Deterministic: a pure function of the store and the task stream. Never writes the store."""
+    launch the parent is the newest host minted before the node and the why says the record it is rooted in.
+    A host minted AFTER the node was never current at its mint, so a node older than every host is NOT nested:
+    it keeps its card, with its face (an oldest-host fallback stood here until 2026-09-18, when a store whose
+    five human-anchored hosts were all minted in one day swept two completed roots from days before into the
+    oldest host's tree (the first request of that day), as its reviewed-earlier rows: a time boundary applied across roots). Returns
+    {nid: (parent nid or None, born)}; None for a top not nested (blocked, or no host current at its mint).
+    Deterministic: a pure function of the store and the task stream. Never writes the store."""
     out = {}
     status = status or {}
     def delegate(nd):
@@ -35253,7 +36387,7 @@ def _heal_session_tops(path, nodes, status=None, keep=()):
         host = None
         if nest:
             before = [h for h in hosts if (h[1].get("t") or 0) <= (nd.get("t") or 0) and h[0] != nid]
-            pool = before or [h for h in hosts if h[0] != nid][:1]
+            pool = before                       # only a host current at the mint: never one minted after the node
             if pool:
                 host = pool[-1]
                 if hit and len(pool) > 1:            # several open: the launch's words pick the parent, ties the newest
@@ -35262,7 +36396,7 @@ def _heal_session_tops(path, nodes, status=None, keep=()):
         if host:
             born["parentText"] = str(host[1].get("text") or "")[:120]
         elif nest and skill_of(nd):
-            born["hidden"] = True     # a skill-load top with no request in the store to sit under: the feed hides it (the
+            born["hidden"] = True     # a skill-load top with no host current at its mint to sit under: the feed hides it (the
                                       # session's own view keeps the work); a blocked one is not here, it keeps its card
         out[nid] = (host[0] if host else None, born)
     return out
@@ -35322,23 +36456,61 @@ def _bg_tasks(path, spawned_at=None, live=None, sid=None):
 # (mtime, size) keys, the transcript's own launch↔notification pairing, and the SDK's live sets.
 _AGENT_ID_RE = re.compile(r"^a[0-9a-f]{16}$")
 _SUBAGENT_META_CACHE = {}       # subagents dir -> (dir mtime_ns, {toolUseId: {agentId, agentType, description, spawnDepth}})
-_SUBAGENT_FILE_CACHE = {}       # (parent transcript, agentId) -> (the tree's stamps, the agent file's path or None): the walk, once per change
+_SUBAGENT_FILE_CACHE = {}       # (parent transcript, agentId) -> (the tree's stamps, the agent file's path or None, the walk's noted
+#                                 (path, key) dependency pairs, replayed on a hit): the walk, once per change
 _AGENT_GIST_CACHE = {}          # agent jsonl path -> em.fold_records entry (the Agent head's steps fold state)
 _AGENT_LAUNCH_CACHE = {}        # parent jsonl path -> em.fold_records entry (foreground launches + their settles)
 _SUBAGENT_FRAMES = {}           # (sid, agentId) -> (change key, frame, serialized) — shared by every client with it open
 SUBAGENT_EVENT_CAP = 300        # events shipped per viewer frame — a bounded TAIL, honest about the cut (the episode fold's rule)
 SUBAGENT_STEPS_CAP = 200        # tool calls shipped on the Agent head (agentSteps) — the newest; stepsTotal says the true count
 # THE WALK MEMO (2026-09-16): subagents root -> (its directories in walk order, their identities), one entry per root, shared by
-# every reader of the tree (_subagent_dirs, _subagent_meta_map, _find_agent_file, the feed key's _subagent_dirs_ident). Before
-# it every call ran os.walk over the tree (up to 330 directories, 3,600 files on the measured box), several calls per session
-# per build from the feed, timeline and chat builds and the nudge walk, and a pusher stack sample put a tenth of its push-stage
-# samples inside that walk. Bounded by ownership, not by a count: _subagent_trees_forget drops every root no alive session's
-# transcript names, on every jobs pass (_interrupt_block_tick, audience-independent) and, as a belt, after each feed build
-# and from the tracking-off frame.
+# every reader of the tree (_subagent_dirs, _subagent_meta_map, _find_agent_file, _subagent_file_walk, which hands its
+# read to _find_agent_file, the feed key's _subagent_dirs_ident). Before it every call ran os.walk over the tree (up
+# to 330 directories, 3,600 files on the measured box), several calls per session per build from the feed, timeline
+# and chat builds and the nudge walk, and a pusher stack sample put a tenth of its push-stage samples inside that
+# walk. Bounded by ownership, not by a count: _subagent_trees_forget drops every root no alive session's transcript
+# names, on every jobs pass (_interrupt_block_tick, audience-independent) and, as a belt, after each feed build
+# and from the tracking-off frame. And, since 2026-09-18, one sample per cycle on `_live_scope.subagent_trees`: the first
+# reader of a root in a pusher cycle (a jobs pass, a handler thread's connect push) validates or walks, and every later
+# reader of that cycle is served the same (directories, stats) with no lstat (_subagent_tree, THE CYCLE SCOPE).
 _SUBAGENT_TREES = {}
-_SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
+_SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "scoped": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
 #                          advisory tallies, incremented without a lock as the neighbouring memos' are (a lost count under a race
-#                          is tolerated; the memo's own writes are single dict stores of immutable tuples)
+#                          is tolerated; the memo's own writes are single dict stores of immutable tuples). Stated here once:
+#                          _subagent_tree_memo_report's docstring, the /perf table's comment and docs/reference.md's memos
+#                          paragraph point here.
+#                          WHICH COUNTER A READ LANDS IN: a _subagent_tree read answered a tree lands in exactly one of hit
+#                          (validated: one lstat per known directory), miss (walked; when an entry stood and its validation
+#                          failed first, that validation lands in miss too, one miss for the validation and the walk, its
+#                          lstats in dirStats and its time in validateMs beside the walk's walkMs) and scoped (answered from
+#                          the tree scope's held pair, `_live_scope.subagent_trees`, with no stat; _subagent_tree's early
+#                          return alone moves it), the held-root lag included (a root removed on disk after this thread's
+#                          scope sampled it is answered the held pair, and counted scoped, until the scope ends). A read
+#                          answered no tree moves none of the three: a missing root, a file or a symlink in its place (the two
+#                          pop paths) and a root whose lstat fails for another reason (the raise, _SubagentTreeUnreadable). So
+#                          hit + miss is the reads that reached the disk and answered a tree (not the count of validations
+#                          paid, since a miss may carry a failed one), scoped is the reads the scope absorbed, and hit + miss +
+#                          scoped is the reads answered a tree, not every call. Executed in tests/test_subagent_tree_memo.py
+#                          UnreadableRoot (no counter moves on the raise) and MovedTrees' symlinked-root case (the symlink
+#                          shape, which shares the file shape's branch, not S_ISDIR: (hit, miss, scoped) unmoved over the live
+#                          and the dangling link's reads).
+#                          WHAT dirStats COUNTS: _subagent_tree's lstat per known directory below the root on a validation,
+#                          whether or not it succeeds (the root's own lstat and a walk's lstats are not counted), plus every
+#                          os.stat _dir_stamp takes that succeeds and is not served from the stamp index: the agent-file
+#                          walk's stamps of the own root, the project directory and each sibling root, and the memo hit's
+#                          re-check (_dir_stamps). A _dir_stamp stat that raises is not counted. _dir_stamp's stats joined with
+#                          this change; before it dirStats counted the validation's lstats alone, so a figure from a kernel
+#                          without this change and one from a kernel with it are not one series
+_TREE_UNREADABLE = "unreadable"     # the key recorded where a stat's key would go for a path a reader needed and could not read
+#                                     for a reason other than absence: a value no stat produces, so it never equals an absent path's
+#                                     (None) or a read one's, a chat build that recorded it is rebuilt at the next cycle's signature,
+#                                     and a frame keyed on it moves when the read succeeds. Its recorders: _subagent_meta_map (the
+#                                     chat build's dependency note) and _subagent_dirs_ident (the feed key's identity component,
+#                                     whatever entry stands, so the feed key moves into the fault and out of it) for a subagents root
+#                                     whose own lstat failed (_SubagentTreeUnreadable, raised by _subagent_tree, whose docstring
+#                                     states the shape), and _subagent_walk_unreadable (the chat
+#                                     build's note) for the first place the agent-file walk excluded; which places the walk excludes
+#                                     is stated once, in _subagent_file_walk's docstring
 
 
 def _subagents_dir(path):
@@ -35367,12 +36539,79 @@ def _subagent_tree_charge(kind, t0):
     _SUBAGENT_TREE_STATS[kind] += (time.monotonic() - t0) * 1000.0
 
 
-def _subagent_tree(d):
+class _SubagentTreeUnreadable(Exception):
+    """_subagent_tree's answer for a root whose own lstat failed for a reason other than absence (its docstring states the
+    shape): `root`, `error` (the OSError) and `entry`, the memo's standing (directories, identities) for the root, or
+    None. Not an OSError, so no reader's `except OSError` (the sibling loop of _subagent_file_walk) can take it for a
+    missing tree; every kernel reader of the tree catches it by name, and a reader that does not is loud (a raise). A
+    reader that catches it answers its standing entry or an unreadable marker (the feed key's component is always the
+    marker, whatever entry stands: _subagent_dirs_ident), except for the two absent-shaped answers
+    _subagent_tree's docstring names: _subagent_meta_map's {} for a map never built, and _subagent_file's bare None to a
+    caller that passes no faults list, which the viewer shows as a missing transcript, the Agent head as no steps and
+    _subagent_meta's sidecar read as {}, each while the fault lasts (tests/test_subagent_tree_memo.py
+    ViewerUnderAnUnreadableTree; having the viewer state the fault instead is a follow-up fix after this change). The
+    callers that pass one are told the reason: _awaiting_nest, for the call, and the release at an agent's end, which
+    releases nothing until a lookup can be made (_release_ended_agents). The agent-file walk excludes
+    the tree that raised it and nothing else: it looks through every other tree and answers a file found under one
+    (_subagent_walk_unreadable)."""
+
+    def __init__(self, root, error, entry):
+        super().__init__("%s: %s" % (root, error))
+        self.root, self.error, self.entry = root, error, entry
+
+
+def _subagent_tree(d, faults=None):
     """The subagents root `d` and every directory under it (Claude Code 2.1.261 writes a Workflow agent's file and sidecar
     one level down, workflows/wf_<id>/) in os.walk's top-down sorted order, no symlink followed, as (directories, their
     stat results), each directory's lstat taken BEFORE it was listed (the _subagent_file rule: a stamp taken after the
     listing could pair an older listing with a newer mtime). ((), ()) when nothing is at `d`; ((), (the lstat,)) when what
-    is there is not a directory (a symlink, a file in its place: not this session's tree, never listed).
+    is there is not a directory (a symlink, a file in its place: not this session's tree, never listed). Raises
+    _SubagentTreeUnreadable, carrying the memo's standing entry for `d` when one stands, when the root's own lstat fails for
+    any reason but absence (ENOENT and ENOTDIR are the (), () above; EACCES on a parent, EIO and ELOOP in a path component
+    are not): a read that did not happen says nothing about what is there, so nothing is popped, nothing is held and the
+    next call reads the disk again, and each reader answers its own standing entry unheld
+    (_subagent_meta_map its cached map, _subagent_file its cached resolution when that lies under what the walk could not
+    read) or, with none standing, an answer no readable and no absent tree produces where the reader can carry one
+    (_subagent_file None with a fault, to a caller that passes a faults list: _awaiting_nest gives it the call's
+    lifetime, and _release_ended_agents reads it, or a standing resolution answered with a fault, as not yet, releasing
+    nothing and looking the end up again once a place the walk could not read reads again or the walk no longer reaches
+    it), except the feed key's
+    reader: _subagent_dirs_ident answers (d,), (_TREE_UNREADABLE,) whatever
+    entry stands, so the feed key moves into the fault and out of it and an entry the feed derived under the fault is
+    never served after it clears (its docstring states the rule's scope and the roads it leaves open). A running chat
+    build is told the tree is unreadable (_chat_dep_note_taskout under _TREE_UNREADABLE, a key no stat equals, so the
+    tab is rebuilt next cycle and reads again) (the code before this change, #1822's sample, took every OSError for
+    absence: an EIO popped the entry, answered (), () and noted the tree absent, which the tab showed as no subagents
+    until the fault cleared; tests/test_subagent_tree_memo.py UnreadableRoot executes an EIO by mock and a real EACCES
+    at both edges). Either
+    None _subagent_file answers stands only for a file under no tree the walk could read, since a fault excludes its own
+    tree from the agent-file walk and nothing else (_subagent_walk_unreadable). Two answers with none standing are
+    absent-shaped: _subagent_meta_map's {} for a map never built, and _subagent_file's bare None to a caller that passes
+    no faults list (_stamp_agents for the chat's Agent heads, build_subagent and _subagent_frame_cached for the viewer,
+    and _subagent_meta, reached when its caller hands it no resolved path), which that caller reads as absence: the
+    viewer says the agent's transcript is missing, its frame and its cached key equal to a removed tree's, the Agent head
+    shows no steps, and _subagent_meta reads the sidecar beside the flat place, {} under the fault. Those four are every
+    caller that passes none; the release at an agent's end passes one since this change (the code before it read the
+    bare None as no file for the agent and gave the end's release up, counted nowhere and never looked up again after
+    the fault cleared: _release_ended_agents). Both answers last only while the fault does, since nothing is memoized
+    under it (tests/test_subagent_tree_memo.py ViewerUnderAnUnreadableTree, the witness, under an EIO by mock and a real
+    EACCES); a follow-up fix after this change is to have the viewer state the fault instead.
+    The rule's cost: while a tree stays unreadable, an agent-file lookup whose file is under no tree the walk can read
+    (the no-holder road) memoizes nothing and walks again on every call, and its chat build is told the tree is
+    unreadable, so the tab is rebuilt every cycle until the fault clears; the four cases named
+    test_control_no_holder_... in tests/test_subagent_tree_memo.py FaultExcludesItsOwnTree are its witness, and the same
+    class executes a file found past the fault. What every read pays under the fault: the
+    unreadable-tree entry of _subagent_tree_memo_report's docstring.
+
+    `faults`, a list when given, receives (directory, OSError) for each place below the root the walk could not read: a
+    directory whose listing failed, an entry whose type could not be read and a child whose lstat failed, each for a
+    reason other than absence (ENOENT and ENOTDIR say the place is gone since its parent was listed, and its parent's
+    stamp moved with it). Only a walk can report one: a validated hit answers a tree whose every listing succeeded (a
+    failed listing is never vouched, below). The agent-file walk passes it and excludes those places, as it excludes a
+    tree whose root could not be read, so a file it did not find there is not memoized as missing (the code before this
+    change memoized such a walk's miss on stamps a chmod or a transient EIO does not move, and served it after the fault
+    cleared; tests/test_subagent_tree_memo.py FaultBelowTheRoot). The other readers pass none; the sample reports its
+    faults to this function either way, and a sample that reported one is never held in the cycle scope (below).
 
     Memoized per root in _SUBAGENT_TREES on the identities (_stat_ident: ino, mtime_ns, size, ctime_ns) of every directory
     it listed, the root included. Exact because the directory list changes only by the creation, removal or renaming of a
@@ -35399,15 +36638,96 @@ def _subagent_tree(d):
     exists) that mismatches whatever was stored for it, real or None, up to the root; so by induction a
     fresh-None-equals-stored-None never serves a stale tree. One difference from os.walk, stated: a directory that exists
     but cannot be listed (EACCES) stays in the list, where os.walk dropped it, unvouched, so the tree is walked on every
-    call until it can be listed (today's cost, and the chmod that opens it is seen at once); no consumer's output changes
-    (_subagent_meta_map's listing of it fails and is skipped, _find_agent_file finds no file in it, the feed key folds one
-    more identity)."""
+    call until it can be listed (today's cost, and the chmod that opens it is seen by the tree's next read);
+    _subagent_meta_map's listing of it fails and is skipped, the feed key folds one more identity, and the agent-file
+    walk, told through `faults`, excludes it from the lookup.
+
+    THE CYCLE SCOPE (2026-09-18). The event is one pusher cycle (or one jobs pass, or one connect push's chat loop on a
+    handler thread), which opens `_live_scope.subagent_trees`: {root path: (directories, stats)}, exactly what this
+    function returns. The first reader of a root in the cycle validates or walks (_subagent_tree_sample, the body) and
+    its answer is stored on the scope; every later reader of the cycle is served that sample with no lstat, counted as
+    `scoped`. Before it each reader took its own sample within the one cycle: the chat build's sidecar-map reads
+    (_stamp_agents, _awaiting_live_rows, _awaiting_nest, through _subagent_meta_map), the feed key's
+    _subagent_dirs_ident, the derivation's _session_awaiting, and a viewer frame's agent-file re-walk on a cache miss
+    (its first open, or after a file landed in a directory the walk read), which samples the root through
+    _find_agent_file (the frame's hit-path re-stats through _dir_stamps were a separate route, the follow-up #1822 named:
+    the stamp index below serves them); 63k
+    validations and 5.2M lstats over 3.9k cycles live, of which the ~39,500 outside the feed key are the candidates,
+    an estimated 30-50% of all validations being re-samples of a root another reader had taken in the same cycle, the
+    `scoped` tally measuring the realized share. A
+    directory change landing after the sample is invisible to the rest of the cycle and seen by the next cycle's fresh
+    sample, the one-cycle lag _sessions' mtime and _live_scope.snapshot already accept. Exact across the boundary because
+    every scoped sample carries a stamp per directory it listed (the stats), so a reader that folds those stamps into its
+    own memo (_subagent_meta_map's key, _subagent_file's stamps, the feed key's identities, the chat build's taskout notes)
+    mismatches next cycle when the tree moved and re-derives, never a stale hit; an EMPTY answer (nothing at the root, or
+    not a directory) carries no stamp and is therefore NOT scoped: _subagent_file_walk stamps the root itself with a fresh
+    _dir_stamp and hands _find_agent_file the tree it read with _subagent_tree, and served an older empty sample it would
+    memoize a nested agent's miss under a stamp newer than the listing it read, a stale miss that outlives the cycle because
+    _subagent_file's hit path re-stats and never re-walks; so such a root costs each caller its one lstat, as before. A
+    sample that reported a fault below its root (`faults` above: a listing, an entry's type or a child's lstat that
+    failed for a reason other than absence) is NOT scoped either: a held pair reports no fault to a later reader, so the
+    agent-file walk served it would take the unread places for read ones and memoize a miss under them (the walk
+    excludes the places its own read of the tree reports, above); the next reader in the cycle samples again, as it
+    did before the scope (tests/test_subagent_tree_stamps_per_cycle.py Guards
+    test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is, the store; and beside it, the road it closes,
+    test_a_walk_with_a_failed_listing_by_a_reader_that_passes_no_faults_list_leaves_a_lookup_in_that_scope_told_of_the_fault:
+    a reader that passes no faults list samples the tree under a failed listing, and an agent-file lookup in the same
+    scope walks again and is told the fault, where a held pair would answer it None with no fault and memoize the miss). The
+    `stats` list is shared by every reader of the cycle and read-only by contract, as _sessions' rows are (the readers
+    zip, iterate or copy it). Outside a scope every call samples afresh, as _live_map, _sessions, _path_of and
+    _auth_avail_status behave (a WS viewer handler, GET /feed.json read fresh).
+
+    THE STAMP INDEX. `_live_scope.subagent_stamps`, {directory: (directory, mtime_ns)}, the shape
+    _dir_stamp answers, opens and clears with `subagent_trees` at every site that opens and clears it, and is filled here
+    from each pair when the pair is stored: every directory the held tree lists, under the st_mtime_ns of the stat the
+    pair carries for it (the tree holds real directories only, the root by lstat and each child by
+    is_dir(follow_symlinks=False), so the stat _dir_stamp would take and the lstat held agree). _dir_stamp answers such a
+    directory from the index with no stat, so the agent-file memo's re-check (_subagent_file's hit, _dir_stamps over the
+    directories its walk read) and the walk's own stamp of a held root cost nothing after the cycle's first read of the
+    tree; without the index each lookup stats every directory its walk read (for a nested or missing agent's file the
+    whole tree, per awaiting agent per _awaiting_nest call (_session_awaiting's and _session_background_items', each
+    through _awaiting_live_rows)). A directory no held pair lists (the project directory on
+    a miss walk, a tree's directories re-checked before any read of that tree in the cycle) is stat'd by _dir_stamp once,
+    and that stamp is held in the index for the rest of the scope: a change after it is seen by the next scope's first
+    stamp, the one-cycle lag the samples accept. A stat that raises is answered (directory, None) and never held. The index holds
+    nothing a stored pair did not give it apart from those own stamps, so it lives exactly as long as the samples do: a
+    sample the scope refuses fills no stamp (Guards test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is,
+    the index after the refused walk and after the held one)."""
+    d = str(d)
+    scope = getattr(_live_scope, "subagent_trees", None)
+    if scope is not None:
+        got = scope.get(d)
+        if got is not None:
+            _SUBAGENT_TREE_STATS["scoped"] += 1
+            return got
+    told = [] if faults is None else faults               # the sample's faults, read here whether or not the caller asked
+    n0 = len(told)
+    out = _subagent_tree_sample(d, told)
+    if scope is not None and out[0] and len(told) == n0:
+        # only an answer with at least one directory is scoped (2026-09-18): it carries a stamp per directory it listed,
+        # so a reader folding those stamps into its own memo re-derives next cycle; the two zero-directory answers carry
+        # none, and a scoped empty answer would let _subagent_file_walk memoize a nested agent's miss under the root's
+        # fresh stamp for good (its hit path re-stats and never re-walks). And only a sample that reported no fault below
+        # its root: a held pair tells a later reader of no fault (the docstring)
+        scope[d] = out
+        stamps = getattr(_live_scope, "subagent_stamps", None)
+        if stamps is not None:                            # the stamp index, from the stored pair alone (THE STAMP INDEX)
+            for sd, sst in zip(out[0], out[1]):
+                stamps[sd] = (sd, sst.st_mtime_ns)
+    return out
+
+
+def _subagent_tree_sample(d, faults=None):
+    """One fresh sample of the tree at `d`: the memo's validation or walk, with no cycle scope (2026-09-18: _subagent_tree's
+    body before the scope; the memo's rules, `faults` and the raise for a root that cannot be read are documented there)."""
     d = str(d)
     try:
         st = os.lstat(d)
-    except OSError:                                       # nothing at the root: [] as ever, and the entry is forgotten
+    except (FileNotFoundError, NotADirectoryError):       # nothing at the root (ENOENT, ENOTDIR): [] as ever, and the entry is forgotten
         _SUBAGENT_TREES.pop(d, None)
         return (), ()
+    except OSError as e:                                  # any other errno (EACCES on a parent, EIO, ELOOP): the root could not be READ,
+        raise _SubagentTreeUnreadable(d, e, _SUBAGENT_TREES.get(d))   # which is not absence: nothing popped or held (the docstring)
     if not stat.S_ISDIR(st.st_mode):                      # a symlink (live or dangling) or a file in its place: not a tree
         _SUBAGENT_TREES.pop(d, None)
         return (), (st,)
@@ -35428,6 +36748,10 @@ def _subagent_tree(d):
     t0 = time.monotonic()
     racy_from = time.time_ns() - _SUBAGENT_DIR_RACY_NS    # a stamp at or past this may still be the tick an entry lands in
     dirs, stats, clean, stack = [], [], [], [(d, st)]
+
+    def unread(where, err):                               # a place below the root this walk could not read: the caller told,
+        if faults is not None and not isinstance(err, (FileNotFoundError, NotADirectoryError)):   # absence aside (the docstring)
+            faults.append((where, err))
     while stack:
         cur, cst = stack.pop()
         dirs.append(cur)
@@ -35439,18 +36763,21 @@ def _subagent_tree(d):
                     try:
                         if e.is_dir(follow_symlinks=False):   # a symlink to a directory is not a root, as os.walk's
                             subs.append(e.name)                #  followlinks=False never descended into one
-                    except OSError:
+                    except OSError as err:
                         ok = False
-        except OSError:                                   # unreadable, or gone since its lstat: nothing under it this call
+                        unread(os.path.join(cur, e.name), err)
+        except OSError as err:                            # unreadable, or gone since its lstat: nothing under it this call
             ok = False
+            unread(cur, err)
         subs.sort()
         pending = []
         for name in subs:
             p = os.path.join(cur, name)
             try:
                 pending.append((p, os.lstat(p)))          # the stamp BEFORE the listing, as the rule says
-            except OSError:
+            except OSError as err:
                 ok = False
+                unread(p, err)
         clean.append(ok)
         stack.extend(reversed(pending))                   # popped first-sorted first: os.walk's top-down sorted order
     idents = tuple(_stat_ident(s) if ok and max(s.st_mtime_ns, s.st_ctime_ns) < racy_from else None
@@ -35462,7 +36789,8 @@ def _subagent_tree(d):
 
 def _subagent_dirs(d):
     """The subagents directory `d` and every directory under it in walk order, no symlink followed; [] when `d` is not a
-    directory or is a symlink. The list is _subagent_tree's, served from the walk memo while the tree stands."""
+    directory or is a symlink. The list is _subagent_tree's, served from the walk memo while the tree stands; a root that
+    cannot be read raises as _subagent_tree does (never [], which is absence)."""
     return list(_subagent_tree(d)[0])
 
 
@@ -35485,9 +36813,281 @@ def _subagent_trees_forget(alive):
 
 
 def _subagent_tree_memo_report():
-    """/perf memos.subagentTree: hit and miss (trees served by validation against trees walked), evict (roots dropped as
-    unowned), dirStats (the lstats validations paid), walkMs and validateMs (the time in each, every thread), and the gauges
-    roots (entries) and dirs (directories held). Written from several threads; a resize under the sum is read again."""
+    """/perf memos.subagentTree: hit, miss and scoped (scoped / (hit + miss + scoped) is the share of the reads answered
+    a tree that the tree scope served from a pair another reader took in the same scope), evict (roots dropped as
+    unowned), dirStats, walkMs and validateMs (the time in each, every thread), and the gauges roots (entries) and dirs
+    (directories held). Which of hit, miss and scoped a read lands in, and what dirStats counts: the comment at
+    _SUBAGENT_TREE_STATS. dirStats counts _dir_stamp's stats beside the validation's lstats since this change, so a
+    figure from a kernel without this change and one from a kernel with it are not one series. A tree is sampled once
+    per scope (_subagent_tree, THE CYCLE SCOPE).
+
+    THE COST, road by road, stated here once: docs/reference.md's memos paragraph and the other kernel texts point here,
+    and a test's docstring states only what its own case asserts. Each entry names the road's population, its unit,
+    whether the tree scope holds it, the counter that counts it or that none does, and the case that pins its figure by
+    equality, derived from its world's sizes; the cases are in tests/test_subagent_tree_stamps_per_cycle.py unless
+    another module is named. Symbols: D_r the directories of subagents root r, D_s a session's own; A_s the agents of
+    session s whose launches are consulted; N the _session_awaiting reads per session in a scope; k the index of the
+    directory a walk found the agent's file in, among its tree's directories with the root at 0; E the project
+    directory's entries, files included; S_d the directories of a sibling tree the walk reads; K the project directory's
+    session directories with no subagents/; G the agents whose file is nowhere or under a sibling's tree; M such an
+    agent's lookups in a scope beyond the one _awaiting_nest makes (the Agent head's, an open viewer's, and on a pusher
+    cycle the release's at the agent's end or at a faulted end's lookup again, _release_ended_agents); W the own
+    root's lstats by the walk's lstat of its type and by os.path.realpath, W' os.path.realpath's of a sibling's
+    subagents place, R os.path.realpath's under a tree for a found file's path, each counted by running the call
+    (_find_agent_file takes the root's realpath only for a tree read that found a directory, so a place with no tree
+    pays none).
+
+    WHO HOLDS THE SCOPE. The tree slot, `_live_scope.subagent_trees`, and the two slots derived from it, the stamp index
+    (`subagent_stamps`) and the launch folds (`subagent_launches`), open and clear together at three sites (SlotSites):
+    _pusher_cycle, _jobs_cycle, and _chat_push_scopes_open with _chat_push_scopes_close, which _push calls around its
+    chat loop, opening only the slots its thread lacks. So the pusher's own push (_push_all) opens none, and the one
+    handler-thread reader that holds them is the connect push (_push_one, a fresh or repaired client's full push on its
+    WS handler thread), across its chat loop and viewer frames (_push_subagents), not its feed and timeline stages.
+    Every other reader holds none and pays per call (the last entry): on a handler thread, a viewer's open
+    (openSubagent), the history and episode replies (loadOlder, _chat_history_reply, loadEpisode), the act-now nudge
+    pass (_ws_act_now_tick), a feed built for clearAll or for GET /feed.json with no pusher audience, the /classify
+    route, a comment create's thread frame (commentCreate, its repeat answer included, through _comments_frame and
+    _thread_events) and a connect push's own feed or timeline build; and a targeted push (_push_session_now), whose
+    callers sit on handler, spawn and backend threads.
+
+    ON A PUSHER CYCLE OR A JOBS PASS, per scope:
+      - the validated hit (an entry whose identities stand): D_r lstats, the root's and one per known directory below
+        it; once per root per scope, then held with its stamps indexed; hit 1, dirStats D_r - 1, validateMs.
+        BoundPerCycleAndPerPass test_one_pusher_cycle_validates_the_tree_once_however_many_readers and its jobs-pass
+        twin ({lstat: D, stat: A}, hit 1, dirStats D - 1); SumOverRoots, both cases (sum_r D_r over three roots);
+      - the walk (no entry, or one holding an unvouched directory): D_r lstats and D_r listings; once per root per
+        change, and again at each scope's first read while a directory's stamp stays racy; held for the scope unless it
+        reported a fault below its root (an unlistable directory among them), and then walked again by the next read;
+        miss 1, walkMs, no dirStats. Guards
+        test_a_walk_with_no_entry_standing_pays_d_lstats_and_d_listings_in_one_miss_and_is_held_with_its_stamps
+        ({lstat: D, scandir: D}, (hit, miss, dirStats) (0, 1, 0), the pair and its stamps held);
+      - a failed validation, then the walk (D_old the entry's directories, D_new the tree's): D_old + D_new - 1 lstats
+        and D_new listings; held as the walk is; one miss for both, dirStats D_old - 1, validateMs and walkMs. Guards
+        test_a_failed_validation_then_the_walk_pays_both_in_one_miss_with_the_validations_lstats_in_dirstats
+        ({lstat: 2D, scandir: D + 1}, (0, 1, D - 1) for one directory added);
+      - the scoped read (a held pair, or a stamp the index holds): no call; scoped 1 for a pair, no counter for a stamp.
+        BoundPerCycleAndPerPass
+        test_the_served_tree_read_the_served_stamp_and_the_agent_file_hit_make_no_filesystem_call_of_any_class_the_census_wraps_under_the_tree
+        (no call on each served path), and _assert_asks in every bound case;
+      - a place with no tree (an absent root, a dangling or live link or a file in its place): one lstat per call,
+        whichever reader makes it, never held, no counter; with a link or a file there, each dependency note of it asks
+        _chat_stat_key whether it dangles, one os.stat per note: _subagent_meta_map's note (_subagent_tree_dep_note)
+        costs that os.stat alone, and the agent-file walk's note (_subagent_walk_dep_note) costs it plus one os.lstat
+        for a file or a live link, which checks that the place did not change after the read (a dangling link's key is
+        None and the lstat is skipped); none of these moves a counter. A walk whose note of the place comes out None
+        while its stamp of the place is real (either call raised, or the place changed between them) memoizes nothing,
+        so each later lookup of that agent walks again, at the walk's cost below, until a walk notes the place under a
+        real key (tests/test_subagent_tree_memo.py DowngradedNoneIsNotMemoized: one rebuild, then served). The walk
+        notes a sibling session's place through the same helper, so a sibling whose subagents place is a file or a live
+        link costs each walk its tree read's lstat, that stat and that lstat, and none of the W' realpath lstats a
+        sibling tree's walk pays (_find_agent_file resolves no place with no tree): G x (1, 1, 1, 0) per scope in the
+        cycle whose walks run, and none once the lookups are memo hits; the place's stamp is real, so it is an own stamp
+        (the re-check entry below).
+        MissPathRoads test_a_place_with_no_tree_costs_one_lstat_per_read_and_is_never_held (the own place) and
+        test_a_siblings_place_holding_a_file_or_a_live_link_costs_each_walk_its_read_and_its_note_and_one_own_stamp_per_cycle
+        (a sibling's, keyed per path inside _subagent_tree, _chat_stat_key, _subagent_walk_dep_note and
+        _find_agent_file);
+      - the launch fold (_awaiting_nest): one os.stat of the agent's file per agent per scope, sum_s A_s, held; no
+        counter. The two bound cases (A file stats). The key the fold records for the file is its reader's own stat,
+        so it costs none of its own (the bound cases' A is unmoved by it). A fold that faults is held for its one call
+        alone: A_s folds per read (Guards test_a_faulted_launch_fold_is_folded_once_per_call_and_not_held_across_calls);
+      - the agent-file memo's re-check (_subagent_file's hit): one stamp per directory the entry's walk read, 1 for a
+        flat file (the own root), D_s for a nested one, and for a file nowhere or under a sibling's tree D_s, the
+        project directory's 1, S_d per sibling tree the walk read and 1 per sibling place it found absent. A directory
+        a held pair lists is served; any other (the project directory, a sibling tree the scope has not read, the own
+        tree before its first read in the scope, the own root's place or a sibling's holding a file or a live link)
+        costs one os.stat per scope, an own stamp held for every later lookup, dirStats 1 each; the noted keys are
+        replayed with no stat.
+        BoundPerCycleAndPerPass test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat
+        (dirStats (D - 1) + 1 at one row and at two); MissPathRoads
+        test_a_command_rows_owner_lookup_before_the_tree_is_read_re_stats_its_directories_once_per_cycle (D stats,
+        dirStats (D - 1) + D) and test_boundary_a_file_or_a_live_link_in_the_own_roots_place_is_stat_once_per_cycle_and_held
+        (1 stat per cycle beside the project directory's), and for a sibling's place the no-tree entry's sibling case
+        above (1 stat per cycle inside _dir_stamp, dirStats (D - 1) + 1 + 1 in the cycle whose walks run and in the
+        steady one alike); FoundRoads' landing case below (a flat entry unmoved where every nested one moves);
+      - a (place, None) stamp an entry holds (a stat that raised): one failing os.stat per lookup of each agent whose
+        stamps hold it, G x (1 + M) per place per scope, cold or steady; never held, counted by no counter; each cold
+        walk also pays the place's lstats. The populations, each in MissPathRoads: an absent sibling place, 1 per cold
+        walk, the tree read's root lstat, and no realpath
+        (test_each_absent_sibling_root_costs_one_failed_stat_per_lookup_of_each_agent_whose_file_is_nowhere_and_moves_no_counter);
+        a sibling root whose stat raises (EACCES from its parent), 1, the tree's root lstat
+        (test_a_sibling_root_whose_stat_raises_costs_one_failed_stat_per_lookup_of_each_agent_found_past_it_and_is_never_held);
+        the own root whose stat raises, 2, the type lstat and the tree's
+        (test_the_own_root_whose_stat_raises_costs_one_failed_stat_per_lookup_of_each_agent_found_under_a_sibling_beside_the_unreadable_trees_own);
+        an absent own root or a dangling link there, 2, the walk's lstat of its type and the tree read's, and no realpath
+        (test_an_absent_or_dangling_own_root_costs_one_failed_stat_per_lookup_of_each_agent_whose_file_is_nowhere); and
+        the boundary, an EIO on the root's lstat alone with the stat succeeding, an own stamp held once per scope
+        (test_boundary_an_eio_on_a_sibling_roots_lstat_alone_leaves_its_stamp_held_once_per_cycle);
+      - a walk that finds the file (per agent whose walk runs: no memo entry, or a stamp it holds moved, so a change in
+        any own-tree directory walks every nested agent again; once per agent per scope, the held fold answering its
+        later lookups; no counter beyond the tree read's and the own stamps'): a flat file, the own root's stamp and 2
+        lstats, the own subagents directory's and the flat place's; a nested file at k, the own root's stamp, the tree
+        read and W + 1 + (k + 1) + R lstats (W, the flat place's, k + 1 candidates, the first of them the flat place's
+        path again, and R of the found file's path), no listing and no entry stat; a file under a sibling's tree, the
+        own tree's miss part in full, the project directory's stamp and one listing, one os.stat per entry up to and
+        including the found sibling's directory and none after it, the sibling part below for each sibling before it,
+        and at the found sibling its root's stamp, its tree read and W' + (k + 1) + R lstats. FoundRoads, each walk
+        keyed on itself alone:
+        test_a_landing_in_one_workflow_directory_walks_each_nested_agent_once_at_its_own_k_while_the_flat_agent_is_served
+        ({lstat: W + 1 + (k + 1) + R}, no listing, no entry stat, at each nested agent's k (two or more distinct values,
+        asserted)),
+        test_a_flat_agents_walk_pays_the_own_subagents_directorys_lstat_and_the_flat_places_and_nothing_else_under_the_tree
+        ({lstat: 2}) and
+        test_an_agent_found_under_a_siblings_tree_stats_the_entries_up_to_that_sibling_and_its_candidates_up_to_the_found_directory
+        (3 entry stats of E = 4, k + 1 candidates there, nothing of the sibling after it);
+      - the miss walk over the own tree (per agent whose walk finds the file nowhere, once per scope for it): the own
+        root's stamp (served when the tree is held), W lstats of the own root, 1 + D_s candidate lstats (the flat place
+        and one per directory, the root's candidate being the flat place again), the tree read once for the lookup and
+        the dependency note (with no tree in the place, one lstat, never held); then the project directory's stamp (an
+        own stamp, shared), one listing and one os.stat per entry, E per walk, held nowhere and counted nowhere.
+        BoundPerCycleAndPerPass test_one_pusher_cycle_with_an_agent_whose_file_is_nowhere_walks_once_and_its_notes_cost_no_stat
+        and the two-row case, through _miss_walk_cycle (D + G x W lstats of the tree's directories, G x (D + 1)
+        candidate lstats, G x E entry stats, G listings);
+      - the miss walk over a sibling's tree (per sibling session directory with a tree, per walk): its root's stamp (an
+        own stamp before the scope's first read of the tree, dirStats 1, then served from the index), the tree read
+        once per scope for every walk (a walk, miss 1, or a validated hit), W' lstats by realpath and S_d candidate
+        lstats per walk; in later scopes the memo hits re-check its S_d directories as own stamps, shared, dirStats
+        S_d, and read no tree. MissPathRoads
+        test_a_sibling_tree_the_walk_reads_is_read_once_per_cycle_and_costs_a_candidate_lstat_per_directory_per_walk;
+      - an unreadable tree (a root whose lstat fails for a reason other than absence; the fault excludes that tree from
+        the walk and nothing else): nothing is held, so every read resolves every agent of the session again, each call
+        under the tree failing and the standing resolutions answered: per read _subagent_meta_map's root lstat, and per
+        agent the re-check of its stamps (D_s for a nested file), the walk's own-root stamp, the lstats of the flat
+        place, of the own root's type and of the root by the tree read, and the standing file's fold, so 1 + 3 A_s
+        lstats and A_s x (D_s + 2) stats per read, N reads per scope, plus each walk's project-directory part; no
+        counter moves on the failed calls, and the chat build is told the tree is unreadable (_TREE_UNREADABLE), so its
+        tab is rebuilt every cycle while the fault lasts. Guards
+        test_an_unreadable_session_directory_resolves_every_agent_again_on_every_read_and_its_failed_calls_move_no_counter
+        ({lstat: N x (3A + 1), stat: N x A x (D + 2)} under the tree, dirStats 1). The feed key's subagents component
+        is the unreadable marker for the fault whatever entry stands (_subagent_dirs_ident), so the session's feed entry
+        is derived once at the first build under the fault and once at the first build after it clears, each counted in
+        builds.feed.memo derived and miss_by subagents, and served between them; tests/test_feed_session_memo.py
+        FeedEntryDerivedUnderARootFault
+        test_the_fault_beginning_and_clearing_each_re_derive_the_session_once_under_the_subagents_label ((derived,
+        miss_by) (1, subagents), (0), (1, subagents), (0) over the fault's two builds and the two after it);
+      - a place below a root that cannot be read (a listing, an entry's type or a child's lstat failing for a reason
+        other than absence), or a candidate whose lstat fails so: the tree is walked again at every read for the first,
+        and read clean and held for the second; a standing resolution is answered by its memo hit; a lookup that walks
+        and finds its file under no readable place memoizes nothing and walks again at every lookup, and its tab is
+        rebuilt every cycle while the fault lasts. tests/test_subagent_tree_memo.py FaultBelowTheRoot and
+        FaultOnTheWalksOwnRead (two lookups, two walks, nothing memoized);
+      - a faulted end (an ended agent whose file lookup could not be made, which _release_ended_agents remembers in
+        _AGENT_ENDED_FAULTED; on a pusher cycle alone, in its jobs stage before the push): per cycle, one read of each
+        place a remembered end's walk could not read, each end's reads stopping at the first that answers, and the read
+        memoized for the cycle on the place, its kind and the session, so the ends of one session waiting on a place
+        share one read of it (_unread_place_reads: for a
+        place in a subagents tree one os.lstat, and for a directory there the first entry of its listing too; for a
+        project-directory entry one os.stat; for the project directory one os.stat and the first entry of its listing;
+        and for any place whose read fails, the session's transcript path (_path_of, memoized on the pusher cycle's
+        scope), then, for a place in a tree inside that transcript's project directory, the way the walk would take to
+        it: one os.lstat of each directory from the tree's root down to the place's parent (none for a root, then one per
+        level: 1 for a flat candidate, 2 for a workflow agent's directory, 3 for the file in it), and first, when the
+        place's own read failed with ELOOP or EBADF under a sibling session directory, one os.stat of that directory,
+        which can answer before any lstat of the way; the lstats stop at the first that does not read a real directory),
+        and no walk while none answers; at most _AGENT_RELEASED_MAX ends, for as long as the fault lasts; no counter.
+        Once a place answers, at most _AGENT_FAULTED_LOOKUPS_MAX (one) lookups a cycle, oldest first, each with the
+        walk's terms above, as a new end's lookup costs, and the other ends due are looked up at the next cycles.
+        Measured on 2026-09-30 on 3.12, in the AgentEnd fixture (a project directory of two entries) inside the slots
+        _pusher_cycle opens, with the table at its bound (4096 ends of one session waiting on one place), at a load of
+        43 to 45 on 60 cores, nice 19: a cycle while the ends wait took 53 to 67 ms (median 59) with one place per end,
+        a root (4096 lstats), and 232 to 259 ms (median 252) with two, a workflow agent's directory and its file (28672
+        lstats and 4096 listings), when each end read its own places; with the memo, 1.1 to 2.8 ms with one place (1
+        lstat) and 1.8 to 3.4 ms with two (7 lstats and 1 listing), fourteen cycles each over two runs. The memo shares
+        nothing across sessions, so ends of several sessions waiting on one place cost one read of it for each session,
+        and a table whose ends are each of their own session costs what the reads of each end's own places cost: 4096
+        ends of 4096 sessions on one root took 40 to 52 ms a cycle (4096 lstats) over two runs at a load of 8 to 9
+        (medians 41.4 and 41.6 ms, one cycle of fourteen past the 50 ms bound; the two trees differed only in the cap,
+        which a cycle whose ends all wait never reaches), where the reads of each end's own places took 41 to 43 ms at
+        that load (the tree before the memo, fourteen cycles) and one session's ends 1.1 to 1.9 ms in the same runs,
+        with the fixture's _path_of, a stub, answering one transcript for every session, so a lower bound; with two
+        places an end, by the same reading, the per-end figure above, over the 50 ms bound. The cycle in which the place
+        reads again took 631 to 728 ms (median 692, seven runs) to look up all 4096 ends with no cap, and 1.1 to 1.9 ms
+        (median 1.7, seven runs) to look up one with it; the table then empties in 4096 cycles, each run's median cycle
+        0.31 to 0.39 ms and its longest 2.9 to 28 ms: about 68 minutes at the default one cycle a second
+        (PUSH_MIN_INTERVAL_S), longer where a cycle runs past half a second and no event wakes the loop after it, and
+        sooner when a watched tab's live-tail wake runs a cycle inside that second or a cycle raises, since its first
+        retry starts half a second later (PUSHER_FAIL_BACKOFF_S). A lookup's walk costs 0.17 ms in that fixture
+        (692 ms over 4096 lookups) and 21 to 49 ms at the median on the largest project measured (docs/reference.md's
+        bound text), so the bound holds at the median for one lookup a cycle, and two are at or over it.
+        tests/test_record_cache_agent_end.py AgentEnd, over two faulted cycles each:
+        test_a_faulted_end_costs_one_lstat_of_its_unread_place_per_cycle_and_is_looked_up_only_once_that_place_reads
+        (in the three slots, {lstat: [the place], stat: [], scandir: [], walks: 0} per cycle, one walk at the clear: the
+        place a root),
+        test_a_directory_whose_listing_is_refused_is_read_by_its_listing_so_its_end_is_not_walked_while_it_stays_refused
+        (two places: 3 lstats, the third the root on the way to the file whose read failed, and 1 listing per cycle, no
+        walk),
+        test_a_project_directory_entry_is_read_through_its_link_so_its_end_is_not_walked_while_the_target_is_unreadable
+        (1 os.stat, no walk) and
+        test_a_project_directory_whose_listing_is_refused_is_read_by_its_listing_so_its_end_is_not_walked_meanwhile
+        with its linked twin (1 os.stat and 1 listing, no walk). The memo, AgentEnd
+        test_the_ends_waiting_on_one_place_read_it_once_per_cycle_however_many_they_are (50 ends, over two faulted
+        cycles, {lstat: [the place], stat: [], scandir: [], walks: 0} each),
+        test_an_end_of_another_session_waiting_on_the_same_place_is_read_for_its_own_session (one faulted cycle: the
+        place read once for each of the two sessions, and one walk, the other session's end looked up) and
+        test_a_path_waited_on_as_an_entry_and_as_a_tree_place_is_read_once_for_each_kind (one faulted cycle: the tree
+        end looked up, one walk, while the entry end waits); the cap, AgentEnd
+        test_the_ends_whose_place_reads_again_are_looked_up_one_per_cycle_oldest_first (two ends, one walk at each of
+        the two cycles after the clear) and
+        test_the_ends_due_take_turns_when_the_oldest_ones_lookup_faults_again_at_each_cycle (one walk a cycle: the
+        older end, whose lookup faults again, then the younger, released at the second cycle). A place whose read
+        answers while the walk's read of it still fails (a listing that fails past its first entry, or
+        _find_agent_file's strict realpath of the place failing while its lstat answers) has its end looked up at each
+        cycle while that fault lasts, at a walk's cost, in turn with the other ends due under the cap (AgentEnd
+        test_residual_a_listing_that_fails_past_its_first_entry_has_its_end_looked_up_at_each_cycle_while_it_lasts,
+        test_residual_a_resolution_that_fails_where_its_places_lstat_answers_has_its_end_looked_up_at_each_cycle_while_it_lasts
+        and, for a tree's root,
+        test_residual_a_resolution_of_a_trees_root_that_fails_where_its_lstat_answers_has_its_end_looked_up_at_each_cycle:
+        one walk per cycle);
+      - the dependency-note signature (every build that looks the agent up records the walk's noted keys, and every
+        build a launch fold answers records the key of the agent file the fold read, one entry per path, a path
+        reported under two keys recorded as their disagreement): per pusher cycle, per cached chat tab whose build
+        recorded them, one os.stat per recorded path, 1 for the beside-path when its lstat answered absence, D_s for the
+        own tree, S_d per sibling tree read, 1 per absent sibling place, and 1 per awaited agent whose file a launch
+        fold read and the build does not already record through the Agent head's _agent_steps (an agent with no Agent
+        event in the parent transcript: a Workflow agent, or an agent a subagent launched), counted in memos.chatSig and
+        in none of these counters; a change in any of them rebuilds the tab. DependencyKey
+        test_the_chat_signature_re_stats_every_directory_the_walk_recorded_so_a_change_in_any_sibling_directory_rebuilds_the_tab
+        (D + 1 + S x D + K + A recorded paths). The agent file's key is its (mtime, size), so a tab whose build's
+        launch fold ran (_awaiting_nest folds every other live agent's file for each agent that lacks a sidecar
+        parentAgentId, and every live agent's file for a command whose owner is not in the launch ledger) is rebuilt
+        at each cycle in which an awaited agent's file grew, by any record and not only a launch (HeldFoldAgentFileKey
+        test_a_workflow_tab_whose_fold_read_an_agents_file_is_rebuilt_at_each_cycle_the_file_grew_by_any_record,
+        [cold build, rebuilt, rebuilt, served] over two growing cycles and a quiet one). For a Workflow agent that
+        rebuild is new with this change: the live row does not move with the agent's records, since its row for the
+        run moves when the run's task_progress description changes (SdkSession._on_task_event's desc), which the CLI
+        sets per progress batch to the phase and label of the batch's last agent, or the run's own description when
+        the batch names no agent (the installed CLI's workflow emitter, read in 2.1.280), and not at each record.
+        Measured through the real SdkSession's snapshot and the real Sessions.live merge, six cycles each
+        with one record pair and one progress frame: one agent reporting under one label rebuilt the tab once (the
+        first frame's new description) in the code before this change and six times with it; two agents reporting in
+        turn moved the row, and rebuilt the tab, at all six cycles either way. For an agent a subagent launched,
+        whether the rebuild is new is not measured. And while an awaited agent's file is there but cannot be read (the
+        reader's fail path: its open or read raised, as at mode 000), the fold records the file under None, which a
+        re-stat that answers never equals, so such a tab is rebuilt at every cycle while that lasts (with an Agent head
+        too: the head's key and the fold's None disagree) and settles at the first cycle after, whose build records the
+        file's key, where the code before this change served it at each cycle after its first build (HeldFoldAgentFileKey
+        test_a_tab_whose_fold_cannot_read_an_agents_file_is_rebuilt_at_each_cycle_until_the_first_cycle_after_it_reads_again,
+        [cold build, rebuilt, rebuilt, rebuilt, served] over three unreadable cycles and two after).
+
+    ON A CONNECT PUSH, per push, for the reads of its chat loop and viewer frames: the entries above with the push for
+    the scope, so one validation or walk per root, the lookups' re-checks served or held as own stamps, and one launch
+    fold per agent however many of the chat build's reads consult it. BoundPerCycleAndPerPass
+    test_a_connect_push_validates_the_tree_once_serves_its_stamps_and_folds_each_agent_once_across_its_chat_loop
+    ({lstat: D, stat: A}, (hit, miss, dirStats) (1, 0, D - 1) and A folds over a push whose chat build reads twice).
+
+    ON A THREAD THAT HOLDS NO SCOPE, per call: nothing is held. Each read pays its own tree read, per agent whose
+    launches it consults the memo hit's re-check, one os.stat per directory the agent's walk read (1 flat, D_s nested,
+    and for an agent found nowhere D_s + 1 counted, one failing stat per absent sibling place and S_d per sibling tree
+    its walk read), and A_s folds; a lookup that walks pays the walk entries above. BoundPerCycleAndPerPass
+    test_outside_a_cycle_every_reader_validates_for_itself_and_dirstats_counts_both_validators (nested: D lstats,
+    A x D stats, dirStats (D - 1) + A x D), test_outside_a_cycle_a_flat_agents_hit_re_checks_the_one_directory_its_walk_read
+    (flat: A stats, dirStats (D - 1) + A) and
+    test_outside_a_cycle_an_agent_found_nowhere_re_checks_the_own_tree_the_project_directory_and_each_sibling_place
+    ((A + 1) x D stats on the own tree, 1 on the project directory, 1 failing on the absent place, S_d on the sibling
+    tree, dirStats (D - 1) + A x D + (D + 1) + S_d).
+
+    The per-call reads land in the same counters as the scoped ones. Written from several threads; a resize under the
+    sum is read again."""
     for _ in range(3):
         try:
             dirs = sum(len(v[0]) for v in list(_SUBAGENT_TREES.values()))
@@ -35500,32 +37100,59 @@ def _subagent_tree_memo_report():
     return out
 
 
+def _subagent_tree_dep_note(d, dirs, stats, notes=None):
+    """A tree reader's report to the running chat build (the taskout idiom, _chat_dep_note_taskout) for the subagents root
+    `d` it read as the pair (dirs, stats) _subagent_tree answered: every directory of the tree under the (st_mtime,
+    st_size) of the SAME stat result the read was taken with, the shape _chat_stat_key answers at the next cycle's
+    signature (a value derived from mtime_ns would miss by float rounding and rebuild the tab every cycle), so a sidecar
+    or agent file landing in a directory, or a directory appearing under one, moves that directory's stamp against the
+    recorded key and the tab is rebuilt. An absent root, or a dangling link in its place, notes None (what _chat_stat_key
+    re-evaluates to, so its appearance is a change too); anything else in the root's place (a live link, a file: not this
+    session's tree, never listed) notes nothing, since a None note could never match its re-stat and the target's key
+    would rebuild the tab on changes no reader shows (_subagent_meta_map's rule; _subagent_file_walk notes such a path
+    under its stat key via _subagent_walk_dep_note). The key comes from the pair the reader was answered and never from
+    a stat taken after it (2026-09-24): inside a cycle scope (_live_scope.subagent_trees: a pusher cycle, a jobs pass, a
+    connect push's chat loop) the pair may be the sample another reader took earlier in the cycle, and a fresh stat would
+    post-date the listing it vouches for, so a file landing after the sample under a directory the listing lacked would
+    be recorded under its own post-landing key, equal to every later re-stat, and the tab that showed the file missing
+    would never be rebuilt (_subagent_file_walk's note did this). Nothing is recorded outside a chat build.
+    `notes`, a list when given, receives the (path, key) pairs instead, and nothing is reported here: the agent-file walk
+    collects its pairs so that every lookup it answers, its own and the later ones the memo or a held launch fold answers,
+    reports the same pairs (_subagent_file_notes_replay). What the chat signature pays for these pairs every cycle: the
+    dependency-note signature entry of _subagent_tree_memo_report's docstring."""
+    if not dirs:
+        pairs = [(d, None)] if not stats or _chat_stat_key(d) is None else []
+    else:
+        pairs = [(sd, (sst.st_mtime, sst.st_size)) for sd, sst in zip(dirs, stats)]
+    if notes is not None:
+        notes.extend(pairs)
+        return
+    for of, key in pairs:
+        _chat_dep_note_taskout(of, key)
+
+
 def _subagent_meta_map(path):
     """toolUseId → {agentId, agentType, description, spawnDepth, parentAgentId} for every agent-*.meta.json beside the
     transcript at `path`, the nested workflow directories included (T355: a workflow agent's sidecar sits under
     workflows/wf_<id>/, and a flat listing missed it, so its Agent card never learned its id), cached on the
     directories' mtimes (a sidecar landing changes its directory's — a stat, never a timer). {} when the directory does
-    not exist (older CLIs wrote no subagent files)."""
+    not exist (older CLIs wrote no subagent files); under a root that cannot be read, the cached map when one stands, else
+    {}, with the running chat build told either way (_subagent_tree's docstring: the shape). The directories and their
+    stats come from the shared walk memo (_subagent_tree), one sample per cycle across every reader since 2026-09-18: the
+    reads a chat build makes of this map (_stamp_agents, _chat_agents_moved, _bg_tasks, _awaiting_live_rows,
+    _awaiting_nest) and the feed key's read share the cycle's stamps."""
     d = str(_subagents_dir(path))
-    dirs, stats = _subagent_tree(d)                       # the shared walk memo (2026-09-16): the directories and the stat each
-    if not dirs:                                          #  was taken under, one pass, no os.walk and no second stat per directory
+    try:
+        dirs, stats = _subagent_tree(d)                   # the shared walk memo (2026-09-16): the directories and the stat each
+    except _SubagentTreeUnreadable:                       #  was taken under, one pass, no os.walk and no second stat per directory
+        _chat_dep_note_taskout(d, _TREE_UNREADABLE)       # the root could not be read: the build is told (rebuilt next cycle, when it
+        hit = _SUBAGENT_META_CACHE.get(d)                 #  reads again), the cache stands untouched, and the standing map is answered,
+        return hit[1] if hit is not None else {}          #  else {} for a map never built
+    _subagent_tree_dep_note(d, dirs, stats)               # the running chat build's dependency record, from that same read
+    if not dirs:
         _SUBAGENT_META_CACHE.pop(d, None)
-        # a running chat build: the directory's absence is a dependency too, as os.stat's failure recorded it before the
-        # memo: nothing at the path, or a dangling link in its place, notes None (what _chat_stat_key re-evaluates to); a
-        # LIVE link (not this session's tree, never listed, {} regardless) notes nothing, as before, since a None note
-        # could never match its re-stat and the target's key would rebuild the tab on changes the map does not show
-        if not stats or _chat_stat_key(d) is None:
-            _chat_dep_note_taskout(d, None)
         return {}
-    stamps = []
-    for sd, sst in zip(dirs, stats):
-        stamps.append((sd, sst.st_mtime_ns))
-        # the running chat build's dependency record (the taskout idiom, _chat_dep_note_taskout): a sidecar landing
-        # moves its directory's mtime, which the next cycle's signature re-stats; the (st_mtime, st_size) pair from the
-        # SAME stat_result the memo validated with, the exact shape _chat_stat_key answers (a value derived from mtime_ns
-        # would miss by float rounding and rebuild the tab every cycle)
-        _chat_dep_note_taskout(sd, (sst.st_mtime, sst.st_size))
-    key = tuple(stamps)
+    key = tuple((sd, sst.st_mtime_ns) for sd, sst in zip(dirs, stats))
     hit = _SUBAGENT_META_CACHE.get(d)
     if hit is not None and hit[0] == key:
         return hit[1]
@@ -35559,11 +37186,28 @@ def _subagent_meta_map(path):
 
 
 def _dir_stamp(sd):
-    """(dir, mtime_ns) for one directory, a stat (None when missing)."""
+    """(dir, mtime_ns) for one directory, a stat (None when missing). On a thread that holds the stamp index
+    (`_live_scope.subagent_stamps`, opened with the tree slot: a pusher cycle, a jobs pass, a connect push's chat loop;
+    _subagent_tree's docstring, THE STAMP INDEX) a directory the index holds is answered from it with no stat: one a held
+    tree lists, from that pair's stat, or one this function stat'd earlier in the scope. Any other directory is stat'd,
+    and a stat that succeeds is held there for the rest of the scope, so a second lookup that re-checks the same
+    directory (the project directory, on every miss walk) is served it; a stat that raises is answered (sd, None) and
+    never held, so the next call stats again. Each os.stat that succeeds counts under memos.subagentTree dirStats beside
+    _subagent_tree's validation lstats; a stamp served from the index and a stat that raises are not counted. What the
+    re-check costs: _subagent_tree_memo_report's docstring."""
+    stamps = getattr(_live_scope, "subagent_stamps", None)
+    if stamps is not None:
+        got = stamps.get(sd)
+        if got is not None:
+            return got
     try:
-        return (sd, os.stat(sd).st_mtime_ns)
+        out = (sd, os.stat(sd).st_mtime_ns)
     except OSError:
-        return (sd, None)
+        return (sd, None)                                 # never held: the next call stats again
+    _SUBAGENT_TREE_STATS["dirStats"] += 1
+    if stamps is not None:
+        stamps[sd] = out                                  # an own stamp: no held pair lists this directory
+    return out
 
 
 def _dir_stamps(dirs):
@@ -35587,75 +37231,425 @@ def _subagent_meta(path, agent_id, apath=None):
     return meta if isinstance(meta, dict) else {}
 
 
-def _find_agent_file(subdir, name, read=None):
+def _find_agent_file(subdir, name, read=None, tree=None, *, exclude):
     """`name` anywhere under the subagents directory `subdir`, one level or deeper (workflows/wf_<id>/agent-<id>.jsonl),
     no symlink followed or taken, and never a file reached THROUGH a symlink (its real path stays under the tree's);
-    None when absent. `read` collects the directories walked."""
-    dirs, stats = _subagent_tree(str(subdir))
+    None when absent. `read` collects the directories walked. `tree`, when the caller has read the tree already, is the
+    (directories, stats) pair _subagent_tree answered it, looked through here instead of a second read, so the caller's
+    dependency note, when it takes one, comes from the read that answered the lookup (_subagent_file_walk, 2026-09-24).
+    Each candidate is read by one os.lstat, whose error is read: ENOENT and ENOTDIR are absence; any other errno (EACCES
+    in a directory that can be listed but not searched, EIO) is a fault, which excludes that candidate path through the
+    walk's `exclude` (called with the path and the error) and nothing else, and the search goes on through the other
+    candidates; a success is taken when it is a regular file (an lstat of a symlink never is), subject to the real-path
+    check. The code before this change read the candidate through os.path.isfile, which answers False on any error, so a
+    fault was taken for absence and the walk memoized a miss that a chmod or a cleared EIO never invalidated
+    (tests/test_subagent_tree_memo.py FaultOnTheWalksOwnRead).
+    The real-path check reads its error too, with one behaviour on every supported interpreter: its two
+    os.path.realpath calls, the root's and the candidate's, are strict, so a read either one makes that fails (an lstat
+    or a readlink of any component) raises, and the raise is the walk's own fault, every errno alike, since each call
+    resolves a path a read has just found: the root's excludes the tree, whose candidates are then not searched, and a
+    candidate's excludes that candidate while the search goes on. A path removed between the candidate's lstat and its
+    realpath is read the same way, so that lookup memoizes nothing and the next one reads the place again, and so is a
+    root removed on disk while a cycle scope holds its tree's pair: that scope's lookups answer the fault, and the next
+    scope reads the absence (the code before this change memoized a miss on the held stamps). The root's
+    call is made only when the tree read found a directory, so a place with no tree (an absent root, a file, a link)
+    stays an ordinary miss, never a strict call's FileNotFoundError. The code before this change called both unstrict,
+    which differs by interpreter: 3.10 to 3.12 raise when a readlink the call makes fails, a raise the walk did not read
+    (in a sibling's tree the project listing's ENOENT clause took it for no project directory to list and the miss was
+    memoized; in the own tree it escaped _subagent_file), and 3.13 and later answer the path unresolved, so a candidate
+    whose own resolution failed under a resolved root was rejected with no fault and its miss memoized, still answered
+    after the fault cleared (tests/test_subagent_tree_memo.py RealpathFailureIsAFault)."""
+    dirs, stats = tree if tree is not None else _subagent_tree(str(subdir))
     if read is not None:
         read.extend((sd, st.st_mtime_ns) for sd, st in zip(dirs, stats))   # stamped as read: each directory's stat from
         #                                                                    BEFORE its listing (the memo's own), never re-taken after
-    real_root = os.path.realpath(str(subdir))
+    if not dirs:                                          # no tree at the place (absent, a file, a link): nothing to search, and
+        return None                                       #  no strict realpath to raise FileNotFoundError on an absent root
+    try:
+        real_root = os.path.realpath(str(subdir), strict=True)
+    except OSError as e:                                  # strict on every interpreter: a read the resolution makes failed (3.10 to
+        exclude(str(subdir), e)                           #  3.12 raise even unstrict when a readlink fails; 3.13 and later would
+        return None                                       #  answer the path unresolved): the tree is excluded, a fault
     for root in dirs:
         cand = os.path.join(root, name)
-        if os.path.isfile(cand) and not os.path.islink(cand) and os.path.realpath(cand).startswith(real_root + os.sep):
+        try:
+            st = os.lstat(cand)
+        except (FileNotFoundError, NotADirectoryError):   # ENOENT, ENOTDIR: no file here, an ordinary miss
+            continue
+        except OSError as e:                              # the candidate could not be read: excluded, the other candidates still read
+            exclude(cand, e)
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            continue
+        try:
+            real = os.path.realpath(cand, strict=True)
+        except OSError as e:                              # as the root's: the candidate excluded, a fault, and the search goes on
+            exclude(cand, e)
+            continue
+        if real.startswith(real_root + os.sep):
             return Path(cand)
     return None
 
 
-def _subagent_file(path, agent_id):
+def _subagent_file_notes_replay(noted):
+    """Report the (path, key) pairs an agent-file walk noted to the running chat build, exactly as noted and never
+    re-stat'd: the absent beside-path's None and each tree's _subagent_tree_dep_note pairs, taken from the read that
+    answered the walk. Every road that answers an agent-file lookup reports through here: the
+    walk's own lookup (_subagent_file, after the walk), a lookup the agent-file memo answers (the pairs stored in the memo
+    entry) and a lookup _awaiting_nest's held launch fold answers (the pairs stored in the fold entry, and with them the
+    agent file's own key as the fold's reader stat'd it, so a build the held fold answers records the file as the fold
+    saw it whether or not the build stats the file itself), so every build that
+    looks the agent up records the keys of the walk that produced its answer. A key re-stat'd here would post-date the read
+    it vouches for: a file landing under a held listing before this build would be recorded under its post-landing key,
+    equal to every later re-stat, and the tab that shows the file missing would never be rebuilt (the defect
+    _subagent_tree_dep_note's docstring states). On a memo hit the replay is exact for what the memo's stamps cover, each
+    directory's mtime_ns as the walk stamped it, since the hit has just found those equal to the walk's; a walk that
+    noted a downgraded None for a place (_subagent_walk_dep_note) is never memoized, so no hit replays one. The
+    residual, stated and not closed by this change: a filesystem clock coarser than the change (Linux before 6.13
+    stamps directories in jiffies, some filesystems in seconds) can leave a directory's mtime_ns equal across an entry
+    change made in the tick its stamp was taken in, and a hit then replays keys the walk took before the change. Where
+    the directory's size moves per entry (tmpfs, btrfs, short-form xfs), that is an (mtime, size) key no later re-stat
+    equals, so the tab is rebuilt every cycle until the directory's mtime moves again (the code before this change
+    rebuilt it once); and where the agent's own file lands at its flat place in that tick, the lookup answers the
+    memoized miss until then (the code before this change memoized the same miss) and replays the place's (path, None),
+    so the tab is rebuilt every cycle meanwhile. No same-mtime_ns change was seen in 15,000 trials on ext4 and tmpfs
+    under a Linux 7.0 kernel, whose directory stamps are multigrain. Witnessed as it stands, the coarse tick emulated by
+    putting the directory's mtime back after the change: tests/test_subagent_tree_memo.py CoarseClockTick. A replayed
+    pair may be older than a key the same build already holds for that path (a held fold replaying a walk made before a
+    landing, behind a fresh walk made after it, or the agent file's key from before a launch beside the Agent head's
+    _agent_steps stat after it): the build then records the disagreement, a key no re-stat equals, and never the
+    fresher key alone (_chat_build_deps).
+    Nothing to report outside a chat build."""
+    if getattr(_chat_dep_scope, "deps", None) is None:
+        return
+    for of, key in noted:
+        _chat_dep_note_taskout(of, key)
+
+
+def _subagent_file(path, agent_id, faults=None, notes=None, unread=None):
     """The agent's own transcript beside the parent transcript `path`: subagents/agent-<id>.jsonl, or one level or
     more down (a Workflow agent's, workflows/wf_<id>/agent-<id>.jsonl, since Claude Code 2.1.261: the flat lookup
     missed it and the viewer said the file was missing, T355), or — when the sidecar dir has moved under a /clear
     fork's fsid — the one file of that name anywhere in the project dir, nested or not. None when missing.
     A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout;
-    re-review 2026-09-08): the absent beside-path and the identity of every sibling subagents directory the
-    fallback scanned are recorded for the running build, so the file landing in any of them moves the key
-    (a resolved file is recorded by _agent_steps when it is read)."""
+    re-review 2026-09-08): the absent beside-path and, for every sibling subagents tree the fallback looked
+    through and for the own tree when the project directory's listing reaches the session's directory, each
+    directory's identity as the read that answered the walk saw it, or the path's stat key when a live link, a
+    file or a dangling link is there in place of a tree (_subagent_walk_dep_note, 2026-09-24), are recorded for
+    the running build, so the file landing in any of them, a directory appearing for it to land in, or a tree
+    replacing the link or the file, moves the key (a resolved file is recorded when it is read: by the Agent head's
+    _agent_steps, and by _awaiting_nest's launch fold under the key its reader stat'd, which every build the fold
+    answers records, so a Workflow agent's file, which no Agent head reads, is recorded too). In a chat build
+    _stamp_agents calls _subagent_meta_map on the same path before this lookup, and that
+    call notes the own tree from the pair its own _subagent_tree call answered (every directory of a tree; None
+    when nothing or a dangling link is there). The scope of the walk's record, stated here
+    once (docs/reference.md's memos paragraph points here): the walk notes those pairs, and every build that looks the
+    agent up records them, exactly as noted (_subagent_file_notes_replay): the build whose lookup walked; a build whose
+    lookup this memo answers, on the stamps the walk took (on this thread or another, in this cycle or an earlier one),
+    the pairs being the memo entry's third element; and a build whose lookup _awaiting_nest's held launch fold answers
+    without calling here, the pairs being the fold entry's second element (`notes`, a list when given, receives the
+    pairs this lookup reported, which is how the fold stores them; the fold adds the agent file's own key to its list
+    after this call has stored its memo entry, so that key never reaches this memo). Where a fresher read in the same
+    build reported another key for one of those paths, the build records the disagreement, a key no re-stat equals, so
+    the tab is rebuilt next cycle (_chat_build_deps). The code before this change recorded the walk's keys for the
+    walk's own build alone, so a build the memo answered, in the walk's cycle or a later one, held no key for the trees
+    the walk read and a landing under a sibling's tree moved nothing it recorded;
+    DependencyKey's memo-hit and held-fold cases in tests/test_subagent_tree_stamps_per_cycle.py execute the replay.
+    The residual, and no wider parity is claimed: the project directory the walk lists is stamped for this memo alone
+    (its mtime moves when a sibling fsid's directory appears in it, so a lookup that stamps the project directory after
+    it moves walks: one on a thread with no scope, or the next scope's first; a later lookup in a scope that already
+    holds the directory's own stamp is served that stamp and answers the held miss until the scope closes: _dir_stamp)
+    and is no build's dependency on any of the three roads, so a sibling session directory that appears after a build
+    moves no key that build recorded: an agent whose file was nowhere when the build looked, landing under the new
+    sibling's tree, leaves that tab showing the file missing until another recorded key moves, while such a lookup
+    finds the file. Witnessed
+    by DependencyKey test_a_sibling_directory_appearing_after_a_build_moves_no_key_that_build_recorded_on_any_road.
+    The same residual where the build found the file: a build that found the agent's file under a sibling's tree
+    records no key under a sibling session directory that appears after it, and none for the project directory, and
+    neither does any later build that looks the agent up, on any of the three roads (a walk that finds the file under
+    the first sibling never reaches a directory sorted after it). Witnessed by DependencyKey
+    test_a_sibling_directory_appearing_after_a_build_that_found_the_file_is_recorded_by_no_later_build_on_any_road.
+    `faults`, a list when given, receives the reason when the answer stands for a lookup that could not be made: the
+    file found nowhere while a tree, a place below a tree's root, a candidate file (the own place among them), a
+    project-directory entry or the listing the walk needed could not be read (_subagent_file_walk's faults, and the
+    places a fault excludes, stated there), so a caller can give it the shorter lifetime
+    (_awaiting_nest, as it does _agent_launch_ids' faults) or read it as not yet (_release_ended_agents, which releases
+    nothing and looks the end up again once a place the walk could not read reads again or the walk no longer reaches
+    it); such a lookup memoizes
+    nothing, so the next call walks again (a read that did not happen is not a miss), and answers the memo's standing
+    resolution for the agent only when that path lies under a place the walk could not read (_subagent_file_walk's
+    `excluded`), else None:
+    a standing path under a tree the walk read in full is disproven by that read, whatever faulted elsewhere
+    (tests/test_subagent_tree_memo.py StandingResolutionUnderAFault). A fault excludes what raised it from the walk and
+    nothing else, so a file found past one is a lookup made: answered, memoized, and nothing passed to `faults`.
+    A walk that noted None for a place whose stamp it took as real memoizes nothing either, found or not (a live link or
+    a file at a subagents place whose note's stat or identity lstat failed, or which changed between the two:
+    _subagent_walk_dep_note), so no memo hit replays that None, which no re-stat of the place equals while it holds a live
+    link or a file, and the next lookup walks again (tests/test_subagent_tree_memo.py DowngradedNoneIsNotMemoized).
+    `unread`, a list when given, receives with that reason each place the walk could not read, once each, in the walk's
+    order (the path of each exclusion _subagent_file_walk records): what a caller that looks the agent up again watches
+    for the fault's end (_release_ended_agents, through _unread_place_reads)."""
     if not path or not _AGENT_ID_RE.match(str(agent_id or "")):
         return None
     ckey = (str(path), str(agent_id))
     hit = _SUBAGENT_FILE_CACHE.get(ckey)           # the walk once per change of what it read (the pusher asks every cycle per
     if hit is not None and _dir_stamps([d for d, _m in hit[0]]) == hit[0]:   # open viewer, the chat build once per Agent card):
-        return hit[1]                                 #  a hit re-stats the directories the walk read, own tree and siblings, never lists
-    read = []                                         # each directory's stamp taken AS IT IS READ (a file landing between the
-    found = _subagent_file_walk(path, agent_id, read)   # listing and a later stat would memoize a miss against the newer mtime)
+        _subagent_file_notes_replay(hit[2])           #  a hit re-stats the directories the walk read, own tree and siblings, never
+        if notes is not None:                         #  lists, and its build records the walk's noted keys, replayed
+            notes.extend(hit[2])
+        return hit[1]
+    read, failed, noted, excluded = [], [], [], []    # each directory's stamp taken AS IT IS READ (a file landing between the
+    found = _subagent_file_walk(path, agent_id, read, failed, noted, excluded)   # listing and a later stat would memoize a
+    _subagent_file_notes_replay(noted)                #  miss against the newer mtime); the walk's keys to this lookup's build, as
+    if notes is not None:                             #  every road reports them
+        notes.extend(noted)
+    if failed and found is None:                      # found nowhere, and a place the walk needed could not be read:
+        if faults is not None:                        #  not a miss, nothing memoized, the caller told
+            faults.extend(failed)
+        if unread is not None:                        # and where, each place once: what a caller that retries watches
+            unread.extend(dict.fromkeys(where for where, _kept in excluded))
+        standing = hit[1] if hit is not None else None   # the standing resolution, unheld (its stamps stay as they were), only
+        if standing is not None and _subagent_walk_excluded(standing, excluded):   #  where the walk could not look
+            return standing
+        return None
+    # A file found past a fault is a lookup made: memoized, and no fault passed on. Its stamps
+    # hold each skipped tree's root stamp as the walk took it, (dir, None) when that stat failed too (EACCES from a parent),
+    # so the memo walks again once that tree reads; an entry whose type could not be read, or a candidate whose lstat failed,
+    # leaves no stamp of its own.
+    stamped = {d for d, m in read if m is not None}
+    if any(k is None and p in stamped for p, k in noted):   # a place noted None whose stamp is real (the note's stat or its
+        return found                               #  identity lstat failed, or the place changed between them): nothing memoized,
+    #                                                so no hit replays a None the next re-stat never equals; the next lookup walks
     if len(_SUBAGENT_FILE_CACHE) > 1024:
         _SUBAGENT_FILE_CACHE.clear()
     stamps = tuple(dict.fromkeys(read))            # (dir, mtime_ns) pairs, once each
-    _SUBAGENT_FILE_CACHE[ckey] = (stamps, found)   # a miss is memoized too, on the same stamps: a file landing later under a
-    return found                                   #  sibling's tree moves that directory and re-walks
+    _SUBAGENT_FILE_CACHE[ckey] = (stamps, found, tuple(noted))   # a miss is memoized too, on the same stamps: a file landing
+    return found                                   #  later under a sibling's tree moves that directory and re-walks
 
 
-def _subagent_file_walk(path, agent_id, read=None):
-    """_subagent_file's walk itself (no memo); `read` collects every directory it looked at, the memo's stamps."""
+def _subagent_walk_dep_note(d, tree, notes=None):
+    """_subagent_file_walk's report to the running chat build for the subagents path `d` it looked through, read as
+    `tree` (the pair _subagent_tree answered). A tree at `d`, or nothing there, is noted by _subagent_tree_dep_note:
+    every directory under the stat of the read, or None. Anything else at `d` (a live link, a file or a dangling link:
+    never listed, so the lookup found nothing there) is noted under _chat_stat_key(d), as the walk noted every path it
+    looked through before that helper (2026-09-24): the link target's (st_mtime, st_size), the file's, or None. So a
+    real tree that replaces it moves the key against the next signature's re-stat, and the tab that showed the agent's
+    file missing is rebuilt; _subagent_meta_map notes nothing for a live link or a file (a dangling link it notes None,
+    as here). That stat is taken after the read, so its key is kept only while `d` still holds what the read saw: when
+    an lstat taken after the stat has an identity (_stat_ident) other than the read's lstat, the path changed in between
+    and None is noted instead, which no re-stat of a directory, a live link or a file equals, so a tree placed there in
+    between is never recorded under its own key. None is noted too when the stat or the lstat raises (a transient EIO),
+    each helper answering a raise as None. A None noted so while the walk's own stamp of `d` is real is reported to the
+    lookup's build and never memoized (_subagent_file memoizes nothing for that walk): it costs the build one rebuild,
+    and no memo hit replays it to a later build, which would then be rebuilt every cycle with nothing changed on disk
+    (tests/test_subagent_tree_memo.py DowngradedNoneIsNotMemoized). The read's answer for anything but a tree carries no
+    directory and is never held by a cycle scope (_subagent_tree), so the read is always this walk's own. `notes`, a
+    list when given, receives the (path, key) pairs instead, as _subagent_tree_dep_note's does: the walk collects them
+    so that every lookup it answers reports the same pairs (_subagent_file_notes_replay)."""
+    dirs, stats = tree
+    if dirs or not stats:
+        _subagent_tree_dep_note(d, dirs, stats, notes=notes)
+        return
+    key = _chat_stat_key(d)
+    if key is not None and _stat_ident(_lstat_or_none(d)) != _stat_ident(stats[0]):
+        key = None    # `d` changed after the read: None, which no re-stat of a directory, a live link or a file matches
+    if notes is not None:
+        notes.append((d, key))
+        return
+    _chat_dep_note_taskout(d, key)
+
+
+def _subagent_walk_unreadable(where):
+    """_subagent_file_walk's answer when it found the file nowhere and a tree, a place below a tree's root, a candidate
+    file (the own place among them), a project-directory entry or the listing it needed could not be read, `where` being
+    the path of the first such read (the places a fault excludes: _subagent_file_walk's docstring):
+    the running chat build is told under _TREE_UNREADABLE for it (rebuilt next cycle, when it looks again; for a place
+    that tree's read also noted under its own key, the build records the two keys' disagreement, _chat_build_deps) and
+    the lookup answers None for this call, which
+    _subagent_file declines to memoize (a read that did not happen is not a miss); the shape is _subagent_tree's
+    docstring's. A fault excludes what raised it from the walk and nothing else: the walk
+    records the fault and looks through every other tree first, and a file found anywhere is the answer, memoized, with
+    nothing noted here."""
+    _chat_dep_note_taskout(where, _TREE_UNREADABLE)
+    return None
+
+
+def _subagent_walk_excluded(p, excluded):
+    """Whether the path `p` lies under a part of the project directory the agent-file walk could not read: `excluded` is
+    the walk's list of (path, kept) pairs (_subagent_file_walk), each excluding its path and everything under it except
+    what lies under `kept`: the own tree, which the walk reads before the listing and the entries' stats that can fail,
+    for the listing's exclusion and each entry's (None for the rest)."""
+    p = str(p)
+
+    def under(root):
+        return p == root or p.startswith(root.rstrip(os.sep) + os.sep)
+    return any(under(where) and not (kept is not None and under(kept)) for where, kept in excluded)
+
+
+def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excluded=None):
+    """_subagent_file's walk itself (no memo); `read` collects every directory it looked at, the memo's stamps, and `notes`
+    the (path, key) pairs of its dependency notes, which the walk collects and does not report (_subagent_file reports
+    them for its lookup and stores them for the lookups its memo answers: _subagent_file_notes_replay). Each tree
+    it looks through, its own and each sibling's, is read once (_subagent_tree: inside a cycle scope, possibly the sample
+    another reader took earlier in the cycle), and that read answers the lookup (_find_agent_file's `tree`); the
+    dependency note, when the walk takes one, comes from the same read (_subagent_walk_dep_note: for a tree, every
+    directory under the stat of that read, never a stat taken after it, _subagent_tree_dep_note's docstring says why; for
+    a live link, a file or a dangling link at the path, the path's stat key, as before; 2026-09-24). On a miss the walk
+    notes each tree its project listing reaches, the own tree only when the listing reaches the session's directory. In
+    a chat build _stamp_agents calls _subagent_meta_map on the same path before the lookup, and that call notes the own
+    tree from the pair its own _subagent_tree call answered (every directory of a tree; None when nothing or a dangling
+    link is there).
+    A fault excludes what raised it from the walk and nothing else: a tree the walk needed (its own or a sibling's) whose
+    root could not be read, a place below such a tree's root its read could not read (a directory whose listing failed,
+    an entry whose type or a child whose lstat could not be taken: _subagent_tree's `faults`), a candidate file whose
+    lstat failed (_find_agent_file), a project-directory entry whose type could not be read, and the project directory's
+    listing are each recorded, the first one's error type name going to `faults` (a list when given) at once, and the walk goes on
+    through the rest; a file found anywhere is answered, `faults` notwithstanding (_subagent_file's gate reads a fault
+    beside a found file as a lookup made, and memoizes it); only when the file is found nowhere does the walk answer
+    through _subagent_walk_unreadable, with the first fault's path: the None answered then stands for a lookup that could
+    not be made, not a miss. `excluded`, a list when given, receives every such exclusion as (its path, None), except
+    that the listing's and each project-directory entry's keep the own tree, as (the project directory, the own tree)
+    and (the entry, the own tree), since the own tree is read in full before the listing: what the walk could not look
+    through, which is where _subagent_file may still answer a standing resolution (_subagent_walk_excluded). So a fault
+    on the stat of the own session directory's entry excludes nothing under the own tree beyond what the own tree's
+    read excluded itself. The tree's raise (_SubagentTreeUnreadable, not an OSError) is caught by name, so the
+    listing's own `except OSError` never takes it for a missing tree; that clause itself takes ENOENT and ENOTDIR alone
+    for no project directory to list, and any other errno for a listing that could not be made.
+
+    The walk's reads that decide whether a place holds the file read the error, never a boolean helper that answers a
+    fault as False: the own subagents directory's lstat, the own place's lstat, a candidate's lstat and a
+    project-directory entry's stat. They partition the error two ways. The own subagents directory and a candidate file,
+    the own place included, are read by os.lstat: ENOENT and ENOTDIR are absence, any other errno a fault; the walk never
+    takes a symlink and an lstat never reads through one at the path it is given, so a fault it raises lies on the path
+    the walk would take, never in a link's target. A project-directory entry's type is read by os.stat, which follows a
+    link, so a sibling session directory reached through one stays walkable: _REG_MISSING_ERRNOS (ENOENT, ENOTDIR,
+    EBADF, ELOOP) reads as not a directory, a dangling or looping link among them, and any other errno is a fault. The
+    own subagents directory's lstat comes first and tells a symlinked subagents/ from a real one; a fault on it excludes
+    the own root, which is then the first exclusion, the walk takes and notes nothing at the own place, and the own
+    tree's read that follows excludes the same root a second time, which changes nothing `faults` or the note reads.
+    Otherwise the own place is the own root's candidate (the own tree's first directory is its root), so the flat check
+    before the own tree's read takes the file on an lstat that finds a regular file and excludes nothing on a fault:
+    _find_agent_file's lstat of the same path excludes it once the own tree reads, and when the own tree cannot be read
+    the own root's exclusion covers it, so the first exclusion is the own root. Under a symlinked subagents/ the same
+    lstat reads the own place through that link, and the walk takes nothing there, so its answer decides the dependency
+    note alone: ENOENT or ENOTDIR notes (the place, None), and a fault, like anything present, notes nothing and excludes
+    nothing, since the walk searches nothing there. _find_agent_file's containment check reads its error too, with one
+    behaviour on every supported interpreter: its two os.path.realpath calls are strict, so a read either one makes that
+    fails raises, and the raise is the walk's own fault whatever its errno, the root's call excluding the tree and a
+    candidate's that candidate (_find_agent_file's docstring; tests/test_subagent_tree_memo.py RealpathFailureIsAFault).
+    Unstrict, as the code before this change called them, 3.10 to 3.12 raise when a readlink fails, a raise the walk did
+    not read, and 3.13 and later answer the path unresolved, which the check rejected with no fault, memoizing a miss.
+    It runs only on a tree whose read found a directory, and on a candidate whose lstat found a regular file. That the
+    fault is met before a candidate path through the faulted place is resolved is claimed for one fault, an EACCES from
+    a parent, as far as it was executed: on a read that reaches the disk the tree read or the candidate's lstat meets it
+    first; on a tree held earlier in the cycle, whose read the scope serves, the root's realpath does read through the
+    faulted place and, strict, raises, which excludes the tree; and a candidate's realpath runs only after that
+    candidate's lstat found a regular file, which a fault on the traversal prevents (the real EACCES:
+    FaultOnTheWalksOwnRead's listable-but-not-searchable cases and their controls, its held-tree control
+    test_control_a_tree_held_earlier_in_the_scope_then_a_real_eacces_from_its_parent_resolves_no_candidate_path, and
+    FaultExcludesItsOwnTree's eacces variants). A fault that begins between a candidate's lstat and its realpath lies
+    outside the claim (an order the code before this change had too), and no claim is made for any other fault.
+    The code before this change read a candidate through os.path.isfile, which answers False on any error, and an entry
+    through Path.is_dir, which before 3.14 raised on any errno but ENOENT, ENOTDIR, EBADF and ELOOP and from 3.14
+    answers False on every error, so such a fault was taken for absence and its miss memoized on stamps a chmod or a
+    cleared EIO never moves (tests/test_subagent_tree_memo.py FaultOnTheWalksOwnRead). It read the own subagents
+    directory's type through os.path.islink, which answers False on any error, so a fault on that lstat alone read a
+    symlinked subagents/ as a real one, and the flat check took the file through the link, memoized it and served it
+    after the fault cleared (FaultOnTheWalksOwnRead's symlinked-subagents case)."""
     read = read if read is not None else []
+    notes = notes if notes is not None else []
+    excluded = excluded if excluded is not None else []   # (path, kept) per tree, place, candidate, entry or listing the walk could not read
     name = "agent-%s.jsonl" % agent_id
+
+    def exclude(where, error, kept=None):                 # a fault excludes what raised it and nothing else: recorded, the walk goes on
+        excluded.append((str(where), kept))
+        if len(excluded) == 1 and faults is not None:     # the first one's, at once, found elsewhere or not: _subagent_file's gate
+            faults.append(type(error).__name__)           #  tells the two apart
     own = _subagents_dir(path)
     read.append(_dir_stamp(str(own)))
     ap = own / name
-    if not os.path.islink(own) and os.path.isfile(ap) and not os.path.islink(ap):   # this tree's own file (a symlinked
-        return ap                                                                   #  subagents/ or file is not taken)
-    nested = _find_agent_file(own, name, read)
-    if nested is not None:
-        return nested
-    # A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout): the
-    # file appearing at its own place, or a sibling fsid's directory gaining one, changes the Agent card.
-    _chat_dep_note_taskout(str(ap), None)
+    own_fault = None                                      # the own subagents directory's type, read by one lstat whose error is read:
+    try:                                                  #  a symlinked subagents/ is not taken, and nothing found through it is
+        own_is_link = stat.S_ISLNK(os.lstat(own).st_mode)
+    except (FileNotFoundError, NotADirectoryError):       # ENOENT, ENOTDIR: no link there; the flat check reads the own place
+        own_is_link = False
+    except OSError as e:                                  # any other errno is a fault on the own subagents directory: the own
+        own_is_link, own_fault = False, e                 #  root is excluded (the first exclusion), and nothing at the own
+        exclude(str(own), e)                              #  place is taken or noted, whatever its lstat below answers
+    try:                                                  # the own place, read by one lstat whose error is read, whatever own is
+        if stat.S_ISREG(os.lstat(ap).st_mode) and not own_is_link and own_fault is None:
+            return ap                                     # this tree's own file: a symlink at the place is not taken
+        ap_absent = False                                 # present and refused: a symlink or a directory at the place, anything
+        #                                                   there reached through a symlinked subagents/, or own's type unread
+    except (FileNotFoundError, NotADirectoryError):       # ENOENT, ENOTDIR: nothing at the own place, noted below unless the
+        ap_absent = own_fault is None                     #  own subagents directory's lstat faulted (its exclusion covers it)
+    except OSError:                                       # a fault, not an absence, and not excluded here: in a real subagents/
+        ap_absent = False                                 #  ap is the own root's candidate, which _find_agent_file excludes below
+    own_tree = None                                     # stays None when the own tree could not be read: the loop skips its note
+    below = []                                            # (place, error) under a tree's root the tree read could not read
     try:
-        read.append(_dir_stamp(str(Path(str(path)).parent)))   # the project directory: a sibling fsid's directory appearing moves it
-        for d in sorted(Path(str(path)).parent.iterdir()):
-            if d.is_dir():                                # the directory the walk below reads: a file landing in
+        own_tree = _subagent_tree(str(own), faults=below)
+    except _SubagentTreeUnreadable as e:                  # the own tree could not be read: excluded, the siblings still looked through
+        exclude(e.root, e.error)
+    for where, e in below:                                # a place below the own root it could not read: that place alone excluded
+        exclude(where, e)
+    if own_tree is not None:
+        nested = _find_agent_file(own, name, read, tree=own_tree, exclude=exclude)
+        if nested is not None:
+            return nested
+    # A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout): the
+    # file appearing at its own place, or a sibling fsid's directory gaining one, changes the Agent card. The own place
+    # is noted only when nothing is there, as (ap, None), which the next signature's re-stat answers while it stays
+    # absent; a place holding what the walk refuses (a symlinked file, or a file reached through a symlinked subagents/)
+    # notes nothing, since the re-stat follows the link to a key None never equals and every build replaying the note
+    # would rebuild the tab every cycle, while a key taken through the link stops matching at the first write to its
+    # target, which moves no stamp the memo checks. Absence is read from the place's one
+    # lstat, under a real or a symlinked subagents/ alike, and a fault on it is not an absence and notes nothing: in a
+    # real subagents/ the place is excluded (the own root's candidate read, or the own root's exclusion), and a file
+    # found nowhere is noted under _TREE_UNREADABLE; through a symlinked one the walk takes nothing whatever the lstat
+    # answers, so the miss stands once the fault clears too. A fault on the lstat of the own subagents directory itself
+    # notes nothing for the place whatever the place's lstat answers: the own root is excluded, and a file found nowhere is
+    # noted under _TREE_UNREADABLE for that root. Under a mutant that reads the place through a boolean helper
+    # (os.path.lexists), which answers a fault as an absence, its (ap, None), which the re-stat answers while the fault
+    # lasts and not after, is replayed from the memo, whose stamps a chmod or a cleared EIO never moves, so the tab is
+    # rebuilt every cycle once the fault clears (DependencyKey's symlinked-subagents fault cases).
+    if ap_absent:
+        notes.append((str(ap), None))
+    parent = Path(str(path)).parent
+    try:
+        read.append(_dir_stamp(str(parent)))          # the project directory: a sibling fsid's directory appearing moves it
+        for d in sorted(parent.iterdir()):
+            try:
+                is_dir = stat.S_ISDIR(os.stat(d).st_mode)     # through a link, as a sibling reached by one stays walkable
+            except OSError as e:
+                if e.errno not in _REG_MISSING_ERRNOS:        # its type could not be read: that entry alone is excluded, keeping
+                    exclude(str(d), e, kept=str(own))         #  the own tree read above (the own session directory's entry too)
+                    continue
+                is_dir = False                            # gone, a file on the way, a dangling or looping link: not a directory
+            if is_dir:                                   # the directory the walk below reads: a file landing in
                 sd = d / "subagents"                      # <sib>/subagents/ moves ITS mtime, not the sibling's
-                _chat_dep_note_taskout(str(sd), _chat_stat_key(str(sd)))
-                if sd != own:
-                    read.append(_dir_stamp(str(sd)))
-                    cand = _find_agent_file(sd, name, read)
-                    if cand is not None:
-                        return cand
-    except OSError:
-        pass
-    return None
+                if sd == own:
+                    if own_tree is not None:
+                        _subagent_walk_dep_note(str(sd), own_tree, notes=notes)   # the own tree: the read above, looked through already
+                    continue
+                read.append(_dir_stamp(str(sd)))
+                below = []
+                try:
+                    tree = _subagent_tree(str(sd), faults=below)   # the sibling's tree, once: the note and the lookup below share it
+                except _SubagentTreeUnreadable as e:      # a sibling's tree could not be read: excluded, the rest looked through
+                    exclude(e.root, e.error)
+                    continue
+                for where, e in below:                    # a place below its root the read could not read: that place alone
+                    exclude(where, e)
+                _subagent_walk_dep_note(str(sd), tree, notes=notes)
+                cand = _find_agent_file(sd, name, read, tree=tree, exclude=exclude)
+                if cand is not None:
+                    return cand
+    except (FileNotFoundError, NotADirectoryError):
+        pass                                              # no project directory to list: no sibling tree to look through
+    except OSError as e:                                  # the listing could not be made (EACCES): not "no siblings"; every sibling
+        exclude(str(parent), e, kept=str(own))            #  is excluded, the own tree read above is not
+    return _subagent_walk_unreadable(excluded[0][0]) if excluded else None
 
 
 def _agent_id_of_output(output_file):
@@ -35723,14 +37717,30 @@ def _launch_ids_step(state, o):
     return state
 
 
-def _agent_launch_ids(agent_path):
+def _agent_launch_ids(agent_path, faults=None, key=None):
     """The launch tool_use ids in one agent's own file (_launch_ids_step), folded append-incrementally like
     the head's steps (a growing file steps only its new records; an unchanged one costs a stat). The
     transcript half of _awaiting_nest's attribution: a background command whose tool_use id is in THIS
-    file was launched by THIS agent. set() when unreadable."""
+    file was launched by THIS agent. set() when unreadable; `faults`, a list when given, receives the
+    reason (the reader's "fail" path, or the exception's type name) when the answer stands for a read that
+    did not happen, so a caller can give it the shorter lifetime (_awaiting_nest: the launch-fold slot declines it, the
+    call's own map holds it). `key`, a list when given, receives the file's key in _chat_stat_key's form as the fold's
+    reader stat'd it before its read ((st_mtime, st_size) of em._LAST_ENTRY, the reader's entry for this read; None when
+    the file was absent or unreadable), taken from the read itself so it costs no stat, and nothing when the fold raised
+    before its reader answered (a raise after it, in the provisional fold of a last line with no newline yet or in the
+    quiescent drop, leaves the key, which _awaiting_nest records with the fault): what _awaiting_nest records for the
+    file with the fold (the comment at its fold map, which states what the None an unreadable file leaves costs)."""
+    def on(kind):
+        if key is not None:                               # the reader's entry for this read: (st_mtime, st_size) of its stat
+            ent = getattr(em._LAST_ENTRY, "ent", None)    #  before the read, None when the file was absent or unreadable
+            key.append((ent[0], ent[1]) if ent is not None else None)
+        if kind == "fail" and faults is not None:
+            faults.append(kind)
     try:
-        return em.fold_records(_AGENT_LAUNCH_IDS_CACHE, str(agent_path), _launch_ids_fresh, _launch_ids_step, ckpt="agentLaunchIds", drop_after="quiescent")
-    except Exception:
+        return em.fold_records(_AGENT_LAUNCH_IDS_CACHE, str(agent_path), _launch_ids_fresh, _launch_ids_step, on=on, ckpt="agentLaunchIds", drop_after="quiescent")
+    except Exception as e:
+        if faults is not None:
+            faults.append(type(e).__name__)
         return set()
 
 
@@ -36673,7 +38683,7 @@ def _postal_intent(kind, body=""):
     return m.group(1) if m else ""
 
 
-_postal_index_memo = [None]   # ((mtime_ns, size), idx, body_map) — exact-change key of messages.jsonl
+_postal_index_memo = [None]   # ((mtime_ns, size), idx, body_map, sid_revs) — exact-change key of messages.jsonl
 
 
 def _postal_index():
@@ -36684,7 +38694,8 @@ def _postal_index():
     through this and re-parsed the whole log per push otherwise (~7% of the pusher's wall time,
     py-spy 2026-08-31). Consumers only read the index (_hydrate_postal), so sharing one dict is safe.
     The memo also carries the index's body-keyed map (_postal_body_rows), built once per index version
-    beside it, so the outgoing-card join does not rescan every row per card per build."""
+    beside it, so the outgoing-card join does not rescan every row per card per build, and the per-session
+    revision table (_postal_sid_revs_of, 2026-09-18), so a chat's postal key is a dict lookup per build."""
     p = jd.STATE / "timeline" / "messages.jsonl"
     try:
         st = os.stat(p)
@@ -36738,7 +38749,7 @@ def _postal_index():
                     rec["bouncedWhy"] = re.sub(r"[\x00-\x1f\x7f]+", " ", why)[:200]
             elif ev == "recall":
                 rec["recalled"] = o["t"]
-    _postal_index_memo[0] = (key, idx, _postal_body_map(idx))
+    _postal_index_memo[0] = (key, idx, _postal_body_map(idx), _postal_sid_revs(idx))
     return idx
 
 
@@ -36765,6 +38776,61 @@ def _postal_body_rows(index):
     if hit is not None and hit[1] is index:
         return hit[2]
     return _postal_body_map(index)
+
+
+def _postal_sid_revs(index):
+    """Per session, its revision of the postal index (2026-09-18): {key: (n, last_mid, outcomes)} over the
+    records whose fromId or toId is the key, walked in the index's (the log's) order. n is the count of such
+    records, last_mid the id of the latest, outcomes a tuple with one entry per such record that carries any
+    outcome, (id, read, relayed, bounced, recalled, bouncedWhy) as the record holds them: the receipt a sent
+    card renders (enrich_out in _hydrate_postal), lossless, so equality is exact by value. Being a fold of
+    the records' VALUES it equals a fresh walk of the same records (a caller's own dict and the memo's table
+    agree) and moves exactly when a card's receipt would: an exec on one message beside an unexec on
+    another moves it, where a count of outcomes would net to no change; an exec then an unexec of ONE
+    message with no build between leaves it where it was, because the receipt is back where it was (the
+    drain rolled back, the mail is unread again); with a build between it moves twice, as the receipt did;
+    and a later exec after the restore lands a new time, which the card renders, so that moves it too.
+
+    The key "" is the bucket for records with NO recipient: such a record hydrates in every chat
+    (_postal_addressed_to), so every session's revision folds this bucket (_chat_postal_rev). A record with
+    no SENDER keys its recipient alone: the bus refuses an anonymous /send, so the only writer of one is the
+    bus's own return note (deliver from "romp-postal", from_id ""), and an outgoing card joins its row by
+    body with no sender filter today, so such a row is no more its sender's than any third party's; keying
+    it here would rebuild every mail-bearing tab per return note for nothing. When the join is scoped to
+    rows with fromId in (sid, "") the bucket must key fromId == "" too. A self-addressed or pre-schema row
+    (from == to) counts once, the keys being a set. A relay row's to_id is "peer:<host>", an unused bucket
+    (this kernel builds chats only for sessions with a local transcript; an incoming relayed message is a
+    local sent row with to_id the local session), one dict entry per peer host. A second `sent` row for one
+    id is not a case: deliver mints a unique maildir name, the relay park a px- name, the start sweep's row
+    rebuild skips ids already sent, and every writer appends (_tl_append)."""
+    revs = {}
+    for rec in index.values():
+        keys = {rec.get("toId") or ""}
+        if rec.get("fromId"):
+            keys.add(rec["fromId"])
+        outs = None
+        if rec.get("read") or rec.get("relayed") or rec.get("bounced") or rec.get("recalled"):
+            outs = (rec["id"], rec.get("read") or None, rec.get("relayed") or None, rec.get("bounced") or None,
+                    rec.get("recalled") or None, rec.get("bouncedWhy") or None)
+        for k in keys:
+            ent = revs.get(k)
+            if ent is None:
+                ent = revs[k] = [0, None, []]
+            ent[0] += 1
+            ent[1] = rec["id"]
+            if outs is not None:
+                ent[2].append(outs)
+    return {k: (n, mid, tuple(outs)) for k, (n, mid, outs) in revs.items()}
+
+
+def _postal_sid_revs_of(index):
+    """The per-session revision table for `index` (2026-09-18): the memoized index's table comes from its
+    memo entry (built once per index version, never per build); any other dict (a caller's own index) gets
+    one built here, once per call. _chat_postal_rev reads a session's revision through this."""
+    hit = _postal_index_memo[0]
+    if hit is not None and hit[1] is index:
+        return hit[3]
+    return _postal_sid_revs(index)
 
 
 def _name_color_by_name(name):
@@ -37047,8 +39113,8 @@ def _postal_card_deps(cards, index, captions):
     re-hydration in this build would read: per card its mid, the caption under that mid, and its peer's
     identity (the sender's name and colour for an incoming card, the recipient's colour for an outgoing
     one); a raw event that did not hydrate contributes None, its rendering depending on the log alone,
-    which the gate keys beside this by the log's identity (_chat_postal_key). Everything else a card
-    carries comes from the raw event or the log row. `captions` is the build's caption-map getter and is
+    which the gate keys beside this by this session's postal revision (_chat_postal_rev). Everything else
+    a card carries comes from the raw event or the log row. `captions` is the build's caption-map getter and is
     called only when a card carries a mid, so a tab whose cards join no caption never pays for the map.
     The gate re-hydrates when this tuple moved: O(cards) dict lookups instead of a whole-list re-hydration
     on every judge pass, which was the gate's rule while the judge generation was its key (2026-09-09)."""
@@ -37776,17 +39842,29 @@ def _feed_goals_keyed(sid):
     too, which a plain already-done flag would have swallowed. Every replay lands on a fresh copy of the
     snapshot entry: an object this function has served is a fixed value (COPY-ON-PUNCH below).
 
-    THE LIVE BRANCH READS THE SHARED VIEW (this fork's round-4 plan P1, wired at the 2026-09-15 pull-in): the
-    store is read through jd.load_goals_shared_or_fault, the shared read-only cache, not the writer's loader
-    (the plain jd.load_goals here was the pusher's single largest raw_decode caller, re-parsing stores the
-    timeline and the chat already held in the cache). The cache hands one FrozenStore per (store identity,
-    journal identity, archive identity) and compares the store's bytes on a hit; anything else the loader
-    answers (the cache switched off after a write attempt, no store file, an unreadable journal, an archive
-    that moved under the fill) is a private object per call. A read that FAULTS (the file exists and did not
-    read) answers (None, None), its row filed once per episode; build_feed renders that session without
-    goal-derived content. build_feed is read-only on the store (tests/test_feed_goals_shared.py pins it): a
-    write on the shared object raises FrozenStoreError and switches the cache off, loudly (memos.shared
-    `off`). Serve counters ride memos.pass: `live` and `snap` count the branch taken, `punch` the copies."""
+    THE LIVE READ IS THE SHARED READ-ONLY VIEW (2026-09-18): load_goals_shared's one frozen parse per file version,
+    the same object _bg_placed_tops, _session_stamp_read, build_session and build_timeline already hold, served
+    through the per-session store-fault boundary. The feed is a pure reader: _feed_session_entry and every helper it
+    hands the store or its nodes to (_segs_seam, _heal_session_tops, _agent_open_set, _parked_rows, _summary_outrun,
+    _node_anchor_uuids, _landing_inputs, _node_log_rows, _pure_delegation_top, _goal_awaiting_stamp_full,
+    _all_outstanding_delegated, _open_leaves, _handoff_peer_identities, _handoff_card_fields, _session_started_face,
+    _provisional_card, _closer_pending, jd.review_boundary, jd._done_since) write only into their own containers;
+    _apply_rewind_hold works on copies (dict(store), fresh nodes/status maps, copy-on-write re-parents, the re-roll on
+    a json deep copy) and already runs on the shared view at _provisional_ledger's and build_session's ledger sites;
+    the punch above is the snapshot branch's and replays onto a json copy of the pass memo's entry, never onto the
+    shared view. A write would be LOUD: it raises FrozenStoreError, files one `frozen-store-write` judge-errors row
+    naming the site (_shared_poison) and switches the cache off for the process (memos.shared.off; later loads are
+    served by load_goals as `fallback`), and a raise inside a derivation lands in build_feed's per-session try/except
+    (_feed_derive_complain: the `failed` count, the `failing` gauge). Before this, the writer's loader ran once per
+    alive non-hidden session per build, hit or miss: a fresh copy of the parse, every node wrapped, the override
+    journal read and replayed, _baseRev stamped, then the copy dropped whenever the session's card memo hit. Faults
+    are unchanged: the boundary wraps either loader, so a read fault is (None, exc) plus one `store-unreadable` row
+    per episode, an absent file is the fresh store, corrupt bytes still quarantine through load_goals, an unreadable
+    journal is still served uncached from load_goals, and _baseRev is present on the shared view.
+
+    This fork wired the same read at the 2026-09-15 pull-in (its round-4 plan P1, fork PR 359), so the live branch is
+    one line on both sides. Fork-only beside it: tests/test_feed_goals_shared.py pins build_feed read-only on the
+    store, and the serve counters ride memos.pass: `live` and `snap` count the branch taken, `punch` the copies."""
     with _goals_snap_lock:
         snap = _goals_snap[0]
         if snap is not None and sid in snap:
@@ -37816,7 +39894,7 @@ def _feed_goals_keyed(sid):
             return _apply_rewind_hold(sid, store), snap_key   # a pending rewind's cards are hidden NOW (latched
             #                                                   at the gesture; archive lands at the branch-take)
         _goals_memo_stats["live"] += 1
-    store, fault = jd.load_goals_shared_or_fault(sid)   # no pass in flight → the shared read-only view, outside the lock
+    store, fault = jd.load_goals_shared_or_fault(sid)   # no pass in flight → the shared read-only view, outside the lock (2026-09-18)
     if fault is not None:
         return None, None                              # the read FAULTED (the pre-pass snapshot skips such a file
     #                                                    too): the row is filed once per episode, and build_feed
@@ -38458,13 +40536,29 @@ def _chat_stat_key(path):
         return None
 
 
-def _chat_postal_key():
-    """The postal index's identity — messages.jsonl (mtime_ns, size), the same key _postal_index memoizes on."""
-    try:
-        st = os.stat(jd.STATE / "timeline" / "messages.jsonl")
-        return (st.st_mtime_ns, st.st_size)
-    except OSError:
-        return None
+def _chat_postal_rev(sid, index):
+    """This session's revision of the postal index (2026-09-18): (its own entry, the no-recipient bucket) from
+    _postal_sid_revs_of(index), the postal component's key beside the values the cards embed
+    (_postal_card_deps). It moves on exactly the postal events that can change this tab's cards: a record
+    addressed to or from this session appearing (a raw marker resolving, an outgoing card's body join), an
+    outcome landing on one of those (read, relayed, bounced with its why, recalled: the receipt a sent card
+    renders), or a record with no recipient appearing (it hydrates in every chat). It deliberately does not
+    move on mail between two other sessions, nor on outcome rows for their messages. The key before it was
+    the log's identity ((mtime_ns, size), the index memo's own key), so a message between ANY two sessions
+    rebuilt every mail-bearing tab and re-hydrated their sealed cards: 1862 of 5907 background chat rebuilds
+    on one live kernel carried the postal label, and the gate re-hydrated sealed cards 1624 times (a /perf
+    read, 2026-09-18).
+
+    One residual inexactness, inherited from the outgoing join: enrich_out in _hydrate_postal joins an
+    outgoing card to ANY sent row wearing its exact body, closest in time to the tool call, with no sender
+    filter. For a card correctly joined to its own row, a later identical-body row from another pair would
+    STEAL the join under the log key, so the render this key leaves unrefreshed is the correct one; the one
+    wrong-either-way case is a card already mis-joined to a third party's row whose outcomes then change,
+    which this key does not see. The follow-up that scopes the join to rows with fromId in (sid, "") makes
+    this key exact by construction (and adds fromId == "" to the bucket, see _postal_sid_revs). `index` is
+    the object the build hydrates against, so the key and the cards it stands for read one index."""
+    revs = _postal_sid_revs_of(index)
+    return (revs.get(sid), revs.get(""))
 _prev_chat_ledger = {}                           # sid → the previous build's ledger (so a delta carries it only when changed)
 
 # The ledger memo (2026-09-09): build_session's goal-tree walk and live roots per sid, keyed on every input
@@ -38565,12 +40659,57 @@ def _chat_ident(path):
 
 
 def _chat_reg_sig(sid):
-    """Registry content that can change a chat or feed entry, plus its readable/missing/unreadable state. Host journal
+    """Registry content that can change a chat entry, plus its readable/missing/unreadable state. Host journal
     acknowledgements and log offsets move during ordinary output without changing the payload; keying on
     the file's stat rebuilt the tab on each of those writes. Keep every other field, including future
-    ones. The shared reader handles atomic replacements and permission repairs; never edit its record."""
+    ones (the chat reads many). The feed key takes _feed_reg_sig, its allow-list (2026-09-18). The shared reader
+    handles atomic replacements and permission repairs; never edit its record."""
     state, reg = _thread_reg_read(sid)
     return state, {k: v for k, v in reg.items() if k not in ("hostAck", "hostLogPos")}
+
+
+_FEED_REG_FIELDS = ("bgLedger", "spawnedAt")   # the SDK registry fields a feed derivation reads (2026-09-18): the launch
+#   ledger (_bg_live_norm's deadline / acting-agent join over the live task rows) and the CLI epoch (_sdk_spawned_at ->
+#   jd._cli_epoch, the bg ghost gate). An ALLOW-list, pinned by tests/test_feed_memo_inputs.py (RegAllowList) against
+#   every function of the kernel and the judge that reads the record in one of the receiver shapes that census names
+#   (the shared readers, a decode of the registry path, a `reg` parameter or a record handed on, their copies, merges
+#   and comprehensions) and against a callee walk from the derivation: a reader in those shapes that the walk reaches
+#   names a field here, or the test is red. lastSid is read inside the body too (_session_stamp_read -> jd._sdk_last_sid, under _bg_split ->
+#   _session_stamped_tops, run by _awaiting_task_descs and _bg_service_descs) and stays out on purpose: it shapes only
+#   that helper's own memo key and its deleg output, which no card consumes, and the transcript path it resolves is
+#   folded by the key's `transcript` component (_feed_reg_sig says why in full).
+
+
+def _feed_reg_sig(sid):
+    """The feed key's registry half: the record's readable/missing/unreadable state (its existence is what
+    _display_sdk_human and the parse slot answer) and ONLY the fields a feed derivation reads (_FEED_REG_FIELDS), by
+    value. The feed key took _chat_reg_sig, every field but the host journal's, so a result's cost watermark
+    (costState), the Stop hook's settle stamp (lastStopAt, lastTurnOpener), the echo and queue mirrors, the bgTasks
+    mirror and the cron, task-store, push and skill records each re-derived the session's cards though no card reads
+    them (2026-09-18; live, `reg` rode 9% of misses). An allow-list, not a deny-list: a registry field a feed reader
+    takes up is added to _FEED_REG_FIELDS, and the census pin (tests/test_feed_memo_inputs.py, RegAllowList) is red
+    until it is, for a reader in the receiver shapes the census names (the shared readers _thread_reg and
+    _thread_reg_read, the backend's read_reg, a decode of the registry path, a `reg` parameter or a record handed on
+    to a function, their dict() and .copy() copies, `{**reg}` merges, walruses and comprehensions, a name or attribute
+    bound from one) that a callee walk from _feed_session_entry reaches; a record reaching a reader outside those
+    shapes (a container built in another function, an attribute set in another method) is outside the pin, and the
+    census's docstring says so. Every other field is mirrored into the
+    live row (apiKeyAuth as the row's authLive, the bgTasks set, the auth fields the row carries: the `row`
+    component) or read only off the feed path: lastStopAt by _settle_event_key (the nudge and compaction ticks) and
+    _turn_end_key (_turn_notify_tick's post-loop pass, the checkpoints, the bell pass after the feed's loop);
+    lastTurnOpener by _turn_opener (the same pass); threadOf by _compact_suggest_tick, _thread_mail_off,
+    _asker_row_alive and the backend's own live_sessions and thread_sessions views; bgLedgerEnded by _lift_decisions
+    (the lift tick); forkOf and forkedFrom by the comment threads and the chat page's signature; spawnedAtCli by the
+    SDK backend's host attach alone. lastSid IS read inside the body, by _session_stamp_read -> jd._sdk_last_sid
+    (under _bg_split -> _session_stamped_tops, run by _awaiting_task_descs and _bg_service_descs), and stays out of
+    the list because that read shapes only the helper's own memo key and its deleg output, which the feed never
+    consumes (_session_awaiting's stamp arm is gated on `stamp`, which the body never passes), while the transcript
+    path it resolves is discover's, folded by the `transcript` component; a card that starts consuming deleg adds
+    lastSid here. The values ride by reference (the memo's nested bgLedger list, as _chat_reg_sig's did):
+    _thread_reg_read's record is the memo's own and no caller edits it (_thread_reg hands out copies), so the key
+    never aliases a later write."""
+    state, reg = _thread_reg_read(sid)
+    return state, {k: reg[k] for k in _FEED_REG_FIELDS if k in reg}
 
 
 def _names_digest(snap):
@@ -38613,12 +40752,27 @@ def _chat_sig_shared():
 def _chat_push_scopes_open():
     """Open what the chat loop reads once per push and would otherwise read once per TAB on a thread with
     no pusher-cycle scope (a connect push on a handler thread): the shared signature components
-    (_chat_sig_shared), the caption-map slot (_msg_summaries_scoped) and the names snapshot (a registry
-    scan per outgoing postal card without it). A pusher cycle already holds the last two, so only the
-    absent ones are opened, and the record says which; _chat_push_scopes_close clears exactly what was
-    opened here, so a cycle's own scopes are never touched. A names snapshot on a handler thread makes
-    that push's postal values one read (the fold's `_scoped`), which is the condition the recorded values
-    rest on, and gives the signature's names digest the same content the pusher's has."""
+    (_chat_sig_shared), the caption-map slot (_msg_summaries_scoped), the names snapshot (a registry
+    scan per outgoing postal card without it) and the subagents-tree samples (`subagent_trees`,
+    2026-09-18: a rebuilt tab reads its sidecar map two to four times, each a validation of its own
+    without the slot, and a viewer frame's agent-file re-walk on a cache miss (its first open, or after
+    a file landed in a directory the walk read) samples the root once more; a handler thread's push
+    shares one sample per root across its chat loop and those re-walks, exactly as a pusher cycle does.
+    The frame's hit-path re-stats through _dir_stamps were a separate route, the follow-up #1822 named),
+    opened with the two slots derived from them, the stamp index (`subagent_stamps`, which serves those
+    re-stats: _subagent_tree's docstring) and the launch folds (`subagent_launches`, _awaiting_nest: one
+    fold per agent per push), which live exactly where the samples do. A pusher cycle already holds
+    every slot here but the shared components, so only the absent ones are opened, and the record says which;
+    _chat_push_scopes_close clears exactly what was opened here, so a cycle's own scopes are never
+    touched. The ownership record is written BEFORE the shared components are read (2026-09-18, the
+    review's finding): _chat_sig_shared reads the flags and cards files, the colormap, the login label
+    and the billing availability, and a raise there used to leave the slots just opened set on the
+    handler thread with no record of them, so the push's except branch and the next push's opening
+    close cleared nothing, and every later push and viewer frame on that connection's thread was served
+    the stale snapshot for the connection's life (the open skips a slot that is already set, so the leak
+    was adopted, never replaced). A names snapshot on a handler thread makes that push's postal values
+    one read (the fold's `_scoped`), which is the condition the recorded values rest on, and gives the
+    signature's names digest the same content the pusher's has."""
     owned = ["chat_shared"]
     if getattr(_live_scope, "msgsum", None) is None:
         _live_scope.msgsum = [_MSGSUM_UNSET]
@@ -38626,8 +40780,15 @@ def _chat_push_scopes_open():
     if getattr(_live_scope, "names", None) is None:
         _live_scope.names = _names_snapshot()
         owned.append("names")
-    _live_scope.chat_shared = _chat_sig_shared()
-    _live_scope.chat_push_owned = owned
+    if getattr(_live_scope, "subagent_trees", None) is None:
+        _live_scope.subagent_trees = {}                   # one sample per subagents root across this push's chat loop and its
+        owned.append("subagent_trees")                    #  viewer frames' agent-file re-walks (_push_subagents runs before the close), 2026-09-18
+        _live_scope.subagent_stamps = {}                  # the stamp index and the launch folds derived from those samples,
+        owned.append("subagent_stamps")                   #  opened and owned with them so they live exactly where the trees
+        _live_scope.subagent_launches = {}                #  do (_dir_stamp, _awaiting_nest)
+        owned.append("subagent_launches")
+    _live_scope.chat_push_owned = owned                   # recorded before the read below can raise (2026-09-18): the close must
+    _live_scope.chat_shared = _chat_sig_shared()          #  find every slot this open set, on the except path too
 
 
 def _chat_push_scopes_close():
@@ -38655,14 +40816,19 @@ def _chat_dep_note_taskout(of, key):
     """A reader's report to the running chat build: it read `of` (a task's output file, an agent's
     transcript, a sidecar directory) under `key`, the (mtime, size) it stat'd BEFORE the read (so a write
     landing after the stat pairs the old key with new content, and the next signature check misses,
-    never a stale hit); None when the path was absent, so its appearance is a change too. Nothing to
-    report outside a chat build."""
+    never a stale hit); None when the path was absent, so its appearance is a change too; _TREE_UNREADABLE
+    when the reader needed the path and could not read it for a reason other than absence (the comment at
+    _TREE_UNREADABLE: its rule and its recorders), a key no stat equals, so the build is redone next cycle
+    and reads again. A path reported twice under two different keys is recorded
+    under _CHAT_DEP_KEYS_DIFFER (_chat_build_deps). Nothing to report outside a chat build."""
     d = getattr(_chat_dep_scope, "deps", None)
     if d is not None:
         d["task_outs"].append((of, key))
 
 
 _DEPS_UNSET = object()
+_CHAT_DEP_KEYS_DIFFER = "keys differ"   # the key _chat_build_deps records for a path one build reported under two different keys:
+#                                         a value no stat produces, so the next signature misses and the tab is rebuilt
 
 
 def _chat_build_deps(sid, payload):
@@ -38671,16 +40837,36 @@ def _chat_build_deps(sid, payload):
     so _chat_build_sig can re-evaluate them every cycle as its three trailing components
     (_CHAT_SIG_DEPS): the files whose tails the payload embeds, each with the identity it was read under
     (taskout); the messages whose path tokens are still unresolved (a mention precedes its file, so the
-    build retries them), with the links and pins as rendered (pathlink); and the postal cards, with the
-    log's identity and the embedded values (_postal_card_deps) read from the index and caption map the
-    build hydrated against, never from a fresh read (postal). `at_build` is the three components as this
-    build embedded them, the tail of the signature stored with the entry; the next cycle's
+    build retries them), with the links and pins as rendered (pathlink); and the postal cards, with this
+    session's postal revision (_chat_postal_rev) and the embedded values (_postal_card_deps) read from the
+    index and caption map the build hydrated against, never from a fresh read (postal). `at_build` is the
+    three components as this build embedded them, the tail of the signature stored with the entry; the next cycle's
     _chat_sig_deps evaluates the same record against the world then. A cold tab records its dependencies
-    on its first build and is cached from then on."""
+    on its first build and is cached from then on.
+
+    A path the build reported once, or more than once under one key, is recorded under that key. A path it
+    reported under two different keys is recorded under _CHAT_DEP_KEYS_DIFFER, which no re-stat equals, so
+    the next cycle's signature misses and the tab is rebuilt: two keys mean the payload embeds reads of the
+    path in two states, and a record of either key can equal the next re-stat while the payload shows the
+    other state. Keeping the first key hides both: a report replayed from a held read or a memo entry can
+    come after a fresher one, and a place one read recorded under its stat key can be noted unreadable by a
+    later read of the same build, a fault that moves no stat.
+    The rule is pinned at the unit level (tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
+    test_a_path_one_build_reported_under_two_keys_is_recorded_under_a_key_no_re_stat_equals_in_either_order,
+    both orders and a path reported twice under one key) and on the live road that depends on it: a chat build
+    that reads the sidecar map before its lookup (_stamp_agents, as build_session does) records the tree read's
+    key for a place below the root first, the agent-file walk then notes that place under _TREE_UNREADABLE when
+    it could not read it, and after the fault clears only the disagreement rebuilds the tab, since the tree
+    read's key, which a chmod or a cleared EIO does not move, equals the next re-stat
+    (tests/test_subagent_tree_memo.py FaultBelowTheRoot
+    test_a_chat_build_that_reads_the_sidecar_map_before_its_lookup_rebuilds_its_tab_through_the_disagreement_eio).
+    A lookup with no sidecar read before it reports the walk's _TREE_UNREADABLE before the replayed tree note, so
+    a record keeping the first key re-arms that tab as well (FaultBelowTheRoot's other cases)."""
     sc = getattr(_chat_dep_scope, "deps", None) or {}
     touts = {}
     for of, key in sc.get("task_outs") or ():
-        touts.setdefault(of, key)                        # the first identity a build read a file under
+        if touts.setdefault(of, key) != key:             # the same path under a second key: the two reads disagree, and
+            touts[of] = _CHAT_DEP_KEYS_DIFFER            #  no one key the build holds stands for what the payload shows
     events = payload.get("events") or []
     pl = []
     for ev in events:
@@ -38692,12 +40878,13 @@ def _chat_build_deps(sid, payload):
     postal_any = bool(cards) or bool(sc.get("postal_any"))
     postal = None
     if postal_any:
+        pidx = sc.get("pidx")
+        idx = pidx if pidx is not None else _postal_index()  # the index first: the revision is read from it (2026-09-18)
         pk = sc.get("postal_key", _DEPS_UNSET)
         if pk is _DEPS_UNSET:
-            pk = _chat_postal_key()
-        pidx = sc.get("pidx")
+            pk = _chat_postal_rev(sid, idx)
         msum = sc.get("msum") or _msg_summaries_scoped
-        postal = (pk, _postal_card_deps(cards, pidx if pidx is not None else _postal_index(), msum))
+        postal = (pk, _postal_card_deps(cards, idx, msum))
     pl_at = tuple((u, l, p) for u, _md, l, p in pl)
     # `pl_check` starts None: the next cycle's signature re-resolves the pending tokens once (the build's
     # own resolves ran before any pre-check could be taken) and vouches from there (_chat_sig_deps)
@@ -38774,9 +40961,9 @@ def _chat_sig_deps(sid, deps):
     the build ran per pass before, moved into the key), except that a message none of whose candidate
     directories moved since the record's answers were verified (_chat_pl_precheck) keeps those answers,
     and only the messages a moved directory could have resolved are re-resolved (pathlink); and the
-    postal cards' embedded values re-read from the current index and caption map beside the log's
-    identity (postal). No record (a cold tab) → the empty components, which a first build's record then
-    replaces. The pre-check is taken BEFORE the re-resolve and stored on the record only when every
+    postal cards' embedded values re-read from the current index and caption map beside this session's
+    postal revision (postal). No record (a cold tab) → the empty components, which a first build's record
+    then replaces. The pre-check is taken BEFORE the re-resolve and stored on the record only when every
     answer held (stat-then-read): a file landing between the two is seen by the resolve, one landing
     after moves the next pre-check."""
     if not deps:
@@ -38804,9 +40991,44 @@ def _chat_sig_deps(sid, deps):
     postal = None
     if deps["postal_any"]:
         # the caption map through the cycle's slot on the pusher (_msg_summaries_scoped): the same map every
-        # build of the cycle hydrates against, one fetch per cycle; a handler thread reads it fresh
-        postal = (_chat_postal_key(), _postal_card_deps(deps["postal_cards"], _postal_index(), _msg_summaries_scoped))
+        # build of the cycle hydrates against, one fetch per cycle; a handler thread reads it fresh. The
+        # revision is read from the one index resolved here (2026-09-18): one stat of the log per tab per
+        # cycle, where the log-identity key stat'd it once and _postal_index again
+        idx = _postal_index()
+        postal = (_chat_postal_rev(sid, idx), _postal_card_deps(deps["postal_cards"], idx, _msg_summaries_scoped))
     return (touts, tuple(pl), postal)
+
+
+# The liveness-row fields the chat build never reads (2026-09-18). snapT and interrupting as before (the row comment in
+# _chat_build_sig; the merged row Sessions.live emits carries neither, it copies an explicit key list and interrupting
+# is a feed-entry field, so those two matter only to hand-built test rows and are kept for them); ctxTokens, the raw
+# token count every usage report moves while the payload renders the clamped percent (context, ctxOver; its one reader
+# is the compaction-suggestion tick, _compact_suggest_tick, not a build); and, on each background-task row, lastTool,
+# which every task_progress of a background task that names a tool rewrites (sdk_backend _on_task_event) and no kernel
+# reader reads (_bg_live_norm, _bg_tasks, _agent_alive and the feed's _row_ids_sig read toolUseId, taskId, type, desc,
+# since). A field the build READS is never listed here: an unread field left in costs one byte-identical rebuild per
+# cycle it moved in, which /perf's builds.chat.bg_miss.row shows; a read field dropped would serve a stale payload
+# silently (the memo rule in _chat_build_sig's docstring). tests/test_chat_build_sig_inputs.py pins both sets and that
+# the kernel reads neither dropped field.
+_CHAT_ROW_UNKEYED = frozenset(("snapT", "interrupting", "ctxTokens"))
+_CHAT_TASK_ROW_UNKEYED = frozenset(("lastTool",))
+
+
+def _chat_row_sig(tm):
+    """The liveness row as the chat-build signature's `row` component: the row's items without _CHAT_ROW_UNKEYED,
+    each bgTasks row reduced to its sorted items without _CHAT_TASK_ROW_UNKEYED (a tuple, compared by value as the
+    dict was; a task row keeps toolUseId, taskId, type, desc and since, of which toolUseId, taskId and since are
+    static per task). The component moves exactly when a rendered row fact moves (state, since, model, effort, mode,
+    the percent and ctxOver, the badges, the retry fields), a subagent starts or stops (the subagent set), or a
+    background task starts or ends (membership by toolUseId) or learns its description or type; never on a task's
+    progress chatter or a usage report that left the percent where it was (2026-09-18). None for no row."""
+    if not tm:
+        return None
+    out = {k: v for k, v in tm.items() if k not in _CHAT_ROW_UNKEYED}
+    if "bgTasks" in out:
+        out["bgTasks"] = tuple(tuple(sorted((k, v) for k, v in t.items() if k not in _CHAT_TASK_ROW_UNKEYED))
+                               if isinstance(t, dict) else t for t in (out["bgTasks"] or ()))
+    return out
 
 
 def _chat_build_sig(sess, tm=None, now=None, live_map=None, deps=None):
@@ -38913,10 +41135,12 @@ def _chat_build_sig(sess, tm=None, now=None, live_map=None, deps=None):
         sig.append(Sessions.live_rev(sid, be))
         # row: the liveness row the build reads (state, since, model, effort, mode, the badges, the live
         # subagent and task sets, spawning, retry info), minus snapT (a per-snapshot stamp that moves every
-        # cycle) and interrupting (read only through _interrupting, whose boolean is folded below); with
-        # whether the map holds anything at all (the row-missing status once turned on it — the no-tmux
-        # fallback, gone 2026-09-11 — and the key keeps it).
-        sig.append(({k: v for k, v in tm.items() if k not in ("snapT", "interrupting")} if tm else None, bool(live_map)))
+        # cycle) and interrupting (read only through _interrupting, whose boolean is folded below); minus
+        # ctxTokens (the raw count: the payload renders the percent) and each task row's lastTool (progress
+        # chatter no reader reads), both 2026-09-18, _chat_row_sig; with whether the map holds anything at
+        # all (the row-missing status once turned on it — the no-tmux fallback, gone 2026-09-11 — and the
+        # key keeps it).
+        sig.append((_chat_row_sig(tm), bool(live_map)))
         # clock: the booleans the clock decides, so the signature moves exactly at each crossing and at no
         # other tick: the interrupt stamp's 120 s cap and its settle (_interrupting, which pops the stamp
         # exactly as the build's call would), the model-switch stamp's 20 s cap (_model_pending_now), the
@@ -39597,7 +41821,9 @@ def _parse_cached(path):
     cost on the request path. build_feed reads it for the working-dots + deep-link anchors so its CARDS
     (which come from the goal store, cheap) paint AT ONCE on a cold kernel start; the dots/anchors fill in a
     beat later once _warm_fleet_bg has parsed the session in the background (the user 2026-06-26: the feed
-    cards lagged the timeline lanes on startup, all of it the ~1s cold parse of the fleet)."""
+    cards lagged the timeline lanes on startup, all of it the ~1s cold parse of every living session). The one caller-side
+    exception (2026-09-18): _feed_session_key falls through to _parse when the memo already holds a WARM-keyed
+    entry for the session and this read misses; a session parsed once, never a cold kernel's first paint."""
     ent = jd.parse_entry_for_leaf(str(path))     # the entry names its romp sid: a leaf's stem is the CLI session's id
     if ent is None or len(ent) < 5:               # after a /clear or a resume fork, never the romp sid (review find)
         return None
@@ -41188,9 +43414,27 @@ def _set_env_or_park(be, sid, value):
     """Apply a per-session env change (POST /new's "env", the spawn-time slice) now — or park it while
     the session compacts, in the same FIFO as /model and /effort: a CHANGE applies by reconnecting
     (env is connect-time, like effort), which mid-compaction would derail the compaction exactly the
-    way an effort switch would. An unchanged re-assert is a no-op inside set_env either way."""
-    if not _gate_or_park(sid, ("env", value)):
-        be.set_env(sid, value)
+    way an effort switch would. An unchanged re-assert is a no-op inside set_env either way. Returns
+    (took, parked) in _set_effort_or_park's shape (review round 2 of the env-pick door, 2026-09-19):
+    `parked` is True when the change queued, `took` is False when the backend refused it, so the /new
+    echo can carry the verdict. This used to return nothing and drop it, so a set_env that refused (a
+    pick the door refuses, a session whose registry the backend cannot read) was echoed back as applied
+    and `romp new` printed it so while nothing had changed."""
+    if _gate_or_park(sid, ("env", value)):
+        return (True, True)
+    return (bool(be.set_env(sid, value)), False)
+
+
+def _env_refusal():
+    """The sentence a refused per-session env pick is answered with, POST /new's echo and the parked-op
+    drain's alike (review round 2 of the env-pick door, 2026-09-19; the drain's since round 1): generic on
+    purpose, and NAMES nothing of the pick, because the pick's dict carries values and a credential-shaped one
+    is what the door refuses; the backend's own log line says why on every road it refuses: SdkBackend's problem row
+    (a refused name, or a registry it could not read: that road logged nothing until the closing review of 2026-09-19,
+    so the sentence pointed at no line there) and the unowned route's stderr line (_UnownedBackend.set_env, for a sid
+    no backend owns: it refused in silence until the closing commit of round 9 of fork PR #781's review, kernel-1, so
+    the sentence pointed at no line there either; `romp sessions` shows whether the session is listed)."""
+    return "Couldn't set the per-session env: the session's backend refused it (its log line says why)."
 
 
 def _set_auth_or_park(be, sid, value):
@@ -41548,7 +43792,19 @@ def _apply_pending_ops(now=None):
                     elif op[0] == "auth":
                         be.set_auth(sid, op[1])
                     elif op[0] == "env":
-                        be.set_env(sid, op[1])
+                        # the verdict is READ here too (review round 1 of the env-pick door, 2026-09-18): a parked
+                        # pick the door refuses at replay (a queue mirrored before the credential-shape rule and
+                        # drained after a restart) retired its chip as if it had landed, with no line and no frame,
+                        # while the effort and fast arms had been changed to read theirs for exactly that reason.
+                        # GUARDED like the /new door's env leg (round 9 of the review, kernel-1 and extra9-1): set_env
+                        # is SdkBackend's alone, so on a sid Sessions.backend_for routes to _UNOWNED (a queue parked
+                        # before the session died, or restored after a restart for a session no backend owns) or to
+                        # the Codex backend the unguarded call raised AttributeError, the handler below popped the
+                        # sid's WHOLE queue, and a send parked behind the pick was dropped with no frame and no line,
+                        # where the effort and fast arms answer settingRefused and still hand the send over. A backend
+                        # without set_env is a refusal here; _UnownedBackend answers set_env False itself since the
+                        # same round, so this guard is for a backend outside the kernel's own (Codex; a stand-in)
+                        refused = (be.set_env(sid, op[1]) is False) if hasattr(be, "set_env") else True
                     # (an unknown op kind gets no call: it is popped below and dropped — never wedge the queue)
                     with _pending_ops_lock:               # POP the head — only if it is still the op the backend got
                         _inflight_ops.pop(sid, None)      # (a no-op for a cwd op, which was never recorded)
@@ -41580,7 +43836,7 @@ def _apply_pending_ops(now=None):
                             _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
                         _after_turn_opening(be, sid, _pending_ops.get(sid) or [])
                         break                             # its turn / compaction must end before anything behind it fires
-                    if op[0] in ("effort", "fast") and refused:
+                    if op[0] in ("effort", "fast", "env") and refused:
                         # the backend refused the parked level or toggle when it fired (a Codex model whose catalog does
                         # not offer the level, a session the backend holds no row for, a Codex session's fast toggle):
                         # the same stderr line the command and compact arms write, and the refusal to the chat on the
@@ -41589,9 +43845,17 @@ def _apply_pending_ops(now=None):
                         # a same-kind replacement delivering next does not unsay this one's refusal. No client is at hand
                         # here, so the chat page is the addressee (_send_to_app). Nothing applies early: the gate lift is
                         # still what fires the op (the catch-up fold's review, 2026-09-18).
-                        what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
-                        why = (_effort_refusal(be, op[1]) if op[0] == "effort"
-                               else "Couldn't toggle fast mode: the session's backend refused it.")
+                        if op[0] == "env":
+                            # NAMES ONLY, through the chip's own renderer (_parked_md): the op's dict carries the values,
+                            # and a credential-shaped one is what the door refuses, so neither the stderr line nor the
+                            # frame may quote the pick; the reason stays generic, the backend's log line says why
+                            # (review round 1 of the env-pick door, 2026-09-18)
+                            what = _parked_md(op)
+                            why = _env_refusal()
+                        else:
+                            what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
+                            why = (_effort_refusal(be, op[1]) if op[0] == "effort"
+                                   else "Couldn't toggle fast mode: the session's backend refused it.")
                         sys.stderr.write("pending ops apply: %s refused %r for %s\n" % (type(be).__name__, what, sid[:8]))
                         _send_to_app("chat", {"type": "settingRefused", "gesture": "command", "sid": sid,
                                               "flag": op[0], "text": why})
@@ -43283,12 +45547,15 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
     _fk, _fe, _fold_ok, _fold_why = _floor, None, False, None
     _pref_len = 0
     _seams_sig = json.dumps((_bs_store or {}).get("seams") or [], sort_keys=True, default=str)
-    _pk = _chat_postal_key()
     # ONE postal index and ONE caption map per build: the fold gate's check, the tail pass and the commit
     # hydrate against the same objects, so the entry records exactly the values its cards embed (a caption
     # appended between two of them would otherwise be embedded by one hydration and recorded by another).
     # The map is the cycle's on the pusher thread (_msg_summaries_scoped); a handler thread fetches its own.
+    # This session's postal revision (_pk, _chat_postal_rev) is read from that same index (2026-09-18), so
+    # the key the gate compares and the index it hydrates against are one object; the log's identity was
+    # the key before it, and mail between two other sessions rebuilt every mail-bearing tab.
     _pidx = _postal_index()
+    _pk = _chat_postal_rev(sid, _pidx)
     _msum_slot = [None]
     def _msum():
         if _msum_slot[0] is None:
@@ -43372,11 +45639,11 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
                             break
             if _fold_why is None and _fe["postal_raw"]:
                 # The sealed postal cards are keyed on the VALUES they embed from outside the transcript
-                # (2026-09-09): the log's identity (_pk, the index memo's own key) and, per card, its caption
-                # and its peer's name and colour, read from the same index and caption map a re-hydration in
-                # this build would read (_postal_card_deps). They used to be re-hydrated on every judge pass
-                # (_judge_gen), although the only judge-written input a card embeds is its caption: every
-                # tab's whole sealed list, on every pass that moved any store. A deps tuple of None is an
+                # (2026-09-09): this session's postal revision (_pk, _chat_postal_rev, 2026-09-18) and, per
+                # card, its caption and its peer's name and colour, read from the same index and caption map a
+                # re-hydration in this build would read (_postal_card_deps). They used to be re-hydrated on
+                # every judge pass (_judge_gen), although the only judge-written input a card embeds is its
+                # caption: every tab's whole sealed list, on every pass that moved any store. A deps tuple of None is an
                 # entry sealed outside the pusher's names scope (see _scoped): unverified, so it re-hydrates
                 # once here and is recorded by this build if it is scoped.
                 _deps = _fe.get("postal_deps")
@@ -43888,7 +46155,7 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
         if _ev.get("uuid") and _ev["uuid"] not in _raw_turn:
             _raw_turn[_ev["uuid"]] = _ti
     # A raw postal event that did not hydrate (its message not in the index yet) renders from the log alone and
-    # depends on the postal log, so the signature folds the log's identity even when no card rendered
+    # depends on the postal log, so the signature folds this session's postal revision even when no card rendered
     # (_chat_build_deps: postal_any); the record keeps the index and caption map this build hydrated against.
     if _chat_dep_scope.deps is not None:
         _chat_dep_scope.deps["postal_any"] = _chat_dep_scope.deps["postal_any"] or any(_chat_postal_relevant(_e) for _e in _raw_tail)
@@ -44011,6 +46278,8 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
                                     + [(em.parse_z(_e.get("ts")) or 0, (_e.get("md") or "").strip()) for _e in _newpart if _e.get("orphaned")],
                     "open_tools": _open_tools, "skill_unfilled": _skill_unf,
                     "postal_raw": _praw, "postal_cards": _pcards,
+                    # postal_key: this session's postal revision (2026-09-18; the field's name predates it, and an
+                    # entry sealed under the old shape never outlives a restart: _chat_fold is in memory)
                     "postal_key": _pk, "postal_deps": _pdeps, "pl_pending": _plp, "pv_missing": _pvm,
                     "task_outs": _touts,
                     # the sealed Agent cards, for _chat_agents_moved: (toolUseId, agentId, pending) —
@@ -45592,7 +47861,7 @@ def _provisional_card(s, name, color, fsid, live, now, store=None):
             "t": t, "live": live, "_ageT": t,   # the tint's epoch; trgb is stamped per build by the feed's fold (_feed_fold_card)
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
-            "blocked": None, "column": "working",
+            "blocked": None, "column": "working", "board": "feed", "category": "working",
             # judging = the turn has SETTLED and the planner's classify pass is due/in flight — the swirl
             # chip says Analyzing… only then; an open turn keeps the honest Working… (the user 2026-07-12)
             "provisional": True, "judging": not turn_open, "tree": []}
@@ -45628,7 +47897,7 @@ def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None, 
             "t": t, "live": live, "_ageT": age_t,   # trgb is stamped per build by the feed's fold (_feed_fold_card)
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
-            "blocked": None, "column": "working",
+            "blocked": None, "column": "working", "board": "feed", "category": "working",
             # awaiting flavor with the live bg-task descriptions → the "Waiting on task" pill (the user
             # 2026-07-13). judging False: this session is idle-awaiting, not analyzing — the pill, not a
             # "Working…"/"Analyzing…" chip, carries the state (feed.ts defers the provisional chip when awaiting).
@@ -45697,7 +47966,7 @@ def _blocked_placeholder(s, name, color, fsid, live, now, perm_state, since):
             "blocked": {"state": perm_state,
                         "what": ("this session is stopped awaiting your input" if perm_state == "picker"
                                  else "this session is stopped awaiting your approval")},
-            "column": "needs_input",
+            "column": "needs_input", "board": "feed", "category": "needs_input",
             "provisional": True, "tree": []}
 
 
@@ -45731,7 +48000,7 @@ def _user_todo_placeholder(s, name, color, fsid, live, now, todos):
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": "userTodos", "count": len(todos),
                         "what": _USER_TODO_BLOCK_WHAT},
-            "column": "needs_input",
+            "column": "needs_input", "board": "feed", "category": "needs_input",
             "provisional": True, "tree": []}
 
 
@@ -46241,11 +48510,36 @@ _FEED_MEMO_LABELS = ("transcript", "parse", "cut", "states", "names", "captions"
                      "closer", "todos", "queued", "peers")
 _FEED_MEMO_DEPS = ("usage", "offer", "peers", "nudge", "stalls")    # components evaluated over the previous entry's read record
 _FEED_NUDGE_FIELDS = ("count", "failed", "failedAt")  # the fields the card reads; pinned by the input census
+# The `row` component's positions and the live-row fields each folds (2026-09-18): _feed_row_key reads them by name,
+# the input census (tests/test_feed_memo_inputs.py RowFieldCensus) pins them to the readers' constant reads, and a
+# row miss is attributed to the positions that moved (row_by).
+_FEED_ROW_FIELDS = ("state", "since", "billing", "retry", "agents", "tasks")   # `billing`, not `auth`: miss_by's `auth` is the
+#                                                  machine's key on hand (_auth_key_present), a board-wide input; this is one row's fields
+_FEED_ROW_AUTH_FIELDS = ("authLive", "auth", "authLogin", "authLoginLive", "authLabel")   # the billing position's fields:
+#                                                  _cap_switch_offer (authLive, auth); _login_refusal_label and the body's refused-login
+#                                                  mark (authLogin, authLoginLive, authLabel)
+_FEED_ROW_RETRY_FIELDS = ("max", "status", "networkDown", "rateLimitType")   # the retryInfo fields _session_retrying reads, beside retryCount
+_FEED_ROW_AGENT_FIELDS = ("agentId", "type", "since")                      # the subagents fields _awaiting_live_rows reads
+_FEED_ROW_TASK_FIELDS = ("toolUseId", "type", "desc", "since", "taskId")   # the bgTasks fields _bg_live_norm reads
 _feed_memo = {}                                  # sid → (key, entry_json, size); dict order is the LRU order: a served entry
 #                                                  moves to the tail, the head goes first when the bytes exceed the bound
 _feed_memo_lock = threading.Lock()               # the dict ops and the counters only; the derivation runs outside it
 _FEED_MEMO_STATS = {"hit": 0, "miss": 0, "evict": 0, "entries": 0, "bytes": 0, "bound": 0, "derived": 0, "failed": 0,
-                    "miss_by": {k: 0 for k in _FEED_MEMO_LABELS + ("cold",)}}   # /perf builds.feed.memo
+                    "coldLive": 0, "coldFlip": 0,   # coldLive: a living session with a transcript whose cache-only parse
+                    #                                  read MISSED, per session per build; a session no client and no judge
+                    #                                  has parsed rides it EVERY build, so a standing count is those
+                    #                                  cold-by-design sessions, not a fault. coldFlip: those the memo held
+                    #                                  WARM-keyed and the key re-read in place through _parse instead of
+                    #                                  deriving cold (one kernel parse each, also under /perf parses.kernel;
+                    #                                  2026-09-18, the re-read comment in _feed_session_key). Watch: coldFlip
+                    #                                  climbing every build for ONE session with no appends means its parse
+                    #                                  never stores (jd._parse_store refuses a retired leaf), a row still
+                    #                                  naming a leaf discover retired; discover retires the old leaf exactly
+                    #                                  when handing out the new one, so it should not occur, and this shows it
+                    "miss_by": {k: 0 for k in _FEED_MEMO_LABELS + ("cold",)},   # /perf builds.feed.memo
+                    "row_by": {k: 0 for k in _FEED_ROW_FIELDS + ("presence",)}}   # ...and which row position moved on a row
+#                                                  miss; `presence`: the row appeared or left (None on one side) or has another
+#                                                  shape. Not `live`, which miss_by uses for the live tail's revision (2026-09-18)
 _FEED_DERIVE_FAILED = {}   # sid → cause head of the session's CURRENT card-build fault episode (the decode of its memoized
 #                            entry, its key, its derivation, the serialization: whatever raised last), present while it is
 #                            failing: the dedupe of the stderr line and the bell row (one per distinct cause per session,
@@ -46276,15 +48570,26 @@ def _feed_memo_count(key, n=1):
 def _feed_memo_miss(old, new):
     """Count a miss and attribute it: the sorted labels of every key component that differs between the cached key
     `old` and the fresh one `new` (`cold` when there was no cached entry, or its key has another shape). A miss with
-    several moved components counts under each, so miss_by's sum can exceed `miss`."""
+    several moved components counts under each, so miss_by's sum can exceed `miss`. A row miss is further attributed
+    to the row positions that moved (row_by, in _FEED_ROW_FIELDS order; its sum can exceed miss_by's row), or to
+    `presence` when the row appeared or left or is not a tuple of the positions' length (2026-09-18)."""
     if old is None or len(old) != len(new):
         labels = ("cold",)
     else:
         labels = tuple(sorted(lab for lab, a, b in zip(_FEED_MEMO_LABELS, old, new) if a != b))
+    positions = ()
+    if "row" in labels:
+        a, b = old[_FEED_MEMO_LABELS.index("row")], new[_FEED_MEMO_LABELS.index("row")]
+        if isinstance(a, tuple) and isinstance(b, tuple) and len(a) == len(b) == len(_FEED_ROW_FIELDS):
+            positions = tuple(f for f, x, y in zip(_FEED_ROW_FIELDS, a, b) if x != y)
+        else:
+            positions = ("presence",)
     with _feed_memo_lock:
         _FEED_MEMO_STATS["miss"] += 1
         for lab in labels:
             _FEED_MEMO_STATS["miss_by"][lab] = _FEED_MEMO_STATS["miss_by"].get(lab, 0) + 1
+        for f in positions:
+            _FEED_MEMO_STATS["row_by"][f] = _FEED_MEMO_STATS["row_by"].get(f, 0) + 1
     return labels
 
 
@@ -46382,6 +48687,7 @@ def _feed_memo_report():
     with _feed_memo_lock:
         out = dict(_FEED_MEMO_STATS)
         out["miss_by"] = dict(_FEED_MEMO_STATS["miss_by"])
+        out["row_by"] = dict(_FEED_MEMO_STATS["row_by"])
         out["entries"] = len(_feed_memo)
         out["bound"] = FEED_MEMO_BYTES
         out["failing"] = len(_FEED_DERIVE_FAILED)   # sessions whose LAST derivation raised (a standing fault, not history)
@@ -46411,15 +48717,42 @@ def _subagent_dirs_ident(sid, d):
     """(the directories under the subagents root `d`, their identities) for the feed key's subagents component, from the
     shared walk memo (_subagent_tree, 2026-09-16; before it this key held a sid-keyed memo of its own over the same walk,
     the T368 review's profile having put the walk at a third of the key's cost, while every other reader still walked):
-    an unchanged tree costs one lstat per known directory. A root that does not exist is the tree (d,) with identity None,
+    an unchanged tree costs one lstat per known directory, once per cycle across every reader (the cycle scope,
+    2026-09-18: the chat build's sidecar-map reads earlier in the same cycle sampled this root, and the key is served that
+    sample). A root that does not exist is the tree (d,) with identity None,
     and its appearance moves the component; a symlink or file in its place is (d,) with the LINK's own lstat identity
     (before the shared memo, the target's os.stat identity: one component miss at deploy for such a session, no output
     change).
     A sidecar REWRITTEN in place under its own name moves no directory's mtime, so neither this component nor
     _subagent_meta_map's own cache sees it (pre-existing, shared with that cache; the CLI writes a sidecar once, at the
     agent's spawn). `sid` is kept for the call's shape; the memo is per root and bounded by the alive set
-    (_subagent_trees_forget), not per session."""
-    dirs, stats = _subagent_tree(d)
+    (_subagent_trees_forget), not per session. A root that cannot be read (_subagent_tree raises) answers (d,) with
+    identity _TREE_UNREADABLE whatever memo entry stands for it, unheld (the read paid the failed lstat; the next build's
+    key reads again): a value no readable tree's identities and no absent root's (None,) equal, so the component moves
+    when the fault begins and again when it clears. The entry the feed derives under the fault, whose awaiting fold
+    could not read the agents' files under the tree (a command an agent launched stands unattributed), is keyed on the
+    marker and never served once the root reads again (tests/test_feed_session_memo.py
+    FeedEntryDerivedUnderARootFault); a standing entry answered here would keep the component at its healthy value
+    through the fault, and that entry would be served after the fault cleared until another component moved. The
+    marker also covers an entry holding an unvouched (None) identity (a racy stamp or a failed listing), which
+    _subagent_tree_sample never serves as a hit, and a lone root's such entry, ((d,), (None,)), which equals the
+    missing root's key: the answer is never the missing root's (d,), (None,), an unreadable tree is never keyed as an
+    absent one, and the frame keyed on the marker moves when the read succeeds (tests/test_subagent_tree_memo.py
+    FailClosedRoads, the feed key's marker cases: no entry, a lone root's entry and a multi-directory one;
+    UnreadableRoot, a vouched entry standing). Its cost, one derivation of the session's
+    feed entry at each edge of the fault (the code before this change, whose tree sample took the fault for absence,
+    derived at both edges too): the unreadable-tree entry of _subagent_tree_memo_report's docstring. The rule holds for
+    a fault present when this key is taken. A fault that begins after the key is taken, inside the derivation
+    (_feed_session_entry), and clears before the next build moves no component, so the entry derived under it is
+    served after it clears until another component moves: a residual this change does not close (the code before this
+    change had it too). The key has no component for an agent's own file either: a launch appended to that file after
+    a build moves nothing, so the feed serves the entry derived before the launch, and an entry derived while the fold
+    faulted on that file with the tree readable is served after that fault clears (pre-existing; a follow-up outside
+    this change)."""
+    try:
+        dirs, stats = _subagent_tree(d)
+    except _SubagentTreeUnreadable:                       # whatever entry stands: the marker, which no readable or absent
+        return ((d,), (_TREE_UNREADABLE,))                #  tree answers, so the key moves into the fault and out of it
     idents = tuple(_stat_ident(s) for s in stats)
     return (dirs or (d,), idents or (None,))
 
@@ -46526,6 +48859,47 @@ def _feed_stalls_key(ctx, entry):
     return tuple(sorted((g, v.get("why"), v.get("since")) for g, v in ctx["stalls"].items() if g in ids))
 
 
+def _feed_row_key(tm):
+    """The `row` component of _feed_session_key: the live row's fields the derivation reads, by position
+    (_FEED_ROW_FIELDS), or None when the session is not live (`tm is None`, the same test the key's `live` makes; the
+    whole-row fold keyed an empty row None while `live` read True). The positions:
+      state, since: `live`, perm_state, _warm_wanted's state, the blocked placeholder's since; the key builder itself
+        also reads state, for the `ask` gate (a row on a permission or picker prompt asks the backend for its ask).
+      billing: authLive and auth (_cap_switch_offer), authLogin, authLoginLive and authLabel (_login_refusal_label and
+        the body's refused-login mark): five named reads, so the census derivation sees each (_FEED_ROW_AUTH_FIELDS
+        documents them and is pinned to these reads). Named for what it is, not `auth`: miss_by's `auth` label is the
+        machine's key on hand, a board-wide input, and /perf shows the two maps side by side.
+      retry: retryCount and retryInfo's max, status, networkDown and rateLimitType (_session_retrying). Keyed whether
+        or not the row reads "retrying", where the reader alone looks: a superset of the reads, one possible extra
+        derivation at a storm's edge, within the contract.
+      agents: each subagent's (agentId, type, since), the fields _awaiting_live_rows reads.
+      tasks: whether the row carries a task set at all (`"bgTasks" in tm`, _bg_live_norm's branch: a live row with no
+        set falls to the transcript scan, an empty set is authoritative) and each task's (toolUseId, type, desc, since,
+        taskId), the fields _bg_live_norm reads. desc stays: a task_progress event may rename a task, and
+        _agent_task_label renders the name.
+    Not the whole row (2026-09-18): the raw token count, the context percent and its overflow flag move on every context refresh (after each landed
+    turn, on connect, on a model switch) and a background agent's task-row last-tool name on its every tool call; no card
+    reads them, yet the sorted whole row re-derived the owning session in every cycle that saw them moved (row rode
+    1454 of 4132 misses on the live kernel at the design's read, 2568 of 6245 at the review's; the row-only share is
+    what row_by reports). model, effort, mode, fast, the pending bits, connected and spawning are the chat chip's and
+    the lanes' facts (_chat_build_sig and the views' per-row signature fold them), not a card's. snapT and interrupting
+    are not read here: the `interrupting` component carries _interrupting's boolean. The merged row (Sessions.live) is
+    the only shape the feed reads, and it carries neither, its since an int via _num; a running session whose reg
+    vanished is no second shape, since _backend_rows hands its own snapshot back through that same projection.
+    Pre-existing and unchanged: _cap_switch_offer, _session_awaiting and _bg_live_norm take the row off _live_map()
+    (the cycle snapshot), not off this `tm`; the same map under the pusher. The exact readers and their fields are
+    pinned by tests/test_feed_memo_inputs.py's RowFieldCensus."""
+    if tm is None:
+        return None
+    info = tm.get("retryInfo") if isinstance(tm.get("retryInfo"), dict) else {}
+    return (tm.get("state"), tm.get("since"),
+            (tm.get("authLive"), tm.get("auth"), tm.get("authLogin"), tm.get("authLoginLive"), tm.get("authLabel")),
+            (tm.get("retryCount"),) + tuple(info.get(k) for k in _FEED_ROW_RETRY_FIELDS),
+            tuple(tuple(a.get(k) for k in _FEED_ROW_AGENT_FIELDS) for a in (tm.get("subagents") or ()) if isinstance(a, dict)),
+            ("bgTasks" in tm,
+             tuple(tuple(t.get(k) for k in _FEED_ROW_TASK_FIELDS) for t in (tm.get("bgTasks") or ()) if isinstance(t, dict))))
+
+
 def _feed_session_key(s, tm, ctx, prev_entry):
     """One session's memo key: a tuple in _FEED_MEMO_LABELS order, one component per input _feed_session_entry reads,
     every file stat'd BEFORE any read below it (stat-then-read: a publish landing between the stat and the read pairs
@@ -46536,10 +48910,16 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     side effects (the live merge's prune/settle, the interrupt stamp's pop, the snapshot punch) run every build as
     they did before the memo. `prev_entry` is the session's previous decoded entry (None when cold): its `peers` and
     `reads` records drive the dependency components (_FEED_MEMO_DEPS), which _feed_key_with_deps re-evaluates over the NEW entry
-    after a derivation (the chat build's deps idiom), so a cold entry hits on the next unchanged build.
+    after a derivation (the chat build's deps idiom), so a cold entry hits on the next unchanged build. `ctx["prev_key"]`
+    is the key that entry was memoized under (None when cold), set per session by build_feed's loop beside `prev_entry`:
+    its parse component decides the warm-to-stale re-read below.
 
     Components, label: what it covers (the reads in the body), how it is taken.
-      transcript: _chat_ident(s["path"]). The cache-only parse (_parse_cached → jd.parse_cached's fileset key), the
+      transcript: (_chat_ident(s["path"]), s["path"]). The file's identity and its PATH, the string (2026-09-18: a live
+        SDK row discover cannot see yet takes its path from the registry's cwd and lastSid through _sdk_sess, and
+        `reg` no longer folds those fields; a move between two transcripts that exist moves the identity, a move
+        between two that do not has the identity None at both, and the string alone tells them apart). The
+        cache-only parse (_parse_cached → jd.parse_cached's fileset key), the
         anchors (_segs_seam, _seg_anchors, _seg_jump, _seg_key, _seg_last_text, _atom_prose_chars, em.turn_scalar),
         the api-error tail (_api_error), the background scans (_heal_session_tops → _bg_scan_all_cached,
         _bg_live_norm's transcript rung, _bg_owner_tops/_bg_service_descs/_awaiting_task_descs → _bg_placed_tops →
@@ -46551,7 +48931,10 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         parse that is not a function of its files (em.parse_session reads the clock for the trailing idle span's
         end alone, synthesize_idle), so a parse re-run at a later clock with no file change (an evicted parse warmed
         again) differs there and nowhere else; keying on it re-derives once per re-parse and makes the parse's
-        identity exact without a clock in the key (T368 review round two).
+        identity exact without a clock in the key (T368 review round two). The bit never flips back to False for an
+        entry the memo holds warm: when the cache-only read misses for such a session, the key re-reads through _parse
+        in place (the re-read comment in the body, 2026-09-18) rather than deriving the session cold and warm again a
+        build later; a cold kernel's first paint still parses nothing, since no entry is warm yet.
       cut: the SDK backend's pending_cut(sid), a chat DELETE rollback that changes the parse with no file change.
       states: (_chat_ident(STATE/states/<fsid>.jsonl), _chat_ident(STATE/states/<anchor>.jsonl)). The parse key's
         states file, the machine cuts (_interrupt_suppresses_nudge → _last_machine_cut), _session_retrying's
@@ -46573,14 +48956,30 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         stamp moved every snapshotted session's key twice per pass.
       anchors: _node_anchor_rev[fsid]. The warm-anchor table _node_anchor_uuids serves a cold node from; a chat build's
         resolve for this sid bumps it.
-      reg: (_chat_reg_sig(fsid), _chat_ident(STATE/gone/<fsid>.json)). The SDK registry's content and read state,
-        excluding host journal acknowledgements/log offsets, plus the death marker's file identity. The launch ledger
-        (_thread_reg → _bg_live_norm), spawnedAt and the death marker (_sdk_spawned_at, jd._cli_epoch), the SDK-human
-        flag (_display_sdk_human).
+      reg: (_feed_reg_sig(fsid), _chat_ident(STATE/gone/<fsid>.json)). The SDK registry record's state (readable,
+        missing or unreadable) and the fields a derivation reads (_FEED_REG_FIELDS, by value): bgLedger, the launch
+        ledger _bg_live_norm joins for deadlines and acting agents (the body's own call, _session_awaiting →
+        _awaiting_live_rows, _bg_owner_tops' rows, _awaiting_task_descs, _bg_service_descs), and spawnedAt, the CLI
+        epoch (_sdk_spawned_at → jd._cli_epoch); plus the death marker's file identity. The record's existence is
+        _display_sdk_human's answer (the parse slot). Every other field is the live row's (`row`) or is read off the
+        feed path (2026-09-18, the allow-list; _feed_reg_sig names the readers). cwd, lastSid and name reach the
+        loop's session row through _sdk_sess outside this key and are folded by `transcript` (the path, by string
+        and by identity) and `names` (the row's name, by value); lastSid is also read inside the body by
+        _session_stamp_read → jd._sdk_last_sid, whose output no card consumes (_feed_reg_sig says why).
       cleared: the session's own slice of _cleared_ids(), sorted. `nid in cleared` per top, the provisional card's
         follow-up target check; a peer's slice rides `peers`.
-      row: the live row tm without snapT and interrupting, as sorted items (None when not live). `live`, perm_state,
-        `since`, _session_retrying's retry fields, the subagent and bgTasks sets, authLive (_cap_switch_offer).
+      row: _feed_row_key(tm): the live row's fields the derivation reads, by position (state, since; the billing fields
+        authLive, auth, authLogin, authLoginLive, authLabel; retryCount with retryInfo's max, status, networkDown,
+        rateLimitType; each
+        subagent's (agentId, type, since); whether the row carries a task set and each task's (toolUseId, type, desc,
+        since, taskId)); None when not live. Read by `live`, perm_state, the blocked placeholder's since, the `ask`
+        gate's state read below, _session_retrying, _cap_switch_offer, _login_refusal_label, _warm_wanted's state,
+        _awaiting_live_rows' agents, _bg_live_norm's tasks. Not the whole row (2026-09-18): the raw token count, the context percent and
+        ctxOver move on every context refresh and a background agent's task-row last-tool name on its every tool call, none read
+        here, and the sorted whole row re-derived the session on each (row rode 1454 of 4132 misses on the live kernel
+        at the design's read, 2568 of 6245 at the review's). The merged row (Sessions.live) is the only shape read here,
+        a vanished-reg session's included (_backend_rows hands its snapshot through the same projection): no snapT, no
+        interrupting, an int since.
       ask: json of the backend's current_ask(fsid) while the row is on a permission/picker prompt, else None. The
         blocked placeholder's title.
       live: Sessions.live_rev(fsid, be). The in-memory live tail _merge_live_atoms folds in ahead of the disk.
@@ -46607,7 +49006,10 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         under it, from the shared walk memo (_subagent_dirs_ident over _subagent_tree, 2026-09-16: the directories are
         listed once per change, vouched for by one lstat each while they stand). _subagent_meta_map. A sidecar rewritten
         in place under its own name moves no directory's mtime and is invisible here as it is to the map's own cache
-        (pre-existing).
+        (pre-existing). Sampled once per pusher cycle across every reader (2026-09-18), so the key's identities are the
+        same sample the derivation's map read. A root whose own lstat fails for a reason other than absence keys under
+        the unreadable marker whatever entry stands, so an entry derived under that fault is never served after it
+        clears (_subagent_dirs_ident's docstring: the rule, the fault it covers and the roads it leaves open).
       usage: _chat_ident(STATE/usage.json) when the previous entry recorded reading it (an api error's cap offer,
         _cap_switch_offer), else None. A deps component.
       offer: the login-account usage window sitting at its cap with its reset still ahead of the build's clock, as
@@ -46640,7 +49042,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     hide = bool(_session_flag(fsid, "hideFromFeed"))
     board = _feed_board_facts(ctx, now)         # the board-wide identities and indexes, once per build (before any read)
     # ── file identities, every one BEFORE the reads below ──
-    transcript = _chat_ident(path) if path else None
+    transcript = (_chat_ident(path), path) if path else None   # the identity and the string: two absent files differ by path alone
     states = tuple(_chat_ident(jd.STATESDIR / (k + ".jsonl"))
                    for k in dict.fromkeys([fsid, str(s.get("anchor") or "")]) if k)
     names = (s.get("name"), tuple(_names_parts(fsid) or ()))
@@ -46652,10 +49054,9 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     _hold = _rewind_hold_get(fsid)
     hold = (_hold.get("cutT"), _hold.get("leaf"), _hold.get("at")) if _hold else None
     anchors = _node_anchor_rev.get(fsid, 0)
-    reg = (_chat_reg_sig(fsid), _chat_ident(jd.GONEDIR / (fsid + ".json")))
+    reg = (_feed_reg_sig(fsid), _chat_ident(jd.GONEDIR / (fsid + ".json")))
     cl = board["cleared_by_sid"].get(fsid, ())
-    row = (tuple(sorted(((k, v) for k, v in tm.items() if k not in ("snapT", "interrupting")), key=lambda kv: kv[0]))
-           if tm else None)
+    row = _feed_row_key(tm)                          # the read fields by position, None when not live (2026-09-18)
     postal = _postal_session_slice(fsid, board["postal"])
     nudge = _feed_nudge_key(ctx, prev_entry)
     stalls = _feed_stalls_key(ctx, prev_entry)
@@ -46690,6 +49091,36 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     ut_open = []                                     # the session's OPEN user todos (the fork's floor, marker and rows)
     if not hide:
         ps = _parse_cached(s["path"]) if path else None   # CACHE-ONLY: the cards paint at once on a cold kernel (the user 2026-06-26)
+        if ps is None and path:
+            _feed_memo_count("coldLive")             # a living session (every session in build_feed's loop is in live_map:
+            #                                          _alive_sessions filters on it, so no `live` gate here) whose parse
+            #                                          the cache does not hold at this version; a session nothing has
+            #                                          parsed rides this every build
+            prev_key = ctx.get("prev_key")           # the key the memo holds this session's entry under (build_feed's loop
+            #                                          sets it per session, None when cold)
+            if _feed_key_was_warm(prev_key):
+                # THE WARM-TO-STALE RE-READ (2026-09-18). This session's memoized entry was derived over a warm parse and
+                # the cache-only read just missed: its transcript, its states log or its cut moved since the parse the
+                # chat's build stored, which is what a streaming session does every cycle (the chat builds before the
+                # feed in _push; the stream lands between them). Deriving COLD here painted the entry without its
+                # parse-derived half (no working dot, no open-turn narration, no anchors, sessState unknown, bg None,
+                # the closer swirl off) and the next build, after the chat re-parsed, derived it WARM again: two
+                # derivations and a dot blink per append, a card move on no new information (live: the parse miss label
+                # 2061 against transcript 1297 over 1195 builds). The parse is the shared store's (jd.parsed_session
+                # through _parse, the slot the chat's build hits next cycle), so a tab the chat builds every cycle pays
+                # it once either way, here instead of there; a session the chat skips pays one assembly fold per
+                # appended version (em.parse_session's `fold` mode; a full parse when the fold cannot serve), on
+                # whichever thread builds the feed (the pusher, a clearAll handler, GET /feed.json), a racing build on
+                # another thread costing a duplicate parse and never a wrong entry. A session never derived warm still
+                # reads cache-only, so a cold kernel's first paint parses nothing, as before. The one completeness
+                # caveat: a parse whose content changed while the transcript's identity, both states identities, the
+                # cut, the reg and the last turn's end all stand now key-equals and hits (the cold/warm pair used to
+                # re-derive it). The only parse input outside the key is the anchor candidate transcript
+                # (jd._judge_candidates), which the store treats as immutable after the fork (jd._note_leaf retires the
+                # old leaf as discover hands out the new one); were that contract to break, add the anchor's identity
+                # to the `transcript` component (same label, no census change).
+                ps = _parse(path, fsid, now)
+                _feed_memo_count("coldFlip")
         if ps is not None:
             ps = _merge_live_atoms(ps, fsid)         # the same LIVE-MERGED session the chat chip + timeline lane read
         try:
@@ -46712,7 +49143,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
             ut_open = []
     ctx.update(ps=ps, who_working=who_working, interrupting=interrupting, store=st, closer=closer, hide=hide,
                ut_open=ut_open)
-    # the store component closes on the READ's outcome (st is None: the read faulted, jd.load_goals_or_fault filed it):
+    # the store component closes on the READ's outcome (st is None: the read faulted, jd.load_goals_shared_or_fault filed it):
     # an EIO or a permissions fault moves no stat, so without the bit a faulted derivation (no cards) would serve
     # on after the fault cleared, and a pre-fault entry would serve through it (tests/test_goal_store_fault_boundary)
     # The store VERSION the body's read rendered, and whether the override journal is replayed onto it (2026-09-16):
@@ -46738,6 +49169,17 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     return (transcript, parse, cut, states, names, captions, store, anchors, reg, cl, row, ask, live_rev,
             bg, wait, postal, stalls, nudge, jauth, jactive, hide, watch, subagents, usage, offer, auth, downtime,
             debug, interrupting, closer, todos, queued, peers)
+
+
+_FEED_PARSE_IDX = _FEED_MEMO_LABELS.index("parse")
+
+
+def _feed_key_was_warm(key):
+    """Whether a memoized key was taken over a WARM parse: its parse component reads (True, end). False for no key, a
+    key of another shape (a build before a label change; _feed_memo_miss files that under cold) or a cold one
+    (2026-09-18, the warm-to-stale re-read in _feed_session_key)."""
+    return (isinstance(key, tuple) and len(key) == len(_FEED_MEMO_LABELS)
+            and isinstance(key[_FEED_PARSE_IDX], tuple) and key[_FEED_PARSE_IDX][0] is True)
 
 
 _FEED_PEERS_UNSETTLED = ("unsettled",)           # a `peers` component no build's key can equal (the builder makes None or
@@ -46868,7 +49310,7 @@ def _feed_session_entry(s, ctx):
     #                                          pass is mid-flight → the card's
                                              # status never shows a half-applied intermediate (atomic visibility)
     store_faulted = store is None            # this session's store could not be READ (EACCES, EIO, a directory
-    if store_faulted:                        # at the path): its row is filed (jd.load_goals_or_fault) and THIS
+    if store_faulted:                        # at the path): its row is filed (jd.load_goals_shared_or_fault) and THIS
         store = {"nodes": {}, "status": {}}  # session renders with no goal-derived content — no cards (so no
         #                                      floors and no swirl, which land only on cards) and nothing
         #                                      inferred from the absence (the provisional card is gated on the
@@ -47872,6 +50314,7 @@ def _feed_session_entry(s, ctx):
             "interrupting": bool(sess_interrupting and (column == "working" or (col == "blocked" and _lastblk == "interrupt"))),   # a user interrupt is IN FLIGHT → steady "interrupting…" badge until it settles (the user 2026-07-07)
             "interrupted": bool(sess_interrupted and not sess_interrupting and (column == "working" or (col == "blocked" and _lastblk == "interrupt"))),   # the user stopped this session and hasn't re-engaged → "interrupted" badge (only ONCE the interrupt has settled); nudge suppressed until their next message (the user 2026-07-05)
             "column": column,
+            "board": "feed", "category": column,   # the board model's two fields (plans/card-boards.md, phase two): the feed's category IS the column
             "recheck": recheck,                  # targeted follow-up on a soft-block → de-urgented (dotted), moved to Working, pending re-judge
             "rejudging": rejudging,              # plain thread reply after a block → STAYS in Needs-You, "Re-judging…" swirl while a turn is in flight (the user 2026-06-30)
             "judging": bool((sess_judging or _stall_inflight) and column == "working"),
@@ -48067,6 +50510,10 @@ def build_feed(now, live_map=None):
         try:
             prev = json.loads(ent[1]) if ent is not None else None   # the ONE decode per session per build: a hit's fresh
             #                                                          objects to fold, and the dependency record the key reads
+            ctx["prev_key"] = ent[0] if ent is not None else None    # ...and the key it was memoized under: the key's
+            #                                                          warm-to-stale re-read reads its parse component
+            #                                                          (2026-09-18). Set for EVERY session, None when cold:
+            #                                                          ctx is one dict across the loop (the peer_facts idiom)
             key = _feed_session_key(s, tm, ctx, prev)
             if ent is not None and ent[0] == key:
                 _feed_memo_count("hit")
@@ -48110,8 +50557,8 @@ def build_feed(now, live_map=None):
     if heal_total > _HEAL_LOG["n"]:                   #   count is named only when it is the one that rose, so a rise in
         _rose.append("%d session-started top(s) nested under the goal they ran in" % heal_total)   # one never re-says
     if hidden_total > _HEAL_LOG.get("h", 0):         #   the other's number (T333: the hidden count, a skill the harness
-        _rose.append("%d session-started top(s) hidden (rooted in a skill the harness loaded, no request in the "
-                     "store to sit under; the session's own view keeps the work)" % hidden_total)   # loaded, no host)
+        _rose.append("%d session-started top(s) hidden (rooted in a skill the harness loaded, no request current at "
+                     "its mint to sit under; the session's own view keeps the work)" % hidden_total)   # loaded, no host)
     if _rose:
         _HEAL_LOG["n"], _HEAL_LOG["h"] = max(heal_total, _HEAL_LOG["n"]), max(hidden_total, _HEAL_LOG.get("h", 0))
         sys.stderr.write("feed: %s (no request behind them; the planner nests new ones at mint time)\n" % "; ".join(_rose))
@@ -48157,7 +50604,7 @@ def build_feed(now, live_map=None):
             "blocked": {"state": "parkedHandoff", "toSid": ph["toId"], "toName": ph["toName"],
                         "what": "a handoff from %s is parked — revive %s to deliver it"
                                 % (ph["fromName"], ph["toName"])},
-            "column": "needs_input",
+            "column": "needs_input", "board": "feed", "category": "needs_input",
             "tree": []})
     # QUARANTINED PEER MAIL (per-host trust model): mail from a DIRECTED federated host is held, never
     # auto-injected — each is a human decision (approve/deny/edit), so it surfaces as a needs-you card.
@@ -50709,6 +53156,17 @@ def _postal_messages(now, alive_sids, id2name, live_sids=None):
     tanchors = _thread_anchors(alive_sids)              # {tid: (parent sid, anchorT, name)} — thread mail's home
     for mid, e in sent.items():
         f, t, st = e.get("from_id"), e.get("to_id"), e.get("t")
+        # A relayed send's row addresses the RELAY ("peer:<host>") and, since 2026-09-08, names the recipient too:
+        # to_sid its stable id, toName "<host>:<name>". The connector's far end is the RECIPIENT (the merged board
+        # stitches a bare foreign sid onto that host's lane by its uuid) and its display name carries the host, so
+        # mail to a remote twin of a local session reads "web → TESTHOST:web", never "web → peer:TESTHOST" hanging
+        # off a stub for a lane nobody has (the user 2026-09-18). The relay address keeps ONE job, the pending
+        # flag's cross-host leg below, which stays honest on it (the far end's liveness is not knowable here). A
+        # row older than the fields keeps the relay address, as before.
+        relay = isinstance(t, str) and t.startswith("peer:")
+        to_name = ""
+        if relay and e.get("to_sid"):
+            t, to_name = str(e["to_sid"]), str(e.get("toName") or "")
         # both endpoints must EXIST (bus-origin mail — bounces from the Romp Postal Service itself —
         # has no sender sid and can never draw), and at least one must be a local lane. A comment-THREAD
         # endpoint counts through its parent's lane (rewritten below) — the raw f == t self-check runs
@@ -50719,7 +53177,7 @@ def _postal_messages(now, alive_sids, id2name, live_sids=None):
         ex = execd.get(mid)
         ex_t, ex_dmid = (ex if isinstance(ex, tuple) else (ex, None))
         row = {"id": mid, "fromId": f, "toId": t,
-               "from": id2name.get(f, e.get("from", "")), "to": id2name.get(t, ""),
+               "from": id2name.get(f, e.get("from", "")), "to": id2name.get(t) or to_name,
                "fromOrig": e.get("from", id2name.get(f, f)),
                "sent": st, "exec": ex_t if ex_t else st, "hasExec": ex_t is not None,
                # pending = the deciding events say it can still land: never read (no exec), never
@@ -50732,10 +53190,13 @@ def _postal_messages(now, alive_sids, id2name, live_sids=None):
                "pending": (ex_t is None and mid not in ended
                            and (live_sids is None or t in live_sids
                                 or (t in tanchors and tanchors[t][0] in live_sids)
-                                or (isinstance(t, str) and t.startswith("peer:")))),
+                                or relay)),
                "text": (e.get("body", "") or "").strip()[:240], "summary": msgsum.get(mid)}
         if ex_dmid:
             row["dmid"] = ex_dmid   # lets the MERGED view join a relayed connector to the remote turn's mids
+        if e.get("originMid"):
+            row["originMid"] = str(e["originMid"])   # a delivered copy names the SENDER's id: the merged board folds the
+            #                                          two kernels' rows for one message into one connector on it
         # A thread has NO lane of its own; its visual home is the comment's anchor square on the
         # parent's lane (the user 2026-08-23: the connector comes out of the square and lands back in
         # the lane where the mail arrives — and a reply arcs back into the square). Rewrite the
@@ -50771,6 +53232,93 @@ def _thread_anchors(alive_sids):
     return out
 
 
+_parked_fold_cache = {}       # str(jd.MESSAGES) -> _fold_records cursor (count, gen, state) over the parked-handoff candidates:
+#                               the feed's parked-handoff scan walked every row of the postal log per build (2026-09-18); a fold
+#                               keeps only the parked candidates, and a quiet log is one cursor check per build
+_parked_fold_stats = {"hit": 0, "append": 0, "refold": 0, "restore": 0, "cold": 0, "fail": 0}   # pre-seeded with every path
+#                               fold_records reports through `on`, so the /perf key set is fixed (memos.parkedHandoffs)
+_parked_fold_failed = set()   # paths whose last read failed on a file that exists: one stderr line per episode, ended by the
+#                               next good read (_parked_fold_on). One path in production (the postal log), so no cap
+_PARKED_FOLD_LOCK = threading.Lock()   # the pusher, the connect-time builds on WS threads and the GET handlers all build the
+#                                        feed, so a bare `+= 1` is a read-modify-write across threads (the statesOverlay
+#                                        precedent); the episode set rides the same lock. The cursor dict itself is unlocked
+#                                        like every fold dict in the module: a lost race degrades to a re-read, never a wrong
+#                                        answer
+
+
+def _parked_fold_fresh():
+    return {}
+
+
+def _parked_fold_step(state, o):
+    """One postal-log row into the parked-handoff candidates {mid: {fromId, toId, body, t}} (2026-09-18): a park:true
+    'sent' row enters (a `recovered` sent row, the postal start's rowless rebuild, exactly as the walk let it), and a
+    'recall' or 'bounced' row retires it (terminal, the same pair _postal_log_step files under `ended`: recalled by the
+    sender, or the bus refused or destroyed it; it can never land now). Those two rows are written only AFTER the file
+    has left new/: recall unlinks new/<mid> and writes its row second, none when the unlink fails; _mail_unreadable
+    moves the file aside and writes bounced second, none when the move fails (both in postal_service.py); the orphan
+    sweep never bounces parked mail; and every other bounced writer closes a message that stands in no box, a claim
+    already in cur/, or a cross-host outbox record that never had a new/ file. So the pop never hides a standing file.
+    'exec' and 'unexec' are NOT consulted: read_box(consume=True) renames new/ to cur/ and writes exec second, but
+    restore() moves the file back to new/ BEFORE its unexec row lands and ignores a failed append, so a claim the
+    ledger records can outlive the maildir's truth; the maildir new/ check in _parked_handoffs stays the sole authority
+    for hiding as well as surfacing, applied to every candidate. The body is clipped here as the answer clipped it;
+    `t` reads as the walk's `int(t or now)` did (0 is missing), and a non-numeric t reads as missing too: the walk
+    raised out of the feed build on one, and in a fold that raise would recur as a whole refold per build.
+    Mutate-and-return: fold_records deep-copies the cached state before stepping."""
+    ev, mid = o.get("ev"), o.get("id")
+    if not mid:
+        return state
+    if ev == "sent":
+        to_id, from_id = o.get("to_id"), o.get("from_id")
+        if o.get("park") and to_id and from_id:
+            t = o.get("t")
+            try:
+                t = int(t) if t else None
+            except (TypeError, ValueError):
+                t = None
+            state[mid] = {"fromId": from_id, "toId": to_id, "body": (o.get("body") or "")[:240], "t": t}
+    elif ev in ("recall", "bounced"):
+        state.pop(mid, None)
+    return state
+
+
+def _parked_fold_on(path_s, kind):
+    """The fold's `on` for the postal log: count the path the fold took, and on "fail" (the log exists and could not be
+    stat'ed, opened or read; the fold answered its empty state and memoized nothing, so the feed shows no parked handoff
+    for that build) write one stderr line per episode, the awaiting overlay's shape (_states_overlay_on): the walk this
+    replaced answered [] on such a failure with no trace at all, and a /perf counter alone is not the visible error an
+    unavailable source owes (2026-09-18). A later good read of the same path ends the episode, so a failure after it is
+    said again; nothing else ends one. Cheap on purpose, since it runs inside every fold: one locked increment, and the
+    set is touched only on a failure or while an episode is open."""
+    with _PARKED_FOLD_LOCK:
+        _parked_fold_stats[kind] = _parked_fold_stats.get(kind, 0) + 1
+        if kind == "fail":
+            first = path_s not in _parked_fold_failed
+            _parked_fold_failed.add(path_s)
+        else:
+            first = False
+            _parked_fold_failed.discard(path_s)
+    if first:
+        sys.stderr.write("parked-handoffs: %s unreadable (the file exists); parked handoffs are answered as none until the "
+                         "log reads again\n" % os.path.basename(path_s))
+
+
+def _parked_fold_report():
+    """The fold's counters plus its occupancy, for GET /perf (memos.parkedHandoffs) (2026-09-18): hit (the records were
+    the cached ones; nothing stepped), append (only the appended rows stepped), refold (every row stepped: a rewrite, a
+    shrink, or the first fold of the file), restore (the cursor came from the log's checkpoint and the tail alone was
+    stepped), cold (a checkpointed cursor without its state: stepped from its cut), fail (a read that failed on a file
+    that exists; not memoized, answered as no parked handoffs and said once per episode on stderr) and the gauge
+    entries: the parked sends not yet recalled or bounced, consumed ones included (no terminal row ever comes for a
+    consumed mail; each is one stat per build, a stat the walk paid too)."""
+    with _PARKED_FOLD_LOCK:
+        out = dict(_parked_fold_stats)
+    out["entries"] = sum(len(cur[2]) for cur in list(_parked_fold_cache.values())
+                         if isinstance(cur, tuple) and isinstance(cur[2], dict))
+    return out
+
+
 def _parked_handoffs(now, alive_sids):
     """Parked-to-dead HANDOFFS still awaiting your decision (the user 2026-06-22): a send to a session that
     is DEAD parks in its maildir until that session is revived. Each is a decision only the human can make —
@@ -50778,25 +53326,35 @@ def _parked_handoffs(now, alive_sids):
     parking silently. DETERMINISTIC, no judging: a parked 'sent' row in the postal log (park:true) whose
     maildir file is STILL in the recipient's new/ (unconsumed — the authoritative 'still parked' signal, so a
     later revive+consume or a recall clears it) AND whose recipient is still dead. Returns oldest-first
-    [{msgId, fromId, fromName, toId, toName, body, t}]. Best-effort []."""
+    [{msgId, fromId, fromName, toId, toName, body, t}]. Best-effort [].
+
+    (2026-09-18) A _fold_records fold over the log (_parked_fold_step, checkpointed as "parkedHandoffs") keeps
+    only the parked candidates, so a quiet log is one cursor check per build and an append steps its new rows
+    alone; before it the scan walked every row of the ~32k-row log per feed build (about 4.6 ms in a synthetic
+    replay of the loop, ~9 ms quoted from the live kernel, which built the feed 1370 times in a sampled 97
+    minutes). Keyed on jd.MESSAGES, the file _messages_rows read (tests re-point it); in production it is the
+    file _postal_messages folds under "postalLog", the two cursors sharing one reader entry. The maildir new/
+    check is still applied to every candidate whose recipient is dead: no more than the stats the walk paid, one
+    per parked send not yet recalled or bounced whose recipient is dead (the walk stat'd the recalled ones too);
+    names resolve and the alive set is read at answer time (names change; the state carries ids only). A log
+    that exists and cannot be read answers [] for the build, as the walk did, and is now said once per episode
+    on stderr (_parked_fold_on). Counters ride GET /perf under memos.parkedHandoffs."""
+    cands = _fold_records(_parked_fold_cache, jd.MESSAGES, _parked_fold_fresh, _parked_fold_step,
+                          ckpt="parkedHandoffs", on=functools.partial(_parked_fold_on, str(jd.MESSAGES)))
     base = jd.STATE / "postal"
     out = []
-    for o in _messages_rows():
-        if not isinstance(o, dict):
-            continue
-        mid, to_id, from_id = o.get("id"), o.get("to_id"), o.get("from_id")
-        if not (o.get("park") and mid and to_id and from_id):
-            continue
+    for mid, c in cands.items():                     # never mutate c or cands: on a hit the fold hands back its cached state
+        to_id, from_id = c["toId"], c["fromId"]
         if to_id in alive_sids:                          # recipient revived → the parked mail already delivered
             continue
         try:
-            if not (base / "mail" / to_id / "new" / mid).exists():   # consumed / recalled / gone → resolved
+            if not (base / "mail" / to_id / "new" / mid).exists():   # consumed / recalled / gone → resolved (the authority)
                 continue
         except OSError:
             continue
         out.append({"msgId": mid, "fromId": from_id, "fromName": _name_of(from_id) or from_id[:8],
                     "toId": to_id, "toName": _name_of(to_id) or to_id[:8],
-                    "body": (o.get("body") or "")[:240], "t": int(o.get("t") or now)})
+                    "body": c["body"], "t": c["t"] if c["t"] is not None else int(now)})
     out.sort(key=lambda h: h["t"])
     return out
 
@@ -50846,7 +53404,7 @@ def _quarantine_cards(now, cleared):
                         "what": "an incoming postal message from %s (held because peer %s is DIRECTED) is "
                                 "waiting on you — approve to deliver it to %s, or deny to drop it. Nothing "
                                 "reaches %s until you approve." % (frm, origin, to, to)},
-            "column": "needs_input",
+            "column": "needs_input", "board": "feed", "category": "needs_input",
             "tree": []})
     out.sort(key=lambda c: c["t"])
     return out
@@ -55686,6 +58244,16 @@ def _client_reset_chat_base(client):
         # the accept-time comment in _ws states the rationale in full).
         if not client.get("redial"):
             client.pop("skeleton", None); client.pop("skeletonOrder", None); client.pop("reconnect", None)
+            client.pop("preferred", None)   # [fork] pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-2): the parked-reveal
+            #   preference's record (`preferred`, _resolve_reconnect) is a belief about this set, so it leaves with the set. The road that reaches
+            #   this line with a record standing is the ready arm's re-base: a second ready on a socket whose connect push already resolved and
+            #   recorded (Handler._dispatch_ws runs this reset on every ready, readySeen or not). Before this line the record outlived its set and
+            #   _watched_tab demoted the page's own declared tab out of _push's active-first batch. By reading, no client of this tree posts a
+            #   second ready on one socket (render.ts posts once at evaluation, the shim re-posts on a new socket alone, federation.ts once per
+            #   remote socket, the extension's pipe once per up), so the arm's own re-base branch is the road; driven by
+            #   tests/test_chat_skeleton_reconnect.py test_12g over the ?skeleton=1 handshake's own client shape (reconnect, dietSkeleton,
+            #   skeletonOnReady): the first ready's connect push records, the second ready re-bases. A declared redial keeps its record
+            #   with its set, as the guard above says.
         # A SKELETON client (a later chat column, ?skeleton=1 at its handshake, 2026-09-11): the pop above took the
         # `reconnect` the handshake armed, with the set a pre-ready pusher cycle may have built into a document that
         # could not hear it. Re-armed HERE, from the survivor, so the ready arm's connect push serves the page the same
@@ -56009,6 +58577,73 @@ def _resolve_reconnect(c, chat_list):
             # this socket; without the stamp a tap for this window parked for the rest of the page's life.
             c["ready"] = True
         act = c.get("active")
+        _hint = None   # the page's hint the preference below replaced, when it did (pass 5, the author's label, taking the reviewer's round-4 finding kernel-2: the record)
+        # [fork] pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1): a reveal PARKED for this client's
+        # window (the shell's /reveal at boot beats the chat pane's socket on the ack and vanish roads, and on sw when the browser opens the
+        # installed app on its own start URL) names the session the user tapped, and the consume behind this strip will focus it. When the
+        # tab list carries it, the one full is ITS, not the last-shown tab's: before this the phone's skeleton first dial spent the full on
+        # the dial's hint and the notified session arrived as a skeleton, shown only after a skeleton-click round trip. What this buys is
+        # that time-to-show, NOT a full or an ask saved (the author's pass-4b verify; settled by execution in the ack-road leg of
+        # tests/test_notification_tap_resume_browser.py): the strip lands ahead of the focus, so the page restores the tab its blob stored,
+        # a skeleton now, and asks for it (activeTab, then needFull skeleton-click) before it processes the focus; the ask is answered
+        # (the activeTab's release, _release_skeleton) and the tab is whole at a later tap. The round trip moves from the notified session
+        # to the stored tab. By reading, not driven: on a warm redial with a park, render.ts noteSkeletonTabOrder re-shows the shown tab
+        # that became a skeleton, a loader until the focus switches. The entry read is the one _consume_pending_reveal lands (the
+        # window's, else the no-wid one); a parked sid the list lacks (an ended session, another host's id) leaves the hint as before; no
+        # hint keeps the fail-safe whole push below. A dict read under this slot lock and no second lock: the park is one dict write
+        # (_reveal_request, _send_focus_to_view), and a park landing after this read is served as today, its consume behind the strip
+        # landing the focus on a skeleton tab the page then asks for. The ruled release+wake half is DEFERRED by the reviewer, not landed:
+        # executed, it added a duplicate full on the live road and closed nothing.
+        if act and not fresh:
+            _pk = str(c.get("wid") or "")
+            _pr = _PENDING_REVEAL.get(_pk)
+            if _pr is None and _pk:
+                _pr = _PENDING_REVEAL.get("")
+            _ps = str((_pr or {}).get("sid") or "")
+            # [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-1: the regression pass 4b introduced by taking the reviewer's round-3 addendum). The preference is for the client
+            # that will SHOW the parked session, and the kernel cannot name it on a split chat page (two or more columns under one wid:
+            # the consume focuses the first chat client of the wid, and the page hands a session another column holds to that column,
+            # render.ts's focus gate), so it applies to a window with ONE chat column. Two reads say how many the window has, and both
+            # must say one. The DECLARATION (the author's pass-5 verify): the shell posts its chat column count with the tap (_LANDING_REVEAL_JS
+            # cols, the /reveal body), kept on the park as `cols`, so a split page is known before its columns have all redialed; a park
+            # with no declaration (_send_focus_to_view's, a shell of a build before the field) leaves this read open. The SOCKETS: every
+            # chat client of this wid, this one included, reports the same `col` (the column each declares at its handshake, _ws), the
+            # belt for a column split off after the tap. Keyed on the column and not on a count of same-wid clients, because the boot
+            # road's normal state is a stale twin of the SAME column (the previous page's socket, its wid kept by sessionStorage, up to
+            # WS_DEAD_S from its reaping): a count read it as a second column and dropped the preference on the road the clause exists
+            # for (executed by the reviewer's round-4 refuter). Read off a lock-free copy of _clients, no _clients_lock under this slot lock (a new
+            # nesting would need its order stated; a stale read here chooses between the preference and the parent's whole-hint push,
+            # fail-safe either way). RESIDUAL, disclosed in the PR body: for a park with NO declaration the sockets read is the only one,
+            # and on a split page whose columns redial one after another (both reaped by the ping timeout, or a kernel restart) the first
+            # column's resolve sees one column and takes the preference: its own shown tab is served as a skeleton (a loader until it
+            # asks) and the parked session's full is spent on a column that may not show it. `not fresh`: the skeleton client's pre-ready
+            # pop consumes nothing (the ready arm re-resolves and consumes), so the preference waits for the pop that does.
+            _pc = (_pr or {}).get("cols")
+            _col = str(c.get("col") or "")
+            _cols = {str(x.get("col") or "") for x in list(_clients) if x.get("app") == "chat" and str(x.get("wid") or "") == _pk}
+            _cols.add(_col)
+            # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1); DEFENSIVE (pass 8, the author's label,
+            # 2026-09-21, taking the reviewer's round-6 findings tests-2 and extra9-3): no road reaches the pop below with a record at this head. A
+            # socket enters this branch at most once: `skeletonOnReady` alone re-arms `reconnect` on a live client (the ready arm's reset, once, at
+            # the bundle's one ready), and the two other writers arm it at the handshake; so a redial enters once (its first strip sender's pop,
+            # fresh False), a skeleton column enters once (the pre-ready pop skips the branch under `fresh`, the ready-time re-arm's pop enters), and
+            # a redial of a skeleton column enters once. The record's releases today are the page's activeTab (Handler._dispatch_ws) and the ready
+            # arm's reset (_client_reset_chat_base). Kept against a future writer that re-arms `reconnect` on a live client past the fresh guard,
+            # so a second resolve of one socket never carries the first's record into its set; the premise is pinned by
+            # tests/test_chat_skeleton_reconnect.py test_12h (the three roads driven, the branch entered once each, the pop finding nothing).
+            c.pop("preferred", None)   # [fork] pass 7 (kernel-1), defensive since pass 8 (the block above)
+            if _ps and (_pc is None or _pc == 1) and len(_cols) <= 1 and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
+                _hint = str(act)   # the page's own hint, for the record below (pass 5, the reviewer's round-4 kernel-2)
+                act = _ps
+                # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): the session served whole is RECORDED on the client, under this slot lock, where _push's readers
+                # look (_watched_set: the active-first set, build_order, _all_active and the cold-tab gate; _watched_flag: the targeted push's
+                # perf label). Before this the preference reassigned
+                # the local `act` alone, so those readers still named the page's stale hint: on the boot road the hint, a skeleton on every
+                # connected page, was ranked first and handed a cold full build the gate would otherwise have skipped, and the notified session's
+                # full was built after it. `active` is left as the page's own declaration (the client-diag skeleton row, _watched_sids and the
+                # live-wake exemption read it); the page's next activeTab drops this record (Handler._dispatch_ws), and so does the ready
+                # arm's reset (_client_reset_chat_base, pass 8: the record is a belief about the set and leaves with it).
+                c["preferred"] = _ps
         held = c.get("echat") or {}
         if not act:
             # No active hint. A RELAY client that DIETED (skeleton=1 at the handshake: `dietSkeleton`, kind `relay`)
@@ -56030,7 +58665,82 @@ def _resolve_reconnect(c, chat_list):
         skel = [sid for sid in _skeleton_for(c, str(act), chat_list) if sid not in held]
         c["skeleton"] = set(skel)
         c["skeletonOrder"] = skel
+        if _hint is not None:
+            # [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding kernel-2): the preference is the one place the kernel overrides the page's own active
+            # hint, and every other _PENDING_REVEAL transition prints a [reveal] line; this one filed nothing, and the `skeleton` client-diag
+            # row carries the page's activeId, so no record named the session the kernel served whole. Printed after the set is built, so the
+            # hint's fate is one of three, read off the list and the resolved set: "not listed" (an ended session, or another host's id: the
+            # kernel sent it nothing; the reviewer's round-7 finding kernel-1, where it read "whole"), "a skeleton", or "whole" (a listed hint
+            # with no transcript stays whole: _skeleton_for); and named by the EVENT, this client's set resolving, not by a road: the branch
+            # runs on the redial and on the ready arm's boot resolve alike.
+            print("[reveal] sid=%s wid=%s: preferred at the set's resolve, the one full in place of the page's hint %s (%s)"
+                  % (str(act)[:8], _pk[:8], _hint[:8], "not listed" if _hint not in {s.get("sid") for s in chat_list}
+                     else ("a skeleton" if _hint in c["skeleton"] else "whole")), file=sys.stderr)
     return not fresh
+
+
+def _watched_tab(c):
+    """The per-client definition of the chat tab a client will show once its set resolves: the
+    session the parked-reveal preference served whole in place of the page's hint (`preferred`, written by
+    _resolve_reconnect under the slot lock when the preference applies and dropped by the page's next activeTab, which is
+    the page's own word, and by the ready arm's reset, with the set it belongs to), else the page's own declaration (`active`). `active` itself is never overwritten: the client-diag
+    skeleton row, _watched_sids and the live-wake exemption read it as the page's declaration. [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): before this the
+    preference reassigned only the local `act`, so on the boot road the stale hint stayed in _push's active set, was ranked first
+    and handed a cold full build the gate would have skipped (every connected page holds it as a skeleton, and its live row
+    states its status), and the notified session's full was built after it (tests/test_chat_skeleton_reconnect.py test_12f). No
+    kernel code calls it since pass 8 (the reviewer's round-7 finding correctness-2): _push's active-first set, build_order, _all_active
+    and the cold-tab gate read _watched_set, and the targeted push's perf label reads _watched_flag, both computed from the project's
+    declared set (_watched_records); this function is the definition they compute, which the tests read and test_12i holds equal to
+    _watched_set over every configuration of three clients."""
+    return c.get("preferred") or c.get("active")
+
+
+def _watched_records(clients):
+    """The parked-reveal preference's standing records over `clients`, for the two derivations below: (recs, withheld),
+    where `recs` is every record (`preferred`) a client carries and `withheld` is every declaration (`active`) a client with
+    a record made that no record-less client also declares. A client with a record watches the record and not its
+    declaration (_watched_tab), so the set of watched tabs is the declared set minus `withheld` plus `recs`; with no record
+    standing both sets are empty and the declared set is the watched set. [fork] pass 8 (the author's label, 2026-09-21,
+    taking the reviewer's round-6 findings kernel-1 and regression-4): the fork's readers DERIVE their answer from the
+    project's line (the declared set, or the declared flag) instead of recomputing it, so a later upstream edit to that
+    line takes effect here; the residual, disclosed: a client the project's line filters out still contributes its record."""
+    recs, withheld = set(), set()
+    for c in clients:
+        p = c.get("preferred")
+        if not p:
+            continue
+        recs.add(p)
+        a = c.get("active")
+        if a and a != p and not any(x is not c and not x.get("preferred") and x.get("active") == a for x in clients):
+            withheld.add(a)
+    return recs, withheld
+
+
+def _watched_flag(declared, sid, clients):
+    """Whether `sid` is a watched tab, derived from the project's answer `declared` (whether a client declares it): the
+    project's answer stands while no client in `clients` carries the preference's record; with one standing, a withheld
+    declaration does not count and a record does, so the targeted push's perf label (_push_session_now) files the session
+    the preference served whole as active, as _push's active-first set ranks it (kernel-1, the reviewer's round 6: the label
+    read the declaration alone and filed that session as background while the set built it first, one question with two
+    answers). [fork] pass 8."""
+    recs, withheld = _watched_records(clients)
+    if not recs:
+        return declared
+    return (declared and sid not in withheld) or sid in recs
+
+
+def _watched_set(declared, clients):
+    """_push's set of watched tabs, derived from the project's `declared` set (the tabs `clients` declare active): the
+    project's set itself while no client carries the parked-reveal preference's record, else that set minus the
+    declarations the records replaced plus the records (_watched_records), which is what {_watched_tab(c) for c in clients}
+    computes when `declared` is the unfiltered declaration set (tests/test_chat_skeleton_reconnect.py test_12i checks the
+    two over every configuration of three clients). The project's line stays live and consumed: a filter it gains upstream
+    reaches build_order and the cold-tab gate (test_12j mutates it in a scratch copy and the result moves). [fork] pass 8
+    (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4)."""
+    recs, withheld = _watched_records(clients)
+    if not recs:
+        return declared
+    return (set(declared) - withheld) | recs
 
 
 def _send_tab_order(c, tab_order, tab_meta, live):
@@ -58941,13 +61651,19 @@ def _html_esc(s):
 def _too_large_page(msg, name, q, route="/file"):
     """The 413 a PDF's OWN TAB shows (2026-09-06): the same sentence the text form carries, plus the way
     out — a link to the download half of the SAME route (`route`: /file, or a federated session's
-    /remote/<host>/file relay) for the same path and sid. Same-origin, so the cookie rides the download
-    exactly as it rode the view. Built from the parsed query, never the raw request line, and every value
-    is escaped; the page has no script and inherits _send's nosniff."""
+    /remote/<host>/file relay) for the same path and sid. The download link carries the request's OWN
+    cap (`q["cap"]`): the browser reached this page over a file-class request that already presented a
+    valid cap, and download is outside the cap's MAC, so the same cap authorizes the download exactly as
+    the view was authorized. Same-origin, so the session cookie rides the download too. Built from the
+    parsed query, never the raw request line, and every value is escaped; the page has no script and
+    inherits _send's nosniff."""
     dq = {"path": (q.get("path") or [""])[0], "download": "1"}
     sid = (q.get("sid") or [""])[0]
     if sid:
         dq["sid"] = sid
+    cap = (q.get("cap") or [""])[0]
+    if cap:
+        dq["cap"] = cap
     href = route + "?" + urlencode(dq)
     return ("<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title>"
             "<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
@@ -61370,7 +64086,7 @@ def _path_tokens(md):
 
 _MENTION_PINS = None                                   # resolved lazily: jd.STATE / "mention-pins"
 _PIN_STORE_MAX_BYTES = 500 * 1024 * 1024               # bounded: evict oldest-mtime past this
-_PIN_ID_RE = re.compile(r"^[0-9a-f]{64}\.[a-z0-9]{1,8}$")   # sha256 + the original extension
+_PIN_ID_RE = re.compile(r"^[0-9a-f]{64}\.[a-z0-9]{1,8}\Z")   # sha256 + the original extension (\Z: no trailing newline, which $ admits)
 
 
 def _pin_dir():
@@ -61879,6 +64595,7 @@ def _push(targets, connect=False, live_map=None):
                 if redialed:                             # the redial's first strip stands in for the ready it never posts:
                     _consume_pending_reveal(c, why="the pane's redial")   # a reveal parked for its window lands behind the strip
             active = {c.get("active") for c in chat_clients if c.get("active")}
+            active = _watched_set(active, chat_clients)   # [fork] pass 7 (kernel-1), derived since pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4): the project's set above, consumed as is while no client carries the parked-reveal preference's record, and with one standing the record in the declaration's place; build_order and the gate read this set, and an upstream edit to the line above reaches them instead of being recomputed away
             # Stable: active tabs first — and TRANSCRIPT-LESS sessions with them. A just-created session
             # has no transcript, so its build is near-free, and its creator is guaranteed to be staring
             # at its placeholder — yet the active-first hint can never name it: a client cannot declare
@@ -61893,7 +64610,8 @@ def _push(targets, connect=False, live_map=None):
             # start-keyed dirty watermark for the in-memory stamps neither key named; every stamp is a
             # component now, so a bare _mark_views_dirty rebuilds no chat tab (it still busts the feed and the
             # timeline). The shared components, the caption map and the names snapshot are opened once per
-            # push (_chat_push_scopes_open; a pusher cycle already holds the last two).
+            # push (_chat_push_scopes_open; a pusher cycle already holds the last three, 2026-09-18: the caption
+            # map, the names snapshot and the subagents-tree samples).
             _chat_push_scopes_open()
             _nd = len(_CHAT_SIG_DEPS)
             # the render floor (T323 stage 4b): a proto-1 client needs today's index frames over the whole
@@ -61907,6 +64625,7 @@ def _push(targets, connect=False, live_map=None):
             _live_scope.chat_floor0 = _chat_floor0_of(_all_chat)
             _all_active = {c.get("active") for c in _all_chat if c.get("active")}   # every connected column's watched tab,
             #                                                                          not this push's targets alone (round two, low 2)
+            _all_active = _watched_set(_all_active, _all_chat)   # [fork] pass 7 (kernel-1), derived since pass 8 (regression-4): the same derivation over every connected column's declared set, the project's two lines above consumed (this pair merges clean on a fold, the project's continuation comment standing between: the pair with the silent-discard hazard the derivation closes)
             _chat_sig_bump(pushes=1)                     # memos.chatSig.pushes: a push that runs the chat tab loop, the table's per-push denominator
             _sig_tabs = []                               # memos.chatSig: the per-tab rows the warm-tab census folds after the loop (_chat_sig_note_census)
             for s in build_order:
@@ -62553,6 +65272,7 @@ def _push_session_now(sid):
         except OSError:
             _nbytes = None
         _active = sid in {c.get("active") for c in targets if c.get("active")}   # the watched tab, as _push reads it from its clients
+        _active = _watched_flag(_active, sid, targets)   # [fork] pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-1): derived from the project's answer above, which stands while no target carries the parked-reveal preference's record; with one standing the record counts as watched and the declaration it replaced does not, so this label and _push's active-first set answer alike
         _PERF_STATS.build_chat(False, _dt, active=_active, miss=("targeted",), sid=sid, nbytes=_nbytes)
         _chat_sig_bump(targetedBuilds=1)             # memos.chatSig.targetedBuilds: a targeted build, no signature taken, watched or not
         #   the per-session timer (round three, 2026-09-15): this push builds too (27 attach handshakes at a boot run it), and an
@@ -62630,8 +65350,15 @@ def _take_live_wake_sids():
 
 
 def _watched_sids():
-    """The chat tabs connected clients are looking at: each alive, ready chat client's active sid (the
-    ?active= connect hint or the activeTab message; the same set _push builds first)."""
+    """The chat tabs connected clients are looking at, by each alive, ready chat client's own declaration: its active sid (the
+    ?active= connect hint or the activeTab message), the page's word, for the live-wake exemption. _push's active-first set
+    differs from this set in two ways, its population and its field: _push filters its targets by _client_ready alone and
+    reaps a socket a handler thread marked dead (`alive` False) at the cycle's end, so such a socket's declaration counts
+    there for that cycle and never here; and while a parked-reveal preference's record stands on a client, _push reads the
+    record in the declaration's place (_watched_set; _watched_flag for the perf label). Over live clients with no record standing the two sets
+    are equal. The exemption stays on the page's word (the reviewer's round-5 ruling), so the two sets are named apart here
+    (pass 8, the author's label, taking the reviewer's round-6 finding kernel-1; the population difference stated at the
+    pass-8 verify's finding kernel-3)."""
     with _clients_lock:
         return {str(c["active"]) for c in _clients
                 if c.get("app") == "chat" and c.get("alive", True) and _client_ready(c) and c.get("active")}
@@ -63260,7 +65987,8 @@ def _pure_feed(now, live_map):
     persist when the living set moved, the views store's re-stamp, a fork's tag inheritance heal, and
     _warm_fleet_bg (a background parse warm that then drops the pusher's cache and wakes it), which
     runs only with a client connected and no chat/timeline client parsing; a goal store that cannot be
-    read files its fault row (load_goals_or_fault: loud by design, and only on a fault).
+    read files its fault row (load_goals_shared_or_fault, the store-fault boundary the feed's reads take since
+    2026-09-18: loud by design, and only on a fault).
     The build id IS claimed (a consumer reads buildId like any payload); the counter is monotonic and a
     card-move ack only needs the pusher's next build to outrank whatever was claimed before it.
     Counted under the route's own numbers (feedJson*, never the pusher's feed*): those read as the
@@ -63299,6 +66027,170 @@ def _pure_feed(now, live_map):
         feed["buildId"] = bid
         _PURE_FEED = (feed, time.time(), started, sig)
         return feed
+
+
+# THE BOARD TABLE (plans/card-boards.md, phase two): the code-defined boards in the one schema the renderer's
+# ui/webview/board-def.ts holds (FEED_BOARD there is this dict, field for field; tests/test_card_boards.py holds the two
+# together). A card the kernel builds names its board and its category (`board`, `category`, beside `column` until the
+# renderer reads category alone); the bell, the phone and the badge read the board's `notify` and `needsYou` here instead
+# of a literal. Data-defined boards (phase three) join through _board_check's door and never overwrite a code-defined id.
+_CODE_BOARDS = {
+    "feed": {
+        "id": "feed", "title": "Feed",
+        "categories": [{"id": "working", "title": "Working", "chip": "working"},
+                       {"id": "needs_input", "title": "Blocked", "chip": "blocked"},
+                       {"id": "completed", "title": "Completed", "chip": "completed"}],
+        "defaultCategory": "working",
+        "rules": [],                                   # the feed's category rule is code: the expression in _feed_session_entry
+        "sort": {"key": "t", "dir": "asc"},
+        "subSorts": [],
+        "groupBy": "session",
+        "order": [],                                   # the owner rank joins in phase three
+        "notify": ["needs_input", "completed"],
+        "needsYou": "needs_input",
+        "kinds": ["goal", "placeholder", "parked", "quarantine", "notice"],
+    },
+}
+_BOARD_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_BOARD_MEMBERS = ("id", "title", "categories", "defaultCategory", "rules", "sort", "subSorts", "groupBy", "order", "notify", "needsYou", "kinds")
+_BOARD_CHIPS = ("working", "blocked", "completed", "neutral")
+_BOARD_SORT_FIELDS = ("t", "session", "owner", "title")
+_BOARD_PREDICATES = ("needsYou", "producer", "keyPrefix")
+_BOARD_ORDER_RULES = ("ownerRank",)
+_BOARD_KINDS = ("goal", "placeholder", "parked", "quarantine", "notice")
+
+
+def _board_check_sort(sv, where):
+    if not isinstance(sv, dict):
+        return where + " must be an object {key, dir}"
+    for k in sv:
+        if k not in ("key", "dir"):
+            return "%s has an unknown member %r" % (where, k)
+    if sv.get("key") not in _BOARD_SORT_FIELDS:
+        return where + ".key must be one of " + ", ".join(_BOARD_SORT_FIELDS)
+    if sv.get("dir") not in ("asc", "desc"):
+        return where + ".dir must be asc or desc"
+    return None
+
+
+def _board_check(defn, allow_reserved=False):
+    """The schema check, the kernel's half (ui/webview/board-def.ts boardCheck is the renderer's, the same rules): (defn, None)
+    for a board in the schema, else (None, the refusal naming the member and the rule it broke). An unknown member refuses,
+    so a typo never silently defaults; a code-defined id is refused at the door (`allow_reserved` lets the constants pass)."""
+    if not isinstance(defn, dict):
+        return None, "a board definition must be a JSON object"
+    for k in defn:
+        if k not in _BOARD_MEMBERS:
+            return None, "unknown member %r (the schema's members are %s)" % (k, ", ".join(_BOARD_MEMBERS))
+    bid = defn.get("id")
+    if not isinstance(bid, str) or not _BOARD_ID_RE.match(bid):
+        return None, "id must match [a-z][a-z0-9_-]{0,31}"
+    if not allow_reserved and bid in _CODE_BOARDS:
+        return None, "id %r is a code-defined board and cannot be defined" % bid
+    title = defn.get("title")
+    if not isinstance(title, str) or not 1 <= len(title) <= 40:
+        return None, "title must be 1 to 40 characters"
+    cats = defn.get("categories")
+    if not isinstance(cats, list) or not 1 <= len(cats) <= 8:
+        return None, "categories must hold 1 to 8 entries"
+    ids = set()
+    for c in cats:
+        if not isinstance(c, dict):
+            return None, "each category must be an object {id, title, chip}"
+        for k in c:
+            if k not in ("id", "title", "chip"):
+                return None, "category has an unknown member %r" % k
+        cid = c.get("id")
+        if not isinstance(cid, str) or not _BOARD_ID_RE.match(cid):
+            return None, "category id must match [a-z][a-z0-9_-]{0,31}"
+        if cid in ids:
+            return None, "category id %r repeats" % cid
+        ids.add(cid)
+        ct = c.get("title")
+        if not isinstance(ct, str) or not 1 <= len(ct) <= 40:
+            return None, "category %s: title must be 1 to 40 characters" % cid
+        if c.get("chip") not in _BOARD_CHIPS:
+            return None, "category %s: chip must be one of %s" % (cid, ", ".join(_BOARD_CHIPS))
+    if defn.get("defaultCategory") not in ids:
+        return None, "defaultCategory must name one of the board's categories"
+    rules = defn.get("rules")
+    if not isinstance(rules, list) or len(rules) > 16:
+        return None, "rules must hold 0 to 16 entries"
+    for r in rules:
+        if not isinstance(r, dict) or not isinstance(r.get("when"), dict):
+            return None, "each rule must be an object {when, category}"
+        for k in r:
+            if k not in ("when", "category"):
+                return None, "rule has an unknown member %r" % k
+        when = r["when"]
+        for k in when:
+            if k not in _BOARD_PREDICATES:
+                return None, "rule predicate has an unknown member %r (the predicates are %s)" % (k, ", ".join(_BOARD_PREDICATES))
+        if not when:
+            return None, "a rule's predicate must name at least one member"
+        if "needsYou" in when and not isinstance(when["needsYou"], bool):
+            return None, "rule predicate needsYou must be a boolean"
+        for k in ("producer", "keyPrefix"):
+            if k in when and not isinstance(when[k], str):
+                return None, "rule predicate %s must be a string" % k
+        if r.get("category") not in ids:
+            return None, "a rule's category must name one of the board's categories"
+    err = _board_check_sort(defn.get("sort"), "sort")
+    if err:
+        return None, err
+    subs = defn.get("subSorts")
+    if not isinstance(subs, list) or len(subs) > 6:
+        return None, "subSorts must hold 0 to 6 entries"
+    for i, sv in enumerate(subs):
+        err = _board_check_sort(sv, "subSorts[%d]" % i)
+        if err:
+            return None, err
+    if defn.get("groupBy") not in ("session", None):
+        return None, 'groupBy must be "session" or null'
+    order = defn.get("order")
+    if not isinstance(order, list) or len(order) > 4:
+        return None, "order must hold 0 to 4 entries"
+    for o in order:
+        if o not in _BOARD_ORDER_RULES:
+            return None, "order rules must be from " + ", ".join(_BOARD_ORDER_RULES)
+    notify = defn.get("notify")
+    if not isinstance(notify, list):
+        return None, "notify must be a list of category ids"
+    for n in notify:
+        if n not in ids:
+            return None, "notify names a category the board does not have: %r" % (n,)
+    ny = defn.get("needsYou")
+    if ny is not None and ny not in ids:
+        return None, "needsYou must be one of the board's categories or null"
+    kinds = defn.get("kinds")
+    if not isinstance(kinds, list) or not kinds:
+        return None, "kinds must hold at least one entry"
+    for k in kinds:
+        if k not in _BOARD_KINDS:
+            return None, "kinds must be from " + ", ".join(_BOARD_KINDS)
+    return defn, None
+
+
+for _bid, _bdef in _CODE_BOARDS.items():                 # a drifted constant fails at import, never in a build
+    _berr = _board_check(_bdef, allow_reserved=True)[1]
+    if _berr or _bdef.get("id") != _bid:
+        raise RuntimeError("code-defined board %r is not in the schema: %s" % (_bid, _berr or "its id differs from its key"))
+
+
+def _board_def(board):
+    """The definition a card's `board` names; a card that names none, or an id this kernel does not know, reads as the feed's
+    (the default every card the kernel builds carries; a data-defined board joins the lookup in phase three)."""
+    return _CODE_BOARDS.get(board) or _CODE_BOARDS["feed"]
+
+
+def _board_notify(board):
+    """The category ids whose ENTRY announces (the bell, the phone) for a card's board."""
+    return tuple(_board_def(board)["notify"])
+
+
+def _board_needs_you(board):
+    """The category the app badge counts for a card's board, or None when the board never badges."""
+    return _board_def(board)["needsYou"]
 
 
 # ── system notifications: the bell toggles (the user 2026-07-28) ──────────────────────────────────
@@ -63356,7 +66248,7 @@ def _pure_feed(now, live_map):
 # rule holds across a restart too. The silent first-boot seed counts as told (the user has the board).
 # The desktop notice and the phone push both iterate the list this diff returns, so the one gate covers
 # both legs; _buzz_claim's one-buzz-per-turn-end rule sits after it, unchanged.
-_NOTIFY_COLUMNS = ("needs_input", "completed")
+_NOTIFY_COLUMNS = tuple(_CODE_BOARDS["feed"]["notify"])   # the feed board's notify set, the value the snapshot entries are checked against
 # itemId -> {"sid", "column" (the notified column the card was last SEEN in, None while it sits in
 # working), "announced" (the column last announced, None if never), "announcedAt" (seconds)}; the
 # store holds a card while it is in a notified column or carries an announced mark. None = this life's
@@ -63628,7 +66520,7 @@ def _feed_notifications_diff(feed):
     now_t = int(feed.get("now") or time.time())   # the build's own moment: wall clock, like the journal's t
     entered = []                                     # (itemId, card, column, entry): the cards that ENTERED a column
     for iid, a in cur.items():
-        col, sid, ent = a.get("column"), str(a.get("sid") or ""), prev.get(iid)
+        col, sid, ent = a.get("category", a.get("column")), str(a.get("sid") or ""), prev.get(iid)   # the board's category; the column from an older card
         _ut_floor = col == "needs_input" and (a.get("blocked") or {}).get("state") == "userTodos"
         if _ut_floor and seed_ut:
             # a life's first build SEEDS the todo-floor latch from the already-floored cards (_NOTIFY_UT_FIRED):
@@ -63636,7 +66528,7 @@ def _feed_notifications_diff(feed):
             # own rules below (silent on a first boot, else the column diff and the announced gate)
             with _NOTIFY_UT_LOCK:
                 _NOTIFY_UT_FIRED[0][sid] = _notify_ut_open_ids(sid)
-        if col in _NOTIFY_COLUMNS:
+        if col in _board_notify(a.get("board")):   # the card's board's notify set (the feed's is _NOTIFY_COLUMNS)
             e = {"sid": sid, "column": col,
                  "announced": ent.get("announced") if ent else None,
                  "announcedAt": ent.get("announcedAt") if ent else None}
@@ -63674,7 +66566,7 @@ def _feed_notifications_diff(feed):
             elif e["announced"] == col and not _notify_user_acted_since(e["sid"], iid, e["announcedAt"]):
                 continue                             # the same (card, column), told already, nothing of the user's since
             e["announced"], e["announcedAt"] = col, now_t
-            needs_you = col == "needs_input"            # the card's column: the authoritative state, not the words
+            needs_you = col == _board_needs_you(a.get("board"))   # the board's badge category: the authoritative state, not the words (the same read as _needs_you_count)
             what = "Needs you" if needs_you else "Completed"
             txt = str(a.get("text") or "").strip()
             out.append((_notify_title(a.get("name") or "session", needs_you),
@@ -63711,12 +66603,15 @@ def _needs_you_count(feed):
     ITSELF beside whatever todos it holds. PER-ITEM decision cards (_NEEDS_YOU_PER_ITEM) count
     per CARD: they are independent decisions, not session stops (review 2026-08-22). A sid-less
     needs-input card (nothing to dedup against) still counts alone; provisional placeholders stay
-    out, as ever (churn is not news)."""
+    out, as ever (churn is not news). The needs-you test is the card's board's badge category
+    (`needsYou` in _CODE_BOARDS, the feed's `needs_input`), read from `category` with `column` as an
+    older card's fallback (upstream 1837); a board with no badge category counts nothing."""
     n = sum(int(v or 0) for v in (feed.get("userTodos") or {}).values())
     hard = set()
     for a in (feed.get("asks") or []):
-        if a.get("provisional") or a.get("column") != "needs_input":
-            continue
+        _ny = _board_needs_you(a.get("board"))   # the board's badge category (upstream 1837); a board with none counts nothing
+        if a.get("provisional") or _ny is None or a.get("category", a.get("column")) != _ny:
+            continue                                 # category, or the column from an older card; this fork keeps its != spelling
         _st = (a.get("blocked") or {}).get("state")
         if _st == "userTodos":
             continue                                 # the floor's presentation — the todos are already in n
@@ -65070,7 +67965,7 @@ def _sw_js():
 # and a park for a wid whose page never connected a socket has no end but a consume, since the drop at the last
 # client sees no client leave. A sweep of the park sites was tried in review and dropped live taps (a dead-shell-socket
 # phone park, a storage-blocked page's own park), so neither is closed here.
-_PENDING_REVEAL = {}                         # wid -> {"sid": ..., "wid": ...[, "sent": [clients]]}; "" is the no-wid entry
+_PENDING_REVEAL = {}                         # wid -> {"sid": ..., "wid": ...[, "sent": [clients]][, "cols": int]}; "" is the no-wid entry. cols (pass 7, the author's label, taking the reviewer's round-5 finding extra9-2): the shell's chat column count, written by _reveal_request from the /reveal body and read by _resolve_reconnect's parked-reveal preference; a park without it (a focus _send_focus_to_view parks, a shell of a build before the field) leaves the preference the sockets read alone, the disclosed residual, so a third park site should carry it
 # The roads a shell may name in /reveal's `via`, the log line's first word (the ledger block above _push_ledger has
 # the design): the worker's message to a live window ('sw'), the deep link the page opened on or was navigated to
 # ('link' — on Apple the OS's own tap callback for a killed app), the kernel's own clicked row ('ack') and the shown
@@ -65096,10 +67991,15 @@ def _reveal_msg(sid):
     return {"type": "focus", "id": sid, "live": True}
 
 
-def _reveal_request(sid, wid, boot=False, via=""):
+def _reveal_request(sid, wid, boot=False, via="", cols=None):
     """POST /reveal: aim the focus at the dashboard whose wid asked. Its chat pane already
     connected → deliver now; not yet (the cold-start norm — the shell's fetch beats the iframe's
     WS) → park for _consume_pending_reveal. Returns whether it was delivered immediately.
+    `cols` ([fork] the author's pass-5 verify, correctness-1's residual): the window's chat column count the shell
+    declared with the tap, kept on the park (`cols`) for _resolve_reconnect's parked-reveal preference, which
+    applies to a one-column window and cannot read that off the sockets registered at the first column's
+    resolve; None declares nothing (a shell of a build before the field; _send_focus_to_view's park has no
+    declaration either) and the entry keeps its two-key shape.
 
     Two ways a same-wid chat socket the kernel holds is NOT the pane this tap is for (the user
     2026-09-06, whose tap on the phone did nothing — the phone is where sockets die without a
@@ -65162,13 +68062,16 @@ def _reveal_request(sid, wid, boot=False, via=""):
                 sent.append(c)
         except Exception:
             pass
+    entry = {"sid": str(sid), "wid": str(wid or "")}
+    if cols is not None:
+        entry["cols"] = int(cols)
     if not delivered:
-        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or "")}
+        _PENDING_REVEAL[str(wid or "")] = entry
     elif sent:
-        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or ""), "sent": sent}
+        _PENDING_REVEAL[str(wid or "")] = dict(entry, sent=sent)
     outcome = ("delivered, copy parked (%s)" % ("booting page" if boot else "target unproven") if sent else "delivered") if delivered else "parked"
-    print("[reveal] %s sid=%s wid=%s%s: %s" % (via or "shell", str(sid)[:8], str(wid or "")[:8],
-                                             " boot" if boot else "", outcome), file=sys.stderr)
+    print("[reveal] %s sid=%s wid=%s%s: %s%s" % (via or "shell", str(sid)[:8], str(wid or "")[:8],
+                                               " boot" if boot else "", outcome, " cols=%d" % cols if cols is not None else ""), file=sys.stderr)   # cols after the outcome: the trail regexes of the unit and served legs read `wid=…: parked` and `boot: parked`
     return delivered
 
 
@@ -65975,6 +68878,23 @@ def _pusher_cycle():
         #                                         forks); the wide walk under ("wide", window)): ~35 sweeps
         #                                         per cycle became one
         _live_scope.auth = {}                   # …and the cycle's billing-availability memo (_auth_avail_status)
+        _live_scope.subagent_trees = {}         # …and the cycle's subagents-tree samples (_subagent_tree): one sample per
+        #                                       root per cycle for every tree that exists, validated or walked by the
+        #                                       first reader and served to every reader after it: the chat builds'
+        #                                       sidecar maps and awaiting rows, the feed key and its derivations, a
+        #                                       viewer frame's agent-file re-walk on a cache miss (2026-09-18: each
+        #                                       reader took its own sample, 63k validations and 5.2M lstats over 3.9k
+        #                                       cycles live, an estimated 30-50% of them re-samples, the `scoped` tally
+        #                                       measures the realized share; an absent root stays one lstat per caller,
+        #                                       never a validation)
+        _live_scope.subagent_stamps = {}        # …and the cycle's stamp index (_dir_stamp), derived from the held trees
+        #                                       and living exactly where they do: an agent-file lookup's re-check of a
+        #                                       held tree's directories costs no stat (without it, one stat each)
+        _live_scope.subagent_launches = {}      # …and the cycle's launch folds (_awaiting_nest), derived from the held
+        #                                       trees and living exactly where they do: one resolution and fold per
+        #                                       awaiting agent per cycle, where each _awaiting_nest call
+        #                                       (_session_awaiting's and _session_background_items', each through
+        #                                       _awaiting_live_rows) folded again
         _live_scope.msgsum = [_MSGSUM_UNSET]    # …and the cycle's caption-map slot (_msg_summaries_scoped): the
         #                                       first chat build that needs the map fetches it, the rest read it
         _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
@@ -65986,10 +68906,13 @@ def _pusher_cycle():
         _pusher_cycle_jobs(now, live_map, any_client)
     finally:
         _chat_push_scopes_close()
+        _live_scope.subagent_stamps = None      # the slots derived from the tree samples, cleared with them (the
+        _live_scope.subagent_launches = None    #  census in tests/test_subagent_tree_stamps_per_cycle.py SlotSites)
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
         _live_scope.sessions = None
+        _live_scope.subagent_trees = None
         _live_scope.msgsum = None
         _live_scope.auth = None
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle,
@@ -66266,6 +69189,10 @@ def _jobs_cycle():
         _live_scope.paths = {}
         _live_scope.sessions = {}
         _live_scope.auth = {}
+        _live_scope.subagent_trees = {}         # the pass's subagents-tree samples (2026-09-18): the reminder walk's
+        #                                       _session_awaiting readers and _mark_nudge_failed read the same roots per pass
+        _live_scope.subagent_stamps = {}        # the pass's stamp index (_dir_stamp) and launch folds (_awaiting_nest),
+        _live_scope.subagent_launches = {}      #  beside the trees they come from
         _live_scope.msgsum = [_MSGSUM_UNSET]
         _live_scope.names = _names_snapshot()
         _PERF_STATS.stage("jobs.prelude", time.monotonic() - _t)
@@ -66277,6 +69204,9 @@ def _jobs_cycle():
         _live_scope.paths = None
         _live_scope.sessions = None
         _live_scope.auth = None
+        _live_scope.subagent_trees = None
+        _live_scope.subagent_stamps = None
+        _live_scope.subagent_launches = None
         _live_scope.msgsum = None
         _live_scope.files_stat = None
         _live_scope.files_dirty = None
@@ -66850,6 +69780,30 @@ function parentLink(){try{return (window.parent!==window&&typeof window.parent._
 // byte for byte. The shell is present when its probe exists, window.parent.__rompMobileOn is a function, as parentLink()'s
 // gate reads the link; undefined off a shell (standalone, VS Code, an older shell): parks nothing.
 function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn==="function")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}
+// [fork] stage 0 (2026-09-18, the user's decision of that day): the phone's FIRST chat dial takes the skeleton diet. The kernel
+// then serves the strip with a skeleton list, ONE full for the tab the page shows (its ?active= hint, the state blob's activeId)
+// and a ~400 B status per other tab (_resolve_reconnect), where a fresh dial was served every tab whole (17 frames / 9 MB on the
+// measured board); the page's idle prefetch loads the rest one tab at a time once the visible tab's full has applied (render.ts,
+// skeleton-tabs.ts's gate). The dial line below reads RESTART_DIET for the first dial (everConnected false) and nothing after it,
+// so setting the reload diet's flag here gives the phone the same shape with the URL line left as upstream wrote it; a redial
+// carries the diet through reconnect=1 as today, and a redial after a socket that died before the bundle's ready was answered
+// dials as a fresh page, as the reload diet does. TWO readers of the flag (review round 3, 2026-09-19): the dial line below, and
+// window.__rompDialTerms (the reload core's tail), whose skeleton term federation.ts carries onto every remote relay dial
+// (remoteDialUrl); both scope it to this page's first LOCAL dial through !everConnected. The relay is dialed after the bundle's
+// async /tunnels poll (federation.ts start, poll, openRemote, connect), which this shim's dial at parse precedes, so on a healthy
+// page the local socket has opened (everConnected true) before the relay dial is built and that dial carries NO skeleton term
+// (observed 3/3 and 7/7 phone cold opens in review; pinned in a real engine by test_federated_dial_terms_served.py's phone pass):
+// the remote serves its whole board through the relay, the shape the main pane always had. In the window before the local open
+// (never observed) the relay dial would carry skeleton=1: with the stored tab on that host `active` names it and the remote serves
+// it whole and skeletons the rest; with the stored tab not this host's (the hub's own, or another remote's) no `active` rides and the remote's relay no-active rule
+// (_resolve_reconnect) skeletons every transcript-bearing tab, which the hub's chain loads one per ask through the relay once the
+// local gate opens. Off this pane the flag stays false: a column is SKEL already, a standalone page or the VS Code webview has no
+// shell (parentMobile undefined), the desktop's grid shows several panes and keeps the whole push. The
+// shell's probe is defined in its head, before any iframe (_landing), so this read at the shim's load cannot race the shell's
+// body scripts. A blob with no activeId (a first-ever open) dials the term too and the kernel keeps its fail-safe whole push
+// for a local page with no hint (_resolve_reconnect); a stored tab that has ended matches no session and every tab is skeleton,
+// which the page's strip gate loads in the kernel's order.
+if(APP==="chat"&&!COL&&!SKEL&&parentMobile()===true)RESTART_DIET=true;
 // [fork] D2: park this pane's socket. abandon()'s teardown (the four handlers detached, close, ws nulled, so the watchdog tick
 // is inert on !ws and no onclose timer can arm) and its quiet-stale rule, but ONE state word to the shell, "parked", never
 // abandon()'s "down": a parked pane is not a broken one, so the shell's connection log stays silent and its cue dark
@@ -66953,7 +69907,7 @@ if(awaitLink)return;   // [fork] D3 (review round 2, 2026-09-18): while this ret
 if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
-ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+((everConnected&&bundleReady&&readyAcked&&!readyQueued)?"&reconnect=1&proto="+readyProto:"")+(COL?"&col="+encodeURIComponent(COL):"")+((SKEL||(RESTART_DIET&&!everConnected))?"&skeleton=1":"")+(APP==="fleet"?"&provrows=1":""));   // skeleton=1: a later chat column, or the main pane's FIRST dial after any reload the reload core fired (RESTART_DIET), served as a view of the session its ?active= names (above). reconnect=1: this page has held a socket before AND its bundle has said ready AND the kernel's caps frame has answered that ready AND the ready is not still waiting in the queue for this open, so it holds the sessions the kernel served it; the kernel skeletons the tabs it is not looking at (2026-09-07). A socket that opened and died before the bundle said ready held nothing for the page, and neither did one whose bundle said ready only after it died (the ready queued, and flushes onto this socket as the bundle's own); a ready that left on an open socket the kernel never answered (the socket died before its caps frame came back) served the page nothing either: all three redials dial as a fresh page, the last for the page's life, since the bundle posts ready once and no later socket carries one for a caps frame to answer (2026-09-10)
+ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+((everConnected&&bundleReady&&readyAcked&&!readyQueued)?"&reconnect=1&proto="+readyProto:"")+(COL?"&col="+encodeURIComponent(COL):"")+((SKEL||(RESTART_DIET&&!everConnected))?"&skeleton=1":"")+(APP==="fleet"?"&provrows=1":"")+(window.__rompKeyQ?window.__rompKeyQ():""));   // the page key (k=): the socket class's credential on this origin, added by the page-key script; skeleton=1: a later chat column, or the main pane's FIRST dial after any reload the reload core fired (RESTART_DIET), served as a view of the session its ?active= names (above). reconnect=1: this page has held a socket before AND its bundle has said ready AND the kernel's caps frame has answered that ready AND the ready is not still waiting in the queue for this open, so it holds the sessions the kernel served it; the kernel skeletons the tabs it is not looking at (2026-09-07). A socket that opened and died before the bundle said ready held nothing for the page, and neither did one whose bundle said ready only after it died (the ready queued, and flushes onto this socket as the bundle's own); a ready that left on an open socket the kernel never answered (the socket died before its caps frame came back) served the page nothing either: all three redials dial as a fresh page, the last for the page's life, since the bundle posts ready once and no later socket carries one for a caps frame to answer (2026-09-10)
 // onopen: flush the queue; a RECONNECT (after a drop) also PROMPTS a reload — the fresh socket resyncs live via
 // the kernel's next push, and the banner offers a full reload for anything a live push doesn't cover. This
 // replaced the old silent location.reload() (the user 2026-07-05: don't foist a reload; let me click). Since T265
@@ -67149,7 +70103,7 @@ if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // waits, and the shell's link-up word is the redial's event. The shell re-tells the link on its socket's open, close
 // and abandon (_LANDING_COLLAPSE_JS broadcast): the six pane frames hear it as the link field of the panes word
 // (link:'up'|'down', panesMsg), every other shim-bearing iframe (the settings frame, a split chat column) as a link
-// word of its own ({romp:'link',link}), since a panes word would replace those frames' pane set (review round 1,
+// word of its own ({romp:'link',link,mob}: this reader takes the link alone, render.ts the layout term), since a panes word would replace those frames' pane set (review round 1,
 // 2026-09-18: before this the word reached the six pane frames alone, and the others ended their await on the 5 s
 // backstop poll below). Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending
 // return-fresh.
@@ -67613,6 +70567,20 @@ def _pane_spin(cid, ignore_id=""):
             # pane that has content — the kernel's connect-time push landing is. So it waits for
             # romp:wsfresh, the shim's first real frame after the reconnect.
             "window.addEventListener('romp:wsup',function(){hide();});"
+            # [fork] review round 2 (2026-09-19, D3): while a pane's FIRST paint is held off screen (the feed on the phone,
+            # paint-gate.ts firstPaintHeld) nobody can see the sheet, so it stands with no timer (a failsafe firing then
+            # faded it over the still-empty list, and the tap revealed a blank pane); the release render re-arms the 30 s
+            # backstop, and its first child retires the sheet through the observer above. Both events are the bundle's
+            # (feed.ts), dispatched once per hold. A LATCH, not a one-shot (review round 3, fresh-2): the hold word sets
+            # `held` and re-shows a sheet a blip had faded before the word (the socket's wsup hide() above); two fork
+            # listeners after the upstream ones stand the socket's arms down while held: a wsdown's show() re-armed the 30 s
+            # failsafe (cleared again here, same-target listeners run in registration order, so this runs after it), and a
+            # wsup's hide() faded the sheet over the still-empty list (re-shown here). The release clears the latch and re-arms.
+            "var held=false;"
+            "window.addEventListener('romp:firstpaintheld',function(){held=true;clearTimeout(fail);o.classList.remove('gone');});"
+            "window.addEventListener('romp:firstpaintreleased',function(){held=false;arm();});"
+            "window.addEventListener('romp:wsdown',function(){if(held)clearTimeout(fail);});"
+            "window.addEventListener('romp:wsup',function(){if(held)o.classList.remove('gone');});"
             "window.addEventListener('romp:wsfresh',function(){badge(false);});})();</script>")
 
 
@@ -68224,6 +71192,11 @@ locate:"a click that should have jumped to a message in the chat couldn't find i
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
 refused:"a setting that could not be saved, a state file that could not be read, or a restart the manager refused. A change you made (a lane or tab setting, a card bell, a lane order) was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults. Or the kernel asked its manager to restart and the manager refused (it does not hold the serve token the kernel sent, or cannot read its own): nothing restarted, and the entry carries the status and the way out",
 undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read the comment threads' store while resolving a session name, or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo refused over the goals file writes nothing there"};
+// `frozen` (the maintainer's round 6 of the wsBytesByHost review, ui-1): the kind of the two messages the apply-throw refusal
+// posts (federation.ts refuseRemoteApply and refuseLocalApply), which posted the kindless catch-all before and landed unlabelled;
+// registered in all three tables here, on lines of its own after them, and worn in the warning yellow (its chip rule beside k-refused):
+// the cards are stale, not lost, and the person can act on it, so it is labelled, explained and mutable like every other kind
+KINDS.push('frozen');KINDLBL.frozen='cards frozen';DESC.frozen="a machine's cards stopped updating and are frozen at their last update: a live update could not be applied, and another failed after the machine sent a fresh copy. Nothing is lost. A remote machine's cards refresh when its connection reconnects; the local machine's when the connection reconnects or the page is reloaded";
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
 if(filtBar)KINDS.forEach(function(k){var b=document.createElement('span');
@@ -68258,6 +71231,13 @@ row.addEventListener('click',function(){close();
 // reveal at this dashboard). A shell socket that is down says so in the Log rather than dropping the click.
 if(!feedHere()){jumpChat(n.tgt.sid||'');return;}
 try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}
+// [fork] review round 3 (2026-09-19, extra9-1): the jump SHOWS the pane on the phone too (the browseFiles relay's precedent in
+// _LANDING_SETTINGS_JS): show() runs the feed's synchronous show hook, so its held board is painted and its panes word posted in
+// this click's task, BEFORE the revealCard message below, and the feed finds the card at the tap; nothing parks on this road.
+// Gated on the phone layout (review round 4, 2026-09-19, correctness-3 and regression-3; the viewFile relay's shape in _LANDING_SETTINGS_JS):
+// the desktop grid shows the feed pane already, and show() there would still persist romp-mobile-tab and set body data-tab, so the switch
+// would buy nothing and write the remembered phone tab from a desktop click; before this the call ran on every layout.
+try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}
 var f=document.getElementById('f-feed');
 try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'revealCard',itemId:n.tgt.itemId||'',sid:n.tgt.sid||'',gesture:true},'*');}catch(e){}});}
 row.appendChild(tx);row.appendChild(tm);row.appendChild(del);list.appendChild(row);})(NOTES[i],i);
@@ -69331,8 +72311,8 @@ return '<div class="ru-tip-row ah-row'+(full?'':' ah-ro')+'"'+(full?' role=butto
 +(bg?'<span class=ah-nm style="color:'+bg+'">':'<span class=ah-nm>')+esc(r.name)+'</span>'   // the name in its colour is the whole cue: no square beside it (T340)
 +'<span class=ah-desc>'+(r.kind==='retrying'?'retrying':'stopped')+' · '+clsWords(r)+(r.since?' · since '+hm(r.since):'')
 +(r.suppressed?' · auto-retry off for this session (you interrupted it)':'')+'</span></div>';}
-// -- History: GET /api-health at show time. The shell authenticates the way its other fetches do (the romp_token
-// cookie; a same-origin GET sends no Origin, which _origin_ok accepts). A failed read is said in the section, in
+// -- History: GET /api-health at show time. The shell authenticates the way its other fetches do (the session
+// cookie and the page key the fetch wrapper adds; a same-origin GET sends no Origin, which _origin_ok accepts). A failed read is said in the section, in
 // place of the rows: never stale numbers, never silence. Painted through the same held / dirty gate as a frame.
 // fresh=true (a show) drops the last answer first, so a hover never paints an earlier hover's numbers while its
 // own read is in flight. A frame on an open card re-reads behind the stamped answer the card shows, and a pin from
@@ -69689,13 +72669,38 @@ function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled
 // document still on its way would be dropped, and the first click would show nothing. A second ask while that
 // one waits is not queued: the page's opener toggles, so two would open and close it.
 var sPend=false;
+var sArmed=false,sOpen=null;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2), on its own line so the project's declaration above stands unedited: sArmed, the one load listener armed for the element's life; sOpen, the poster of the ask the fetch in flight answers, written by the tap that fetched and read once by that listener
+var sDeferred=false;   // [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-1): a tap has ridden the fetch in flight (the deferral below), once per fetch; cleared where a fetch starts
 window.__rompOpenSettings=function(tab,section){var f=document.getElementById('f-settings');if(!f)return;
 // tab and section (T379): the chat strip's tab-widgets gear asks for the Chat tab at its Tab widgets section; the rail's gear names none (the remembered tab)
 var msg={romp:'openSettings'};if(typeof tab==='string'&&tab)msg.tab=tab;if(typeof section==='string'&&section)msg.section=section;
 var open=function(){try{f.contentWindow&&f.contentWindow.postMessage(msg,'*');}catch(e){}};
+// [fork] review round 3 (2026-09-19, kernel-3): a src set over NO document is a failed fetch (Chromium commits a cross-origin error
+// page, contentDocument null; Firefox and WebKit keep the frame's initial about:blank and fire no load event), and before this it left
+// the gear unopenable for the page's life: every later tap returned at sPend or posted into a dead document. Read at TAP time (no load
+// event comes on two engines, and no timer: the next tap is the event): no document, or about:blank, drops the src and the pending flag
+// and falls through to the promotion below, which fetches again and posts the open on the load. Live means the settings PAGE: a
+// same-origin document at a url with the pane shim's marker in its window (window.__rompApp, set as the shim parses, the read
+// docState makes for its `app` answer in _LANDING_MOBILE_JS, kernel.py function docState; review round 4, 2026-09-19, kernel-2). A document without it (the kernel's 403 line
+// to a browser holding no session cookie the kernel accepts, a proxy's 502 body) is not the page: it cannot hear the ask, and this frame is display:none until the page
+// speaks, so the lazy panes' shown-as-served rule has no bearing here; before this a same-origin error body left the gear dead for the
+// page's life, every tap posting into it. A body that stays an error leaves the gear silently unopenable still (a disclosed residual).
+// A tap while the first fetch is still in flight reads not-live too. Before the document commits (about:blank, or no document) it restarts
+// the fetch (one open still, at that load; the earlier "not queued" rule kept a second tap from toggling the page twice, and the restart
+// keeps that). Once the document has COMMITTED at the url but its inline shim has not run (the page's two stylesheets load ahead of it),
+// the marker alone cannot tell "still in flight" from "finished and not the page": the LOAD EVENT can (pass 5, the author's label, 2026-09-20, the reviewer's round-4 ui-1),
+// since the listener below clears the pending flag on the page's load. With the flag still up, the tap rides the fetch already running,
+// re-recording its own ask so the load posts this tap's tab and section, and it does so ONCE: a further tap in the unchanged state
+// restarts (the refuter's rule: a link lost mid-load, the document committed and its shim never arriving, must not leave the gear
+// unopenable for the page's life). Before this the second tap tore the navigation down and started a second load, where the parent
+// rode the one running. The gear paints no failure state; a further tap is the recovery.
+if(f.getAttribute('src')){var live=false,parsed=false;try{var sd=f.contentDocument;parsed=!!(sd&&sd.URL&&sd.URL!=='about:blank');live=!!(parsed&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}
+  if(!live&&parsed&&sPend&&!sDeferred){sDeferred=true;sOpen=open;return;}   // [fork] pass 5, the author's label, the reviewer's round-4 ui-1: committed at the url, no marker yet, no load yet: the fetch is in flight, so this tap rides it once (its ask recorded for the load; the comment above)
+  if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}
 if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);
-  f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's
-    if(sPend){sPend=false;open();}});return;}
+  sOpen=open;sDeferred=false;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2): the ask THIS fetch answers (sDeferred: a new fetch, no tap has ridden it yet, pass 5, the reviewer's round-4 ui-1), read by the listener below at the page's load. The listener is armed once for the element's life and closed over the first tap's open (and so its msg), so every re-fetch after a dead document, and the restart a tap during the first fetch makes, opened the gear at the FIRST tap's tab and section whatever the later tap named; the tap that fetches records its own ask here and the listener posts and clears it
+  if(!sArmed){sArmed=true;f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's; ONE listener for the element's life (a re-fetch after a failed one reuses it: review round 3)
+    if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}
 if(sPend)return;
 open();};
 // #settings=<tab> in the URL (T404 round two): a standalone /feed or /fleet page's off notice lands here with the tab named,
@@ -69748,6 +72753,7 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
     if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
   var fwd=function(){try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null,frag:m.frag||null},'*');}catch(e){}};
   var rd='';try{rd=(ff&&ff.contentDocument)?ff.contentDocument.readyState:'';}catch(e){}
+  try{if(ff&&ff.contentDocument&&ff.contentDocument.URL==='about:blank')rd='loading';}catch(e){}   // [fork] stage 0 (2026-09-18): a LAZY Files pane the tab switch above just promoted still holds its initial about:blank (readyState complete) until the page commits; a forward into it would be lost, so it waits for the page's load below (the gear opener's own guard)
   if(ff&&rd!=='complete'){var once=function(){ff.removeEventListener('load',once);fwd();};ff.addEventListener('load',once);}else fwd();}
 // the Files pane's viewer closed (files.ts posts it on the close edge: nothing left up in the pane): on a
 // phone, where the arm above switched tabs to show it, go back to the tab the click came from; on desktop
@@ -69773,6 +72779,7 @@ if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getEl
     if(curb!=='files'){window.__rompFilesTabFrom=curb;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
   var fwdb=function(){try{fb&&fb.contentWindow&&fb.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}};
   var rdb='';try{rdb=(fb&&fb.contentDocument)?fb.contentDocument.readyState:'';}catch(e){}
+  try{if(fb&&fb.contentDocument&&fb.contentDocument.URL==='about:blank')rdb='loading';}catch(e){}   // [fork] stage 0: the same wait for a just-promoted lazy Files pane (the viewFile arm above says why)
   if(fb&&rdb!=='complete'){var onceb=function(){fb.removeEventListener('load',onceb);fwdb();};fb.addEventListener('load',onceb);}else fwdb();}
 // A browse ask naming no pane surfaces the FILE BROWSER in the FEED pane, which is a different
 // document — so the shell relays it. If the feed pane is toggled off we turn it on for the duration
@@ -69782,7 +72789,7 @@ if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getEl
 else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
-  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
+  try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // the phone's one-pane tab swap, gated on the layout as the two Files arms above and the Log row are (pass 5, the author's label, 2026-09-20, taking the reviewer's round-4 finding ui-2: the desktop grid shows the feed already, and show() there would persist the remembered phone tab, romp-mobile-tab, from a desktop gesture); the lift above and the post below run on both layouts
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
 // A passage selected in a viewer hosted by a pane with NO composer (the Files pane, the feed) posts up in
 // the editorSelection shape the chat already handles (file-view.ts composerWindow); the shell forwards it
@@ -70535,6 +73542,19 @@ refresh();   // self-schedules (fast while attaching, slow keep-alive otherwise)
 # to 1024px, is one pane at a time with bottom tabs; mouse desktops keep the grid.
 _MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 
+# [fork] stage 0 (review round 1, 2026-09-19, regression-5): the DESKTOP promotion of the Waiting and Files panes. Both are
+# served with data-src (lazy on the phone since 2026-09-18) and have no gear row, so the pane controller's list
+# (_LANDING_COLLAPSE_JS reconcile) does not carry them; on the desktop grid they load at boot, here. Its own <script>, like
+# every shell behaviour (test_kernel_mobile's count pin): a throw in the mobile script must not strand a desktop pane
+# (before this the promotion was the mobile script's last line, behind an early return and 295 lines that can throw). It
+# reads the layout from the media query itself, never from window.__rompMobileOn, which the script assumed to have thrown
+# defines, and never from the controller's list (the gear-optional panes; a Waiting row there would change togglePane).
+# Spliced before the mobile script. A phone layout returns at once: there the mobile script promotes a pane on its tap.
+_LANDING_DESKTOP_PANES_JS = """
+(function(){var MQ=null;try{MQ=window.matchMedia&&matchMedia(""" + json.dumps(_MOBILE_MQ) + """);}catch(e){}if(MQ&&MQ.matches)return;
+['f-waiting','f-files'].forEach(function(id){try{var f=document.getElementById(id);if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));}catch(e){}});})();
+"""
+
 _LANDING_MOBILE_JS = """
 (function(){
 // The shell's own client-diag rows (2026-09-08): the bell's and the tap-landing scripts record what they saw
@@ -70570,10 +73590,263 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // keyboards and collapsing toolbars — where height*scale keeps a mobile pinch from re-fitting too.
 // Every run recomputes from scratch — never adjusts a stored value — so a viewport that grows back
 // (keyboard gone, app back in front) can never leave a stale, shorter --app-h behind.
+// [fork] the author's pass 8 (2026-09-20): "pinch-immune in every browser" above is upstream's premise about innerHeight, left as written;
+// the fork's contrary reading of WebKit and its evidence status live in ONE place, the fit() comment below the --app-h write
+// ("TWO PREMISES rest here"), which names this paragraph as the contrary. The fine-pointer road reads the layout viewport
+// as document.documentElement.clientHeight through the fork line after the h assignment.
+// [fork] D1 (2026-09-19): the pinch road's state, the only values fit() keeps from one run to the next (the upstream sentence
+// above, every run recomputes from scratch, is about --app-h, which every run still does). lastPan is the HOLD, the pan a WRITING
+// road of fit() last stored: the measured road stores what it publishes before the clamp at use it applies under a pinch (kbPx
+// below, the reading itself under the cut) and the 0px road a zero, in a no-pan state only. The hold road writes nothing into it, so what the page is using can differ from the
+// hold until a road WRITES it (the author's pass 8, 2026-09-20; the author's pass 6, 2026-09-20: it had read "the pan last
+// published, on every road"). held says the hold was WRITTEN with a keyboard up: every measured-road write sets it to L - h > 0,
+// and the 0px road clears it with the hold. It is kept apart from the hold's value because a hold of 0 (the keyboard up at scale
+// 1 with no pan) is a hold like any other, and under a pinch the measured road writes only where none is held, so no pinch
+// reading, a drag or a continuous pinch, overwrites a standing hold (the maintainer's round 6 ruling, 2026-09-29: that write had
+// keyed on any reading past the zoom's share, so a drag one pixel past it dropped a hold of 83 to 1 and a continuous pinch
+// lowered it at every step; keyed on the hold's value instead, a hold of 0 would read as none and a drag would overwrite it).
+// gone says the held keyboard went down under the pinch: the hold road's keyboard-down run (inside the layout viewport, L - h <=
+// 0, the run whose clamp publishes 0) sets it where a hold is held, and the next keyboard-up run under the pinch bounds the hold
+// into the reading's interval [kbPx, panPx] and keeps the result in rp, apart from the hold. So a keyboard raised again with no
+// pan, or with a pan inside the zoom's share, publishes a value the reading allows and not the stale hold (round 6: a keyboard
+// raised again with no pan under a zoom of 1.003 had put the composer 81.5 px below the visible band's bottom), and a later
+// re-raise of the first field still finds the hold, since every re-raise bounds from the hold itself, which the hold road never
+// writes, and never from rp (the keyboard-down run also drops rp, which reaches only a report outside the layout viewport that
+// follows it before the next re-raise: that report takes the hold). ps and ph are the scale and h of the previous run that
+// took the measured road or the hold road, so a run can tell what changed since: h changed with a keyboard up (L - h > 0) is a
+// RAISE on the measured road (kz below), and the scale changed is a ZOOM, a zoom alone where h is unchanged. kz is the zoom of the keyboard event
+// that wrote the value in force, 0 where none did: a measured-road write with the keyboard up and h changed since the previous run
+// (a raise) sets it to the scale, and so does the re-raise that writes rp; any other measured-road write (a drag's, h unchanged)
+// sets 0, and the hold road clears it at any change of scale, h changed with it or not (the maintainer's round 6 ruling, 2026-09-29:
+// any zoom disarms the rule; while only a zoom alone cleared it, kz stood through a report that changed the scale and h together, a
+// keyboard swapped in during a pinch, h's rounding flipping by a pixel during one with the same keyboard, or the keyboard going down
+// with the visual viewport outside the layout viewport, and a later such report back at kz's zoom, no pan on its own run, took the
+// stance there and the pan rule on its refit, so --app-top moved with no new information; since the pan test was dropped, below,
+// such a report back would take the pan rule on both runs, a zoom that did not disarm it). The 0px road leaves it: the hold it
+// clears is 0, from which the pan rule and the stance publish the same value, kbPx. For a report inside the layout viewport the
+// hold road publishes the pan rule, the larger of the hold and the value in force re-bounded into the reading's interval, exactly
+// where kz is the current scale (the maintainer's round 6 ruling, 2026-09-29: the reading governs a pan of a keyboard raised at
+// this zoom, the stance a zoom and what follows it). That is the rule's one test (the same ruling, on its focused re-check: a pan
+// test the rule had also made, the scale unchanged since the previous run with a keyboard up, did no work, and it is dropped).
+// Every road that sets kz sets ps with it, and the hold road clears kz before the test when the scale changed, so kz is 0 or the
+// current scale there; a run that changed the scale reaches the rule only as a re-raise, which sets kz and where the rule and the
+// stance both publish rp; and with the keyboard down (L - h <= 0) the clamp at use publishes 0 on either arm. A keyboard of
+// another height swapped in at the zoom of the raise changes neither the scale nor kz, so the rule governs the swap's own run (the
+// same ruling: while the rule also asked for h unchanged, a swap's own run took the stance and a refit at the same report the pan
+// rule, so --app-top moved with no new information). Every one of these keys on a run fit() reads, not on a time window.
+// Nothing adjusts the hold in place: the clamp is at use (the author's pass 4, 2026-09-20).
+var lastPan=0,held=false,gone=false,rp=null,ps=0,ph=0,kz=0;
+// [fork] the author's pass 8 (2026-09-20): the ONE reading of the pan both writing roads share: the measured road stores it under the cut (at
+// or above it, it less the zoom's share, kbPx below; the author's pass 9) and the 0px road's no-pan test reads it, so an offsetTop
+// that rounds to no pixel (0.4) is no pan on both roads and one that rounds up (0.5) a pan on both. The 0px road had read the raw offsetTop, so a pan in (0, 0.5) was a standing hold there and a stored 0 here.
+function panPx(vv){return Math.round(vv.offsetTop||0);}
+// [fork] the author's pass 9 (2026-09-20): a pure ZOOM's share of that reading, in the same pixels. What panPx reads is vv.offsetTop, the visual
+// viewport's top edge in the layout viewport's coordinates, and the visual viewport lies inside the layout viewport: over a layout
+// viewport L px tall a report at scale s with no keyboard behind it has a visual viewport L/s tall whose top ranges over
+// [0, L - L/s], so a zoom alone pans by at most L(1 - 1/s), 0 at scale 1, 2.5 px at 1.003 and 8.4 px at 1.01 over 844. A keyboard
+// shortens the visual viewport further, to h/s (h the band's unzoomed height the coarse road computes below), and that shortening
+// is what lets the top sit lower than a zoom alone could put it: the part of the reading below the zoom's share is a keyboard's.
+// L is the LAYOUT viewport, read once per run below (document.documentElement.clientHeight; innerHeight stands in only where the
+// document element has no clientHeight, a node stub, a real standards-mode document always has one), never the coarse road's
+// h = round(vv.height*scale): with the keyboard up that h is the band, L less the keyboard, a height no zoom pans over, and
+// h(1 - 1/s) would understate the share by the keyboard's height times (1 - 1/s). The author's pass 8 had derived the cut below from "an 844
+// px layout viewport" while the coarse road passed its h of 460 to it, so the two roads took the cut at two heights. The
+// derivation's DOMAIN is a scale of 1 or more, the premise that the visual viewport lies inside the layout viewport; below 1 (a
+// zoom-out, or a pinch-out bounce, whether iOS reports one unverified) the visual viewport is the taller and its top can only sit at
+// or above the layout viewport's, so a pure zoom-out pans nothing downward and its share is 0, never the negative L(1 - 1/s) (the
+// fixer pass of the author's pass 9: the helper had returned the negative share and kbPx below published the reading PLUS it, 94 px
+// at scale 0.9 with no keyboard, stored as the hold).
+function zoomPx(vv,L){return Math.max(0,Math.round(L*(1-1/(vv.scale||1))));}
+// [fork] the author's pass 8 (2026-09-20): the pinch CUT, derived from the measured road's own rounding (it had been the literal 1.01, with no
+// derivation anywhere and no cell driven inside (1, 1.01)): the scale at which a zoom's own share first rounds to a pixel,
+// L(1 - 1/s) = 0.5, s = L/(L - 0.5), 1.0006 over an 844 px layout viewport, on both roads at the layout viewport (the author's pass 9). Below it
+// a pure zoom's pan stores as 0, so a reading of 0 there is a resting viewport (the 0px road clears the hold on that) and a
+// positive reading is a keyboard's whole; at or above it a zoom could put a pixel into the reading, so the report is a PINCH: the
+// 0px road leaves the hold standing, and the measured road publishes the reading less the zoom's share (kbPx below) rather than
+// standing down (the author's pass 8 had it fall to the hold road there, and with no hold standing that road publishes 0: a keyboard raised
+// under a light zoom, a scale between the cut and the old 1.01, laid the shell out at pan 0 and reopened the band; the maintainer's
+// round 5 ruling). Both engines report exactly 1 at rest (Playwright's WebKit and Chromium, eight descriptor contexts). With no
+// layout height (L 0) the cut is undefined and the report counts as pinched, so the hold stands rather than being cleared against a
+// height that is not there.
+function pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}
+// [fork] the author's pass 9 (2026-09-20): the pan a pure zoom CANNOT explain, the keyboard's: the measured pixels less the zoom's share in
+// pixels, never below 0. Below the cut the share is no pixel and this is panPx itself, the one reading the 0px road's no-pan test
+// shares (the author's pass 8); at or above it the error against the keyboard's own pan is bounded by the share (the zoom may have panned less
+// than its bound, 8 px at 1.01 over 844, where standing down cost the whole keyboard pan, about 80 px) plus the two roundings: the
+// published value is an integer from panPx and zoomPx, each at most half a pixel off, so it lies within the share plus one pixel
+// BELOW the keyboard's own pan and one pixel ABOVE it, never one-sided (the fixer pass of the author's pass 9: a reading of 86.5 at a
+// share of 2.49 publishes 85, a pixel above a keyboard pan of 84.01 when the zoom panned its whole share; a reading of 84 at a share
+// of 16.55 publishes 67, 17 below a keyboard pan of 84 when the zoom panned nothing; an engine's float32 report adds an ulp). Under a real
+// pinch a keyboard's pan of 83 lies inside the share (422 at scale 2 over 844), so kbPx is 0, the measured road does not run and the
+// hold road publishes the hold, the pan of the keyboard it was measured with; a visual viewport dragged lower under that pinch than
+// the hold plus the share publishes the excess, kbPx, and no road stores it while a hold is held, so the drag back publishes the
+// hold again and a keyboard raised again is bounded from the hold (gone, beside lastPan), not from the excess (the maintainer's
+// round 6 ruling, 2026-09-29: it had been stored, so a drag to 590 at scale 2 left a hold of 168 for the re-raise). The share's
+// bound rests on the visual viewport lying inside the layout viewport (inside below): a report it does not fit, the stale one a rotation leaves until the visual viewport re-reports, is outside the derivation
+// and takes the hold road, whose clamp binds at 0 there. inside compares the report's bottom edge ROUNDED to the pixel, the rounding
+// this road reads at: the engines hand over float32 values, and a visual viewport flush at the layout viewport's bottom (offsetTop +
+// height = L, the deep pan with the keyboard up) can sum to L plus an ulp in doubles (3e-5 over 844), which an exact test read as
+// outside and sent to the hold road, 0 with no hold where the measured road publishes 277 (the fixer pass of the author's pass 9, scale
+// 1.3856); a report whose bottom overshoots by less than the half pixel that rounds away is inside to the pixel, and the stale
+// report (232 over: offsetTop 200 plus height 422 against a layout height of 390, the harness's rotation cell asserts it) is not.
+function kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}
+function inside(vv,L){return Math.round((vv.offsetTop||0)+(vv.height||0))<=L;}
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
+// [fork] the author's pass 8 (2026-09-20): the LAYOUT viewport, read once here for every road below (the author's pass 9: the fine road's height, the cut
+// and the zoom's share on both roads, and the clamp), as document.documentElement.clientHeight (the reasoning and the engine premise
+// are in the fit() comment below the --app-h write); innerHeight stands in only where the document element has no clientHeight
+// (a node stub), a real standards-mode document always has one. On the fine road h IS the layout viewport (this line re-reads
+// upstream's innerHeight as clientHeight); on the coarse road h stays upstream's round(vv.height*scale), the visible band's
+// unzoomed height, which the keyboard shortens, so the two are the same number only with no keyboard up.
+var L=document.documentElement.clientHeight||window.innerHeight;
+if(!coarse||!vv)h=L;
 if(h)document.documentElement.style.setProperty('--app-h',h+'px');
+// [fork] D1 (2026-09-19): the visual viewport's PAN. iOS reveals a focused input by moving the visual viewport down the
+// layout viewport (offsetTop > 0; no document scroll for the scrollTo below to undo) while the layout viewport keeps its
+// height, so a body sized to vv.height sat at layout y 0..vv.height while the visible band ran offsetTop..offsetTop+vv.height,
+// and the bottom offsetTop pixels of the screen showed bare page background under the composer (the user 2026-09-18 and
+// 2026-09-19, iPhone, installed app: an empty band about 80 CSS px tall between the composer and the keyboard's accessory
+// bar). Publish the pan as --app-top; the mobile body rule (position:fixed;top:var(--app-top)) moves the shell down into the
+// visible band. Written on every run except a coarse run whose height report is refused (h 0, the validity guard at the end of
+// this comment), 0px whenever the pointer is not coarse or there is no visual viewport, whatever the visual viewport says (a fine-pointer browser has no soft keyboard to pan for). Two gates on two axes (the author's pass 2, 2026-09-19): this writer is gated on the POINTER, so any
+// coarse document publishes its pan at any width; the consumer, the fixed body rule inside the _MOBILE_MQ block, is gated
+// on the LAYOUT query, which a window at or under 820 px matches at any pointer and a coarse one up to 1024 px. So a
+// fine-pointer window at or under 820 px takes the fixed body at top 0 and lays out as before, and a coarse document wider
+// than 1024 px publishes a pan no rule consumes and keeps its body in flow (tests/test_keyboard_gap_served.py drives
+// both; test_kernel_mobile's harness turns the pointer fine from a panned state). A PINCH (pinched: a scale at or above the
+// cut L/(L - 0.5), the smallest zoom whose own pan can round to a pixel, derived beside the helper) pans
+// the visual viewport too, with no keyboard behind it, so the part of offsetTop a pure zoom can explain (its share, zoomPx,
+// derived beside it) is never published: the measured road publishes the reading less that share where anything is left
+// (kbPx; the author's pass 9, 2026-09-20: it had stood down at the cut, which with no hold standing published 0 and reopened the band under
+// a light zoom), under a pinch only where no hold is held (held, beside lastPan; the maintainer's round 6 ruling, 2026-09-29), and
+// otherwise the hold road publishes from the hold, or from the re-raise bound rp where one stands (beside lastPan). A report
+// inside the layout viewport where kz is the current scale, the value in force written at a raise or a re-raise under this zoom with
+// no change of scale between runs on the measured or hold road since (kz and ps, beside lastPan, which says why the rule needs no
+// test of a pan: a pan of a keyboard raised at this zoom, a keyboard swapped in at that zoom included, is such a report), re-bounds
+// the larger of the hold and the value in force into the reading's interval [kbPx, panPx] (the maintainer's round 6 ruling, 2026-09-29: keeping the value there left the composer 44 px below the
+// visible band's bottom for a light-zoom hold of 20 at 1.05 dragged to 0, where 0 px leaves 24, and a pan to the share after a
+// no-pan re-raise under a light zoom opened a band under the composer, 2.67 px at 1.008, 3.33 px at 1.01 and 16 px at 1.05; node
+// cells). The larger of the two, because a keyboard raised again with the visual viewport deep under the zoom leaves a re-raise
+// bound above the hold (the reading less the share), and a pan re-bounded from the hold alone published the smaller hold and
+// opened a band under the composer (the same ruling: a hold of 83 from scale 1, the keyboard down under a zoom of 2 and raised
+// again at offsetTop 590, rp 168, then a pan to 422, had published 83, a band of 85 px, and now publishes 168, the composer at the
+// band's bottom; the bands of 29 px at 1.5 and 20.82 px at 1.1 close alike; node cells, test_kernel_mobile's reraiseDeep cells).
+// Any other report inside
+// the layout viewport takes the stance: where the zoom's share is below the value, the value bounded into the reading's interval;
+// where the share reaches it, the larger of the value and kbPx, so a zoom alone never re-lays the shell there (the pinch-aware
+// note above: its share is the whole of its pan), except after a pan the rule re-bounded: the rule's value is published and not
+// stored, so a zoom alone then publishes from the value in force and the shell moves by the difference (disclosed, a design call
+// not taken here: a pan to the share at 1.05 publishes 40 px, and a zoom alone to 1.1 about the band's centre then publishes 0, a
+// band of 5 px under the composer, and the zoom back to 1.05 at the same pan 0 again, a band of 16 px; test_kernel_mobile's
+// zoomAfterPan cell pins both); and a drag past the value plus the share
+// publishes the excess, which nothing stores. Three costs of the stance, each measured in round 6: a zoom alone leaves the composer below the visible band's bottom by
+// the zoom's own magnification (12 px at 1.05 about the band's centre, served); where the rule does not apply (after a zoom
+// alone, for example, or over a value a drag wrote), a pan of the same keyboard above the value keeps it where the share reaches it, the composer below the band's bottom by
+// the drag until the keyboard goes down (a hold of 83 from scale 1, pinched to 2 and dragged to the top: 83 px published where the
+// reading allows 0, the composer 337 px below the band's bottom where 0 px leaves 254; node cells); and after a zoom alone a pan
+// of the same keyboard DOWN inside the new zoom's share keeps the value too, so a band can open under the composer, the class the
+// pan rule closes for a keyboard raised at the current zoom (a keyboard re-raised with no pan under a light zoom, the value in
+// force its re-raise bound 0, then a zoom alone about the band's top and a pan down to the new zoom's share: 30.55 px from 1.05
+// to 1.1, 19.02 px from 1.05 to 1.06, 6.59 px from 1.01 to 1.02 and 3.33 px from 1.003 to 1.01, and the same bands for a hold
+// of 83 from scale 1 re-raised so; node cells, test_kernel_mobile's zoomThenPanDown cells pin them; the pan rule governing that
+// pan where the value in force is a re-raise bound was measured and not built, the maintainer's round 6 ruling, 2026-09-29: it
+// closes these bands, but the zoom alone's own run takes the stance and its refit is a pan, so a refit with nothing new would move
+// --app-top). Everything the hold road
+// publishes, and what the measured road publishes under a pinch, is CLAMPED AT USE to the layout
+// viewport's height less h (the author's pass 2,
+// 2026-09-19; the measured road under a pinch since the maintainer's round 6 ruling, 2026-09-29, below): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
+// gone would otherwise place the body's bottom, the composer row, below the layout viewport until the zoom ended. The layout
+// height is document.documentElement.clientHeight, on this road (the author's pass 7, 2026-09-20) and on the fine-pointer road above
+// (the author's pass 8, 2026-09-20; one read for every road since the author's pass 9); both had read window.innerHeight. TWO PREMISES rest here and nowhere else in this file: the other
+// sites point here, and the upstream lines that state the contrary (the "pinch-immune in every browser" paragraph above;
+// the meta comment in _landing) stay as written. ENGINE MODEL: Chromium keeps innerHeight at the layout viewport under a
+// pinch and WebKit shrinks it to the visual viewport's height, so a clamp reading innerHeight there had innerHeight - h
+// below 0 on every zoomed run, the max term bound at 0 and the road published 0px whatever the hold, the band under the
+// composer reopened for as long as the zoom held; clientHeight is the layout viewport in both models (standards mode is
+// pinned by EXECUTION, not by an assertion on the mode: in quirks mode the root's clientHeight is the body's height, not
+// the viewport's, and the served legs' pan and pinch figures, 83 and 336 px in tests/test_keyboard_gap_served.py, flip to 0 in
+// the Chromium legs the moment the document is served without its doctype, legs CI runs with a skip counted as a failure; the
+// WebKit legs run wherever a WebKit is installed and ROMP_SERVED_TESTS_ENGINES does not exclude it, and an absent or undeclared
+// WebKit is never a failure in any configuration (its skip is optional, even where the engine is declared; the class's own skips,
+// no extension deps or a lab kernel that never served, fail every leg alike under ROMP_SERVED_TESTS_REQUIRE=1), so no enforced run
+// measures the WebKit figures without the doctype (the author's pass 9, 2026-09-20: the clause had said "pinned" and named no pin;
+// the maintainer's round 6 ruling, 2026-09-29: it had said both engines with a skip counted as a failure); the page is
+// overflow:hidden, so no scrollbar parts
+// clientHeight from innerHeight where innerHeight was right), which
+// makes the read a no-op on every road where the old value was right and a fix on any road where it was not. The model
+// holds by WebKit's source and a Chromium run; the on-device read under a pinch is the only real-engine confirmation, and
+// it is pending (headless WebKit here refuses a scale above 1). REACHABILITY: the pinch machinery here assumes a pinch is
+// reachable on iOS Safari despite the meta's user-scalable=no, unverified on device; the meta comment in _landing states
+// the contrary (that the token disables zoom). The harness drives both engine models on the pinch road and on the
+// fine-pointer road, and both signs of the clamp's difference (a rotation under a standing zoom with the visual viewport's
+// report not yet updated makes it negative). The clamp bounds what is
+// published and leaves the hold itself standing (the author's pass 4, 2026-09-20: it had written its result back, so the first time it
+// bound the held pan decayed to 0 and a keyboard raised again under the same zoom laid the shell out at pan 0 under a
+// keyboard-sized --app-h, the band reopened). The hold is the pan of the KEYBOARD it was measured with: a keyboard of a
+// different height swapped in while the zoom stands, with no keyboard-down run between (the emoji keyboard, the predictive bar
+// toggled), changes neither the scale nor kz on its own run. Where the value in force was written at a raise or a
+// re-raise under the current zoom (kz the scale), the pan rule governs it; anywhere else the stance publishes from that pan under
+// the new keyboard's own height, so a band under the composer can open for a taller keyboard and the body's bottom sit below the
+// band for a shorter one, by up to the height difference (the author's pass 5, 2026-09-20, disclosed: re-measuring under a zoom only
+// when the height changes is a design call not taken here; the harness's swapZoom and swapRefit cells drive a swap). fit() is
+// IDEMPOTENT at an unchanged report: a refit with nothing new publishes what the run before it did (the maintainer's round 6 ruling,
+// 2026-09-29), and fit() runs again on ordinary events (a visual viewport resize or scroll, a window resize, focus and focusout among
+// them). The case argument: the measured road below the cut runs there whatever the flag, so its refit takes it again; under a
+// pinch with the band not short of the layout viewport it writes no flag, so its refit takes it again too; with the band short it
+// writes the hold and the flag, so its refit
+// takes the hold road, whose pan rule and stance both publish that hold, kbPx, clamped at L - h as the measured road now publishes
+// it; a report the hold road takes, it takes again (the hold road writes no hold and no flag), and its refit takes the pan rule
+// exactly where its own run did: the rule's test reads kz and the scale after the run's own updates to kz (the clearing at a change
+// of scale, the re-raise's write), and the refit, at the same scale with no re-raise left to take, changes neither. Three kinds of
+// report had moved --app-top at a refit, each closed by that ruling.
+// While the rule also asked for h unchanged, the swap's own run had taken the stance and a refit the pan rule: a 471 px keyboard
+// raised at scale 2 with offsetTop 657.5 publishes 236, and the 508 px keyboard swapped in at offsetTop 40 had published 236 on the
+// swap's run, the composer 364 px below the band's bottom, and 40 on a refit; it now publishes 40 on both, 168 below, the zoom's
+// own magnification (test_kernel_mobile's swapRefit cells). While only a zoom alone cleared kz (beside lastPan), a report back at
+// kz's zoom after one that changed the scale and h together took the stance on its own run and the pan rule on its refit: the 508 px
+// keyboard raised at 2 with offsetTop 500 publishes 78, and after one report at 1.5 that brings in the 471 px keyboard, keeps the
+// 508 px keyboard with h rounding to 337, or puts the keyboard down at offsetTop 300, the report back to 2 with the 508 px keyboard
+// at 40 had published 78 and then 40 on its refit; a change of scale now clears kz, so it publishes 78 on both (test_kernel_mobile's
+// swapZoomBack, roundFlip and downOutside cells). And under a pinch with no hold held the measured road had published kbPx
+// unclamped while the refit, on the hold road, clamps at L - h, so where rounding put kbPx a pixel above L - h the refit published
+// a pixel less. That needs the visual viewport within half a pixel of the layout viewport's bottom and the zoom's share of the
+// band's shortfall, (L - h)(1 - 1/s), under a pixel, so a long shortfall needs a light zoom: the refit had moved at a shortfall
+// of 535 px under a zoom of 1.00178, a share of 0.95 px, and at one of 1 px under 1.9976 (node cells; test_kernel_mobile's
+// clampFace535 and clampFaceDeep cells pin both). A visual viewport 841.3459 tall at offsetTop 2.6541 under a zoom of
+// 1.00155, h 843, had published 2 px and then 1 px on its refit, and one 692.4298 tall at 151.5702 under 1.00169, h 694, 151 and
+// then 150; the measured road now clamps what it publishes under a pinch at use, as the hold road does, and still writes kbPx, so
+// they publish 1 and 150 on both runs (test_kernel_mobile's clampFace cells). Below the cut it publishes its reading unclamped as
+// before (its refit takes the measured road again and publishes the same; the clamp there would move the harness's scale-1 sweep,
+// whose visual viewport it drives past the layout viewport's bottom). The refit pin in test_kernel_mobile reads every designed
+// family with each report fired twice, these cells among them, and its seeded doubled-step fuzz, 48000 steps with no move; out of
+// the tree that fuzz's generator over 21 seeds, one weighted to return to earlier scales exactly, and one that also flips h's
+// rounding and drives small keyboards, move it at no step of 1,008,000 each (node cells). Two roads WRITE the hold and
+// each writes the value it publishes, before the clamp at use the measured road applies under a pinch: the measured road its
+// measurement less the zoom's share (kbPx, the measurement itself below
+// the cut; under a pinch only where no hold is held), and the 0px road a zero, only in a true no-pan state, one the measured road would
+// store as 0: no visual viewport, or one under the cut, taken at the layout viewport L on both roads (the author's pass 9, 2026-09-20: the
+// coarse road had taken it at its own h, the band's height with the keyboard up, so the two roads' cuts differed; pinched reads
+// the cut itself as a pinch, so the hold stands there), whose offsetTop rounds to no positive pixel (panPx, the reading the
+// measured road stores there;
+// the author's passes 6 and 8, 2026-09-20: the 0px road had read the raw offsetTop, so a pan in (0, 0.5) was no pan by this rule and a
+// kept hold by that test). A pointer that turns fine with a pan standing (the keyboard up on iOS) or under a
+// standing zoom leaves the hold for the keyboard it was measured with, so coarse again under that zoom the hold road
+// publishes the keyboard's pan and not a 0 the fine window never measured (the author's pass 4 had written the zero on every fine run,
+// and the hold road then laid the shell out at pan 0 under a keyboard-sized --app-h, the band reopened); a flip with the
+// visual viewport at rest clears it, so a zoom after that republishes no stale pan. The hold road publishes from the hold and
+// writes nothing into it (it sets gone, rp, ps, ph and kz, beside lastPan), so --app-top can differ from the hold until a road WRITES it (the
+// measured road, or the 0px road in a no-pan state; the 0px road runs without writing under a standing pan or zoom, the author's
+// pass 8, 2026-09-20). The pan is published under
+// the same validity guard as the height it belongs to (the author's pass 4, 2026-09-20,
+// as the maintainer's round 1 confirmed it): a coarse run whose height report is refused (h 0) publishes neither, so the prior pan stands
+// beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height
+// to belong to and publishes unconditionally (only its write into the hold carries the no-pan condition above). The visual
+// viewport's scroll event, where a pan lands, is already bound below, so no new listener.
+if(!coarse||!vv){if(!vv||(!pinched(vv,L)&&!(panPx(vv)>0))){lastPan=0;held=false;gone=false;rp=null;}document.documentElement.style.setProperty('--app-top','0px');}
+else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;kz=held&&h!==ph?(vv.scale||1):0;ps=vv.scale||1;ph=h;document.documentElement.style.setProperty('--app-top',(pinched(vv,L)?Math.min(Math.max(0,L-h),lastPan):lastPan)+'px');}
+else if(h){var S=vv.scale||1;if(S!==ps)kz=0;ps=S;ph=h;if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;kz=S;}}var H=rp===null?lastPan:rp;document.documentElement.style.setProperty('--app-top',Math.min(Math.max(0,L-h),!inside(vv,L)?H:kz===S?Math.max(kbPx(vv,L),Math.min(Math.max(lastPan,H),panPx(vv))):zoomPx(vv,L)<H?Math.max(kbPx(vv,L),Math.min(H,panPx(vv))):Math.max(H,kbPx(vv,L)))+'px');}
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
 // (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.
@@ -70590,6 +73863,38 @@ barfit();}catch(e){}}
 function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}
 function barfit(){try{var bar=document.getElementById('mtabs');if(!bar)return;
 document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}
+// [fork] D1 (2026-09-19): the strip is for the bar's pixels the user can SEE. Upstream's reading (kbOpen: the visual viewport
+// far shorter than the layout viewport) misses a keyboard that shrinks the LAYOUT viewport too (an engine honouring
+// interactive-widget=resizes-content: innerHeight, vv.height and --app-h agree) while the fixed bar is still outside the
+// visible band; .col then reserved a bar-tall strip that rendered as an empty band above the keyboard. Read the geometry
+// instead of inferring it. The band is the one THIS run published, --app-top to --app-top + --app-h (the fixed body's box
+// on the phone layout; both are written above barfit's call in fit()), and the strip is the part of the bar's box inside
+// it, the overlap of the two intervals, max(0, min(bar.bottom, bandBottom) - max(bar.top, bandTop)), getBoundingClientRect
+// being layout-viewport-relative for a fixed box too: 0 for a bar whose box starts at or below the band's bottom edge or
+// ends at or above its top edge, the whole height for a bar wholly inside, and the overlap between. The author's pass 6 (2026-09-20):
+// the first form, clamp(bandBottom - bar.top, 0, offsetHeight), read the band's bottom edge only, so a band whose top sat
+// below the bar's top (the band a refused height report leaves standing after a rotation, or a short band panned deep)
+// reserved pixels above the band: the whole bar over a bar with no pixel inside it, and more than a short band holds. The author's pass 4 (2026-09-20): the reservation had been all-or-nothing on a visibility verdict, so across one bar
+// height of pan values, the bar partly inside the band, the strip stood bar-tall over a bar showing a few pixels, the very
+// band this change exists to close; the strip now follows the pixels. The PUBLISHED band rather than the live visual
+// viewport, so a pinch (whose --app-top the hold road publishes from the hold, bounded by the reading and clamped at use, and
+// whose --app-h is upstream's scale arithmetic) judges the bar against the
+// shell it laid out and the strip never flips at the pinch cut (the author's pass 4: the pinch term had handed the verdict back to
+// upstream's height reading, which disagrees with the box under a deep pan). A bar the engine keeps ABOVE the keyboard
+// (Android Chrome under resizes-content: innerHeight shrinks and fixed bottom:0 rides the shrunken bottom) is wholly inside
+// by this reading, so its strip stays reserved; the focused-field and shrunken-innerHeight readings considered instead would
+// have collapsed it there. Upstream's barfit (kbOpen's verdict: the whole height or nothing) stands only where the box or
+// the band cannot be read: no bar, no visualViewport, a style object without getPropertyValue, or a run before fit()
+// published both variables. Cost: one getBoundingClientRect per fit(), the read the author's pass 3 kbOpen already made; while a
+// pan carries the bar through the band's edge each frame writes a new --mtabs-h, which .col's padding consumes, one
+// relayout per frame, the same as the all-or-nothing strip's single flip spread across the frames it now spans. Rebound
+// rather than edited: fit() calls barfit by name.
+var barfitVV=barfit;
+barfit=function(){try{var vv=window.visualViewport,bar=document.getElementById('mtabs'),st=document.documentElement.style;
+if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||typeof st.getPropertyValue!=='function'){barfitVV();return;}
+var top=parseFloat(st.getPropertyValue('--app-top')),h=parseFloat(st.getPropertyValue('--app-h'));
+if(!(top>=0)||!(h>0)){barfitVV();return;}
+var r=bar.getBoundingClientRect().top;st.setProperty('--mtabs-h',Math.max(0,Math.min(r+(bar.offsetHeight||0),top+h)-Math.max(r,top))+'px');}catch(e){}};
 // ONE fit per animation frame, however many events a keyboard slide or a resume fires: rAF is the
 // frame the browser is about to paint, not a timer, so a burst coalesces and nothing is deferred past
 // the next paint. The boot fit below stays synchronous so the first paint is already right.
@@ -70637,11 +73942,135 @@ var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-f
 // slash rule keys on, until the next paint event. A tab or a reveal decides which pane shows, nothing else.
 var B=bar.querySelectorAll('button[data-pane]'),KT='romp-mobile-tab';
 function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.showFilesControl===true);}catch(e){return false;}}   // the gear's Files-control setting (T317; off by default since T317b: shown only when the store holds the literal true under the fresh key, never the T317-era filesControl a whole-object save merged in): the same read the pane controller makes, which parses after this script
+// [fork] stage 0 (2026-09-18): LAZY PANES on the phone (the user's decision of 2026-09-18: a pane nobody is looking at costs
+// nothing until its tap). The served markup gives every pane but the chat a data-src (the optional panes since 2026-09-10;
+// the Waiting and Files panes since this change), and on the desktop the pane controller (_LANDING_COLLAPSE_JS reconcile)
+// copies it to src at boot for every optional pane the gear shows, as before, while the Waiting and Files panes, which have
+// no gear row and so are not in the controller's list, are promoted at boot by their own script (_LANDING_DESKTOP_PANES_JS,
+// spliced before this one; review round 1: a throw here must not strand a desktop pane). On the phone layout only the chat, the feed
+// (exempt: its socket carries the card-trouble entries the shell's bell mirrors, the parking rule's exemption) and the stored
+// tab load at boot; every other pane loads on its FIRST show (a tap, a reveal, a relay's switch), so a cold open costs their
+// documents, sockets and connect pushes nothing. The controller's boot promotion reads data-src, so before it parses (this
+// script runs first) the lazy panes' data-src is parked under data-lazy-src, an attribute the controller does not read, and
+// promote() reads either: the controller's own lines stay upstream's text, byte for byte. A layout flip to the desktop (a
+// rotation across the breakpoint) promotes every lazy pane, since the grid shows them without a tap. A promoted pane's
+// document hears the panes word on its own load (the controller's load hook) and dials as any pane does; from its first show
+// on it is a pane like any other (a return while it is off screen parks it, the shim's D2 rule). The measure of the saving is
+// the pane's absence from the timing rows: a never-tapped pane files none.
+// The loading state (ui/CLAUDE.md, loading states): from the promotion until the iframe's load event the pane's .pane div
+// carries the `loading` class, and while the SHOWN tab's div carries it the body carries `pane-loading`, which paints the
+// shell's #pane-load, the romp loader over the pane area (the .pane div is display:contents on the phone, so it can host no
+// box of its own: one shell element, painted for the tab in view). Event-based, with a 30 s backstop so it can never trap the
+// user; the pane's own loader (_pane_spin) takes over the instant its document paints, with the same backdrop and loader, so
+// the hand-over is not visible.
+// A FAILED load (review round 1, 2026-09-19, HIGH 2): a src is never reassigned, and promote()'s first guard reads it, so a
+// document fetch that failed at the first tap left the pane blank for the life of the page, the backstop clearing the loader
+// over nothing. The detector is docState(): what the frame holds, in five answers. `none`: no readable document, the cross-origin
+// error page Chromium commits for a failed navigation (a failure). `blank`: about:blank, the frame's initial document, kept by
+// Firefox and WebKit through a failed navigation (no load event follows) and by every engine until the fetch commits (still
+// loading). `app`: the pane's OWN document, same-origin at its url with the pane shim run in its window (window.__rompApp, set as
+// the shim parses, ahead of the bundle and the load event). `doc`: a same-origin document at the url with no shim that carries the
+// kernel's stamp of a 200 (data-romp-served=200 on its <html> tag, written by Handler._send on every text/html 200 this kernel
+// writes whose body has an <html> tag, _stamp_served_html: a rule over the writer, not a list of pages; a body with none is served
+// unstamped and would read as a failure here, the paste-the-token page at / and /login being the one today, never at a pane url), so a 200 the kernel served that this reader cannot
+// classify: the kernel's own "needs the ui/ modules" fallback page. `other`: a same-origin document at the url with neither the
+// marker nor the stamp, so what the kernel did not serve as a 200 (its 403 line to a browser holding no session cookie the kernel accepts,
+// its 500 page, a proxy's 502 body while it restarts). THE RULE (review round 2's family two, narrowed in review round 4,
+// 2026-09-19, kernel-1 and tests-1): a 200 the kernel served at the pane's url is not a failure just because this reader cannot
+// recognise it, so `doc` is SHOWN AS SERVED (the loader clears, the src stays), the way the pane's own document is; every other status is NOT shown as served: `other` is a failure like `none`,
+// re-parked with the failed state and its retry road (a re-tap, the overlay tap, the Try again button). Pass 3 had shown every
+// same-origin document as served, which put the kernel's 403 line, whose body names the serve-token file's path, on the phone's
+// screen with no retry road for the page's life; the stamp is what a 403, a 500 or a 502 body cannot carry. The iframe's `error`
+// event never fires for a failed navigation in any engine; the load listener reads docState() on every load but the initial
+// about:blank's own, and the 30 s backstop reads it for a frame still loading then (`blank` or `none` is a failure by the
+// backstop, WebKit's road; `app` is a slow load, the loader clears as before; `doc` is shown as served; `other` fails).
+// No answer files a row (the reviewer's round-7 ruling on regression-1): the pane-load-unmarked and pane-load-failed rows and their
+// keys were dropped, since no reader acted on them, so `doc` and `app` now leave the same page state and the rule that a `doc` is said
+// and never silent (review round 2's family two) is retired with them; the page's state is the whole of the outcome.
+// failed() reads the LAYOUT at fire time (review round 3, 2026-09-19, family one: a promotion armed on the phone keeps judging after a
+// flip to the desktop, where the failed state is not painted at all, and before this it re-parked under data-lazy-src whatever the
+// layout, leaving a desktop column with neither src nor data-src and no road to promote it again). On the phone it re-parks the pane
+// (src removed, the url back under data-lazy-src, so the next show() promotes it again as a first tap would) and swaps the div's
+// `loading` for `failed`; on the desktop it hands the url back to data-src (what the gear's reconcile and the desktop boot read),
+// clears `failed` (a later rotation must not paint a stale failure over a pane that loaded there) and promotes once more, since the
+// grid shows the pane with no tap. EVERY promotion arms the load listener and the 30 s backstop, the desktop's included (review
+// pass 4, 2026-09-19, regression-1: pass 3 armed them under mobileOn() alone, so the desktop's re-promotion had no detector; when
+// it failed too the pane kept a src over a dead document with no state, lazyFlip's flip-back parking skipped a frame with a src,
+// and back on the phone the tab tap, the overlay tap and the Try again button all did nothing for the page's life, a dead end the
+// parent commit did not have). The desktop's response is a TABLE over the episode count (EPI) and docState's answer (pass 5, the author's label,
+// 2026-09-20, taking the reviewer's round-4 findings correctness-3 and extra9-1). `blank` at the backstop HOLDS: the src is kept for the fetch still in flight, nothing is
+// re-fetched, the episode count records the 30 s uncommitted document and DEAD records the promotion for the flip back; a
+// healthy slow load is not torn down and lands through the load listener as ever, loaded() ending the episode (pass 4 tore it down at
+// 30 s, re-fetched it, and a rotation to the desktop armed one such deadline per parked pane in the same tick). Otherwise the episode's
+// first failure re-parks under data-src and promotes again, and the second is the bound: `other`, a document the kernel sent (its 403
+// line, whose body names the serve-token file's path; its 500 page), is dropped from the frame (the src removed, so the frame navigates
+// to about:blank; the answer is on show for the frames between its commit and its load event, the listener's read, then dropped: the
+// author's pass-5 verify), its url parked under data-lazy-src, the attribute the controller's reconcile does not read (parked under data-src, a
+// gear save set the src again with no token and no backstop and the bound promotion's stale listener judged and dropped it once more:
+// one re-fetch per save, the author's pass-5 verify), so on the desktop nothing promotes it again short of a
+// flip to the phone or a reload; and `none`, the browser's own error page, keeps its src as a desktop failure always showed;
+// both record the promotion's token in DEAD, so the promote-fail loop is closed at two and the flip back to the phone (lazyFlip's phone
+// branch) parks that pane under data-lazy-src with the failed state, where the three retry roads promote it again. Pass 4's bound kept
+// the src whatever the answer, which left the kernel's 403 body on the desktop's screen with no failed state and no retry: pass 3's
+// high moved to the desktop layout. The cost of the hold: the desktop's one automatic retry for a navigation that never commits
+// (Firefox and WebKit fire no load event for one) is gone, no worse than the parent, which armed nothing there; and a fetch still in
+// flight at a flip back to the phone is dropped with the src, an open residual. The backstop's guard is
+// PEND, the token of the promotion still awaiting its verdict (the phone's `loading` class is paint alone: the grid paints none).
+// Both layouts count the failure in the episode's count (EPI) and file no row. Every promotion mints the
+// token (TOK), the desktop's included, so a phone-armed listener or backstop is inert over the desktop's re-promotion (without that
+// the stale listener re-failed the desktop's load and the promote-fail cycle never ended). Not every promotion goes through promote():
+// the desktop's boot promotions (the controller's reconcile in _LANDING_COLLAPSE_JS, and _LANDING_DESKTOP_PANES_JS for the Waiting and
+// Files panes) set src from data-src with no token, listener or backstop, as before this change, so a pane that fails at a
+// desktop-layout boot and is then flipped to the phone has no state and no retry road short of a reload (a residual, disclosed in
+// the author's pass-4 verify; a fix changes the desktop's boot and needs a ruling). The failed state is painted where the user
+// looks: body.pane-failed keeps #pane-load up with #pane-load-msg (role=alert, so it is announced) saying the pane did not load and the
+// #pane-load-retry button, a real button shown in the failed state alone (review round 3, ui-1: focusable and named for the keyboard
+// and a screen reader, the way #rail-api's row is; a tap anywhere on #pane-load retries too); the second failure and later of an
+// EPISODE say so and offer the page reload (EPI counts the failures since the pane last loaded and loaded() resets it, review round 3,
+// correctness-1: a page-life count never resets, and read for the copy it called a fresh failure the second; the page-life count left with
+// its row in the reviewer's round 7).
+// The copy names no input (ui-2: "Try again" sits on the control), since the phone layout also serves a narrowed mouse window.
+var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},EPI={},TOK={},PEND={},DEAD={};   // PEND: per pane, the token of the promotion still awaiting its verdict (the backstop's guard); DEAD: the token of a desktop promotion recorded for the flip back to the phone to park: the episode's bound, or a backstop over a fetch still in flight (pass 4, the table of pass 5; the author's labels)
+var MSG_FAILED="Couldn't load this pane.",MSG_FAILED_AGAIN="Still not loading. Try again, or reload the page.";
+var RFOC=false;   // the Try again button's click retried with the keyboard's focus on it (review round 4, 2026-09-19, ui-1): paintLoading hides the button while the retry loads, and hiding the focused control drops focus to the body in every engine with nothing bringing it back, so pass 3's keyboard road survived exactly one activation; the failed paint that shows the button again puts focus on it while this is set, and clears it. A load (loaded) and a tab switch (show) clear it too, so a later pane's first failure moves focus onto nothing the user did not ask for; the overlay tap sets nothing (a pointer gesture keeps its own focus)
+function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
+function paintLoading(){try{var k=document.body.getAttribute('data-tab'),d=paneDiv(F[k]);document.body.classList.toggle('pane-loading',!!(d&&d.classList.contains('loading')));
+var bad=!!(d&&d.classList.contains('failed'));document.body.classList.toggle('pane-failed',bad);
+var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((EPI[k]||0)>=2?MSG_FAILED_AGAIN:MSG_FAILED):'';   // the copy by this episode's count (EPI), not a page-life count
+var rb=document.getElementById('pane-load-retry');if(rb){rb.hidden=!bad;if(bad&&RFOC){RFOC=false;try{rb.focus();}catch(e){}}}}catch(e){}}   // the retry button exists for the failed state alone: a focusable control under the loader would be wrong; shown again after the keyboard's retry (RFOC), it takes the focus back, once
+function loaded(k){EPI[k]=0;PEND[k]=0;DEAD[k]=0;RFOC=false;try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}   // a load ends the episode: the next failure's copy is a first failure's; nothing is pending or dead; the keyboard's retry, if one was owed a focus, is answered by the load (RFOC)
+function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;if(w&&typeof w.__rompApp==='string')return 'app';var h=d.documentElement;return (h&&h.getAttribute&&h.getAttribute('data-romp-served')==='200')?'doc':'other';}catch(e){return 'none';}}   // the frame's document, classified (the comment above): none (a cross-origin error page), blank (the initial document, never committed), app (the pane's own, its shim run: window.__rompApp), doc (a 200 the kernel served, its stamp on the <html> tag, that this reader cannot classify: shown as served), other (a document at the url with neither: not a 200 of this kernel's, a failure)
+function failed(k,s){var f=F[k];if(!f)return;var mob=mobileOn();PEND[k]=0;EPI[k]=(EPI[k]||0)+1;   // the verdict is in, s docState's answer at it (pass 5, the author's label); EPI: this episode's count, for the copy and the desktop's bound
+var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');   // the desktop's table (pass 5, the author's label; the comment above): a fetch still in flight at the backstop is held (the src kept, nothing re-fetched); else the episode's first failure is re-parked and promoted again below, and the second is the bound, which drops a document the kernel sent (`other`) from the frame and keeps the browser's own error page (`none`); the hold and the bound record DEAD for the flip back
+var park=(mob||bound)?LAZY:'data-src';   // the attribute the url waits under: the phone's, and the desktop BOUND's too (the author's pass-5 verify: the controller's reconcile copies data-src to src on every gear save, so a bound pane parked there was re-fetched with no token and no backstop and judged by the bound promotion's stale listener, one re-fetch per save); the desktop's first failure keeps data-src, which the promotion below reads at once
+if(!keep){try{f.removeAttribute('src');}catch(e){}try{if(URLS[k]){f.setAttribute(park,URLS[k]);f.removeAttribute(park===LAZY?'data-src':LAZY);}}catch(e){}}   // re-parked under the attribute its next promotion reads, and the other dropped (the author's pass-4 verify: a pane the desktop promoted and the phone judged held data-src beside data-lazy-src, and the controller's reconcile set its src from data-src on the next gear save with no token, listener or backstop armed; so a feed parked by a failure is re-fetched by its Feed tab tap, never off screen by a gear save): promote()'s src guard reads nothing, the url is back where a first tap (the phone) or the grid's promotion below (the desktop's first failure) finds it, and no other writer promotes it (at the desktop's bound the reconcile reads data-src and finds none)
+DEAD[k]=(hold||bound)?TOK[k]:0;
+try{var d=paneDiv(f);if(d){d.classList.remove('loading');if(mob)d.classList.add('failed');else d.classList.remove('failed');}}catch(e){}   // the failed state is the phone's; the desktop path never leaves one for a later rotation to paint (the flip back paints it for a DEAD pane, lazyFlip)
+paintLoading();
+if(again)promote(k);}   // the desktop grid shows the pane with no tap: promoted again at once, once per episode (its own listener and backstop judge it; at the bound nothing promotes, DEAD above)
+function promote(k){var f=F[k];if(!f)return false;var u=null;
+try{if(f.getAttribute('src'))return false;u=f.getAttribute('data-src')||f.getAttribute(LAZY);}catch(e){return false;}   // loaded already (a src is never reassigned: no reload of a live pane), or an element without attributes: nothing to do
+if(!u)return false;
+if(window.__rompPaneEnabled&&!window.__rompPaneEnabled(k))return false;   // off in the gear's Panes section: not in this dashboard at all (the controller's rule, read through the head's one reader)
+try{f.removeAttribute(LAZY);}catch(e){}
+URLS[k]=u;var tok=TOK[k]=(TOK[k]||0)+1;PEND[k]=tok;DEAD[k]=0;   // tok: this promotion's, minted on EVERY promotion (the desktop's too, review round 3): a listener or backstop of an earlier promotion (a retry after a failure; a phone-armed one over the desktop's re-promotion after a flip) is inert; PEND: its verdict is owed; a DEAD record is over
+try{var d0=paneDiv(f);if(d0)d0.classList.remove('failed');}catch(e){}   // any promotion clears a standing failed state (a flip to the desktop re-promotes a pane the phone failed; a stale `failed` would paint over it on the flip back)
+if(mobileOn()){try{var d=paneDiv(f);if(d)d.classList.add('loading');}catch(e){}}   // the loading state is the phone's paint (the grid paints no loader); the two detectors below are every layout's (review round 4, regression-1: the desktop's re-promotion had none)
+f.addEventListener('load',function(){if(TOK[k]!==tok)return;var s=docState(f);if(s==='blank')return;if(s==='app'||s==='doc')loaded(k);else failed(k,s);});   // the initial about:blank's own load is not the page's (the gear opener's guard); the pane's own document loaded, and a stamped 200 with no shim is shown as served the same way; an error page (no document), or a document the kernel did not serve as a 200, is a failure
+setTimeout(function(){if(TOK[k]!==tok||PEND[k]!==tok)return;var s=docState(f);if(s==='app'||s==='doc')loaded(k);else failed(k,s);},LOAD_MS);   // the verdict still owed at the backstop (PEND, the class being paint): the pane's own document is a slow load (the loader clears, as before), and a stamped 200 with no shim is shown as served the same way; no document, one never committed (WebKit's road), or one the kernel did not serve as a 200, is a failure
+f.setAttribute('src',u);paintLoading();return true;}
+try{var pl=document.getElementById('pane-load'),prb=document.getElementById('pane-load-retry');
+var retry=function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}};   // the failed state's retry: the shown tab's pane again (show() promotes a re-parked pane as a first tap would)
+if(pl)pl.addEventListener('click',retry);   // a tap anywhere on the overlay
+if(prb)prb.addEventListener('click',function(ev){try{ev.stopPropagation();}catch(e){}retry();RFOC=true;});}catch(e){}   // the button: a real <button>, so Enter and Space run its click natively (no keydown copy); its click does not bubble into the overlay's. RFOC AFTER retry(): its show() clears the flag as any tab switch does, and the button's own retry must survive that (review round 4, ui-1)
 function show(p){if(p==='files'&&!filesCtlM())p='chat';   // the Files tab is hidden while its control is off: the chat shows instead
 if(!F[p])return;for(var i=0;i<B.length;i++)if(B[i].getAttribute('data-pane')===p&&B[i].hidden)return;   // a tab the controller hid (its pane is off in the gear's Panes section) is not a place to go
 document.body.setAttribute('data-tab',p);for(var k in F)if(F[k])F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError
+try{var pw=F[p]&&F[p].contentWindow;if(mobileOn()&&pw&&pw.__rompPaneShown)pw.__rompPaneShown();}catch(e){}   // [fork] review round 2 (2026-09-19, D3): the shown pane's own synchronous show hook (same origin; the feed's paints its held first board in THIS task, before the compositor can show the empty pane); the re-tell below still carries the word for a document that has none, or loaded after the show
+RFOC=false;   // [fork] review round 4 (2026-09-19, ui-1): a tab switch retires the keyboard's retry, so a failure that lands after the user moved on (this tab's, or another's) focuses nothing; the button's own click sets the flag after the show() it runs
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
 try{localStorage.setItem(KT,p);}catch(e){}
+try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}   // [fork] stage 0: a lazy pane loads on its first show, BEFORE the re-tell below (the pane hears the word on its own load; a word posted into a document not yet there is dropped); the loader paints for a tab whose pane is still loading, and clears for one that is not
 // a tab switch changes what is on screen: re-tell the panes (the collapse script's broadcast; absent only
 // before that script parses, and its boot apply then tells them)
 try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
@@ -70650,6 +74079,28 @@ window.__rompMobileTab=show;   // the shell's relays bring a pane's tab forward 
 // and no tab switch: the media query's own change event IS that flip, so re-tell the panes on it
 var retell=function(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}};
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.addListener)MQ.addListener(retell);}
+// [fork] stage 0: the desktop grid shows every pane the rail has on without a tap, so a flip TO the desktop layout hands
+// every parked pane back to the controller's attribute (data-src) and promotes the ones the gear shows; a pane the gear has
+// off keeps its data-src for the controller's later enable (review round 1, 2026-09-19: parked with no data-src, a pane
+// turned on in the gear after a rotation showed an empty column until a reload). A flip BACK to the phone layout parks
+// every pane still unloaded (no src) but the chat and the feed again, as the boot does, so a later gear enable on the phone
+// loads nothing off screen (review round 2: after a rotation there and back a gear-off pane sat on data-src and the
+// controller's enable loaded it hidden). A pane whose desktop promotion failed at the episode's bound kept its src over a dead
+// document (failed(), DEAD; since pass 5 (the author's label) the bound drops the src for a document the kernel sent, and a backstop over a fetch
+// still in flight records DEAD with the src kept): the flip back parks it too, under data-lazy-src with the failed state, so the phone's three retry roads
+// (the tab tap, the overlay tap, the Try again button) promote it again (review round 4, regression-1: before, a frame with a src
+// was skipped and the pane was dead for the page's life); keyed on the recorded failure, never on a read of the document at the flip
+// (a read would re-park a served page or tear down a load in flight). The feed is exempt from the unloaded parking alone (it loads at
+// boot): a feed recorded DEAD is parked like any pane (the author's pass-4 verify: skipped with the chat, it kept its src over the dead
+// document and the Feed tab tap did nothing for the page's life). A pane with a src whose desktop promotion is still awaiting its
+// verdict (PEND) gets the loading class the grid never painted, so a tap after the flip back meets the loader and not a blank pane
+// (the same verify). Its own listener on the same media query, beside the re-tell's.
+var lazyFlip=function(){try{if(!mobileOn()){for(var lk in F){var lf2=F[lk],lz=null;try{lz=lf2&&lf2.getAttribute(LAZY);}catch(e){}
+if(lz){try{lf2.setAttribute('data-src',lz);lf2.removeAttribute(LAZY);}catch(e){}}promote(lk);}}
+else{for(var lk3 in F){var lf3=F[lk3];if(!lf3||lk3==='chat')continue;var lu3=null;try{lu3=lf3.getAttribute('data-src');if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){var du3=URLS[lk3]||lu3;lf3.removeAttribute('src');if(du3)lf3.setAttribute(LAZY,du3);lf3.removeAttribute('data-src');DEAD[lk3]=0;var dd3=paneDiv(lf3);if(dd3)dd3.classList.add('failed');}   // the DEAD pane, checked FIRST (pass 5, the author's label). The order is DEFENSIVE (pass 7, the author's label, taking the reviewer's round-5 findings correctness-7 and ui-1; the reason re-derived in pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding ui-1): DEAD is written truthy by failed() alone (DEAD[k]=(hold||bound)?TOK[k]:0), so three roads record a pane, all on the desktop: the HOLD at the backstop over a fetch still in flight (s 'blank': keep, so the src AND data-src stay), the BOUND over the browser's own error page (s 'none': keep, the src and data-src stay), and the BOUND over a document the kernel sent (s 'other': the src removed, the url parked under data-lazy-src, data-src removed). What is true of all three: none can reach the unloaded parking below, which takes a pane with data-src AND no src, because the first two keep their src and the third has no data-src; so this branch parks every recorded pane under data-lazy-src with the failed state whatever its road left, and the order guards a future writer whose park leaves data-src on a src-less recorded pane. Each road's flip back reads src and data-src in tests/test_pane_state_broadcast.py (the desktop-bound case: the other bound and the none bound; the hold-rotation case: the hold) and case D of tests/test_lazy_pane_layout_flip_served.py drives the other bound in Chromium. What the branch does: its src dropped if it still has one, the url parked for the tap, the failed state on (the phone's response to the failure the desktop recorded), painted if its tab is the shown one; the feed too (the author's pass-4 verify: its exemption is from the off-screen parking, not from a recorded failure; skipped, a feed recorded DEAD kept its src over the dead document and its tab tap did nothing)
+else if(lk3!=='feed'&&lu3&&!lf3.getAttribute('src')){lf3.setAttribute(LAZY,lu3);lf3.removeAttribute('data-src');}
+else if(PEND[lk3]&&PEND[lk3]===TOK[lk3]&&lf3.getAttribute('src')){var pd3=paneDiv(lf3);if(pd3)pd3.classList.add('loading');}}catch(e){}}paintLoading();}}catch(e){}};   // a desktop promotion whose verdict is still owed (PEND, the token) wears the loading class the grid's promote() did not paint, keyed on the recorded promotion and never on a read of the document, so the shown tab's tap meets the loader and not a blank pane (the author's pass-4 verify: on WebKit up to 30 s of blank until the backstop's verdict); loaded() or failed() takes it off
+if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',lazyFlip);else if(MQ.addListener)MQ.addListener(lazyFlip);}
 // A REVEAL un-hides a desktop-toggled-off pane before the mobile tab switch (the user 2026-08-13: a feed
 // click that jumps into a CLOSED chat used to land invisibly — the hidden iframe's WS stays live, so the
 // scroll ran under display:none and nothing appeared to happen). Same __rompPaneToggle(…, true) the Log
@@ -70660,6 +74111,19 @@ function reveal(p){try{window.__rompPaneToggle&&window.__rompPaneToggle(p,true);
 // relay's: the tab the relay remembered for the viewer's close (the settings listener's __rompFilesTabFrom) is
 // dropped, so closing a file much later cannot jump them back to a tab they left on their own
 function userSwitch(p){window.__rompFilesTabFrom=null;show(p);}
+// [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-2; the reviewer's round-3 class, correctness-3 and regression-3): the switches the person makes are the
+// PHONE's. show() is the one writer of body data-tab and the remembered tab (KT, romp-mobile-tab), and on the desktop layout a reveal aimed
+// at this window (a feed card's tap into a session, the Waiting pane's, a remote link, the kernel's push on a notification tap) and the chat
+// header's Outline pill reached it through userSwitch above, so a desktop gesture rewrote the tab the phone boots on. The Log row and the
+// file relays gate the same switch on the layout probe; this is the one function every other arrival passes through (reveal, the toggleFleet
+// arm, the tab bar's buttons, which the desktop stylesheet hides anyway), so it is gated here: on the desktop a reveal's un-hide stands alone
+// (reveal's __rompPaneToggle) and the pill's toggle is the collapse script's (_LANDING_FLEET_JS), and the relay's remembered tab is left as
+// it was, a phone tab the person did not leave. Declared AGAIN rather than edited: the declaration above is the project's line, and a
+// function body binds the LAST declaration of a name (both are var-scoped, in strict code too), so the gate is inserted around it. Two
+// roads into show() keep both layouts on purpose: the boot show (show(last) below: a flip to the phone needs a tab) and the pane controller's
+// reconcile (a tab whose pane this browser has off is not a place to go on either layout, the gear's set being per browser); the census in
+// tests/test_pane_state_broadcast.py (MobileShowRoads) derives every road from the served scripts and classifies each.
+function userSwitch(p){if(!mobileOn())return;window.__rompFilesTabFrom=null;show(p);}
 for(var i=0;i<B.length;i++)(function(b){var pk=b.getAttribute('data-pane');b.addEventListener('click',function(){userSwitch(pk);});})(B[i]);
 // the rail's actions on mobile: settings opens the settings iframe's modal (the same __rompOpenSettings
 // the desktop gear calls, _LANDING_SETTINGS_JS), net opens the shell's remotes panel, usage opens the
@@ -70705,7 +74169,7 @@ shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // script mints before any pane connects): an op the shell sends that the kernel answers with a reveal (the API
 // detail's openSession) then lands on THIS dashboard's chat alone (_reveal_chat_for), the way the feed's own session
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
-var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));
+var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid())+(window.__rompKeyQ?window.__rompKeyQ():''));   // +k=: the page key the socket class needs, added by the page-key script
 shWs=ws;var shOpened=false;   // [fork] D3: this dial's socket for the liveness machinery, and whether it ever opened (the return probe's attempt count keys on it)
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
@@ -70774,6 +74238,15 @@ shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-sta
 shFailed=0;shFirstFailT=0;
 shAbandon();shellWS();});
 shellWS();
+// [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src) and the feed's (exempt)
+// is parked under data-lazy-src before the pane controller parses, so its boot promotion leaves them alone; the feed is
+// promoted here (the gear's word respected) and the stored tab by show(last) below, which reads the parked attribute too, so
+// an enabled stored tab boots as before while a stored tab the gear has off stays parked (review round 1, 2026-09-19: skipped
+// by the parking, it kept its data-src and a later gear enable loaded it off screen). On the desktop the controller's eager
+// boot stands, and the Waiting and Files panes, outside its list, are promoted by _LANDING_DESKTOP_PANES_JS (its own script).
+try{if(mobileOn()){for(var lk2 in F){var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed')continue;
+var lu=lf.getAttribute('data-src');if(lu&&!lf.getAttribute('src')){lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');}}
+promote('feed');}}catch(e){}
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
 """
@@ -70997,9 +74470,21 @@ feedReady=true;if(pendingCard){var c=pendingCard;pendingCard=null;revealCard(c.i
 // the session the user is looking at: the chat pane's active tab, read off the same-origin iframe's DOM — the read
 // the bell's test push uses (one truth, no second channel); '' before the pane has tabs, or without a pane
 function activeSid(){try{var f=document.getElementById('f-chat'),d=f&&f.contentDocument,t=d&&d.querySelector('#tabs .tab.active[data-id]');return t?String(t.getAttribute('data-id')||''):'';}catch(e){return '';}}
+// [fork] the author's pass-5 verify (2026-09-20, correctness-1's residual): the window's CHAT COLUMN COUNT rides every /reveal, so the kernel's
+// parked-reveal preference (_resolve_reconnect) reads a declaration the page made rather than the chat sockets registered so far, which
+// on a split page whose columns redial one after another are one column's at the first column's resolve, whatever the page holds.
+// Before _LANDING_SPLIT_JS parses (this script's own boot run, fromLink below) the count is what that script will build: one on the
+// phone layout (it restores nothing there), else one plus the later columns persisted under romp-chat-cols (a v2 record's entries, or
+// the v1 array of column numbers; an entry the split script would drop is counted, the safe side: a count above one declines the
+// preference). Once the split script is up its frames are the truth (window.__rompChatFrames; a bottom pane counts, it dials as a
+// column). A count this page cannot read (a throwing store) declares nothing, and the kernel reads the sockets it holds as before.
+function cols(){try{var fr=window.__rompChatFrames;if(typeof fr==='function')return fr().length||1;
+if(window.__rompMobileOn&&window.__rompMobileOn())return 1;
+var raw=JSON.parse(localStorage.getItem('romp-chat-cols')||'null');var n=Array.isArray(raw)?raw.length:((raw&&typeof raw==='object'&&raw.v===2&&Array.isArray(raw.cols))?raw.cols.length:0);return 1+n;}catch(e){return 0;}}
 function land(sid,kind,cardId,boot,via){
 boot=!!boot||!(chatUp||activeSid());   // booting, or our chat pane has not connected yet: the kernel parks for it and its ready delivers, never a same-wid socket the previous page left; via: which road the tap took, for the kernel's log line. The pane's rendered tabs (activeSid, the same-origin read above) are proof its socket was up even when its wsState message beat this listener (2026-09-09: the served shell's parser can yield to that message before this script runs, and every landing then said booting and parked for a ready that had already come)
 var body={sid:sid,wid:wid(),via:via};if(boot)body.boot=true;
+var cc=cols();if(cc>0)body.cols=cc;   // [fork] cols: the window's chat column count (above), the kernel's parked-reveal preference reads it; its own line after the project's body line, which is inserted around and never edited (pass 5, the author's label, its verify's fixer, 2026-09-20)
 if(sid)fetch('/reveal',{method:'POST',body:JSON.stringify(body)}).then(function(r){
 diag('reveal-post',{status:r.status,via:via,boot:!!boot});
 if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});},
@@ -71267,17 +74752,17 @@ _LANDING_COLLAPSE_JS = """
   // classes ignored, _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session
   // or an earlier bring-forward cannot silently steer a phone's file links into a tab nobody is looking at
   function panesMsg(){var mob=!!(window.__rompMobileOn&&window.__rompMobileOn()),tab=mob?document.body.getAttribute('data-tab'):null;
-    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down'};}   // [fork] D3 (2026-09-18): the page's link is the shell socket's state (_LANDING_MOBILE_JS window.__rompLink), re-told on its open/close/abandon; consumers (render.ts, waiting.ts) replace on and avail wholesale and ignore keys they do not read
+    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down',mob:mob};}   // mob (review round 3, extra8-1): the LAYOUT word, so a pane re-decides a layout-keyed hold on every flip (the media query's change re-tells: _LANDING_MOBILE_JS retell); render.ts's return hold reads it   // [fork] D3 (2026-09-18): the page's link is the shell socket's state (_LANDING_MOBILE_JS window.__rompLink), re-told on its open/close/abandon; consumers (render.ts, waiting.ts) replace on and avail wholesale and ignore keys they do not read
   function tell(f,m){try{f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}
   // [fork] D3 (2026-09-18): the page's link reaches EVERY shim-bearing iframe, not the six pane frames alone. The pane
   // frames hear it as the panes word's link field; the others (the settings frame, a split chat column: every iframe
-  // in this document runs the shim) hear a link word of their own, {romp:'link',link}, because a panes word would
+  // in this document runs the shim) hear a link word of their own, {romp:'link',link,mob}, because a panes word would
   // replace a chat column's pane set wholesale (render.ts). The shim's await ends on either word (kernel.py _shim).
   // Review round 1: before this a split column or the settings frame ended its await on the shim's 5 s backstop poll.
   // broadcast (the boot and toggle apply) stays the pane frames' word; the re-tell the shell and the mobile script call
   // (__rompPanesTell) is the one that carries a CHANGED link, so it is the one that reaches every iframe.
   function broadcast(){var m=panesMsg();KEYS.forEach(function(k){tell(document.getElementById('f-'+k),m);});}
-  function linkMsg(){return {romp:'link',link:panesMsg().link};}
+  function linkMsg(){var m=panesMsg();return {romp:'link',link:m.link,mob:m.mob};}   // mob (review round 4, 2026-09-19, kernel-3): the LAYOUT word rides the link word too, so a split chat column, which hears no panes word, re-decides its return hold on every flip as the pane frames do (render.ts's link branch runs onLayoutWord on it); before this a column that armed the hold on the phone kept it for the socket's life after a flip to the desktop
   function tellLink(){var m=linkMsg(),pane={};KEYS.forEach(function(k){pane['f-'+k]=true;});
     Array.prototype.forEach.call(document.querySelectorAll('iframe'),function(f){if(!pane[f.id])tell(f,m);});}
   function broadcastAll(){broadcast();tellLink();}
@@ -72326,6 +75811,9 @@ def _landing():
             # maximum-scale=1,user-scalable=no: the top document governs pinch-zoom for the whole visual
             # viewport (incl. iframes), so without this iOS page-zooms on a timeline pinch instead of letting
             # the timeline's own pinch handler run (the user 2026-06-16). Disables browser zoom on the mobile UI.
+            # [fork] the author's pass 8 (2026-09-20): whether iOS Safari honours user-scalable=no is a premise this file states ONCE, with its
+            # evidence status, in the fit() comment of _LANDING_MOBILE_JS ("TWO PREMISES rest here"); the line above is upstream's
+            # and stays as written.
             # NO viewport-fit=cover in the STATIC meta (the user 2026-06-17): with cover, Android Chrome reports a non-zero
             # env(safe-area-inset-bottom) even though the viewport already sits ABOVE the nav bar, so #mtabs's
             # safe-area padding-bottom became a dead slab below the Chat/Feed/Timeline labels; cover also drew
@@ -72368,18 +75856,69 @@ def _landing():
             # script lands a deep link at its own boot). A corrupt store reads as every pane shown, like reconcile.
             "window.__rompPaneEnabled=function(k){try{var s=JSON.parse(localStorage.getItem('romp:settings')||'{}'),p=s&&s.panes;"
             "return !(p&&typeof p==='object'&&p[k]===false);}catch(e){return true;}};"
+            # [fork] stage 0 (2026-09-18): the phone LAYOUT probe, defined in the head too, before any iframe, so a pane's shim can
+            # read window.parent.__rompMobileOn at its own load (the chat pane's first dial takes the skeleton diet on the phone,
+            # _shim). The mobile script (_LANDING_MOBILE_JS) defines the same probe over its cached media-query list and replaces
+            # this one when it parses, at the body's end, which on a fast origin can be after the chat document's inline shim has
+            # run (the wid mint above moved here for the same race). One constant, _MOBILE_MQ, so the two answers cannot differ.
+            "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(_MOBILE_MQ) + ").matches);}catch(e){return false;}};"
+            # [fork] review round 3 (2026-09-19, fresh-1): a push notification's deep link names the session it is about (?push-reveal=<sid>,
+            # the reveal script's param, which that script reads and strips at the body's end). The chat pane's shim dials at ITS parse,
+            # before any body script runs, and reads the tab it shows from the chat blob's activeId, the LAST-SHOWN tab; on the phone that
+            # first dial takes the skeleton diet, so the kernel's one full went to the last-shown tab while the notified session, parked
+            # as a pending reveal, arrived as a skeleton and cost a second kernel round trip (a skeleton-click) before it showed. The blob
+            # is seeded HERE, in the head, before the parser reaches the chat iframe: the notified session becomes the stored tab, the
+            # first dial carries active=<it>, the kernel's one full is its by construction (_resolve_reconnect read the hint as before until
+            # pass 4b, the author's label, whose parked-reveal preference covers the roads the seed does not), and render.ts's wantActive restores
+            # that tab before the reveal's focus lands, which then finds it active
+            # and loaded. The value is admitted in push-card's shape (a host-prefixed id passes); a blob that already names it is left
+            # alone; the param stays for the reveal script, whose /reveal still lands the focus (a revive prompt for an ended session). Its
+            # own try/catch: a page whose storage is missing or throws must still reach the token scrub below. The seed runs on the phone
+            # layout alone (the head probe above; the reviewer's round-7 finding fresh-2): on the desktop it would write the FIRST column's
+            # blob whichever column holds the session, so a desktop split into columns moved its first column off its stored tab and kept the
+            # move, and the desktop's first dial is main's (its stored tab), the reveal landing the focus as it always did.
+            # The cost when the seeded hint names a session this kernel cannot match (review round 4, 2026-09-19, regression-4), on the phone:
+            # the notified session ended while the phone was away, or the id is host-prefixed (another host's, admitted by the shape on
+            # purpose). The kernel's _resolve_reconnect reads the hint as any stored tab, and _skeleton_for over an active that matches no
+            # session lists EVERY local transcript-bearing tab as a skeleton, so that cold open is served no local full where the last-shown
+            # tab would have been served whole. For a notified LOCAL session that ended before the tap that is not the whole cost: the chat
+            # pane stays on the awaited-session body until a pick, and the stored tab is lost, since the seed wrote the ended id into the
+            # blob where main keeps the stored tab (the reviewer's round-7 finding fresh-3, measured on the phone with and without the gate;
+            # whether to change that is the owner's call). For a host-prefixed id the missing local full is the only cost the seed adds:
+            # main's reveal persists that id too. Past the one full, the page's own loading is the road the shim's diet comment (_shim, RESTART_DIET) and the strip gate
+            # already describe: a local strip that lists no such local tab opens the prefetch gate (skeleton-tabs.ts gateOnStrip) and the idle
+            # chain loads the tabs in the kernel's order; a tap loads its tab at once. A kernel-side fail-safe (a live-session fallback in
+            # _resolve_reconnect) was executed in the review and declined: it restored the whole board in place of one full, misfired for
+            # the host-prefixed hints the page handles by design, and reached beyond the push cold open. The pass-4b preference in
+            # _resolve_reconnect is a different clause: it reads a reveal PARKED for the window, not the hint's match, and falls back to
+            # the hint when the parked sid is not a session this kernel lists.
+            "try{if(window.__rompMobileOn()){var _pr=new URL(location.href).searchParams.get('push-reveal');if(_pr&&/^[A-Za-z0-9_.:-]{1,128}$/.test(_pr)){"
+            "var _sk='romp-vscode-state-chat',_sb=null;try{_sb=JSON.parse(localStorage.getItem(_sk)||'null');}catch(e){}"
+            "if(!_sb||typeof _sb!=='object'||Array.isArray(_sb))_sb={};"
+            "if(_sb.activeId!==_pr){_sb.activeId=_pr;_sb.activeName='';localStorage.setItem(_sk,JSON.stringify(_sb));}}}}catch(e){}"
             "if(navigator.standalone){document.documentElement.className+=' ios-standalone';"
             "var _vp=document.querySelector('meta[name=viewport]');"
             "_vp.setAttribute('content',_vp.getAttribute('content')+',viewport-fit=cover');}"
-            # The token this page was opened with (`/?token=`: the login page, `romp url`, the CLI's open) is
-            # spent by the time this runs: the response that served the page turned it into the cookie every
-            # later request rides (_authorize, then _send's Set-Cookie). The URL copy would otherwise outlive
-            # it for the page's lifetime, as what a Referer carries, what every same-origin pane iframe reads
-            # as document.referrer, and what the address bar shows. Dropped HERE, in the head, before the
-            # manifest link or the first <iframe> can make a request, so no request this document makes ever
-            # carries it; the other params (panes, wid, a push deep link the reveal script strips later) and
-            # the hash stay, re-serialized by URLSearchParams (a comma becomes %2C, which every reader's
-            # searchParams.get decodes). A reload rides the cookie, as the pane iframes already do.
+            # The token this page was opened with (`/?token=`: the login page, `romp url`, the CLI's open) must
+            # not outlive the response that spent it, as what a Referer carries, what every same-origin pane
+            # iframe reads as document.referrer, and what the address bar shows. On a sign-in navigation the
+            # sign-in seed, which _send puts first in the head, has already dropped token= and c= before this
+            # runs, so this finds nothing there. This is the fallback for a shell served on ?token= without a
+            # sign-in: a load _is_navigation does not count (its Sec-Fetch-Dest names neither a document nor an
+            # iframe or, with no Sec-Fetch headers, its Accept does not name text/html) gets no session and no
+            # seed, and this is the one step that drops the token from that document's address. Which element
+            # loads fall there depends on the engine and on whether the origin gets Sec-Fetch headers. A frame's
+            # load does only where the browser sends Sec-Fetch-Dest: frame. A plain-http origin off loopback gets
+            # no Sec-Fetch headers, and there a same-origin frame's load asks for text/html, counts as a
+            # navigation, and is signed in and seeded like one. frame-ancestors 'self' and X-Frame-Options keep the
+            # shell from showing in a frame on a page of another origin. It runs HERE, in the head, before the
+            # manifest link or the first <iframe> can make a request, so a request this document makes after it
+            # carries no token in its Referer. A speculative preload, which the parser can start before a head
+            # script runs, is outside this step: its Referer is the address the document was opened with, sent
+            # to this origin only (_send's Referrer-Policy: same-origin). The other params (panes, wid, a push
+            # deep link the reveal script strips later) and the hash stay, re-serialized by URLSearchParams (a
+            # comma becomes %2C, which every reader's searchParams.get decodes). After a sign-in, a reload rides
+            # the session cookie, as the pane iframes do.
             "try{var _u=new URL(location.href);if(_u.searchParams.has('token')){_u.searchParams['delete']('token');"
             "history.replaceState(null,'',_u.pathname+(_u.searchParams.toString()?'?'+_u.searchParams.toString():'')+_u.hash);}}"
             "catch(e){}</script>"
@@ -72674,8 +76213,9 @@ def _landing():
             # "Previously attached": a quiet section header + dimmed rows, so remembered hosts read as
             # history you can act on and never as something currently connected. Hover restores full
             # opacity (they're interactive, not decoration).
-            # same treatment as the settings modal's .rs-sec section headers (10.5px/700/.08em uppercase)
-            ".rnet-khead{color:#6e7681;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;"
+            # same treatment as the settings modal's .rs-sec section headers (11px/600, sentence case, the accent blue;
+            # the user 2026-09-18: no all-caps delineators in the settings)
+            ".rnet-khead{color:var(--accent,#9cd2ff);font-size:11px;font-weight:600;"
             "margin:10px 0 2px;padding-top:8px;border-top:1px solid #2a2a2a}"
             ".rnet-known{opacity:0.62}"
             ".rnet-known:hover{opacity:1}"
@@ -73048,6 +76588,13 @@ def _landing():
             ".pane.pane-focused.split-v::after{display:none}"
             ".pane.pane-focused.split-v.focus-top>iframe,.pane.pane-focused.split-v.focus-bottom>.chat-sub{outline:2px solid rgba(156,210,255,0.55);outline-offset:-2px}"
             "#mtabs{display:none}"
+            "#pane-load{display:none}"   # the lazy pane loader (stage 0, 2026-09-18): hidden everywhere but the phone layout's loading state (the media block below)
+            "#pane-load-msg{display:none;max-width:22em;padding:0 1.5em;text-align:center;font:14px/1.45 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#ccc}"   # the failed-load message (review round 1): shown by body.pane-failed inside the media block
+            # the retry button (review round 3, ui-1): a real button, shown by the failed paint alone (paintLoading drops its `hidden`), in the
+            # rail row's dress: a pill outline, the accent on keyboard focus
+            "#pane-load-retry[hidden]{display:none}"
+            "#pane-load-retry{font:14px/1.2 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;padding:8px 18px;border-radius:999px;border:1px solid rgba(255,255,255,0.28);background:transparent;color:#ddd;cursor:pointer}"
+            "#pane-load-retry:focus-visible{outline:2px solid var(--accent,#9cd2ff);outline-offset:2px}"
             # narrow OR a touch device up to 1024px → one pane + bottom tabs; mouse desktops keep the grid
             # (_MOBILE_MQ: the same query the mobile script's __rompMobileOn probe answers by)
             "@media " + _MOBILE_MQ + "{"
@@ -73064,6 +76611,32 @@ def _landing():
             # never scrolls (panes scroll inside their iframes).
             "html,body{height:100vh;height:var(--app-h,100dvh);overflow:hidden}"
             "body{display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)}"
+            # [fork] D1 (2026-09-19): the body is FIXED at the visual viewport's pan (--app-top, which fit() publishes from
+            # visualViewport.offsetTop). iOS pans the visual viewport down the layout viewport to reveal the focused composer
+            # while the layout viewport keeps its height; a body sized to vv.height at layout y 0 then left the bottom
+            # offsetTop pixels of the visible band showing bare background under the composer. With the pan as its top edge
+            # the body covers exactly the visible band. The height chain of the rule above; no containing-block property
+            # (transform and its longhands, filter, contain, will-change and the rest of the list tests/test_shell_viewport_fit.py
+            # scans the served CSS for) on any html or body rule, so the shell's fixed panels keep the viewport as their
+            # containing block and stay glued to the true bottom. This block only:
+            # outside _MOBILE_MQ (a fine pointer above 820 px, a coarse one above 1024 px) the body stays in flow at layout
+            # y 0; a coarse document there still publishes its pan, and nothing consumes it (the two gates, and the two
+            # populations they cover, are in the fit() comment; the served populations leg drives both).
+            "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
+            # [fork] D1, the author's pass 2 (2026-09-19): the other fixed box sized by --app-h is the new-session picker's lift
+            # (body.picker-open iframe.lifted, upstream's base rule above the media blocks: position:fixed;top:0). At layout
+            # y 0 it sat a pan above the body under the keyboard, so the band the rule above removes from the composer
+            # survived under the picker; a hand list of fixed panels once kept here had missed it, so the consumers are
+            # DERIVED (test_shell_viewport_fit scans the served CSS for every fixed rule sized by var(--app-h) and holds
+            # each to this origin) and never listed. Inside this block only (asserted: the census in
+            # tests/test_shell_viewport_fit.py refuses a --app-top origin for a member outside this block): on a coarse
+            # desktop layout (wider than the query) the body stays in flow at layout y 0, and a lift moved to the pan
+            # there would part from the pane rect render.ts placeLifted measures for the transcript backing. On this
+            # layout the lifted pane is display:contents
+            # (the id rule below outranks the base .pane.lifted block rule), its rect is empty and placeLifted takes its
+            # gone branch, so no backing arithmetic depends on the lift's origin; the served leg reads both boxes under
+            # the pan (tests/test_keyboard_gap_served.py).
+            "body.picker-open iframe.lifted{top:var(--app-top,0px)}"
             # padding-right is a DESKTOP-only strip: one pane fills the screen here, and a 3px sliver of
             # backdrop down the edge would read as a rendering fault rather than as slack. The desktop
             # rule's longhand survives this block unless it is named, so name it.
@@ -73087,6 +76660,16 @@ def _landing():
             "iframe{position:static;display:none;width:100%;height:100%;border:0}"
             "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}"
             "#f-timeline{flex:1 1 auto;min-height:0}#f-timeline.m-on{display:block}"
+            # the lazy pane loader (stage 0, 2026-09-18): while the shown tab's pane is loading its document the shell paints the
+            # romp loader over the pane area, above the pane's iframe and below the tab bar (z 20; the bar stays tappable, the
+            # loader stops at its reserved height), with the pane loader's backdrop and loader (_pane_spin), so the hand-over is not visible
+            "#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}"
+            "body.pane-loading #pane-load{display:flex}"
+            # the FAILED state (review round 1, 2026-09-19): the same element stays up over a pane whose document did not load, the
+            # loader gone and the message in its place; a tap anywhere on it retries (_LANDING_MOBILE_JS failed / the #pane-load click)
+            "body.pane-failed #pane-load{display:flex;flex-direction:column;gap:14px;cursor:pointer}"
+            "body.pane-failed #pane-load>.rl-in{display:none}"
+            "body.pane-failed #pane-load-msg{display:block}"
             "body[data-tab=timeline] .row{display:none}"    # timeline tab active → collapse the chat/feed row so the band fills
             # compact text-only switcher, FIXED to the visible viewport bottom so nothing can sit below it.
             # NO safe-area padding-bottom in the BROWSER: without viewport-fit=cover the viewport already sits
@@ -73195,6 +76778,7 @@ def _landing():
             "border-radius:999px;line-height:1.4;white-space:nowrap;border:1px solid transparent}"
             ".rerr-chip.k-stalled,.rerr-chip.k-warn{color:#ffd166;border-color:rgba(255,209,102,0.6)}"
             ".rerr-chip.k-refused{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # a change that did not land: the warning yellow, its own kind
+            ".rerr-chip.k-frozen{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # cards frozen at their last update (the maintainer's round 6 of the wsBytesByHost review, ui-1): stale, not lost, so the warning yellow
             # "not sent" rides with the follow-up-failed red: both mean a message of yours didn't land, and
             # this one is the harder loss of the two — nothing was delivered at all (the user 2026-07-29)
             ".rerr-chip.k-nudge,.rerr-chip.k-undelivered{color:#ff6a6a;border-color:rgba(255,106,106,0.6)}"
@@ -73249,6 +76833,9 @@ def _landing():
             "body.theme-light .gv:hover::after,body.theme-light .gh:hover::after{background:var(--accent)}"
             "body.theme-light .pane.pane-focused::after{box-shadow:inset 0 0 0 2px rgba(194,65,12,0.55)}"
             "body.theme-light #romp-boot{background:#F1EAE2}"
+            "body.theme-light #pane-load{background:#F1EAE2}"   # the lazy pane loader's backdrop goes warm-light with the page (stage 0)
+            "body.theme-light #pane-load-msg{color:#333}"
+            "body.theme-light #pane-load-retry{border-color:rgba(0,0,0,0.3);color:#222}"
             # (the loader dots' light rule rides in _LOADER_CSS, included below)
             # light cards: raised white over the warm page, dark warm text, hairline borders, soft shadows
             "body.theme-light #rerr-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
@@ -73325,6 +76912,13 @@ def _landing():
             "</style></head><body class='po-chat po-feed po-timeline'>"
             + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"
+            # the LAZY PANE loader (stage 0, 2026-09-18): the same loader, painted over the pane area on the phone while the
+            # shown tab's pane is loading its document (_LANDING_MOBILE_JS promote: body.pane-loading while the shown .pane wears
+            # `loading`, from the promotion to the iframe's load event). One element for every pane: a .pane div is
+            # display:contents on the phone and can host no box of its own. Its second child is the failed-load message
+            # (review round 1, 2026-09-19): empty and hidden until a pane's document fails to load (body.pane-failed), announced (role=alert);
+            # its third the retry button, hidden until the failed paint shows it (review round 3, ui-1: a keyboard-reachable, named control)
+            "<div id=pane-load>" + _loader_inner() + "<div id=pane-load-msg role=alert></div><button id=pane-load-retry type=button hidden>Try again</button></div>"
             # the bell popover (2026-09-05; driven by _LANDING_PUSH_JS): the two switches that ONE bell
             # tap used to flip together — the kernel-wide master and this device's push subscription —
             # as separate rows, plus the turn-finished switch and a test button that shows the push
@@ -73384,11 +76978,17 @@ def _landing():
             # "Waiting on you" (2026-09-03): every session's open user todos in one place — the far-right
             # column, OFF by default like the Outline (the feature itself is off by default)
             "<div class=gv id=gv-c></div>"
-            "<div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>"
+            # data-src since stage 0 (2026-09-18): on the phone the pane loads on its first tap (_LANDING_MOBILE_JS, the lazy
+            # panes); on the desktop _LANDING_DESKTOP_PANES_JS promotes it at boot, so the column loads as it always did. The chat keeps
+            # its src (the shell's reveal landing reads its document); the Files pane below is data-src too.
+            "<div class=pane id=waiting-pane><iframe id=f-waiting data-src=/waiting></iframe></div>"
             # "Files" (2026-09-03): the file viewer as its own column, far right, OFF by default — the
             # shell's viewFile relay brings it forward when a chat file-link click routes here
             "<div class=gv id=gv-d></div>"
-            "<div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>"
+            # data-src since stage 0 (2026-09-18): the one upstream markup token this fork changes (src -> data-src). On the phone
+            # the pane loads on its first tap; on the desktop _LANDING_DESKTOP_PANES_JS promotes it at boot, so the column loads as it
+            # always did (its rail toggle is off by default and it has no gear row, so the controller's list does not carry it).
+            "<div class=pane id=files-pane><iframe id=f-files data-src=/files></iframe></div>"
             "</div>"
             "<div id=gv-ghost></div>"   # the divider drag's landing line (position:fixed; gutter() in _LANDING_JS moves it)
             "<div id=col-ghost></div>"   # a tab drag's provisional rectangle: the right half of the rightmost chat column (position:fixed; _LANDING_SPLIT_JS places it)
@@ -73611,6 +77211,7 @@ def _landing():
                          .replace("__ROMP_BOOT__", json.dumps(_BOOT_ID))
                          .replace("__ROMP_LOADER__", json.dumps(_loader_inner())) + "</script>"
             "<script>" + _LANDING_REMOTES_JS + "</script>"
+            "<script>" + _LANDING_DESKTOP_PANES_JS + "</script>"   # the desktop's Waiting and Files promotion, its own element so a throw in the mobile script cannot strand a pane (review round 1, 2026-09-19)
             "<script>" + _LANDING_MOBILE_JS + "</script>"
             "<script>" + _LANDING_PUSH_JS + "</script>"
             "<script>" + _LANDING_REVEAL_JS + "</script>"
@@ -73633,6 +77234,24 @@ _BOOT_ID = "%d.%d" % (os.getpid(), int(time.time()))
 _LANE_FLAGS = ("hideFromFeed", "postalServiceOff", "notify")   # the per-session toggles the lane gear offers
 #                                    (LANE_TOGGLES in ui/romp-timeline-view.js) and the tab menu's typed union
 #                                    (setSessionFlag in ui/webview/render.ts)
+
+
+def _lane_flag_refusal(flag):
+    """The ONE whitelist of the per-session flags a client may write: None when `flag` is one of _LANE_FLAGS, else
+    the refusal, naming the list and a bounded echo of what arrived. The two flag doors ask it, POST /flag (its 400's
+    error) and the setSessionFlag socket op (its settingRefused frame, which wraps the same sentence), for every flag
+    name a request carries, a falsy one included, so they cannot disagree on which flag names a client may set; a
+    request with no flag key is where they differ, POST /flag answering this refusal ("got null") and the socket op
+    the terminal arm's unknownOp, the kernel's answer for a known op missing a field its arm requires
+    (_note_unknown_op). The saveFile socket op, under the file-editing consent, can write session-flags.json whole,
+    as it can any text file; it is not a flag door and does not ask this. Until the reviewer's ruling in the round-3
+    review of fork PR #897 the socket op wrote any name it was sent: a client could set `threadMail`, the key that
+    turns a comment thread's mail on, or the legacy `postalOff`, while the route refused both. The kernel and the
+    postal bus read those keys; no dashboard, panel or extension sends them. tests/test_obsidian_state_routes.py pins
+    the doors (FlagWriterPopulation) and executes both refusals."""
+    if flag in _LANE_FLAGS:
+        return None
+    return "flag must be one of %s, got %s" % (", ".join(_LANE_FLAGS), _clip_json(flag))
 
 
 def _unknown_keys_error(b, allowed):
@@ -73678,9 +77297,9 @@ def _state_write_route(path, b):
             return 400, {"ok": False, "error": "id (the session's id) required"}
         sid = sid.strip()
         flag = b.get("flag")
-        if flag not in _LANE_FLAGS:
-            return 400, {"ok": False, "error": "flag must be one of %s, got %s"
-                         % (", ".join(_LANE_FLAGS), _clip_json(flag))}
+        err = _lane_flag_refusal(flag)                 # the whitelist the setSessionFlag socket op asks too
+        if err:
+            return 400, {"ok": False, "error": err}
         if b.get("value") is None:
             return 400, {"ok": False, "error": "value (true or false) required"}
         value, ferr = _as_bool(b.get("value"), "value")
@@ -73744,13 +77363,142 @@ def _state_write_route(path, b):
     return 404, {"ok": False, "error": "no such route"}
 
 
+_STAMP_HTML_TAG = re.compile(r"(<html)(?=[\s>])", re.I)
+_STAMP_HTML_TAG_B = re.compile(rb"(<html)(?=[\s>])", re.I)
+
+
+def _stamp_served_html(code, body, ctype):
+    """[fork] The lazy panes' proof of a 200 (review round 4 of the lazy panes, 2026-09-19, kernel-1): every text/html 200 this kernel
+    writes whose body carries an <html> tag gets `data-romp-served=200` on that tag, written at the top of Handler._send, so it is a
+    rule over the writer and no list of pages. Handler._send is not the one place every response leaves (pass 5, the author's label, taking the reviewer's round-4 finding extra6-1):
+    eight `send_response` sites bypass it, and the rule holds over text/html 200s because none of them writes one: they are HEAD roads
+    with no body, 206 ranges, the 204 preflight, the 101 upgrade, and two 200 attachments with application/octet-stream hardcoded, a
+    census tests/test_pane_state_broadcast.py pins over the writers (every `send_response(` outside _send is a non-200, a bodiless
+    road, or an octet-stream attachment). One road lies outside both censuses (the author's pass-5 verify): _remote_ws writes a response
+    head to the client with a raw sendall and then pumps the remote kernel's frames, with no send_response at all. Since main's fork PR
+    #919 that head is not the remote's bytes: _ws_head_allowlist rebuilds it from the remote's 101 as this kernel's own status line,
+    `HTTP/1.1 101 Switching Protocols`, the allowlisted handshake headers (each name in this kernel's spelling, its value the
+    remote's), and any line of this kernel's own (the legacy cookie's clear, when one is due), then the blank line, with the remote's
+    first frame bytes in the same sendall; any other answer is this kernel's own text/plain 502 through _send
+    (tests/test_remote_ws_set_cookie_strip.py). No document can arrive by it: the route answers 400 text/plain without a
+    Sec-WebSocket-Key, a header no navigation or fetch can set (tests/test_kernel_remote_ws_proxy.py), and the one status line the
+    relay writes raw is that 101. A third census in the same module classifies every raw `sendall(` and `wfile.write(` in this file
+    (this writer's, a bypassing block's, that splice's, or a WebSocket frame's), so a new raw writer of an HTTP response reds it. A body
+    with no <html> tag is returned as it came, unstamped, so served at a pane url it would read as a failure; the paste-the-token page,
+    served at / and at /login, is one today, and neither is a pane url (correctness-2, regression-1, extra6-2: the rule with its shape
+    condition, the token page an example and not a list). The phone shell's docState (_LANDING_MOBILE_JS) reads it off a pane frame's
+    same-origin document: one with the pane shim's marker is the pane's own; one with this stamp and no marker is a 200 the kernel
+    served that the shell cannot classify (its "needs the ui/ modules" page), shown as served; one with neither is not a 200 of this
+    kernel's (its 403 line, which a pane url answers only to a browser holding no session cookie this kernel accepts, since a page opens
+    on that cookie alone and a stale page key does not close it; its 500 page; a proxy's 502 body while it restarts) and is a failure
+    with the retry road. The 403 and the 500 are text/plain and a proxy's page is not this kernel's, so none can carry it:
+    that is the point. The first <html tag alone (the shell page's own script names the tag in a regex and a comment, so a body can
+    carry more than one match); a body with none is returned as it came, bytes or str alike; any other status or type passes through
+    untouched."""
+    if code != 200 or not isinstance(ctype, str) or not ctype.lower().startswith("text/html"):
+        return body
+    if isinstance(body, bytes):
+        return _STAMP_HTML_TAG_B.sub(rb"\1 data-romp-served=200", body, count=1)
+    if isinstance(body, str):
+        return _STAMP_HTML_TAG.sub(r"\1 data-romp-served=200", body, count=1)
+    return body
+
+
+# ── the route table the router and the auth classifier both read ───────────────────────────────────
+# ONE declaration of which GET paths are the PAGE class (a document, served text/html) and which are
+# the STATIC class (the built bundles and assets: code, no session data). do_GET dispatches a page by
+# looking its renderer up here, and Handler._need classifies a request's auth class off the same two
+# structures, so a page or static route added in one place is covered in the other by construction and
+# neither can drift from the other. Everything not named here is the full, socket or file class
+# (Handler._need); the cookie on its own opens the page and static classes and nothing else.
+_PAGE_RENDERERS = {
+    "": _landing, "/": _landing,          # the shell (a bare path classes as "/" the same way _need does)
+    "/chat": _chat_page, "/feed": _feed_page, "/timeline": _timeline_page,
+    "/fleet": _fleet_page, "/waiting": _waiting_page, "/files": _files_page,
+    "/settings": _settings_page,
+}
+_STATIC_EXACT = ("/sw.js",)               # the push service worker
+_STATIC_PREFIXES = ("/dist/", "/media/")  # the built bundles and static assets
+
+
+def _static_route(p):
+    """True for the STATIC class: the service worker and the built-bundle/asset trees. The install
+    manifest and the three home-screen icons are served auth-exempt earlier and are not classed here."""
+    return p in _STATIC_EXACT or p.startswith(_STATIC_PREFIXES)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *a):
         pass
 
+    def handle_one_request(self):
+        # What end_headers reads about a request starts empty before the request's line and headers are
+        # read, so an error the base class answers mid-parse on a keep-alive connection reads nothing from
+        # the request before it. This is also the one reset of the session a sign-in sets (_set_cookie), and
+        # with it of the seed and the no-store, which _send writes only beside that cookie: every request on
+        # a keep-alive connection passes here first, the routes served before the gate included.
+        self._legacy_ours = self._legacy_signed_in = False
+        self._set_cookie = None
+        super().handle_one_request()
+
+    def parse_request(self):
+        """The base parse, then two facts about the request's cookies that every response reads
+        (_clears_legacy_cookie): whether the legacy romp_token cookie holds THIS kernel's token, and
+        whether the request carries a valid session cookie of this kernel. Both are computed for every
+        request, and both compares are constant time (_ct_eq, and _session_ok's)."""
+        ok = super().parse_request()
+        if ok:
+            self._legacy_ours = bool(TOKEN) and _ct_eq(self._cookie("romp_token"), TOKEN)
+            self._legacy_signed_in = bool(self._browser_session())
+        return ok
+
+    def _clears_legacy_cookie(self):
+        """True when this response clears the legacy romp_token cookie (a kernel before the session-id
+        design set it, and its value WAS the serve token). It is cleared only when its value is THIS
+        kernel's token, and only when the browser is signed in without it: this response sets the session
+        cookie (the sign-in that migrates it), or the request already carries a valid session cookie of
+        this kernel beside it (the browser signed in earlier; a request carries both when an earlier
+        version, run after this one, set the old cookie again and this version then came back with the
+        same token). Every response that holds, of any route class, a refusal and a socket upgrade
+        included, carries the clear. Apart from the response that signs the browser in, a request with no
+        valid session is never answered with it, so a dashboard that has not migrated keeps the cookie it
+        still signs in with (its polls and socket redials carry no session, and the reload that migrates
+        it finds the cookie), and a romp_token holding any other value (a second, older kernel on the same
+        host) is never touched."""
+        return bool(getattr(self, "_legacy_ours", False)
+                    and (getattr(self, "_legacy_signed_in", False) or getattr(self, "_set_cookie", None)))
+
+    def end_headers(self):
+        # the one place every response's headers end, so the legacy cookie's clear reaches each response
+        # _clears_legacy_cookie names (the socket relay writes the 101 head it rebuilds without this, and
+        # adds the clear to that head's lines itself)
+        if self._clears_legacy_cookie():
+            self.send_header("Set-Cookie", _LEGACY_COOKIE_CLEAR)
+        super().end_headers()
+
     def _send(self, code, body, ctype, cache=None, headers=None):
+        body = _stamp_served_html(code, body, ctype)   # [fork] every text/html 200 whose body has an <html> tag carries the kernel's stamp (the lazy panes' proof of a 200; the function's docstring names the writers that bypass this method and the rootless exception)
+        seeded = False
+        if getattr(self, "_page_ok", False) and isinstance(body, str) and ctype.startswith("text/html") and "<head>" in body:
+            # An authorized page document: the page-key script goes first in its head, before the page
+            # makes any request. On the login response (a session was just minted or kept: _set_cookie
+            # holds it) the SEED goes ahead of it: it stores this origin's page key (in the per-kernel
+            # slot _PAGE_KEY_SLOT) and drops token= and c= from the address. That seed is the one and
+            # only place the page key ever reaches the browser; a page served on the session cookie alone
+            # carries neither the seed nor the key.
+            seed = ""
+            if getattr(self, "_set_cookie", None):
+                seed = ("<script>try{localStorage.setItem(%s,%s)}catch(e){}"
+                        "try{var u=new URL(location.href);u.searchParams['delete']('token');u.searchParams['delete']('c');"
+                        "history.replaceState(history.state,'',u.pathname+(u.searchParams.toString()?'?'+"
+                        "u.searchParams.toString():'')+u.hash)}catch(e){}</script>"
+                        % (json.dumps(_PAGE_KEY_SLOT), json.dumps(_page_key(self._set_cookie))))
+                seeded = True
+            body = body.replace("<head>", "<head>" + seed + "<script>" + _PAGE_KEY_JS + "</script>", 1)
+        if seeded:
+            cache = "no-store"                        # the key-bearing login response is never stored
         body = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -73769,30 +77517,44 @@ class Handler(BaseHTTPRequestHandler):
         # Phone and tailnet frame the kernel's own origin, which 'self' permits.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
-        # Referrer policy: a document's URL is what its requests send as Referer, and the shell's URL is `/?token=` on its
-        # first load (the address scrub in _landing's head script drops it; a pane page opened bare as `/chat?token=`
-        # keeps it). same-origin sends the full Referer on requests to this origin and nothing cross-origin (a
-        # transcript's <img> from another host, a link out), whatever the browser's default, on every page the kernel
-        # serves: the SECURITY.md claim that a cross-site page cannot obtain the token then holds by construction, save
-        # the one exception its Network access section states (an inline svg's paint reference, on a page whose own
-        # address carries ?token=). same-origin and not no-referrer: a same-origin GET carries no Origin header, so the
-        # Referer is the one header that names the page origin behind it to the kernel, and this keeps it.
+        # Referrer policy: a document's URL is what its requests send as Referer, and a page's URL holds
+        # `?token=` (or `?c=`) on the load that signs a browser in. The sign-in seed, which this method puts
+        # first in the head of the page a sign-in response serves (above), drops token= and c= from the
+        # address before the page makes a request, and _landing's head script drops token= from the shell's
+        # address on a load that is not a navigation and so gets no seed. Neither reaches a speculative
+        # preload the parser starts before a head script runs, or a page other than the shell loaded on
+        # `?token=` by a load that is not a navigation; this header covers those. same-origin sends the
+        # full Referer on requests to this origin and nothing cross-origin (a transcript's <img> from
+        # another host, a link out), whatever the browser's default, on every page the kernel serves: the
+        # SECURITY.md claim that a cross-site page cannot obtain the token then holds by construction, save
+        # the one exception its Network access section states (an inline svg's paint reference, on a page
+        # whose own address carries ?token=). same-origin and not no-referrer: a same-origin GET carries no
+        # Origin header, so the Referer is the one header that names the page origin behind it to the
+        # kernel, and this keeps it.
         self.send_header("Referrer-Policy", "same-origin")
+        if getattr(self, "_reauth", False):
+            # A valid session whose stored page key no longer matches: the page-key script reads this
+            # marker off the fetch's own 403 response, drops the stale key and hops to /login. A
+            # denial for any other reason carries no marker, so nothing else triggers the hop.
+            self.send_header("X-Romp-Reauth", "1")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         if cache:                                     # e.g. "no-cache" — keeps a tab from running a stale bundle
             self.send_header("Cache-Control", cache)
-        if getattr(self, "_set_cookie", None):       # auto-inject the token so a client never 401-loops
-            # Max-Age=1yr so the phone persists the token past its browser session (no re-prompt on
+        if getattr(self, "_set_cookie", None):       # the browser session this login minted or kept (never the serve token)
+            # Max-Age=1yr so the phone persists the session past its browser session (no re-prompt on
             # the tailnet after the tab is closed) — for simplify's auto-serve/permanence work.
             # SameSite=Lax, NOT Strict (the user 2026-08-08): Android launches an installed
             # home-screen app through a launcher INTENT, which Chrome scores as a cross-site
             # top-level navigation — Strict withheld the cookie on every launch and the app opened
             # on the login page each time, a token re-ask per launch. Lax still attaches only on
             # top-level navigations (never on a cross-site POST/subresource, and every
-            # state-changing route here is a POST), so the gate the token provides is unchanged.
-            self.send_header("Set-Cookie", "romp_token=%s; Path=/; Max-Age=31536000; "
-                             "SameSite=Lax; HttpOnly" % self._set_cookie)
+            # state-changing route here is a POST), so the gate the cookie provides is unchanged.
+            # The cookie holds the SESSION ID and its name is this kernel's own (_SESSION_COOKIE); the
+            # serve token is never a cookie value. When the request carried the legacy romp_token cookie
+            # holding this kernel's token, end_headers adds its clear beside this (_clears_legacy_cookie).
+            self.send_header("Set-Cookie", "%s=%s; Path=/; Max-Age=31536000; "
+                             "SameSite=Lax; HttpOnly" % (_SESSION_COOKIE, self._set_cookie))
         # CORS delivery for an AUTHORIZED browser origin (set at the _authorize call sites).
         # A VS Code webview's synthetic origin makes every kernel fetch cross-origin, and
         # without an echoed Access-Control-Allow-Origin the browser withholds the response
@@ -73806,9 +77568,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    # ── serve-layer security (docs/read-side.md): Origin/Host gate always; token required for ALL
-    # access, loopback included (Jupyter's model — loopback is shared by every local user on the
-    # machine, so it is not a trust boundary; the 0600 token file is the same-user gate) ──
+    # ── serve-layer security (docs/read-side.md): Origin/Host gate always; the token, presented directly
+    # or through a browser sign-in made with it, required for ALL access, loopback included (Jupyter's
+    # model: loopback is shared by every local user on the machine, so it is not a trust boundary; the
+    # 0600 token file is the same-user gate) ──
     def _origin_ok(self):
         """Reject cross-site browser origins — the ClawJacked/WS hole (WS isn't covered by CORS, so
         this is the real gate). Allow same-origin, the local kernel origin, vscode-webview, and an
@@ -73825,57 +77588,112 @@ class Handler(BaseHTTPRequestHandler):
             return True                              # same-origin (covers local AND tailnet self-access)
         return o in ("http://127.0.0.1:%d" % PORT, "http://localhost:%d" % PORT)
 
-    def _cookie_token(self):
+    def _cookie(self, name):
         for part in (self.headers.get("Cookie") or "").split(";"):
             k, _, v = part.strip().partition("=")
-            if k == "romp_token":
+            if k == name:
                 return v
         return ""
 
-    def _authorize(self, q):
-        """(ok, cookie_to_set, reason). An EXPLICITLY PRESENTED token is sufficient auth and bypasses
-        the Origin gate. This is what lets the FEDERATED dashboard work: a browser served by ANOTHER
-        kernel opens a tunnel'd /ws (or fetch) here carrying ?token — a foreign Origin, but the
-        unguessable token is the credential, and a cross-site page can't forge it. The token is
-        REQUIRED for every gated route, loopback included (Jupyter's model: loopback is reachable by
-        every local user, so the 0600 token file — not the socket — is the same-user trust boundary).
-        Browsers present ?token once and ride the auto-set cookie; local CLIs/hooks read the file and
-        send X-Romp-Token (a custom header forces a CORS preflight through this same gate, so a
-        cross-site page can't forge it either). Token-less browser traffic still hits the Origin gate
-        first (the ClawJacked/WS hole) so a denial names the real reason.
+    def _browser_session(self):
+        """This browser's session id when its cookie holds one this kernel minted; "" otherwise."""
+        sess = self._cookie(_SESSION_COOKIE)
+        return sess if _session_ok(sess) else ""
 
-        The COOKIE is the one credential that does NOT bypass the Origin gate, because it is the one
-        the browser attaches for you: cookies are scoped by host and NOT by port (RFC 6265 §8.5), so
-        every `http://127.0.0.1:<any-port>` page is same-site with the dashboard and rides this
-        cookie — SameSite=Strict included. Without the Origin check below, any page served by
-        anything else on loopback (an agent-cloned repo's dev server) reached `/ws`, which streams
-        every session and accepts sendMessage. Presenting a token proves you are not a drive-by page;
-        carrying a cookie proves only that the browser had one. Nothing in the shipped UI needs the
-        cookie cross-origin: the dashboard's own socket is same-origin, federation relays through the
-        hub's own origin WITH ?token, and the VS Code webview origin is allowed by _origin_ok."""
+    @staticmethod
+    def _need(p):
+        """The auth class of a route, read off the shared route table (_PAGE_RENDERERS / _static_route):
+        (class, file host). "page" and "static" are the two the session cookie opens on its own; "ws"
+        (a socket upgrade), "file" (/file and /remote/<host>/file, whose header-less loads carry a cap)
+        and "full" (everything else) each need the page key or the cap on top of the cookie. The file
+        host is the attached host a /remote/<host>/file URL names, "" for the local route."""
+        if p in _PAGE_RENDERERS:
+            return "page", ""
+        if _static_route(p):
+            return "static", ""
+        if p == "/ws" or (p.startswith("/remote/") and p.endswith("/ws")):
+            return "ws", ""
+        if p == "/file":
+            return "file", ""
+        if p.startswith("/remote/") and p.endswith("/file"):
+            return "file", unquote(p[len("/remote/"):-len("/file")])
+        return "full", ""
+
+    def _authorize(self, q):
+        """(ok, session_to_set, reason). An EXPLICITLY PRESENTED serve token (?token= or X-Romp-Token)
+        or a one-time ?c= code authorizes from any Origin, as before: it is the credential the CLI,
+        hooks, the extension host, the VS Code webview and kernel-to-kernel calls present, and a
+        cross-site page cannot forge it. The BROWSER's own credential is two parts. The session cookie
+        alone opens only the page and static classes (a page document, /dist, /media, /sw.js: code, no
+        session data). The full and socket classes additionally need the page key (the X-Romp-Key
+        header, or k= on a socket dial); the file class additionally needs a per-file cap. The cookie
+        still passes through the Origin gate (_origin_ok), which refuses a request that names a foreign
+        Origin. A request that names none passes it with the cookie, and a browser names none on a GET
+        navigation (a frame's included) or on a subresource load made without CORS (a script, an image),
+        whichever page made it: that is why the page and static classes carry code and no session data.
+        session_to_set is the session a login mints or keeps: a
+        GET navigation to a page authorized by ?token=, ?c=, or the old romp_token cookie (which held
+        the serve token itself, migrated once here); every other authorized response sets no cookie."""
+        need, fhost = self._need(urlparse(getattr(self, "path", "") or "").path)
+        cmd = getattr(self, "command", "GET")
+        if cmd == "HEAD":
+            if need != "file":
+                need = "full"                         # HEAD serves /file alone (the existence probe); nothing else
+        elif cmd != "GET":
+            need = "full"                             # only GET opens a shell, the socket or the file class; a POST/PUT is full
+        self._page_ok = False
+        self._reauth = False
+        self._trace_ok = False
+        login = migrate = False
         if TOKEN and _ct_eq((q.get("token") or [""])[0], TOKEN):
-            return True, TOKEN, ""                    # valid ?token → authorize (any origin) + set cookie
-        if _spend_handoff((q.get("c") or [""])[0]):
-            return True, TOKEN, ""                    # one-time handoff (the browser we opened) → cookie, once
-        if TOKEN and _ct_eq(self._cookie_token(), TOKEN) and self._origin_ok():
-            return True, None, ""                     # valid token cookie + same-site origin
-        if TOKEN and _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN):
-            return True, None, ""                     # header form — local CLI/hook/daemon clients
-        if not self._origin_ok():
-            return False, None, "cross-site origin"
-        return False, None, "token required (loopback included; token file: ~/.local/state/romp/serve-token)"
+            ok, login = True, True                    # valid ?token → authorize (any origin) + a page navigation seeds a session
+            self._trace_ok = True
+        elif _spend_handoff((q.get("c") or [""])[0]):
+            ok, login = True, True                    # one-time handoff (the browser we opened) → likewise, once
+            self._trace_ok = True
+        elif TOKEN and _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN):
+            ok = True                                 # header form: local CLI/hook/daemon clients; sets no cookie
+            self._trace_ok = True
+        else:
+            ok = False
+            if self._origin_ok():
+                sess = self._browser_session()
+                if sess:
+                    pk = self.headers.get("X-Romp-Key") or ((q.get("k") or [""])[0] if need == "ws" else "")
+                    key_ok = bool(pk and _ct_eq(pk, _page_key(sess)))
+                    ok = (need in ("page", "static")
+                          or key_ok
+                          or (need == "file" and _one_file_term_each(q) and _ct_eq((q.get("cap") or [""])[0], _file_cap(
+                              sess, fhost, (q.get("path") or [""])[0], (q.get("sid") or [""])[0]))))
+                    self._trace_ok = key_ok               # the page key opens every route, so a 500 may carry its traceback
+                    # A VALID session whose key/cap does not match: a DISTINCT refusal (X-Romp-Reauth via
+                    # _send) so the page-key script drops the stale key and hops to /login, rather than a
+                    # plain 403 the page cannot tell from any other denial (the concurrent-login case: the
+                    # cookie of one login with the stored key of another).
+                    self._reauth = not ok
+                elif need == "page" and TOKEN and _ct_eq(self._cookie("romp_token"), TOKEN):
+                    ok, login, migrate = True, True, True   # the old token cookie, once: this response migrates it (and clears it: _clears_legacy_cookie)
+        if not ok:
+            if not self._origin_ok():
+                return False, None, "cross-site origin"
+            if self._reauth:
+                return False, None, "session key required"
+            return False, None, "token required (loopback included; token file: ~/.local/state/romp/serve-token)"
+        self._reauth = False
+        self._page_ok = need == "page"
+        if login and need == "page" and self._is_navigation():
+            # a browser already signed in keeps its session; one migrating from the old cookie gets the
+            # migration session, the same id for every tab that migrates at once (_migration_session)
+            return True, self._browser_session() or (_migration_session() if migrate else _mint_session()), ""
+        return True, None, ""
 
     def _write_token_ok(self, q):
         """An EXPLICITLY PRESENTED serve token — ?token= or the X-Romp-Token header — and nothing
-        else. STRICTER than _authorize on purpose: it does NOT accept the ambient romp_token cookie,
-        because the cookie is the one credential the browser attaches for you, so a drive-by
-        loopback subresource GET (an <img>/<script>/no-cors fetch to this route) rides it with no
-        Origin, and _authorize takes that pair as authorized. A state-changing GET must require
-        proof the caller is not a drive-by page — the reason _authorize's own docstring gives for
-        preferring the token — and only an explicit token clears BOTH the cross-origin-fetch and the
-        cookie-carrying-subresource vectors (a custom header forces a CORS preflight no-cors cannot
-        send, and no subresource load can set it or guess ?token=). Local daemons (the manager) read
-        the 0600 token file and send X-Romp-Token — exactly this."""
+        else. STRICTER than _authorize on purpose: it accepts neither the session cookie nor the page
+        key, only the token itself. The state-changing GETs it gates (the drain arm, the park stamp) are
+        the manager's, and a custom header forces a CORS preflight while no subresource load can set it
+        or name ?token=, so only a caller holding the token reaches them. Local daemons (the manager)
+        read the 0600 token file and send X-Romp-Token, exactly this."""
         return bool(TOKEN) and (_ct_eq((q.get("token") or [""])[0], TOKEN)
                                 or _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN))
 
@@ -74096,6 +77914,9 @@ class Handler(BaseHTTPRequestHandler):
         first). Approve only what the auth gate itself allows — the actual request
         still runs the full _authorize on arrival; this grants delivery, not access."""
         q = parse_qs(urlparse(self.path).query)
+        # Nothing from an earlier request on this keep-alive connection reaches this response, with no reset
+        # here: handle_one_request clears the session cookie before every request, and _authorize, which runs
+        # before either response below, resets the page, re-sign-in and traceback flags itself.
         ok, _, _ = self._authorize(q)
         origin = self.headers.get("Origin")
         if not (ok and origin):
@@ -74116,7 +77937,9 @@ class Handler(BaseHTTPRequestHandler):
         # 501s every HEAD, which the client would read as "gone" and hide a live chip.
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        self._set_cookie = None
+        # No reset of the per-request flags here: handle_one_request clears the session cookie before every
+        # request, and _authorize runs before any response this method writes and resets the page,
+        # re-sign-in and traceback flags itself.
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
@@ -74147,13 +77970,23 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = u.path
         q = parse_qs(u.query)
-        self._set_cookie = None
+        # The routes served before the gate below never run _authorize, so these two resets are the clear of
+        # the re-sign-in marker and the traceback permission an earlier request on this keep-alive connection
+        # set. The session cookie needs none here (handle_one_request clears it before every request), and
+        # the page flag needs none: _authorize sets it on every gated request, and no route before the gate
+        # serves a document with a <head> for _send to put the page-key script in.
+        self._reauth = False
+        self._trace_ok = False
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
+            if p == "/login":
+                # the sign-in page, served exempt so a browser holding no page key can reach it (the
+                # page-key script sends the top frame here when this origin's storage was cleared)
+                return self._send(200, _TOKEN_LOGIN_HTML, "text/html", cache="no-cache")
             if p == "/healthz":
                 # liveness probe — exempt from auth. X-Romp-Boot identifies THIS kernel process: the
                 # restart button reloads only when the id flips (a bare 200 can still be the old kernel
@@ -74174,9 +78007,9 @@ class Handler(BaseHTTPRequestHandler):
                 # new turn starts, refreshable forever — so it is GATED on an explicit token
                 # (_write_token_ok), unlike the exempt read. Before this gate it armed in the
                 # exempt block: a drive-by loopback page's no-cors GET or a tailnet client could
-                # loop it and freeze all turn starts (the _authorize docstring's drive-by-loopback
-                # adversary). An unauthorized drain still returns the count (the read stays exempt)
-                # but arms nothing; the manager reads the serve-token file and sends X-Romp-Token.
+                # loop it and freeze all turn starts. An unauthorized drain still returns the count
+                # (the read stays exempt) but arms nothing; the manager reads the serve-token file and
+                # sends X-Romp-Token.
                 be = _sdk()
                 n = be.busy_count() if be and hasattr(be, "busy_count") else 0
                 # the breakdown rides beside the total (T240): the manager defers on EITHER kind of
@@ -74656,31 +78489,13 @@ class Handler(BaseHTTPRequestHandler):
                                   "application/json", cache="no-cache")
             # HTML pages are served no-cache so a reload always gets the freshest markup — which carries
             # the latest ?v= bundle url, so even a cached old bundle is bypassed (stale-client fix).
-            if p in ("/", ""):
-                # combined chat + feed (both ported); the timeline pane joins this layout next.
+            # The PAGE class is dispatched off the shared route table (_PAGE_RENDERERS), the same table
+            # _need reads to class a request, so the router and the classifier can never disagree on
+            # which paths a session cookie opens on its own.
+            _page = _PAGE_RENDERERS.get(p)
+            if _page is not None:
                 _client_seen[0] = time.time()
-                return self._send(200, _landing(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/chat":
-                _client_seen[0] = time.time()
-                return self._send(200, _chat_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/feed":
-                _client_seen[0] = time.time()
-                return self._send(200, _feed_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/timeline":
-                _client_seen[0] = time.time()
-                return self._send(200, _timeline_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/fleet":
-                _client_seen[0] = time.time()
-                return self._send(200, _fleet_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/waiting":
-                _client_seen[0] = time.time()
-                return self._send(200, _waiting_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/files":
-                _client_seen[0] = time.time()
-                return self._send(200, _files_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/settings":
-                _client_seen[0] = time.time()
-                return self._send(200, _settings_page(), "text/html; charset=utf-8", cache="no-cache")
+                return self._send(200, _page(), "text/html; charset=utf-8", cache="no-cache")
             if p == "/sw.js":
                 # the push service worker (see _SW_JS). Behind the gate on purpose: the browser's
                 # register() fetch is same-origin and carries the cookie, and only an authed shell
@@ -74813,7 +78628,7 @@ class Handler(BaseHTTPRequestHandler):
                 # subscription and states where its page runs (its Referer — a same-origin GET carries no Origin)
                 _push_backfill_origin(_pep, _request_page_origin(self.headers))
                 return self._send(200, json.dumps(_push_pending(_pep)), "application/json", cache="no-cache")
-            if p.startswith("/dist/") or p.startswith("/media/"):
+            if p.startswith(_STATIC_PREFIXES):        # the STATIC class's bundle/asset trees (the same prefixes _need reads)
                 base = DIST if p.startswith("/dist/") else MEDIA
                 fp = (base / p.split("/", 2)[2]).resolve()
                 if base.resolve() not in fp.parents or not fp.is_file():
@@ -74837,8 +78652,15 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:
+            tb = traceback.format_exc()
+            sys.stderr.write("do_GET %s: %s\n" % (p, tb))
+            # A traceback can name an internal path or state, so the 500 carries it only to a caller that
+            # presented the serve token or the page key (_authorize sets _trace_ok): the CLI, the extension,
+            # a signed-in page's own fetch. Every other caller gets a bare 500: a page or static request on
+            # the session cookie alone, a file load on its cap, and the routes served before the gate. The
+            # traceback goes to stderr either way.
             try:
-                self._send(500, traceback.format_exc(), "text/plain")
+                self._send(500, tb if getattr(self, "_trace_ok", False) else b"internal error", "text/plain")
             except Exception:
                 pass
 
@@ -74909,7 +78731,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        self._set_cookie = None
+        # The push ack below is served before the gate and never runs _authorize, so these two resets are the
+        # clear of the re-sign-in marker and the traceback permission an earlier request on this keep-alive
+        # connection set. The session cookie needs none here (handle_one_request clears it before every
+        # request), and the page flag needs none: _authorize sets it on every gated request (a POST is never
+        # the page class), and the ack's answers are plain text or JSON.
+        self._reauth = False
+        self._trace_ok = False
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
@@ -75385,11 +79213,15 @@ class Handler(BaseHTTPRequestHandler):
                     via = str(body.get("via") or "")   # 'sw' | 'link' | 'ack' | 'vanish': the road the tap took, for the log line
                     if via not in _REVEAL_ROADS:       # whitelisted before it reaches the journal (_REVEAL_ROADS has the why)
                         via = "other" if via else ""
+                    # [fork] the author's pass-5 verify (correctness-1's residual): the window's chat column count the shell declares with the
+                    # tap (_LANDING_REVEAL_JS cols), a positive int; anything else, or a shell of a build before the field, declares nothing
+                    cols = body.get("cols")
+                    cols = cols if (isinstance(cols, int) and not isinstance(cols, bool) and 0 < cols < 100) else None
                 except (ValueError, AttributeError):
                     return self._send(400, "bad json", "text/plain")
                 if not sid:
                     return self._send(400, "missing sid", "text/plain")
-                now_ = _reveal_request(sid, wid, boot=boot, via=via)
+                now_ = _reveal_request(sid, wid, boot=boot, via=via, cols=cols)
                 return self._send(200, json.dumps({"ok": True, "delivered": now_}), "application/json")
             if u.path == "/tick":
                 # Event-driven wake: the Stop / UserPromptSubmit / PostCompact hooks (and the postal drain) poke
@@ -76895,8 +80727,10 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:
-            try:
-                self._send(500, traceback.format_exc(), "text/plain")
+            tb = traceback.format_exc()
+            sys.stderr.write("do_POST %s: %s\n" % (u.path, tb))
+            try:                                      # the traceback only to a token or page-key caller, as do_GET's
+                self._send(500, tb if getattr(self, "_trace_ok", False) else b"internal error", "text/plain")
             except Exception:
                 pass
 
@@ -76910,6 +80744,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if msg and msg.get("type") == "activeTab":
             client["active"] = msg.get("id")   # tab switch → next push builds the now-active tab first
+            client.pop("preferred", None)   # [fork] pass 7
             if msg.get("id"):
                 _release_skeleton(client, str(msg["id"]))   # a skeleton tab clicked: its full rides that push (2026-09-07)
             _pusher_wake.set()                 # …and the pusher wakes now (the tab switch IS the event): that
@@ -76917,6 +80752,15 @@ class Handler(BaseHTTPRequestHandler):
             #                                       interval has passed or the new tab's live tail changed since
             #                                       the last cycle (the hold re-tests every recorded sid against
             #                                       the active tabs; see _pusher), else at the interval's deadline
+            # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): the pop of `preferred`
+            #   above releases the parked-reveal preference's record before this wake, so the push the wake starts reads the
+            #   page's own word (_watched_set) and never builds the parked preference once more. Its comment is one tag so the
+            #   wake stays inside the tab-switch pin's 400-character window (tests/test_chat_fold.py, Wiring.test_a_tab_switch_wakes_the_pusher).
+            #   THE MARGIN (pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding extra8-2): at this head the wake ENDS
+            #   20 characters inside the window (the anchor `msg.get("type") == "activeTab"` to the end of `_pusher_wake.set()` is 380 of the
+            #   400, by the pin's own method: src.index(anchor), then the wake's index in src[i:i + 400] plus the wake's 18 characters). Before
+            #   inserting anything between the anchor and the wake, re-measure by that method and keep the end under 400; a comment goes
+            #   here, after the wake, where it leaves the distance unchanged (this block did).
             if client.get("app") == "chat":
                 _relay_active_chat(client, msg.get("id"), msg.get("nonce"))   # …and the window's feed learns which session is focused (T347), the announcement number echoed (T416)
             return
@@ -77160,10 +81004,23 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             _apih_resend(client)          # and the bottom bar's API cell, from the last frame (same reason)
-        elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and msg.get("flag"):
+        elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and "flag" in msg:
             # timeline lane gear → toggle a per-session view flag (e.g. hideFromFeed). Persisted +
             # re-broadcast so the feed drops/restores that session's cards immediately. The notify
             # bell is tri-state (an override on the master default) → its own setter.
+            # The name first, as POST /flag checks it: one of the lane toggles, by the predicate the route asks
+            # (_lane_flag_refusal has the why). Refused on the settingRefused frame like a bad value below, with
+            # `value` null, since no pane paints an unlisted flag; the log names the field's type, never the name.
+            # The arm keys on the flag key's PRESENCE, not its truthiness, so every name a frame carries, null, "",
+            # 0, false, [] and {} included, meets the predicate and draws the refusal a truthy unlisted name draws.
+            # A frame with NO flag key falls to the terminal arm's unknownOp (_note_unknown_op, the answer for a
+            # known op missing a field its arm requires), where POST /flag answers its 400 ("got null")
+            nerr = _lane_flag_refusal(msg["flag"])
+            if nerr:
+                _refuse_setting(client, nerr, "that setting", "flag", sid=msg["id"], flag=msg["flag"], value=None,
+                                log="refused %s: 'flag' is %s, not one of %s"
+                                    % (msg["type"], _json_type_name(msg["flag"]), ", ".join(_LANE_FLAGS)))
+                return
             value, ferr = _as_bool(msg.get("value"), "value")
             if ferr:
                 # the lane gear's own refusal frame (settingRefused, which the timeline page renders and
@@ -77509,6 +81366,8 @@ class Handler(BaseHTTPRequestHandler):
             # the card on the next build (event-based — no cleared.jsonl needed). Failure answers the asker by mid.
             _qmid = str(msg["mid"])
             _qbody = {"mid": _qmid, "action": str(msg.get("action") or "").strip().lower()}
+            if msg.get("sid"):                     # the recipient, stripped of its host by the route: the bus checks it serves that session
+                _qbody["sid"] = str(msg["sid"])
             if msg.get("text") is not None:
                 _qbody["text"] = str(msg["text"])
             if msg.get("feedback"):                # deny-with-note: the bus mails it back to the sender
@@ -78233,6 +82092,8 @@ class Handler(BaseHTTPRequestHandler):
         wid = (q.get("wid") or [""])[0]         # which DASHBOARD this pane belongs to → _send_to_view aims at one
         iid = (q.get("iid") or [""])[0]         # which page INSTANCE: a reconnect carrying it retires its old socket
         active = (q.get("active") or [""])[0]   # the tab this client is looking at → _push builds it FIRST
+        # [fork] pass 8 (kernel-1): first unless a reveal parked for this window names another session at the set's resolve, when the
+        #   parked-reveal preference records that session on the client and _push builds it first in the hint's place (_watched_set)
         # Capabilities the client ANNOUNCES (comma-separated). FEED_DELTA_CAP: a page whose bundle can apply
         # {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served feed, Outline and
         # Waiting on you pages — see _shim's `caps`); READY_GATE_CAP is the hold below. Announced on the URL
@@ -78408,8 +82269,9 @@ class Handler(BaseHTTPRequestHandler):
         viewed from anywhere else (the phone, through `tailscale serve`) reached its own loopback
         and every remote host's sessions silently vanished (the user 2026-07-30). Relaying under
         the kernel's own origin gives any client that can reach this kernel the whole fleet, with
-        no per-host setup. The kernel stays a dumb pipe: after do_GET's local auth gate the two
-        sockets are spliced byte-for-byte (no frame parsing), and the REMOTE kernel still enforces
+        no per-host setup. The kernel stays a dumb pipe past the handshake: after do_GET's local
+        auth gate, and after the remote's 101 head is read and rebuilt here (_ws_head_allowlist),
+        the two sockets are spliced byte for byte (no frame parsing), and the REMOTE kernel still enforces
         its own token — rewritten into the forwarded query here, so the browser only ever needs
         its local credential — keeping the per-host trust boundary unchanged."""
         with _remotes_lock:
@@ -78420,7 +82282,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.headers.get("Sec-WebSocket-Key"):
             return self._send(400, "expected websocket", "text/plain")
         q = parse_qs(query or "")
-        q.pop("token", None)         # whatever the browser sent never travels — with or without a row token
+        for _k in ("token", "c", "k", "cap"):
+            q.pop(_k, None)          # this kernel's browser credentials never travel to the peer, with or without a row token
         if rtok:
             q["token"] = [rtok]      # the remote's own credential; whatever the browser sent means nothing there
         q["relay"] = ["1"]           # the dial's kind, stated the way the shim states proto, reconnect and skeleton (2026-09-15): the remote
@@ -78447,15 +82310,23 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True             # hijacked socket — no keep-alive after the splice
         down = self.connection
         # The remote's answer decides whether this hub side is an accepted socket at all: its head (the status line and the
-        # headers, up to the blank line) is read here, forwarded byte for byte, and only a 101 files the hub's own wsopen row,
-        # kind hub, naming the host, so the auditor sees the browser's pane here AND its relay dial on the remote; a refusal
-        # (401, 404, a dead tunnel) files nothing, the splice going on as before (2026-09-15). Bytes past the blank line are
-        # the remote's first frames and ride along in the same send. The read is bounded; a remote that answers nothing in
-        # time gets the pumps below as before, and no row.
+        # headers, up to the blank line) is read here, within _WS_HEAD_MAX bytes and _WS_HEAD_TIMEOUT_S seconds. Only a 101
+        # head that _ws_head_allowlist can rebuild reaches the browser, and as that rebuild, never as the remote's bytes: the
+        # browser talks to THIS kernel's origin through the relay, so any header the peer sets beyond the WebSocket handshake
+        # (a Set-Cookie, a Clear-Site-Data, a cache directive) would act on this origin and is dropped. Bytes past the blank
+        # line are the remote's first frames and ride along in the same send. A 101 files the hub's own wsopen row, kind hub,
+        # naming the host, so the auditor sees the browser's pane here AND its relay dial on the remote (2026-09-15).
+        # Anything else (a refusal such as a 401 or a 404, a head with no blank line within the bounds, a remote that closes
+        # or stays silent, a head the rebuild refuses) is this kernel's own 502, with this kernel's headers: the remote's
+        # bytes never reach the browser, no row is filed and the pumps below never start.
         head = b""
+        deadline = time.monotonic() + _WS_HEAD_TIMEOUT_S
         try:
-            up.settimeout(15)
-            while b"\r\n\r\n" not in head and len(head) < 65536:
+            while b"\r\n\r\n" not in head and len(head) < _WS_HEAD_MAX:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                up.settimeout(left)
                 b = up.recv(65536)
                 if not b:
                     break
@@ -78464,14 +82335,31 @@ class Handler(BaseHTTPRequestHandler):
             pass
         finally:
             up.settimeout(None)
-        if head:
+        # this kernel's own clear of the legacy cookie, which end_headers adds to every other response
+        # (_clears_legacy_cookie): the rebuilt head is written here, not through end_headers, so the clear
+        # goes in as one of the lines this kernel writes
+        extra = ([b"Set-Cookie: " + _LEGACY_COOKIE_CLEAR.encode("ascii")] if self._clears_legacy_cookie() else [])
+        rebuilt = _ws_head_allowlist(head, extra)
+        if rebuilt is None:
             try:
-                down.sendall(head)
+                up.close()
             except OSError:
                 pass
-        if head.split(b"\r\n", 1)[0].startswith(b"HTTP/1.1 101"):
-            _note_ws_open({"app": (q.get("app") or ["chat"])[0], "wid": (q.get("wid") or [""])[0], "iid": (q.get("iid") or [""])[0],
-                           "cid": uuid.uuid4().hex[:12], "kind": "hub", "host": host}, reconnect=(q.get("reconnect") or [""])[0] == "1")
+            code, sep = re.match(rb"HTTP/1\.[01] (\d{3})(?: |\r\n)", head), head.find(b"\r\n\r\n")
+            if sep < 0 or sep + 4 > _WS_HEAD_MAX:
+                why = "%s sent no complete socket handshake within %d bytes and %g s" % (
+                    host, _WS_HEAD_MAX, _WS_HEAD_TIMEOUT_S)
+            elif code and code.group(1) != b"101":
+                why = "%s refused the socket (HTTP %s)" % (host, code.group(1).decode("ascii"))
+            else:
+                why = "%s answered the socket with a handshake this kernel does not relay" % host
+            return self._send(502, why, "text/plain")
+        try:
+            down.sendall(rebuilt)
+        except OSError:
+            pass
+        _note_ws_open({"app": (q.get("app") or ["chat"])[0], "wid": (q.get("wid") or [""])[0], "iid": (q.get("iid") or [""])[0],
+                       "cid": uuid.uuid4().hex[:12], "kind": "hub", "host": host}, reconnect=(q.get("reconnect") or [""])[0] == "1")
 
         def _quiet_shutdown(s):
             # shutdown only, never close: `down` still belongs to the base handler (its finish()
@@ -78663,9 +82551,8 @@ class Handler(BaseHTTPRequestHandler):
         the same table and the same 404 the local /file route applies — and the remote's own
         Content-Type header is discarded. Mirroring it let a compromised remote kernel answer
         `text/html` for a path the preview lightbox opens in a SAME-ORIGIN, unsandboxed iframe
-        (ui/webview/preview.ts), i.e. script on the dashboard's origin with the token cookie
-        attached. An attached host is trusted to serve its own files, not to choose how this
-        browser interprets them."""
+        (ui/webview/preview.ts), i.e. script running on the dashboard's own origin. An attached
+        host is trusted to serve its own files, not to choose how this browser interprets them."""
         with _remotes_lock:
             r = _remotes.get(host)
             port, rtok = (r or {}).get("local_port") or 0, (r or {}).get("token") or ""
@@ -78675,6 +82562,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, b"" if head else ("no attached host %r" % host), "text/plain",
                               headers={_FILE_404_REASON_HDR: "detached"})
         q = parse_qs(query or "")
+        _browser_cap = (q.get("cap") or [""])[0]      # kept before the strip: a 413 way-out page rebuilt here for
+        #   THIS browser links back to this relay's download half, which needs the browser's own cap again
+        for _k in ("token", "c", "k", "cap"):
+            q.pop(_k, None)          # this kernel's browser credentials are its own, never the peer's (the peer runs its own gate)
         if (q.get("download") or [""])[0] == "1":
             # The download half rides the same relay (the user 2026-08-09: anything on disk is
             # downloadable — see _file_download). No local extension gate: the gate below exists so the
@@ -78730,6 +82621,16 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             except OSError:
                 pass
+        if not all(_peer_header_value_ok(v) for v in (clen, lastmod, r_ns, r_u8, crange) if v):
+            # Each of these five is written into this response's headers as the remote gave it on one arm or more: the
+            # HEAD arm writes Content-Length, Last-Modified and X-Romp-Mtime-Ns, a GET's 206 arm writes Content-Range,
+            # and a GET's 200 arm writes Last-Modified, X-Romp-Mtime-Ns and X-Romp-Text-Utf8. The check runs ahead of
+            # every arm, so a value that carries a line break or another control character refuses the reply, on an
+            # arm that would not have written it too, rather than writing the remote's bytes as a header of this
+            # kernel's own. The 404's cause needs no check: it is mirrored only when it equals one of this kernel's
+            # own words (_FILE_404_REASONS).
+            return self._send(502, b"" if head else ("%s answered with a header value this kernel does not relay" % host),
+                              "text/plain")
         if len(body) > _MEDIA_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
             return self._send(413, b"" if head else "too large to preview", "text/plain")
         if status not in (200, 206):
@@ -78747,8 +82648,13 @@ class Handler(BaseHTTPRequestHandler):
             if head:
                 return self._send(status, b"", "text/plain", headers=why)
             if status == 413 and mime == "application/pdf" and self._is_navigation():
+                # q had the browser's cap stripped (it never travels to the peer); restore it here so the
+                # way-out page's download link back to this relay carries the cap the browser must present
+                _pq = dict(q)
+                if _browser_cap:
+                    _pq["cap"] = [_browser_cap]
                 return self._send(413, _too_large_page(_decode_text(body) or "too large to show",
-                                                       os.path.basename(rp), q,
+                                                       os.path.basename(rp), _pq,
                                                        route="/remote/%s/file" % quote(host, safe="")),
                                   "text/html; charset=utf-8", cache="no-cache")
             return self._send(status, body, "text/plain", cache="no-cache", headers=why)
@@ -78830,6 +82736,11 @@ class Handler(BaseHTTPRequestHandler):
                     body = b"" if head else resp.read(_TEXT_MAX_BYTES)
                     return self._send(resp.status, body, "text/plain", cache="no-cache")
                 clen = resp.getheader("Content-Length")
+                if clen is not None and not _peer_header_value_ok(clen):
+                    # passed through below as the remote gave it: a line break or another control character in
+                    # it refuses the reply, like the preview arm's mirrored values (_remote_file)
+                    return self._send(502, b"" if head else ("%s answered with a header value this kernel does not relay"
+                                                             % host), "text/plain")
             except (OSError, http.client.HTTPException):
                 _demand_redial(host, "timeout")
                 return self._send(502, b"" if head else ("tunnel to %s is not answering — re-dialing now" % host),
@@ -79361,11 +83272,12 @@ def main():
     url = "http://127.0.0.1:%d" % PORT
     sys.stderr.write("romp-kernel: serving the ported UI at %s  (Ctrl-C to stop)\n" % url)
     sys.stderr.write("romp-kernel: records under %s ; bundles from %s\n" % (jd.STATE, DIST))
-    sys.stderr.write("romp-kernel: every request needs the serve token (loopback included) — "
-                     "browser entry: `romp`\n")
+    _bus_port()                                    # the census line: the bus port dialed, from the record or the environment
+    sys.stderr.write("romp-kernel: every request needs the serve token or a browser sign-in made with it "
+                     "(loopback included); browser entry: `romp`\n")
     if BIND != "127.0.0.1":
         # reachable off-box (tailnet/phone): the Origin gate blocks cross-site browsers token-free,
-        # and the token is required everywhere. Open from the phone:
+        # and the token, or a browser sign-in made with it, is required everywhere. Open from the phone:
         sys.stderr.write("romp-kernel: bound %s — open from the phone:\n"
                          "  http://<this-host>:%d/?token=%s\n" % (BIND, PORT, TOKEN))
     if not os.environ.get("ROMP_KERNEL_NO_OPEN"):

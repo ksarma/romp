@@ -33,6 +33,8 @@ jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"            # known token for the serve-security test
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 # The ACCOUNT gate (_limit_hold: a usage limit / monthly spend cap parks every drive op, tested in
 # tests/test_kernel_limit_queue.py) is a SEPARATE axis from the compaction/busy gates this module
@@ -4716,7 +4718,8 @@ class ViewBuilder(unittest.TestCase):
         # the user 2026-06-23: descriptions become HOVER tooltips (decluttered), and the analytics button drops
         # its 📊 emoji.
         self.assertIn("#rsettings .rs-sub { display: none; }", _gear_css_src())               # descriptions hidden by default
-        self.assertRegex(_gear_css_src(), r"#rsettings \.rs-row:hover \.rs-sub, #rsettings \.rs-widget:hover \.rs-sub \{ display: block; position: absolute")   # the widget rows share the popover (T379)  # float on hover
+        self.assertRegex(_gear_css_src(), r"#rsettings \.rs-row:hover \.rs-sub, #rsettings \.rs-widget:hover \.rs-sub \{ display: block; position: absolute")   # the widget rows share the popover (T379); float on hover
+        self.assertRegex(_gear_css_src(), r"#rsettings \.rs-row:has\(:focus-visible\) \.rs-sub, #rsettings \.rs-widget:has\(:focus-visible\) \.rs-sub \{ display: block; position: absolute")   # and, since 2026-09-20, while the row holds a keyboard focus (:has(:focus-visible), never a mouse click), a rule of its own since the maintainer's round 5 so an engine without :has() keeps the pointer road; ui/webview/gear-sub-focus-browser.test.ts parses both
         self.assertNotIn("\U0001F4CA", _gear_src())                                 # the 📊 emoji is gone
         self.assertIn("Token usage analytics", _gear_src())                          # the label itself stays
 
@@ -5371,7 +5374,8 @@ class ViewBuilder(unittest.TestCase):
         # as before) and is said on stderr — once per file VERSION, not per pass: the failure is
         # remembered under the same key, so a corrupt megabyte is not re-decoded and re-reported every
         # 3 s. The file's next publish is a new key and is decoded again. The first two passes take no
-        # live read on purpose: the feed's live read goes through load_goals_or_fault, which QUARANTINES
+        # live read on purpose: the feed's live read goes through load_goals_shared_or_fault, whose corrupt-bytes
+        # path is load_goals (2026-09-18), which QUARANTINES
         # an unparseable file (moves it aside), and a second pass over a vanished file would prove
         # nothing about the memo.
         path = jd.GOALDIR / (SID + ".json")
@@ -7301,9 +7305,10 @@ class WsFraming(unittest.TestCase):
 
 class ServeSecurity(unittest.TestCase):
     """The serve-layer gate (docs/read-side.md): Origin validation on every request AND the /ws
-    upgrade (kills the cross-site WS hole token-free), + the serve token REQUIRED on every gated
-    route, loopback included (Jupyter's model — loopback is reachable by every local user, so the
-    0600 token file, not the socket, is the same-user boundary). Runs the REAL handler over a
+    upgrade (kills the cross-site WS hole token-free), + the serve token, presented directly or
+    through a browser sign-in made with it, REQUIRED on every gated route, loopback included
+    (Jupyter's model: loopback is reachable by every local user, so the 0600 token file, not the
+    socket, is the same-user boundary). Runs the REAL handler over a
     loopback server (GET /feed is a static page → no model calls)."""
 
     @classmethod
@@ -7328,11 +7333,11 @@ class ServeSecurity(unittest.TestCase):
             return e.code
 
     def test_loopback_needs_token_and_all_forms_work(self):
-        # Loopback is NOT a trust boundary: token-free → 403 even from 127.0.0.1. Every credential
-        # form authorizes: ?token= (browser bootstrap), the cookie it seeds, X-Romp-Token (CLI/hooks).
+        # Loopback is NOT a trust boundary: token-free → 403 even from 127.0.0.1. A page opens on the
+        # serve token (?token=, X-Romp-Token) or, for a signed-in browser, this kernel's session cookie.
         self.assertEqual(self._code("/feed", {}), 403)
         self.assertEqual(self._code("/feed?token=testtok", {}), 200)
-        self.assertEqual(self._code("/feed", {"Cookie": "romp_token=testtok"}), 200)
+        self.assertEqual(self._code("/feed", {"Cookie": "%s=%s" % (km._SESSION_COOKIE, km._mint_session())}), 200)
         self.assertEqual(self._code("/feed", {"X-Romp-Token": "testtok"}), 200)
         self.assertEqual(self._code("/feed", {"X-Romp-Token": "wrong"}), 403)
 
@@ -7577,7 +7582,10 @@ class ServeSecurity(unittest.TestCase):
         with urllib.request.urlopen("http://127.0.0.1:%d/timeline?token=testtok" % self.port, timeout=5) as r:
             self.assertEqual(r.status, 200)
             body = r.read().decode("utf-8", "replace")
-        self.assertIn("TimelinePanel", body, "the shared obsidian view is injected")
+        # the page's CODE, comments blanked (the author's pass 8, 2026-09-20, the fixer pass): the view's own comments and the pane sheet's spell
+        # the name, so a pin over the fetched body was satisfiable by three of its eight occurrences (the pins census reads a formatted
+        # fetch as its route's text now and named this row)
+        self.assertIn("TimelinePanel", served_css.code(body), "the shared obsidian view is injected")
         self.assertIn("app=timeline", body, "the page drives panel.update over the kernel WS")
 
     def test_landing_has_three_panes(self):
@@ -7687,7 +7695,8 @@ class ServeSecurity(unittest.TestCase):
         html = km._landing()
         self.assertIn("<script src=/dist/shell-perf.js?v=", html)
         self.assertLess(html.index("/dist/age-color-global.js"), html.index("/dist/shell-perf.js"))
-        self.assertLess(html.index("/dist/shell-perf.js"), html.index("window.__rompAgeColor"))   # before the errs script
+        code = served_css.code(html)   # offsets preserved, comments blanked: a script comment spells __rompAgeColor before the code does
+        self.assertLess(code.index("/dist/shell-perf.js"), code.index("window.__rompAgeColor"))   # before the errs script
         self.assertLess(html.index("/dist/shell-perf.js"), html.index("/dist/palette-main.js"))
         # the socket it posts through is the shell's own, defined by the mobile-shell script, which runs
         # later: the bundle reads window.__rompShellSend at call time, so the order is fine
@@ -7791,9 +7800,15 @@ class ServeSecurity(unittest.TestCase):
         import urllib.request
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=testtok" % self.port, timeout=5) as r:
             body = r.read().decode("utf-8", "replace")
-        self.assertIn("visualViewport", body)               # the live-visible-height source
-        self.assertIn("--app-h", body)                      # the custom prop the JS drives
-        self.assertIn("height:var(--app-h,100dvh)", body)   # body height reads it, dvh only as fallback
+        # read from the fetched page's code with its comments blanked and from its parsed rules: the fit script's comments spell
+        # both tokens, so a page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py, which reads this
+        # formatted fetch as the landing's text since the fixer pass of the author's pass 8, 2026-09-20; it had been re-pointed by hand)
+        code = served_css.code(body)
+        rules = served_css.rules(body)
+        self.assertIn("visualViewport", code)               # the live-visible-height source
+        self.assertIn("setProperty('--app-h'", code)        # the custom prop the JS drives
+        self.assertIn(("height", "var(--app-h,100dvh)"), [d for r in rules if r.selector in ("body", "html,body") for d in r.decls],
+                      "body height reads it, dvh only as fallback")
 
     def test_cross_site_origin_rejected(self):
         self.assertEqual(self._code("/feed", {"Origin": "http://evil.example"}), 403)
@@ -7805,16 +7820,20 @@ class ServeSecurity(unittest.TestCase):
             "Sec-WebSocket-Key": "x", "Sec-WebSocket-Version": "13"}), 403)
 
     def test_same_origin_ws_passes_gate(self):
-        # same-origin upgrade WITH the cookie passes the gate (101) — the served page always has it
-        # (the page itself required the token to load). urllib can't complete the upgrade, so a 101
-        # surfaces as a non-403 — assert it's NOT rejected. Token-free same-origin is 403 now.
+        # same-origin upgrade WITH the session cookie AND the page key (k= on the dial) passes the gate
+        # (101): the served page carries both. urllib can't complete the upgrade, so a 101 surfaces as
+        # a non-403, so assert it's NOT rejected. The cookie alone (no key) is 403, like a token-free dial.
         ws_headers = {
             "Origin": "http://127.0.0.1:%d" % self.port, "Host": "127.0.0.1:%d" % self.port,
             "Upgrade": "websocket", "Connection": "Upgrade",
             "Sec-WebSocket-Key": "x", "Sec-WebSocket-Version": "13"}
+        sess = km._mint_session()
         self.assertEqual(self._code("/ws?app=chat", dict(ws_headers)), 403)
-        self.assertNotEqual(self._code("/ws?app=chat",
-                                       dict(ws_headers, Cookie="romp_token=testtok")), 403)
+        self.assertEqual(self._code("/ws?app=chat",
+                                    dict(ws_headers, Cookie="%s=%s" % (km._SESSION_COOKIE, sess))), 403,
+                         "the session cookie without the page key is refused on the socket")
+        self.assertNotEqual(self._code("/ws?app=chat&k=" + km._page_key(sess),
+                                       dict(ws_headers, Cookie="%s=%s" % (km._SESSION_COOKIE, sess))), 403)
 
     def test_healthz_exempt(self):
         self.assertEqual(self._code("/healthz", {"Origin": "http://evil.example"}), 200)
@@ -8557,10 +8576,26 @@ class PostalPeerTunnels(unittest.TestCase):
         # bus was down for a restart); restored after, whatever the outcome
         env_saved = {k: os.environ.get(k) for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT")}
         os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1")
+        # the revive runs on a DAEMON THREAD: restoring the environment as soon as the assertion returns raced it, and the
+        # thread's ensure then ran with the RESTORED environment and started a real bus detached from the test (2026-09-18: two
+        # such buses stood on the shared box for hours, and the record one wrote under the shared state root redirected a
+        # later module's dial). Every spawn is recorded, the revive is waited out BEFORE the restore, and the ensure must
+        # never have run at all here: a client-only kernel owns no bus to revive.
+        runs = []
+        real_run = km.subprocess.run
+        km.subprocess.run = lambda *a, **kw: (runs.append((a, dict(os.environ))), real_run(*a, **kw))[1]
         try:
             self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, True),
                              "postal down → False, never an exception (the supervisor must survive)")
+            for _ in range(200):                      # the revive thread finishes (or never started) before the environment goes back
+                if not km._bus_reviving[0]:
+                    break
+                time.sleep(0.01)
+            self.assertFalse(km._bus_reviving[0], "the revive finished before the environment was restored")
+            self.assertEqual([a[0][:2] for a, _ in runs if a and "romp-postal-service" in " ".join(map(str, a[0]))], [],
+                             "a client-only kernel never runs the bus ensure: nothing to spawn, nothing to leak")
         finally:
+            km.subprocess.run = real_run
             km.BUS_PORT = saved
             for k, v in env_saved.items():
                 if v is None:

@@ -43,8 +43,13 @@ async function openSource(browser: any): Promise<{ page: any; errors: string[] }
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
   const html = pageHtml("pane", { [DIAGRAM]: svgOf(0) }, MT);
   await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+  // the picture's own request to its /file address, answered with the svg as image/svg+xml; registered after the page's route,
+  // so it is asked first
+  await page.route((u: URL) => u.pathname === "/file" && u.searchParams.get("path") === DIAGRAM, (route: any) => route.fulfill({ status: 200, contentType: "image/svg+xml", body: svgOf(0) }));
   await page.goto(ORIGIN + "/");
   await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [DIAGRAM, SID]);
+  // the picture decodes before the Source click (a failed load puts the failure pane in its place, and the wait runs out)
+  await page.waitForFunction(() => { const i = document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement | null; return !!i && i.complete && i.naturalWidth === 600; }, null, { timeout: 10000 });
   await page.locator("#romp-fileview .fileview-btn", { hasText: /^Source$/ }).waitFor({ state: "visible", timeout: 10000 });
   await page.locator("#romp-fileview .fileview-btn", { hasText: /^Source$/ }).click();
   await page.waitForFunction(() => document.querySelectorAll("code.hljs .fv-cl").length > 300, null, { timeout: 10000 });

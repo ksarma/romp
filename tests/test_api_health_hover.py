@@ -32,6 +32,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 import time
 import types
@@ -49,6 +50,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_apih_hover", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment spans (loads no romp code)
 sb = load_source("romp_sdk_backend_apih_hover", os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py"))
 
 SID = "88888888-aaaa-4bbb-8ccc-000000000001"     # this module's private synthetic sid
@@ -60,8 +63,12 @@ JS = km._LANDING_APIH_JS
 
 
 def _hist():
-    """The History block of the cell's script, or '' before the section exists."""
-    i, j = JS.find("// -- History"), JS.find("// full=false is the HOVER")
+    """The History block of the cell's script, between its two section comments, or '' before the section exists. The anchors are
+    COMMENTS, so they are read from the script's comment spans on purpose (the fixer pass of the author's pass 9: a find over the raw text is a pin a
+    comment satisfies, and here the comment is the point)."""
+    spans = [(s, JS[s:e]) for s, e in served_css.js_comment_spans(JS)]
+    i = next((s for s, text in spans if text.startswith("// -- History")), -1)
+    j = next((s for s, text in spans if text.startswith("// full=false is the HOVER")), -1)
     return JS[i:j] if 0 <= i < j else ""
 
 
@@ -103,6 +110,16 @@ def _serve_get(path, headers=None):
     h.log_message = lambda *a: None
     h.do_GET()
     return captured.get("status"), h.wfile.getvalue().decode("utf-8", "replace")
+
+
+def _shell_creds(extra=None):
+    """The shell's fetch shape for a data route (the full class): this kernel's session cookie plus the
+    page key the page-key script adds as X-Romp-Key. A fresh session each call; every one is valid."""
+    sess = km._mint_session()
+    h = {"Cookie": "%s=%s" % (km._SESSION_COOKIE, sess), "X-Romp-Key": km._page_key(sess)}
+    if extra:
+        h.update(extra)
+    return h
 
 
 class _Backend:
@@ -357,7 +374,7 @@ class OneClock(unittest.TestCase):
         saved = km._sdk
         try:
             km._sdk = lambda: be
-            status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
+            status, body = _serve_get("/api-health", _shell_creds())
         finally:
             km._sdk = saved
         self.assertEqual(status, 200, body[:200])
@@ -621,15 +638,16 @@ class Route(unittest.TestCase):
             self.assertIn(k, b, k)
         self.assertEqual(set(b["windows"]), {str(w) for w in out["config"]["windows"]})
 
-    def test_the_cookie_alone_reads_it_with_no_origin_header_the_shell_s_fetch_shape(self):
-        # a same-origin GET fetch sends the romp_token cookie and NO Origin header; _origin_ok accepts an absent
-        # Origin, so this is exactly the credential the shell's fetch('/api-health') carries (kernel.py's own
-        # /usage/fleet read goes the same way). The header form the CLI uses is not what the shell sends.
-        status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
+    def test_the_session_cookie_and_key_read_it_with_no_origin_header_the_shell_s_fetch_shape(self):
+        # a same-origin GET fetch sends the session cookie and NO Origin header, and the page-key script
+        # adds X-Romp-Key; that pair (the full class's credential) is exactly what the shell's
+        # fetch('/api-health') carries (kernel.py's own /usage/fleet read goes the same way). The header
+        # token form the CLI uses is not what the shell sends.
+        status, body = _serve_get("/api-health", _shell_creds())
         self.assertEqual(status, 200, body[:200])
         self.assertIn("buckets", body)
-        status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK,
-                                                  "Origin": "http://evil.example", "Host": "127.0.0.1:%d" % km.PORT})
+        status, body = _serve_get("/api-health", _shell_creds(
+            {"Origin": "http://evil.example", "Host": "127.0.0.1:%d" % km.PORT}))
         self.assertEqual(status, 403, "a cross-site page's cookie is refused")
         self.assertIn("fetchDoc(h?'/remote/'+encodeURIComponent(h)+'/api-health':'/api-health')", JS)
         self.assertIn("fetch(u,{cache:'no-store'})", JS)
@@ -637,7 +655,7 @@ class Route(unittest.TestCase):
 
     def test_a_missing_backend_is_a_loud_503_that_the_section_shows_as_its_failure_line(self):
         km._sdk = lambda: None
-        status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
+        status, body = _serve_get("/api-health", _shell_creds())
         self.assertEqual(status, 503)
         self.assertIn("error", json.loads(body))
         self.assertIn("if(!r.ok){var tp=(typeof r.text==='function')?r.text():Promise.resolve('');", HIST, "a non-2xx is the failure, with its status")
@@ -674,7 +692,7 @@ class FrameUnchanged(unittest.TestCase):
         for k in ("windows", "transitions", "buckets", "history", "overall", "bootAt"):
             self.assertNotIn(k, f1)
         # a hover reads the route in between (the read files a transition: the storm classifies)
-        status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
+        status, body = _serve_get("/api-health", _shell_creds())
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["overall"]["state"], "thrashing", "the read observed the storm")
         f2 = km._api_health_frame(11, {})
@@ -730,9 +748,12 @@ class Docs(unittest.TestCase):
             self.assertNotIn("fleet", text.lower(), name)
         for w in ("card", "board", "goal", "column"):
             self.assertNotIn("'" + w, HIST, w)          # no quoted romp noun inside the History script
-        css = km._landing()
-        i = css.index(".ah-dot[data-dot=fine]")     # the dot rules follow #1338: keyed on the dot word, not the machine state
-        self.assertNotIn("\u2014", css[i:i + 400])
+        # the dot rules follow #1338: keyed on the dot word, not the machine state; read as parsed rules (the fixer pass of the author's pass 9: a
+        # 400-character window over the raw page stood here)
+        dots = [r for r in served_css.rules(km._landing()) if any("[data-dot=" in m for m in served_css.members(r.selector))]
+        self.assertIn(".ah-dot[data-dot=fine]", [m.strip() for r in dots for m in served_css.members(r.selector)], "the dot rules are keyed on the dot word")
+        for r in dots:
+            self.assertNotIn("\u2014", r.selector + r.declarations, r.selector)
 
 
 class Script(unittest.TestCase):
@@ -907,9 +928,12 @@ class Skin(unittest.TestCase):
         self.assertIn("#rail-api[data-dot=errors] .ah-dot,.ah-dot[data-dot=errors]{background:var(--st-blocked-bg,#e5484d);opacity:1}", self.html)
         self.assertIn("#rail-api[data-dot=quiet] .ah-dot,.ah-dot[data-dot=quiet]{background:var(--dim,#9aa4ad);opacity:.55}", self.html)
         self.assertNotIn("data-state=thrashing", self.html, "the machine's words are not colours any more")
-        rules = re.findall(r"[^{}]*\.ah-err[^{}]*\{[^}]*\}", self.html)
+        # the parsed rules, comments stripped: a regex over the page read rule text inside comments too, and the census reads this
+        # page since it reads a setUpClass's cls.html (tests/test_served_pins_read_elements.py, round 6)
+        rules = [r for r in served_css.rules(self.html) if ".ah-err" in r.selector]
+        self.assertTrue(rules, "the failure line's rules are served")
         for rule in rules:
-            self.assertNotIn("var(--accent", rule, "the failure line is never the accent: " + rule)
+            self.assertNotIn("var(--accent", rule.declarations, "the failure line is never the accent: " + rule.selector)
         self.assertIn(".ah-hword{opacity:.8}.ah-hsub{opacity:.55}.ah-boot .ah-hword{font-style:italic;opacity:.6}", self.html)
         self.assertIn(".ah-hname{margin-top:6px}.ah-err{color:#ef6b6f}.ah-wait{margin:5px 0 2px}", self.html)
         self.assertIn("body.theme-light .ah-err{color:#B02A1C}", self.html, "the light theme's error-text red")

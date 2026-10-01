@@ -18,9 +18,11 @@ const RENDER = fs.readFileSync(path.join(W, "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.join(W, "styles.css"), "utf8");
 
 test("the fold is keyed on this window's own resize event", () => {
-  assert.match(RENDER, /const kbFit = \(\) => document\.getElementById\("picker"\)\?\.classList\.toggle\("kb-tight", window\.innerHeight < 480\)/);
-  assert.match(RENDER, /window\.addEventListener\("resize", kbFit\)/);
-  assert.match(RENDER, /kbFit\(\);/);   // synced at build too, not only on the first resize
+  // one match over the picker's own three lines, so the listener and the build-time sync are the PICKER'S: the todo Reply
+  // sheet's builders carry a resize listener and a kbFit() call of their own (render.ts showUserTodoReply), and a bare
+  // match on either line was satisfied by those with the picker's deleted (the maintainer's round 2 on PR 859, regression-1)
+  const block = RENDER.match(/const kbFit = \(\) => document\.getElementById\("picker"\)\?\.classList\.toggle\("kb-tight", window\.innerHeight < 480\);\n\s*window\.addEventListener\("resize", kbFit\);\n\s*kbFit\(\);/g) || [];
+  assert.equal(block.length, 1, "the picker's fold, its resize listener and its sync at build, as one block, once in render.ts: the listener keys the fold on this window's own resize and the sync runs it at build too, not only on the first resize");
 });
 
 test("kb-tight keeps every create control — the resume list is what gives way", () => {

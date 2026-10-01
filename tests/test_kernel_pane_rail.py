@@ -89,7 +89,7 @@ class PaneRailTest(unittest.TestCase):
         for k in ("fleet", "feed", "timeline"):
             self.assertIn("<iframe id=f-%s data-src=/%s>" % (k, k), self.html)
         self.assertIn("<iframe id=f-chat class=m-on src=/chat>", self.html)
-        self.assertIn("<iframe id=f-files src=/files>", self.html)
+        self.assertIn("<iframe id=f-files data-src=/files>", self.html)   # data-src since stage 0 (2026-09-18): _LANDING_DESKTOP_PANES_JS promotes it at boot on the desktop, the mobile script on its first tap on the phone (tests/test_pane_state_broadcast.py LazyPanes)
         self.assertIn(".rail-btn[hidden]{display:none}", self.html, "the controller's hidden must beat .rail-btn's display:flex")
         self.assertIn("var ALL=KEYS.slice(),OPT=['timeline','fleet','feed'],SK='romp:settings';", self.html)
         # reconcile(live): the boot call keeps a shown pane's stored rail flag; the storage listener's call brings a
@@ -176,7 +176,7 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("#gv-ghost{display:none;position:fixed;width:7px;pointer-events:none;z-index:40;", self.html)
         # a child of .col right after the row closes (the files pane's close, then the row's) and before the
         # timeline's gutter: fixed, so a flex item of neither
-        self.assertIn("<iframe id=f-files src=/files></iframe></div></div><div id=gv-ghost></div>", self.html)
+        self.assertIn("<iframe id=f-files data-src=/files></iframe></div></div><div id=gv-ghost></div>", self.html)
         self.assertLess(self.html.index("<div id=gv-ghost></div>"), self.html.index("<div class=gh id=gh></div>"))
 
     def test_timeline_is_the_rail_toggled_bottom_band(self):
@@ -340,7 +340,7 @@ class ApiHealthCell(unittest.TestCase):
         # broadcast and every open dashboard's chat would switch (_reveal_chat_for)
         js = km._LANDING_MOBILE_JS
         helper = "function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){return '';}}"
-        connect = "var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));"
+        connect = "var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid())+(window.__rompKeyQ?window.__rompKeyQ():''));"
         self.assertIn(helper, js)
         self.assertIn(connect, js)
         self.assertLess(js.index(helper), js.index(connect), "the helper is defined before the connect reads it")

@@ -7,8 +7,9 @@ Hermetic: temp state roots, a fake host server inside the test (an asyncio Unix 
 frame protocol), synthetic ids, no real CLI. Tests needing the SDK skip without it.
 
 Two effects on the rest of a pytest process, both from the import block below that puts romp's SDK venv on
-sys.path when claude_agent_sdk is not already importable (the kernel's own _ensure_sdk_on_path idiom; CI has no
-venv and the SDK-gated cases skip). (1) The cases that build the SDK's options with a can_use_tool callback raise
+sys.path when claude_agent_sdk is not already importable (the kernel's own _ensure_sdk_on_path idiom; CI installs
+the pinned SDK into every Python cell's interpreter since 2026-09-20, so there the block is inert and the SDK-gated
+cases run). (1) The cases that build the SDK's options with a can_use_tool callback raise
 claude_agent_sdk.types.CanUseToolShadowedWarning, a UserWarning subclass the SDK emits when the callback is set
 beside a permission mode or an allowed_tools entry that auto-approves a tool before the callback is consulted.
 Under pytest-xdist the worker ships that warning to the controller, whose venv cannot import the class: xdist's
@@ -48,7 +49,8 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_CLI_SCOPE"] = "0"          # no scopes: a test's children sit in the tester's own scope
 # the SDK, when this machine has the venv bin/romp-sdk-setup builds (the kernel's own _ensure_sdk_on_path
-# does the same at boot); CI has none and the SDK-gated tests skip there
+# does the same at boot); CI installs the pinned SDK into the interpreter itself (.github/workflows/ci.yml, the
+# Install the Claude Agent SDK step), so this block is the box's road and the SDK-gated tests run on both
 if importlib.util.find_spec("claude_agent_sdk") is None:
     _tag = "python%d.%d" % sys.version_info[:2]
     for _sp in sorted(Path(os.path.expanduser("~/.local/state/romp/sdkvenv/lib")).glob(_tag + "/site-packages")):
@@ -1550,9 +1552,12 @@ class BackendHostRules(unittest.TestCase):
         s = types.SimpleNamespace(sid=SID, name="web", inflight=0, _host=t, _host_is_attach=True, _fire_boot_settled=lambda: fired.append(1))
         be._on_host_hello(s, {"host": {"pid": 1, "start": "a"}, "cli": {"pid": 2, "start": "b"}, "journal": {"next": 6}, "parked": [], "inflight": 1})
         self.assertEqual((s.inflight, fired), (1, [1]), "mid-turn adopted; the boot slot released for an attach")
-        s2 = types.SimpleNamespace(sid=SID, name="web", inflight=1, _host=t, _host_is_attach=False, _fire_boot_settled=lambda: fired.append(2))
+        s2 = types.SimpleNamespace(sid=SID, name="web", inflight=1, _inflight_texts=["a fed text"], _host=t, _host_is_attach=False,
+                                   _fire_boot_settled=lambda: fired.append(2))
         be._on_host_hello(s2, {"host": {"pid": 1, "start": "a"}, "cli": {}, "journal": {"next": 0}, "parked": [], "inflight": 0})
-        self.assertEqual((s2.inflight, fired), (1, [1]), "a lower count never lowers ours; a spawn's hello leaves the slot to the init record")
+        self.assertEqual((s2.inflight, s2._inflight_texts, fired), (0, [], [1]),
+                         "the host's count is adopted EXACTLY, down as well as up: a stale count on our side never survives an attach "
+                         "(the base kept the higher of the two and read Working for two days); a spawn's hello leaves the slot to the init record")
 
     def test_the_hello_decides_the_fresh_cli_by_identity_and_tolerates_older_shapes(self):
         """The fresh-CLI decision at the hello (the connect loop's pins drive it through the loop; this one drives the handler):

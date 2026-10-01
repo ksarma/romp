@@ -85,11 +85,11 @@ def bounds_snapshot(mem_total=MEM_TOTAL):
         "checkpoints": {"docMemo": {"entries": 2, "bytes": 3000, "capBytes": max(64 * 1024 ** 2, mem_total // 512), "parseMultiple": 4.5}},
         "asmCheckpoint": {"asmDocMemo": {"entries": 1, "bytes": 200, "capBytes": max(64 * 1024 ** 2, mem_total // 512), "multiple": 10}},
         "asmIndex": {"resident": 40, "cap": max(500_000, mem_total // (32 * 1024))},
-        "recordCache": {"entries": 9, "bytes": 123456, "budgetBytes": max(4 * 1024 ** 3, mem_total // 2), "countCap": 1024},
+        "recordCache": {"entries": 9, "bytes": 123456, "budgetBytes": max(4 * 1024 ** 3, int(mem_total * 0.5 / 3.2)), "countCap": 1024},
         "builds": {"feed": {"memo": {"entries": 3, "bytes": 777, "bound": mem_total // 64}}},
         "memos": {"notices": {"bytes": 10, "bound": mem_total // 256}, "spendTree": {"bytes": 11, "bound": mem_total // 64},
                   "summaryAnchor": {"bytes": 12, "bound": mem_total // 256}},
-        "judge": {"child": {"recordCache": {"entries": 1, "bytes": 5, "budgetBytes": max(4 * 1024 ** 3, mem_total // 2)}}},
+        "judge": {"child": {"recordCache": {"entries": 1, "bytes": 5, "budgetBytes": max(4 * 1024 ** 3, int(mem_total * 0.5 / 3.2))}}},
     }
 
 
@@ -635,7 +635,7 @@ class FoldInvariant(unittest.TestCase):
 class BoundCoarsening(unittest.TestCase):
     """The ten memory-fraction bounds (BOUND_PATHS) are kept and COARSENED (round 3 of the export's review, 2026-09-18): each
     is a fixed fraction of the machine's MemTotal, so every export from one machine shared all ten exactly and
-    recordCache.budgetBytes (half of MemTotal) gave the machine's RAM to the kilobyte, a value derived from a machine fact.
+    recordCache.budgetBytes (then half of MemTotal) gave the machine's RAM to the kilobyte, a value derived from a machine fact.
     The fold rounds each UP to a power of two (BOUND_KEYS, public_bound), the key kept and the occupancy beside it
     untouched, so a bound that binds stays visible next to its bytes or entries; the machine's memory is not recoverable
     from the result. Fails before: all ten survived exact."""
@@ -1074,8 +1074,10 @@ class ServedKernel(unittest.TestCase):
         st = km._PERF_STATS
         km.em._count_read(self.leaf, 4096)
         self.addCleanup(self._unplant)
+        self.tier_gate = km.jd.tier_stats()    # the child's gate block in its minter's shape: every gated tier's counters, the stamps
         st.judge_child_done({"op": "done", "seq": 7, "wallMs": 12.5, "failures": {"count": 1, "first": self.first}, "recovered": False,
-                             "recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}}}}, pid=4242)
+                             "recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}}},
+                             "tierGate": self.tier_gate}, pid=4242)
         st.build_chat(False, 0.100, active=True, sid=SID, nbytes=4096)
         st.parse(SID, 4096)
         for method, path in (("GET", "/glossary/" + TERM), ("GET", "/nope/" + SID), ("GET", "/remote/TESTHOST/sessions"),
@@ -1139,6 +1141,8 @@ class ServedKernel(unittest.TestCase):
         self.assertGreaterEqual(perf["http"]["GET /glossary/*"]["count"], 1)
         self.assertGreaterEqual(perf["http"]["other"]["count"], 2)
         self.assertEqual((perf["judge"]["child"]["status"], perf["judge"]["child"]["failures"]), ("failed", 1))
+        self.assertEqual(perf["judge"]["child"].get("tierGate"), self.tier_gate,
+                         "the child's gate counters are served and the public form keeps them whole: fixed names over numbers")
         self.assertEqual(perf["parses"]["perSession"]["sessions"], 1)
         self.assertIn("other", perf["pusher"]["connectPush"]["byApp"])
         self.assertGreaterEqual(doc["usage"]["actions"]["send"], 1)

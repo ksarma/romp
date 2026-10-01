@@ -45,10 +45,11 @@ const start = panel.slice(startAt, spanCarriedAt);
 
 // ── the condition: three parts, as spanCarried has them ───────────────────────────────────────────────────────────
 
-test('the about paragraph records the withholding with its condition\'s three parts, each as the panel\'s helper has it: the status\'s bytes (textCurrent), a text to cut from (indexedText), a text view', () => {
-  assert.ok(note.includes('For a spanned change, an insertion or a substitution, the card offers Comment on this change only while the view carries the change\'s text (`spanCarried`: the view\'s bytes are the status\'s, whose offsets place the span (`textCurrent`); there is a text to cut it from (`indexedText`: the view\'s, or while the editor is up the file as the editor loaded it, never the buffer); and the view shows text at all, not the picture of a media file)'));
-  assert.ok(panel.includes('return !!s && this.textCurrent(s) && this.indexedText() !== null && this.ctx.mode() !== "media";'), 'spanCarried: the three parts and nothing else');
-  assert.ok(panel.includes('private textCurrent(s: Status): boolean {\n    const vm = this.ctx.mtimeNs();\n    return !vm || !s.fileMtimeNs || vm === s.fileMtimeNs;'), 'textCurrent: the view\'s mtime is the status\'s');
+test('the about paragraph records the withholding with its condition\'s three parts, each as the panel\'s helper has it: the status\'s bytes as the body shows them (the card-state rule\'s current, over textCurrent), a text to cut from (indexedText), a text view', () => {
+  assert.ok(note.includes('For a spanned change, an insertion or a substitution, the card offers Comment on this change only while the view carries the change\'s text (`spanCarried`: the bytes the view shows are the status\'s, whose offsets place the span; there is a text to cut it from (`indexedText`: the view\'s, or while the editor is up the file as the editor loaded it, or as the last save through the panel from that editor wrote it, never the buffer); and the view shows text at all, not the picture of a media file; each as the Comments panel\'s card-state rule took it at its last event (`#cardState` in file-comments.ts, whose doc states the rule))'), 'the plan\'s sentence states the gate\'s three parts and points to the rule for when they are taken; a pin on the plan\'s text, whose executed witness is file-comments-changes-review2.test.ts\'s roads of the card-state rule');
+  assert.ok(panel.includes('return !!s && this.#cardState.current && this.#cardState.shows;'), 'spanCarried: the three parts and nothing else, each as the card-state rule (file-comments.ts, #cardState\'s doc) took it; a source pin only, whose executed witnesses are file-comments-about-fixes.test.ts\'s case on Comment on this change withheld while the view\'s bytes are not the status\'s, and file-comments-changes-review2.test.ts\'s roads of the card-state rule');
+  assert.ok(panel.includes('next = { ...was, current: over && !!s && this.textCurrent(s, was.mtime!) };') && panel.includes('current: !!s && this.textCurrent(s, mtime) };'), 'the card-state rule\'s reading of the status in #latchCardState, its one writer (file-comments.ts, #cardState\'s doc); a source pin only, whose executed witness is file-comments-changes-review2.test.ts\'s roads of the card-state rule');
+  assert.ok(panel.includes('private textCurrent(s: Status, vm = this.ctx.mtimeNs()): boolean {\n    return !vm || !s.fileMtimeNs || vm === s.fileMtimeNs;'), 'textCurrent: the mtime it is given, the view\'s by default, is the status\'s; a source pin only, executed through #latchCardState by file-comments-about-fixes.test.ts\'s case on Comment on this change withheld while the view\'s bytes are not the status\'s');
   assert.ok(panel.includes('private indexedText(): string | null {\n    return this.ctx.editing() && this.editText !== null ? this.editText : this.ctx.text();'), 'indexedText: the file as the editor loaded it while editing, else the view\'s text');
   // the sentence stands where a reader meets the button: after the Reply sentence, before the selection's option
   const reply = note.indexOf('The change card\'s Reply is Comment on this change (`fcchangecomment`, `startChangeComment`)');
@@ -87,11 +88,11 @@ test('the paragraph says a click that reaches startChangeComment in flux writes 
 
 // ── it comes back with the bytes, as Reveal and the not-shown tag do: inFlux ───────────────────────────────────────
 
-test('the paragraph names Reveal\'s and the not-shown tag\'s sibling gate, inFlux, which renderChangeCard derives from the same textCurrent', () => {
+test('the paragraph names Reveal\'s and the not-shown tag\'s sibling gate, inFlux, which renderChangeCard derives from the same card state', () => {
   assert.ok(note.includes('the button comes back with the bytes, as an unpainted change\'s Reveal and its "not shown" tag do on the same ground (`inFlux`)'));
-  assert.ok(panel.includes('const inFlux = !!s && !this.textCurrent(s);'), 'inFlux: the status\'s bytes are not the view\'s');
+  assert.ok(panel.includes('const inFlux = !!s && !cs.current;'), 'inFlux: the card-state rule\'s current, false (file-comments.ts, #cardState\'s doc), the read spanCarried makes; a source pin only, whose executed witness is file-comments-changes-review2.test.ts\'s roads of the card-state rule');
   assert.ok(panel.includes('if (c.kind === "del" || !inFlux) acts.appendChild(rv);'), 'an unpainted insertion\'s or substitution\'s Reveal waits; a deletion\'s stays');
-  assert.match(panel, /else if \(!painted && this\.inline && !editing && !inFlux && src !== null && this\.ctx\.mode\(\) !== "media"\) \{[^}]*el\("span", "fc-tag", "not shown"\)/, 'the not-shown tag waits too');
+  assert.match(panel, /else if \(!painted && cs\.marks && !editing && !inFlux && cs\.shows\) \{[^}]*el\("span", "fc-tag", "not shown"\)/, 'the not-shown tag waits too; a source pin only, whose executed witness is file-comments-changes-review2.test.ts\'s roads of the card-state rule');
 });
 
 // ── the history, as the stand-in's header has it ──────────────────────────────────────────────────────────────────
