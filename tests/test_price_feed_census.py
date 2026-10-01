@@ -8444,7 +8444,59 @@ LS_WITNESSES = (("lsmh", 'import sys\n\n\nclass _ProbeLsmh(object):\n    def new
 AE_FILES += tuple((t, _a_module(t, A_SEND % "", head=head, branches=(branch,))) for t, head, branch, _w, _r in AG_BIND) + (
     ("apg", _a_module("apg", A_SEND % "", head=APG_HEAD, branches=(_fo_page("apg", '_PROBE_APG.sub("x", "<p>x</p>")'),))),) + tuple(
     (t, _a_module(t, A_SEND % "", head=head, branches=(_fo_page(t, e),))) for t, head, e, _w in LS_WITNESSES)
-AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES
+# (ar) the writer proof's roles (A(i) of the reviewer's 06:26Z ruling of 2026-10-01): one plant for each conjunct of the stamp, the
+# injection, the text name and the non-body header writes that no plant held until a mutant dropped it (the mutants and their reds are
+# in the build record), each aww's module with its swaps (_ae_module), refused at the definition with the gate's reason at its line, or
+# read, its fetch listed. A near shape that leaves aww's text name read in no injection (ard, are, arh, ari, arj) is refused first at
+# the text name's assignment; with the conjunct dropped the shape is taken for an injection, and the refusal moves or goes. ara, a stamp through a method of the page, no bare name; arb, a stamp handed a constant; ard, an injection
+# assigned to two names; are, a text name read only in a replace of the page assigned to another name; arh, an injection handed its
+# count as a keyword; ari, an injection handed a fourth argument; arj, an injection whose value and count are one starred argument;
+# ark, a parameter bound again and read in an injection's value; arl, a text name bound to a module constant, read (its value page
+# text only through the text role); arm, a string constant assigned to a name the definition reads nowhere; arn, the page parameter
+# bound to a string constant holding a fetch (no text the census reads, Python serving the fetch, were it admitted); aro and arp, the
+# cache header holding a CR alone and an LF alone; arq, a header value that is a bool constant; arr, a header value built by a `+`;
+# ars, a header value that is a `%` whose left operand is a parameter.
+_AR_STAMP = "        body = _probe_aww_stamp(code, body, ctype)\n"
+_AR_INJ = '            body = body.replace("<head>", "<head>" + extra + _PROBE_AWW_INJ, 1)\n'
+_AR_EXTRA = '            extra = ""\n'
+_AR_PCT = '"%s=%s; Path=/" % (_PROBE_AWW_NAME, self.probe_more)'
+# (tag, what the plant is, its swaps, ("gate", the anchor of the line its reason names, the reason) or ("read", the fetches listed))
+AR_PLANTS = (("ara", "a stamp through a method of the page, no bare name", ((_AR_STAMP, "        body = body.strip()\n"),),
+              ("gate", "body = body.strip()", _AE_FLAG)),
+             ("arb", "a stamp handed a constant", ((_AR_STAMP, '        body = _probe_aww_stamp(code, body, "text/html")\n'),),
+              ("gate", '_probe_aww_stamp(code, body, "text/html")', _AE_FLAG)),
+             ("ard", "an injection assigned to two names", ((_AR_INJ, _AR_INJ.replace("body = body.replace", "body = done = body.replace")),),
+              ("gate", 'extra = ""', _AE_FLAG)),
+             ("are", "a text name read only in a replace of the page assigned to another name",
+              ((_AR_INJ, '            head = body.replace("<head>", "<head>" + extra, 1)\n            body = body.replace("<head>", head + _PROBE_AWW_INJ, 1)\n'),),
+              ("gate", 'extra = ""', _AE_FLAG)),
+             ("arh", "an injection handed its count as a keyword", ((_AR_INJ, _AR_INJ.replace("_PROBE_AWW_INJ, 1)", "_PROBE_AWW_INJ, count=1)")),),
+              ("gate", 'extra = ""', _AE_FLAG)),
+             ("ari", "an injection handed a fourth argument", ((_AR_INJ, _AR_INJ.replace("_PROBE_AWW_INJ, 1)", '_PROBE_AWW_INJ, 1, "x")')),),
+              ("gate", 'extra = ""', _AE_FLAG)),
+             ("arj", "an injection whose value and count are one starred argument",
+              ((_AR_INJ, _AR_INJ.replace('"<head>" + extra + _PROBE_AWW_INJ, 1)', '*("<head>" + extra + _PROBE_AWW_INJ, 1))')),), ("gate", 'extra = ""', _AE_FLAG)),
+             ("ark", "a parameter bound again and read in an injection's value",
+              ((_AR_EXTRA, _AR_EXTRA + "            code = int(code)\n"), (_AR_INJ, _AR_INJ.replace("extra + _PROBE_AWW_INJ", "extra + str(code) + _PROBE_AWW_INJ"))),
+              ("gate", "code = int(code)", _AE_FLAG)),
+             ("arl", "a text name bound to a module constant", ((_AE_NAME, _AE_NAME + '\n_PROBE_ARL_T = "%s"' % (FGH_PAGE % "arl")),
+                                                                 (_AR_EXTRA, "            extra = _PROBE_ARL_T\n")), ("read", ("arl",))),
+             ("arm", "a string constant assigned to a name the definition reads nowhere", (("        flag = False\n", '        flag = False\n        probe = "x"\n'),),
+              ("gate", 'probe = "x"', _AE_FLAG)),
+             ("arn", "the page parameter bound to a string constant", ((_AR_STAMP, _AR_STAMP + '        body = "%s"\n' % (FGH_PAGE % "arn")),),
+              ("gate", "example.invalid/arn", _AE_FLAG)),
+             ("aro", "the cache header holding a CR alone", (('            cache = "no-store"\n', '            cache = "no-store\\rX-Probe: 1"\n'),),
+              ("gate", 'cache = "no-store\\r', _AE_FLAG)),
+             ("arp", "the cache header holding an LF alone", (('            cache = "no-store"\n', '            cache = "no-store\\nX-Probe: 1"\n'),),
+              ("gate", 'cache = "no-store\\n', _AE_FLAG)),
+             ("arq", "a header value that is a bool constant", (('"X-Probe-Mark", "1")', '"X-Probe-Mark", True)'),),
+              ("gate", '"X-Probe-Mark", True)', "a Constant expression outside its listed roles at line %d")),
+             ("arr", "a header value built by a +", ((_AR_PCT, '"probe_aww=" + self.probe_more'),),
+              ("gate", '"probe_aww=" + self.probe_more', "a BinOp expression outside its listed roles at line %d")),
+             ("ars", "a header value that is a `%` whose left operand is a parameter", ((_AR_PCT, "ctype % code"),),
+              ("gate", '"X-Probe-Name", ctype % code)', "a BinOp expression outside its listed roles at line %d")))
+AR_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AR_PLANTS)
+AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES
 
 
 A_FILES = tuple((_a_rel(tag), text) for tag, text in (
@@ -13607,8 +13659,8 @@ class TheFollowProofRefusesAFileNoScanRead(unittest.TestCase):
 # round builds or converts is iterative (an explicit worklist and one visited set per query, no Python recursion over a chain and no
 # depth bound) and calls one named step once for each name it expands. WALKS names each walk, its entry (called once per query) and
 # its step. Since the eleventh round's review (layer vi, freeze ruling 2 of the eleventh round: every walk that expands names through a visited set owes
-# its own count pin, red under a mutant that drops that set) WALKS holds every such walk the census has, twelve, derived from the script:
-# the six above and six more. R1.6's walk over the bases of a class that may override a followed method (_file_override, its step
+# its own count pin, red under a mutant that drops that set) WALKS holds every such walk the census has, fourteen, derived from the script:
+# the six above and eight more. R1.6's walk over the bases of a class that may override a followed method (_file_override, its step
 # _override_step: R2 of the eleventh round's review); resolve's walk over the names it follows (choice 11: its visited set `done`,
 # one per route, its entry _route_done, which hands back that set, and its step _resolve_step, both builtins, so neither stands as a
 # frame under resolve's recursion); layer iv's two closures, over the names bound to a local (_containers, its step
@@ -13620,10 +13672,16 @@ class TheFollowProofRefusesAFileNoScanRead(unittest.TestCase):
 # (_frame_alias_names, its step _frame_alias_step, called once per name the fixpoint reaches, with its own visited set `out`; without the
 # set a cycle of aliases loops); and the set join's walk from a `.join`'s argument to a set literal or comprehension through the names
 # the census reads (_set_value, its step _set_step, called once per name it expands, one visited set per query; without the set a cycle of
-# names loops). No other loop or
+# names loops); since the reviewer's 06:26Z ruling of 2026-10-01 (A(ii)), the digest leaf's walk over the names and the functions a
+# leaf's shapes reach (_leaf, its step _leaf_step, a builtin, one visited set per query keyed on what each key expands: a local by the
+# map of the scope that binds it, a module constant, a function defined in the page function, a module function; without the set a
+# cycle of names or of functions loops); and the header constant's walk over the module constants a `_send` definition's header value
+# names (_header_const, a module function, so its owner here is the script's module, None; its step _header_step, a builtin, one
+# visited set per query; without the set a cycle of constants loops). No other loop or
 # recursion in the script expands a name through a visited set: the rest walk a syntax tree or an expression's own parts (line_scan's
-# per-line set holds the tools it listed, and _held a literal's nesting), and _path and _ctype_values follow one child per step to a
-# fixed depth, with no visited set. The pins read both by wrapping them from outside the script, in a child interpreter that runs the served pass over one
+# per-line set holds the tools it listed, and _held a literal's nesting), _path and _ctype_values follow one child per step to a
+# fixed depth, with no visited set, and the container proof's type reading (_item_types) reads a name again whenever a type its
+# bindings read moves, under a budget, with no visited set either. The pins read both by wrapping them from outside the script, in a child interpreter that runs the served pass over one
 # synthetic module per run (WALK_DRIVER), so no instrument of the script's own is read. The child sets the recursion limit before
 # each run (WALK_LIMIT) and enters every run at the same stack depth, so a chain's completion depth there is a figure of the
 # interpreter alone. A wrapped function called more than WALK_CAP times in one run ends that run, and the child's timeout
@@ -13639,7 +13697,9 @@ WALKS = (("the class walk", "_Served", "_class_value", "_class_step"),
          ("layer iv's walk over the names bound to a local", "_Served", "_containers", "_container_step"),
          ("layer iv's walk over the names bound to a module container", "Scan", "cflows", "_cflow_step"),
          ("the frame-alias fixpoint over a body's aliases", "_Served", "_frame_alias_names", "_frame_alias_step"),
-         ("the set join's walk", "_Served", "_set_value", "_set_step"))
+         ("the set join's walk", "_Served", "_set_value", "_set_step"),
+         ("the digest leaf's walk", "_Served", "_leaf", "_leaf_step"),
+         ("the header constant's walk", None, "_header_const", "_header_step"))
 WALK_BY = {w[0]: w for w in WALKS}
 WALK_LIMIT = 1000
 # three million: layer iv's local walk is linear in each query and quadratic in a function's names bound to one another (every name
@@ -13678,7 +13738,7 @@ def _main():
     spec.loader.exec_module(mod)
     counts, cap, out = {}, job["cap"], []
     for owner, name in job["count"]:
-        cls = getattr(mod, owner)
+        cls = mod if owner is None else getattr(mod, owner)   # None: a module function of the script
         if name not in vars(cls):
             continue
         held = vars(cls)[name]
@@ -13724,10 +13784,11 @@ WALK_PAST = 1100   # past resolve's edge for every chain shape below on every in
 WALK_PAGE = '    def _probe_page(self):\n        return "%s"\n' % (FGH_PAGE % "wpg")
 
 
-def _walk_module(lines, head="", send="", bases=None):
+def _walk_module(lines, head="", send="", bases=None, slot=""):
     """A synthetic module for the walks' pins: `head`, then class Handler (deriving from `bases`, object by default) holding
-    `_send` and `send`, and a do_GET whose /probe-wlk branch runs `lines`, the last of them its return."""
-    text = _a_module("wlk", A_SEND % "" + send, head=head, call="\n            ".join(lines))
+    `_send` (with `slot`, lines before its end_headers) and `send`, and a do_GET whose /probe-wlk branch runs `lines`, the last
+    of them its return."""
+    text = _a_module("wlk", A_SEND % slot + send, head=head, call="\n            ".join(lines))
     return text.replace("class Handler(object):", "class Handler(%s):" % bases, 1) if bases else text
 
 
@@ -13754,7 +13815,11 @@ def _walk_counted(shape, n):
     before; "rcomp2", the same with two generators in each comprehension, each reading the one before;
     "rnested", n + 1 defs in the page function, each returning two calls of the one before; "rfunc", the same as module
     functions; "rdflt", module functions each returning its parameter, whose default calls the one before twice; "clocal", "rlocal"'s
-    locals with the first bound to a list, the page a constant; "cmodule", "rconst"'s module names with the first bound to a list."""
+    locals with the first bound to a list, the page a constant; "cmodule", "rconst"'s module names with the first bound to a list. Since the
+    reviewer's 06:26Z ruling of 2026-10-01: "lloc" and "lconst", the digest leaf's walk over a rotation of locals and of module
+    constants; "lfunc" and "lnest", the same walk over n + 1 module functions and functions defined in the page function, the first
+    returning a digest and each other two calls of the one before; and "hrot", the header constant's walk over a rotation of module
+    constants, the first a header value."""
     call = 'return self._send(200, "<p>m</p>" + self._probe_page(), "text/html")'
     if shape == "rot":
         return _walk_module(_walk_ring(n, False) + ['return self._send(200, "<p>x</p>" + x0.get("k"), "text/html")'])
@@ -13829,6 +13894,34 @@ def _walk_counted(shape, n):
         head = "_FA0 = locals\n" + "".join("_FA%d = _FA%d\n" % (i, i - 1) for i in range(1, n + 1)) + "_FA0 = _FA%d" % n
         return _walk_module(['d = ["<p>x</p>"]', '_FA%d()["d"] = "y"' % n,
                              'return self._send(200, "<p>a</p>" + "".join(d), "text/html")'], head=head)
+    if shape == "lloc":
+        # the digest leaf's walk (_leaf) over locals: the two-value rotation of n names under the page `x0[:4]`, a slice of a name, which
+        # resolve asks the leaf's walk first; every value a name, the walk expands each local once in its one query, and without its
+        # visited set it loops on the rotation (the drop-set mutant's red)
+        return _walk_module(_walk_ring(n, True) + ['return self._send(200, x0[:4], "text/html")'])
+    if shape == "lconst":
+        # the same over module constants: n names in a rotation, each bound to a slice of the next, the page a slice of the first
+        head = "\n".join("_PROBE_LC%d = _PROBE_LC%d[:4]" % (i, (i + 1) % n) for i in range(n))
+        return _walk_module(['return self._send(200, _PROBE_LC0[:4], "text/html")'], head=head)
+    if shape == "lfunc":
+        # the same over module functions: n + 1, the first returning a digest of hashlib, each other returning a call of the one before
+        # in each of two returns, the page a call of the last; the walk expands each function once, and without its visited set once
+        # per path, 2^(n + 1) - 1 times (the drop-set mutant's red)
+        head = 'import hashlib\n\n\ndef _probe_lf0(q):\n    return hashlib.sha256(b"x").hexdigest()\n' + "".join(
+            "\n\ndef _probe_lf%d(q):\n    if q:\n        return _probe_lf%d(q)\n    return _probe_lf%d(q)\n" % (i, i - 1, i - 1) for i in range(1, n + 1))
+        return _walk_module(['return self._send(200, _probe_lf%d(p), "text/html")' % n], head=head.rstrip("\n"))
+    if shape == "lnest":
+        # the same over functions defined in the page function
+        defs = ['def _probe_ln0(q):\n                return hashlib.sha256(b"x").hexdigest()'] + [
+            "def _probe_ln%d(q):\n                if q:\n                    return _probe_ln%d(q)\n                return _probe_ln%d(q)" % (i, i - 1, i - 1)
+            for i in range(1, n + 1)]
+        return _walk_module(defs + ['return self._send(200, _probe_ln%d(p), "text/html")' % n], head="import hashlib")
+    if shape == "hrot":
+        # the header constant's walk (_header_const): n module constants in a rotation, each bound to a `+` of the next two, the first a
+        # `_send` definition's header value; the walk expands each constant once in its query, and without its visited set it loops on
+        # the rotation (the drop-set mutant's red)
+        head = "\n".join("_PROBE_H%d = _PROBE_H%d + _PROBE_H%d" % (i, (i + 1) % n, (i + 2) % n) for i in range(n))
+        return _walk_module(['return self._send(200, "<p>h</p>", "text/html")'], head=head, slot='        self.send_header("X-Probe", _PROBE_H0)\n')
     raise ValueError("no count shape %r" % shape)
 
 
@@ -13975,7 +14068,21 @@ WALK_COUNT_RUNS = tuple((label, shape, n, {w: (1, n) for w in _RING_WALKS[shape]
         # the cycle and its run stops at the cap
         ("frame aliases over a cycle of ten", "falias", 10, {10: (2, 22)}),
         # the set join's walk: one query (the page's one join) and one expansion per name of the rotation
-        ("the set join's walk over the two-value rotation of 24 names", "sjoin", 24, {11: (1, 24)})))
+        ("the set join's walk over the two-value rotation of 24 names", "sjoin", 24, {11: (1, 24)}),
+        # the digest leaf's walk (A(ii) of the reviewer's 06:26Z ruling of 2026-10-01): one query (resolve asks it once, of the page) and
+        # one expansion per key, a local or a module constant of the rotation, or each of the n + 1 functions, module functions or
+        # functions defined in the page function; every value the walk reaches is a name it expands, a call of a function it follows
+        # or a digest, so it answers a leaf and the page, which then gives no text, is refused as text the census did not read (the
+        # count is the pin, not that verdict)
+        ("the digest leaf's walk over the two-value rotation of 24 locals", "lloc", 24, {12: (1, 24)}),
+        ("the digest leaf's walk over a rotation of 24 module constants", "lconst", 24, {12: (1, 24)}),
+        ("the digest leaf's walk over module functions each returning two calls of the one before, twelve levels", "lfunc", 12, {12: (1, 13)}),
+        ("the digest leaf's walk over functions defined in the page function each returning two calls of the one before, twelve levels",
+         "lnest", 12, {12: (1, 13)}),
+        # the header constant's walk: one query (the gate reads the `_send` definition's one header value once) and one expansion per
+        # constant of the rotation
+        ("the header constant's walk over a rotation of three constants", "hrot", 3, {13: (1, 3)}),
+        ("the header constant's walk over a rotation of 24 constants", "hrot", 24, {13: (1, 24)})))
 
 
 # (the chain's label, its shape, what the chain ends in: ("site", the fetch's tag) where the page's fetch is listed, or ("served", the
@@ -14068,7 +14175,14 @@ class TheWalksExpandEachNameOnceAndStopNoChainResolveCompletes(unittest.TestCase
         join's (not those read as a lookup key), on both fan-outs and on resolve's two comprehension shapes (over locals, and of two
         generators); and its module walk expands the module
         list's names 8191 times for 13. The set join's walk with its visited set dropped loops on the rotation until its step passes
-        the count case's cap. The backstop ends none of these runs."""
+        the count case's cap. Since the reviewer's 06:26Z ruling of 2026-10-01, the digest leaf's walk (_leaf) over the two-value
+        rotation of 24 locals and over a rotation of 24 module constants, one query and 24 expansions each, and over module functions
+        and over functions defined in the page function, each returning two calls of the one before, twelve levels, the first a
+        digest, one query and 13 expansions each; and the header constant's walk (_header_const) over a rotation of three and of 24
+        module constants, the first a `_send` definition's header value, one query and three or 24 expansions. The leaf's walk with its
+        visited check for a name removed loops on both rotations until its step passes the count case's cap, and with its check for a
+        function removed expands the twelve levels' functions 8191 times for 13; the header constant's walk with its visited check
+        removed loops on both rotations until its step passes the cap. The backstop ends none of these runs."""
         recs = _walk_runs([(label, _walk_counted(shape, n)) for label, shape, n, _ in WALK_COUNT_RUNS], cap=WALK_COUNT_CAP)
         for label, shape, n, want in WALK_COUNT_RUNS:
             rec = recs[label]
@@ -14343,8 +14457,13 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
     strip of no leaf and agk a leaf constant rewritten at run time among them); the leaf's and the pattern's conjuncts by binding (agz
     a decorated nested def, agg and agj a module rebound under a global declaration, agq one bound by a local, apg a pattern's name so
     rebound); and the proof by binding's stated limit, silent (lsmh and lsmr a module object stored in sys.modules before the import,
-    lsma and lsra an attribute store on the module, hmac's and re's). The reds, each over a mutant of the fix script with one conjunct
-    or arm dropped, are in the build record (r13/record.md)."""
+    lsma and lsra an attribute store on the module, hmac's and re's). The writer proof's roles, one plant for each conjunct a mutant
+    showed no plant held (AR_PLANTS), each refused at the definition with its reason at its line: ara and arb stamps outside its
+    shape; ard, are, arh, ari and arj injections outside its shape, each refused at the text name its injection then leaves unread; ark
+    a parameter bound again and read in an injection's value; arm a string constant assigned to a name read nowhere; arn the page
+    parameter bound to a string constant; aro and arp the cache header holding a CR or an LF alone; arq, arr and ars header values
+    that are a bool constant, a `+` and a `%` whose left operand is a parameter; and arl, a text name bound to a module constant, read.
+    The reds, each over a mutant of the fix script with one conjunct or arm dropped, are in the build record (r13/record.md)."""
 
     def setUp(self):
         self.at, (self.rc, self.out) = served_pass()
@@ -14445,6 +14564,21 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
             with self.subTest(witness="(ae) %s (%s)" % (what, tag)):
                 self.assertEqual(self._served(tag), [], "the stated limit: a CR or LF the bound value computes at run time is not read (%r)" % self._served(tag))
                 self.assertFalse(self._is_site(tag), "a header value is not scanned: %s no site" % tag)
+
+    def test_each_role_conjunct_a_mutant_showed_unheld_has_its_plant(self):
+        files = dict(AD_FILES)
+        for tag, what, _swaps, outcome in AR_PLANTS:
+            with self.subTest(plant="(ar) %s (%s)" % (what, tag)):
+                srv = self._served(tag)
+                if outcome[0] == "read":
+                    self.assertEqual(srv, [], "read: no SERVED line (%r)" % srv)
+                    for ft in outcome[1]:
+                        self.assertTrue(self._is_site(ft), "the text name's value is page text: %s a site" % ft)
+                    continue
+                self.assertEqual(len(srv), 1, "one refusal, at the definition: %r" % srv)
+                self.assertIn("whose page body the census does not read (%s, in Handler.do_GET)" % (outcome[2] % _a_line(files[tag], outcome[1])), srv[0],
+                              "refused with its reason at its line")
+                self.assertFalse(self._is_site(tag), "%s's fetch is no site" % tag)
 
     def test_the_leaf_and_a_compiled_pattern_by_binding_and_the_proofs_stated_limit(self):
         for tag, _head, _branch, what, why in AG_BIND:

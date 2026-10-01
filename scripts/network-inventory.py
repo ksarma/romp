@@ -4200,7 +4200,10 @@ def _send_preamble(d, me, page, params, codec):
       None or bool constant default, isinstance(<page>, str), `<parameter>.startswith(<a str constant>)` or `<a str constant> in
       <page>`, or the `and` of those.
     Each name in a role is the definition's own (a parameter, or a local only these roles bind); the gate (_send_gate) refuses any
-    other node by its kind and line, as it refuses any other statement."""
+    other node by its kind and line, as it refuses any other statement. Two conjuncts are dominated, kept and argued here (choice 5 of
+    the eleventh round's rulings): a flag's every load is an if's test, so no flag is read in an injection's value, and neither the
+    flag's `t not in read_in` nor the text name's `t not in flags` can decide; and `params` never holds self (the gate drops it), so
+    the cache header's `t != me` cannot either, and _body_param refuses a definition that binds self again before the gate reads it."""
     top = list(d.body)
     cut = top.index(codec) if codec in top else len(top)
     roles, texts = {}, []
@@ -4279,6 +4282,11 @@ def _send_preamble(d, me, page, params, codec):
     return roles, texts
 
 
+_header_step = list   # _header_const's expansion of one module constant, called once for each name it expands (a builtin, as
+# _Served._leaf_step is): handed the constant's one value, which it hands back (freeze ruling 2 of the eleventh round: its count pin
+# reads this step from outside the script; without the walk's visited set a cycle of constants loops)
+
+
 def _header_const(consts, rebinds, name):
     """Why a module constant a `_send` definition uses as a header value is refused (_send_gate), or None: the gate's guard on a
     string constant holding a CR or LF in a header call, applied where the value is bound. The census reads the constant's value
@@ -4289,15 +4297,17 @@ def _header_const(consts, rebinds, name):
     a `global` declaration, a receiver among them), save a call's callee by its name alone (`f` in `f(...)`), whose return the
     census does not read. A CR or LF the value computes at run time from anything else, a call's return or a number formatted as a
     character, is not read: the stated limit, as a header value's text is not scanned, its witnesses aew (a call of chr) and aeq (a
-    `%c` of an int)."""
+    `%c` of an int). Walked iteratively: an explicit worklist and one visited set per query, each constant expanded once, in
+    _header_step, so the walk is linear in the module's constants and a cycle of them ends."""
     seen, todo = set(), [name]
     while todo:
         k = todo.pop()
         if k in seen: continue
         seen.add(k)
+        v, = _header_step((consts[k],))   # the constant's one value, read once per query (the walk's step)
         # a call's callee by its name alone: the base of a method call's callee (its receiver) is no callee but a value it reads
-        callee = {id(x.func) for x in ast.walk(consts[k]) if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)}
-        for x in ast.walk(consts[k]):
+        callee = {id(x.func) for x in ast.walk(v) if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)}
+        for x in ast.walk(v):
             if isinstance(x, ast.Constant) and isinstance(x.value, (str, bytes)):
                 if any(c in x.value for c in ((b"\r", b"\n") if isinstance(x.value, bytes) else ("\r", "\n"))):
                     return "whose bound text holds a CR or LF"
@@ -4366,7 +4376,14 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, co
     line M, which may rewrite the builtins at run time"), a string constant holding a CR or LF in a header call's arguments by
     name, a module constant used as a header value whose bound text holds a CR or LF, or reads a name the census does not follow,
     by name and line ("the module constant X, whose bound text holds a CR or LF, as a header value at line N"), and the signature
-    by what it holds, the first in the definition's order."""
+    by what it holds, the first in the definition's order. Conjuncts another dominates, kept and argued here (choice 5 of the eleventh
+    round's rulings): the Tuple arm's `%`, its right operand and its string-constant left operand, since a tuple standing anywhere
+    else in a BinOp leaves that BinOp refused by the BinOp arm (a page text's BinOp is in a preamble role, and so is the tuple in it,
+    admitted before either arm); the tuple-element clause's conditions on the tuple's parent, since a loaded tuple other than that
+    `%`'s right operand is refused by the Tuple arm itself; the `n.attr not in _WRITE_NAMES` of an attribute of self, since
+    _body_param refuses an attribute named as a write method other than as the write's callee before the gate reads the definition;
+    and the `value(n, p)` of an attribute of self and of a BinOp, since every parent the gate admits for either, outside a preamble
+    role, takes it as a header value, and any other parent is refused by its own arm."""
     a = d.args
     sig = ([(x, "a positional-only parameter") for x in a.posonlyargs] + [(x, "a keyword-only parameter") for x in a.kwonlyargs]
            + [(x, w) for x, w in ((a.vararg, "a *args parameter"), (a.kwarg, "a **kwargs parameter")) if x is not None]
@@ -7224,6 +7241,8 @@ class _Served(object):
         return m is not None and self._std_module(m, None) == "re"
 
     _leaf_step = staticmethod(list)   # _leaf's expansion of one key, called once for each key it expands (a builtin, as _resolve_step is)
+    # (freeze ruling 2 of the eleventh round: its count pin reads this step from outside the script; without the walk's visited set a
+    # cycle of names or of functions loops)
 
     def _leaf(self, e, ctx):
         """(whether the expression `e`, read in ctx, is a digest leaf, the reason it is refused or None): A(ii) of the reviewer's
