@@ -1073,12 +1073,15 @@ def _bench(args, state, repo, out, shadow, rec, maps):
 
     def scope(live_map):
         """The pusher cycle's scope, as _pusher_cycle opens it: the liveness snapshot, the sid->path memo,
-        the discover-rows memo (a per-cycle memo slot some kernel revisions read), the names snapshot and
+        the discover-rows memo (a per-cycle memo slot some kernel revisions read), the names snapshot,
         the cycle's billing-availability memo (_auth_avail_status, upstream
-        https://github.com/romp-on/romp/pull/1147; a kernel from before it never reads the slot).
-        tests/test_perf_bench.py CycleScopeParity reads _pusher_cycle's slots and fails when one is
+        https://github.com/romp-on/romp/pull/1147; a kernel from before it never reads the slot), the
+        cycle's subagents-tree samples (upstream #1822) and the stamp index and launch folds derived from
+        them. tests/test_perf_bench.py CycleScopeParity reads _pusher_cycle's slots and fails when one is
         missing here."""
         km._live_scope.snapshot = live_map
+        km._live_scope.subagent_stamps = {}   # the stamp index and the launch folds derived from the tree samples
+        km._live_scope.subagent_launches = {}   #  (_dir_stamp, _awaiting_nest), opened and cleared with them
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
         km._live_scope.auth = {}
@@ -1086,6 +1089,8 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         km._live_scope.names = km._names_snapshot()
 
     def unscope():
+        km._live_scope.subagent_stamps = None
+        km._live_scope.subagent_launches = None
         km._live_scope.snapshot = None
         km._live_scope.names = None
         km._live_scope.paths = None
@@ -1095,6 +1100,8 @@ def _bench(args, state, repo, out, shadow, rec, maps):
 
     def new_cycle():
         """A fresh cycle's per-cycle memos (what _pusher_cycle resets between two cycles)."""
+        km._live_scope.subagent_stamps = {}   # the stamp index and the launch folds derived from the tree samples
+        km._live_scope.subagent_launches = {}
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
         km._live_scope.auth = {}

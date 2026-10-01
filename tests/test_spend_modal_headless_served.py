@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import types
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from romp_load import load_source
@@ -50,7 +51,14 @@ class SpendModalServed(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         state = Path(self.td.name)
         self._saved = (km.jd.STATE, km.NAMES, km._live_names, km._live_map, km._self_host,
-                       km._claude_account, km._auth_key_present)
+                       km._claude_account, km._auth_key_present, km.time)
+        # The kernel reads the fixture's clock, not the wall's. /spend/detail was already served at NOW, but /usage,
+        # which fills the rail and the modal's Totals, read the wall clock. Its "this month" row is calendar
+        # month-to-date, so it held the fixture's September spend, on two lines, only while the real month was
+        # September 2026. On 2026-10-01 it read $0 on one line, the chart rose 14 px, and the short-window tooltip found
+        # room below the pointer. Every other attribute stays the real module's.
+        km.time = types.SimpleNamespace(**{k: getattr(time, k) for k in dir(time) if not k.startswith("_")})
+        km.time.time = lambda: _sd.NOW
         km.jd.STATE = state
         km.NAMES = state / "names"
         km.NAMES.mkdir()
@@ -131,7 +139,7 @@ class SpendModalServed(unittest.TestCase):
             self.srv.server_close()
         if hasattr(self, "_saved"):
             (km.jd.STATE, km.NAMES, km._live_names, km._live_map, km._self_host,
-             km._claude_account, km._auth_key_present) = self._saved
+             km._claude_account, km._auth_key_present, km.time) = self._saved
             km._remotes.clear()
             km._remotes.update(getattr(self, "_saved_remotes", {}))
             self.td.cleanup()

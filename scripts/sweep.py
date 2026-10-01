@@ -30,9 +30,14 @@ GIT_COMMON_DIR and GIT_WORK_TREE set, and GIT_CEILING_DIRECTORIES at the directo
 no repository of its own, and a .git it does not recognize (refs/ removed, objects/ a file, HEAD or .git removed) fails
 the call instead of sending git up to an enclosing repository, whose files it would read in its place (GitRepo says what
 each variable changes). The one call that looks for a repository is find_repo's in the batcher's tree, with the ceiling alone, at the
-parent of the directory holding .git; it reads the work tree, git dir and common dir once, before the first leg. It
-copies none of the batcher's repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or
-replace refs, so the legs see the sha's tree plus the tool installs, and
+parent of the directory holding .git, and the tree is refused unless git's work tree there is that directory (a
+core.worktree in its config naming another is refused); it reads the work tree, git dir and common dir once, before the
+first leg. A --tree must itself hold .git: one that does not exist, or whose .git is gone, is refused, naming it, and is
+never resolved to a repository that encloses it (the closing check wf_3b100f5e-b38, its item 1); only with no --tree
+does the runner look up from the current directory for the nearest directory holding .git, so there, and only there, a
+tree whose .git is gone resolves to a repository that encloses it, when one does. It copies none of the batcher's
+repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or replace refs, so the legs see the
+sha's tree plus the tool installs, and
 nothing from the checkout's parents. Before any leg the runner verifies the first checkout against `git ls-tree -r
 <sha>` (every path, executable bit, symlink target and blob), and refuses (exit 2, nothing recorded) on a
 difference or on node_modules, package.json, tsconfig.json or jsconfig.json in any ancestor directory, which
@@ -74,20 +79,32 @@ created it with, so a FIFO, a symlink or another file a leg puts at a log's path
 for the counts; deps_skipped reads the pytest leg's log by its path once that descriptor is closed, through
 open_regular, so a log the leg replaced with anything but a regular file reads as unreadable and the served leg is red,
 naming why, and one it replaced with another regular file is read as the leg's own output would be. A venv's build log
-opens only as a regular file, and the build is refused, naming it, otherwise (open_build_log). The results, the
+opens only as a regular file, and the build is refused, naming it, otherwise (open_build_log), and with it the run
+(exit 2, nothing recorded, since both venvs are built or reused before anything is recorded). The results, the
 checkouts' markers and the venvs' markers are read through open_regular, so one that is not a regular file reads as
-unreadable (check and batch.py verify fail that result, naming the file, and the next run at its sha is refused), as no
-marker (its checkout is removed as stale) or as no finished build (the venv is built again); a lock file is opened
-without waiting, since it is only locked. The checkout's tracked and ignored files and a venv's files, which the runner
-checks with os.lstat before it reads them, are read through open_regular as well, so one swapped in after that check is a
-content fault, a file no excuse matches, or a venv that cannot be read, and is never waited on.
+unreadable (check and batch.py verify fail that result, naming the file, and the next run at its sha is refused; that
+includes a dangling symlink at a result, since assess tests the path with os.path.lexists: with os.path.exists it read
+as missing and named a run as the remedy, which the runner then refused; the closing check wf_3b100f5e-b38, its item 3), as no
+marker (its checkout is removed as stale) or as no finished build (the venv is built again). The two locks the runner
+takes, the run's per-sha lock and a venv's lock, open through open_lock: without waiting, without following a symlink and
+only as a regular file, so a FIFO, a symlink or a directory a leg left at either refuses the run (exit 2), naming the
+lock and its type (the closing check wf_3b100f5e-b38, its item 2); another sha's lock, which the runner only tests while
+it removes stale checkouts, is opened read-only and without waiting. The checkout's tracked and ignored files and a
+venv's files, which the runner checks with os.lstat before it reads them, are read through open_regular as well, so one
+swapped in after that check is a content fault, a file no excuse matches, or a venv that cannot be read, and is never
+waited on. Of the eight fail-closed reads the 11:57Z ruling of 2026-10-01 named (its item 1), seven are the runner's,
+above: the leg logs, deps_skipped's read of the pytest leg's log, the results, the checkouts' markers, the venvs'
+markers, the venvs' build logs and the two locks. The eighth is scripts/batch.py's read of its state file, in the
+clone's common dir: only as a regular file and without waiting, and otherwise the command stops, naming the file
+(read_state).
 
 Every git call the runner makes into a repository is made in run_git, the one helper that starts such a call
-(tests/test_git_call_census.py holds each one in this file to it; the one git started elsewhere, tool_versions' git
---version, run in a leg's environment, reads no repository and has that function's 60 s bound), and has a bounded wait
-(the 02:43Z ruling, item 1(a)): GIT_BOUND, 120 s from its start. A git still running at the bound (waiting on a FIFO
-where git reads: one a leg left at a .gitignore, at a file an include.path names or at the batcher's repository's
-objects/info/alternates, or one swapped in after the runner's lstat) is killed with its process group, and the call
+(tests/test_git_call_census.py holds every place this file starts a process to a named allowlist, on which the one git
+started elsewhere is tool_versions' git --version, run in a leg's environment, which reads no repository and has that
+function's 60 s bound), and has a bounded wait (the 02:43Z ruling, item 1(a)): GIT_BOUND, 120 s from its start. A git
+still running at the bound (waiting on a FIFO where git reads: one a leg left at a .gitignore, at a file an include.path
+names or at the batcher's repository's objects/info/alternates, or one swapped in after the runner's lstat) is killed
+with its process group, and the call
 raises GitBound naming it. Before the run is recorded (the reads of the batcher's repository, the first checkout, its
 verification and a --leg re-run's first setup), and in check, that is a refusal (exit 2, nothing recorded); during the
 run (a later job's checkout, the reads of the ignored files before the deps leg and before a setup, the re-read after a
@@ -1056,7 +1073,10 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
         out.update(case=case, line=line, result=result)
         return out
 
-    if not os.path.exists(path):
+    # lexists, which follows no symlink: anything at the path, a dangling symlink included, is read by _load, which
+    # reads it as unreadable naming it unless it is a regular file (the closing check wf_3b100f5e-b38, its item 3). With
+    # os.path.exists a dangling symlink read as missing, and the remedy that line names, a run, is refused at that sha.
+    if not os.path.lexists(path):
         if branch:
             opath, other = newest_for_branch(branch, env)
             if other is not None and other.get("sha") != sha:
@@ -1186,11 +1206,12 @@ def excuse_contradiction(repo, result, sha, subject="HEAD"):
     scripts/upstream-ledger.py, round 2's correctness-4) while the sha's tree does hold the file that reason names, as a
     line naming them and the file; None when none is so marked or the tree really has no such file. Read with the
     runner's own git hygiene (no inherited GIT_*, no global or system config, refs/replace ignored), in `repo`, a GitRepo
-    or the path of the tree, which find_repo then reads, through run_git: a cat-file that does not end within GIT_BOUND
-    raises GitBound. batch.py's verify, plan and --repin and this script's check apply it after a pass."""
+    or the path of the tree (the directory holding .git, which find_repo reads without walking up from it), through
+    run_git: a cat-file that does not end within GIT_BOUND raises GitBound. batch.py's verify, plan and --repin and this
+    script's check apply it after a pass."""
     legs = (result or {}).get("legs") or {}
     if isinstance(repo, str):
-        repo = find_repo(repo)
+        repo = find_repo(repo, walk=False)
     clauses = []
     for why, rel in NOT_OWED_FILE.items():
         excused = [n for n in LEGS if not is_owed(n, legs.get(n)) and (legs.get(n) or {}).get("why") == why]
@@ -1222,7 +1243,8 @@ GIT_NEUTRAL_CONFIG = (("core.attributesFile", os.devnull), ("core.excludesFile",
 # The 02:43Z ruling, item 1(a): every git call the runner makes into a repository has a bounded wait, GIT_BOUND seconds,
 # and is made through run_git, the one helper that makes one (tool_versions' git --version, which reads no repository,
 # runs outside it, with that function's own 60 s bound). A git that has not ended by then is killed with its process
-# group (each starts in a session of its own) and the call raises GitBound naming it: a refusal before the run is
+# group (each starts in a session of its own; the group gets SIGTERM first, so git removes its own lock files, and SIGKILL
+# GIT_TERM_GRACE seconds later if anything of it is left: _end_git) and the call raises GitBound naming it: a refusal before the run is
 # recorded (cmd_run's reads of the batcher's repository, the first checkout and its verification, and a --leg re-run's
 # first setup) and in check, and the run's invalid mark during the run (a later job's checkout, the reads of the ignored
 # files and the re-read after a leg or a setup). So a file a leg plants that a git opens and waits on (a FIFO at a repository's config, HEAD, index,
@@ -1232,7 +1254,7 @@ GIT_NEUTRAL_CONFIG = (("core.attributesFile", os.devnull), ("core.excludesFile",
 # batcher's tree a shared clone with some 400 worktrees), a job's checkout took 0.57 to 0.58 s (0.63 to 0.72 s for the
 # whole clone in the record of that day's sweep at the PR's head), and every other call 0.02 s or less: git status in
 # the batcher's tree, ls-tree, cat-file and check-ignore over the 4626 ignored paths npm ci and the two builds leave.
-# tests/test_git_call_census.py holds every git argv and git launch in this file to run_git.
+# tests/test_git_call_census.py holds every place this file starts a process to a named allowlist, run_git first.
 GIT_BOUND = 120
 
 
@@ -1247,11 +1269,12 @@ class GitRepo(collections.namedtuple("GitRepo", "work_tree git_dir common_dir ce
     after the discovery, in the batcher's tree when it is a linked worktree, does not move a call to another repository:
     GitBoundPins' git-file pin, red when the three are dropped), its setup reads no commondir file (so a FIFO .git/commondir
     a leg leaves in its clone is not read by the re-read's git check-ignore, which reads no ref), and a core.worktree in the
-    repository's config moves no call's work tree. They do not keep every read off a commondir file: git 2.43 reads the
-    git dir's commondir file when a call reads a ref (rev-parse HEAD, symbolic-ref, status, cat-file of a revision),
-    whatever GIT_COMMON_DIR says (measured on 2026-10-01), so in a linked worktree's git dir that file is read by such a
-    call, and a FIFO there ends it at GIT_BOUND, naming it. git_dir None is the one discovery call (find_repo), which sets
-    only the ceiling."""
+    repository's config moves no call's work tree (one present at the discovery, naming another directory than the one
+    holding .git, is refused by find_repo, so the work tree named is that directory). They do not keep every read off a
+    commondir file: git 2.43 reads the git dir's commondir file when a call reads a ref (rev-parse HEAD, symbolic-ref,
+    status, cat-file of a revision), whatever GIT_COMMON_DIR says (measured on 2026-10-01), so in a linked worktree's git
+    dir that file is read by such a call, and a FIFO there ends it at GIT_BOUND, naming it. git_dir None is the one
+    discovery call (find_repo), which sets only the ceiling."""
 
 
 class GitBound(Refused):
@@ -1282,12 +1305,19 @@ def run_git(repo, *args, input=None, text=True, cwd=None):
     It runs with the runner's neutral git (_git_env), in `cwd` (default: the work tree), stdin closed unless `input` is
     given, in a session of its own, and has GIT_BOUND seconds to end. One that has not (waiting on a FIFO, reading without
     end) is killed with its process group and reaped, and GitBound is raised naming the call; a stop signal that arrives
-    while it runs kills it the same way before the stop propagates, so no git the runner started outlives the call."""
+    while it runs kills it the same way before the stop propagates, and one that arrives while it starts is held until
+    the git is started and raised then, inside the same try, so no git the runner started outlives the call."""
     argv = ["git", *args]
-    p = subprocess.Popen(argv, cwd=cwd or repo.work_tree, env=_git_env(repo), text=text, start_new_session=True,
-                         stdin=subprocess.DEVNULL if input is None else subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE)
+    _hold_stops()
     try:
+        p = subprocess.Popen(argv, cwd=cwd or repo.work_tree, env=_git_env(repo), text=text, start_new_session=True,
+                             stdin=subprocess.DEVNULL if input is None else subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+    except BaseException:
+        _release_stops()
+        raise
+    try:
+        _release_stops()
         out, err = p.communicate(input, timeout=GIT_BOUND)
     except BaseException as e:
         _end_git(p)
@@ -1298,20 +1328,63 @@ def run_git(repo, *args, input=None, text=True, cwd=None):
     return subprocess.CompletedProcess(argv, p.returncode, out, err)
 
 
+# How long a git the runner ends (at the bound, or on a stop) has after SIGTERM to its process group before what is left of
+# the group gets SIGKILL. SIGTERM comes first because git's own handlers for it remove the lock files it holds: git status
+# in the batcher's tree takes its index.lock (an optional lock, to write the refreshed index back) and holds it while it
+# reads info/exclude, so a SIGKILL there left .git/index.lock in your repository, and every later git add or commit
+# there failed on it until you removed it by hand (the verify pass at PR 926's build head, its code finding 1, the same
+# class). Measured on 2026-10-01 (git 2.43.0): that git status, waiting on a FIFO at info/exclude, exited on SIGTERM
+# with the lock removed; under SIGKILL the lock stayed.
+GIT_TERM_GRACE = 10
+
+
 def _end_git(p):
-    """Kill the git `p` and its process group, reap it, and close its pipes, without reading them: a child of git still
-    holding one would otherwise keep the read waiting."""
+    """End the git `p`, started in a session of its own, with its process group: SIGTERM to the group, then wait until
+    the group is gone (`p` exited and reaped and no process left in its group), at most GIT_TERM_GRACE seconds, and
+    SIGKILL what is left of it then; `p` is reaped and its pipes closed unread (a child of git still holding one would
+    otherwise keep a read waiting)."""
+    _signal_group(p.pid, signal.SIGTERM)
     try:
-        os.killpg(p.pid, signal.SIGKILL)
+        end = time.monotonic() + GIT_TERM_GRACE
+        while _group_left(p) and time.monotonic() < end:
+            time.sleep(0.01)
+    finally:
+        if _group_left(p):
+            _signal_group(p.pid, signal.SIGKILL)
+        p.wait()
+        for f in (p.stdin, p.stdout, p.stderr):
+            if f is not None:
+                try:
+                    f.close()
+                except OSError:
+                    pass
+
+
+def _signal_group(pgid, sig):
+    try:
+        os.killpg(pgid, sig)
     except OSError:
         pass
-    p.wait()
-    for f in (p.stdin, p.stdout, p.stderr):
-        if f is not None:
-            try:
-                f.close()
-            except OSError:
-                pass
+
+
+def _group_left(p):
+    """Whether anything of `p`'s process group is left: `p` still running, or, once it has exited and been reaped, any
+    other process in its group. The runner is a child subreaper, so a child of git that outlives git is adopted by it,
+    and one that has since exited is reaped here, so it does not count."""
+    if p.poll() is None:
+        return True
+    try:
+        while os.waitpid(-p.pid, os.WNOHANG)[0]:
+            pass
+    except ChildProcessError:
+        pass
+    try:
+        os.killpg(p.pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def git(repo, *args, check=True):
@@ -1323,26 +1396,52 @@ def git(repo, *args, check=True):
     return p.stdout.strip() if check else p
 
 
-def find_repo(start):
-    """The GitRepo of the repository holding the directory `start` (the batcher's tree): the nearest directory at or
-    above its real path that holds a .git entry (os.path.lexists, nothing opened), read by git there, `rev-parse
-    --show-toplevel --absolute-git-dir --git-common-dir` with GIT_CEILING_DIRECTORIES at that directory's parent, so a
-    .git that git does not recognize there is refused, naming the directory, and never sends git on to an enclosing
-    repository (a leg can reach the batcher's repository through its clone's alternates and remove its HEAD, for one;
-    the 02:43Z ruling, item 1(b)). Every later call into the repository names it explicitly (GitRepo)."""
+def find_repo(start, walk=False):
+    """The GitRepo of the repository whose work tree is the directory `start` (the batcher's tree): without `walk`,
+    `start` itself, whose real path must exist and hold a .git entry (os.path.lexists, nothing opened), so a --tree that
+    does not exist, or whose .git is gone, or that is empty, is refused naming it and is never resolved to a repository
+    that encloses it or to the current directory
+    (the closing check wf_3b100f5e-b38, its item 1); with `walk`, which only cmd_run's and cmd_check's default (no
+    --tree, the current directory) passes, the nearest directory at or above its real path that holds one. git reads
+    that directory, `rev-parse --show-toplevel --absolute-git-dir --git-common-dir` with GIT_CEILING_DIRECTORIES at its
+    parent, so a .git that git does not recognize there is refused, naming the directory, and never sends git on to an
+    enclosing repository (a leg can reach the batcher's repository through its clone's alternates and remove its HEAD,
+    for one; the 02:43Z ruling, item 1(b)); and the directory is refused unless git's work tree there is that directory
+    itself, so a core.worktree in the repository's config that names another directory is refused here rather than
+    taken as the work tree of every later call. Every later call into the repository names it explicitly (GitRepo)."""
+    if not start:
+        # an empty --tree (what an unset shell variable gives) names no directory; os.path.realpath would read it as the
+        # current one (the verify pass at PR 926's build head, its code finding 5)
+        raise Refused("an empty path ('') is not a git working tree: give the directory that holds .git")
     d = os.path.realpath(start)
-    while not os.path.lexists(os.path.join(d, ".git")):
-        up = os.path.dirname(d)
-        if up == d:
-            raise Refused("%s is not a git working tree: no .git at or above it" % start)
-        d = up
+    if walk:
+        while not os.path.lexists(os.path.join(d, ".git")):
+            up = os.path.dirname(d)
+            if up == d:
+                raise Refused("%s is not a git working tree: no .git at or above it" % start)
+            d = up
+    elif not os.path.lexists(os.path.join(d, ".git")):
+        raise Refused("%s is not a git working tree: %s" % (start, _no_git_why(d)))
     p = run_git(GitRepo(d, None, None, os.path.dirname(d)), "rev-parse", "--path-format=absolute", "--show-toplevel",
                 "--absolute-git-dir", "--git-common-dir")
     found = p.stdout.splitlines() if p.returncode == 0 else []
     if len(found) != 3:
         raise Refused("%s is not a git working tree that git recognizes (%s)" % (d, (p.stderr or p.stdout).strip()))
     top, git_dir, common = found
+    if os.path.realpath(top) != d:
+        raise Refused("%s is not the work tree git reads for the .git in it: git's work tree there is %s (a core.worktree in "
+                      "the repository's config names it); give the directory that holds .git and is its work tree" % (d, top))
     return GitRepo(top, git_dir, common, os.path.dirname(top))
+
+
+def _no_git_why(d):
+    """Why the directory `d`, given explicitly (find_repo without walk), holds no .git: it does not exist, it is not a
+    directory, or it holds none."""
+    if not os.path.lexists(d):
+        return "there is no such directory"
+    if not os.path.isdir(d):
+        return "it is not a directory"
+    return "no .git in it"
 
 
 def uncommitted_count(repo):
@@ -1468,6 +1567,37 @@ def read_regular(path):
         return None
     with f:
         return f.read()
+
+
+# The flags open_lock opens a lock file with: created when absent, and opened without waiting (O_NONBLOCK: a FIFO opens
+# at once), without following a symlink (O_NOFOLLOW: one fails the open, so neither it nor a target it names is opened or
+# created) and without taking a terminal as the runner's controlling terminal (O_NOCTTY).
+_LOCK_FLAGS = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY
+
+
+def open_lock(path):
+    """The lock file at `path`, created when absent, as a file object the caller locks with fcntl.flock: the one way the
+    runner opens a lock it takes, the run's per-sha lock (cmd_run) and a venv's lock (_venv_environment), each of which
+    a leg can reach (the state dir from its log's path, the venv's lock beside the venv it runs in; the closing check
+    wf_3b100f5e-b38, its item 2). It opens with _LOCK_FLAGS and keeps the file only when fstat finds a regular file, so a
+    FIFO, a symlink or a directory a leg left at the lock's name is Refused naming the path and its type (cannot_read's
+    words), with no wait, nothing followed and nothing created, and the descriptor closed; any other open that fails is
+    Refused naming the path and why. Before, open(path, "a+") ended the run with a traceback on a FIFO or a directory and
+    followed a symlink, creating a missing target. _lock_held, which only tests another sha's lock, opens it read-only
+    without creating it, and refuses nothing."""
+    try:
+        fd = os.open(path, _LOCK_FLAGS, 0o666)
+    except OSError as e:
+        why = {errno.ELOOP: _not_regular(stat.S_IFLNK), errno.EISDIR: _not_regular(stat.S_IFDIR)}.get(e.errno)
+        raise Refused("the lock %s cannot be opened (%s); remove it to sweep again" % (path, why or e.strerror or e)) from None
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            raise Refused("the lock %s cannot be opened (%s); remove it to sweep again" % (path, _not_regular(mode)))
+        return os.fdopen(fd, "r+b", buffering=0)
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def shallow_path(repo):
@@ -2036,11 +2166,41 @@ class Stopped(BaseException):
         self.signum = signum
 
 
+# A stop that arrives while run_git starts its git is held until the git is started and run_git is inside the try that
+# ends it (_hold_stops, _release_stops), and raised there: raised as it arrived, between the start and that try, it left
+# the git running, never ended (the verify pass at PR 926's build head, its code finding 2, measured in scripts/batch.py's
+# run_git, whose shape this one had). _holding: whether a start is in progress; _held: the first stop signal that
+# arrived meanwhile, or None.
+_holding = False
+_held = None
+
+
 def _on_stop(signum, _frame):
     # the first stop signal wins: a second one during the cleanup is ignored
+    global _held
     for s in STOP_SIGNALS:
         signal.signal(s, signal.SIG_IGN)
+    if _holding:
+        if _held is None:
+            _held = signum
+        return
     raise Stopped(signum)
+
+
+def _hold_stops():
+    """Hold every stop signal from here until _release_stops: called just before run_git starts its git."""
+    global _holding
+    _holding = True
+
+
+def _release_stops():
+    """End the hold, and raise Stopped for the stop signal held during it, if one was: called inside the try that ends
+    the git once it is started, so the git is ended as on any other stop (or, when the start failed, on the way out)."""
+    global _holding, _held
+    _holding = False
+    held, _held = _held, None
+    if held is not None:
+        raise Stopped(held)
 
 
 # Whether install_stop_handlers made this process a child subreaper; wait_leg reads it, and each run records it
@@ -3620,7 +3780,7 @@ def _venv_environment(spec, sha, python, tmpdir):
     rec.update(spec["record"])
     rec.update({"python_version": None, "tree": None, "files": None, "built": False, "build_s": 0.0, "log": log,
                 "base_python": os.path.abspath(python), "base_version": base.get("version")})
-    lock = open(venv + ".lock", "a+")
+    lock = open_lock(venv + ".lock")
     stale = None
     try:
         for _attempt in range(SDK_ATTEMPTS):
@@ -4204,9 +4364,10 @@ def parse_flakes(values, only):
 def cmd_run(args):
     # Before TMPDIR or the checkout exists, so every exit path removes both (A5).
     install_stop_handlers()
-    # The batcher's repository, found once (find_repo: a .git git does not recognize is refused, never walked past) and
+    # The batcher's repository, found once (find_repo: a .git git does not recognize is refused, never walked past; a
+    # --tree is the directory holding .git, never walked up from, and only the current directory, with no --tree, is) and
     # named explicitly in every later git call; its common dir is read here, once, for the run (the 02:43Z ruling, item 1).
-    batcher = find_repo(args.tree or os.getcwd())
+    batcher = find_repo(args.tree, walk=False) if args.tree is not None else find_repo(os.getcwd(), walk=True)
     tree = batcher.work_tree
     # The batcher's shallow file, checked here, before any git call that parses commits, since git reads it first (the
     # closing check's item 1): one that is not a regular file refuses the run, naming it.
@@ -4237,7 +4398,7 @@ def cmd_run(args):
     os.makedirs(d, mode=0o700, exist_ok=True)
     path = result_path(sha)
     lock_path = os.path.join(d, sha + ".lock")
-    lock = open(lock_path, "a+")
+    lock = open_lock(lock_path)
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -4733,8 +4894,10 @@ def cmd_check(args):
     """What verify reads for the batch head, and plan and --repin for a member's head: the reader's case, the branch
     told apart from the sha (a result for the tree's branch at another sha reads stale, not missing), then the excuse
     rule against the sha's tree."""
-    repo = find_repo(args.tree or os.getcwd())
-    tree = os.path.realpath(args.tree or os.getcwd())
+    repo = find_repo(args.tree, walk=False) if args.tree is not None else find_repo(os.getcwd(), walk=True)
+    # the work tree find_repo found, not the directory check ran in: the missing remedy's --tree must be one run accepts,
+    # and run refuses a --tree that does not hold .git (the verify pass at PR 926's build head, its code finding 4)
+    tree = repo.work_tree
     # Before the first git call that parses a commit, as in cmd_run: rev-parse's ^{commit} reads the shallow file, so
     # one that is not a regular file refuses here, naming it, instead of waiting (the closing check's verify, code 2).
     shallow_checked(repo)
@@ -4775,8 +4938,9 @@ def main(argv=None):
                                    "not be clean; its uncommitted edits are not swept. Exit 0 pass, 1 red (a run that is "
                                    "itself invalid but leaves the sha unable to pass included), 2 refused to start, 3 "
                                    "invalid." % (", ".join(LEGS), MEASURED_TEXT))
-    p.add_argument("--tree", metavar="DIR", help="the repository whose HEAD is swept (default: the one holding the current "
-                                                 "directory); read for its HEAD sha and branch only")
+    p.add_argument("--tree", metavar="DIR", help="the repository whose HEAD is swept, the directory holding its .git, which "
+                                                 "is not looked up from (default: the nearest directory at or above the "
+                                                 "current one holding a .git); read for its HEAD sha and branch only")
     p.add_argument("--python", metavar="PATH", help="the interpreter the pytest leg's venv is built from (default: the one running "
                                                     "this script); the pytest leg runs in that venv, under <state "
                                                     "dir>/sweeps/sdk/<key>, which holds what the install steps of the sha's "
@@ -4822,7 +4986,9 @@ def main(argv=None):
                                    "is not a git working tree git recognizes, a SHA that names no commit there, a shallow "
                                    "file that cannot be read, a git call that did not end within GIT_BOUND).")
     p.add_argument("sha", nargs="?", metavar="SHA", help="the commit (default: HEAD of --tree)")
-    p.add_argument("--tree", metavar="DIR", help="the repository to resolve SHA in (default: the current directory)")
+    p.add_argument("--tree", metavar="DIR", help="the repository to resolve SHA in, the directory holding its .git, which is "
+                                                 "not looked up from (default: the nearest directory at or above the current "
+                                                 "one holding a .git)")
     p.add_argument("--branch", metavar="BR", help="tell a missing result apart from a stale one recorded for this branch "
                                                   "(default, when SHA is the tree's HEAD: the branch the tree has checked out)")
     p.set_defaults(func=cmd_check)

@@ -36,7 +36,8 @@ class BatsStepBound(unittest.TestCase):
         self.assertTrue(m, "no BATS_TEST_TIMEOUT in the step's env: a hung test would eat the job's whole budget, nameless")
         secs = int(m.group(1))
         self.assertGreaterEqual(secs, 120, "below two minutes the slowest legitimate macOS test (the 60 s romp-serve probes) is at risk")
-        self.assertLessEqual(secs, 600, "above ten minutes a hang still eats most of the 35-minute job")
+        self.assertLessEqual(secs, 600, "above ten minutes a hang still eats most of the Shell job's margin under its cap (45 "
+                             "minutes on Linux and 55 on macOS, a flat 35 when this bound was set)")
 
     def test_the_step_still_runs_every_bats_file(self):
         self.assertIn("tests/*.bats", self.cmd)

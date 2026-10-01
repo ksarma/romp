@@ -16,17 +16,23 @@ agent's entry, writing the file's checkpoint document first when it lacks what t
 cursor the document records restores a zero-weight tail instead of reading the file whole; an end seen before any fold
 holds the file is remembered and the file is released at the first cycle after a read holds it. A file no fold holds a
 recordable cursor for is released without a document and read whole at its next fold; a file that no longer exists is
-released with nothing written.
+released with nothing written. An end whose file lookup could not be made (a place the walk needed could not be read)
+releases nothing and is remembered, and the lookup is made again at the first cycle at which one of the places the walk
+could not read reads again or the walk no longer reaches it, each read once per cycle until then with no walk, one read
+for all the ends of a session waiting on it (the reads: kernel._unread_place_reads' docstring); a cycle makes one such
+lookup, oldest first, so when more ends are due the rest are looked up at the next cycles.
 
 Synthetic data only: a notes-api project under a temp root, placeholder ids, a private sid, hostname TESTHOST.
 """
 import ast
 import asyncio
 import contextlib
+import errno
 import io
 import json
 import os
 import shutil
+import stat
 import tempfile
 import threading
 import unittest
@@ -56,6 +62,7 @@ WF_AID = "afedcba9876543210"                           # a workflow agent
 WF_AID2 = "a2222222222222222"                          # the slot's retried attempt
 WF_TID = "w0000000000000001"                           # the workflow run's task id
 AID3 = "a3333333333333333"                             # a third agent, for a cycle that must still drain its end
+SIB_SID = "11111111-2222-3333-4444-a9e7e1d0c0e1"      # a sibling session directory in the project, holding the third agent's file
 LAUNCH = "toolu_notesapi_bg_tests"                     # the agent's run_in_background Bash: the pending command the rows attribute
 NOTHING_RELEASED = {"agentEnded": {"count": 0, "bytes": 0}}   # recordCache.released before any release: the reason
 #                                                                  reported at zero, so an export carries the key from the first read
@@ -113,6 +120,7 @@ class AgentEnd(unittest.TestCase):
         getattr(em, "_RELEASE_LOST_SAID", set()).clear()
         getattr(km, "_AGENT_RELEASED", {}).clear()
         getattr(km, "_AGENT_ENDED_UNHELD", {}).clear()
+        getattr(km, "_AGENT_ENDED_FAULTED", {}).clear()
         km._AGENT_LAUNCH_IDS_CACHE.clear(); km._AGENT_GIST_CACHE.clear()
         self._saved = {n: getattr(km, n) for n in ("_bg_live_norm", "_bg_pending", "_path_of", "_sdk_backend",
                                                    "CKPT_CONVERGE_MS", "CKPT_CONVERGE_BYTES")}
@@ -809,7 +817,8 @@ class AgentEnd(unittest.TestCase):
         first end's release pops the file, and the second's then finds nothing held. Red when a taken batch end's release
         adds nothing to the popped paths: the second end stays remembered."""
         real = km._subagent_file
-        km._subagent_file = lambda path, aid: Path(self.agent) if aid in (AID, WF_AID) else real(path, aid)
+        km._subagent_file = lambda path, aid, faults=None, unread=None: (   # the release's lookup passes both lists
+            Path(self.agent) if aid in (AID, WF_AID) else real(path, aid, faults, unread=unread))
         self.addCleanup(setattr, km, "_subagent_file", real)
         em._read_jsonl_incremental(self.agent)                           # a whole read holds it
         size = os.path.getsize(self.agent)
@@ -821,6 +830,1501 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}}, "by one release")
         self.assertEqual(km._AGENT_RELEASED, {(SID, AID): [self.agent, True]}, "only the first end's release was taken")
         self.assertEqual(km._AGENT_ENDED_UNHELD, {}, "the popped path forgot the second end")
+
+    # ---- an end whose file lookup could not be made (fork PR 882 round 5, the callers of _subagent_file's bare None) ----
+    # The release resolves an ended agent's file with a faults list (kernel._release_end). A lookup that could not be made
+    # (a place the walk needed could not be read, for a reason other than absence) is not "no file for the agent": nothing
+    # is released, the end is remembered with the places the walk could not read (_AGENT_ENDED_FAULTED), and it is looked up
+    # again at the first cycle at which one of them reads again by the read the walk makes of it, one per place per cycle
+    # (the reads: _unread_place_reads' docstring; the cases below that say a place is read as the walk reads it), or at a
+    # later one when more such ends are due (one lookup a cycle), and no walk until then. The code before the change passed
+    # no faults list: with no resolution standing it read the bare None as no file and gave the end up, counted nowhere and
+    # not looked up again after the fault cleared; with one standing it released under the fault, where em.release_entry's
+    # os.path.exists read the fault as the file gone and popped the records without their checkpoint document. Each fault is
+    # a real EACCES (skipped as root, whom permission bits do not bind), restored inside the case, since a cleanup runs
+    # after tearDown removed the tree.
+
+    @contextlib.contextmanager
+    def _unreadable(self, *dirs, mode=0o000):
+        """Each of `dirs` at `mode` (000 unless given) for the block, its mode restored at the block's end whatever the
+        block raised."""
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        modes = [(d, stat.S_IMODE(os.stat(d).st_mode)) for d in dirs]
+        try:
+            for d in dirs:
+                os.chmod(d, mode)
+            yield
+        finally:
+            for d, m in reversed(modes):
+                os.chmod(d, m)
+
+    def _ended_with_its_file_resolved(self, aid, path, standing):
+        """The agent runs and its file is folded (_fold_while_running), a cycle drains its start, and it ends: its end is
+        queued for the next cycle. With `standing` False the lookup's memo entry is dropped (as the memo's 1024-key clear
+        drops it), so no resolution stands for the end's lookup; with it True the resolution the folds made stands."""
+        size = self._fold_while_running(aid, path)
+        km._begin_checkpoint_cycle()                                     # drains the start
+        if standing:
+            self.assertEqual(str(km._subagent_file(self.leaf, aid)), path, "precondition: a resolution stands")
+        else:
+            km._SUBAGENT_FILE_CACHE.pop((self.leaf, aid), None)
+        self._stop(aid)
+        return size
+
+    def _lookup_faults(self, aid, standing):
+        faults = []
+        got = km._subagent_file(self.leaf, aid, faults)
+        self.assertEqual((got is None, faults), (not standing, ["PermissionError"]),
+                         "precondition: the lookup could not be made (%r, %r)" % (got, faults))
+
+    def _released_with_its_document(self, path, size):
+        w = self._weight(path)
+        self.assertTrue(w is None or w == 0, "the end's release happens once the lookup is made (weight %r of %d)" % (w, size))
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}}, "one release, counted")
+        self.assertTrue(em._ckpt_file(path).exists(), "with its checkpoint document")
+        self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {}, "and the faulted end is forgotten")
+
+    def _held_unwritten_nothing(self, path, size, when):
+        self.assertEqual((self._weight(path), self._stat("released"), self._stat("releaseLost"), em._ckpt_file(path).exists()),
+                         (size, NOTHING_RELEASED, 0, False),
+                         "%s: not yet, so the records stay, nothing is released or given up, and nothing is popped "
+                         "unwritten" % when)
+
+    @contextlib.contextmanager
+    def _recording(self):
+        """This thread's os.lstat, os.stat and os.scandir calls on a path under the project directory, by class, and the
+        agent-file walks (_subagent_file_walk calls), for the block."""
+        me, proj = threading.get_ident(), os.path.dirname(self.leaf)
+        got = {"lstat": [], "stat": [], "scandir": [], "walks": 0}
+        real = {n: getattr(os, n) for n in ("lstat", "stat", "scandir")}
+
+        def wrap(n):
+            def call(p=".", *a, **k):
+                if threading.get_ident() == me and isinstance(p, (str, os.PathLike)) and (
+                        str(p) == proj or str(p).startswith(proj + os.sep)):
+                    got[n].append(str(p))
+                return real[n](p, *a, **k)
+            return call
+        real_walk = km._subagent_file_walk
+
+        def walk(*a, **k):
+            got["walks"] += 1
+            return real_walk(*a, **k)
+        try:
+            for n in real:
+                setattr(os, n, wrap(n))
+            km._subagent_file_walk = walk
+            yield got
+        finally:
+            for n, f in real.items():
+                setattr(os, n, f)
+            km._subagent_file_walk = real_walk
+
+    def _cycle_in_the_pushers_slots(self):
+        """One _begin_checkpoint_cycle inside the three tree slots, as _pusher_cycle opens them around its jobs stage."""
+        slots = ("subagent_trees", "subagent_stamps", "subagent_launches")
+        for s in slots:
+            setattr(km._live_scope, s, {})
+        try:
+            km._begin_checkpoint_cycle()
+        finally:
+            for s in slots:
+                setattr(km._live_scope, s, None)
+
+    def test_an_end_whose_file_lookup_faults_is_released_at_the_first_cycle_after_the_fault_clears(self):
+        """R1: no resolution standing, the session directory at mode 000. In the end's cycle under the fault nothing is
+        released or counted; at the first cycle after the fault clears, with no new event, the release happens with its
+        checkpoint document. Red under a mutant that reads the fault as no file again: the end's cycle gives the end up,
+        and after the clear the records stay whole (weight equal to the file's size). The code before this change cannot
+        run the case (its _subagent_file takes no `faults` argument, so the precondition's lookup raises TypeError), which
+        is no red for the reason."""
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
+        with self._unreadable(os.path.dirname(os.path.dirname(self.agent))):
+            self._lookup_faults(AID, standing=False)
+            km._begin_checkpoint_cycle()                                 # the end's cycle, under the fault
+            self._held_unwritten_nothing(self.agent, size, "in the end's cycle under the fault")
+        km._begin_checkpoint_cycle()                                     # the fault cleared; no new event
+        self._released_with_its_document(self.agent, size)
+
+    def test_a_start_after_a_faulted_end_cancels_its_retry(self):
+        """R2: the agent is live again before its faulted end is looked up again. The start's cycle forgets the faulted end,
+        and the running agent keeps its records then and at the cycle after. Red under a mutant that drops the drained
+        start's forgetting of the faulted end: the table still holds the end after the start's cycle, and at the next cycle
+        its lookup would release the running agent's records. Before the change there was no faulted end to forget, and
+        the premise fails."""
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
+        with self._unreadable(os.path.dirname(os.path.dirname(self.agent))):
+            km._begin_checkpoint_cycle()
+            self.assertIn((SID, AID), getattr(km, "_AGENT_ENDED_FAULTED", {}), "precondition: the end is remembered as faulted")
+        self._start(AID)                                                 # live again; the fault has cleared
+        km._begin_checkpoint_cycle()                                     # the start's cycle
+        self.assertEqual(km._AGENT_ENDED_FAULTED, {}, "the drained start forgot the faulted end")
+        self.assertEqual(self._weight(self.agent), size, "a live agent's records are not released")
+        km._begin_checkpoint_cycle()
+        self.assertEqual((self._weight(self.agent), self._stat("released")), (size, NOTHING_RELEASED), "nor at the cycle after")
+
+    def test_an_end_whose_standing_resolution_lies_under_the_fault_is_deferred_and_released_with_its_document_after_it(self):
+        """R3: a resolution stands, and the lookup answers it with the fault, since it lies under the place the walk could
+        not read. The end is not released under the fault, so nothing pops its records unwritten, and it is released with
+        its checkpoint document at the first cycle after the fault clears. Red under a mutant that defers only a lookup
+        with no resolution, and under one that reads the fault as no file again: the release under the fault takes the
+        standing path, em.release_entry's os.path.exists answers False under the EACCES, and the records are popped with
+        no document (the next fold reads the file whole). The code before this change cannot run the case (its
+        _subagent_file takes no `faults` argument, so the precondition's lookup raises TypeError), which is no red for the
+        reason."""
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=True)
+        with self._unreadable(os.path.dirname(os.path.dirname(self.agent))):
+            self._lookup_faults(AID, standing=True)
+            km._begin_checkpoint_cycle()
+            self._held_unwritten_nothing(self.agent, size, "under the fault")
+        km._begin_checkpoint_cycle()
+        self._released_with_its_document(self.agent, size)
+
+    def test_a_faulted_end_costs_one_lstat_of_its_unread_place_per_cycle_and_is_looked_up_only_once_that_place_reads(self):
+        """The retry is keyed on the event that the place reads again, not on the cycle. R1's world: the session directory
+        at mode 000 leaves one place the walk could not read, the own subagents directory (its lstat, and the tree's read
+        of it, each excluded it). Inside the pusher cycle's three slots, each cycle under the fault reads that place by one
+        os.lstat and makes no os.stat, no listing and no walk; the first cycle after the clear walks once and releases.
+        Red under a mutant that looks every faulted end up at every cycle (a walk per faulted cycle). Before the change no
+        end was remembered, and the premise fails."""
+        own = os.path.dirname(self.agent)
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
+        with self._unreadable(os.path.dirname(own)):
+            self._cycle_in_the_pushers_slots()                           # the end's cycle: the lookup walks and faults
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID): ((own, "tree"),)},
+                             "precondition: remembered with its one place, a place in a subagents tree")
+            for n in (1, 2):
+                with self._recording() as got:
+                    self._cycle_in_the_pushers_slots()
+                self.assertEqual(got, {"lstat": [own], "stat": [], "scandir": [], "walks": 0},
+                                 "faulted cycle %d: one lstat of the place and no walk" % n)
+            self._held_unwritten_nothing(self.agent, size, "over the two faulted cycles")
+        with self._recording() as got:
+            self._cycle_in_the_pushers_slots()                           # the fault cleared: the place reads
+        self.assertEqual(got["walks"], 1, "looked up again, one walk, once the place reads")
+        self._released_with_its_document(self.agent, size)
+
+    def test_the_ends_waiting_on_one_place_read_it_once_per_cycle_however_many_they_are(self):
+        """The waiting reads are memoized for the cycle on the place, its kind and the session (_release_ended_agents),
+        so the wait costs one read per place per cycle, not one per end. R1's world: the own end remembered with its one
+        place, the own subagents directory under the session directory at mode 000, and 49 more ends of the session
+        waiting on that place. Each cycle under the fault reads it by one os.lstat and makes no walk. Red under a read
+        per end: 50 lstats a cycle."""
+        own = os.path.dirname(self.agent)
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
+        with self._unreadable(os.path.dirname(own)):
+            km._begin_checkpoint_cycle()                                 # the end's cycle: the lookup walks and faults
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID): ((own, "tree"),)},
+                             "precondition: remembered with its one place")
+            for i in range(1, 50):
+                km._remember_faulted_end((SID, "a%016x" % i), ((own, "tree"),))
+            for n in (1, 2):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                self.assertEqual(got, {"lstat": [own], "stat": [], "scandir": [], "walks": 0},
+                                 "faulted cycle %d: one lstat of the place for the 50 ends, and no walk" % n)
+            self.assertEqual(len(km._AGENT_ENDED_FAULTED), 50, "every end still waits")
+            self._held_unwritten_nothing(self.agent, size, "under the fault")
+
+    def test_an_end_of_another_session_waiting_on_the_same_place_is_read_for_its_own_session(self):
+        """The memo's key holds the session, since a place whose read fails is lasting or not by where the session's
+        transcript lies (_unread_place_reads). The own end, remembered with the own subagents directory under the
+        session directory at mode 000, is lasting; an end of a second session waiting on the same place, whose
+        transcript lies in another project directory, is not, since its walk lists that directory. The cycle reads the
+        place once for each session and looks the second end up, one walk, which finds no file and forgets it. Red under
+        a memo keyed on the place and its kind alone: the second end is served the first's answer and waits while the
+        place stays unreadable."""
+        own = os.path.dirname(self.agent)
+        other = os.path.join(self.root, "projects", "-home-TESTHOST-notes-web", OTHER_SID + ".jsonl")
+        os.makedirs(os.path.dirname(other))
+        _append(other, [{"type": "user", "uuid": "11111111-2222-3333-4444-000000000005", "sessionId": OTHER_SID,
+                         "timestamp": "2026-09-24T10:30:00.000Z",
+                         "message": {"role": "user", "content": "Review the notes-web client."}}])
+        km._path_of = lambda sid, now=None: {SID: self.leaf, OTHER_SID: other}.get(sid)   # restored by tearDown
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
+        with self._unreadable(os.path.dirname(own)):
+            km._begin_checkpoint_cycle()                                 # the end's cycle: the lookup walks and faults
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID): ((own, "tree"),)},
+                             "precondition: remembered with its one place")
+            km._remember_faulted_end((OTHER_SID, AID3), ((own, "tree"),))
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual((got["lstat"], got["walks"], km._AGENT_ENDED_FAULTED),
+                             ([own, own], 1, {(SID, AID): ((own, "tree"),)}),
+                             "the place read once per session, and the second session's end looked up and forgotten")
+            self._held_unwritten_nothing(self.agent, size, "under the fault")
+
+    def test_a_path_waited_on_as_an_entry_and_as_a_tree_place_is_read_once_for_each_kind(self):
+        """The memo's key holds the kind of read, since one path read as a project-directory entry (its os.stat, through a
+        link) and as a place in a subagents tree (its os.lstat and listing) can answer differently. No lookup records a
+        path under two kinds, so the table is injected: two ends of the session wait on a sibling session directory with
+        no tree, the older as an entry and the newer as a tree place, and the directory's os.stat fails (an EIO by mock)
+        while its lstat and listing answer. The older end's read fails, and the entry lies in the project directory the
+        walk lists, so that end waits; the newer end's read answers, so it is looked up, one walk (which faults on the
+        same os.stat and remembers the end again, with the place as the entry it is). The older end comes first in the
+        table so that the cap (one lookup a cycle) does not end the cycle before the newer end is read. Red under a memo
+        keyed on the place and the session alone: the newer end is served the older end's answer and waits, no walk."""
+        p = os.path.join(os.path.dirname(self.leaf), SIB_SID)
+        os.makedirs(p)
+        km._remember_faulted_end((SID, AID), ((p, "entry"),))
+        km._remember_faulted_end((SID, AID3), ((p, "tree"),))
+        real = os.stat
+
+        def st(q, *a, **k):
+            if isinstance(q, (str, os.PathLike)) and os.fspath(q) == p:
+                raise OSError(errno.EIO, "the lookup answered EIO", p)
+            return real(q, *a, **k)
+        os.stat = st
+        try:
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+        finally:
+            os.stat = real
+        self.assertEqual((got["walks"], km._AGENT_ENDED_FAULTED),
+                         (1, {(SID, AID): ((p, "entry"),), (SID, AID3): ((p, "entry"),)}),
+                         "the entry-kind end waits; the tree-kind end is looked up, one walk, and remembered again")
+
+    def test_the_ends_whose_place_reads_again_are_looked_up_one_per_cycle_oldest_first(self):
+        """The count cap on the faulted ends looked up per cycle (_AGENT_FAULTED_LOOKUPS_MAX, one): the own agent and the
+        workflow agent end in one batch under R1's fault, each remembered with the own subagents directory, the own
+        agent's first. At the first cycle after the fault clears the oldest end alone is looked up and released with its
+        document, the other left in the table; the next cycle looks the other up and releases it. Red under a mutant with
+        no cap: the first cycle walks twice."""
+        own = os.path.dirname(self.agent)
+        size = self._fold_while_running(AID, self.agent)
+        wf_size = self._fold_while_running(WF_AID, self.wf_agent)
+        km._begin_checkpoint_cycle()                                     # drains both starts
+        for aid in (AID, WF_AID):
+            km._SUBAGENT_FILE_CACHE.pop((self.leaf, aid), None)          # no resolution stands for either lookup
+        self._stop(AID)
+        self._stop(WF_AID)
+        with self._unreadable(os.path.dirname(own)):
+            km._begin_checkpoint_cycle()                                 # the ends' cycle: each lookup walks and faults
+            self.assertEqual(list(getattr(km, "_AGENT_ENDED_FAULTED", {}).items()),
+                             [((SID, AID), ((own, "tree"),)), ((SID, WF_AID), ((own, "tree"),))],
+                             "precondition: both remembered with the own subagents directory, the own agent's first")
+        with self._recording() as got:
+            km._begin_checkpoint_cycle()                                 # the fault cleared: the oldest end alone
+        self.assertEqual((got["walks"], list(km._AGENT_ENDED_FAULTED)), (1, [(SID, WF_AID)]),
+                         "one lookup, the oldest end's; the other waits for the next cycle")
+        self.assertEqual((self._weight(self.agent) in (None, 0), em._ckpt_file(self.agent).exists(),
+                          self._weight(self.wf_agent)), (True, True, wf_size),
+                         "the own agent released with its document, the workflow agent's records still held")
+        with self._recording() as got:
+            km._begin_checkpoint_cycle()
+        self.assertEqual((got["walks"], km._AGENT_ENDED_FAULTED), (1, {}), "the next cycle looks the other up")
+        self.assertEqual((self._weight(self.wf_agent) in (None, 0), em._ckpt_file(self.wf_agent).exists(),
+                          self._stat("released")), (True, True, {"agentEnded": {"count": 2, "bytes": size + wf_size}}),
+                         "and releases it with its document")
+
+    def test_the_ends_due_take_turns_when_the_oldest_ones_lookup_faults_again_at_each_cycle(self):
+        """The ends due take turns under the cap: a lookup that faults again remembers its end as the newest
+        (_remember_faulted_end), so an end whose lookup faults at every cycle does not hold the cycle's one lookup. The
+        older end is the workflow agent's, whose lookup faults at every cycle on residual 2's root form (the strict
+        os.path.realpath of the own subagents directory fails, an EIO by mock, while its lstat and listing answer), as
+        in the root-form witness
+        test_residual_a_resolution_of_a_trees_root_that_fails_where_its_lstat_answers_has_its_end_looked_up_at_each_cycle.
+        The younger is the third agent's, whose file lies in a sibling session's tree; both end in one batch while that
+        tree's root fails its resolution too (by the same mock), so both lookups fault and both ends are remembered, the
+        workflow agent's first. Then the sibling's root resolves again, and both ends' places read at each cycle, so
+        both are due: the first cycle looks the older up, which faults again and goes behind the younger; the second
+        looks the younger up and releases its records with their document; the third looks the older up again. Red
+        under a mutant that keeps a re-remembered end in its old place: the older end is looked up at every cycle and
+        the younger never is."""
+        own = os.path.dirname(self.agent)
+        sib = os.path.join(os.path.dirname(self.leaf), SIB_SID, "subagents")
+        path3 = os.path.join(sib, "agent-%s.jsonl" % AID3)
+        os.makedirs(sib)
+        _append(path3, _agent_lines(AID3, 0, 40))
+        wf_size = self._fold_while_running(WF_AID, self.wf_agent)
+        size3 = self._fold_while_running(AID3, path3)
+        km._begin_checkpoint_cycle()                                     # drains both starts
+        for aid in (WF_AID, AID3):
+            km._SUBAGENT_FILE_CACHE.pop((self.leaf, aid), None)          # no resolution stands for either lookup
+        failing = {own, sib}
+        real = os.path.realpath
+
+        def resolve(p, *a, **k):
+            if k.get("strict") and os.fspath(p) in failing:
+                raise OSError(errno.EIO, "the resolution failed", os.fspath(p))
+            return real(p, *a, **k)
+        os.path.realpath = resolve
+        try:
+            self._stop(WF_AID)
+            self._stop(AID3)
+            km._begin_checkpoint_cycle()                                 # the ends' cycle: each lookup faults on both roots
+            both = ((own, "tree"), (sib, "tree"))
+            self.assertEqual(list(km._AGENT_ENDED_FAULTED.items()), [((SID, WF_AID), both), ((SID, AID3), both)],
+                             "precondition: both remembered with the two roots, the workflow agent's end the older")
+            failing.discard(sib)                                         # the sibling's root resolves again; the own root's not
+            rows, self.maxDiff = [], None                                # the whole rows in a red's message
+            for n in (1, 2, 3):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                rows.append((n, got["walks"], list(km._AGENT_ENDED_FAULTED), self._weight(path3) in (None, 0)))
+            self.assertEqual(rows, [(1, 1, [(SID, AID3), (SID, WF_AID)], False),
+                                    (2, 1, [(SID, WF_AID)], True),
+                                    (3, 1, [(SID, WF_AID)], True)],
+                             "(cycle, walks, the faulted ends oldest first, the third agent's records released): the "
+                             "older end's lookup faults again and it goes behind the younger, looked up and released at "
+                             "the second cycle")
+            self.assertEqual((em._ckpt_file(path3).exists(), self._weight(self.wf_agent), self._stat("releaseLost")),
+                             (True, wf_size, 0), "the younger end's records released with their document, the older "
+                             "end's still held while its lookup faults, nothing given up")
+        finally:
+            os.path.realpath = real
+        km._begin_checkpoint_cycle()                                     # the own root resolves again
+        self.assertEqual((self._weight(self.wf_agent) in (None, 0), em._ckpt_file(self.wf_agent).exists(),
+                          self._stat("released"), km._AGENT_ENDED_FAULTED),
+                         (True, True, {"agentEnded": {"count": 2, "bytes": size3 + wf_size}}, {}),
+                         "the older end looked up and released with its document at the first cycle after its fault")
+
+    def test_an_end_that_waited_keeps_its_place_and_is_looked_up_first_once_its_place_reads(self):
+        """Oldest first holds for an end that waited too: a cycle in which an end waits leaves it where it is in the table,
+        so once its place reads it is looked up before the younger ends due. The own agent's end, the oldest, waits on a
+        place whose read fails (by a wrapper of _unread_place_reads, since the order is under test and not the read); the
+        workflow agent's and the third agent's ends, younger, are remembered with the own subagents directory, which
+        reads, so both are due. The first cycle looks the workflow agent's end up; then the oldest end's place reads, and
+        the second cycle looks it up before the third agent's. Red under a mutant that moves a waiting end behind the
+        others at each cycle it waits: the first cycle leaves the table as [the third agent's, the own agent's], and the
+        second looks the third agent's end up while the oldest waits another cycle."""
+        own = os.path.dirname(self.agent)
+        _append(os.path.join(own, "agent-%s.jsonl" % AID3), _agent_lines(AID3, 0, 40))
+        blocked = os.path.join(os.path.dirname(self.leaf), "a-place-that-fails")
+        km._remember_faulted_end((SID, AID), ((blocked, "tree"),))      # the oldest, waiting
+        km._remember_faulted_end((SID, WF_AID), ((own, "tree"),))       # two younger ends, due
+        km._remember_faulted_end((SID, AID3), ((own, "tree"),))
+        real, fails = km._unread_place_reads, [True]
+        km._unread_place_reads = lambda p, kind, sid: (not fails[0]) if p == blocked else real(p, kind, sid)
+        try:
+            rows, self.maxDiff = [], None
+            for n in (1, 2, 3):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                rows.append((n, got["walks"], [aid for _sid, aid in km._AGENT_ENDED_FAULTED]))
+                fails[0] = False                                         # the oldest end's place reads after the first
+        finally:
+            km._unread_place_reads = real
+        self.assertEqual(rows, [(1, 1, [AID, AID3]), (2, 1, [AID3]), (3, 1, [])],
+                         "(cycle, walks, the faulted ends left, oldest first): the waiting end keeps its place and is "
+                         "looked up at the first cycle after its place reads, ahead of the younger end due")
+
+    def test_a_directory_whose_listing_is_refused_is_read_by_its_listing_so_its_end_is_not_walked_while_it_stays_refused(self):
+        """The own subagents directory at mode 000: its lstat succeeds (its parent can be searched) while its listing and
+        the lstat of the file in it are refused. The walk excludes the directory for its listing and the file for its
+        lstat, and each cycle under the fault reads the directory by its lstat and its listing's first entry and the file
+        by its lstat, then, that read failing, the tree's root on the walk's way to the file by one more lstat (the
+        directory itself, a real one, so the walk reaches the file), with no walk; the first cycle after the clear walks
+        once and releases. Red under a mutant that reads a directory by its lstat alone: the directory reads at every
+        faulted cycle, and the end is walked at each."""
+        own = os.path.dirname(self.agent)
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
+        with self._unreadable(own):
+            os.lstat(own)                                                # the premise: the place's own lstat reads
+            with self.assertRaises(PermissionError, msg="precondition: its listing is refused"):
+                os.scandir(own).close()
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID): ((own, "tree"), (self.agent, "tree"))},
+                             "precondition: remembered with the directory and the file in it")
+            for n in (1, 2):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                self.assertEqual(got, {"lstat": [own, self.agent, own], "stat": [], "scandir": [own], "walks": 0},
+                                 "faulted cycle %d: each place read once, the root on the way to the file, and no walk" % n)
+            self._held_unwritten_nothing(self.agent, size, "under the fault")
+        with self._recording() as got:
+            km._begin_checkpoint_cycle()
+        self.assertEqual(got["walks"], 1, "looked up again once the listing reads")
+        self._released_with_its_document(self.agent, size)
+
+    def test_a_project_directory_entry_is_read_through_its_link_so_its_end_is_not_walked_while_the_target_is_unreadable(self):
+        """A sibling session directory reached through a link, the agent's file under its tree, the link's target in a
+        directory at mode 000: the walk reads the entry by os.stat, which follows the link and fails, and excludes the
+        entry. Each cycle under the fault reads the entry by one os.stat, as the walk does, and no lstat and no walk; the
+        first cycle after the clear walks once and releases. Red under a mutant that reads the entry by its lstat: the link
+        itself reads at every faulted cycle, and the end is walked at each."""
+        proj = os.path.dirname(self.leaf)
+        away = os.path.join(self.root, "elsewhere")
+        target = os.path.join(away, SIB_SID)
+        os.makedirs(os.path.join(target, "subagents"))
+        link = os.path.join(proj, SIB_SID)
+        os.symlink(target, link)
+        path = os.path.join(link, "subagents", "agent-%s.jsonl" % AID3)
+        _append(path, _agent_lines(AID3, 0, 40))
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        with self._unreadable(away):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((link, "entry"),)},
+                             "precondition: remembered with the entry, a project-directory entry")
+            for n in (1, 2):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                self.assertEqual(got, {"lstat": [], "stat": [link], "scandir": [], "walks": 0},
+                                 "faulted cycle %d: the entry read once through its link and no walk" % n)
+            self._held_unwritten_nothing(path, size, "under the fault")
+        with self._recording() as got:
+            km._begin_checkpoint_cycle()
+        self.assertEqual(got["walks"], 1, "looked up again once the entry reads")
+        self._released_with_its_document(path, size)
+
+    def test_a_project_directory_entry_replaced_by_a_looping_link_answers_its_own_read_so_its_end_is_looked_up(self):
+        """A sibling session directory reached through a link whose target lies in a directory at mode 000: the walk's
+        os.stat of the entry fails and the end is remembered with the entry. The link is then replaced by a link to itself:
+        the entry's os.stat reads ELOOP, which the walk takes for not a directory and the place read answers the same
+        way, so the next cycle looks the end up, and the walk, finding no file, releases nothing. Red under a mutant that
+        drops the entry's _REG_MISSING_ERRNOS answer: the read falls through to the transcript, whose project directory
+        holds the entry, so the place stays lasting and no walk is made."""
+        proj = os.path.dirname(self.leaf)
+        away = os.path.join(self.root, "elsewhere")
+        target = os.path.join(away, SIB_SID)
+        os.makedirs(os.path.join(target, "subagents"))
+        link = os.path.join(proj, SIB_SID)
+        os.symlink(target, link)
+        path = os.path.join(link, "subagents", "agent-%s.jsonl" % AID3)
+        _append(path, _agent_lines(AID3, 0, 40))
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        with self._unreadable(away):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((link, "entry"),)},
+                             "precondition: remembered with the entry")
+            os.unlink(link)
+            os.symlink(link, link)
+            with self.assertRaises(OSError, msg="precondition: the entry's os.stat fails") as cm:
+                os.stat(link)
+            self.assertEqual(cm.exception.errno, errno.ELOOP, "precondition: the entry's os.stat reads ELOOP")
+            faults, excluded = [], []
+            self.assertEqual((km._subagent_file_walk(self.leaf, AID3, [], faults, [], excluded), faults, excluded),
+                             (None, [], []), "precondition: the walk takes the looping entry for not a directory")
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual((got["walks"], getattr(km, "_AGENT_ENDED_FAULTED", {})), (1, {}),
+                             "the next cycle looks the end up, one walk, and forgets it")
+            self.assertEqual((self._weight(path), self._stat("released"), self._stat("releaseLost")),
+                             (size, NOTHING_RELEASED, 0), "nothing released or given up: the walk found no file")
+
+    def _sibling_agent(self, proj):
+        """The third agent's file under a sibling session directory's tree in `proj`, where only the walk's project
+        listing reaches it: its path."""
+        path = os.path.join(proj, SIB_SID, "subagents", "agent-%s.jsonl" % AID3)
+        os.makedirs(os.path.dirname(path))
+        _append(path, _agent_lines(AID3, 0, 40))
+        return path
+
+    def _project_listing_refused(self, proj, refused):
+        """The third agent, its file under a sibling's tree, ends while `refused` (the project directory, or the directory
+        a link in its place points at) is at mode 300: searchable, so the own tree and every entry's stat read, and not
+        listable, so the walk excludes the project directory for its listing. Each cycle under the fault reads the project
+        directory by one os.stat and its listing, with no lstat and no walk; the first cycle after the clear walks once
+        and releases."""
+        path = self._sibling_agent(proj)                                 # the path the walk resolves, through a link if one
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        with self._unreadable(refused, mode=0o300):
+            with self.assertRaises(PermissionError, msg="precondition: the project directory's listing is refused"):
+                os.listdir(proj)
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((proj, "project"),)},
+                             "precondition: remembered with the project directory")
+            for n in (1, 2):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                self.assertEqual(got, {"lstat": [], "stat": [proj], "scandir": [proj], "walks": 0},
+                                 "faulted cycle %d: the project directory read once, stat and listing, and no walk" % n)
+            self._held_unwritten_nothing(path, size, "under the fault")
+        with self._recording() as got:
+            km._begin_checkpoint_cycle()
+        self.assertEqual(got["walks"], 1, "looked up again once the listing reads")
+        self._released_with_its_document(path, size)
+
+    def test_a_project_directory_whose_listing_is_refused_is_read_by_its_listing_so_its_end_is_not_walked_meanwhile(self):
+        """The project directory at mode 300 (_project_listing_refused). Red under a mutant that reads the project
+        directory by its stat alone: it reads at every faulted cycle, and the end is walked at each."""
+        self._project_listing_refused(os.path.dirname(self.leaf), os.path.dirname(self.leaf))
+
+    def test_a_project_directory_reached_through_a_link_is_read_through_it_so_its_end_is_not_walked_meanwhile(self):
+        """The same with the project directory a link to a directory at mode 300: the walk stats and lists it through the
+        link. Red under a mutant that reads the project directory as a place in a tree (its lstat, which answers the link
+        itself, and a listing only for a directory there): the link reads at every faulted cycle, and the end is walked
+        at each."""
+        real = os.path.join(self.root, "projects-real", "-home-TESTHOST-notes-api-linked")
+        link = os.path.join(self.root, "projects", "-home-TESTHOST-notes-api-linked")
+        os.makedirs(os.path.join(real, SID, "subagents"))
+        os.symlink(real, link)
+        self.leaf = os.path.join(link, SID + ".jsonl")                 # the session's transcript, reached through the link
+        _append(self.leaf, [{"type": "user", "uuid": "11111111-2222-3333-4444-000000000002", "sessionId": SID,
+                             "timestamp": "2026-09-24T09:59:00.000Z",
+                             "message": {"role": "user", "content": "Run the notes-api tests in the background."}}])
+        km._path_of = lambda sid, now=None: self.leaf if sid == SID else None   # restored by tearDown
+        self._project_listing_refused(link, real)
+
+    def test_a_faulted_end_is_looked_up_again_when_any_of_its_places_reads_while_another_still_cannot(self):
+        """Two places the walk could not read: the own session directory at mode 000 (the own subagents directory
+        excluded) and a sibling session directory at mode 000 whose tree holds the agent's file (its subagents root
+        excluded). When the sibling alone is restored the end is looked up again at the next cycle and released, the own
+        tree still unreadable: every place the walk could not read is read at each cycle, the first to read ending the
+        wait. Red under a mutant that reads the first place alone: the release waits until the own tree reads."""
+        proj = os.path.dirname(self.leaf)
+        sess, sib = os.path.dirname(os.path.dirname(self.agent)), os.path.join(proj, SIB_SID)
+        path = os.path.join(sib, "subagents", "agent-%s.jsonl" % AID3)
+        os.makedirs(os.path.dirname(path))
+        _append(path, _agent_lines(AID3, 0, 40))
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        with self._unreadable(sess):
+            with self._unreadable(sib):
+                km._begin_checkpoint_cycle()
+                self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}),
+                                 {(SID, AID3): ((os.path.join(sess, "subagents"), "tree"),
+                                                (os.path.join(sib, "subagents"), "tree"))},
+                                 "precondition: remembered with both places, the own tree's first")
+                km._begin_checkpoint_cycle()
+                self._held_unwritten_nothing(path, size, "while both places are unreadable")
+            with self.assertRaises(PermissionError, msg="precondition: the own tree still cannot be read"):
+                os.lstat(os.path.join(sess, "subagents"))
+            km._begin_checkpoint_cycle()                                 # the sibling reads; the own tree does not
+            self._released_with_its_document(path, size)
+
+    def test_a_faulted_end_whose_lookup_faults_again_waits_on_the_places_of_that_lookup(self):
+        """A faulted end looked up again whose lookup faults again is remembered with the places that lookup could not
+        read, not the earlier set (_remember_faulted_end). The own agent ends with the own session directory and an empty
+        sibling session directory both at mode 000, so it is remembered with both subagents places, the own first. The
+        sibling is restored: its subagents place reads (nothing there), so the next cycle looks the end up, and that
+        lookup faults again on the own tree alone and remembers the end with it. The two cycles after that make no walk,
+        and the first cycle after the own tree reads releases the records with their document. Red under a mutant that
+        keeps the earlier set: the sibling's place still reads at every cycle, so every cycle walks and faults again."""
+        proj = os.path.dirname(self.leaf)
+        sess, own = os.path.dirname(os.path.dirname(self.agent)), os.path.dirname(self.agent)
+        sib = os.path.join(proj, SIB_SID)
+        os.makedirs(sib)                                                 # a sibling session directory with no tree
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
+        with self._unreadable(sess):
+            with self._unreadable(sib):
+                km._begin_checkpoint_cycle()                             # the end's cycle: the lookup walks and faults
+                self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}),
+                                 {(SID, AID): ((own, "tree"), (os.path.join(sib, "subagents"), "tree"))},
+                                 "precondition: remembered with both places, the own tree's first")
+            walks = []
+            for n in range(3):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                walks.append(got["walks"])
+                if n == 0:
+                    self.assertEqual(km._AGENT_ENDED_FAULTED, {(SID, AID): ((own, "tree"),)},
+                                     "the lookup faulted again and remembered the end with its own place alone")
+            self.assertEqual(walks, [1, 0, 0], "looked up once, when the sibling's place read; then no walk")
+            self._held_unwritten_nothing(self.agent, size, "while the own tree cannot be read")
+        km._begin_checkpoint_cycle()
+        self._released_with_its_document(self.agent, size)
+
+    # A place whose read fails is lasting only where the walk the lookup makes now reaches it (fork PR 882's focused
+    # re-check, condition 1: every error the place read takes as lasting is one the walk faults on). The walk lists the
+    # project directory of the session's transcript and no other, so a project directory, an entry or a place in a tree
+    # outside that one is not reached. Inside it, the walk enters a sibling session directory only when its os.stat reads
+    # a directory (_REG_MISSING_ERRNOS read as not one), and goes below a tree's root only through real directories, never
+    # a link, while an os.lstat of the place follows a link at every component but the last. Each case below changes what
+    # lies on the way to a place the end's walk could not read, or where the session's transcript lies, so that the walk
+    # no longer reaches the place and answers, while the place's own read still fails. Under a read that takes every
+    # failed place as lasting (no transcript read, no read of the way), the end stays until the table's bound gives it up
+    # and is counted in releaseLost: each case whose name says a place is read as the walk reads it is red there at its
+    # last step (no walk, the end kept), and the control holds there too. The unit pin
+    # test_a_failed_place_answers_where_the_transcript_lies_in_another_project_and_waits_with_no_transcript_or_a_raise is
+    # red there at each kind's first other-project answer.
+
+    def _read_fails(self, p, kind="tree"):
+        """Whether the place's own read fails for a reason other than absence: the read _unread_place_reads makes first,
+        for a place in a tree an os.lstat and the first entry of its listing for a directory there, for the project
+        directory an os.stat and the first entry of its listing, and for an entry of it an os.stat, _REG_MISSING_ERRNOS
+        read as not a directory."""
+        try:
+            if stat.S_ISDIR((os.lstat if kind == "tree" else os.stat)(p).st_mode) and kind != "entry":
+                with os.scandir(p) as it:
+                    next(it, None)
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+        except OSError as e:
+            return not (kind == "entry" and e.errno in (errno.EBADF, errno.ELOOP))
+        return False
+
+    def _looked_up_at_the_next_cycle(self, aid, places, path, size, kind="tree"):
+        """Each of the end's places (of `kind`) still fails its own read, the walk the lookup makes now answers (no file,
+        no fault), and the next cycle looks the end up: one walk, the end forgotten, nothing released or given up, and
+        the records still held, since the walk found no file to release."""
+        self.assertEqual([self._read_fails(p, kind) for p in places], [True] * len(places),
+                         "precondition: each place's own read still fails")
+        faults, excluded = [], []
+        self.assertEqual((km._subagent_file_walk(self.leaf, aid, [], faults, [], excluded), faults, excluded),
+                         (None, [], []), "precondition: the walk the lookup makes now answers, with no file and no fault")
+        with self._recording() as got:
+            km._begin_checkpoint_cycle()
+        self.assertEqual((got["walks"], getattr(km, "_AGENT_ENDED_FAULTED", {})), (1, {}),
+                         "the next cycle looks the end up, one walk, and forgets it")
+        self.assertEqual((self._weight(path), self._stat("released"), self._stat("releaseLost")),
+                         (size, NOTHING_RELEASED, 0), "nothing released or given up: the walk found no file")
+
+    def _sibling_entry_no_longer_a_directory(self, replace):
+        """A sibling session directory reached through a link, the agent's file under its tree, the link's target at mode
+        000: the walk reads the entry by os.stat, a directory, and excludes the tree, whose root's lstat fails, so the end
+        is remembered with that root, a place in a subagents tree. `replace(link)` then leaves the entry something the
+        walk's os.stat takes for not a directory, and the walk enters nothing there."""
+        proj = os.path.dirname(self.leaf)
+        target = os.path.join(self.root, "elsewhere", SIB_SID)
+        os.makedirs(os.path.join(target, "subagents"))
+        link = os.path.join(proj, SIB_SID)
+        os.symlink(target, link)
+        path = os.path.join(link, "subagents", "agent-%s.jsonl" % AID3)
+        _append(path, _agent_lines(AID3, 0, 40))
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        place = os.path.join(link, "subagents")
+        with self._unreadable(target):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((place, "tree"),)},
+                             "precondition: remembered with the sibling's tree root")
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual(got, {"lstat": [place], "stat": [], "scandir": [], "walks": 0},
+                             "precondition: a cycle under the fault reads the root once (EACCES, no read on the way to a "
+                             "root, and no os.stat of the entry for that errno) and makes no walk")
+            replace(link)
+            self._looked_up_at_the_next_cycle(AID3, (place,), path, size)
+
+    def test_a_sibling_session_directory_replaced_by_a_looping_link_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 1 (ELOOP): the link replaced by a link to itself. The walk's os.stat of the entry reads ELOOP, which it
+        takes for not a directory, while the lstat of the place reads the same ELOOP through the entry."""
+        def loop(link):
+            os.unlink(link)
+            os.symlink(link, link)
+        self._sibling_entry_no_longer_a_directory(loop)
+
+    def test_a_sibling_session_directory_whose_stat_reads_ebadf_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 1 (EBADF, by mock: a FUSE filesystem can answer a lookup so, a local one does not): every os.stat and
+        os.lstat that resolves the entry reads EBADF, which the walk's os.stat of the entry takes for not a directory."""
+        real = {n: getattr(os, n) for n in ("stat", "lstat")}
+
+        def ebadf(link):
+            def call(n):
+                def f(p, *a, **k):
+                    s = os.fspath(p) if isinstance(p, (str, os.PathLike)) else None
+                    if s is not None and (s == link and n == "stat" or s.startswith(link + os.sep)):
+                        raise OSError(errno.EBADF, "the lookup answered EBADF", s)
+                    return real[n](p, *a, **k)
+                return f
+            for n in real:
+                setattr(os, n, call(n))
+        try:
+            self._sibling_entry_no_longer_a_directory(ebadf)
+        finally:
+            for n, f in real.items():
+                setattr(os, n, f)
+
+    # The next two cases drive the sibling stat's other two answers by mock: a filesystem that answers two lookups of one
+    # path differently (a FUSE one can; on a local one an entry that is a file makes an lstat below it read ENOTDIR, an
+    # absence, and an entry whose own os.stat fails fails the same way for an lstat that resolves it). Every os.lstat
+    # below the entry reads ELOOP, so the sibling stat is made, and the entry's os.stat answers otherwise.
+
+    def _entry_answers_while_below_it_loops(self, answer):
+        """(install, real): install(link), the `replace` of _sibling_entry_no_longer_a_directory or a case's own step,
+        makes every os.lstat below the link read ELOOP and the link's os.stat answer `answer(path)`; the case restores
+        os.stat and os.lstat from `real`."""
+        real = {n: getattr(os, n) for n in ("stat", "lstat")}
+
+        def install(link):
+            def st(p, *a, **k):
+                if isinstance(p, (str, os.PathLike)) and os.fspath(p) == link:
+                    return answer(p)
+                return real["stat"](p, *a, **k)
+
+            def lst(p, *a, **k):
+                if isinstance(p, (str, os.PathLike)) and os.fspath(p).startswith(link + os.sep):
+                    raise OSError(errno.ELOOP, "the lookup answered ELOOP", os.fspath(p))
+                return real["lstat"](p, *a, **k)
+            os.stat, os.lstat = st, lst
+        return install, real
+
+    def test_a_sibling_session_directory_whose_stat_reads_a_file_while_below_it_loops_is_read_as_the_walk_reads_it(self):
+        """The entry's os.stat reads a regular file: the walk takes it for not a directory and enters nothing, and the
+        place read answers the same, so the end is looked up. Red under a mutant that reads that non-directory as the
+        fault lasting: the end waits with no walk."""
+        file_st = os.stat(self.leaf)
+        install, real = self._entry_answers_while_below_it_loops(lambda p: file_st)
+        try:
+            self._sibling_entry_no_longer_a_directory(install)
+        finally:
+            for n, f in real.items():
+                setattr(os, n, f)
+
+    def test_a_sibling_session_directory_whose_stat_fails_otherwise_while_below_it_loops_keeps_the_fault_with_no_walk(self):
+        """The entry's os.stat reads EIO: the walk's os.stat of the entry fails there too, a fault, so the place stays
+        unreadable and the end waits with no walk; once the mock is gone and the target reads, the next cycle releases
+        the records with their document. Red under a mutant that answers every error of that stat: each cycle walks."""
+        proj = os.path.dirname(self.leaf)
+        target = os.path.join(self.root, "elsewhere", SIB_SID)
+        os.makedirs(os.path.join(target, "subagents"))
+        link = os.path.join(proj, SIB_SID)
+        os.symlink(target, link)
+        path = os.path.join(link, "subagents", "agent-%s.jsonl" % AID3)
+        _append(path, _agent_lines(AID3, 0, 40))
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        place = os.path.join(link, "subagents")
+
+        def eio(p):
+            raise OSError(errno.EIO, "the lookup answered EIO", os.fspath(p))
+        install, real = self._entry_answers_while_below_it_loops(eio)
+        with self._unreadable(target):
+            km._begin_checkpoint_cycle()                                 # the end's cycle: the root's lstat reads EACCES
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((place, "tree"),)},
+                             "precondition: remembered with the sibling's tree root")
+            install(link)
+            try:
+                for n in (1, 2):
+                    with self._recording() as got:
+                        km._begin_checkpoint_cycle()
+                    self.assertEqual((got["stat"], got["walks"], km._AGENT_ENDED_FAULTED),
+                                     ([link], 0, {(SID, AID3): ((place, "tree"),)}),
+                                     "cycle %d: the entry's os.stat fails, so the place stays unreadable, and no walk" % n)
+            finally:
+                for n, f in real.items():
+                    setattr(os, n, f)
+            self._held_unwritten_nothing(path, size, "while the entry's os.stat fails")
+        km._begin_checkpoint_cycle()
+        self._released_with_its_document(path, size)
+
+    def test_an_own_session_directory_left_looping_by_a_clear_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 1 through a /clear: the session directory replaced by a link to itself before the end, so the walk's lstat
+        of the own subagents directory reads ELOOP, a fault, and the end is remembered with that place. While the session's
+        transcript stays the same the place is lasting and no walk is made. A /clear then moves the session to a new
+        transcript in the same project: the old session directory is a sibling to the walk from it, read by os.stat, whose
+        ELOOP it takes for not a directory. Red under a mutant that answers ELOOP for the own session directory too: the
+        cycles before the /clear walk at each."""
+        proj = os.path.dirname(self.leaf)
+        sess = os.path.join(proj, SID)
+        own = os.path.join(sess, "subagents")
+        size = self._ended_with_its_file_resolved(AID, self.agent, standing=False)
+        os.rename(sess, os.path.join(self.root, "moved-session"))
+        os.symlink(sess, sess)                                           # the session directory a link to itself
+        km._begin_checkpoint_cycle()                                     # the end's cycle: the own lstat reads ELOOP
+        self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID): ((own, "tree"),)},
+                         "precondition: remembered with the own subagents directory")
+        for n in (1, 2):
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual(got, {"lstat": [own], "stat": [], "scandir": [], "walks": 0},
+                             "cycle %d before the /clear: the own place is lasting (its session directory the own one, "
+                             "not read by os.stat), and no walk" % n)
+        self.leaf = os.path.join(proj, "11111111-2222-3333-4444-a9e7e1d0c0e2.jsonl")   # the transcript after the /clear,
+        _append(self.leaf, [{"type": "user", "uuid": "11111111-2222-3333-4444-000000000003", "sessionId": SID,   # which
+                             "timestamp": "2026-09-24T10:30:00.000Z",                   # setUp's _path_of stub answers
+                             "message": {"role": "user", "content": "Start the notes-api migration review."}}])
+        self._looked_up_at_the_next_cycle(AID, (own,), self.agent, size)
+
+    def _nested_place_behind_a_link(self, replace):
+        """The workflow agent's directory (workflows/wf_notesapi01) at mode 000: the walk excludes it for its listing and
+        the agent's file in it for its lstat, and the end is remembered with both. Two cycles under the fault read both as
+        lasting and make no walk, the directories on the way to them being real. `replace(own, moved)` then moves a
+        directory on the way out of the tree (to `moved`) and leaves a link in its place, which the walk never goes
+        through, while an lstat of each place follows it (or, by mock, makes that directory read as absent while an
+        lstat of each place still resolves it)."""
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        own = os.path.dirname(self.agent)
+        wf = os.path.dirname(self.wf_agent)
+        size = self._ended_with_its_file_resolved(WF_AID, self.wf_agent, standing=False)
+        moved = os.path.join(self.root, "moved")
+        os.chmod(wf, 0o000)
+        try:
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, WF_AID): ((wf, "tree"), (self.wf_agent, "tree"))},
+                             "precondition: remembered with the workflow directory and the file in it")
+            for n in (1, 2):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                self.assertEqual(got["walks"], 0, "precondition: faulted cycle %d makes no walk" % n)
+            replace(own, moved)
+            self._looked_up_at_the_next_cycle(WF_AID, (wf, self.wf_agent), self.wf_agent, size)
+        finally:                                                         # wherever the workflow directory is now
+            for d in (wf, os.path.join(moved, "wf_notesapi01"), os.path.join(moved, "workflows", "wf_notesapi01")):
+                with contextlib.suppress(OSError):
+                    os.chmod(d, 0o755)
+
+    def test_a_directory_below_a_trees_root_replaced_by_a_looping_link_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 2: the workflows directory moved out and a link to itself left in its place."""
+        def loop(own, moved):
+            os.rename(os.path.join(own, "workflows"), moved)
+            os.symlink(os.path.join(own, "workflows"), os.path.join(own, "workflows"))
+        self._nested_place_behind_a_link(loop)
+
+    def test_a_directory_below_a_trees_root_replaced_by_a_link_to_it_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 2: the workflows directory moved out and a link to it left in its place, so the workflow directory's lstat
+        answers through the link and its listing is still refused, and the file's lstat still reads EACCES."""
+        def link(own, moved):
+            os.rename(os.path.join(own, "workflows"), moved)
+            os.symlink(moved, os.path.join(own, "workflows"))
+        self._nested_place_behind_a_link(link)
+
+    def test_a_directory_on_the_way_that_reads_as_absent_while_the_place_resolves_is_read_as_the_walk_reads_it(self):
+        """Road 2 with nothing on the way (by mock: a filesystem that answers two lookups of one path differently; on a
+        local one a directory missing on the way makes the place's own lstat read ENOENT, an absence): the workflows
+        directory's os.lstat reads ENOENT while the workflow directory's lstat, which resolves it, still answers and its
+        listing is refused. The walk's tree read takes the workflows directory for gone and goes no deeper, and the place
+        read answers the same, so the end is looked up. Red under a mutant that reads a way directory's absence as the
+        fault lasting: the end waits with no walk."""
+        real = os.lstat
+
+        def absent(own, moved):
+            gone = os.path.join(own, "workflows")
+
+            def lst(p, *a, **k):
+                if isinstance(p, (str, os.PathLike)) and os.fspath(p) == gone:
+                    raise FileNotFoundError(errno.ENOENT, "the lookup answered ENOENT", gone)
+                return real(p, *a, **k)
+            os.lstat = lst
+        try:
+            self._nested_place_behind_a_link(absent)
+        finally:
+            os.lstat = real
+
+    def _transcript_in_another_project(self):
+        """The session's transcript now lies in another project directory, which holds nothing else: the walk the lookup
+        makes lists that directory and no other."""
+        other = os.path.join(self.root, "projects", "-home-TESTHOST-notes-web")
+        os.makedirs(other)
+        self.leaf = os.path.join(other, SID + ".jsonl")                  # which setUp's _path_of stub answers
+        _append(self.leaf, [{"type": "user", "uuid": "11111111-2222-3333-4444-000000000004", "sessionId": SID,
+                             "timestamp": "2026-09-24T10:30:00.000Z",
+                             "message": {"role": "user", "content": "Continue the notes-api review from the web checkout."}}])
+
+    def test_a_project_directory_the_session_no_longer_lists_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """The project directory at mode 300, so the walk excludes it for its listing, and the third agent's end, its file
+        under a sibling's tree, is remembered with it; a cycle under the fault reads it by its os.stat and its listing and
+        makes no walk. The session's transcript then lies in another project directory, the one the walk lists now, so the
+        next cycle looks the end up. Red under a mutant that reads the transcript for a place in a tree alone, and under
+        one that keeps a project directory lasting whatever the transcript."""
+        proj = os.path.dirname(self.leaf)
+        path = self._sibling_agent(proj)
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        with self._unreadable(proj, mode=0o300):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((proj, "project"),)},
+                             "precondition: remembered with the project directory")
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual(got, {"lstat": [], "stat": [proj], "scandir": [proj], "walks": 0},
+                             "precondition: a cycle under the fault reads the project directory once and makes no walk")
+            self._transcript_in_another_project()
+            self._looked_up_at_the_next_cycle(AID3, (proj,), path, size, kind="project")
+
+    def test_a_project_directory_entry_the_session_no_longer_lists_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """A sibling session directory reached through a link whose target lies in a directory at mode 000, so the walk's
+        os.stat of the entry fails and excludes it, and the third agent's end, its file under that sibling's tree, is
+        remembered with the entry; a cycle under the fault reads the entry by one os.stat and makes no walk. The session's
+        transcript then lies in another project directory, whose entries are the ones the walk reads now, so the next
+        cycle looks the end up. Red under a mutant that reads the transcript for a place in a tree alone, and under one
+        that keeps an entry lasting whatever the transcript."""
+        proj = os.path.dirname(self.leaf)
+        away = os.path.join(self.root, "elsewhere")
+        target = os.path.join(away, SIB_SID)
+        os.makedirs(os.path.join(target, "subagents"))
+        link = os.path.join(proj, SIB_SID)
+        os.symlink(target, link)
+        path = os.path.join(link, "subagents", "agent-%s.jsonl" % AID3)
+        _append(path, _agent_lines(AID3, 0, 40))
+        size = self._ended_with_its_file_resolved(AID3, path, standing=False)
+        with self._unreadable(away):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, AID3): ((link, "entry"),)},
+                             "precondition: remembered with the entry, a project-directory entry")
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            self.assertEqual(got, {"lstat": [], "stat": [link], "scandir": [], "walks": 0},
+                             "precondition: a cycle under the fault reads the entry once and makes no walk")
+            self._transcript_in_another_project()
+            self._looked_up_at_the_next_cycle(AID3, (link,), path, size, kind="entry")
+
+    def test_a_directory_on_the_way_to_a_place_whose_read_fails_there_keeps_the_place_unreadable_with_no_walk(self):
+        """The control of road 2: the workflow directory at mode 000, the end remembered with it and the file in it, then
+        the session directory at mode 000 as well, so each place's read fails and so does the lstat of the tree's root on
+        the walk's way to it (EACCES), a fault the walk's own lstat of that root meets too. Each cycle keeps both places
+        unreadable and makes no walk. Red under a mutant that takes a failed read on the way for a way the walk does not
+        go: the first such cycle walks."""
+        wf = os.path.dirname(self.wf_agent)
+        own = os.path.dirname(self.agent)
+        size = self._ended_with_its_file_resolved(WF_AID, self.wf_agent, standing=False)
+        with self._unreadable(wf):
+            km._begin_checkpoint_cycle()
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, WF_AID): ((wf, "tree"), (self.wf_agent, "tree"))},
+                             "precondition: remembered with the workflow directory and the file in it")
+            with self._unreadable(os.path.dirname(own)):
+                for n in (1, 2):
+                    with self._recording() as got:
+                        km._begin_checkpoint_cycle()
+                    self.assertEqual(got["walks"], 0, "cycle %d: each place's read fails, and the root's on the way to it, "
+                                                      "so no walk" % n)
+                self._held_unwritten_nothing(self.wf_agent, size, "under the fault")
+
+    def test_a_failed_place_answers_where_the_transcript_lies_in_another_project_and_waits_with_no_transcript_or_a_raise(self):
+        """The answers made before the way to a place is read, for each kind of place, each place's read failing (EACCES):
+        the project directory at mode 300 (its listing refused), an entry of it (the own session directory) under the
+        project directory at mode 600 (its os.stat refused), and the own subagents directory under the session directory
+        at mode 000 (its os.lstat refused). Each is lasting from the session's own transcript; each answers when the
+        transcript lies in another project directory, since the walk lists that one, and one of the two other directories
+        has a name the session's own extends (-home-TESTHOST-notes, against the own -home-TESTHOST-notes-api); and each
+        stays lasting when the session has no transcript or its resolution raises, neither of which says where the walk
+        goes (a lookup made then would give the end up while the place still cannot be read). Red under a mutant that
+        answers either of those two, under one that reads the transcript for a place in a tree alone, and under one that
+        takes a place in a tree as inside the project directory by its name without the separator (p.startswith(project)):
+        the tree's subcase for -home-TESTHOST-notes, whose path is a prefix of the place's."""
+        proj = os.path.dirname(self.leaf)
+        sess = os.path.join(proj, SID)
+        own = os.path.join(sess, "subagents")
+        elsewhere = os.path.join(self.root, "projects", "-home-TESTHOST-notes-web", SID + ".jsonl")
+        prefix = os.path.join(self.root, "projects", "-home-TESTHOST-notes", SID + ".jsonl")   # a name the own extends
+        own_transcript = km._path_of
+
+        def raises(sid, now=None):
+            raise RuntimeError("the session registry could not be read")
+        for p, kind, refused, mode in ((proj, "project", proj, 0o300), (sess, "entry", proj, 0o600),
+                                       (own, "tree", sess, 0o000)):
+            with self.subTest(kind=kind), self._unreadable(refused, mode=mode):
+                km._path_of = own_transcript                             # restored by tearDown
+                self.assertTrue(self._read_fails(p, kind), "precondition: the place's own read fails")
+                self.assertFalse(km._unread_place_reads(p, kind, SID), "control: lasting from the session's own transcript")
+                for other in (elsewhere, prefix):
+                    km._path_of = lambda sid, now=None, other=other: other
+                    self.assertTrue(km._unread_place_reads(p, kind, SID), "another project directory (%s): the walk lists "
+                                    "that one" % os.path.basename(os.path.dirname(other)))
+                for why, stub in (("no transcript", lambda sid, now=None: None), ("a resolution that raises", raises)):
+                    km._path_of = stub
+                    self.assertFalse(km._unread_place_reads(p, kind, SID), "%s: the fault lasts" % why)
+
+    def test_a_failed_tree_place_in_the_project_directory_outside_its_subagents_trees_stays_unreadable(self):
+        """The tree kind's answer for a place inside the transcript's project directory that lies in no subagents tree:
+        the own session directory read as a tree place, and a path below it outside its subagents directory, each whose
+        os.lstat fails (an EIO by mock). Neither is on a way the walk takes, so the place's own read decides, and it
+        failed: the fault lasts. No lookup records such a place (every tree place the walk records lies at or below a
+        subagents directory), so this pins the branch by a direct call. Red under a mutant that answers it."""
+        proj = os.path.dirname(self.leaf)
+        sess = os.path.join(proj, SID)
+        real = os.lstat
+        for p in (sess, os.path.join(sess, "notes")):
+            def lst(q, *a, p=p, **k):
+                if isinstance(q, (str, os.PathLike)) and os.fspath(q) == p:
+                    raise OSError(errno.EIO, "the lookup answered EIO", p)
+                return real(q, *a, **k)
+            with self.subTest(place=os.path.relpath(p, proj)):
+                os.lstat = lst
+                try:
+                    self.assertTrue(self._read_fails(p), "precondition: the place's own read fails")
+                    self.assertFalse(km._unread_place_reads(p, "tree", SID), "the place's own failed read decides")
+                finally:
+                    os.lstat = real
+
+    def test_a_trees_root_replaced_by_a_link_to_it_is_read_as_the_walk_reads_it_so_its_end_is_looked_up(self):
+        """Road 2 at the root: the own subagents directory moved out and a link to it left in its place. The walk takes
+        a linked subagents directory for no tree and searches nothing under it. Red under a mutant that reads the
+        directories on the way from below the root."""
+        def link(own, moved):
+            os.rename(own, moved)
+            os.symlink(moved, own)
+        self._nested_place_behind_a_link(link)
+
+    def test_a_faulted_end_forgets_its_unheld_end_so_nothing_pops_the_records_unwritten_under_the_fault(self):
+        """An end remembered as unheld, then a read that holds the file, then the agent's second end in a batch whose
+        lookup faults. The faulted end carries the agent from then on and the unheld end is forgotten, so the remembered
+        releases, which release their path with no lookup, do not pop the records under the fault; the first cycle after
+        the clear releases them with their document. Red before the change, and under a mutant that keeps the unheld end:
+        the next cycle under the fault pays it, em.release_entry's os.path.exists answers False, and the records are popped
+        with no document."""
+        self._end_before_any_read()
+        self.assertIn((SID, AID), km._AGENT_ENDED_UNHELD, "precondition: the end is remembered as unheld")
+        km._agent_steps(self.agent)                                      # a read holds the file after the end
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        km._SUBAGENT_FILE_CACHE.pop((self.leaf, AID), None)
+        self.be.note_agent_live(SID, AID, False)                         # the agent's second end
+        with self._unreadable(os.path.dirname(os.path.dirname(self.agent))):
+            km._begin_checkpoint_cycle()                                 # the second end's cycle: its lookup faults
+            km._begin_checkpoint_cycle()                                 # a cycle with no event under the fault
+            self._held_unwritten_nothing(self.agent, size, "under the fault")
+            self.assertEqual((SID, AID) in km._AGENT_ENDED_UNHELD, False, "the faulted end forgot the unheld end")
+        km._begin_checkpoint_cycle()
+        self._released_with_its_document(self.agent, size)
+
+    def test_the_faulted_ends_past_their_bound_give_up_the_oldest_and_count_it_lost(self):
+        """The table's bound, shared with _AGENT_RELEASED: past it the oldest faulted end is given up, and counted in
+        releaseLost with its cause said once on stderr, since its records stay held. Red under a mutant that forgets it
+        silently."""
+        saved = km._AGENT_RELEASED_MAX
+        km._AGENT_RELEASED_MAX = 2
+        self.addCleanup(setattr, km, "_AGENT_RELEASED_MAX", saved)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for aid in (AID, WF_AID, AID3):
+                km._remember_faulted_end((SID, aid), ((os.path.dirname(self.agent), "tree"),))
+        self.assertEqual(list(km._AGENT_ENDED_FAULTED), [(SID, WF_AID), (SID, AID3)], "the two newest, oldest first")
+        self.assertEqual(self._stat("releaseLost"), 1, "the end given up is counted")
+        self.assertEqual(err.getvalue().count("recordCache.releaseLost"), 1, "said once on stderr: %r" % err.getvalue())
+
+    # Two roads release a path with no lookup, so the deferral above does not reach them: the remembered unheld releases of
+    # an agent with no faulted end (a faulted end forgets the agent's unheld end, the case above) and the owed releases'
+    # pay (em.checkpoint_pay_owed_releases). Each calls em.release_entry on the path, whose own os.path.exists answers
+    # False under a fault as it does for a file that is gone, and pops the records with no document (fork PR 913's code,
+    # pre-existing). The pay also remembers an owed release it finds absent as unheld while the agent's faulted end waits,
+    # which under one lookup a cycle can last cycles after the fault clears, one for each end due ahead of it, so the
+    # unheld release reaches that agent too; its last step is the first case below. The two residual cases below are the
+    # named witnesses of that residual as it stands; the held follow-up (only ENOENT and ENOTDIR read as gone, any other
+    # error deferring the release) turns them red and replaces them. A release either road takes there with the file
+    # present forgets the agent's faulted end too, since it covered the agent's file, and one that is the residual's pop
+    # with no document keeps it, so the end's lookup after the fault remembers the agent as unheld (the cases after
+    # them), and a release on the unheld road that finds nothing held, is lost, raises or races a read keeps it too, in
+    # its place in the table (the cases after those). The file present is a second read after the release's own, and a
+    # fault's edge between the two is a residual _release_ended_agents' docstring states, with no case here; the same
+    # held em.release_entry follow-up closes that residual too: release_entry reports whether its own read found the
+    # file, and the forgetting of the faulted end keys on that answer, in place of the second read.
+
+    def test_residual_an_unheld_end_paid_under_an_unreadable_tree_pops_the_records_without_their_document(self):
+        self._end_before_any_read()
+        km._agent_steps(self.agent)                                      # a read holds the file after the end
+        size = os.path.getsize(self.agent)
+        with self._unreadable(os.path.dirname(os.path.dirname(self.agent))):
+            km._begin_checkpoint_cycle()                                 # the remembered release, under the fault
+            self.assertEqual((self._weight(self.agent), self._stat("released"), em._ckpt_file(self.agent).exists()),
+                             (None, {"agentEnded": {"count": 1, "bytes": size}}, False),
+                             "the residual: popped under the fault with no checkpoint document")
+
+    def test_residual_a_listing_that_fails_past_its_first_entry_has_its_end_looked_up_at_each_cycle_while_it_lasts(self):
+        """The residual witness of one of the two faults the place read cannot see (_unread_place_reads): the own
+        subagents directory's listing yields its first entry and then fails (an EIO by mock; the tree memo's entry
+        dropped, so the tree's read lists it), and the workflow agent's file lies one level down, where that listing
+        would lead. The walk excludes the directory; each cycle's read of it gets the first entry and answers, so the
+        end is looked up, one walk, at each cycle while the fault lasts, and released with its document at the first
+        cycle after it. A fix that reads what the walk's listing reads turns this red and replaces it."""
+        own = os.path.dirname(self.agent)
+        size = self._ended_with_its_file_resolved(WF_AID, self.wf_agent, standing=False)
+        km._SUBAGENT_TREES.pop(own, None)
+        real = os.scandir
+
+        class FailsPastTheFirstEntry:
+            def __init__(self, it):
+                self.it, self.given = it, False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.it.close()
+
+            def close(self):
+                self.it.close()
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if not self.given:
+                    self.given = True
+                    for e in self.it:                                    # a file first, so the walk learns no directory
+                        if not e.is_dir(follow_symlinks=False):
+                            return e
+                raise OSError(errno.EIO, "the listing failed past its first entry")
+
+        os.scandir = lambda p=".", *a, **k: (FailsPastTheFirstEntry(real(p, *a, **k)) if str(p) == own
+                                             else real(p, *a, **k))
+        try:
+            km._begin_checkpoint_cycle()                                 # the end's cycle: the lookup walks and faults
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, WF_AID): ((own, "tree"),)},
+                             "precondition: remembered with the directory whose listing failed")
+            for n in (1, 2):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                own_listings = [d for d in got["scandir"] if d == own]  # the walk's project listing is an os.scandir
+                #                                                         too from 3.13 (Path.iterdir): own's alone count
+                self.assertEqual((own_listings, got["walks"]), ([own, own], 1),
+                                 "faulted cycle %d: the read answers, so the end is walked, and faults again" % n)
+            self._held_unwritten_nothing(self.wf_agent, size, "while the listing fails")
+        finally:
+            os.scandir = real
+        km._begin_checkpoint_cycle()
+        self._released_with_its_document(self.wf_agent, size)
+
+    def test_residual_a_resolution_that_fails_where_its_places_lstat_answers_has_its_end_looked_up_at_each_cycle_while_it_lasts(self):
+        """The residual witness of the other fault the place read cannot see (_unread_place_reads): the workflow agent's
+        file, one level down, whose strict os.path.realpath in _find_agent_file fails (an EIO by mock, the failure a
+        readlink of a link above the file makes there) while the file's own lstat answers. The walk excludes the
+        candidate; each cycle's read of it, one lstat, answers, so the end is looked up, one walk, at each cycle while
+        the fault lasts, and released with its document at the first cycle after it. On Linux a lasting form needs a
+        failure the kernel's own resolution of the path does not meet, since an lstat of the whole path reads every
+        component the realpath reads; a race (a link replaced during the call) lasts one cycle. A fix that reads what the
+        walk's resolution reads turns this red and replaces it."""
+        size = self._ended_with_its_file_resolved(WF_AID, self.wf_agent, standing=False)
+        real = os.path.realpath
+
+        def failing(p, *a, **k):
+            if k.get("strict") and os.fspath(p) == self.wf_agent:
+                raise OSError(errno.EIO, "the resolution failed", os.fspath(p))
+            return real(p, *a, **k)
+        os.path.realpath = failing
+        try:
+            km._begin_checkpoint_cycle()                                 # the end's cycle: the lookup walks and faults
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, WF_AID): ((self.wf_agent, "tree"),)},
+                             "precondition: remembered with the candidate whose resolution failed")
+            for n in (1, 2):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                self.assertEqual((self.wf_agent in got["lstat"], got["walks"]), (True, 1),
+                                 "faulted cycle %d: the candidate's lstat answers, so the end is walked, and faults again" % n)
+            self._held_unwritten_nothing(self.wf_agent, size, "while the resolution fails")
+        finally:
+            os.path.realpath = real
+        km._begin_checkpoint_cycle()
+        self._released_with_its_document(self.wf_agent, size)
+
+    def test_residual_a_resolution_of_a_trees_root_that_fails_where_its_lstat_answers_has_its_end_looked_up_at_each_cycle(self):
+        """The root form of the witness above: the strict os.path.realpath of the own subagents directory in
+        _find_agent_file fails (an EIO by mock) while that directory's lstat and the first entry of its listing answer.
+        The walk excludes the tree, so the workflow agent's file in it (one level down, where no flat lookup reaches) is
+        found nowhere and the end is remembered with the directory; each cycle's read of it answers, so the end is
+        looked up, one walk, at each cycle while the fault lasts, and remembered again with the same place, and it is
+        released with its document at the first cycle after the fault. A fix that reads what the walk's resolution reads
+        turns this red and replaces it."""
+        own = os.path.dirname(self.agent)
+        size = self._ended_with_its_file_resolved(WF_AID, self.wf_agent, standing=False)
+        real = os.path.realpath
+
+        def failing(p, *a, **k):
+            if k.get("strict") and os.fspath(p) == own:
+                raise OSError(errno.EIO, "the resolution failed", os.fspath(p))
+            return real(p, *a, **k)
+        os.path.realpath = failing
+        try:
+            km._begin_checkpoint_cycle()                                 # the end's cycle: the lookup walks and faults
+            self.assertEqual(getattr(km, "_AGENT_ENDED_FAULTED", {}), {(SID, WF_AID): ((own, "tree"),)},
+                             "precondition: remembered with the tree whose resolution failed")
+            for n in (1, 2):
+                with self._recording() as got:
+                    km._begin_checkpoint_cycle()
+                self.assertEqual((own in got["lstat"], got["walks"], km._AGENT_ENDED_FAULTED),
+                                 (True, 1, {(SID, WF_AID): ((own, "tree"),)}),
+                                 "faulted cycle %d: the root's lstat answers, so the end is walked, and faults again" % n)
+            self._held_unwritten_nothing(self.wf_agent, size, "while the resolution fails")
+        finally:
+            os.path.realpath = real
+        km._begin_checkpoint_cycle()
+        self._released_with_its_document(self.wf_agent, size)
+
+    def test_residual_an_owed_release_paid_under_an_unreadable_tree_pops_the_records_without_their_document(self):
+        size = self._owed()
+        with self._unreadable(os.path.dirname(os.path.dirname(self.agent))):
+            km._begin_checkpoint_cycle()                                 # the owed release's pay, under the fault
+            self.assertEqual((self._weight(self.agent), self._stat("released"), em._ckpt_file(self.agent).exists()),
+                             (None, {"agentEnded": {"count": 1, "bytes": size}}, False),
+                             "the residual: popped under the fault with no checkpoint document")
+
+    def test_an_unheld_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too(self):
+        """The unheld road's release covers the agent's file for its faulted end too (_release_ended_agents). The state an
+        owed release paid as absent leaves beside a faulted end (the residual above) is seeded, as fork PR 882's round-5
+        closing check seeded it: the workflow agent's faulted end and then the own agent's, each remembered with the own
+        subagents directory, which reads (the fault has cleared), and the own agent remembered as unheld too, its file
+        held by a whole read. Under the cap (one lookup a cycle) the first cycle looks the workflow agent's end up (one
+        walk; nothing is held for its file, so it is remembered as unheld), and the unheld road releases the own agent's
+        file with its document; that release forgets the own agent's faulted end too, and only that end. Red when it does
+        not: the faulted end waits its turn, and its lookup at the second cycle finds nothing held and remembers the own
+        agent as unheld again, so the unheld road, and with it the residual that reads a fault on the path as the file
+        gone, outlives the wait (the rows then: (1, 1, False, True, False, True, 1), (2, 1, False, False, True, True, 1),
+        (3, 0, False, False, True, True, 1)). Red too when the release forgets another agent's faulted end (every
+        faulted end, the session's, or the oldest): the workflow agent's end is then dropped with no lookup, so the first
+        cycle does not remember it as unheld."""
+        own = os.path.dirname(self.agent)
+        km._remember_faulted_end((SID, WF_AID), ((own, "tree"),))       # an end due ahead of the own agent's
+        km._remember_faulted_end((SID, AID), ((own, "tree"),))          # the own agent's faulted end
+        km._remember_unheld_end((SID, AID), self.agent)                 # and its unheld end beside it
+        km._agent_steps(self.agent)                                      # a read holds the file whole, a fold with it
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        rows, self.maxDiff = [], None                                    # the whole rows in a red's message
+        for n in (1, 2, 3):
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()
+            rows.append((n, got["walks"], (SID, WF_AID) in km._AGENT_ENDED_FAULTED, (SID, AID) in km._AGENT_ENDED_FAULTED,
+                         (SID, AID) in km._AGENT_ENDED_UNHELD, (SID, WF_AID) in km._AGENT_ENDED_UNHELD,
+                         self._stat("released")["agentEnded"]["count"]))
+        self.assertEqual(rows, [(1, 1, False, False, False, True, 1), (2, 0, False, False, False, True, 1),
+                                (3, 0, False, False, False, True, 1)],
+                         "(cycle, walks, the workflow agent's end faulted, the own agent's end faulted, the own agent's "
+                         "end unheld, the workflow agent's end unheld, releases): the first cycle looks the workflow "
+                         "agent's end up, and the release forgets the own agent's faulted end alone")
+        self.assertEqual((self._weight(self.agent) in (None, 0), em._ckpt_file(self.agent).exists()), (True, True),
+                         "the own agent's file released with its document")
+
+    def test_an_owed_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too(self):
+        """The owed releases' pay covers the agent's file for its faulted end too, as the unheld road's release does (the
+        case above, whose state this seeds with a third agent's end due ahead as well). The budget refuses the document
+        at the first cycle, so the unheld road's release of the own agent's file is deferred, owed, and the own agent's
+        faulted end is kept, since a deferral covers nothing yet, while the workflow agent's end, the oldest, is looked
+        up. At the second cycle, the budget back, the pay takes the release with its document and forgets the own
+        agent's faulted end, and only that end: the third agent's end is looked up (nothing is held for its file, so it
+        is remembered as unheld). Red when the pay leaves the own agent's end: it is still in the table after the second
+        cycle, and its lookup at the third finds nothing held and remembers the own agent as unheld again (the rows
+        then: (1, 1, [AID3, AID], False, False, 0, 'owed'), (2, 1, [AID], False, True, 1, 'taken'), (3, 1, [], True,
+        True, 1, 'taken')). Red when a deferred release forgets the faulted end: the first row's table reads [AID3]. Red
+        when the pay forgets another agent's end (every faulted end, the session's, or the oldest): the third agent's
+        end is dropped with no lookup, so the second cycle does not remember it as unheld."""
+        own = os.path.dirname(self.agent)
+        _append(os.path.join(own, "agent-%s.jsonl" % AID3), _agent_lines(AID3, 0, 40))
+        km._remember_faulted_end((SID, WF_AID), ((own, "tree"),))       # two ends due ahead of the own agent's
+        km._remember_faulted_end((SID, AID3), ((own, "tree"),))
+        km._remember_faulted_end((SID, AID), ((own, "tree"),))          # the own agent's faulted end
+        km._remember_unheld_end((SID, AID), self.agent)                 # and its unheld end beside it
+        km._agent_steps(self.agent)                                      # a read holds the file whole, a fold with it
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        rows, self.maxDiff = [], None
+        for n in (1, 2, 3):
+            km.CKPT_CONVERGE_BYTES = 1 if n == 1 else 8 * 1024 * 1024   # the first cycle's budget refuses the document
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()                             # the second pays the owed release
+            rec = km._AGENT_RELEASED.get((SID, AID))
+            rows.append((n, got["walks"], [aid for _sid, aid in km._AGENT_ENDED_FAULTED],
+                         (SID, AID) in km._AGENT_ENDED_UNHELD, (SID, AID3) in km._AGENT_ENDED_UNHELD,
+                         self._stat("released")["agentEnded"]["count"], None if rec is None else "taken" if rec[1] else "owed"))
+        self.assertEqual(rows, [(1, 1, [AID3, AID], False, False, 0, "owed"), (2, 1, [], False, True, 1, "taken"),
+                                (3, 0, [], False, True, 1, "taken")],
+                         "(cycle, walks, the faulted ends left, oldest first, the own agent's end unheld, the third "
+                         "agent's end unheld, releases, the own agent's release): the deferral keeps the own agent's "
+                         "faulted end, and the pay's release forgets it alone")
+        self.assertEqual((self._weight(self.agent) in (None, 0), em._ckpt_file(self.agent).exists()), (True, True),
+                         "the own agent's file released with its document")
+
+    def _released_under_a_fault_then_at_the_whole_read_after_it(self, size):
+        """The rows of a release that pops the own agent's records under R1's fault on its own subagents directory (mode
+        000 for a cycle: its lstat answers, its listing and the file's stat are refused) while the agent's faulted end
+        waits on that directory: (cycle, the end faulted, the end unheld, releases, weight, document), over the cycle
+        under the fault, the cycle after it, the next fold's whole read, and the cycle after that read."""
+        own = os.path.dirname(self.agent)
+        rows, self.maxDiff = [], None
+
+        def row(n):
+            rows.append((n, (SID, AID) in km._AGENT_ENDED_FAULTED, (SID, AID) in km._AGENT_ENDED_UNHELD,
+                         self._stat("released")["agentEnded"]["count"], self._weight(self.agent),
+                         em._ckpt_file(self.agent).exists()))
+        with self._unreadable(own):
+            km._begin_checkpoint_cycle()                                 # the release, under the fault
+            row(1)
+        km._begin_checkpoint_cycle()                                     # the fault cleared: the faulted end looked up
+        row(2)
+        km._agent_steps(self.agent)                                      # the next fold reads the file whole
+        row("read")
+        km._begin_checkpoint_cycle()
+        row(3)
+        self.assertEqual(rows, [(1, True, False, 1, None, False), (2, False, True, 1, None, False),
+                                ("read", False, True, 1, size, False), (3, False, False, 2, None, True)],
+                         "the release under the fault pops the records with no document and keeps the faulted end; "
+                         "its lookup after the fault remembers the agent as unheld, so the whole read is released "
+                         "with its document at the cycle after it")
+
+    def test_an_unheld_release_that_pops_the_records_under_a_fault_keeps_the_agents_faulted_end(self):
+        """A release that did not see the file did not cover it, so it keeps the agent's faulted end. The own agent is
+        remembered as faulted, with the own subagents directory, and as unheld, its file held by a whole read; then the
+        directory is at mode 000 for a cycle. The unheld road's release is the residual's own pop with no document
+        (em.release_entry's os.path.exists reads the refused stat as the file gone), and the faulted end, kept, waits on
+        the directory's listing. At the cycle after the fault it is looked up, finds nothing held, and remembers the
+        agent as unheld, so the next fold's whole read of the file, with no document to restore from, is released with
+        its document at the cycle after it. Red when the pop forgets the faulted end whatever the release saw: nothing
+        remembers the agent after the fault, and the whole read stays held (the rows then: (1, False, False, 1, None,
+        False), (2, False, False, 1, None, False), ('read', False, False, 1, <size>, False), (3, False, False, 1,
+        <size>, False))."""
+        own = os.path.dirname(self.agent)
+        km._remember_faulted_end((SID, AID), ((own, "tree"),))
+        km._remember_unheld_end((SID, AID), self.agent)
+        km._agent_steps(self.agent)                                      # a read holds the file whole
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        self._released_under_a_fault_then_at_the_whole_read_after_it(size)
+
+    def test_an_owed_release_that_pops_the_records_under_a_fault_keeps_the_agents_faulted_end(self):
+        """The pay's form of the case above: the own agent's release owed (the budget refused its document) and its end
+        remembered as faulted, with the own subagents directory; then the directory at mode 000 for a cycle. The pay's
+        release is the residual's pop with no document and keeps the faulted end; after the fault its lookup remembers
+        the agent as unheld, and the next fold's whole read is released with its document at the cycle after it. Red
+        when the pay's release forgets the faulted end whatever the release saw (the rows then as the case above's)."""
+        own = os.path.dirname(self.agent)
+        size = self._owed()
+        km._remember_faulted_end((SID, AID), ((own, "tree"),))
+        self._released_under_a_fault_then_at_the_whole_read_after_it(size)
+
+    def test_an_unheld_release_that_finds_nothing_held_keeps_the_agents_faulted_end(self):
+        """Only a release taken with the file there forgets the agent's faulted end: one that finds nothing held keeps
+        it, and the faulted end goes on carrying the agent's release. The workflow agent is remembered as faulted, with
+        the own subagents directory, and as unheld, nothing held for its file, while that directory's strict
+        os.path.realpath fails (residual 2's root form, an EIO by mock) and its lstat and listing answer. The first
+        cycle's unheld release finds nothing held; the faulted end is looked up, one walk, faults again, and forgets the
+        unheld end (_release_end). Then the mock is off, a fold holds the file whole, and the directory is at mode 000
+        for a cycle: the faulted end waits on its listing and no road releases the file under the fault, so the records
+        stay; at the cycle after the fault the lookup releases them with their document. Red when the faulted end is
+        forgotten before the release is known: the unheld end stays remembered, and the cycle under the fault pops the
+        records with no document."""
+        own = os.path.dirname(self.agent)
+        km._remember_faulted_end((SID, WF_AID), ((own, "tree"),))
+        km._remember_unheld_end((SID, WF_AID), self.wf_agent)
+        real = os.path.realpath
+
+        def failing(p, *a, **k):
+            if k.get("strict") and os.fspath(p) == own:
+                raise OSError(errno.EIO, "the resolution failed", os.fspath(p))
+            return real(p, *a, **k)
+        os.path.realpath = failing
+        try:
+            with self._recording() as got:
+                km._begin_checkpoint_cycle()                             # absent; the lookup faults again
+            self.assertEqual(((SID, WF_AID) in km._AGENT_ENDED_FAULTED, (SID, WF_AID) in km._AGENT_ENDED_UNHELD,
+                              got["walks"], self._stat("released")["agentEnded"]["count"]),
+                             (True, False, 1, 0), "(faulted, unheld, walks, releases): the release found nothing held, "
+                             "so the faulted end is kept, looked up, and remembered again, its unheld end forgotten")
+        finally:
+            os.path.realpath = real
+        km._agent_steps(self.wf_agent)                                   # a fold holds the file whole
+        size = os.path.getsize(self.wf_agent)
+        self.assertEqual(self._weight(self.wf_agent), size, "precondition: the read holds the whole file")
+        with self._unreadable(own):
+            km._begin_checkpoint_cycle()
+            self._held_unwritten_nothing(self.wf_agent, size, "under the fault")
+        km._begin_checkpoint_cycle()
+        self._released_with_its_document(self.wf_agent, size)
+
+    def _unheld_release_beside_a_faulted_end(self, first_cycle):
+        """The rows of the unheld road's release of the own agent's file beside that agent's faulted end, in the state
+        test_an_unheld_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too seeds, with a third agent's
+        end behind: the workflow agent's faulted end, the own agent's and then the third agent's, each remembered with the
+        own subagents directory, which reads (the fault has cleared) and holds the third agent's file, and the own agent
+        remembered as unheld too, its file held by a whole read. The third agent's end, the youngest, is there to show
+        whether the own agent's end keeps its place in the table, oldest first, or is moved behind it. `first_cycle` runs
+        the first cycle and shapes what that release returns; under the cap (one lookup a cycle) the first cycle looks the
+        workflow agent's end up (one walk; nothing is held for its file, so it is remembered as unheld), and the second
+        cycle, run as it is, looks up the oldest end still in the table. The rows, one after each cycle: (cycle, walks,
+        the faulted ends, the unheld ends, each table oldest first, releases, releaseLost, the own file's weight, its
+        document, the own agent's release). Returns the file's size before the first cycle and the rows."""
+        own = os.path.dirname(self.agent)
+        _append(os.path.join(own, "agent-%s.jsonl" % AID3), _agent_lines(AID3, 0, 40))
+        km._remember_faulted_end((SID, WF_AID), ((own, "tree"),))       # an end due ahead of the own agent's
+        km._remember_faulted_end((SID, AID), ((own, "tree"),))          # the own agent's faulted end
+        km._remember_faulted_end((SID, AID3), ((own, "tree"),))         # an end due behind it
+        km._remember_unheld_end((SID, AID), self.agent)                 # and the own agent's unheld end beside it
+        km._agent_steps(self.agent)                                      # a read holds the file whole, a fold with it
+        size = os.path.getsize(self.agent)
+        self.assertEqual(self._weight(self.agent), size, "precondition: the read holds the whole file")
+        rows, self.maxDiff = [], None                                    # the whole rows in a red's message
+        for n, cycle in ((1, first_cycle), (2, km._begin_checkpoint_cycle)):
+            with self._recording() as got:
+                cycle()
+            rec = km._AGENT_RELEASED.get((SID, AID))
+            rows.append((n, got["walks"], [aid for _sid, aid in km._AGENT_ENDED_FAULTED],
+                         [aid for _sid, aid in km._AGENT_ENDED_UNHELD], self._stat("released")["agentEnded"]["count"],
+                         self._stat("releaseLost"), self._weight(self.agent), em._ckpt_file(self.agent).exists(),
+                         None if rec is None else "taken" if rec[1] else "owed"))
+        return size, rows
+
+    def test_an_unheld_release_that_is_lost_keeps_the_agents_faulted_end(self):
+        """A loss on the unheld road keeps the agent's faulted end in its place, and that end then carries the agent's
+        release (_release_ended_agents, the unheld road's keep list). The drop writes are off for the first cycle, so the
+        unheld release of the own agent's file is lost (counted in releaseLost) and the records stay, and the own agent's
+        faulted end stays in the table, ahead of the third agent's, while the workflow agent's end takes the cycle's
+        lookup. At the second cycle, the writes on, the own agent's end is looked up before the third agent's (one walk)
+        and the file released with its document. Red when a lost release forgets the faulted end: nothing looks the file
+        up after the loss, so the second cycle looks the third agent's end up and the records stay held with no document
+        (the rows then: (1, 1, [AID3], [WF_AID], 0, 1, <size>, False, None), (2, 1, [], [WF_AID, AID3], 0, 1, <size>,
+        False, None)). Red too when the loss moves the faulted end behind the third agent's: the second cycle looks the
+        third agent's end up first, and the own agent's file waits another cycle held with no document (the rows then:
+        (1, 1, [AID3, AID], [WF_AID], 0, 1, <size>, False, None), (2, 1, [AID], [WF_AID, AID3], 0, 1, <size>, False,
+        None))."""
+        def first_cycle():
+            km.CKPT_CONVERGE_MS = 0                                      # the drop writes off: the unheld release is lost
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    km._begin_checkpoint_cycle()
+            finally:
+                km.CKPT_CONVERGE_MS = 150.0
+        size, rows = self._unheld_release_beside_a_faulted_end(first_cycle)
+        self.assertEqual(rows, [(1, 1, [AID, AID3], [WF_AID], 0, 1, size, False, None),
+                                (2, 1, [AID3], [WF_AID], 1, 1, None, True, "taken")],
+                         "(cycle, walks, the faulted ends, the unheld ends, releases, releaseLost, the own file's "
+                         "weight, its document, the own agent's release): the loss keeps the own agent's faulted end "
+                         "in its place, and its lookup at the second cycle releases the file with its document")
+
+    def test_an_unheld_release_that_raises_keeps_the_agents_faulted_end(self):
+        """A raise on the unheld road keeps the agent's faulted end in its place, and that end then carries the agent's
+        release, as after a loss (the case above). em.release_entry raises for the own agent's file at the first cycle (a
+        synthetic RuntimeError: given up, counted in releaseLost and written to stderr), so the records stay, and the own
+        agent's faulted end stays in the table, ahead of the third agent's, while the workflow agent's end takes the
+        cycle's lookup. At the second cycle, the release no longer raising, the own agent's end is looked up before the
+        third agent's (one walk) and the file released with its document. Red when a raise forgets the faulted end:
+        nothing looks the file up after the raise, so the second cycle looks the third agent's end up and the records
+        stay held with no document (the rows then: (1, 1, [AID3], [WF_AID], 0, 1, <size>, False, None), (2, 1, [],
+        [WF_AID, AID3], 0, 1, <size>, False, None)). Red too when the raise moves the faulted end behind the third
+        agent's: the second cycle looks the third agent's end up first, and the own agent's file waits another cycle held
+        with no document (the rows then: (1, 1, [AID3, AID], [WF_AID], 0, 1, <size>, False, None), (2, 1, [AID], [WF_AID,
+        AID3], 0, 1, <size>, False, None))."""
+        real, err = em.release_entry, io.StringIO()
+
+        def release(key, reason):
+            if key == self.agent:
+                raise RuntimeError("synthetic")
+            return real(key, reason)
+
+        def first_cycle():
+            em.release_entry = release
+            try:
+                with contextlib.redirect_stderr(err):
+                    km._begin_checkpoint_cycle()
+            finally:
+                em.release_entry = real
+        size, rows = self._unheld_release_beside_a_faulted_end(first_cycle)
+        self._assert_raise_line(err.getvalue(), (SID, AID, self.agent))
+        self.assertEqual(rows, [(1, 1, [AID, AID3], [WF_AID], 0, 1, size, False, None),
+                                (2, 1, [AID3], [WF_AID], 1, 1, None, True, "taken")],
+                         "(cycle, walks, the faulted ends, the unheld ends, releases, releaseLost, the own file's "
+                         "weight, its document, the own agent's release): the raise keeps the own agent's faulted end "
+                         "in its place, and its lookup at the second cycle releases the file with its document")
+
+    def test_an_unheld_release_that_races_a_read_keeps_the_agents_faulted_end(self):
+        """A race on the unheld road keeps the agent's faulted end in its place, since a release that is only owed covers
+        nothing yet. At the first cycle a read of the grown file replaces the entry between the unheld release's document
+        write and its pop (the race test_a_release_racing_a_read_is_owed_not_lost drives), so the release is owed and the
+        grown records stay, and the own agent's faulted end stays in the table, ahead of the third agent's, while the
+        workflow agent's end takes the cycle's lookup. At the second cycle the pay takes the owed release with its
+        document and forgets the faulted end, as
+        test_an_owed_release_taken_while_the_agents_faulted_end_waits_forgets_that_end_too pins, and the third agent's
+        end takes the cycle's lookup (one walk; nothing is held for its file, so it is remembered as unheld). Red when a
+        race forgets the faulted end: the first cycle's faulted table holds the third agent's end alone (the first row
+        then: (1, 1, [AID3], [WF_AID], 0, 0, <grown size>, True, 'owed')). Red too when the race moves the faulted end
+        behind the third agent's (the first row then: (1, 1, [AID3, AID], [WF_AID], 0, 0, <grown size>, True, 'owed')).
+        Only the first cycle's table shows either: the pay forgets the end at the second cycle either way, so the final
+        state is the same, and the first row is asserted on its own."""
+        real, fired = em.checkpoint_write, []
+
+        def racing_write(path, *a, **k):                                 # between the document write and the pop, a read of the
+            out = real(path, *a, **k)                                    #  grown file replaces the entry
+            if str(path) == self.agent and not fired:
+                fired.append(1)
+                _append(self.agent, _agent_lines(AID, 40, 2))
+                em._read_jsonl_incremental(self.agent)
+            return out
+
+        def first_cycle():
+            em.checkpoint_write = racing_write
+            try:
+                km._begin_checkpoint_cycle()
+            finally:
+                em.checkpoint_write = real
+        size, rows = self._unheld_release_beside_a_faulted_end(first_cycle)
+        self.assertTrue(fired, "precondition: the unheld release wrote the agent's document and a read raced its pop")
+        grown = os.path.getsize(self.agent)
+        self.assertGreater(grown, size, "precondition: the racing read grew the file")
+        self.assertEqual(rows[0], (1, 1, [AID, AID3], [WF_AID], 0, 0, grown, True, "owed"),
+                         "(cycle, walks, the faulted ends, the unheld ends, releases, releaseLost, the own file's "
+                         "weight, its document, the own agent's release) after the first cycle: the race keeps the own "
+                         "agent's faulted end in its place (the only cycle that shows it, since the pay forgets the end "
+                         "at the second cycle either way)")
+        self.assertEqual(rows[1], (2, 1, [], [WF_AID, AID3], 1, 0, None, True, "taken"),
+                         "the same row after the second cycle: the pay takes the owed release with its document and "
+                         "forgets the faulted end, and the third agent's end takes the cycle's lookup")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": grown}}, "the grown file released")
 
     # ---- an agent's later end after its earlier release was taken (PR 913 round 1, the texts' account of two ends) ----
     # An agent reports two ends (its stop and its task's end, or its workflow slot's done state), and the second can reach a

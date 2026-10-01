@@ -375,33 +375,72 @@ subject; `verify` refuses the branch otherwise.
    call the sweep makes into a repository names it explicitly (`GIT_DIR`, `GIT_COMMON_DIR` and
    `GIT_WORK_TREE` set, `GIT_CEILING_DIRECTORIES` at the directory above it), but for the one call
    that finds your repository, which sets the ceiling alone, at the parent of the directory holding
-   `.git`; so a clone's `.git` that `git` no longer recognizes (its `refs/` removed, say) fails the
-   call instead of sending `git` up to a repository that encloses the clone, and each call has 120 s
-   to end (`GIT_BOUND` in `scripts/sweep.py`; a job's checkout, the slowest call, took under a
-   second when measured on 2026-10-01). A `git` still running then, waiting on a FIFO a leg left
+   `.git`, and refuses a directory whose work tree, as `git` reads it there, is another (a
+   `core.worktree` in its config); so a clone's `.git` that `git` no longer recognizes (its `refs/`
+   removed, say) fails the call instead of sending `git` up to a repository that encloses the clone.
+   The directory `--tree` names must itself hold `.git`: one that does not exist, or whose `.git` is
+   gone, is refused, naming it, and never read as a repository that encloses it, and an empty
+   `--tree` (an unset shell variable gives one) is refused rather than read as the current
+   directory; only with no `--tree` does the sweep look up from the current directory for the
+   nearest directory holding `.git`, and `check`'s remedy then names that directory. Each call has 120 s to end (`GIT_BOUND` in `scripts/sweep.py`; a job's checkout, the
+   slowest call, took under a second when measured on 2026-10-01). A `git` still running then, waiting on a FIFO a leg left
    where `git` reads (a `.gitignore`, a file an `include.path` names, your repository's
    `objects/info/alternates`) or on one swapped in after the sweep's check, is killed, and the run
    is invalid, naming the call, or,
-   where that happens before anything is recorded or in `check`, refused, naming it. A FIFO a leg
+   where that happens before anything is recorded or in `check`, refused, naming it. A `git` the
+   sweep kills, at the bound or on a stop, gets SIGTERM with its process group first, so it removes
+   its own lock files (the `git status` in your tree holds your `index.lock` while it reads
+   `info/exclude`), and SIGKILL 10 s later if anything of the group is left. A FIFO a leg
    leaves in your repository where no `git` of that run reads after it (its `config` or `HEAD`,
    since the sweep's `git` calls in your repository all come before the first leg; its `index` or
    `info/exclude`, which only `git status` there reads; or its `objects/info/alternates` once the
    run's last checkout is made and verified, since the reads after the legs read no object) leaves
-   that run's verdict as recorded; the next run is refused at its first `git` call that reads the
-   file, naming the call, and so is `check` for `config`, `HEAD` and `objects/info/alternates` (it
-   reads neither `index` nor `info/exclude`). `scripts/batch.py` names the repository and bounds its
-   own `git` calls the same way (its discovery call, with the ceiling alone, runs again before each
-   call in a batch worktree), at 600 s, since it also pushes through the pre-push hook
-   and fetches, and stops with an error naming the call. The sweep's own files under the state dir,
-   which a leg can reach (each leg's log, the results, the checkouts' and the venvs' markers, a
-   venv's build log, the locks), are created or opened without waiting. A FIFO or a symlink a leg
-   leaves at a result or a marker is never read, and reads as unreadable (`check` and `verify` fail
-   that result, naming the file, and the next sweep at its sha is refused), as no marker (the
-   checkout is removed as stale) or as no finished build (the venv is built again); one at a venv's
-   build log refuses the venv's build, naming the log; and a lock is opened without waiting, since
-   it is only locked. A leg's log is created afresh, under another name when its name is taken, and
-   its counts are read through the file the sweep created. `scripts/batch.py` reads its state file
-   only as a regular file, without waiting, and otherwise stops, naming it. A leg can also leave
+   that run's verdict as recorded, and the next run is refused at its first `git` call that reads
+   the file, naming the call. `check` is refused the same way for `config`, `HEAD` and
+   `objects/info/alternates`. For `index` and `info/exclude`, of the sweep's two commands only the
+   next run is refused: `check` reads neither file and reports the verdict the run recorded. `scripts/batch.py` names the
+   repository and bounds its own `git` calls the same way (its discovery call, with the ceiling
+   alone, runs again before each call in a batch worktree, and its clone, `ROMP_BATCH_REPO` or the
+   directory above its `scripts/`, and each batch worktree must hold `.git` themselves, as
+   `--tree` must, and be the work tree `git` reads there, a `core.worktree` naming another
+   refused), at 600 s, since it also pushes through the pre-push hook and fetches, and stops with
+   an error naming the call. Its
+   `verify` and `plan` run `git` in your clone's own work tree, so the `index` they can meet is that
+   work tree's, not a batch worktree's: a FIFO there stops `plan` at its `git fetch`, and `verify`
+   at its `git fetch` or, with `--no-fetch`, at the `git diff-tree` of its check of a merge. A FIFO
+   at `info/exclude` stops `verify`, fetching or not, at the `git worktree add` of its ledger check;
+   `plan` does not read that file. It runs
+   `scripts/pr-orphans.sh` and the ledger script, which run `git` in your clone, each with the
+   repository of the tree it runs in named in its environment (your clone for `pr-orphans.sh`; the
+   batch worktree, or the ledger check's temporary worktree, for the ledger script) and the same
+   bound (`finish` reports a `pr-orphans.sh` stopped at the bound as unread and carries on, the
+   merge having happened). SIGTERM, SIGHUP (unless it was
+   started with it ignored) and Ctrl-C stop it: the process it is waiting on is killed (a `git`, or
+   one of those two scripts, with its process group; `gh`, or the command `bisect` runs, alone), its
+   cleanup runs, and a stop by SIGTERM or SIGHUP exits 128 plus the signal's number. A `git` or one
+   of the two scripts gets SIGTERM first here too, then SIGKILL 10 s later, so a `git worktree add`
+   stopped or killed at the bound removes the worktree it was adding and its registration rather
+   than leaving them locked, and the next `assemble` is not refused on a lock it left. The files the
+   sweep and `scripts/batch.py` keep for themselves, which a leg can reach (the state dir from its
+   log's path, your clone's common dir through its checkout's alternates), are created or opened
+   without waiting, and eight reads of them fail closed. (1) Each leg's log is created afresh,
+   without following a symlink, under another name when anything is at its name, and its summary
+   and counts are read through the file the sweep created, so nothing a leg puts at the log's path
+   is written to or read for them. (2) The sweep reads the `pytest` leg's log again by its name,
+   once its own file is closed, for the tests that leg skipped for want of the deps, which the
+   `served` leg also runs: a log the leg replaced with anything but a regular file (a FIFO, a
+   symlink) is not read, and the `served` leg is red, naming why, while one it replaced with another
+   regular file is read as if the leg had written it. (3) A result that is not a regular file (a
+   FIFO, a directory, or a symlink, a dangling one included) is never read and reads as unreadable:
+   `check` and `verify` fail it, naming the file, and the next sweep at its sha is refused. (4) A
+   checkout's marker that is not a regular file reads as no marker, and the checkout is removed as
+   stale. (5) A venv's marker that is not a regular file
+   reads as no finished build, and the venv is built again. (6) A venv's build log that is not a
+   regular file refuses that build, and so the sweep, naming the log. (7) The run's lock and a
+   venv's lock are opened without waiting, without following a symlink and only as a regular file,
+   so a FIFO, a symlink or a directory at either refuses the sweep, naming the lock. (8)
+   `scripts/batch.py` reads its state file only as a regular file, without waiting, and otherwise
+   stops, naming it. A leg can also leave
    a process running. The sweep reaps its own process tree: when a leg ends, it kills its children
    again and again until none is left or 30 s pass, and on Linux, where the sweep is a child
    subreaper and so adopts each orphaned descendant of a leg (a `setsid` child, a double-forked
