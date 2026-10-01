@@ -68,6 +68,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -226,11 +227,29 @@ def relaunch_env(env):
             and not k.startswith(RELAUNCH_ENV_EXCLUDED_PREFIXES)}
 
 
+# A relaunch waits for the killed kernel's instance lock (<state>/kernel.lock, kernel.py's _kernel_lock_acquire). A
+# SIGKILLed kernel releases it at its exit, which follows the kill by up to some hundreds of milliseconds, and a kernel
+# relaunched before that exit finds the lock held and is refused with exit 75. The runner owns the first kernel's
+# process, so the driver cannot reap it; it runs this program instead, which blocks in flock until the lock is free (the
+# exit itself, never a fixed sleep) and exits 0, or dies by its own SIGALRM at the bound. It holds the lock for an
+# instant and writes nothing: the relaunched kernel writes its own line.
+RELAUNCH_LOCK_WAIT_S = 30
+WAIT_FREE_PROGRAM = (
+    "import fcntl, os, signal, sys\n"
+    "signal.alarm(int(sys.argv[2]))\n"
+    "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\n"
+    "fcntl.flock(fd, fcntl.LOCK_EX)\n")
+
+
 def relaunch_cfg(env, klog):
     """cfg.relaunch, the stanza a served lab writes for the driver's relaunch of the kernel it kills: the command,
-    relaunch_env() of the lab kernel's environment `env`, and the log `klog` the first kernel writes. Both served
-    labs write their stanza through this, so RelaunchEnv covers what reaches the file."""
-    return {"cmd": os.path.join(BIN, "romp-kernel"), "env": relaunch_env(env), "log": klog}
+    relaunch_env() of the lab kernel's environment `env`, the log `klog` the first kernel writes, and `waitFree`, the
+    argv the driver runs before each relaunch, which returns 0 once the killed kernel's instance lock under the lab's
+    state root is free (WAIT_FREE_PROGRAM). Both served labs write their stanza through this, so RelaunchEnv covers what
+    reaches the file."""
+    lock = os.path.join(env["XDG_STATE_HOME"], "romp", "kernel.lock")
+    return {"cmd": os.path.join(BIN, "romp-kernel"), "env": relaunch_env(env), "log": klog,
+            "waitFree": [sys.executable, "-c", WAIT_FREE_PROGRAM, lock, str(RELAUNCH_LOCK_WAIT_S)]}
 
 
 DRIVER = r"""
@@ -250,6 +269,13 @@ const die = async (why) => {
   await browser.close();
   process.exit(0);
 };
+// the killed kernel releases its instance lock at its exit, a process the runner owns: block on the lock itself
+// (cfg.relaunch.waitFree) before the relaunch, which a still-held lock would refuse
+const waitFree = () => new Promise((resolve) => {
+  const w = spawn(cfg.relaunch.waitFree[0], cfg.relaunch.waitFree.slice(1), { stdio: "ignore" });
+  w.on("error", (e) => resolve(String(e)));
+  w.on("exit", (code, sig) => resolve(code === 0 ? true : String(sig || code)));
+});
 
 // ---- wedge: SIGSTOP the kernel so the ship rides a live socket that will never answer ----
 await page.goto(cfg.url);
@@ -293,6 +319,8 @@ await page.evaluate(() => {
 });
 // ---- the restart: the old socket dies with the ack still owed; a fresh kernel takes the port ----
 process.kill(cfg.kernelPid, "SIGKILL");
+const freed = await waitFree();
+if (freed !== true) await die("the killed kernel's instance lock never freed: " + freed);
 const k2 = spawn(cfg.relaunch.cmd, [], { env: cfg.relaunch.env, detached: true,
   stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] });
 k2.unref();   // the kernel outlives this driver — an un-unref'd child held node open past RESULT
@@ -570,6 +598,29 @@ class RelaunchEnv(unittest.TestCase):
         for name in ("ROMP_KERNEL_PORT", "ROMP_SERVE_TOKEN", "ROMP_DIST_DIR", "ROMP_MODEL_CATALOG", "ROMP_POSTAL_PORT"):
             self.assertIn(name, written, "the lab's own %s still reaches the relaunched kernel" % name)
 
+    def test_wait_free_blocks_while_the_lock_is_held_and_returns_once_it_is_free(self):
+        # the driver runs cfg.relaunch.waitFree between its SIGKILL and the relaunch: while the killed kernel still holds
+        # its instance lock the program blocks (here this test holds it, and the program, bounded at 1 s for the test,
+        # dies by its own alarm), and once the lock is free it returns 0, writing nothing
+        import fcntl
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        os.makedirs(os.path.join(root, "romp"))
+        lock = os.path.join(root, "romp", "kernel.lock")
+        argv = relaunch_cfg({"XDG_STATE_HOME": root}, os.path.join(root, "kernel.log"))["waitFree"]
+        self.assertEqual(argv, [sys.executable, "-c", WAIT_FREE_PROGRAM, lock, str(RELAUNCH_LOCK_WAIT_S)])
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.pwrite(fd, b"4242 serving\n", 0)
+        held = subprocess.run(argv[:-1] + ["1"], timeout=60)
+        self.assertEqual(held.returncode, -signal.SIGALRM, "the program waited on the held lock until its own bound")
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        freed = subprocess.run(argv, timeout=60)
+        self.assertEqual(freed.returncode, 0, "the program returns once the lock is free")
+        with open(lock) as fh:
+            self.assertEqual(fh.read(), "4242 serving\n", "the wait writes nothing")
+
 
 class LabKernelEnv(unittest.TestCase):
     """A lab kernel's environment is built from names (kernel_env), never from a copy of the runner's. A run from a
@@ -791,6 +842,13 @@ const die = async (why) => {
   await browser.close();
   process.exit(0);
 };
+// the killed kernel releases its instance lock at its exit, a process the runner owns: block on the lock itself
+// (cfg.relaunch.waitFree) before the relaunch, which a still-held lock would refuse
+const waitFree = () => new Promise((resolve) => {
+  const w = spawn(cfg.relaunch.waitFree[0], cfg.relaunch.waitFree.slice(1), { stdio: "ignore" });
+  w.on("error", (e) => resolve(String(e)));
+  w.on("exit", (code, sig) => resolve(code === 0 ? true : String(sig || code)));
+});
 // a wait that hands back the page's answer, asked of whichever page is up: an evaluate mid-navigation throws and is
 // asked again of the page that follows (waitForFunction can reject when the navigation destroys the context it polls)
 const until = async (fn, arg, ms) => {
@@ -849,6 +907,8 @@ out.bootBefore = bootBefore;
 fs.rmSync(cfg.drops, { recursive: true, force: true });
 fs.writeFileSync(cfg.drops, "not a directory");
 process.kill(cfg.kernelPid, "SIGKILL");
+const freed = await waitFree();
+if (freed !== true) await die("the killed kernel's instance lock never freed: " + freed);
 // Invisible restarts (2026-09-14): a restart of the SAME code owes the page no reload (the board stays, the panes redial); a
 // changed build is OFFERED (2026-09-16), never taken, so the reload this lab is about, the one held behind the pending ship,
 // is the offer the user ACCEPTS: the driver takes the offer the instant the page stands it (the standalone page's own bar;
