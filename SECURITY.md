@@ -1050,9 +1050,20 @@ delete of the function or of one of its attributes, `f.__code__ = ...` among
 them, may run code the census does not read) and, for a module function, spells
 in no string constant and in no constants the census folds to text, a `+`, an
 f-string, a `%`, or a `.join`, `.format`, `.format_map` or `.replace` of string
-constants, anywhere in the file (which a lookup by name may reach). Any other
-callee of
-those two kinds is refused by name, the reason naming the condition it fails; a
+constants, anywhere in the file (which a lookup by name may reach), in a file
+where every key a lookup by name takes on a namespace mapping (a subscript of
+globals(), vars() or locals(), `__builtins__` or an attribute named `__dict__`,
+or the first argument of `.get`, `.pop`, `.setdefault`, `.__getitem__`,
+`.__setitem__` or `.__delitem__` on one) is a string constant or constants the
+census folds to text, since any other key, a parameter or a call's return among
+them, may spell its name at run time. A module function that a lookup by name on
+the module object itself reaches with such a key (getattr or attrgetter, the
+module reached through sys.modules, import_module, a parameter or any other way)
+is not seen, a stated limit, since the census does not read which object a
+lookup's receiver is (its witness: a module function that getattr on
+`sys.modules[__name__]` reaches by a module helper's return and whose `__code__`
+the file rewrites). Any other callee of those two kinds is refused by name, the
+reason naming the condition it fails; a
 module-level def of int or float is not followed but refused as a call of int or
 float bound other than to the builtin (above). It
 also follows a text method or a file read, and any other method through its
@@ -1216,7 +1227,9 @@ read as a value, a lambda reached through a name's value, a module function or a
 function defined in the page function that is no plain def (an async def, one
 carrying a decorator, one whose own body yields, one whose name the file reads
 other than as a call's callee or, for a module function, spells in a string
-constant or in constants the census folds to text), a method called on self,
+constant or in constants the census folds to text, or stands in a file where a
+lookup by name on a namespace mapping takes a key that is neither), a method
+called on self,
 whatever its def, a route class's method
 called other than on the calling method's own first parameter, a method called
 on any other parameter, or on a name spelled self that is not that parameter,

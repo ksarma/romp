@@ -738,8 +738,15 @@ decorator's return in the def's place), with no yield or yield from in its own b
 the file reads nowhere but as a call's callee (an alias, an argument, and a store or delete of the function or of one of its
 attributes, `f.__code__ = ...` among them, may run code the census does not read) and, for a module function, spells in no string
 constant and in no constants the census folds to text, a `+`, an f-string, a `%`, or a `.join`, `.format`, `.format_map` or
-`.replace` of string constants, anywhere in the file (which a lookup by name may reach). Any other callee of those two kinds is
-refused by name, the reason naming the
+`.replace` of string constants, anywhere in the file (which a lookup by name may reach), in a file where every key a lookup by
+name takes on a namespace mapping (a subscript of globals(), vars() or locals(), `__builtins__` or an attribute named `__dict__`,
+or the first argument of `.get`, `.pop`, `.setdefault`, `.__getitem__`, `.__setitem__` or `.__delitem__` on one) is a string
+constant or constants the census folds to text, since any other key, a parameter or a call's return among them, may spell its name
+at run time. A module function that a lookup by name on the module object itself reaches with such a key (getattr or attrgetter,
+the module reached through sys.modules, import_module, a parameter or any other way) is not seen, a stated limit, since the census
+does not read which object a lookup's receiver is (its witness: a module function that getattr on `sys.modules[__name__]` reaches
+by a module helper's return and whose `__code__` the file rewrites). Any other callee of those two kinds is refused by name, the
+reason naming the
 condition it fails; a module-level def of int or float is not followed but refused as a call of int or float bound other than to
 the builtin (above). It also follows a text method or a file read, and any other method through its receiver, as above, and it
 reads every call's arguments but those of a call of int or float that is the builtin, a leaf, save where the call is a base
@@ -842,7 +849,8 @@ a class, a method called on one among them, through the class's own name, a name
 subscript of a name whose value holds it or of such a value itself, or any other base whose root by binding is a class), a function
 or class object read as a value, a lambda reached through a name's value, a module function or a function defined in the page
 function that is no plain def (an async def, one carrying a decorator, one whose own body yields, one whose name the file reads
-other than as a call's callee or, for a module function, spells in a string constant or in constants the census folds to text), a
+other than as a call's callee or, for a module function, spells in a string constant or in constants the census folds to text, or
+stands in a file where a lookup by name on a namespace mapping takes a key that is neither), a
 method called on self, whatever its def, a
 route class's method called other than on the calling method's own first parameter, a method called on any other parameter, or on a
 name spelled self that is not that parameter, whose name the file stores, deletes or names to a setter as an attribute, a call of,
@@ -1409,8 +1417,9 @@ class Result(object):
         self.ns = {}
         # per Python file, what the served pass's follow proof reads of the names its top-level def statements bind
         # (_Served._def_uses): each such name read other than as a call's callee, name -> [(its position, the scopes around it as
-        # Scan.kscopes holds them)], and the set of those names a string constant of the file, or constants _Served._const_text folds
-        # to text, spells (Scan.visit_Name, Scan.visit_Constant, Scan.fold_def)
+        # Scan.kscopes holds them)], the set of those names a string constant of the file, or constants _Served._const_text folds
+        # to text, spells (Scan.visit_Name, Scan.visit_Constant, Scan.fold_def), and the lines where a lookup by name on a namespace
+        # mapping takes a key that is not constant text (Scan.ns_string)
         self.fn_refs = {}
         # per Python file, the names layer iv's module side finds changed other than by the forms Result.writes records (Scan.cwrites):
         # the served pass reads a module name bound to a call that is one of them as a run-time memo (_Served.cmemos)
@@ -1547,9 +1556,10 @@ class Scan(ast.NodeVisitor):
         # and _key_attr read, gathered once (kindex: _key_index)
         self.kscopes, self.ktree, self.klocals, self.kdefer, self.kheld, self.kindex = [], None, {}, [], [], None
         # the served pass's follow proof (Result.fn_refs): the names the module's top-level def statements bind, each read of one
-        # other than as a call's callee with the scopes around it (kscopes), and those a string constant, or constants
-        # _Served._const_text folds to text, spells
-        self.fn_names, self.fn_uses, self.fn_strs = frozenset(), {}, set()
+        # other than as a call's callee with the scopes around it (kscopes), those a string constant, or constants
+        # _Served._const_text folds to text, spells, and the lines of each key a lookup by name takes on a namespace mapping that is
+        # neither (fn_keys: a key that may spell any of those names at run time, ns_string)
+        self.fn_names, self.fn_uses, self.fn_strs, self.fn_keys = frozenset(), {}, set(), []
         self.fold_parts = set()   # the nodes inside a fold fold_def has read whole, each not read apart
         # layer iv's module side (cflows): each change's depth below the name it reaches (cdepth, name -> depths: a store or delete
         # through it, a call that changes it in place or drops a method's return, a bound changer read off it, a setattr or delattr on
@@ -1581,7 +1591,7 @@ class Scan(ast.NodeVisitor):
         self._key_settle(flags)   # arm iii's held keys, read by the allowlist once every binding, declaration and write of the file is seen
         flags["runtime"] = min(self.ns_facts["runtime"])[2] if self.ns_facts["runtime"] else None   # the first form, as _namespace_flags reads it
         self.res.ns[self.rel] = flags
-        self.res.fn_refs[self.rel] = (self.fn_uses, self.fn_strs)
+        self.res.fn_refs[self.rel] = (self.fn_uses, self.fn_strs, self.fn_keys)
         self.routes = routes_of(self.rel, n, self, self.res)
         cands = self.sends + self.ctype_writes + self.responds + self.send_refs   # the route candidates: _page_importers reads the first
         if cands: self.res.candidates[self.rel] = min(c[0].lineno for c in cands)
@@ -2164,12 +2174,15 @@ class Scan(ast.NodeVisitor):
         # but a constant string. Every other shape refuses by name (a direct attribute key or a name bound to one; any other
         # attribute source; that one where the file may write its attribute; a name bound to a constant string; a with
         # target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a comprehension's included; a loop target
-        # bound at module level, among them), the reason naming what the walk met
+        # bound at module level, among them), the reason naming what the walk met. A key on a namespace mapping that is not constant
+        # text (a string constant, or constants _Served._const_text folds to one), whatever the allowlist answers, may spell a
+        # top-level def's name at run time, so it is kept for the follow proof (fn_keys, _Served._def_uses, _DEF_KEY)
         if isinstance(node, ast.Subscript):
             if self._nskey(node.value): self.ns_facts["keyed"].add(id(node.value))   # choice 13: a key position, its key read here
             why = self._unfolded(node.slice) if self._nskey(node.value) else None
             if why: self.ns_runtime(node.slice, why)
             if self._nskey(node.value) and self._const_str(node.slice) in _STRING_NAMES: self.ns_runtime(node.slice, "spells %s as a string" % self._const_str(node.slice))
+            if self._nskey(node.value) and self._const_str(node.slice) is None: self.fn_keys.append(node.lineno)   # the follow proof's key conjunct
             return
         f = node.func   # the callee by its name, a name an import binds to it (in any scope), or as an attribute of a builtins (getattr) or operator (ns_opmods) receiver
         af = self.alias.get(f.id, f.id).split(".")[-1] if isinstance(f, ast.Name) else ""
@@ -2196,6 +2209,7 @@ class Scan(ast.NodeVisitor):
             why = self._unfolded(node.args[0]) if node.args else None
             if why: self.ns_runtime(node.args[0], why)
             if node.args and self._const_str(node.args[0]) in _STRING_NAMES: self.ns_runtime(node.args[0], "spells %s as a string" % self._const_str(node.args[0]))
+            if node.args and self._const_str(node.args[0]) is None: self.fn_keys.append(node.lineno)   # the follow proof's key conjunct
     def visit_Global(self, n):
         self.globals[-1].update(n.names)
         if self.defs: self.global_decls.append((tuple(self.defs), tuple(n.names)))   # Result.global_decls
@@ -3477,14 +3491,16 @@ _DECORATED = ("a callee whose def statement carries a decorator, staticmethod an
               "in its place, which the census does not follow")   # _Served._def_shape's, the follow proof's decorator conjunct (layer ii)
 # The follow proof's other conjuncts (_Served._def_shape, _Served._def_uses; layer ii of the eleventh round's rulings): a callee the census follows is a
 # plain def statement, bound once, with no decorator (_DECORATED), a def and not an async def, no yield in its own body, its name read
-# nowhere in the file but as a call's callee and spelled by no string constant and no constants the census folds to text, never
-# rebound; any other callee refuses by name
+# nowhere in the file but as a call's callee and spelled by no string constant and no constants the census folds to text, in a file
+# whose every key on a namespace mapping is constant text (_DEF_KEY), never rebound; any other callee refuses by name
 _DEF_ASYNC = "a callee an async def statement defines, whose call returns a coroutine, not its return, which the census does not follow"
 _DEF_YIELD = "a callee whose def statement's body yields, whose call returns a generator, not its return, which the census does not follow"
 _DEF_ALIAS = ("a callee whose name the file reads other than as a call's callee (an alias, an argument, a store or a delete of it or of "
               "one of its attributes among them), which the census does not follow")
 _DEF_STRING = ("a callee whose name a string constant of the file, or constants the census folds to text, spells, which a lookup by name "
                "may reach, which the census does not follow")
+_DEF_KEY = ("a callee in a file where a lookup by name on a namespace mapping takes a key that is not constant text, which may spell its "
+            "name at run time, which the census does not follow")
 _LAMBDA_VALUE = "a lambda reached through a name's value, a callee no def statement defines, which the census does not follow"   # resolve's and _defaults's
 _FUNC_OBJECT = "a function or class object"   # _scoped's and _base's reason for such a name read as a value, refused wherever it stands
 # resolve's reasons for a yield, a yield from and an await read as a page value: each evaluates to a value other than its operand (what
@@ -5657,7 +5673,7 @@ class _Served(object):
     ["def"]), each only where the census proves it a plain def (_def_shape: a def statement, not an async def, _DEF_ASYNC, carrying
     no decorator, _DECORATED, with no yield in its own body, _DEF_YIELD, _yields; _def_uses: its name read nowhere in the file but
     as a call's callee, _DEF_ALIAS, and, for a module function, spelled by no string constant of the file and no constants the census
-    folds to text, _DEF_STRING), each such
+    folds to text, _DEF_STRING, in a file whose every key on a namespace mapping is constant text, _DEF_KEY), each such
     function read to its own returns (_returns) and the default of each of its parameters the call omits read as that argument would
     be, in the scope its def statement runs in (_defaults: a default that holds a lambda refused, _LAMBDA_VALUE); any other method
     call through its receiver as above (a lambda a name's value holds is refused where the name is read, _LAMBDA_VALUE,
@@ -5836,10 +5852,10 @@ class _Served(object):
     method call on or a subscript of a name whose value holds it or of such a value itself, or any other base whose root by binding
     is a class (_CLASS_ATTR), a container the container proof refuses (_CONTAINER), a function or class object read as a value
     (_FUNC_OBJECT), a lambda reached through a name's value (_LAMBDA_VALUE), a callee the census does not prove a plain def
-    (_DEF_ASYNC, _DECORATED, _DEF_YIELD, _DEF_ALIAS, _DEF_STRING), every method called on self (_SELF_METHOD, _METHOD_OVERRIDE,
-    _METHOD_UNPLACED, _REPLACED, _REPLACED_OPEN, _METHOD_SUBCLASS), a route class's method called other than on the calling method's
-    own first parameter (_METHOD_CALL), a method called on any other parameter or a name spelled self whose name the file stores,
-    deletes or names to a setter as an attribute (_METHOD_STORED), a
+    (_DEF_ASYNC, _DECORATED, _DEF_YIELD, _DEF_ALIAS, _DEF_STRING, _DEF_KEY), every method called on self (_SELF_METHOD,
+    _METHOD_OVERRIDE, _METHOD_UNPLACED, _REPLACED, _REPLACED_OPEN, _METHOD_SUBCLASS), a route class's method called other than on
+    the calling method's own first parameter (_METHOD_CALL), a method called on any other parameter or a name spelled self whose name
+    the file stores, deletes or names to a setter as an attribute (_METHOD_STORED), a
     `.join` whose one argument or, unbound as in `str.join("", {...})`, its second, is or holds a set literal or a set comprehension
     as the census reads it (_set_value, _JOIN_SET: a set's iteration order is not fixed, so its join is no one text) and a kind with no
     arm among them, as is a route whose body yields no piece and no file slot."""
@@ -6019,8 +6035,8 @@ class _Served(object):
     def _def_uses(self, fn, holder):
         """The follow proof's conjuncts on the name fn's def statement binds (layer ii of the eleventh round's rulings): the reason the census does not
         follow a call of it, or None where no statement of the file reads that binding other than as a call's callee and, for a
-        module function, no string constant of the file, and no constants _const_text folds to text, spells its name. `holder` is None
-        for a module function (a top-level def
+        module function, no string constant of the file, and no constants _const_text folds to text, spells its name, and no lookup
+        by name on a namespace mapping takes a key that is not constant text. `holder` is None for a module function (a top-level def
         statement, its name's one module-level binding, never rebound: _sole), and for a function defined in the page function the
         def statement whose body holds it (its name's one binding there: _scoped's forms ["def"]). A read that reaches the binding
         (_binding_scope over the scopes around the read: a scope that binds the name itself holds a binding of its own) other than as
@@ -6029,14 +6045,21 @@ class _Served(object):
         does not read as the callee (_DEF_ALIAS); a string constant that spells a module function's name, or constants _const_text
         folds to it (a `+`, an f-string, a `%`, or a .join, .format, .format_map or .replace of string constants, read wherever they
         stand in the file: Scan.fold_def), is a key a lookup by name may reach it through (`globals().get("f")`,
-        `globals().get("_f" + "x")`: _DEF_STRING). A module function's reads come from the scan of its whole file
+        `globals().get("_f" + "x")`: _DEF_STRING); and a key on a namespace mapping that is not constant text, in any of the positions
+        Scan.ns_string reads (a subscript, or the first argument of .get, .pop, .setdefault, .__getitem__, .__setitem__ or
+        .__delitem__, on globals(), vars() or locals(), `__builtins__` or an attribute named `__dict__`), a parameter or a call's
+        return among them, may spell any module function's name at run time, so no module function of that file is followed
+        (`globals().get(k())`: _DEF_KEY). A lookup by name on the module object itself (getattr or attrgetter, the module reached
+        through sys.modules, import_module, a parameter or any other way) with such a key is the stated limit: the census does not
+        read which object such a lookup's receiver is. A module function's reads come from the scan of its whole file
         (Result.fn_refs, from Scan's walk), where a file no scan read has none and refuses; a nested function's from a walk of the
         def that holds it (_name_reads), outside which its name binds nothing."""
         if holder is None:
             got = self.res.fn_refs.get(self.rel)
             if got is None: return _DEF_ALIAS   # no scan read the file's names: no proof
             if any(_binding_scope(fn.name, at, chain) is None for at, chain in got[0].get(fn.name, ())): return _DEF_ALIAS
-            return _DEF_STRING if fn.name in got[1] else None
+            if fn.name in got[1]: return _DEF_STRING
+            return _DEF_KEY if got[2] else None
         return _DEF_ALIAS if any(_binding_scope(fn.name, at, chain) is holder for at, chain in _name_reads(holder, fn.name)) else None
 
     def _ctx(self, fn, cls, outer=None, where=None, route=False):
@@ -6637,8 +6660,10 @@ class _Served(object):
         forms exactly one value form, one value: never a parameter the body also assigns, whose incoming value the read may take), and
         only at the read itself, as before; a local the container proof refuses (_Container, whose forms are list-equal to one value
         form while _scoped reads it as unread) is never followed, and its read refuses with the container's own reason (the reviewer's
-        03:08Z ruling of 2026-10-01, correctness-1); a name inside a local's value, or inside the path past its first step, that a
-        function scope binds refuses where it is a module constant's name the head would have read by spelling, and is None otherwise.
+        03:08Z ruling of 2026-10-01, correctness-1), save where a module constant shares its name: that read refuses first as a name a
+        function scope around the read binds, the first condition above, as any local of a module constant's name does; a name inside
+        a local's value, or inside the path past its first step, that a function scope binds refuses where it is a module constant's
+        name the head would have read by spelling, and is None otherwise.
         A module constant's value is read in the module's own scope. None with no reason where the census cannot read the expression
         at all, and for Path(__file__) or open(__file__) wherever `__file__` may not be this file's own path (_file_slot: in a file
         where a statement binds it, in any scope and by any form, _FILE_BOUND, one that writes a name of its module namespace through

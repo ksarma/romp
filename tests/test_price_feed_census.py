@@ -1525,7 +1525,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "statement (not an async def, whose call returns a coroutine) carrying no decorator (staticmethod and classmethod among them: "
                 "Python calls a decorator's return in the def's place), with no yield or yield from in its own body (its call would return a "
                 "generator), whose name the file reads nowhere but as a call's callee (an alias, an argument, and a store or delete of the "
-                "function or of one of its attributes, `f.__code__ = ...` among them, may run code the census does not read) and, for a module function, spells in no string constant and in no constants the census folds to text, a `+`, an f-string, a `%`, or a `.join`, `.format`, `.format_map` or `.replace` of string constants, anywhere in the file (which a lookup by name may reach). Any other callee of those two kinds is refused by name, the reason naming the condition it fails; a module-level def of int or float is not followed but refused as a call of int or float bound other than to the builtin (above). It also follows a text method or a file read, and any other method through its receiver, as above, and it reads every call's arguments but those of a call of int or float that is the builtin, a leaf, save where the call is a base (above). It follows no method called on the calling method's own first "
+                "function or of one of its attributes, `f.__code__ = ...` among them, may run code the census does not read) and, for a module function, spells in no string constant and in no constants the census folds to text, a `+`, an f-string, a `%`, or a `.join`, `.format`, `.format_map` or `.replace` of string constants, anywhere in the file (which a lookup by name may reach), in a file where every key a lookup by name takes on a namespace mapping (a subscript of globals(), vars() or locals(), `__builtins__` or an attribute named `__dict__`, or the first argument of `.get`, `.pop`, `.setdefault`, `.__getitem__`, `.__setitem__` or `.__delitem__` on one) is a string constant or constants the census folds to text, since any other key, a parameter or a call's return among them, may spell its name at run time. A module function that a lookup by name on the module object itself reaches with such a key (getattr or attrgetter, the module reached through sys.modules, import_module, a parameter or any other way) is not seen, a stated limit, since the census does not read which object a lookup's receiver is (its witness: a module function that getattr on `sys.modules[__name__]` reaches by a module helper's return and whose `__code__` the file rewrites). Any other callee of those two kinds is refused by name, the reason naming the condition it fails; a module-level def of int or float is not followed but refused as a call of int or float bound other than to the builtin (above). It also follows a text method or a file read, and any other method through its receiver, as above, and it reads every call's arguments but those of a call of int or float that is the builtin, a leaf, save where the call is a base (above). It follows no method called on the calling method's own first "
                 "parameter (self by binding, however it is spelled, the first parameter of a method whose def carries no decorator, never "
                 "rebound in the method, and read so in a closure, a lambda or a comprehension of the method that does not bind the name; the "
                 "first parameter of a route handler that carries a decorator, whatever it is bound to, or that stands in a file binding "
@@ -1595,7 +1595,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "holds it or of such a value itself, or any other base whose root by binding is a class), a function or class object read as a "
                 "value, a lambda reached through a name's value, a module function or a function defined in the page function that is no plain "
                 "def (an async def, one carrying a decorator, one whose own body yields, one whose name the file reads other than as a call's "
-                "callee or, for a module function, spells in a string constant or in constants the census folds to text), a method called on self, whatever its def, a route class's "
+                "callee or, for a module function, spells in a string constant or in constants the census folds to text, or stands in a file where a lookup by name on a namespace mapping takes a key that is neither), a method called on self, whatever its def, a route class's "
                 "method called other than on the calling method's own first parameter, a method called on any other parameter, or on a name "
                 "spelled self that is not that parameter, whose name the file stores, deletes or names to a setter as an attribute, a call of, "
                 "or a method called on, a route handler's first parameter the census does not classify, a replacement field reaching an "
@@ -5934,6 +5934,15 @@ NM_KEY_TAGS = tuple(tag for tag, _h, _f, _a, _w in NM_KEY_SPEC)
 # there, its return its fetch), refused at the fix at its call; the control fok followed at both heads, its fetch listed, and the
 # control fprt, a module function whose name a part of a fold spells while the fold does not (`("_probe_" + "fprt_page") + "x"`),
 # followed at both heads, a part's text being an operand the fold consumes, no value the program holds.
+# - a lookup by name on a namespace mapping whose key is not constant text, an escape refused where one check does it at 0 live (the
+#   00:28Z rule): a module function whose __code__ the file rewrites, reached by a .get read of globals() keyed by a module helper's
+#   return (fkey, probe_fkey.py) and by a subscript of a module's __dict__, the module handed to a module helper, keyed so (fkdct,
+#   probe_fkdct.py), each silent at the twelfth round's reviewed head, whose string test read string constants alone, and refused at
+#   its call: such a key may spell any module function's name at run time, so no module function of its file is followed and each
+#   plant stands in a module of its own. A lookup by name on the module object itself with such a key is the stated limit, the census
+#   reading no lookup's receiver as the module: its witness fkmod (probe_fkmod.py), the same rewrite reached by getattr on
+#   `sys.modules[__name__]` keyed by a module helper's return, asserted silent. Python serves each of the three fetches with the
+#   module registered in sys.modules under its name, as an import registers it.
 # - functions defined in the page function (probe_fon.py): a decorated one (fndec), a generator (fngen), an async one (fnasy) and
 #   one whose __code__ the page function rewrites (fnal), each silent at the reviewed head (fnasy read there), refused at its call;
 #   the control fnok followed at both heads.
@@ -6161,9 +6170,22 @@ FO_FILES += (
     ("x4g", _a_module("x4g", FO_SEND + "\n    def _probe_loc(self):\n        get = 1\n        return get\n",
                       head="_PROBE_X4G = {\"k\": \"%s\"}\n\n\ndef _probe_x4g_page(q):\n    return \"<p>x4g</p>\" + q.get(\"k\")" % (FGH_PAGE % "x4g"),
                       branches=(("x4g", 'return self._send(200, _probe_x4g_page(_PROBE_X4G), "text/html")'),))))
+# (tag, the module's rewrite of its page function, what the plant is): fkey and fkdct refused at the call (_DEF_KEY), each in a module of
+# its own since the key conjunct reads the whole file; fkmod the stated limit's witness, silent
+FO_FK_HEAD = ("import sys\n\n\ndef _probe_{t}_evil():\n    return \"{fetch}\"\n\n\ndef _probe_{t}_page():\n    return \"<p>ok</p>\"\n\n\n"
+              "def _probe_{t}_k():\n    return chr(95) + \"probe_{t}_page\"\n\n\n{rewrite}")
+FO_FK = (("fkey", "globals().get(_probe_fkey_k()).__code__ = _probe_fkey_evil.__code__",
+          "a module function a .get read of globals() reaches by a module helper's return"),
+         ("fkdct", "def _probe_fkdct_w(m):\n    m.__dict__[_probe_fkdct_k()].__code__ = _probe_fkdct_evil.__code__\n\n\n"
+          "_probe_fkdct_w(sys.modules[__name__])",
+          "a module function a subscript of a module's __dict__ reaches by a module helper's return, the module handed to a module helper"))
+FO_FK_WITNESS = ("fkmod", "getattr(sys.modules[__name__], _probe_fkmod_k()).__code__ = _probe_fkmod_evil.__code__",
+                 "a module function getattr on the module object reaches by a module helper's return")
+FO_FILES += tuple((t, _a_module(t, FO_SEND, head=FO_FK_HEAD.format(t=t, fetch=FGH_PAGE % t, rewrite=rewrite),
+                                branches=(_fo_page(t, "_probe_%s_page()" % t),))) for t, rewrite, _ in FO_FK + (FO_FK_WITNESS,))
 FO_TEXTS = dict(FO_FILES)
 # the modules each plant's SERVED lines stand in, and the read controls (each fetch UNCLASSIFIED at its line)
-FO_MODULES = ("fom", "fon", "fme", "fesc", "nch", "dup", "hpnch", "hpnci", "x4", "ovr", "ovrown", "fobj", "lam", "lam2")
+FO_MODULES = ("fom", "fon", "fme", "fesc", "nch", "dup", "hpnch", "hpnci", "x4", "ovr", "ovrown", "fobj", "lam", "lam2", "fkey", "fkdct")
 FO_READ = (("fok", "fom", "a plain module function, followed, which a def elsewhere binding its name as a local does not alias"),
            ("fprt", "fom", "a plain module function whose name a part of a fold spells while the fold does not, followed"),
            ("fnok", "fon", "a plain function the page function defines, followed"),
@@ -7157,11 +7179,12 @@ CF_TEXTS = dict(CF_FILES)
 # beside a UTF-8 name (u7f), a keyword beside one (u7g) and a keyword alone (u7h), each refused by name (_READ_CODEC; a page's own
 # handler, or one codecs.register_error names, may decode the file to text the walk's replace decoding did not read), and a local the
 # container proof refuses read through .read_text() (pcon: the local bound to the walked .js's Path and its __class__ stored, a
-# PosixPath subclass whose read_text returns the fetch), refused with the container's reason, with the control pcok, the same local
-# with no store, followed and covered. Read with no line at both heads: pathlib's Path to the walked .js through the call arm (pac,
-# `_file_slot`'s accept side since fpc moved), the builtin open to it through a module constant and a local's value (pco), and a
-# module constant's value read in the module's own scope beside a local of the page function that shares a name inside that value
-# (pms). Python serves no fetch from the controls (the walked .js holds none).
+# PosixPath subclass whose read_text returns the fetch), refused with the container's reason, with the control pcok, the same
+# local with no store, followed and covered; the same local named for a module constant (pcnc) refuses first as a name a function
+# scope around the read binds, NEW-2's reason ahead of the container's. Read with no line at both heads: pathlib's Path to the
+# walked .js through the call arm (pac, `_file_slot`'s accept side since fpc moved), the builtin open to it through a module
+# constant and a local's value (pco), and a module constant's value read in the module's own scope beside a local of the page
+# function that shares a name inside that value (pms). Python serves no fetch from the controls (the walked .js holds none).
 FL_UIJS = 'Path(__file__).resolve().parent.parent / "ui" / "romp-timeline-view.js"'   # a walked JavaScript file under the browser roots
 
 
@@ -7228,6 +7251,12 @@ FL_SPEC = (
      "t", ("ct", "bound to neither a literal nor a call whose return the census reads as a value slot"), "t = f.read_text()"),
     ("pcok", "from pathlib import Path", _fl_page("pcok", '"<p>pcok</p>" + t', "f = %s\n            t = f.read_text()\n            " % FL_UIJS),
      None, None, "t = f.read_text()"),
+    # pcnc: pcon's shape on a local that shares a module constant's name, refused first as a name a function scope around the read
+    # binds (NEW-2's reason), ahead of the container's own reason, which _path gives only where no module constant shares the name
+    ("pcnc", "from pathlib import Path\n\n\nclass _ProbePcnc(type(Path())):\n    __slots__ = ()\n\n    def read_text(self, *a, **k):\n"
+     "        return \"%s\"\n\n\n_PROBE_PCNC = %s" % (FGH_PAGE % "pcnc", FL_UIJS),
+     _fl_page("pcnc", '"<p>pcnc</p>" + t', "_PROBE_PCNC = %s\n            _PROBE_PCNC.__class__ = _ProbePcnc\n            t = _PROBE_PCNC.read_text()\n            " % FL_UIJS),
+     "t", ("path", "a function scope around the read binds _PROBE_PCNC"), "t = _PROBE_PCNC.read_text()"),
     ("pco", "from pathlib import Path\n\n_PROBE_PCO = " + FL_UIJS, _fl_page("pco", '"<p>pco</p>" + t', "t = open(_PROBE_PCO).read()\n            "),
      None, None, "t = open("),
     ("pao", _fl_reader("pao") + "\n\n\ndef open(*a, **k):\n    return _ProbeReader()", _fl_page("pao", "open(__file__).read()"), "open(__file__)",
@@ -8323,6 +8352,7 @@ A_FILE_LINES.update((_a_rel(t), ((t, '"<p>%s</p>" + ' % t),)) for t in ("fesc", 
 A_FILE_LINES[_a_rel("fesc")] += (("fesci", "self.send_response(code)"),)   # the (xi) refusal's line, at the module's first route candidate
 A_FILE_LINES.update((_a_rel(t), ((t, "h._probe_%s_meth()" % t),)) for t in ("hpnch", "hpnci"))
 A_FILE_LINES[_a_rel("x4")] = tuple((t, "h.%s()" % m) for t, m, _, _ in FO_X4)
+A_FILE_LINES.update((_a_rel(t), ((t, '"<p>%s</p>" + ' % t),)) for t in ("fkey", "fkdct", "fkmod"))
 A_FILE_LINES[_a_rel("ovr")] = tuple((t, '"<p>%s</p>" + ' % t) for t in FO_OVR_TAGS)
 A_FILE_LINES[_a_rel("fobj")] = tuple((t, '"<p>%s</p>" + ' % t) for t, _, _ in FO_FOBJ)
 A_FILE_LINES[_a_rel("lam")] = tuple((t, '"<p>%s</p>" + ' % t) for t in ("lam", "lamw", "laml", "laml2")) + (("lamd", "cb=lambda"),)
@@ -8467,6 +8497,8 @@ _DEF_ALIAS = ("a callee whose name the file reads other than as a call's callee 
               "of its attributes among them), which the census does not follow")
 _DEF_STRING = ("a callee whose name a string constant of the file, or constants the census folds to text, spells, which a lookup by name "
                "may reach, which the census does not follow")
+_DEF_KEY = ("a callee in a file where a lookup by name on a namespace mapping takes a key that is not constant text, which may spell its "
+            "name at run time, which the census does not follow")
 _LAMBDA_VALUE = "a lambda reached through a name's value, a callee no def statement defines, which the census does not follow"
 _FUNC_OBJECT = "a function or class object"
 _METHOD_SUBCLASS = "a method called on self, which a subclass another file defines may override with code the census does not read"
@@ -9223,7 +9255,8 @@ A_REFUSED += tuple(("(nm) a page from %s, the file's lookup key %s" % (_U_LABEL[
 # (fo) since the eleventh round's follows: each plant at its call (the method arm's plants with the reason that names what the census found
 # first), at the object or the name it reads, or at its default
 _FO_WHY = {"deco": _DECORATED, "yield": _DEF_YIELD, "async": _DEF_ASYNC, "alias": _DEF_ALIAS, "string": _DEF_STRING, "call": _METHOD_CALL,
-           "stored": _METHOD_STORED}
+           "stored": _METHOD_STORED, "key": _DEF_KEY}
+A_REFUSED += tuple(("(fo) %s, refused at its call" % what, t, _A_TEXT % (_a_rel(t), "_probe_%s_page()" % t, _FO_WHY["key"])) for t, _, what in FO_FK)
 A_REFUSED += tuple(("(fo) %s, refused at its call" % what, t, _A_TEXT % (_a_rel("fom"), call, _FO_WHY[why])) for t, call, why, what in FO_FOM) + tuple(
     ("(fo) %s, refused at its call" % what, t, _A_TEXT % (_a_rel("fon"), call, _FO_WHY[why])) for t, call, why, what in FO_FON) + tuple(
     ("(fo) %s, refused at its call with the proof's reason" % what, t, _A_TEXT % (_a_rel("fme"), call, _FO_WHY[why])) for t, call, why, what in FO_FME) + (
@@ -11696,7 +11729,12 @@ class TheServedPagesAreScanned(_Scope):
         fcls, fcmp and fin (each silent), its string test for fstr, ffold and ffpct (silent), both dropped together at the
         module-function follow for all eleven; the string test's fold (Scan.fold_def) for ffold and ffpct (silent; fstr still refused
         by its one string constant), and the fold's parts read apart as well for fprt (then refused as a callee whose name constants
-        the census folds spell); the proof's def-statement tests dropped at the module-function follow alone for
+        the census folds spell); the proof's key conjunct (_DEF_KEY) for fkey and fkdct (silent), its mark at a subscript of a
+        namespace mapping for fkdct and at the first argument of a key method on one for fkey (each then silent), and the mark's
+        constant-text test for fok and fprt (each then refused as a callee in a file whose lookup by name takes such a key,
+        probe_fom.py's .get reads taking a string constant and folded constants); fkmod, the stated limit's witness, silent at
+        every head and red when armed (keyed on vars() of the module, a namespace mapping); the proof's def-statement tests
+        dropped at the module-function follow alone for
         fdec, fgen (silent), fasy (read)
         and (p)'s zdd (silent), and at the nested-def follow alone for fndec, fngen (silent) and fnasy (read); the nested-def follow's
         name read for fnal and fnlam, and its walk into a lambda's body for fnlam (each silent); the resolver's arms, each made to
@@ -11733,6 +11771,9 @@ class TheServedPagesAreScanned(_Scope):
                 self.assertFetchUnclassifiedAt(self.at[tag], tag, "%s: its return read, its fetch listed" % what, _a_rel(mod))
         with self.subTest(plant="(fo) the subclass another file defines has no line of its own"):
             self.assertEqual([ln for ln in self.out.splitlines() if _a_rel("fsub") in ln and not ln.startswith("SERVED %s:" % _a_rel("fesc"))], [])
+        with self.subTest(plant="(fo) the stated limit's witness: %s (fkmod), silent" % FO_FK_WITNESS[2]):
+            self.assertEqual([ln for ln in self.out.splitlines() if _a_rel("fkmod") in ln or _fgh_mark("fkmod") in ln], [],
+                             "no line and no site: the census reads no lookup's receiver as the module object")
         with self.subTest(plant="(fo) a method's local named like a parameter's method is no route class's method (x4g): no SERVED line"):
             self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel("x4g"))], [])
         with self.subTest(plant="(fo) no hidden text is a site"):
@@ -12107,7 +12148,9 @@ class TheServedPagesAreScanned(_Scope):
         locale's default) or a UTF-8 name alone (u7d, `encoding="utf-8"`) stays covered, no line. A local the container proof refuses
         is never followed to its path (the same ruling, correctness-1): pcon, a local bound to the walked .js's Path whose __class__
         the page stores, read through .read_text(), refused with the container's own reason (silent at the twelfth round's reviewed
-        head, which followed it by its forms alone), and the control pcok, the same local with no store, followed and covered. The
+        head, which followed it by its forms alone), and the control pcok, the same local with no store, followed and covered; pcnc,
+        pcon's shape on a local that shares a module constant's name, refuses first as a name a function scope around the read binds
+        (NEW-2's reason ahead of the container's, as _path's docstring orders them; silent at the reviewed head). The
         reds for these, over the fix-script mutants (never in the tree): the codec check for u7a and u7b (each then covered, silent);
         the argument check's keyword conjunct for u7e, u7g and u7h, and its positional conjunct for u7f (each then covered, silent;
         the `.read` arm's tests, a fifth positional argument to the open(...) and a keyword, red nothing and cannot, _path refusing
@@ -12118,7 +12161,9 @@ class TheServedPagesAreScanned(_Scope):
         not scan), the controls pac, pco and pms (then refused so) and the live listing (the tree's three reads of walked JavaScript
         then refused); the reason a refusal carries for every refused plant (each then a file the walk does not scan); the local
         follow's test of _scoped's verdict for pcon (then followed and covered, silent) and the container's reason for pcon (then a
-        file the walk does not scan); the callee's scope test for plp, plo and plw; the context handed to _path by the local-slot arm
+        file the walk does not scan); the order of _path's two reasons for a refused container's name for pcnc and pnc (each then
+        refused with the container's reason; pnc's local, bound to a call no value slot reads, is such a container too); the callee's
+        scope test for plp, plo and plw; the context handed to _path by the local-slot arm
         for plo and pnl (and the live listing, the tree's read through a plain local then refused) and by the call arm for plp, plw
         and pnc; the pathlib import's test for pav, paq, pnm and pna (pap then refused as a file the walk reads as Python), within it
         the module for paq, the imported name for pnm and the name it binds for pna; the name's one binding, never rebound, for psl;
@@ -13644,7 +13689,9 @@ class TheWalksExpandEachNameOnceAndStopNoChainResolveCompletes(unittest.TestCase
         parent read once per route, a local keyed on the scope that binds it, a constant, a function or a default, and with it removed
         no count moves and the module stays green) (its local arm's removal also stops the rotations' runs, resolve raising
         RecursionError on them); layer iv's local walk with its visited map dropped expands the list's locals 16371 times for 93 and
-        loops on the rotations and the fan-out until its step passes the count case's cap; and its module walk expands the module
+        loops until its step passes the count case's cap on the class rotations, the two-value rotations under a `.format` and the set
+        join's (not those read as a lookup key), on both fan-outs and on resolve's two comprehension shapes (over locals, and of two
+        generators); and its module walk expands the module
         list's names 8191 times for 13. The set join's walk with its visited set dropped loops on the rotation until its step passes
         the count case's cap. The backstop ends none of these runs."""
         recs = _walk_runs([(label, _walk_counted(shape, n)) for label, shape, n, _ in WALK_COUNT_RUNS], cap=WALK_COUNT_CAP)
