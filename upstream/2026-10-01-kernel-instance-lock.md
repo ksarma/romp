@@ -1,0 +1,13 @@
+---
+title: One kernel per state root: the kernel takes an instance lock (`kernel.lock`) before any write, waits for a draining predecessor up to its announced deadline, refuses any other holder with exit 75, and writes repo-root after the bind instead of at import
+status: candidate
+where: `kernel/kernel.py` (`_kernel_lock_acquire`, `_kernel_lock_announce_drain`, `_persist_repo_root` moved into `main`), `tests/test_kernel_instance_lock.py`, `tests/test_perf_bench.py`, `tests/test_remote_clone_discovery.py`, `tests/test_ship_reship_served.py`, `tests/test_dashboard_reload_served.py`, `tests/README.md`, `tools/perf-bench.py`, `docs/reference.md`, `plans/multi-kernel.md`, `upstream/2026-10-01-kernel-instance-lock.md` (this entry)
+added: 2026-10-01
+pr:
+tier: fix
+offered:
+closed:
+---
+Nothing stopped a second kernel from running on a state root another kernel was serving. Every kernel ran its import-time writes (the serve-token mint, the repo-root record, the fold checkpoint sweep) and its boot passes (store migrations, the judge scratch prune, the palette mirror, the remotes load, every thread start) before its bind, so a successor that overlapped a draining kernel, a kernels.json profile with no stateDir, or an /ensure for a port no profile names wrote into the live kernel's state, and only the bind's failure stopped it afterwards. A kernel run as __main__ now takes an exclusive flock on `<state>/kernel.lock` right after judge.py fixes the state root, before any of those writes, and holds it until it exits. The file's one line is `<pid> serving`, rewritten to `<pid> draining <deadline>` as the first act of _drain_and_exit (the deadline is now plus the drain's grace). A kernel that finds the lock held waits only for a holder that announced its drain, bounded by that deadline through a one-shot SIGALRM (no thread exists at the lock point); any other holder refuses it with one stderr line naming the holder's pid, the lock and the stateDir remedy, and os._exit(75), having written nothing, so a manager's backoff retries it. The repo-root record moved from import time into main(), after the bind, so an in-process load of the module (a test, a benchmark against a state copy) no longer writes it. The project has the same order: the repo-root write at import, every pre-bind write before the bind, and no instance lock. A fix with tests that fail before it, so fix tier.
+
+An offer to the project needs its own copies of the two served tests' relaunch waits (the drivers SIGKILL a kernel the runner owns and relaunch it on the same root; they now block on the lock before the relaunch) and of the perf-bench test rewrite, where the project carries those modules.

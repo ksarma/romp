@@ -24,6 +24,9 @@ kernel is on, and let co-located kernels message each other through the postal f
    serve-token, goals, judge caches, every `bin/` tool, the hooks, the timeline view, the
    extension. Two kernels sharing that root share a token, a mailbox root, goal stores, and
    auto-nudge records — no isolation at all. One root-override isolates everything at once.
+   (2026-10-01: a kernel started on a root that another kernel serves is now refused at start,
+   through `kernel.lock`, with exit status 75. A second kernel therefore needs its own `stateDir`;
+   see docs/reference.md, "What survives a restart".)
 
 2. **The manager is multi-kernel by construction.** `bin/romp-manager` keeps kernels in a registry
    keyed by id, respawns per entry, and `restart-all` loops the registry; v1 registers only

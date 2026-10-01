@@ -1835,6 +1835,21 @@ so its shells are re-parented and may keep running. A kernel restart has never
 touched work a session deliberately detached: a tmux server it started itself,
 `setsid` children and other processes that outlive their shell.
 
+**One kernel per state root.** A kernel that finds another kernel serving its
+state root refuses to start: it exits with status 75 and prints one stderr line
+naming the holder's pid and the lock file, having written nothing. Under the
+manager, the crash backoff starts it again. The mechanism is an exclusive lock
+on `kernel.lock` in the state root, which a kernel takes before it writes
+anything there and holds until it exits (a SIGKILL releases it too). The file's
+one line names the holder: `<pid> serving`, or `<pid> draining <deadline>` once
+its drain has started, where the deadline is the end of the drain's grace. A
+kernel started while the holder drains waits for the holder to exit, up to that
+deadline, and then serves; if the holder still holds the lock at the deadline,
+the new kernel is refused. A `kernels.json` profile without a `stateDir`, or an
+`/ensure` for a port that no profile names, starts a kernel on the primary
+kernel's root, so that kernel is refused: give it a profile with its own
+`stateDir`.
+
 The dashboard page stays on screen across a restart. Its panes reconnect as they
 do after a dropped socket (the watched tab rebuilt whole, the other tabs as
 skeletons that fill on demand), and a restart onto the same build is invisible
