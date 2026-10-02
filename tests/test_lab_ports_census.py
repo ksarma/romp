@@ -18,16 +18,22 @@ nothing.
 
 THE RULES, each read per module by AST (scan()):
   D  no draw and release: in one scope (a function, a lambda, a class body or the module body), a socket bound to port 0
-     whose port is read (getsockname) and that is released in the same scope, by close(), by a with block, or by going
-     out of scope (a local name used only for its own methods), and that never listens there. A listener keeps its port
-     and a holder kept on an attribute keeps it too, so neither is a draw.
+     (an address written in place, or a name the module binds to one: ADDR = ("127.0.0.1", 0); s.bind(ADDR)) whose port
+     is read (getsockname) and that is released in the same scope, by close(), by a with block, or by going out of scope
+     (a local name used only for its own methods), and that never listens there. A listener keeps its port and a holder
+     kept on an attribute keeps it too, so neither is a draw.
   W  no hand-written /healthz wait: no call other than an assert* has an argument holding /healthz as a path or in a
      URL (at a string's start or right after a non-space: "http://127.0.0.1:%d/healthz", base + "/healthz", an
-     f-string's "{p}/healthz"). Prose that mentions it after a space (a skip's "never served /healthz here") is not a
-     request, an assertion over results keyed by the route asks nothing, and a node driver's /healthz inside a JavaScript
-     text that Python only writes to a file is not a call argument.
+     f-string's "{p}/healthz"), written in place or through a name bound to such a string in the call's own scope or
+     the module's (url = "http://127.0.0.1:%d/healthz" % p; urlopen(url); or HZ at module level and urlopen(HZ % p)).
+     Prose that mentions it after a space (a skip's "never served /healthz here") is not a request, an assertion over
+     results keyed by the route asks nothing, a node driver's /healthz inside a JavaScript text that Python writes to a
+     file or hands to the driver is not a URL, and a cfg dict holding a /healthz URL for the node driver ({"healthz":
+     url}, handed to json.dumps) is the driver's to read, not a Python request.
   K  every function that starts the kernel (a Popen whose argv names romp-kernel, directly or through a name the module
-     binds to an expression naming it) calls lab_ports.wait_owned; a spawn outside any function is an offence too.
+     binds to an expression naming it; Popen spelled by its own name or by a name an import or an assignment binds it
+     to: from subprocess import Popen as P, or P = subprocess.Popen) calls lab_ports.wait_owned; a spawn outside any
+     function is an offence too.
   R  a module that reserves a port, through lab_ports.reserve or through kernel_env (which reserves the kernel's postal
      port), calls lab_ports.release.
   A  the door is bound under its own name only and its members are read as lab_ports.<name>: no `import lab_ports as
@@ -41,12 +47,15 @@ the AST does not read.
 WHAT IT CANNOT SEE (stated, not closed): a draw split across functions, or reached through getattr or partial; a port
 picked without a bind; Python inside a subprocess -c string; a JavaScript wait on a kernel the node driver relaunches in
 place (tests/test_ship_reship_served.py and tests/test_dashboard_reload_served.py relaunch from the driver and wait
-there); a kernel started by a shell or by a name bound outside the module; a module imported by a computed name;
-readiness read by another road than an HTTP call naming /healthz; the door handed to a call as an argument
-(getattr(lab_ports, name); the mock.patch.object(lab_ports, ...) in tests/test_federated_linkdrop_served.py is such a
-hand-off and is green) or bound by a for, a with or a default argument. The planted modules below are each red under exactly
-the rule they break, and the clean shapes (a listener, a kept holder, the door's own use, a /healthz inside a JavaScript
-text) are green.
+there), or a node driver's own wait on a /healthz URL its cfg carries; a kernel started by a shell or by a name bound
+outside the module; a module imported by a computed name; readiness read by another road than an HTTP call naming
+/healthz; a /healthz URL bound in an enclosing function or a class body (W reads the call's own scope and the module's;
+D and K read every assignment in the module by spelling); an address, a URL or Popen that reaches its use through a
+container, a call's result or a parameter; the door handed to a call as an argument (getattr(lab_ports, name); the
+mock.patch.object(lab_ports, ...) in tests/test_federated_linkdrop_served.py is such a hand-off and is green) or bound
+by a for, a with or a default argument. The planted modules below are each red under exactly the rule they break, and
+the clean shapes (a listener, a kept holder, the door's own use, a /healthz inside a JavaScript text, a driver's cfg
+holding a /healthz URL) are green.
 
 Synthetic: reads the tree only; no kernel, no browser, no socket.
 """
@@ -156,6 +165,41 @@ def _port_zero(arg):
             and arg.elts[1].value == 0 and not isinstance(arg.elts[1].value, bool))
 
 
+def _assigns(nodes):
+    """(target, value) of every assignment among `nodes` (plain, annotated, augmented or walrus), a tuple or list target
+    taken element by element."""
+    out = []
+    for n in nodes:
+        if isinstance(n, ast.Assign):
+            pairs = [(t, n.value) for t in n.targets]
+        elif isinstance(n, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)) and n.value is not None:
+            pairs = [(n.target, n.value)]
+        else:
+            continue
+        for t, v in pairs:
+            out += [(tt, v) for tt in (t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t])]
+    return out
+
+
+def _bound(assigns, holds, seed=()):
+    """The spellings (a name, or an attribute chain like self.addr) that `assigns` bind to a value `holds(value, bound)`
+    accepts, followed to a fixed point from `seed`, so a spelling bound to another bound spelling is bound too."""
+    bound, grew = set(seed), True
+    while grew:
+        grew = False
+        for t, v in assigns:
+            name = _text(t)
+            if name and name not in bound and holds(v, bound):
+                bound.add(name)
+                grew = True
+    return bound
+
+
+def _holds_port_zero(node, bound):
+    """Is `node` an address with port 0, ("127.0.0.1", 0), or a spelling bound to one?"""
+    return _port_zero(node) or _text(node) in bound
+
+
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 
 
@@ -178,8 +222,9 @@ def _scope_name(scope):
     return getattr(scope, "name", None) or ("<lambda>" if isinstance(scope, ast.Lambda) else "<module>")
 
 
-def _draws(scope):
-    """(line, receiver) of every draw and release in `scope` (rule D)."""
+def _draws(scope, zero=frozenset()):
+    """(line, receiver) of every draw and release in `scope` (rule D). `zero` holds the spellings the module binds to an
+    address with port 0 (ADDR = ("127.0.0.1", 0); s.bind(ADDR) is a bind to port 0 too)."""
     own = _own(scope)
     calls = [n for n in own if isinstance(n, ast.Call)]
     method = {}
@@ -190,7 +235,8 @@ def _draws(scope):
              if i.optional_vars is not None}
     out = []
     for c in calls:
-        if not (isinstance(c.func, ast.Attribute) and c.func.attr == "bind" and c.args and _port_zero(c.args[0])):
+        if not (isinstance(c.func, ast.Attribute) and c.func.attr == "bind" and c.args
+                and _holds_port_zero(c.args[0], zero)):
             continue
         recv = _text(c.func.value)
         if recv is None or not method.get((recv, "getsockname")) or method.get((recv, "listen")):
@@ -208,20 +254,43 @@ def _draws(scope):
 
 
 HEALTHZ_PATH = re.compile(r"(?:^|\S)/healthz")   # /healthz as a path or in a URL: at the start, or right after a non-space
+HEALTHZ_URL = re.compile(r"^\S*/healthz")         # a string that IS a URL or path to /healthz: no space before the route
+
+
+def _holds_url(node, bound):
+    """Is the expression `node` a string that is a /healthz URL or path: a literal matching HEALTHZ_URL (so a JavaScript
+    text with /healthz deep inside it is not), an f-string with a literal part that does, a + or a % of one, a .format()
+    of one, or a spelling bound to one? A dict, list or call that holds such a string is not one: a driver's cfg
+    {"healthz": url} is for the node driver to read, and the call handed the cfg asks nothing."""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str) and bool(HEALTHZ_URL.search(node.value))
+    if isinstance(node, ast.JoinedStr):
+        return any(_holds_url(v, bound) for v in node.values if isinstance(v, ast.Constant))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        return _holds_url(node.left, bound) or (isinstance(node.op, ast.Add) and _holds_url(node.right, bound))
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format":
+        return _holds_url(node.func.value, bound)
+    return isinstance(node, (ast.Name, ast.Attribute)) and _text(node) in bound
 
 
 def _healthz_calls(tree):
     """(line, callee) of every call, other than an assertion, with an argument holding /healthz as a path or in a URL
-    (rule W). A string that mentions it in prose, after a space (a skip's "never served /healthz here"), is not a request
-    for it, and an assertion comparing a result keyed by the route (an assertEqual over {"/healthz": 200}) asks nothing."""
+    (rule W), written in place or through a spelling bound to such a URL in the call's own scope or the module's
+    (url = "http://127.0.0.1:%d/healthz" % p; urlopen(url)). A string that mentions it in prose, after a space (a
+    skip's "never served /healthz here"), is not a request for it, and an assertion comparing a result keyed by the route
+    (an assertEqual over {"/healthz": 200}) asks nothing."""
+    module = _bound(_assigns(_own(tree)), _holds_url)
     out = []
-    for c in ast.walk(tree):
-        if not isinstance(c, ast.Call) or (_callee(c) or "").startswith("assert"):
-            continue
-        args = list(c.args) + [k.value for k in c.keywords]
-        if any(isinstance(s, ast.Constant) and isinstance(s.value, str) and HEALTHZ_PATH.search(s.value)
-               for a in args for s in ast.walk(a)):
-            out.append((c.lineno, _callee(c) or "<call>"))
+    for scope in _scopes(tree):
+        own = _own(scope)
+        bound = module if scope is tree else _bound(_assigns(own), _holds_url, module)
+        for c in own:
+            if not isinstance(c, ast.Call) or (_callee(c) or "").startswith("assert"):
+                continue
+            args = list(c.args) + [k.value for k in c.keywords]
+            if any(isinstance(s, ast.Constant) and isinstance(s.value, str) and HEALTHZ_PATH.search(s.value)
+                   for a in args for s in ast.walk(a)) or any(_holds_url(a, bound) for a in args if bound):
+                out.append((c.lineno, _callee(c) or "<call>"))
     return out
 
 
@@ -239,22 +308,30 @@ def _names_kernel(node, bound):
 def _kernel_bound(tree):
     """The spellings the module binds to an expression naming the kernel (KERNEL = os.path.join(BIN, "romp-kernel")),
     followed to a fixed point."""
-    assigns = []
+    return _bound(_assigns(ast.walk(tree)), _names_kernel)
+
+
+def _last(node):
+    """The last part of a name or an attribute chain (P, self.P: P), as _callee reads a call's callee; else None."""
+    return node.attr if isinstance(node, ast.Attribute) else node.id if isinstance(node, ast.Name) else None
+
+
+def _spawn_names(tree):
+    """The names a Popen call is spelled by in the module, read as a callee's last part: Popen, each name an import binds
+    it to (from subprocess import Popen as P), and each spelling assigned one of those (P = subprocess.Popen), followed to
+    a fixed point."""
+    names = set(SPAWN_CALLEES)
     for n in ast.walk(tree):
-        if isinstance(n, ast.Assign):
-            assigns += [(t, n.value) for t in n.targets]
-        elif isinstance(n, (ast.AnnAssign, ast.AugAssign)) and n.value is not None:
-            assigns.append((n.target, n.value))
-    bound, grew = set(), True
+        if isinstance(n, ast.ImportFrom):
+            names |= {a.asname for a in n.names if a.name in SPAWN_CALLEES and a.asname}
+    assigns, grew = _assigns(ast.walk(tree)), True
     while grew:
         grew = False
         for t, v in assigns:
-            for tt in (t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t]):
-                name = _text(tt)
-                if name and name not in bound and _names_kernel(v, bound):
-                    bound.add(name)
-                    grew = True
-    return bound
+            if _last(v) in names and _last(t) and _last(t) not in names:
+                names.add(_last(t))
+                grew = True
+    return names
 
 
 def _argv(call):
@@ -265,12 +342,12 @@ def _argv(call):
 
 def _kernel_spawns(tree):
     """[(line, the enclosing function node or None)] of every kernel Popen in the module."""
-    bound = _kernel_bound(tree)
+    bound, spawn = _kernel_bound(tree), _spawn_names(tree)
     out = []
     for scope in _scopes(tree):
         fn = scope if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)) else None
         for c in _own(scope):
-            if isinstance(c, ast.Call) and _callee(c) in SPAWN_CALLEES:
+            if isinstance(c, ast.Call) and _callee(c) in spawn:
                 argv = _argv(c)
                 if argv is not None and _names_kernel(argv, bound):
                     out.append((c.lineno, fn))
@@ -281,8 +358,9 @@ def scan(text, tree, name):
     """{rule: [(file, line, what)]}: one module's offences under each rule, and its kernel-spawning functions under the
     key "spawns" (the census's floor reads them)."""
     off = {r: [] for r in RULES}
+    zero = _bound(_assigns(ast.walk(tree)), _holds_port_zero)
     for scope in _scopes(tree):
-        for line, recv in _draws(scope):
+        for line, recv in _draws(scope, zero):
             off["D"].append((name, line, "%s draws a port into %s and releases it" % (_scope_name(scope), recv)))
     for line, callee in _healthz_calls(tree):
         off["W"].append((name, line, "%s(...) asks /healthz by hand" % callee))
@@ -400,6 +478,20 @@ PLANTS = {
                              '        self.assertEqual({"/healthz": 200}, {"/healthz": 200})\n', None),
     "clean-prose-healthz": ('import unittest\ndef boot(why):\n'
                             '    raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)\n', None),
+    # the address, the URL and Popen reached through a name the module binds (each passed the rules' literal reads)
+    "draw-named-address": ('import socket\nADDR = ("127.0.0.1", 0)\ndef pick():\n    s = socket.socket()\n'
+                           '    s.bind(ADDR)\n    p = s.getsockname()[1]\n    s.close()\n    return p\n', "D"),
+    "spawn-aliased-popen": ('import os\nfrom subprocess import Popen as P\ndef boot(env):\n'
+                            '    return P([os.path.join("bin", "romp-' 'kernel")], env=env)\n', "K"),
+    "spawn-assigned-popen": ('import os, subprocess\nrun = subprocess.Popen\ndef boot(env):\n'
+                             '    return run([os.path.join("bin", "romp-' 'kernel")], env=env)\n', "K"),
+    "wait-url-variable": ('import time, urllib.request\ndef wait(p):\n    url = "http://127.0.0.1:%d/healthz" % p\n'
+                          '    for _ in range(9):\n        try:\n            urllib.request.urlopen(url, timeout=1)\n'
+                          '            return\n        except Exception:\n            time.sleep(0.5)\n', "W"),
+    "wait-url-constant": ('import urllib.request\nHZ = "http://127.0.0.1:%d/healthz"\ndef wait(p):\n'
+                          '    urllib.request.urlopen(HZ % p, timeout=1)\n', "W"),
+    "clean-driver-cfg": ('import json\ndef cfg(p, path):\n    c = {"healthz": "http://127.0.0.1:%d/healthz" % p}\n'
+                         '    open(path, "w").write(json.dumps(c))\n    return c\n', None),
 }
 
 
