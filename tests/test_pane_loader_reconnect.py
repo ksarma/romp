@@ -229,7 +229,7 @@ global.MutationObserver = class { constructor() {} observe() {} };
 const cls = (S) => ({ add: (c) => S.add(c), remove: (c) => S.delete(c), contains: (c) => S.has(c),
   toggle: (c, on) => { if (on) S.add(c); else S.delete(c); return !!on; } });
 const SHEET = { classList: cls(SHEETCLS) };
-const BADGE = { classList: cls(BADGECLS) };
+const BADGE = { classList: cls(BADGECLS), style: {} };
 // the glance carries no count, so ANY write to the badge's text or children is recorded and every case asserts there was none:
 // textContent, innerHTML, innerText or outerHTML set; a child added, moved, replaced or removed; a child node's value or text set
 // (its swirl image and its text node, which a writer could reach as childNodes, firstChild or lastChild)
@@ -271,7 +271,8 @@ class ReconnectBadgeHold(unittest.TestCase):
 
     HOLD = getattr(km, "_RECONN_BADGE_HOLD_MS", 1000)
 
-    def _run(self, scenario):
+    def _run(self, scenario, pre=""):
+        """`pre` runs after the harness and BEFORE the loader script (the placement case's header, transcript box and ResizeObserver)."""
         node = shutil.which("node")
         if not node:
             raise unittest.SkipTest("node not installed")
@@ -280,7 +281,7 @@ class ReconnectBadgeHold(unittest.TestCase):
         fx = tempfile.mkdtemp()
         path = os.path.join(fx, "badge.js")
         with open(path, "w") as f:
-            f.write(_BADGE_HARNESS + "const RHOLD_T = %d;\n" % self.HOLD + script + "\n" + scenario)
+            f.write(_BADGE_HARNESS + "const RHOLD_T = %d;\n" % self.HOLD + pre + script + "\n" + scenario)
         r = subprocess.run([node, path], capture_output=True, text=True, timeout=30)
         shutil.rmtree(fx, ignore_errors=True)
         self.assertEqual(r.returncode, 0, "the loader script threw: " + r.stderr[:800])
@@ -502,6 +503,40 @@ out({ before, atPark, justBefore, atHold, waiting, afterFresh: painted(), runs: 
         self.assertIs(o["afterFresh"], False)
         self.assertEqual([r["on"] for r in o["runs"]], [True, False, True, False], "painted on screen, pulled back at the park, painted a hold after the tap, cleared at the fresh frame")
         self.assertEqual(o["runs"][2]["t"], 2 * self.HOLD + 20000, "the second paint is a hold after the tap, not after the park")
+
+    # The badge's place in the chat page (finding of 2026-10-02): at the top of the transcript, below the chrome, so it covers none
+    # of the header's controls (upstream's top:8px hid the phone's tag filter and + button, and the desktop strip's tag filter and
+    # gear). The served legs measure the real geometry (_badge_clear_of_chrome); this case runs the placement's logic in node.
+    _PLACE_PRE = r"""
+const ROS = [], OBSERVED = [];
+global.ResizeObserver = class { constructor(cb) { ROS.push(cb); } observe(el) { OBSERVED.push(el === CONTENT ? 'content' : el && el.id); } };
+let CTOP = 44;                                                        // the transcript's top: the phone header's height
+CONTENT.getBoundingClientRect = () => ({ top: CTOP, left: 0, right: 390, bottom: 700 });
+const TABBAR = { id: 'tabbar' };
+const getEl0 = document.getElementById;
+document.getElementById = (id) => (id === 'tabbar' ? TABBAR : getEl0(id));
+const resize = (top) => task(() => { CTOP = top; ROS.forEach((cb) => cb([])); });
+"""
+
+    def test_in_the_chat_page_the_badge_sits_below_the_header_and_moves_with_it_on_resize_events(self):
+        o = self._run(r"""
+const atLoad = BADGE.style.top;
+resize(90); const pinnedNotes = BADGE.style.top;                      // the pinned notes strip appears above the transcript
+resize(0); const offScreen = BADGE.style.top;                         // a pane not rendered (display:none) measures 0
+fire('romp:wsdown'); after(RHOLD_T); const painted1 = { painted: painted(), top: BADGE.style.top };
+out({ atLoad, pinnedNotes, offScreen, painted1, observed: OBSERVED, observers: ROS.length, timers: live() - (painted() ? 1 : 0) });""", pre=self._PLACE_PRE)
+        self.assertEqual(o["observed"], ["tabbar", "content"], "one observer on the header and the transcript")
+        self.assertEqual(o["atLoad"], "52px", "at load: 8 px below the transcript's top, clear of the header")
+        self.assertEqual(o["pinnedNotes"], "98px", "a resize event places it again under the new top")
+        self.assertEqual(o["offScreen"], "8px", "a pane measuring nothing keeps upstream's 8 px until it is shown (its resize event places it)")
+        self.assertEqual(o["painted1"], {"painted": True, "top": "8px"}, "the hold and the paint leave the place alone")
+        self.assertEqual(o["timers"], 0, "no timer places it: only the paint's failsafe stands")
+
+    def test_a_page_without_the_chat_header_keeps_upstreams_corner(self):
+        o = self._run(r"""
+out({ top: BADGE.style.top === undefined ? null : BADGE.style.top, observers: ROS.length });""", pre=self._PLACE_PRE.replace("id === 'tabbar' ? TABBAR : ", ""))
+        self.assertEqual(o["observers"], 0, "no header, no observer")
+        self.assertIsNone(o["top"], "the inline top is never written: upstream's rule places it (top:8px)")
 
     def test_the_fork_lines_sit_around_upstreams_badge_lines_which_stay_byte_for_byte(self):
         js = km._pane_spin("content", "live-ask")

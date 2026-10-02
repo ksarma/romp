@@ -70017,6 +70017,16 @@ def _pane_spin(cid, ignore_id=""):
             "function rpaint(){rh=0;if(!rpend||!rb)return;rpend=false;rb.classList.add('on');rfail();}"
             "function rhold(){clearTimeout(rh);rh=0;rpend=true;if(rb)rb.classList.remove('on');clearTimeout(bfail);bfail=0;if(document.visibilityState!=='hidden'&&!rpk)rh=setTimeout(rpaint,RHOLD);}"
             "window.addEventListener('romp:wsdown',function(){rpo=false;ron=!!(rb&&rb.classList.contains('on'));});"
+            # [fork] iOS item 4 (finding of 2026-10-02): in the chat page the badge sits at the top of the transcript, below the
+            # page's chrome (the tab strip or the phone's session header, the strip's resize handle, the pinned notes), so it covers
+            # none of their controls. Upstream's rule puts it at top:8px over the header's right end, where it hid the phone's tag
+            # filter and + button and the desktop strip's tag filter and gear for the whole wait, which since the failsafe latch can
+            # outlast 30 s. Keyed on the chat's header (#tabbar): the other panes keep upstream's corner. The transcript's top moves
+            # only with a size change (the chrome above it grows or shrinks, the pane is shown), so a ResizeObserver on the header and
+            # the transcript places it again; no timer. Upstream's CSS rule stays byte for byte (the inline top outranks it).
+            "var rtb=document.getElementById('tabbar');"
+            "function rplace(){if(!rb||!c)return;var t=Math.round(c.getBoundingClientRect().top);rb.style.top=((t>0?t:0)+8)+'px';}"
+            "if(rb&&c&&rtb&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(rplace);rro.observe(rtb);rro.observe(c);}catch(e){}rplace();}"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
             # the opaque sheet; the sheet stays for a genuinely empty pane (cold load / never
             # painted), per the loading-states rule.

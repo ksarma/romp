@@ -470,6 +470,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertGreaterEqual(cue.get("lastT", 0), t["fresh"], where + "...through the fresh frame, so 'never painted' was read, not assumed")
         badge = cue.get("badge") or []
         self._badge_text(where, badge)
+        self._badge_clear_of_chrome(where, badge)
         self.assertEqual([b for b in badge if b["on"] and sus <= b["t"] < ret], [], where + "nothing painted while the page read hidden: %r" % (badge,))
         self.assertFalse([b for b in badge if b["t"] < ret] and [b for b in badge if b["t"] < ret][-1]["on"], where + "the badge was off entering the return: %r" % (badge,))
         fresh = [x for x in (cue.get("fresh") or []) if x >= ret]
@@ -515,6 +516,24 @@ class ReturnFromBackground(unittest.TestCase):
         (the recorder reads textContent, so a count written through innerHTML or a child text node shows here)."""
         self.assertTrue(badge and all("text" in b for b in badge), where + "the recorder read the badge's text with each change: %r" % (badge,))
         self.assertEqual([b for b in badge if b["on"] and b["text"] != BADGE_TEXT], [], where + "the painted badge reads %r and nothing else: %r" % (BADGE_TEXT, badge))
+
+    def _badge_clear_of_chrome(self, where, badge):
+        """The chat's painted badge covers none of the controls in the chrome above the transcript (finding of 2026-10-02): at upstream's
+        top:8px it covered 78 percent of the phone header's tag filter and of its + button, and the desktop strip's tag filter and gear,
+        for the whole wait. Each painted record carries the badge's box and every visible control's box (the recorder's chrome());
+        the overlap must be zero for each, and the control list must not be empty (a header read as empty would pass by default)."""
+        painted = [b for b in badge if b["on"]]
+        for b in painted:
+            self.assertIn("box", b, where + "the painted chat badge's box was read: %r" % (b,))
+            self.assertTrue(b.get("chrome"), where + "the chrome above the transcript holds controls, read: %r" % (b,))
+            bx, by, bw, bh = b["box"]
+            hits = []
+            for c in b["chrome"]:
+                x, y, w, h = c["box"]
+                ix, iy = min(bx + bw, x + w) - max(bx, x), min(by + bh, y + h) - max(by, y)
+                if ix > 0 and iy > 0:
+                    hits.append((c["el"], c["label"], round(ix * iy / float(w * h), 2)))
+            self.assertEqual(hits, [], where + "the painted badge at %r covers none of the header's controls: %r" % (b["box"], hits))
 
     def _tapcue(self, name, r):
         """The pane the return parked, tapped after the return (iOS item 4, finding of 2026-10-02): its corner badge read once per frame

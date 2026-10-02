@@ -255,14 +255,34 @@ const flip = (hidden) => page.evaluate((h) => {
 // frame, whether the corner badge (#pane-reconn) is painted on and its text (textContent, so a count written through innerHTML or a
 // child node reads too), and records each change of either, so a class set and cleared inside one task never reads as painted; a
 // listener stamps each romp:wsfresh (the event that clears the badge). `armed` keeps the badge's class at arming time (a pane off
-// screen paints no frame, so its loop may not run before it is shown).
+// screen paints no frame, so its loop may not run before it is shown). In the chat page (the one with the #tabbar header) each
+// record of a painted badge also carries its box and the box of every visible control in the chrome above the transcript (the tab
+// strip or the phone's session header, the strip's resize handle, the ledger and pinned-notes strips), so the test can say the
+// painted badge covers none of them (finding of 2026-10-02: at top:8px it hid the header's tag filter and + button).
 const cueRec = () => {
   const w = window; if (w.__labCue) return "again";
   const b0 = document.getElementById("pane-reconn");
   const c = w.__labCue = { badge: [], fresh: [], frames: 0, lastT: 0, armed: { t: Date.now(), on: !!(b0 && b0.classList.contains("on")) } };
   let last = null;
   const read = () => { const b = document.getElementById("pane-reconn"); return { on: !!(b && b.classList.contains("on") && getComputedStyle(b).display !== "none"), text: b ? b.textContent : null }; };
-  const loop = () => { c.frames++; c.lastT = Date.now(); const v = read(), k = v.on + "|" + v.text; if (k !== last) { c.badge.push({ t: c.lastT, on: v.on, text: v.text }); last = k; } requestAnimationFrame(loop); };
+  const box = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
+  const chrome = () => {
+    const out = [];
+    for (const id of ["tabbar", "tabbar-resize", "ledger", "pinned-notes"]) {
+      const root = document.getElementById(id); if (!root) continue;
+      const els = [root].concat(Array.from(root.querySelectorAll("button, a[href], [role=button], [data-act], input, textarea, select, [tabindex]")));
+      for (const el of els) {
+        if (el === root && id !== "tabbar-resize") continue;   // the strips themselves are not controls; the resize handle is one (a drag)
+        const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+        if (!r.width || !r.height || cs.visibility === "hidden" || cs.display === "none") continue;
+        out.push({ in: id, el: el.tagName.toLowerCase() + (el.id ? "#" + el.id : ""), label: (el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "").trim().slice(0, 30), box: box(el) });
+      }
+    }
+    return out;
+  };
+  const loop = () => { c.frames++; c.lastT = Date.now(); const v = read(), k = v.on + "|" + v.text; if (k !== last) { const e = { t: c.lastT, on: v.on, text: v.text };
+    if (v.on && document.getElementById("tabbar")) { e.box = box(document.getElementById("pane-reconn")); e.chrome = chrome(); }
+    c.badge.push(e); last = k; } requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
   w.addEventListener("romp:wsfresh", () => { c.fresh.push(Date.now()); });
   return "armed";
