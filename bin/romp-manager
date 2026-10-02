@@ -254,7 +254,10 @@ function resolveStateRoot(p) {
 // on its root is refused until it stops. A spec the file does not hold (an /ensure for a port no profile names,
 // whose root is the manager's own and so always main's, or the respawn of such a running kernel) is compared with
 // main and that group only. Each root is read the same way (specStateRoot, then resolveStateRoot). `specs` and
-// `dropped` are the loadSpecs answer the start was resolved from, and `primaryPort` the port its main entry gives.
+// `dropped` are the loadSpecs answer the start was resolved from. The primary is the registry's main while main
+// runs, else main's entry in `specs`: a main port edited in kernels.json lands at main's next start, and until then
+// the primary serves the port it was started on, so `primaryPort`, and the port the refusal names, are the running
+// primary's when there is one and the configured one otherwise.
 // `error` is the whole account, one line: the kernel, why its root is another kernel's (for a port no profile names
 // whose entry kernels.json carried and loadSpecs dropped, that entry and why it was dropped), which kernel that is,
 // and the remedy for each road: a kernels.json profile needs a stateDir no other kernel uses, and a kernel started
@@ -262,7 +265,8 @@ function resolveStateRoot(p) {
 function rootConflict(spec, specs, dropped) {
   if (!spec || spec.id === 'main') return null;
   const list = specs || [];
-  const main = list.find((s) => s.id === 'main') || { id: 'main', port: KERNEL_PORT };
+  const mainRec = kernels.get('main');
+  const main = mainRec ? mainRec.spec : (list.find((s) => s.id === 'main') || { id: 'main', port: KERNEL_PORT });
   const inFile = new Set(list.map((s) => s.id));
   const at = list.findIndex((s) => s.id === spec.id);
   const before = [{ s: main, how: 'primary' }]
@@ -279,7 +283,7 @@ function rootConflict(spec, specs, dropped) {
       : drop ? `kernels.json's entry for port ${spec.port} was dropped (${drop.why}), so no profile names the port and it would run on`
         : `no kernels.json profile names port ${spec.port}, so it would run on`;
   const whose = holder.how === 'primary'
-    ? `the primary kernel's state root ${root}, which the primary kernel on port ${main.port} serves`
+    ? `the primary kernel's state root ${root}, which the primary kernel on port ${main.port} ${mainRec ? 'serves' : 'is configured to serve'}`
     : `the state root ${root} of kernel '${holder.s.id}' (port ${holder.s.port}), ` +
       (holder.how === 'earlier' ? 'whose profile comes before it in kernels.json' : 'which is running from a profile kernels.json no longer holds');
   const remedy = at > 0 || spec.stateDir ? `Give the profile a stateDir no other kernel uses in ${KERNELS_FILE}.`

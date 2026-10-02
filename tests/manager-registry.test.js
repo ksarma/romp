@@ -529,6 +529,31 @@ test('kernels.json\'s errors are said once per text per manager life, across the
   } finally { await h.cleanup(); }
 });
 
+test('the refusal and the 409\'s primaryPort give the running primary\'s port, not a main port edited into kernels.json since it started, and the configured port once main is stopped', async () => {
+  const h = await world();
+  try {
+    const [bare, newMain] = [await freePort(__filename), await freePort(__filename)];
+    await h.start();
+    h.writeKernels([{ id: 'main', port: newMain }]);       // lands on main's next start; the primary still serves h.mainPort
+    let r = await h.req(`/ensure?port=${bare}`, 'POST');
+    assert.equal(r.code, 409, r.body);
+    let body = JSON.parse(r.body);
+    assert.equal(body.primaryPort, h.mainPort, body.error);
+    assert.ok(body.error.includes(`which the primary kernel on port ${h.mainPort} serves,`), body.error);
+    assert.ok(!body.error.includes(String(newMain)), body.error);
+    assert.deepEqual((await h.kernels()).map((k) => `${k.id}:${k.port}`), [`main:${h.mainPort}`]);
+    // main stopped: no primary runs, so the port a start would give it is the configured one
+    assert.equal((await h.req('/stop?kernel=main', 'POST')).code, 200);
+    await h.until(() => h.log.includes(`kernel 'main' stopped`), 10000, 'main did not stop');
+    r = await h.req(`/ensure?port=${bare}`, 'POST');
+    assert.equal(r.code, 409, r.body);
+    body = JSON.parse(r.body);
+    assert.equal(body.primaryPort, newMain, body.error);
+    assert.ok(body.error.includes(`which the primary kernel on port ${newMain} is configured to serve,`), body.error);
+    assert.deepEqual(h.rows().filter((row) => row.port !== h.mainPort), [], 'a kernel was started for the refused port');
+  } finally { await h.cleanup(); }
+});
+
 test('the harness: the stand-in kernel says so and exits 2, opening nothing, when the root it resolves is outside the test\'s world', async () => {
   const h = await world();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-registry-outside-'));
