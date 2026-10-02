@@ -5676,10 +5676,11 @@ const SHEET_STACK_CLASSES: ReadonlySet<string> = new Set([
  *  classes picker-error and show loses show and stands at picker-error's display none, the picture inside it hidden, which
  *  fails closed (the file review's round 18, extra6-1 and extra7-5). */
 const SHEET_CONTEXT_CLASSES: ReadonlySet<string> = new Set([
-  "ask-btn", "composer-stage-btn", "ctx-swatch", "fask-secbtn", "fc-arrivals", "fc-clip", "fc-replies", "fc-sec", "fconfirm-btn",
-  "feed-cols", "fileview-load", "fl-prov-swirl", "fold-caret", "host-dial-swirl", "meta-held-mark", "path-load-spin",
-  "picker-dir-hint", "pulse", "ra-group", "ra-metric", "ra-openbtn", "ra-periods", "rail-hit", "rl-o", "romp-lightbox-img",
-  "rs-lifted", "rs-nudge", "show", "slash-spin", "stop-btn", "tab-group-caret", "tab-ph-swirl", "tab-widgets-gear", "wt-hostload"
+  "ask-btn", "composer-stage-btn", "confirm-actions", "ctx-swatch", "fask-secbtn", "fc-arrivals", "fc-clip", "fc-replies",
+  "fc-sec", "fconfirm-btn", "feed-cols", "fileview-load", "fl-prov-swirl", "fold-caret", "host-dial-swirl", "meta-held-mark",
+  "path-load-spin", "picker-dir-hint", "pulse", "ra-group", "ra-metric", "ra-openbtn", "ra-periods", "rail-hit", "rl-o",
+  "romp-lightbox-img", "rs-lifted", "rs-nudge", "show", "slash-spin", "stop-btn", "tab-group-caret", "tab-ph-swirl",
+  "tab-widgets-gear", "wt-hostload"
 ]);
 /** A file document's author markup with the classes that would lift an element over the picture's control taken off it: on the
  *  sanitizer's body, before any pass of the viewer's own, every element loses the classes of SHEET_STACK_CLASSES, which the sheets
