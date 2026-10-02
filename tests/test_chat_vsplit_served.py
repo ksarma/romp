@@ -13,16 +13,15 @@ builder's invented text."""
 import glob
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 from romp_load import load_source
@@ -44,10 +43,6 @@ _ST0.mkdir(parents=True, exist_ok=True)
 SID_TOP = "dddd1111-2222-4333-8444-000000000a01"    # stays in the top pane (the column's own session)
 SID_BOT = "dddd1111-2222-4333-8444-000000000a02"    # split down into the bottom pane
 COLOR = ("#64b5f6", "#0c1a2e")
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 DRIVER = r"""
@@ -373,18 +368,14 @@ class _VSplitLab(unittest.TestCase):
         finally:
             em.set_checkpoint_dir(None)
             jd._rebind_state(saved_state)
-        cls.port, cls.token = _free_port(), "testtok-vsplit"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-vsplit"
         env = _lab.kernel_env(sub, claude, os.path.join(cls.lab, "dist"), cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
         cls.procs = [cls.kernel]
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1); break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            cls.kernel.kill(); raise unittest.SkipTest("kernel never served /healthz")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            cls.kernel.kill(); raise unittest.SkipTest("kernel never served /healthz: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -393,6 +384,7 @@ class _VSplitLab(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _result(self):

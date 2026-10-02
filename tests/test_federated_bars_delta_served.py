@@ -54,6 +54,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -241,14 +242,14 @@ class _BarsLab(unittest.TestCase):
             root = _corners._state_root(cls.lab, name)
             os.makedirs(root, exist_ok=True)
             Path(root, "update-mode.json").write_text(json.dumps({"mode": "off"}))   # a vintage without ROMP_UPDATE_CHECK reads the file
-        cls.rport, cls.rtoken = _dial._free_port(), "testtok-remote-bars"
-        cls.hport, cls.htoken = _dial._free_port(), "testtok-hub-bars"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-bars"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-bars"
         t0 = time.time() - cls.seed_ago_s if cls.seed_ago_s else None
         rp, cls.rlog = _dial._kernel(cls.lab, "testhost", cls.rport, cls.rtoken, [(SID_R0, "api", 1), (SID_R1, "worker", 2)] + EXTRA, t0=t0)
         cls.procs.append(rp)
         hp, cls.hlog = _dial._kernel(cls.lab, "hub", cls.hport, cls.htoken, [], bin_dir=os.path.join(cls.hub_root or ROOT, "bin"))
         cls.procs.append(hp)
-        _dial.checkin(cls.hport, cls.htoken, cls.rport, cls.rtoken)
+        _dial.checkin(cls.hport, cls.htoken, cls.rport, cls.rtoken, lab=cls.lab)
         cls.result, cls.driver_error = None, None
         cls._drive()
         cls.remote_sends, cls.remote_wire = cls._remote_perf()
@@ -330,6 +331,7 @@ class _BarsLab(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     # ---- the readers ----

@@ -13,10 +13,10 @@ when T279_SHOTS names a directory. Skips LOUDLY without the extension deps or a 
 installs none). SYNTHETIC fixtures only."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -39,14 +39,6 @@ NOTICE = ("The model's safeguards flagged this message. Switched to a fallback m
 CATEGORY = "synthetic-category"
 EXPLANATION = "a synthetic explanation of the refusal"
 REPLY = "The README covers install and usage."
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -151,6 +143,7 @@ class ServedRefusalNotice(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="refusal-notice-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
@@ -171,30 +164,25 @@ class ServedRefusalNotice(unittest.TestCase):
         t0 = int(time.time()) - 900
         cls.transcript = os.path.join(proj, SID + ".jsonl")
         Path(cls.transcript).write_text("".join(json.dumps(r) + "\n" for r in refusal_turn_records(t0)))
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-refusalnotice"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
             cls.kernel.wait()
             shutil.rmtree(cls.lab, ignore_errors=True)
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_the_refusal_renders_as_a_sourced_notice_card_and_never_as_the_users_bubble(self):

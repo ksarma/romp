@@ -33,6 +33,7 @@ import urllib.request
 from urllib.parse import parse_qs, urlsplit
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -147,13 +148,13 @@ class FederatedRelayRedial(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box, the served lab needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="federated-relay-redial-")
         lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
-        cls.rport, cls.rtoken = _dial._free_port(), "testtok-remote-rr"
-        cls.hport, cls.htoken = _dial._free_port(), "testtok-hub-rr"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-rr"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-rr"
         rp, cls.rlog = _dial._kernel(cls.lab, "testhost", cls.rport, cls.rtoken, [(SID_R0, "api", 1), (SID_R1, "worker", 2)])
         cls.procs.append(rp)
         hp, cls.hlog = _dial._kernel(cls.lab, "hub", cls.hport, cls.htoken, [])
         cls.procs.append(hp)
-        _dial.checkin(cls.hport, cls.htoken, cls.rport, cls.rtoken)
+        _dial.checkin(cls.hport, cls.htoken, cls.rport, cls.rtoken, lab=cls.lab)
         cls.result, cls.driver_error = None, None
         cls._drive()
         cls.remote_wire = cls._remote_wire_memos()
@@ -224,6 +225,7 @@ class FederatedRelayRedial(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     # ---- the readers, each guarded so a derived expectation never rests on nothing ----

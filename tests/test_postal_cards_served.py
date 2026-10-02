@@ -17,16 +17,15 @@ fixtures only (the notes-api demo world: web / api / tests; host TESTHOST)."""
 import ast
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,14 +53,6 @@ WEB = "aaaaaaaa-1111-2222-3333-444444444444"
 API = "bbbbbbbb-1111-2222-3333-444444444444"
 TESTS = "cccccccc-1111-2222-3333-444444444444"
 BAR = "#" * 44
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -424,24 +415,20 @@ class ServedPostalCards(unittest.TestCase):
         os.makedirs(proj, exist_ok=True)
         Path(proj, WEB + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
         cls.count = 12
-        cls.port, cls.token = _free_port(), "testtok-postal"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-postal"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     @staticmethod
