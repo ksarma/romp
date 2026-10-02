@@ -2504,9 +2504,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the body keeps what it shows (the romp loader on an open, the previous paint on a reload) and the renderer's arrival
   // paints again, so a note's first paint is its final one. One paint, the hooks once, and the anchor map, the reader's place
   // and the comment paint never meet a formula still waiting for its layout. A failed load paints the same way, each formula
-  // as its source; math.ts's backstop bounds the wait, so the loader cannot trap the reader.
+  // as its source; math.ts's backstop bounds the wait, so the loader cannot trap the reader. The open's target waits with the
+  // paint: landTarget stands down while a paint is held, its heading and offset kept pending, and the arrival lands them after
+  // its paint (renderBody spends the heading at a paint that can land it; the offset and the keyboard are landTarget's alone),
+  // as does a paint that ends the hold first (a Raw pick while the chunk loads: renderBody's `ends`).
+  // Before, the landing spent both over the loader: the heading's frame found no section and said the note had none, the
+  // offset found no rendered root and landed nothing, and the arrival's paint opened the note at its top.
   let mathHeld = false;
-  closeHooks.push(onMathSettled(() => { if (mathHeld) { mathHeld = false; renderBody(); } }));
+  closeHooks.push(onMathSettled(() => { if (mathHeld) { mathHeld = false; renderBody(); landTarget(); } }));
   const renderBody = () => {
     const rendered = isMd && fmt.md === "rendered";
     for (const [mode, b] of segBtns) {
@@ -2596,6 +2601,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // entry sets fmt.md to raw before its own paint and returns above, so its exit repaints Raw and clears the record as any
     // paint that stands does.
     let held = false;                         // this paint waits for the math renderer (mathHeld above)
+    const ends = mathHeld;                    // a held paint before this one: if this one stands, what that paint's landing kept lands after it
     perfTimed("paint", () => {                // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed)
       if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
       const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
@@ -2622,6 +2628,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     });
     if (held) return;                         // the heading waits for the paint the renderer's arrival makes
     if ((rendered || !isMd) && pendingHeading !== null) spendHeading();   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
+    if (ends && !mathHeld) landTarget();     // a paint that ends a hold before the renderer arrives (a Raw pick while the chunk loads): the offset and the keyboard the held landing kept land over it, since no arrival paints after it
   };
   // Item 4's heading, spent at a paint that can land it (a note's Rendered paint, any text paint of a file that is not markdown)
   // and landed one frame later through scrollToFragment, or named in the notice bar as no section of the file. Never spent over
@@ -3574,7 +3581,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     keyboardOnLanding();
   };
   const landTarget = (): void => {
-    if (unmeasurable()) return;
+    if (unmeasurable() || mathHeld) return;   // no box, or a paint held for the math renderer (renderBody): the pendings wait for the paint that can land them
     if (pendingLine !== null) { const n = pendingLine; pendingLine = null; scrollToLine(n); }
     if (pendingOffset !== null) { const n = pendingOffset; pendingOffset = null; requestAnimationFrame(() => { if (wrap.isConnected) scrollToSourceOffset(n); }); }
     if (pendingHeading !== null && (!isMd || fmt.md === "rendered")) spendHeading();
