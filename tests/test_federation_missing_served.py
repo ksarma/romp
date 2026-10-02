@@ -9,11 +9,11 @@ names, never a copy of the runner's; FedMissingLabKernelEnv pins that and runs e
 only."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -35,14 +35,6 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 SID_A = "11111111-2222-4333-8444-000000000701"
 SID_B = "11111111-2222-4333-8444-000000000702"
 SID_C = "11111111-2222-4333-8444-000000000703"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def lab_kernel_env(lab, claude, dist, port, token):
@@ -221,6 +213,7 @@ class ServedFederationMissing(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served leg needs them")
         cls.lab = tempfile.mkdtemp(prefix="fed-missing-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
@@ -244,22 +237,16 @@ class ServedFederationMissing(unittest.TestCase):
                      "sdkText": json.dumps({"sid": SID_C, "name": "tests", "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": SID_C, "alive": True}),
                      "transcript": os.path.join(proj, SID_C + ".jsonl"), "transcriptText": _transcript(SID_C, cwd, 3)}
         cls.diag = os.path.join(state, "client-diag.jsonl")
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-fedmissing"
         cls.env = lab_kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=cls.env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         cls.result, cls.driver_error = None, None
         cls._drive()
 
@@ -303,6 +290,7 @@ class ServedFederationMissing(unittest.TestCase):
             except (ProcessLookupError, PermissionError):
                 pass
             k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _r(self):
@@ -449,6 +437,7 @@ class FedMissingLabKernelEnv(unittest.TestCase):
     MACHINE_BUS_PORT = "25302"
 
     def test_a_live_kernels_exports_never_reach_the_lab_kernel(self):
+        self.addCleanup(lab_ports.release, self.LAB)   # the stand-in lab's postal port, held until the test ends
         with mock.patch.dict(os.environ, self.LIVE):
             os.environ.pop("ROMP_POSTAL_PORT", None)   # the runner names no bus: the lab must still get one of its own
             env = lab_kernel_env(self.LAB, os.path.join(self.LAB, "claude"), os.path.join(self.LAB, "dist"), 4321,

@@ -22,11 +22,11 @@ import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -195,24 +195,20 @@ class ServedGroupByTag(unittest.TestCase):
             {"id": "t-backend", "name": "backend", "color": "#1EA1EB", "members": [API, WEB]},
             {"id": "t-frontend", "name": "frontend", "color": "#e0a54a", "members": [WEB, DOCS]},
             {"id": "t-archived", "name": "archived", "color": "#8a8a8a", "members": [OLD]}]}))
-        cls.port, cls.token = _lab._free_port(), "testtok-t399"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-t399"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     _r = None

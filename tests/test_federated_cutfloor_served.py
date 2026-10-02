@@ -17,10 +17,10 @@ the 4a served builder's invented text.
 import glob
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -52,10 +52,6 @@ HOST = "TESTHOST"
 REMOTE = HOST + ":" + SID_R
 WID = "hublab"
 COLOR = ("#64b5f6", "#0c1a2e")
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def _seed_cutfloor(km, state, leaf, sid, now):
@@ -117,14 +113,11 @@ def _kernel(lab, name, port, token, seed_session=None):
     env = _lab.kernel_env(os.path.join(lab, name), claude, os.path.join(lab, "dist"), port, token, ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
     proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
-    for _ in range(120):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
-            return proc, log, seed
-        except Exception:
-            time.sleep(0.5)
+    why = lab_ports.wait_owned(proc, env)
+    if not why:
+        return proc, log, seed
     proc.kill(); proc.wait()
-    raise unittest.SkipTest("hermetic kernel %s never served /healthz" % name)
+    raise unittest.SkipTest("hermetic kernel %s never served /healthz: %s" % (name, why))
 
 
 DRIVER = r"""
@@ -222,13 +215,13 @@ class FederatedCutFloor(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser")
         cls.lab = tempfile.mkdtemp(prefix="fed-cutfloor-")
         lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
-        cls.rport, cls.rtoken = _free_port(), "testtok-remote-cf"
-        cls.hport, cls.htoken = _free_port(), "testtok-hub-cf"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-cf"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-cf"
         rp, cls.rlog, cls.seed = _kernel(cls.lab, "testhost", cls.rport, cls.rtoken, seed_session=(SID_R, "api", "proj"))
         cls.procs.append(rp)
         hp, cls.hlog, _ = _kernel(cls.lab, "hub", cls.hport, cls.htoken, seed_session=None)
         cls.procs.append(hp)
-        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": _free_port(), "token": cls.rtoken}).encode()
+        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": lab_ports.reserve(cls.lab), "token": cls.rtoken}).encode()
         req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (cls.hport, cls.htoken), data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -255,6 +248,7 @@ class FederatedCutFloor(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _result(self):

@@ -34,7 +34,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -46,6 +45,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -59,14 +59,6 @@ SID_R1 = "11111111-2222-4333-8444-000000000702"   # "worker" on TESTHOST: a cold
 HOST = "TESTHOST"
 REMOTE0 = HOST + ":" + SID_R0                      # …as the hub's dashboard carries it (federation.ts prefixId)
 WID = "hublab"                                     # the hub pane's wid: the iid it sends is namespaced by this
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 # ── the relay dial's caps term, derived from the drive (2026-09-19) ──
@@ -427,14 +419,11 @@ def _kernel(lab, name, port, token, sessions, bin_dir=BIN, t0=None):
     env = _lab.kernel_env(os.path.join(lab, name), claude, os.path.join(lab, "dist"), port, token, ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
     proc = subprocess.Popen([os.path.join(bin_dir, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
-    for _ in range(120):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
-            return proc, log
-        except Exception:
-            time.sleep(0.5)
+    why = lab_ports.wait_owned(proc, env)
+    if not why:
+        return proc, log
     proc.kill(); proc.wait()
-    raise unittest.SkipTest("hermetic kernel %s never served /healthz here" % name)
+    raise unittest.SkipTest("hermetic kernel %s never served /healthz here: %s" % (name, why))
 
 
 CHANGE_USER_AGO_S = 60    # an appended pair (change_pair): the user row this long before `now`, the reply CHANGE_REPLY_AGO_S before it
@@ -459,11 +448,12 @@ def change_pair(sid, tag, cwd, prompt, reply, now=None, pairs=SEED_PAIRS):
     return "".join(json.dumps(r) + "\n" for r in rows)
 
 
-def checkin(hport, htoken, rport, rtoken, host=HOST):
+def checkin(hport, htoken, rport, rtoken, host=HOST, *, lab):
     """Check the remote kernel in with the hub (POST /checkin) and wait until the hub reports the peer up with its token
     (the hub's supervisor probes the peer and reports it up; the browser dials only then). A refusal or a peer that
-    never comes up skips the lab."""
-    body = json.dumps({"host": host, "kernelPort": rport, "busPort": _free_port(), "token": rtoken}).encode()
+    never comes up skips the lab. The check-in's busPort, which nothing binds, is a port reserved under `lab`
+    (tests/lab_ports.py), released with the lab's other ports."""
+    body = json.dumps({"host": host, "kernelPort": rport, "busPort": lab_ports.reserve(lab), "token": rtoken}).encode()
     req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (hport, htoken), data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=5) as resp:
@@ -1474,13 +1464,13 @@ class FederatedDialTerms(unittest.TestCase):
         cls.lab = tempfile.mkdtemp(prefix="federated-dial-terms-")
         lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         # the REMOTE owns both sessions (the watched tab + a cold one); the HUB owns none and shows them through the relay
-        cls.rport, cls.rtoken = _free_port(), "testtok-remote-fed"
-        cls.hport, cls.htoken = _free_port(), "testtok-hub-fed"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-fed"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-fed"
         rp, cls.rlog = _kernel(cls.lab, "testhost", cls.rport, cls.rtoken, [(SID_R0, "api", 1), (SID_R1, "worker", 2)])
         cls.procs.append(rp)
         hp, cls.hlog = _kernel(cls.lab, "hub", cls.hport, cls.htoken, [])
         cls.procs.append(hp)
-        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": _free_port(), "token": cls.rtoken}).encode()
+        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": lab_ports.reserve(cls.lab), "token": cls.rtoken}).encode()
         req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (cls.hport, cls.htoken), data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -1647,6 +1637,7 @@ class FederatedDialTerms(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _driver_ran(self):

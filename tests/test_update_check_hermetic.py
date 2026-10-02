@@ -26,6 +26,7 @@ km = load_source("romp_kernel_update_check_hermetic", os.path.join(BIN, "romp-ke
 import sys  # noqa: E402
 sys.path.insert(0, HERE)
 import test_ship_reship_served as lab  # noqa: E402  the lab kernel environment under test
+import lab_ports  # noqa: E402  kernel_env reserves the lab's postal port there; the test releases it
 
 
 class UpdateCheckSeam(unittest.TestCase):
@@ -121,6 +122,7 @@ class LoopSeam(unittest.TestCase):
 class LabKernelsRunWithIt(unittest.TestCase):
     def test_every_lab_kernel_environment_carries_the_seam_and_the_relaunch_keeps_it(self):
         d = tempfile.mkdtemp()
+        self.addCleanup(lab_ports.release, d)
         env = lab.kernel_env(d, os.path.join(d, "claude"), os.path.join(d, "dist"), 1, "test-token-DO-NOT-USE")
         self.assertEqual(env.get("ROMP_UPDATE_CHECK"), "off")
         self.assertEqual(lab.relaunch_env(env).get("ROMP_UPDATE_CHECK"), "off", "the driver's relaunch of the lab kernel stays hermetic too")
