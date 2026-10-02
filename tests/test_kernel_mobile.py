@@ -2369,7 +2369,9 @@ const post = (m) => (WIN.message || []).forEach((f) => f({ data: m }));
   rows.all.fire('click'); await settle(); out.masterOnRow = state();
   bar.querySelector('button[data-pane=feed]').fire('click'); out.finalTabTap = state();
   out.posts = POSTS.map((p) => p[0]);
-  console.log(JSON.stringify(out));
+  // the case ends here, and so do the shell's timers: since iOS item 1a (2026-10-02) the shell's boot dial arms a real 15 s
+  // connect cut, and this socket never opens, so without the exit node waited out that timer (15 s on every run of this class)
+  process.stdout.write(JSON.stringify(out) + '\n', () => process.exit(0));
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
 """
 
