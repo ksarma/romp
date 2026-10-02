@@ -407,6 +407,31 @@ test('a profile refused at boot starts once its stateDir is its own, and is not 
   } finally { await h.cleanup(); }
 });
 
+test('a running profile whose entry loses its stateDir and then exits unasked (a crash, no restart request) is not respawned onto the primary\'s root, and the refusal is said once after the exit line', async () => {
+  const h = await world();
+  try {
+    const aux = await freePort(__filename);
+    const own = path.join(h.dir, 'aux-state');
+    h.writeKernels([{ id: 'aux', port: aux, stateDir: own }]);
+    await h.start();
+    await h.until(() => h.at(aux, 'serving').length === 1, 10000, 'the profile serves on its own root');
+    const pid = h.at(aux, 'serving')[0].pid;
+    assert.ok(fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes(h.dir), 'the serving row\'s pid is this world\'s stand-in');
+    h.writeKernels([{ id: 'aux', port: aux }]);            // the edit lands on the kernel's next start (the spawn-time re-read)
+    process.kill(pid, 'SIGKILL');                          // the crash road: nothing asked for this exit
+    await h.until(() => h.log.includes(`kernel 'aux' (pid ${pid}) exited without a restart request`), 10000, 'the manager did not log the exit');
+    await h.until(() => h.refusals('aux').length === 1, 5000, 'the crash respawn was not refused, or not said');
+    const exited = h.log.indexOf(`kernel 'aux' (pid ${pid}) exited`);
+    assert.ok(h.log.indexOf(h.refusals('aux')[0]) > exited, 'the refusal follows the exit line');
+    assert.match(h.refusals('aux')[0], /its kernels\.json profile has no stateDir, so it would run on the primary kernel's state root/);
+    await h.sleep(2500);                                    // past the crash backoff (1 s after a quick exit): a respawn would be here
+    assert.equal(h.at(aux, 'start').length, 1, `the profile was started again after its unasked exit:\n${JSON.stringify(h.rows())}`);
+    assert.equal(h.refusals('aux').length, 1, h.log);
+    assert.deepEqual((await h.kernels()).map((k) => k.id), ['main'], '/status still lists the refused profile');
+    assert.equal(h.at(h.mainPort, 'start').length, 1, 'main untouched');
+  } finally { await h.cleanup(); }
+});
+
 test('two profiles on one state root, written literally, through a symlink or with a trailing slash: the first runs, and each later one is refused once, named in its line and in /ensure\'s 409, and never started', async () => {
   const h = await world();
   try {
