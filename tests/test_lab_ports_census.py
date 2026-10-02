@@ -15,7 +15,7 @@ can name another under tests/ by (`import x`, `import tests.x`, `from x import`,
 import x`, `from . import x`, `from .x import`), each pinned by a planted helper. A glob matching nothing, a named file
 absent, an empty population or a population with no kernel spawn in it fails the run, so the census never passes on
 nothing. Rules R and A also read THE RESERVERS (reservers()): every other module under tests/ whose AST calls
-lab_ports.reserve or kernel_env, since a unit test that builds a lab kernel's environment holds the postal port as
+lab_ports.reserve or kernel_env, or binds the door under another name (an alias would hide its reserves), since a unit test that builds a lab kernel's environment holds the postal port as
 surely as a served lab does (three modules outside the served step left a postal port held for each kernel_env call
 until the process exited, 2026-10-02).
 
@@ -448,12 +448,14 @@ def _door_aliases(tree):
 
 def reservers(root=ROOT, served=()):
     """{name: (text, tree)} of every module under root/tests outside `served`, other than the door, that reserves a port
-    (lab_ports.reserve or kernel_env, read by AST in the files whose text names either). Rules R and A read them too: a
-    unit test that builds a lab kernel's environment holds a port as surely as a served lab does."""
+    (lab_ports.reserve or kernel_env) or binds the door under another name (rule A's offence, which would hide its
+    reserves from R), read by AST in the files whose text names kernel_env or lab_ports. Rules R and A read them too: a
+    unit test that builds a lab kernel's environment holds a port as surely as a served lab does. tests/__init__.py is
+    not read: it binds the door as _lab_ports only to register it under its bare name, and reserves nothing."""
     tests = os.path.join(root, "tests")
     out = {}
     for f in sorted(os.listdir(tests)):
-        if not f.endswith(".py") or f in served or f == DOOR_FILE:
+        if not f.endswith(".py") or f in served or f in (DOOR_FILE, "__init__.py"):
             continue
         path = os.path.join(tests, f)
         with open(path, encoding="utf-8") as fh:
@@ -461,7 +463,7 @@ def reservers(root=ROOT, served=()):
         if "kernel_env" not in raw and DOOR not in raw:
             continue
         text, tree = parse_cache.source_and_tree(path)
-        if _reserves(tree):
+        if _reserves(tree) or _door_aliases(tree):
             out[f] = (text, tree)
     return out
 
@@ -681,6 +683,20 @@ class LabPortsCensus(unittest.TestCase):
                 self.assertEqual(names, ["test_clean_served.py"])
                 self.assertEqual(total["reservers"], ["test_unit_env.py"], "the door and a module reserving nothing are not read")
                 self.assertEqual([(o[0], o[1]) for o in total["R"]], want)
+
+    def test_a_module_outside_the_served_step_that_aliases_the_door_is_read_under_a(self):
+        # a module outside the served step that reserves only through an alias calls no lab_ports.reserve, so the reserve
+        # read alone would leave it unread; binding the door under another name brings it in, and A names it
+        root = tempfile.mkdtemp(prefix="labports-census-")
+        self.addCleanup(shutil.rmtree, root, True)
+        os.makedirs(os.path.join(root, "tests"))
+        for f, src in (("test_clean_served.py", PLANTS["clean-door"][0]),
+                       ("test_unit_alias.py", PLANTS["door-from-tests-aliased"][0])):
+            with open(os.path.join(root, "tests", f), "w") as fh:
+                fh.write(src)
+        names, total = census(root, ["tests/test_*_served.py"], [])
+        self.assertEqual(total["reservers"], ["test_unit_alias.py"])
+        self.assertEqual([(o[0], o[1]) for o in total["A"]], [("test_unit_alias.py", 1)])
 
     def test_an_empty_population_fails_loudly(self):
         root = tempfile.mkdtemp(prefix="labports-census-")
