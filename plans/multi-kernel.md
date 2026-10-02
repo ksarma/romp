@@ -24,9 +24,15 @@ kernel is on, and let co-located kernels message each other through the postal f
    serve-token, goals, judge caches, every `bin/` tool, the hooks, the timeline view, the
    extension. Two kernels sharing that root share a token, a mailbox root, goal stores, and
    auto-nudge records — no isolation at all. One root-override isolates everything at once.
-   (2026-10-01: a kernel started on a root that another kernel serves is now refused at start,
-   through `kernel.lock`, with exit status 75. A second kernel therefore needs its own `stateDir`;
-   see docs/reference.md, "What survives a restart".)
+   (2026-10-01: one kernel serves a state root, and a second kernel therefore needs its own
+   `stateDir`. The manager never starts a second kernel on the primary's root: a kernels.json
+   profile whose state root resolves to the primary's (no `stateDir`, or one naming that root) is
+   not started, and `/ensure` for a port no profile names answers 409 (bin/romp-manager
+   `rootConflict`). The kernel's own lock, `kernel.lock`, is the guard where every contender is a
+   primary: a successor and the kernel draining before it, and the kernels started outside the
+   manager (the far-host fallback, an orphaned kernel, the test labs); a kernel started on a root
+   another kernel serves is refused there with exit status 75. See docs/reference.md, "What
+   survives a restart".)
 
 2. **The manager is multi-kernel by construction.** `bin/romp-manager` keeps kernels in a registry
    keyed by id, respawns per entry, and `restart-all` loops the registry; v1 registers only

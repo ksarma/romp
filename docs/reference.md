@@ -1844,7 +1844,9 @@ touched work a session deliberately detached: a tmux server it started itself,
 
 **One kernel per state root.** A kernel that finds another kernel serving its
 state root refuses to start: it exits with status 75 and prints one stderr line
-naming the holder's pid and the lock file, having written nothing. Under the
+naming the lock file and the holder as the file's line reads (its pid, or that
+a new owner has not yet written its line, or, for a line that names no owner,
+the line's first 80 characters, quoted), having written nothing. Under the
 manager, the crash backoff starts it again. The mechanism is an exclusive lock
 on `kernel.lock` in the state root, which a kernel takes before it writes
 anything there and holds until it exits (a SIGKILL releases it too). The file's
@@ -1853,11 +1855,21 @@ its drain has started, where the deadline is the end of the drain's grace. A
 kernel started while the holder drains waits for the lock, up to that
 deadline, and serves once it takes the lock. If, at the deadline, the holder
 still holds the lock or another waiting kernel has taken it first (the refusal
-then names that kernel),
-the new kernel is refused. A `kernels.json` profile without a `stateDir`, or an
-`/ensure` for a port that no profile names, starts a kernel on the primary
-kernel's root, so that kernel is refused: give it a profile with its own
-`stateDir`.
+then names that kernel, or says that a new owner has not yet written its line),
+the new kernel is refused.
+
+The lock cannot tell the primary kernel from a second kernel on its root: the
+root goes to whichever kernel takes the lock first. So the manager keeps a
+second kernel off the primary kernel's root before it starts: it never starts a
+`kernels.json` profile whose state root resolves to the primary kernel's (no
+`stateDir`, or one naming that root through a symlink or with a trailing
+slash), and it answers `/ensure` for a port no profile names with 409 (see
+[The manager's control port](#the-managers-control-port)). The lock is the
+guard for the cases where every contender is a primary: a successor and the
+kernel draining before it, and the kernels started outside the manager (the
+far-host fallback, an orphaned kernel, the test labs). A second kernel you
+start by hand on a root another kernel serves is refused; give it its own
+state root with `ROMP_STATE_DIR`.
 
 The dashboard page stays on screen across a restart. Its panes reconnect as they
 do after a dropped socket (the watched tab rebuilt whole, the other tabs as
