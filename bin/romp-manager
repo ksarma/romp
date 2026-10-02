@@ -97,8 +97,9 @@ function rompServeBin() {
 
 // ── the kernel registry (multi-kernel-ready) ───────────────────────────────
 // id → { spec:{id,port,…}, child, restarts, quickCrashes, startedAt, stopping }. The default port is
-// the unfiltered 'main' kernel; additional kernels come from kernels.json (durable profiles) or on
-// demand via /ensure ('k<port>').
+// the unfiltered 'main' kernel; additional kernels come from kernels.json (durable profiles), each on
+// a state root of its own. /ensure names a port no profile names 'k<port>', and refuses it: such a
+// kernel would run on the primary's state root (rootConflict, below).
 
 // kernels.json (plans/multi-kernel.md phase 3): the durable aux-kernel profiles —
 //   { "kernels": [ { "id", "port", "postalPort"?, "stateDir"?, "claudeConfigDir"? } ] }
@@ -170,12 +171,87 @@ function specEnv(spec, base, ids) {
   return env;
 }
 
+// ── one kernel per state root, refused at the source (2026-10-02) ────────────────────────────────
+// A kernel takes an exclusive lock on <its state root>/kernel.lock before it writes anything there
+// (kernel/kernel.py _kernel_lock_acquire), and whichever kernel takes it first serves. The kernel
+// cannot tell the primary from a second kernel this manager started on the same root (specEnv hands
+// it neither a role nor, for a profile with no stateDir, a state root of its own), so a kernels.json
+// profile with no stateDir, or an /ensure for a port no profile names, raced the primary for the
+// primary's own root and could win it, the primary then refused and retried by its backoff behind
+// the kernel holding its root. The manager can tell them apart, so the refusal sits here:
+// spawnKernel, the one road every start takes (the boot pass, the crash respawn, /ensure), never
+// starts a kernel other than main whose state root RESOLVES to the primary's. Keyed on the root, not
+// on a missing stateDir: a stateDir naming the primary's root through a symlink or with a trailing
+// slash is the same conflict. The kernel's lock stays the guard for the roads outside the manager
+// (the far-host fallback, an orphaned kernel, the test labs), where every contender is a primary.
+
+// The state root a kernel started from `spec` resolves, read off the environment specEnv hands it: its
+// ROMP_STATE_DIR (the spec's stateDir, else the manager's own), else XDG_STATE_HOME (an empty one counts as
+// unset) or ~/.local/state, plus /romp, as kernel/judge.py resolves STATE. Joined as text, not normalized:
+// resolveStateRoot reads it the way the kernel's opens will. A stateDir stays as written (loadSpecs keeps a
+// leading ~ as it is, and nothing between here and the kernel expands it), so a ~ path, like any relative
+// one, is relative to the working directory the kernel inherits from this process.
+function specStateRoot(spec) {
+  const env = specEnv(spec, process.env, { managerPid: process.pid, controlPort: CONTROL_PORT });
+  return env.ROMP_STATE_DIR || (env.XDG_STATE_HOME || os.homedir() + '/.local/state') + '/romp';
+}
+
+// `p` as one comparable path: the real path where it exists; where it does not yet (a root its kernel creates at
+// its first start), the real path of its deepest existing ancestor joined with the rest, following a symlink on
+// the way even when it dangles; relative to this process's working directory, which the kernel inherits; no
+// trailing slash. libc's realpath (fs.realpathSync.native), not node's own, which collapses `..` before it
+// follows a link. A path that cannot be walked (a loop of links) falls back to its lexical form.
+function resolveStateRoot(p) {
+  let cur = path.isAbsolute(p) ? p : process.cwd() + path.sep + p;
+  if (cur.length > 1) cur = cur.replace(/\/+$/, '') || '/';
+  const rest = [];
+  for (let step = 0; step < 256; step++) {
+    try { return path.join(fs.realpathSync.native(cur), ...rest); } catch (e) { /* absent here: read the link or go up */ }
+    let target = null;
+    try { target = fs.readlinkSync(cur); } catch (e) { /* not a link */ }
+    if (target !== null) { cur = path.isAbsolute(target) ? target : path.dirname(cur) + path.sep + target; continue; }
+    const up = path.dirname(cur);
+    if (up === cur) break;
+    rest.unshift(path.basename(cur));
+    cur = up;
+  }
+  return path.resolve(p);
+}
+
+// The refusal for starting `spec` (rootConflict's answer, {error, primaryPort, root}) when it is not main and its
+// state root resolves to the primary's, else null. `specs` is the loadSpecs answer the start was resolved from:
+// its main entry is the primary, whose root comes from specStateRoot the same way (main's stateDir if it ever
+// carries one, else the manager's own environment). `error` is the whole account, one line: the kernel, why its
+// root is the primary's, the primary's port, and the remedy, a stateDir of its own in kernels.json.
+function rootConflict(spec, specs) {
+  if (!spec || spec.id === 'main') return null;
+  const main = (specs || []).find((s) => s.id === 'main') || { id: 'main', port: KERNEL_PORT };
+  const root = resolveStateRoot(specStateRoot(main));
+  if (resolveStateRoot(specStateRoot(spec)) !== root) return null;
+  const profiled = (specs || []).some((s) => s.id === spec.id);
+  const why = !profiled ? `no kernels.json profile names port ${spec.port}, so it would run on`
+    : spec.stateDir ? `its kernels.json profile's stateDir ${JSON.stringify(spec.stateDir)} resolves to`
+      : 'its kernels.json profile has no stateDir, so it would run on';
+  const remedy = profiled ? `Give the profile its own stateDir in ${KERNELS_FILE}.`
+    : `Add a profile for port ${spec.port} with its own stateDir to ${KERNELS_FILE}.`;
+  return { root, primaryPort: main.port,
+           error: `kernel '${spec.id}' (port ${spec.port}) is not started: ${why} the primary kernel's state root ${root}, ` +
+                  `which the primary kernel on port ${main.port} serves, and one state root serves one kernel. ${remedy}` };
+}
+
+// Each refusal is logged once per manager life: a retry (the VS Code extension asks /ensure again every few
+// seconds while its window waits) and a respawn tick repeat it silently. The key is the kernel and the refusal's
+// text, so a profile edited into another conflict is said again. A refused RESPAWN is logged even when said
+// before: it ends a kernel that was running, and the exit line just above it promised a respawn.
+const rootRefusalsSaid = new Set();
+
 const kernels = new Map();
 
 // Front ends are configured by PORT, not id; the manager maps a port to a stable kernel id so the
 // control verbs (status/restart/stop) can name it. A running kernel wins, then a kernels.json
 // profile (so /ensure on a profile's port ATTACHES to that profile instead of spawning a bare
-// duplicate), then the legacy shapes: the default port is 'main', anything else 'k<port>'.
+// duplicate), then the legacy shapes: the default port is 'main', anything else 'k<port>' (the name
+// /ensure's refusal gives it: rootConflict).
 function idForPort(port) {
   for (const [id, r] of kernels) if (Number(r.spec.port) === Number(port)) return id;
   const prof = loadSpecs(KERNELS_FILE, KERNEL_PORT, CONTROL_PORT).specs.find((s) => Number(s.port) === Number(port));
@@ -320,11 +396,22 @@ function exitLine(rec, code, sig, delay) {
 function spawnKernel(spec) {
   // SPAWN-TIME RE-READ (the --refresh stale-manager incident): re-resolve this kernel's profile from
   // kernels.json at EVERY spawn — a config edit lands on the kernel's next restart, never waiting on
-  // a manager reinstall. /ensure's dynamic 'k<port>' kernels have no file entry and keep their spec.
+  // a manager reinstall. /ensure's dynamic 'k<port>' kernels have no file entry and keep their spec
+  // (and are refused below: with no stateDir, their root is the primary's).
   const fresh = loadSpecs(KERNELS_FILE, KERNEL_PORT, CONTROL_PORT);
   for (const e of fresh.errors) log(e);
   spec = fresh.specs.find((s) => s.id === spec.id) || spec;
   const prev = kernels.get(spec.id);
+  // One kernel per state root (rootConflict): a kernel other than main whose root resolves to the primary's is
+  // never started, on any road. Returns the refusal so /ensure can answer it; null below once a kernel is spawned.
+  const refused = rootConflict(spec, fresh.specs);
+  if (refused) {
+    const key = spec.id + '\n' + refused.error;
+    if (prev || !rootRefusalsSaid.has(key)) log(refused.error);
+    rootRefusalsSaid.add(key);
+    if (prev) kernels.delete(spec.id);   // a refused respawn: the kernel that exited stays gone, and /status says so
+    return refused;
+  }
   // ROMP_MANAGER_PID lets the kernel run a parent-death watchdog (_parent_watch in bin/romp-kernel):
   // if we die uncleanly (SIGKILL / crash / closed terminal) and never SIGTERM it, it sees us vanish and
   // exits itself instead of orphaning. ROMP_SERVE_PORT is the kernel's listen port; the rest of the
@@ -363,6 +450,7 @@ function spawnKernel(spec) {
       spawnKernel(spec);                                     // still ours & not asked to stop
     }, delay);                                               // crash OR requested restart → bring it back
   });
+  return null;
 }
 
 // /ensure's worker: return the kernel for `port` if the manager already owns one, else spawn it.
@@ -423,11 +511,14 @@ function fetchVersion(port, cb) {
 }
 const READY_PROBE_MS = Number(process.env.ROMP_READY_PROBE_MS) || 500;   // the probe's retry while the new kernel boots
 
+// A kernel the manager will not start there (rootConflict: its root would be the primary's) is answered as
+// {id, port, refused}, and nothing is spawned.
 function ensureKernel(port) {
   const id = idForPort(port);
   const existing = kernels.get(id);
   if (existing) return { id, port: existing.spec.port, pid: existing.child.pid, spawned: false };
-  spawnKernel({ id, port: Number(port) });
+  const refused = spawnKernel({ id, port: Number(port) });
+  if (refused) return { id, port: Number(port), refused };
   const rec = kernels.get(id);
   return { id, port: Number(port), pid: rec ? rec.child.pid : null, spawned: true };
 }
@@ -1083,8 +1174,15 @@ function startManager() {
     if (req.method === 'POST' && url.pathname === '/ensure') {
       // A front end configured for `port` asks us to guarantee a kernel there, then attaches. We own
       // it; the front end never spawns. Idempotent: spawned:false means one was already running.
+      // A port whose kernel would run on the primary's state root (no profile names it, or its profile's
+      // root is the primary's: rootConflict) is answered 409 with the refusal, and nothing starts. 409,
+      // not a 2xx (the extension reads any status below 400 as taken) and not 401 or 503 (each is a
+      // token toast there); its body's error, which names the kernel, the primary's port and the remedy,
+      // is what the extension's toast shows.
       const port = Number(url.searchParams.get('port')) || KERNEL_PORT;
-      return json(200, Object.assign({ ok: true }, ensureKernel(port)));
+      const r = ensureKernel(port);
+      if (r.refused) return json(409, { ok: false, error: r.refused.error, id: r.id, port: r.port, primaryPort: r.refused.primaryPort });
+      return json(200, Object.assign({ ok: true }, r));
     }
     if (req.method === 'POST' && url.pathname === '/restart-all') {
       // Every restart request is logged WITH its source (the user 2026-07-31): a run of anonymous
@@ -1230,7 +1328,7 @@ function ensureUp() {
 // ── dispatch ────────────────────────────────────────────────────────────────
 // Exported for unit tests (restartGate = the pure storm-cap decision). The CLI dispatch runs only when this
 // file is executed directly, so require()-ing it from a test has no side effects.
-module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp,
+module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp, specStateRoot, resolveStateRoot, rootConflict,
                    kernelToken, serveToken, readTokenFile, acceptedTokens, mintServeTokenIfAbsent, writeGate, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
                    staleManagerYields, startManager,
                    retiredCredentialNames, retiredCredentialMessage, exitLine, auditSigterm,

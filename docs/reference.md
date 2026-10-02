@@ -1265,7 +1265,14 @@ header:
 - `POST /restart`: `romp-manager restart [kernel]`, one kernel. No romp verb and
   no front end uses it.
 - `POST /stop`: `romp down`.
-- `POST /ensure`: a front end asking for a kernel (the VS Code extension).
+- `POST /ensure`: a front end asking for a kernel on a port (the VS Code
+  extension). The port must be the primary kernel's or that of a `kernels.json`
+  profile with its own `stateDir`. For any other port, and for a profile whose
+  state root resolves to the primary kernel's (no `stateDir`, or one naming that
+  root through a symlink or with a trailing slash), the manager answers 409 with
+  a body naming the kernel, the primary kernel's port and the remedy, and starts
+  nothing. It never starts such a profile at boot or on a respawn either, and
+  logs one line naming the profile and the remedy: a `stateDir` of its own.
 
 The token is the same 0600 file the kernel gates its own writes with
 (`~/.local/state/romp/serve-token`, or `ROMP_SERVE_TOKEN`). The manager accepts
