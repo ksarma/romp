@@ -15,15 +15,17 @@ The pins, each red on the kernel before the lock for the reason it names:
      reached the postal listener; no postal/server.pid;
   2. a draining holder that releases: the waiting line; while the holder holds, the waiting process runs one thread,
      has written nothing and has not taken the lock; once the holder releases, the kernel takes it ("<its pid> serving")
-     before the deadline, and then serves, its repo-root record written after the bind;
+     before the deadline, and then serves, its repo-root record written after the bind, and still runs 2 s after the old
+     owner's deadline (a wait that left its timer armed is ended by SIGALRM at that deadline);
   3. a draining holder that keeps the lock past its deadline: exit 75 no earlier than the deadline, naming the pid,
      after waiting for it, nothing touched;
   4. a deadline already past when the kernel reads it: refused without waiting;
   5. a pid that is not running in the line (a serving line, a draining line) and an empty file: refused, worded as a
      new owner that has not yet written its line;
   6. in process: the helper's success path over a longer previous line, a non-inheritable descriptor; the drain's
-     announcement as the first act of _drain_and_exit, which never raises; nothing written with no lock held; and an
-     in-process load holds no lock;
+     announcement as the first act of _drain_and_exit, which never raises; nothing written with no lock held; an
+     in-process load holds no lock; and every way out of the wait (the lock taken, the deadline reached, a flock that
+     raises) leaves no timer armed and the SIGALRM handler it found in place;
   7. repo-root: an in-process load writes none (read right after this module's load), the one call is main()'s after
      the bind (a source pin; pin 2 executes it).
 
@@ -34,6 +36,8 @@ serve token, and ROMP_POSTAL_PORT on a listener this test owns and counts connec
 session, and the group kill plus wait is registered before it is spawned, so every road (pass, fail, the bound) ends
 the tree. All fixtures synthetic."""
 import ast
+import contextlib
+import errno
 import fcntl
 import json
 import os
@@ -77,7 +81,10 @@ REPO_ROOT_AFTER_LOAD = (MODULE_STATE_ROOT / "repo-root").exists()
 EXIT_REFUSED = 75             # the status the spec gives a refused kernel (kernel.py's KERNEL_LOCK_EXIT)
 BOUND_S = 30.0                # the most a pin waits for the kernel's verdict: a refusal takes about a second
 BOOT_BOUND_S = 120.0          # pin 2's wait for the handed-over kernel to serve: the whole import and boot
-RELEASE_DEADLINE_S = 15.0     # pin 2's drain deadline: room for the kernel to reach its lock point on a loaded box
+RELEASE_DEADLINE_S = 8.0      # pin 2's drain deadline: room for the kernel to reach its lock point on a loaded box (pin 3
+#                               relies on 5 s for the same), and short, because pin 2 then waits past it
+PAST_DEADLINE_S = 2.0         # how long after the old owner's deadline pin 2 checks the handed-over kernel still runs: a
+#                               timer left armed delivers its SIGALRM at the deadline itself
 EXPIRY_DEADLINE_S = 5.0       # pin 3's drain deadline: the kernel reaches its lock point (about a second here) well
 #                               inside it, so it waits and its timer, not its arrival, decides the refusal
 WAITING_TEXT = "this kernel waits for its drain until"
@@ -309,7 +316,8 @@ class SecondKernelIsRefused(_Lab):
 
 
 class DrainingHolderIsWaitedFor(_Lab):
-    """Pin 2: a holder that announced its drain is waited for, and its release hands the lock over."""
+    """Pin 2: a holder that announced its drain is waited for, its release hands the lock over, and the kernel that
+    took it outlives the old owner's deadline."""
 
     def test_the_kernel_waits_for_a_draining_holder_and_takes_the_lock_when_it_releases(self):
         deadline = time.time() + RELEASE_DEADLINE_S
@@ -344,6 +352,12 @@ class DrainingHolderIsWaitedFor(_Lab):
         self.assertEqual(Path(self.state, "repo-root").read_text().strip(), os.path.realpath(ROOT),
                          "the repo-root record lands with the bind (pin 7's executed half)")
         self.assertEqual(self.lock_line(), "%d serving" % p.pid)
+        # the old owner's deadline passes while the kernel serves: a wait that left its one-shot timer armed delivers
+        # SIGALRM at that deadline, and the default handler, back in place, ends the kernel (pin 6's timer half)
+        while time.time() < deadline + PAST_DEADLINE_S and p.poll() is None:
+            time.sleep(0.2)
+        self.assertIsNone(p.poll(), "the handed-over kernel died after the old owner's deadline (returncode %r; -%d is "
+                          "SIGALRM); stderr:\n%s" % (p.returncode, signal.SIGALRM, self.stderr_of(p)[-3000:]))
 
 
 class DrainPastItsDeadline(_Lab):
@@ -459,6 +473,68 @@ class InProcess(unittest.TestCase):
     def test_an_in_process_load_holds_no_lock(self):
         self.assertIsNone(km._KERNEL_LOCK_FD, "only a kernel run as __main__ locks")
         self.assertFalse((MODULE_STATE_ROOT / "kernel.lock").exists(), "the in-process load created no lock file")
+
+
+class WaitTimer(unittest.TestCase):
+    """Pin 6, the wait's timer: every way out of _kernel_lock_wait (the lock taken, the deadline reached, a flock that
+    raises) leaves ITIMER_REAL cancelled and the SIGALRM handler it found back in place. A timer left armed delivers
+    SIGALRM at the old owner's deadline to the kernel that took the lock and now serves, and the default handler ends
+    it; pin 2 runs that kernel past the deadline."""
+
+    def setUp(self):
+        self.assertTrue(hasattr(km, "_kernel_lock_wait"), "the kernel has no instance lock")
+        self.dir = tempfile.mkdtemp(prefix="kernel-lock-timer-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.fd = os.open(os.path.join(self.dir, "kernel.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, self.fd)
+
+    def _wait(self, flock=None):
+        """A 30 s wait on this test's free lock, with fcntl.flock replaced by `flock` when one is given: (the wait's
+        return, or the exception it raised; the timer and the handler as the wait left them; the handler installed before
+        it). The handler installed before the wait is this test's own, so the restore is checked against a handler that
+        is not the default; the original handler and a cancelled timer are put back whatever the wait did, so a timer it
+        left armed never fires into a later test."""
+        def ours(signum, frame):
+            pass
+        original = signal.signal(signal.SIGALRM, ours)
+        try:
+            with (mock.patch.object(km.fcntl, "flock", side_effect=flock) if flock is not None
+                  else contextlib.nullcontext()):
+                try:
+                    out = km._kernel_lock_wait(self.fd, 30.0)
+                except Exception as e:
+                    out = e
+            left = signal.getitimer(signal.ITIMER_REAL)
+            handler = signal.getsignal(signal.SIGALRM)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, original)
+        return out, left, handler, ours
+
+    def assertLeftNothing(self, left, handler, ours):
+        self.assertEqual(left, (0.0, 0.0), "the wait left its timer armed: %r" % (left,))
+        self.assertIs(handler, ours, "the wait did not put back the SIGALRM handler it found: %r" % (handler,))
+
+    def test_a_wait_that_takes_the_lock_cancels_its_timer_and_restores_the_handler(self):
+        out, left, handler, ours = self._wait()
+        self.assertIs(out, True, "the free lock is taken: %r" % (out,))
+        self.assertLeftNothing(left, handler, ours)
+
+    def test_a_wait_that_reaches_its_deadline_cancels_its_timer_and_restores_the_handler(self):
+        # the expiry: SIGALRM raised into the blocking call as the timer's own would be. raise_signal delivers it to this
+        # thread and runs the wait's handler before it returns, while the wait's 30 s timer is still armed
+        def expire(fd, op):
+            signal.raise_signal(signal.SIGALRM)
+            raise AssertionError("the wait's SIGALRM handler did not raise out of the flock")
+        out, left, handler, ours = self._wait(expire)
+        self.assertIs(out, False, "a wait that reached its deadline reads as no lock: %r" % (out,))
+        self.assertLeftNothing(left, handler, ours)
+
+    def test_a_flock_that_raises_cancels_the_timer_and_restores_the_handler(self):
+        out, left, handler, ours = self._wait(OSError(errno.EIO, "the test's flock error"))
+        self.assertIsInstance(out, OSError, "the flock's error propagates: %r" % (out,))
+        self.assertEqual(out.errno, errno.EIO)
+        self.assertLeftNothing(left, handler, ours)
 
 
 class RepoRootRecord(unittest.TestCase):
