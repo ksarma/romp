@@ -113,10 +113,11 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     temporary worktree, for the ledger script) and GIT_BOUND with the process-group kill, as run_git's calls have (the
     closing check wf_3b100f5e-b38, its item 5); finish reports a pr-orphans.sh killed at the bound as unread, the merge
     having happened, and carries on. Not bounded: bisect's test command, which it runs at the tip, at the base and at
-    each step, and gh, with anything it starts (gh reads the clone's remotes with a git of its own). SIGTERM and SIGHUP
-    (but a SIGHUP the tool was started with ignored, as by nohup) stop the tool as Ctrl-C does: any process it is
-    waiting on is killed (a git or a run_tool process with its process group, gh or bisect's command alone), each step
-    of the cleanup runs to its end (_cleanup_steps), and it exits 128 plus the signal's number (Stopped);
+    each step, and gh, with anything it starts (gh reads the clone's remotes with a git of its own). SIGTERM, SIGHUP
+    and SIGINT (Ctrl-C) stop the tool (but a SIGHUP or SIGINT the tool was started with ignored, as by nohup or as a
+    shell's background job, stays ignored): any process it is waiting on is killed (a git or a run_tool process with
+    its process group, gh or bisect's command alone), each step of the cleanup runs to its end (_cleanup_steps), and
+    it exits 128 plus the signal's number (Stopped);
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
 """
@@ -226,9 +227,9 @@ def run_command(cmd, cwd):
 def _held_wait(p, input_text=None):
     """(stdout, stderr) of `p`, a process _run or run_command started in this tool's own process group, once it ends.
     Any exception while it waits ends it first, then propagates: a stop held while `p` started among them, which
-    _release_stops raises here, inside the try, and a stop or Ctrl-C that arrives while it runs. `p` alone is killed
-    (SIGKILL), as subprocess.run kills its child: it shares this tool's group, so there is no group of its own to end;
-    then it is reaped and its pipes closed unread."""
+    _release_stops raises here, inside the try, and a stop (Ctrl-C among them) that arrives while it runs. `p` alone is
+    killed (SIGKILL), as subprocess.run kills its child: it shares this tool's group, so there is no group of its own to
+    end; then it is reaped and its pipes closed unread."""
     try:
         _release_stops()
         return p.communicate(input_text)
@@ -276,9 +277,12 @@ class GitBound(Fail):
 # in a session of its own that no signal sent to batch.py or to its terminal's process group reaches, with that
 # process's group (_run and run_command, which start gh and bisect's command in batch.py's own group, kill their child
 # alone, on the same except path: _held_wait), and every finally block runs (the ledger check's temporary worktree is
-# removed); main prints the signal and exits 128 plus its number. A SIGHUP that batch.py was started with ignored
-# (nohup) stays ignored, as in scripts/sweep.py, since its caller chose not to have the command stopped by it. SIGINT
-# (Ctrl-C) keeps Python's KeyboardInterrupt, which reaches the same except path.
+# removed); main prints the signal and exits 128 plus its number. SIGINT is one of them (the 05:30Z ruling of
+# 2026-10-02 on PR 926, its item 3), as in scripts/sweep.py, so Ctrl-C runs the same cleanup as SIGTERM and SIGHUP.
+# Before, a Ctrl-C raised Python's KeyboardInterrupt, which _cleanup_steps did not catch, so one that landed inside a
+# cleanup step ended the cleanup there. A SIGHUP or SIGINT that batch.py was started with ignored (IGNORE_INHERITED:
+# nohup ignores SIGHUP, a non-interactive shell starts a background job with SIGINT ignored) stays ignored, as in
+# scripts/sweep.py, since its caller chose not to have the command stopped by it.
 # Every process the tool starts is started under the stop hold (the closing check wf_fb19febe-36b, its item 4; the
 # census in tests/test_git_call_census.py holds every launch site to it): a stop that arrives while run_git, run_tool,
 # _run or run_command starts its process is held until that process is started and the call is inside the try that ends
@@ -287,9 +291,10 @@ class GitBound(Fail):
 # 60 SIGTERMs sent in the first 6 ms of a run_git, at 217 to 579 microseconds, left the git running after batch.py
 # exited 143; the closing check wf_fb19febe-36b found the same of gh and bisect's command, which subprocess.run
 # started). The git of the excuse rule, which scripts/sweep.py's run_git starts in this process, is held the same way:
-# sweep_reader binds that module's hold to this one. SIGINT is held the same way while its handler is Python's own
-# (_on_int).
-STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+# sweep_reader binds that module's hold to this one.
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+# The stop signals batch.py leaves ignored when its caller started it with them ignored; SIGTERM always stops it.
+IGNORE_INHERITED = (signal.SIGHUP, signal.SIGINT)
 # Whether a process start is in progress (_hold_stops), and the first stop signal that arrived meanwhile, or None.
 _holding = False
 _held = None
@@ -311,25 +316,14 @@ def _on_stop(signum, _frame):
     _stop(signum)
 
 
-def _on_int(signum, _frame):
-    """SIGINT (Ctrl-C): KeyboardInterrupt, as Python's own handler raises it, but held while a process starts."""
-    _stop(signum)
-
-
 def _stop(signum):
-    """Raise the stop for `signum` (_raise_stop), or, while a process is being started (_hold_stops), hold it for
-    _release_stops; a later one held meanwhile is dropped, the first wins."""
+    """Raise Stopped for `signum`, or, while a process is being started (_hold_stops), hold it for _release_stops; a later
+    one held meanwhile is dropped, the first wins."""
     global _held
     if _holding:
         if _held is None:
             _held = signum
         return
-    _raise_stop(signum)
-
-
-def _raise_stop(signum):
-    if signum == signal.SIGINT:
-        raise KeyboardInterrupt
     raise Stopped(signum)
 
 
@@ -349,18 +343,17 @@ def _release_stops():
     _holding = False
     held, _held = _held, None
     if held is not None:
-        _raise_stop(held)
+        raise Stopped(held)
 
 
 def _cleanup_steps(*steps):
     """Run each cleanup step (a function of no arguments) to its end, in order, then raise the stop that arrived during
-    them, if one did. A stop (SIGTERM or SIGHUP; Ctrl-C's KeyboardInterrupt is not caught here) that lands inside a
-    step (as the step's git starts, say, which the stop then ends with its group) raises Stopped there; the step runs
-    again from its start, now with the stop signals ignored (_on_stop ignores every one after the first), and so do the
-    steps after it. Before this, such a stop ended the cleanup there: bisect left the batch worktree detached at the
-    base or mid-bisect, and the ledger check left its temporary worktree registered, while main said the cleanup ran
-    (the verify pass at the closing check wf_fb19febe-36b's build, its code finding 4). scripts/sweep.py's _finish runs
-    its cleanup the same way."""
+    them, if one did. A stop (SIGTERM, SIGHUP or SIGINT) that lands inside a step (as the step's git starts, say, which
+    the stop then ends with its group) raises Stopped there; the step runs again from its start, now with the stop
+    signals ignored (_on_stop ignores every one after the first), and so do the steps after it. Before this, such a
+    stop ended the cleanup there: bisect left the batch worktree detached at the base or mid-bisect, and the ledger
+    check left its temporary worktree registered, while main said the cleanup ran (the verify pass at the closing check
+    wf_fb19febe-36b's build, its code finding 4). scripts/sweep.py's _finish runs its cleanup the same way."""
     stopped = []
     for step in steps:
         try:
@@ -373,19 +366,15 @@ def _cleanup_steps(*steps):
 
 
 def install_stop_handlers(replaced):
-    """Make STOP_SIGNALS raise Stopped, leaving a SIGHUP the process was started with ignored as it is, and SIGINT, while
-    its handler is Python's own, raise KeyboardInterrupt through _on_int, which holds it while a process starts; each
-    handler it replaces is recorded in `replaced` ({signal: handler}) before it is replaced, and main puts them back when
-    the command ends."""
+    """Make STOP_SIGNALS raise Stopped, leaving a SIGHUP or SIGINT the process was started with ignored
+    (IGNORE_INHERITED) as it is; each handler it replaces is recorded in `replaced` ({signal: handler}) before it is
+    replaced, and main puts them back when the command ends."""
     for s in STOP_SIGNALS:
         current = signal.getsignal(s)
-        if s == signal.SIGHUP and current == signal.SIG_IGN:
+        if s in IGNORE_INHERITED and current == signal.SIG_IGN:
             continue
         replaced[s] = current
         signal.signal(s, _on_stop)
-    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
-        replaced[signal.SIGINT] = signal.default_int_handler
-        signal.signal(signal.SIGINT, _on_int)
 
 
 class GitRepo:
@@ -423,8 +412,8 @@ def run_git(args, cwd, repo=None, env=None, text=True):
     """`git <args>` in `cwd`, in the repository `repo` names (default: repo_for(cwd)), as a CompletedProcess: the one way
     this tool starts git. stdin is closed, `env` is added to the environment, and the process starts in a session of its
     own and has GIT_BOUND seconds to end; one that has not is killed with its process group and reaped, and GitBound is
-    raised naming the call. Any other exception while it runs (Ctrl-C's KeyboardInterrupt, or Stopped, which SIGTERM and
-    SIGHUP raise) kills it the same way first."""
+    raised naming the call. Any other exception while it runs (Stopped, which SIGTERM, SIGHUP and SIGINT raise, among
+    them) kills it the same way first."""
     repo = repo or repo_for(cwd)
     argv = ["git", *args]
     _hold_stops()
@@ -445,7 +434,7 @@ def run_tool(cmd, cwd, repo=None):
     GIT_CEILING_DIRECTORIES above it, so every git it starts reads that repository and none walks up from its cwd;
     stdin closed; in a session of its own; and GIT_BOUND seconds to end, after which it is killed with its process
     group, the git it is waiting on included, and GitBound is raised naming it. Any other exception while it runs
-    (Ctrl-C's KeyboardInterrupt, Stopped) kills it the same way first."""
+    (Stopped among them) kills it the same way first."""
     repo = repo or repo_for(cwd)
     _hold_stops()
     try:
@@ -488,7 +477,7 @@ def _end_group(p):
     """End `p`, started in a session of its own, with its process group: SIGTERM to the group, then wait until the group
     is gone (`p` exited and reaped and no process left in its group), at most GIT_TERM_GRACE seconds, and SIGKILL what
     is left of it then; `p` is reaped and its pipes closed unread (a child still holding one would keep a read
-    waiting). A KeyboardInterrupt during the wait still gets the SIGKILL and the reap."""
+    waiting). Any exception during the wait (a stop that arrives then, say) still gets the SIGKILL and the reap."""
     _signal_group(p.pid, signal.SIGTERM)
     try:
         end = time.monotonic() + GIT_TERM_GRACE
@@ -1999,8 +1988,8 @@ def sweep_reader():
     # The module's run_git starts its git under this tool's stop hold, not its own (the closing check wf_fb19febe-36b, its
     # item 4(b)): this tool's handlers, not the module's, are the ones installed, and they hold a stop only while this
     # module's hold is on, so with the module's own a stop raised inside the git's start and the git ran on. Both names
-    # are read at the call, so the module's run_git holds and releases here and raises this tool's Stopped (or
-    # KeyboardInterrupt) inside the try that ends the git.
+    # are read at the call, so the module's run_git holds and releases here and raises this tool's Stopped inside the try
+    # that ends the git.
     mod._hold_stops, mod._release_stops = _hold_stops, _release_stops
     return mod
 

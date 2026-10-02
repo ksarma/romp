@@ -4953,6 +4953,68 @@ except sweep.Stopped as e:
                     time.sleep(0.05)
                 self.assertEqual([x for x in recorded if _alive(x)], [], "the git and its child are gone")
 
+    # The SIGCHLD pin's driver: it prints whether SIGCHLD was ignored when this process started, loads sweep.py
+    # (argv[1]), and runs its main as check over the repository argv[2], with cmd_check replaced by a probe that makes one
+    # bounded git call through run_git, `git rev-parse --verify -q` of a branch that does not exist (git exits 1), and
+    # prints the exit status the call returned and whether SIGCHLD was ignored when it was made.
+    SIGCHLD_DRIVER = r"""
+import importlib.util, json, signal, sys
+print(json.dumps({"started_ignored": signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN}), flush=True)
+spec = importlib.util.spec_from_file_location("sweep_runner_sigchld", sys.argv[1])
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+def probe(args):
+    p = sweep.run_git(sweep.find_repo(args.tree), "rev-parse", "--verify", "-q", "refs/heads/no-such-branch")
+    print(json.dumps({"rc": p.returncode, "ignored_at_call": signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN}),
+          flush=True)
+    return 0
+sweep.cmd_check = probe
+sys.exit(sweep.main(["check", "--tree", sys.argv[2]]))
+"""
+
+    def test_check_started_with_sigchld_ignored_reads_its_gits_real_exit_status(self):
+        """The 05:30Z ruling of 2026-10-02 on PR 926, its item 4: an ignored SIGCHLD survives exec, and under it the
+        kernel reaps each child as it exits, so run_git's wait finds no status to read and subprocess reports the git's
+        exit as 0, whatever git returned. main sets SIGCHLD's default action for every command (install_stop_signals),
+        check among them. Started with SIGCHLD ignored (IGNORE_SIGCHLD), a bounded git call returns git's real exit
+        status: `git rev-parse --verify -q` of a branch that does not exist returns 1 through run_git (SIGCHLD_DRIVER),
+        and check of a sha that names no commit is refused (exit 2) naming the call that failed. Each run is in a
+        session of its own under a 60 s watchdog that kills its whole tree. Red under mNoSigchldReset (main's reset
+        dropped): the call returned 0, and check went on as if the commit had resolved."""
+        real = shutil.which("git")
+        tmp = tempfile.mkdtemp(prefix="sweepsigchld-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        repo = os.path.join(tmp, "repo")
+        subprocess.run([real, "init", "-q", repo], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        env = {k: v for k, v in os.environ.items() if k != "ROMP_STATE_DIR"}
+        env["XDG_STATE_HOME"] = os.path.join(tmp, "state")
+
+        def started_ignored(argv):
+            proc = subprocess.Popen([sys.executable, "-c", IGNORE_SIGCHLD, *argv], env=env, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                    start_new_session=True)
+            self.addCleanup(lambda: proc.poll() is None and kill_tree(proc.pid))
+            try:
+                out, err = proc.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                kill_tree(proc.pid)
+                out, err = proc.communicate()
+                self.fail("the run was still going after 60 s:\n%s%s" % (out, err))
+            return proc.returncode, out, err
+
+        with self.subTest(case="run_git"):
+            rc, out, err = started_ignored(["-c", self.SIGCHLD_DRIVER, str(SWEEP), repo])
+            lines = [json.loads(x) for x in out.splitlines()]
+            self.assertEqual(lines[:1], [{"started_ignored": True}], "premise: the process started with SIGCHLD ignored:\n"
+                             + out + err)
+            self.assertEqual(lines[1:], [{"rc": 1, "ignored_at_call": False}], out + err)
+            self.assertEqual(rc, 0, out + err)
+        with self.subTest(case="check"):
+            missing = "deadbeef" * 5
+            rc, out, err = started_ignored([str(SWEEP), "check", missing, "--tree", repo])
+            self.assertEqual((rc, out), (2, ""), out + err)
+            self.assertTrue(err.startswith("sweep: git rev-parse --verify %s^{commit} failed in " % missing), err)
+
     # The no-git stop pin's driver: it loads sweep.py (argv[1]) and runs its main over the rest of argv, with SIGHUP and
     # SIGINT at their defaults first (so a caller that ignores them does not decide the case) and assess sending argv[2]'s
     # signal to this process before it reads anything, so the stop reaches check after its git calls of find_repo and
@@ -6399,14 +6461,60 @@ class LegPath(unittest.TestCase):
 
 
 class LegEnvironmentReader(unittest.TestCase):
-    def test_the_floor_names_every_port_variable_the_tree_reads(self):
-        """A census over the tree: every ROMP_*_PORT name it reads is in PORT_FLOOR, or in PORT_DEFAULTS with a default
-        that is. A new port variable reds this until the floor names it. It reads the tree with git grep and fails when
-        it cannot, rather than passing over an empty population."""
-        p = subprocess.run(["git", "-C", str(ROOT), "grep", "-ohE", r"ROMP_[A-Z_]*PORT\b"], text=True,
+    # The port census's pattern: ROMP_, then whole segments each ending in an underscore, then PORT ending the word. So
+    # PORT is a segment of its own (ROMP_KERNEL_PORT; ROMP_ and PORT with no segment between; a segment with a digit),
+    # and a word that only ends in the letters PORT is not a port variable: ROMP_AT_IMPORT, a name main's
+    # tests/test_hermetic_kernel_postal.py writes into a string, ROMP_SUPPORT, ROMP_EXPORT. The earlier pattern,
+    # ROMP_[A-Z_]*PORT\b, read ROMP_AT_IMPORT as one.
+    # The left side is unanchored on purpose. A name with more letters or segments before ROMP_ is read from ROMP_ on,
+    # an over-read that reds the tree census rather than hiding a name. A \b before ROMP_ would be wrong: it drops a
+    # port name written right after a \n escape inside a string, a shape the tree has (tests/romp-service.bats and
+    # tests/test_credentials.py), so a new port variable written only that way would pass unread.
+    PORT_CENSUS = r"ROMP_([A-Z0-9]+_)*PORT\b"
+
+    def port_census(self, root):
+        """The sorted set of names PORT_CENSUS matches in the tracked files of the git tree at root, read with git grep
+        -E. Fails when git grep does not answer 0, so an unreadable tree or an empty population is a red, not a pass."""
+        p = subprocess.run(["git", "-C", str(root), "grep", "-ohE", self.PORT_CENSUS], text=True,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.assertEqual(p.returncode, 0, "the census could not read the tree: %s" % p.stderr)
-        names = sorted(set(p.stdout.split()))
+        self.assertEqual(p.returncode, 0, "the census could not read the tree at %s: %s" % (root, p.stderr))
+        return sorted(set(p.stdout.split()))
+
+    def test_the_census_reads_a_whole_port_segment(self):
+        """The census over a planted tree: ROMP_AT_IMPORT, ROMP_SUPPORT, ROMP_EXPORT and ROMP_EXPORT_DIR are not port
+        variables, and three planted port names are: ROMP_NEW_THING_ then PORT, ROMP_V2_ then PORT, and ROMP_ then PORT.
+        The port names are assembled at run time, since this file is in the tree the other census reads, and a planted
+        port name written out here would be a port variable the floor does not name. Under the earlier pattern this is
+        red: it counted the first three false shapes and missed the one with a digit.
+        PORT must also end the word. ROMP_KERNEL_PORTS, ROMP_PORTAL and ROMP_X_PORT_PROBE carry a PORT segment followed
+        by more letters or segments, and none of them is a port variable; a pattern without the right word boundary
+        reads each as a shorter port name (ROMP_KERNEL_ then PORT, ROMP_ then PORT, ROMP_X_ then PORT) and is red here.
+        They can be written out because the head pattern does not match them.
+        The left side is unanchored, and three planted shapes hold it there, each read from ROMP_ on: X then a port
+        name, MY_ then a port name, and a port name right after a backslash-n escape in a string. A pattern that reads
+        the whole prefixed word, or one with a word boundary before ROMP_, is red here. These are assembled at run time
+        too, since the tree census would read each as a port variable the floor does not name."""
+        d = tempfile.mkdtemp(prefix="portcensus-")
+        self.addCleanup(shutil.rmtree, d, True)
+        new, bare, digit, xpre, mypre, esc = ("ROMP_%sPORT" % segments
+                                              for segments in ("NEW_THING_", "", "V2_", "F_", "G_", "J_"))
+        with open(os.path.join(d, "planted.py"), "w", encoding="utf-8") as f:
+            f.write("os.environ['ROMP_AT_IMPORT'] = '1'\n"
+                    "ROMP_SUPPORT = ROMP_EXPORT = os.environ.get('ROMP_EXPORT_DIR')\n"
+                    "ROMP_KERNEL_PORTS = os.environ.get('ROMP_PORTAL') or os.environ.get('ROMP_X_PORT_PROBE')\n"
+                    "port = os.environ.get('%s') or os.environ.get('%s')\n"
+                    "${%s:-1}\n"
+                    "X%s = MY_%s = 1\n"
+                    "print('one\\n%s=1')\n" % (new, digit, bare, xpre, mypre, esc))
+        for argv in (["init", "-q"], ["add", "planted.py"]):
+            subprocess.run(["git", "-C", d] + argv, check=True, stdout=subprocess.DEVNULL)
+        self.assertEqual(self.port_census(d), sorted([new, bare, digit, xpre, mypre, esc]))
+
+    def test_the_floor_names_every_port_variable_the_tree_reads(self):
+        """A census over the tree with PORT_CENSUS: every port variable name it reads is in PORT_FLOOR, or in
+        PORT_DEFAULTS with a default that is. A new port variable reds this until the floor names it. It reads the tree
+        with git grep and fails when it cannot, rather than passing over an empty population."""
+        names = self.port_census(ROOT)
         self.assertIn("ROMP_KERNEL_PORT", names, "the census found no port variable at all")
         for n in names:
             self.assertTrue(n in sweep.PORT_FLOOR or sweep.PORT_DEFAULTS.get(n) in sweep.PORT_FLOOR,

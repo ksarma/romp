@@ -424,15 +424,15 @@ jobs:
     # measured or projected job plus 10 minutes, rounded up to a multiple of 5: the 10 minutes
     # exceed the 180 s per-test bound bats is given below plus setup, the margin the python
     # job's rule requires over its own 600 s per-test bound. Linux, 45: the slowest Linux job
-    # measured at fork PR 926's heads took 31 min 21 s, in run 36716348831 (a dispatch of
-    # 2026-09-30, job 109890121553; its Run bats step 1850 s), under the flat 35-minute cap then
-    # in force; 31 min 21 s plus 10 minutes is 41 min 21 s, so 45. The Linux job took 30 min 51 s
-    # in run 36858358700 (job 110356186105; its Run bats step 1822 s) and 26 min 32 s in run
-    # 36807078533 (its Run bats step 26 min 4 s). macOS, 55: the macOS job took 22 min 18 s in
-    # run 36858358700 (job 110356185965; its bats step ran all 1606 tests and failed 83), which
-    # gives 35 by the rule; 55 is the value fork PR 940 sets for this cell, where that PR installs
-    # gitleaks and a newer bash, so the credential cases run there (its comment gives its own
-    # measurement), and both PRs carry the same line. Each job's time is the jobs API's.
+    # among the finished runs on main, on the batch branches and on the open PRs whose tests
+    # will land (a run cancelled at a cap has no measured length), read on 2026-10-02, took
+    # 33 min 52 s, in run 36879494226 (a dispatch of fork PR 940's branch on 2026-10-01, job
+    # 110427331629; its Run bats step 2000 s); 33 min 52 s plus 10 minutes is 43 min 52 s, so
+    # 45. macOS, 55: the slowest macOS job among the same runs took 44 min 34 s, in run
+    # 36879494226 too (job 110427331398; its Run bats step 2644 s; it concluded failure, which
+    # still gives a measured length); 44 min 34 s plus 10 minutes is 54 min 34 s, so 55. Fork
+    # PR 940's branch installs gitleaks and a newer bash on macOS, so the credential cases run
+    # there, and that PR sets the same line. Each job's time is the jobs API's.
     # The vendored tooling tests that ran after Run bats moved to a job of their own
     # (vendored-tooling, below) on 2026-09-28 instead of this cap being raised to hold them.
     timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 45 }}

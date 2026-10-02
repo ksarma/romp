@@ -414,13 +414,14 @@ subject; `verify` refuses the branch otherwise.
    repository of the tree it runs in named in its environment (your clone for `pr-orphans.sh`; the
    batch worktree, or the ledger check's temporary worktree, for the ledger script) and the same
    bound (`finish` reports a `pr-orphans.sh` stopped at the bound as unread and carries on, the
-   merge having happened). SIGTERM, SIGHUP (unless it was
-   started with it ignored) and Ctrl-C stop it: any process it is waiting on is killed (a `git`, or
-   one of those two scripts, with its process group; `gh`, or the command `bisect` runs, alone), its
-   cleanup runs, and a stop by SIGTERM or SIGHUP exits 128 plus the signal's number. Each step of
-   that cleanup (the checkout of the batch branch and the `git bisect reset` in `bisect`, the
-   removal of the ledger check's temporary worktree in `verify`) runs to its end: a SIGTERM or SIGHUP
-   that lands inside one runs it again from its start, with later ones ignored. A stop that arrives
+   merge having happened). SIGTERM stops it, and so do SIGHUP and Ctrl-C (SIGINT) unless it was
+   started with them ignored (under `nohup`, or as a shell's background job), which it keeps: any
+   process it is waiting on is killed (a `git`, or one of those two scripts, with its process group;
+   `gh`, or the command `bisect` runs, alone), its cleanup runs, and it exits 128 plus the signal's
+   number. Each step of that cleanup (the checkout of the batch branch and the `git bisect reset` in
+   `bisect`, the removal of the ledger check's temporary worktree in `verify`) runs to its end: a
+   SIGTERM, SIGHUP or Ctrl-C that lands inside one runs it again from its start, with later ones
+   ignored. A stop that arrives
    while it starts any of those processes, or the `git` of the sweep's excuse rule that `verify`,
    `plan` and `assemble --repin` run, is held until the process has started and then ends it the
    same way. A `git` or one
