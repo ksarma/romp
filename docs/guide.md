@@ -1255,6 +1255,13 @@ checks each device's identity and encrypts the traffic between them, and nothing
 is exposed to your local network or to the internet. The proxy survives restarts
 of both Tailscale and the kernel.
 
+When you come back to Romp after the phone has had it in the background, the page
+reconnects to the kernel on its own. If that takes more than a second, the pane you
+are looking at shows **reconnecting…** in its top corner until fresh content arrives,
+and what is on screen stays readable. The Log, the triangle in the bottom bar, says
+what the page is doing: waiting for the kernel to respond, or trying again after a
+try got no response or could not connect, with the number of tries.
+
 Two settings are worth changing while you are in the admin console. Turn on
 **device approval**, so a new device has to be approved before it can join, and
 leave key expiry enabled on the phone. Do not use `tailscale funnel`, the

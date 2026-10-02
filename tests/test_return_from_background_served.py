@@ -129,6 +129,18 @@ TRANSCRIPT_SESSIONS = tuple(s for s in SESSIONS if s[2])   # the three with a tr
 DECISIONS = {"keep", "redial-closed", "redial-stale"}
 FULL = os.environ.get("RETURN_HARNESS_FULL") == "1"
 OUT_DIR = os.environ.get("RETURN_HARNESS_OUT", "")
+# the reconnect cue (iOS item 4, 2026-10-02): the badge's no-flash hold, read off kernel.py as text (this module loads no romp code
+# in-process), and the cue's Log lines as drafted, spelled here so a change to the product's copy shows up as a red, not a match
+CUE_WAIT = "Waiting for the kernel to respond. The dashboard updates on its own when it does."
+CUE_HUNG1 = "Trying again: the first try got no response."
+CUE_CONNECT = "could not connect to the kernel."
+
+
+def cue_hold_ms():
+    src = Path(os.path.join(ROOT, "kernel", "kernel.py")).read_text()
+    m = re.search(r"^_RECONN_BADGE_HOLD_MS = (\d+)$", src, re.M)
+    assert m, "kernel.py defines _RECONN_BADGE_HOLD_MS"
+    return int(m.group(1))
 
 
 def _free_port():
@@ -431,7 +443,66 @@ class ReturnFromBackground(unittest.TestCase):
             self._gate(name, r)
         self._feed_paint(name, r, boot_tab)
         self._return_chain(name, r, rows)
+        self._cue(name, r, regime, outage_s)
         return m
+
+    # ---- the reconnect cue (iOS item 4, 2026-10-02): the glance and its detail in a real engine ----
+    def _cue(self, name, r, regime, outage_s):
+        """The visible chat's corner badge, read once per frame (the driver's requestAnimationFrame loop), and the shell's Log line,
+        read at each of its mutations. The badge: nothing painted between the suspend and the return (the drop while hidden is held);
+        after the return it paints ONCE, no sooner than the hold after the return, and clears ONCE, at or after the chat's first
+        fresh frame (the clearing event); with an outage that is during the outage and after its end (the link up). With no outage
+        (the healthy leg) it never paints when the fresh frame beat the hold, and paints no sooner than the hold when it did not.
+        The Log line: shown with the wait line when the page returns, never hidden while the outage holds, hidden at the end, at or
+        after the outage's end; in a hung outage past the connect cut it shows the cut's line; in a refused one the connect line."""
+        where = name + ": "
+        hold = cue_hold_ms()
+        self.assertEqual(r.get("cueArm"), {"chat": "armed", "shell": "armed"}, where + "both cue recorders armed: %r" % (r.get("cueArm"),))
+        cue = r.get("cue") or {}
+        t = r["t"]
+        ret, end, sus = t["return"], t["outageEnd"], t["suspend"]
+        self.assertGreater(cue.get("frames", 0), 0, where + "the chat's frame loop ran: %r" % ({k: cue.get(k) for k in ("frames", "lastT", "err")},))
+        self.assertGreaterEqual(cue.get("lastT", 0), t["fresh"], where + "...through the fresh frame, so 'never painted' was read, not assumed")
+        badge = cue.get("badge") or []
+        self.assertEqual([b for b in badge if b["on"] and sus <= b["t"] < ret], [], where + "nothing painted while the page read hidden: %r" % (badge,))
+        self.assertFalse([b for b in badge if b["t"] < ret] and [b for b in badge if b["t"] < ret][-1]["on"], where + "the badge was off entering the return: %r" % (badge,))
+        fresh = [x for x in (cue.get("fresh") or []) if x >= ret]
+        self.assertTrue(fresh, where + "the chat stamped a fresh frame after the return: %r" % (cue.get("fresh"),))
+        ons = [b["t"] - ret for b in badge if b["on"] and b["t"] >= ret]
+        offs = [b["t"] - ret for b in badge if not b["on"] and b["t"] >= ret]
+        rel_fresh, rel_end = fresh[0] - ret, end - ret
+        type(self).measurements.setdefault(name, {})["cue"] = {"holdMs": hold, "paintMs": ons, "clearMs": offs, "freshMs": rel_fresh, "outageEndMs": rel_end,
+                                                               "log": [{"ms": e["t"] - ret, "shown": e.get("shown"), "text": e.get("text")} for e in (cue.get("log") or []) if e["t"] >= sus]}
+        if outage_s:
+            self.assertEqual(len(ons), 1, where + "painted once after the return, no flap: on %r off %r" % (ons, offs))
+            self.assertEqual(len(offs), 1, where + "cleared once: on %r off %r" % (ons, offs))
+            self.assertGreaterEqual(ons[0], hold - 20, where + "not painted before the hold (%d ms): %r" % (hold, ons))
+            self.assertLess(ons[0], rel_end, where + "painted during the outage (ends at %d ms): %r" % (rel_end, ons))
+            self.assertGreaterEqual(offs[0], rel_end, where + "cleared only after the outage ended: %r (end %d ms)" % (offs, rel_end))
+            self.assertGreaterEqual(offs[0], rel_fresh, where + "cleared at the chat's first fresh frame after the link came up, not before: %r (fresh %d ms)" % (offs, rel_fresh))
+        elif rel_fresh < hold - 50:
+            self.assertEqual(ons, [], where + "a healthy return whose fresh frame came at %d ms, inside the %d ms hold, paints no badge: %r" % (rel_fresh, hold, badge))
+        else:
+            self.assertEqual(len(ons), 1, where + "the fresh frame came at %d ms, past the hold: one paint: %r" % (rel_fresh, badge))
+            self.assertGreaterEqual(ons[0], hold - 20, where + "...no sooner than the hold: %r" % (ons,))
+        log = [e for e in (cue.get("log") or []) if e["t"] >= sus]
+        self.assertTrue(log, where + "the Log line was recorded from the suspend on: %r" % (cue.get("log"),))
+        entering = [e for e in log if e["t"] <= ret]
+        state = entering[-1] if entering else log[0]
+        self.assertEqual((state.get("shown"), state.get("text")), (True, CUE_WAIT), where + "the wait line when the page returns: %r" % (log,))
+        during = [e for e in log if ret <= e["t"] < end]
+        self.assertTrue(all(e.get("shown") for e in during), where + "never hidden while the outage holds: %r" % (log,))
+        self.assertEqual((log[-1].get("shown"), log[-1].get("text")), (False, ""), where + "hidden at the end: %r" % (log,))
+        self.assertGreaterEqual(log[-1]["t"], end, where + "...at or after the outage's end (the link up): %r" % (log,))
+        texts = [e.get("text") for e in during]
+        if regime == "hung" and outage_s >= 20:
+            self.assertIn(CUE_HUNG1, texts, where + "the connect cut's line after the hung first try was cut: %r" % (log,))
+            cut = next(e["t"] - ret for e in during if e.get("text") == CUE_HUNG1)
+            self.assertGreaterEqual(cut, 15000 - 100, where + "...no sooner than the connect cut (15 s): %d" % cut)
+        elif regime == "hung":
+            self.assertEqual(set(texts) - {CUE_WAIT}, set(), where + "a hung outage shorter than the cut keeps the wait line: %r" % (log,))
+        else:
+            self.assertTrue([x for x in texts if x and x.endswith(CUE_CONNECT)], where + "a refused try's connect line: %r" % (log,))
 
     # ---- the return's chain (the owner's decision, 2026-09-19): on the phone the redial reloads the visible tab alone ----
     def _return_chain(self, name, r, rows):
@@ -867,6 +938,19 @@ class ReturnFromBackground(unittest.TestCase):
     # ---- the legs: the phone (the measured device) in both regimes at both intervals; the desktop at 12 s, its 30 s legs opt-in ----
     def test_phone_refused_12s(self):
         self._leg("phone", "refused", 12)
+    # iOS item 4 (2026-10-02): the healthy return. The hung regime with no outage: the dials the suspend left pending and the
+    # return's own are released at the return, so the page links at once; the cue's glance must not flash. Only the cue is read
+    # here (the shape checks of _leg assume an outage that held a dial).
+    def _healthy(self, engine):
+        name, r = self._drive("phone", "hung", 0, engine)
+        self._cue(name, r, "hung", 0)
+        Path(os.path.join(self.lab, "return-harness-%s.json" % name)).write_text(json.dumps(type(self).measurements.get(name, {}), indent=1, sort_keys=True))
+
+    def test_phone_healthy_return_paints_no_badge(self):
+        self._healthy("chromium")
+
+    def test_webkit_phone_healthy_return_paints_no_badge(self):
+        self._healthy("webkit")
 
     def test_phone_hung_12s(self):
         self._leg("phone", "hung", 12)

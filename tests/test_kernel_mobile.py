@@ -2590,14 +2590,15 @@ function shOut(o){process.stdout.write(JSON.stringify(o));}
 """
 
 
-def _run_probe(scenario):
+def _run_probe(scenario, pre=""):
+    """`pre` runs after the shell harness and BEFORE the shell script (the reconnect cue's Log fakes, _CUE_PRE)."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + _mobile_js() + "\n" + scenario)
+        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + pre + _mobile_js() + "\n" + scenario)
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
@@ -3029,6 +3030,223 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
         self.assertEqual(r["backstop"], 0, "no link-backstop row: the shell's loop was alive throughout")
         self.assertEqual(len(r["rf"]), 1)
         self.assertEqual(r["rf"][0]["linkUpMs"], 5000, "the word's time")
+
+
+# ── the reconnect cue (iOS item 4, 2026-10-02): its detail line in the Log, and the glance composed with the shell ─────
+# The detail is a live line the shell inserts before #rerr-list (so the Log's own re-render, which empties the list, leaves
+# it alone). The fit harness's document answers no Log, so _CUE_PRE hands the shell a Log panel holding the list and an
+# element factory; cueLine() reads the live line back: shown, its text, its place before the list, its role.
+_CUE_PRE = r"""
+const CUEPANEL = { children: [], insertBefore(n, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, n); n.parentNode = this; return n; } };
+const cueEl = (tag) => { const e = { tagName: tag, id: '', className: '', src: '', alt: null, style: {}, attrs: {}, children: [], parentNode: null, textContent: '',
+  setAttribute(k, v) { this.attrs[k] = String(v); }, appendChild(c) { this.children.push(c); c.parentNode = this; return c; } };
+  Object.defineProperty(e, 'lastChild', { get() { return e.children.length ? e.children[e.children.length - 1] : null; } }); return e; };
+const CUELIST = cueEl('div'); CUELIST.id = 'rerr-list'; CUEPANEL.children.push(CUELIST); CUELIST.parentNode = CUEPANEL;
+const cueFitGet = global.document.getElementById;
+global.document.getElementById = (id) => (id === 'rerr-list' ? CUELIST : cueFitGet(id));
+global.document.createElement = (tag) => cueEl(tag);
+global.cueLine = () => { const el = CUEPANEL.children.find((c) => c.id === 'rerr-live'); if (!el) return null;
+  return { shown: el.style.display !== 'none', text: el.lastChild ? el.lastChild.textContent : null,
+    beforeList: CUEPANEL.children.indexOf(el) < CUEPANEL.children.indexOf(CUELIST), role: el.attrs.role || null, cls: el.className,
+    glyph: el.children[0] && el.children[0].children[0] ? el.children[0].children[0].className : null }; };
+global.cueText = () => { const c = cueLine(); return c ? c.text : null; };   // null where no line was ever inserted (a head without the cue)
+"""
+_CUE_WAIT = "Waiting for the kernel to respond. The dashboard updates on its own when it does."
+_CUE_HUNG1 = "Trying again: the first try got no response."
+_CUE_REFUSED1 = "Trying again: the first try could not connect to the kernel."
+
+
+class ReconnectCueDetail(unittest.TestCase):
+    """iOS item 4 (2026-10-02): the reconnect cue's detail, one tap from the glance (the Log's live first line). Shown while the
+    shell's socket is down after it once opened, cleared at the next open with no success line, its every change keyed on the
+    shell's own events (abandon, close, open). The two states a user sees after a return are pinned: the first try in flight
+    (the wait line, no count) and, after the watchdog cuts it, the retry line that names the cause once. Refusals take the
+    connect line, counted from the second. Run under node against the shell harness's fake socket and clock (ShellLinkProbe's)."""
+
+    def test_no_line_before_the_first_open_and_none_for_a_boot_dial_that_never_opened(self):
+        r = _run_probe(r"""
+var boot=cueLine();
+shRefuseNow();var refused=cueLine();      // the boot dial refused: the page never had a link, the boot splash covers it
+shFireDials();shOpen();var opened=cueLine();
+shOut({boot:boot,refused:refused,opened:opened});""", pre=_CUE_PRE)
+        self.assertIsNone(r["boot"], "nothing inserted before any socket event")
+        self.assertEqual((r["refused"]["shown"], r["refused"]["text"]), (False, ""), "a boot dial that never opened is not a reconnect")
+        self.assertEqual((r["opened"]["shown"], r["opened"]["text"]), (False, ""))
+
+    def test_the_two_states_after_a_return_the_wait_then_the_cut_and_the_open_clears_it(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // a return to a dead socket: the fast path abandons it and dials
+var s1=cueLine();
+SHNOW+=5000;shTick();var s1later=cueLine();                  // 5 s on, the first try still in flight: unchanged
+SHNOW+=11000;shTick();var cutRs=SHSOCKS[1].readyState;       // past the 15 s cut: the watchdog closes the hung dial
+SHSOCKS[1].onclose({code:1006});var s2=cueLine();            // its close: the retry line
+shFireDials();var s2redial=cueLine();                        // the next try dials: the line stands
+shOpen();var up=cueLine();                                   // the link is up: the line goes, with no success line
+shOut({s1:s1,s1later:s1later,cutRs:cutRs,s2:s2,s2redial:s2redial,up:up,socks:SHSOCKS.length});""", pre=_CUE_PRE)
+        self.assertEqual(r["s1"], {"shown": True, "text": _CUE_WAIT, "beforeList": True, "role": "status", "cls": "rerr-row", "glyph": "rnet-spin"},
+                         "S1, the first state a user sees: the wait line, no count, at the top of the Log above its list, announced (role status), the romp swirl beside it")
+        self.assertEqual(r["s1later"], r["s1"], "no change without an event: the shell's tick moves nothing")
+        self.assertEqual(r["cutRs"], 3)
+        self.assertEqual((r["s2"]["shown"], r["s2"]["text"]), (True, _CUE_HUNG1),
+                         "S2, the second state: after the watchdog cut, the retry line naming the cause once")
+        self.assertEqual(r["s2redial"], r["s2"])
+        self.assertEqual((r["up"]["shown"], r["up"]["text"]), (False, ""), "the open clears it")
+        self.assertEqual(r["socks"], 3)
+
+    def test_refusals_take_the_connect_line_and_count_from_the_second(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var lines=[cueText()];
+for(var i=0;i<3;i++){shRefuseNow();lines.push(cueText());SHNOW+=1000;shFireDials();}
+SHNOW+=16000;shTick();shSock().onclose({code:1006});lines.push(cueText());   // a cut after refusals: still the connect line
+shFireDials();shOpen();
+shOut({lines:lines,up:cueLine()});""", pre=_CUE_PRE)
+        self.assertEqual(r["lines"], [_CUE_WAIT, _CUE_REFUSED1,
+                                      "Trying again: 2 tries could not connect to the kernel.",
+                                      "Trying again: 3 tries could not connect to the kernel.",
+                                      "Trying again: 4 tries could not connect to the kernel."],
+                         "a refused try names a connect failure; the count climbs from the second, and a mix keeps the connect line")
+        self.assertEqual((r["up"]["shown"], r["up"]["text"]), (False, ""))
+
+    def test_two_cuts_count_on_the_no_response_line(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var lines=[];
+for(var i=0;i<2;i++){SHNOW+=16000;shTick();shSock().onclose({code:1006});lines.push(cueText());shFireDials();}
+shOut({lines:lines});""", pre=_CUE_PRE)
+        self.assertEqual(r["lines"], [_CUE_HUNG1, "Trying again: 2 tries got no response."])
+
+    def test_a_new_return_counts_from_zero(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+SHNOW+=16000;shTick();shSock().onclose({code:1006});var s2=cueText();
+shFireDials();
+shHide();SHNOW+=100;shShow();                                  // the page goes away and comes back while the next try hangs
+shOut({s2:s2,again:cueText()});""", pre=_CUE_PRE)
+        self.assertEqual(r["s2"], _CUE_HUNG1)
+        self.assertEqual(r["again"], _CUE_WAIT, "the new return's fast path dials afresh: its first try, no count")
+
+    def test_a_link_that_opens_drops_and_opens_again_moves_the_line_only_at_those_events(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var seq=[];function at(k){var c=cueLine();seq.push(c?[k,c.shown,c.text]:[k,null,null]);}
+at('return');SHNOW+=2000;shTick();at('tick');
+shOpen();at('open');SHNOW+=5000;shRecv({type:'ka'});shTick();at('tick');
+shSock().readyState=3;shSock().onclose({code:1006});at('drop');   // the opened socket drops: a new wait, its own count
+SHNOW+=1000;shTick();at('tick');
+shFireDials();shRefuseNow();at('refused');
+SHNOW+=1000;shFireDials();shOpen();at('open');SHNOW+=5000;shRecv({type:'ka'});shTick();at('tick');
+shOut({seq:seq});""", pre=_CUE_PRE)
+        self.assertEqual(r["seq"], [["return", True, _CUE_WAIT], ["tick", True, _CUE_WAIT],
+                                    ["open", False, ""], ["tick", False, ""],
+                                    ["drop", True, _CUE_WAIT], ["tick", True, _CUE_WAIT],
+                                    ["refused", True, _CUE_REFUSED1],
+                                    ["open", False, ""], ["tick", False, ""]],
+                         "each change at a link event (abandon, close, open); every tick between leaves the line as it was")
+
+    def test_the_lines_are_the_drafted_copy_and_the_count_never_reaches_the_glance(self):
+        js = _mobile_js()
+        for text in (_CUE_WAIT, _CUE_HUNG1, _CUE_REFUSED1, "' tries got no response.'", "' tries could not connect to the kernel.'"):
+            self.assertIn(text, js)
+        spin = km._pane_spin("content", "live-ask")
+        self.assertNotIn("shCue", spin, "the pane's badge reads nothing of the count")
+        self.assertIn("reconnecting…</div>", spin)
+        for dash in ("\u2014", "\u2013"):   # the em and en dash, as escapes
+            for text in (_CUE_WAIT, _CUE_HUNG1, _CUE_REFUSED1):
+                self.assertNotIn(dash, text, "no em or en dash in the copy")
+
+
+# The glance composed with the shell (one node process, one clock): the shell script, one pane's shim and the pane's
+# _pane_spin loader script, so the badge a case reads is driven by the shim's real wsdown, wsup and wsfresh and by the panes
+# word the shell's real tell builds (_LINK_GLUE). The pane harness's dispatchEvent only records; here it also runs the
+# listeners (the loader's), and the pane's document answers the loader's three elements: its sheet, its badge, and a content
+# container with one thread (a drop over content raises the badge, not the sheet). snap(k) records the badge and the line.
+_SPIN_BEFORE = r"""
+var SPB=new Set(),SPS=new Set();
+function spCls(S){return {add:function(c){S.add(c);},remove:function(c){S.delete(c);},contains:function(c){return S.has(c);},toggle:function(c,on){if(on)S.add(c);else S.delete(c);return !!on;}};}
+var SPEL={"pane-spin":{classList:spCls(SPS)},"pane-reconn":{classList:spCls(SPB)},"content":{children:[{id:"thread-1"}]}};
+document.getElementById=function(id){return SPEL[id]||null;};
+window.dispatchEvent=function(e){winEvents.push(e.type);(winL[e.type]||[]).forEach(function(f){f(e);});return true;};
+var SNAPS=[];function snap(k){var c=global.cueLine();SNAPS.push({k:k,badge:SPB.has("on"),line:c&&c.shown?c.text:""});}
+function fireNamed(test){var n=0;timers.forEach(function(t){if(t.live&&test(t)){t.live=false;t.fn();n++;}});return n;}
+function holdFires(){return fireNamed(function(t){return t.fn.name==="rpaint";});}
+function failsafeFires(){return fireNamed(function(t){return t.ms===30000&&String(t.fn).indexOf("badge(false)")>=0;});}
+function liveHolds(){return timers.filter(function(t){return t.live&&t.fn.name==="rpaint";}).length;}
+"""
+
+
+def _spin_script():
+    js = km._pane_spin("content", "live-ask")
+    return js[js.index("<script>") + len("<script>"):js.index("</script>")]
+
+
+class ReconnectCueLinked(unittest.TestCase):
+    """iOS item 4 (2026-10-02): the glance (the pane's badge) and the detail (the shell's Log line) across a whole return, on one
+    clock, with the pane's loader script listening to the shim's real events and the shell's real link word. Pins the
+    composition: the badge waits out the hold, stays up through the shell's cut and past 30 s while the link is down, and
+    clears on the pane's first fresh frame after the link comes up; a healthy return paints nothing; a link that opens and
+    drops again before any fresh frame keeps the badge up throughout."""
+
+    def _run(self, scenario):
+        return _run_linked(_spin_script() + "\n" + scenario + "\nout({snaps:SNAPS,holds:liveHolds()});", pre=_CUE_PRE, before=_SPIN_BEFORE)
+
+    def test_a_hung_return_shows_the_cue_through_the_cut_and_past_30s_and_clears_after_link_up(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;
+shShow();show();snap('return');                        // the shell dials (it hangs); the pane, link down, awaits it
+holdFires();snap('hold');                              // the hold passes with no fresh frame: S1 painted
+NOW+=16000;shTick();shSock().onclose({code:1006});snap('cut');   // the watchdog cuts the hung first try: S2
+shFireDials();snap('redial');
+NOW+=20000;failsafeFires();snap('past30');             // 36 s on: no failsafe stood armed, the badge stays
+shOpen();snap('linkup');                               // the shell's socket opens: the link word dials the pane
+open();snap('paneopen');
+NOW+=50;recv({type:"feed",asks:[]});snap('fresh');""")
+        self.assertEqual(r["snaps"], [
+            {"k": "return", "badge": False, "line": _CUE_WAIT},
+            {"k": "hold", "badge": True, "line": _CUE_WAIT},
+            {"k": "cut", "badge": True, "line": _CUE_HUNG1},
+            {"k": "redial", "badge": True, "line": _CUE_HUNG1},
+            {"k": "past30", "badge": True, "line": _CUE_HUNG1},
+            {"k": "linkup", "badge": True, "line": ""},
+            {"k": "paneopen", "badge": True, "line": ""},
+            {"k": "fresh", "badge": False, "line": ""}],
+            "glance: held at the return, painted at the hold through the cut and past 30 s, cleared by the fresh frame; detail: "
+            "the wait line, the cut line, gone at the link-up")
+        self.assertEqual(r["holds"], 0)
+
+    def test_a_healthy_return_paints_nothing(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;
+shShow();show();snap('return');
+NOW+=150;shOpen();snap('linkup');                      // the shell's dial opens at once, inside the hold
+NOW+=100;open();NOW+=100;recv({type:"feed",asks:[]});snap('fresh');   // the pane dials, opens and gets its first frame
+""")
+        self.assertEqual([s["badge"] for s in r["snaps"]], [False, False, False], "no badge at any point of a return that links inside the hold")
+        self.assertEqual([s["line"] for s in r["snaps"]], [_CUE_WAIT, "", ""], "the Log line lived from the return to the link-up")
+        self.assertEqual(r["holds"], 0, "the fresh frame cancelled the hold")
+
+    def test_a_link_that_opens_and_drops_before_any_fresh_frame_keeps_the_badge_up_without_a_flap(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;
+shShow();show();holdFires();snap('hold');
+NOW+=3000;shOpen();open();snap('linked');              // the link and the pane's socket open, no fresh frame yet
+NOW+=500;shSock().readyState=3;shSock().onclose({code:1006});snap('shelldrop');
+sock().readyState=3;sock().onclose({code:1006});snap('panedrop');   // inside the return window, link down: the pane awaits
+holdFires();snap('nohold');                            // nothing pending: a painted badge is never re-held by a drop
+NOW+=2000;shFireDials();shOpen();snap('linkagain');
+open();NOW+=50;recv({type:"feed",asks:[]});snap('fresh');""")
+        self.assertEqual([s["badge"] for s in r["snaps"]], [True, True, True, True, True, True, False],
+                         "painted from the hold to the fresh frame, through the open, both drops and the second link")
+        self.assertEqual([s["line"] for s in r["snaps"]], [_CUE_WAIT, "", _CUE_WAIT, _CUE_WAIT, _CUE_WAIT, "", ""],
+                         "the detail follows the shell's link at its own events")
 
 
 # ── the lazy panes and the phone's skeleton first dial, shell + shim (stage 0, 2026-09-18) ────────────────────────

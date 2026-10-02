@@ -73617,9 +73617,29 @@ var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8
 // that puts it down (review round 2, 2026-09-18: a pane awaiting in that tick filed a false link-backstop row and dialed on
 // its own). The field keeps its name: the pane reads connT, and its derivation pin (tests/test_kernel_ws_heartbeat.py) too.
 window.__rompLink=function(){return {up:!!(shWs&&shWs.readyState===1&&Date.now()-shLastRecv<=SH_STALE_MS),connT:Math.max(shConnT,shTickT)};};
+// [fork] iOS item 4 (2026-10-02): the reconnect cue's detail, one tap from the glance. The glance is each pane's corner badge
+// ('reconnecting…', _pane_spin), with no count. The detail is a live line at the top of the Log (#rerr-live, inserted before
+// #rerr-list so the Log's own re-render leaves it alone), shown while this shell's socket is down after it once opened: on
+// at an abandon (a return's fast path, the watchdog's quiet arm) or a close, off at the next open, with no success line.
+// shCueTries counts the dials that never opened since the link went down or the return began, whichever is later;
+// shCueCuts those the connect cut closed (a never-opened close at least SH_CONNECT_MS after its dial, the complement of
+// the refused-ladder test in ws.onclose). The two states a user sees after a return: the first try in flight (the wait
+// line) and, after the watchdog cuts it, the retry line that names the cause once ('got no response'). Refusals take the
+// connect line, with the count from the second on. Every change is one of those events; nothing here runs on a timer.
+var shCueOn=false,shCueTries=0,shCueCuts=0,shCueEl=null;
+function shCueText(){if(!shCueOn)return '';if(!shCueTries)return 'Waiting for the kernel to respond. The dashboard updates on its own when it does.';
+var hung=shCueCuts===shCueTries;if(shCueTries===1)return hung?'Trying again: the first try got no response.':'Trying again: the first try could not connect to the kernel.';
+return 'Trying again: '+shCueTries+(hung?' tries got no response.':' tries could not connect to the kernel.');}
+function shCue(on){shCueOn=!!on&&shellOpened;if(!shCueOn){shCueTries=0;shCueCuts=0;}
+try{var list=document.getElementById('rerr-list');if(!list||!list.parentNode)return;
+if(!shCueEl){shCueEl=document.createElement('div');shCueEl.id='rerr-live';shCueEl.className='rerr-row';shCueEl.setAttribute('role','status');shCueEl.style.borderBottom='1px solid rgba(127,127,127,0.25)';
+var g=document.createElement('span'),im=document.createElement('img');im.className='rnet-spin';im.src='/media/romp-swirl-glyph.svg';im.alt='';g.appendChild(im);
+var tx=document.createElement('span');tx.className='rerr-msg';shCueEl.appendChild(g);shCueEl.appendChild(tx);list.parentNode.insertBefore(shCueEl,list);}
+shCueEl.style.display=shCueOn?'':'none';shCueEl.lastChild.textContent=shCueText();}catch(e){}}
 function shTell(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
 function shAbandon(){var d=shWs;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}shWs=null;   // detach + null so the abandoned socket's onclose is nobody's event (as the shim's abandon)...
 if(shellSock===d){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}shellSock=null;}   // ...so the API health detail is told HERE, in ws.onclose's order (the hook, then the null): a pause press this socket carried cannot be answered now (review round 1, 2026-09-18: unsaid, the redial's ready re-sent the last frame with the same seq and the press stayed acknowledged, the case onclose's own comment guards against)
+shCue(true);   // [fork] iOS item 4: the link is down, the cue's detail line is on
 shTell();}   // link down: re-tell the panes
 // the shim's freeze / resume stamps: a thawed Chromium tab must not redial a shell socket the browser still holds OPEN
 document.addEventListener('freeze',function(){shFrozeAt=Date.now();});
@@ -73639,6 +73659,7 @@ ws.onopen=function(){shOpened=true;shLastRecv=Date.now();shResumeProvisional=0;s
 shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket; the queue holds clientDiag rows alone, so one re-read of the kill switch at the open holds them all when a mute was flipped on while the socket was down, as the pane shim's flush does (review find, 2026-09-18)
 if(shReturnProbe){shReturnProbe.ms=Date.now()-shForegroundedAt;shReturnProbe.attempts=shFailed;shReturnProbe.firstFailMs=shFirstFailT?Date.now()-shFirstFailT:-1;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;shFailed=0;shFirstFailT=0;}   // [fork] D3: ONE shell row per return - the decision, the hidden/quiet gap, and the path's own recovery (attempts, firstFailMs, foreground->open ms)
 shTell();   // [fork] D3: link up - re-tell the panes
+shCue(false);   // [fork] iOS item 4: the link is up, the cue's detail line goes (no success line)
 if(shellOpened&&window.__rompReload)window.__rompReload.checkBoot();shellOpened=true;};
 ws.onmessage=function(ev){shLastRecv=Date.now();shResumeProvisional=0;var m;try{m=JSON.parse(ev.data);}catch(e){return;}
 if(m&&m.type==='restarting'){shRestartAnnounced=Date.now();return;}   // [fork] D3: the kernel's announced death - the redial keeps its tight cadence
@@ -73667,6 +73688,7 @@ else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateO
 // redial's ready re-sends the last frame verbatim), so the detail is told before the redial (_LANDING_APIH_JS)
 ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;shTell();   // [fork] D3: link down - re-tell the panes. shWs keeps the CLOSED socket (review round 1, 2026-09-18): the watchdog's CLOSED arm below reads it to recover a lost redial timer; shellWS's guard skips a socket that is neither CONNECTING nor OPEN and __rompLink requires readyState 1, so a CLOSED shWs is harmless
 if(!shOpened){if(!shFailed)shFirstFailT=Date.now();shFailed++;}   // [fork] D3: a handshake that never opened - the return probe's attempt count
+if(!shOpened){shCueTries++;if(Date.now()-shConnT>=SH_CONNECT_MS)shCueCuts++;}shCue(true);   // [fork] iOS item 4: a try that never opened counts, and whether the connect cut made its close (an open socket's close finds the count its open zeroed)
 var shInWin=shForegroundedAt&&Date.now()-shForegroundedAt<SH_STALE_MS,shd;   // [fork] D3: the redial cadence (ruling 4, 2026-09-18)
 if(shRestartAnnounced&&Date.now()-shRestartAnnounced<30000)shd=250;   // an announced restart keeps its tight redial (the kernel's own word)
 else if(!shOpened&&Date.now()-shConnT<SH_CONNECT_MS){shd=SH_LADDER[shRung<SH_LADDER.length?shRung:SH_LADDER.length-1];shRung++;}   // a REFUSED attempt (an onclose within the connect cut): back off on the bounded ladder 1/2/4/4 s, reset by an open, so a fast-refusing path is not a dial storm (the harness baseline: 236 dials/pane in 30 s at 250 ms)
@@ -73698,6 +73720,7 @@ var shStale=!shWs||shWs.readyState!==1||Date.now()-shLastRecv>SH_STALE_MS;
 if(!shStale){shReturnProbe=null;return;}
 shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-stale',hiddenMs:shHiddenAt?Date.now()-shHiddenAt:-1,quietMs:shLastRecv?Date.now()-shLastRecv:-1};
 shFailed=0;shFirstFailT=0;
+shCueTries=0;shCueCuts=0;   // [fork] iOS item 4: every return's cue counts its tries from zero (shAbandon below turns it on)
 shAbandon();shellWS();});
 shellWS();
 // [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src) and the feed's (exempt)

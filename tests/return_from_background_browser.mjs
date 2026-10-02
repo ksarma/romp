@@ -602,6 +602,38 @@ try {
   out.installed = await page.evaluate(() => { const docs = [window].concat(Array.from(window.frames)); return docs.map((f) => { try { return ((f === window ? "top" : (f.frameElement && f.frameElement.id)) || f.location.pathname) + (f.document.__labInit ? "" : ":MISSING"); } catch (e) { return "ERR"; } }); });
   if (cfg.shots) await page.screenshot({ path: cfg.shots + "-boot.png" }).catch(() => {});
 
+  // THE RECONNECT CUE (iOS item 4, 2026-10-02): what the page shows from here on, read on the page's own clock and events. In
+  // the visible chat's document a requestAnimationFrame loop reads, once per frame, whether the corner badge (#pane-reconn) is
+  // painted on and records each change, so a class set and cleared inside one task never reads as painted; a listener stamps
+  // each romp:wsfresh (the event that clears the badge). In the shell a MutationObserver over the Log panel records each change
+  // of the cue's live line (#rerr-live: shown, and its text). Armed after the boot, any tap and the settle, before the suspend.
+  out.t.cueArmed = now();
+  const cueChat = page.frames().find((f) => { try { return new URL(f.url()).pathname === "/chat"; } catch (e) { return false; } });
+  out.cueArm = {
+    chat: cueChat ? await cueChat.evaluate(() => {
+      const w = window; if (w.__labCue) return "again";
+      const c = w.__labCue = { badge: [], fresh: [], frames: 0, lastT: 0 };
+      let last = null;
+      const read = () => { const b = document.getElementById("pane-reconn"); return !!(b && b.classList.contains("on") && getComputedStyle(b).display !== "none"); };
+      const loop = () => { c.frames++; c.lastT = Date.now(); const on = read(); if (on !== last) { c.badge.push({ t: c.lastT, on }); last = on; } requestAnimationFrame(loop); };
+      requestAnimationFrame(loop);
+      w.addEventListener("romp:wsfresh", () => { c.fresh.push(Date.now()); });
+      return "armed";
+    }).catch((e) => "ERR:" + String(e).slice(0, 80)) : "no-chat-frame",
+    shell: await page.evaluate(() => {
+      const w = window; if (w.__labCueLog) return "again";
+      const c = w.__labCueLog = [];
+      let last = "";
+      const read = () => { const el = document.getElementById("rerr-live"); return el ? { shown: el.style.display !== "none", text: (el.lastChild && el.lastChild.textContent) || "" } : { shown: false, text: "", absent: true }; };
+      const rec = () => { const v = read(); const k = JSON.stringify(v); if (k !== last) { c.push(Object.assign({ t: Date.now() }, v)); last = k; } };
+      const panel = document.getElementById("rerr-panel");
+      if (!panel) return "no-panel";
+      new MutationObserver(rec).observe(panel, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["style"] });
+      rec();
+      return "armed";
+    }).catch((e) => "ERR:" + String(e).slice(0, 80)),
+  };
+
   // --- the suspend: hidden in every document, the outage armed, every held socket closed ---
   state.phase = "suspended";
   armOutage();
@@ -653,6 +685,10 @@ try {
   out.wsWords = await page.evaluate(() => window.__labWs || []);
   out.wsNow = await page.evaluate(() => window.__labWsNow || {});
   out.overrideErrors = await page.evaluate(() => window.__labErrors || []);
+  out.cue = {   // the reconnect cue's record (iOS item 4): the chat's painted badge changes, its fresh stamps, its frame loop, the Log line's changes
+    ...(cueChat ? await cueChat.evaluate(() => { const c = window.__labCue || {}; return { badge: c.badge || [], fresh: c.fresh || [], frames: c.frames || 0, lastT: c.lastT || 0 }; }).catch((e) => ({ err: String(e).slice(0, 80) })) : {}),
+    log: await page.evaluate(() => window.__labCueLog || []).catch(() => null),
+  };
   out.liveAtEnd = live.size;
   await result({});
 } catch (e) {
