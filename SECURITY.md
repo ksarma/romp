@@ -438,18 +438,18 @@ holds no CR or LF as the census reads it (below); an attribute on self other
 than a header method or wfile, one class whatever its name; and page text, which
 the served pass reads; any other name (a parameter a statement stores outside
 those roles among them) stands in no listed shape. The shapes, each matched by
-as many statements as the kernel's definition holds in it (a constant header by
-four, every other shape by one), `<str>` a string constant and every if and loop
-with no else: before the end_headers, the stamp `<page> = <page text>`; a flag
-`<flag> = <a bool constant>`; the injection's if, `if getattr(self, <str>, <a
-bool constant>) and isinstance(<page>, str) and <parameter>.startswith(<str>)
-and <str> in <page>:` whose body is `<text name> = <page text>`, then `if
-getattr(self, <str>, None):` holding `<text name> = <page text>` and `<flag> =
-<a bool constant>`, then `<page> = <page>.replace(<str>, <page text>, <an int
-constant>)`; the flag's if, `if <flag>: <header parameter> = <str>`; the codec,
-`<page> = <page>.encode("utf-8") if isinstance(<page>, str) else <page>`; the
-response line, `self.send_response(<parameter>)`; a header from a parameter,
-`self.send_header(<str>, <parameter>)`; the length header,
+at most as many statements as the kernel's definition holds in it (a constant
+header by four, every other shape by one), `<str>` a string constant and every
+if and loop with no else: before the end_headers, the stamp `<page> = <page
+text>`; a flag `<flag> = <a bool constant>`; the injection's if, `if
+getattr(self, <str>, <a bool constant>) and isinstance(<page>, str) and
+<parameter>.startswith(<str>) and <str> in <page>:` whose body is `<text name> =
+<page text>`, then `if getattr(self, <str>, None):` holding `<text name> = <page
+text>` and `<flag> = <a bool constant>`, then `<page> = <page>.replace(<str>,
+<page text>, <an int constant>)`; the flag's if, `if <flag>: <header parameter>
+= <str>`; the codec, `<page> = <page>.encode("utf-8") if isinstance(<page>, str)
+else <page>`; the response line, `self.send_response(<parameter>)`; a header
+from a parameter, `self.send_header(<str>, <parameter>)`; the length header,
 `self.send_header(<str>, str(len(<page>)))`; a constant header,
 `self.send_header(<str>, <str>)`; a constant header under a getattr test, `if
 getattr(self, <str>, <a bool constant>): self.send_header(<str>, <str>)`; the
