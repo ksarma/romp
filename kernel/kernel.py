@@ -69239,6 +69239,7 @@ if(APP==="chat"&&!COL&&!SKEL&&parentMobile()===true)RESTART_DIET=true;
 function park(){var d=ws;if(d){d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;}
 if(d&&stalePending&&openSock===d){var qw=stalePending;stalePending="";raiseStale(qw+"-quiet");}
 freshPending=false;window.__rompFreshPending=false;try{if(window.__rompReload)window.__rompReload.ended();}catch(e){}   // [fork] D2 (review round 1, 2026-09-18): the fast path armed the reload core's fresh hold a line before the park branch (the upstream armFresh line), and only a frame on a socket ends it; a parked pane dials nothing until its tap, so the hold would stand for FRESH_HOLD_MS with nothing coming and the core would hold an accepted reload on this pane's word. End it here, as onmessage's resync line does, and tell the core so a reload already held goes now; the tap's open arms it again with its own stamp (ws.onopen's wasReconn branch)
+try{window.dispatchEvent(new Event("romp:parked"));}catch(e){}   // [fork] iOS item 4 (2026-10-02): tells this page's loader the pane is parked, before the wsdown below: its reconnect badge stays down while parked (an off-screen pane gets no fresh frame until its tap, so a hold run here painted the badge off screen, and the tap showed it until that pane's first frame; _pane_spin)
 parked=true;returnParked=true;netState("parked");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
 var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
@@ -69561,6 +69562,7 @@ if(L.connT&&Date.now()-L.connT>25000){awaitLink=false;if(returnAt&&linkUpMs<0)li
 // (a rotation, a resize across the breakpoint) ends a park too: the desktop keeps its background redial.
 try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];
 if(parked&&(onScreen===true||parentMobile()!==true)){parked=false;foregroundedAt=Date.now();eagerDial=true;returnAt=foregroundedAt;returnBytes=0;returnRedialed=false;returnRow=null;awaitLink=false;linkUpMs=-1;
+try{window.dispatchEvent(new Event("romp:unpark"));}catch(e2){}   // [fork] iOS item 4: the pane is on screen again; its loader holds the badge from this moment, before the wsdown re-raise below
 try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e2){}
 var L=parentLink();if(L===undefined||L.up){if(L!==undefined)linkUpMs=Date.now()-foregroundedAt;connect();}else{awaitLink=true;}}});}catch(e){}
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
@@ -69592,7 +69594,7 @@ pendingWhy="foreground";freshPending=true;armFresh();   // the reconnect's arm r
 // through to the D3 block and dials on return like the visible pane; one extra redial per return is the accepted cost. Keyed on the
 // pane's app alone, never on width or timing.
 if(onScreen===false&&parentMobile()===true&&APP!=="feed"){park();row.parked=true;returnDiag("return",row);return;}
-parked=false;   // [fork] D2 (review round 1, 2026-09-18): a return on an ALREADY parked pane that passes the branch above (the layout no longer the phone's, with no panes word yet to end the park) ends the park here, so the D3 block and the upstream lines below can dial and the row's parked:false, set above, is the truth
+if(parked)try{window.dispatchEvent(new Event("romp:unpark"));}catch(e){}parked=false;   // [fork] iOS item 4: a park ended here is an unpark for the loader too (romp:unpark, as the show branch tells it). [fork] D2 (review round 1, 2026-09-18): a return on an ALREADY parked pane that passes the branch above (the layout no longer the phone's, with no panes word yet to end the park) ends the park here, so the D3 block and the upstream lines below can dial and the row's parked:false, set above, is the truth
 // [fork] D3 (2026-09-18): when this pane sits in a shell that publishes a link, put the socket down for EVERY state
 // (abandon nulls ws, so the tick is inert and no onclose timer arms) and dial only once the link is up: now if it
 // already is (linkUpMs 0, the whole wait is code-owned), else on the shell's link-up word (awaitLink; the panes
@@ -70004,12 +70006,16 @@ def _pane_spin(cid, ignore_id=""):
             # 30 s and the page sat stale with no cue until the link came up). The link word 'up' or this pane's own reopen
             # (romp:wsup) restarts the failsafe from that moment. A page with no shell hears no link word and keeps upstream's
             # failsafe. This listener runs before upstream's wsdown line and records whether the badge was already painted.
-            "var RHOLD=" + str(_RECONN_BADGE_HOLD_MS) + ",rh=0,rpend=false,ron=false,rlk='',rpo=false;"
+            # (3) A parked pane (the phone's off-screen tabs at a return, the shim's park) holds its badge with no timer, and its
+            # tap starts the hold: the shim's romp:parked and romp:unpark (rpk). Before this the hold ran off screen, where no
+            # fresh frame can come until the tap, so the badge painted there and the tap showed it until that pane's first frame
+            # even when the link had come up at once (finding of 2026-10-02: a 286 ms flash at a tap 2 s after a healthy return).
+            "var RHOLD=" + str(_RECONN_BADGE_HOLD_MS) + ",rh=0,rpend=false,ron=false,rlk='',rpo=false,rpk=false;"
             "function rwait(){return rlk==='down'&&!rpo;}"
             "function rfail(){clearTimeout(bfail);bfail=0;if(rb&&rb.classList.contains('on')&&!rwait())bfail=setTimeout(function(){badge(false);},30000);}"
             "function rset(lk,po){var was=rwait();rlk=lk;rpo=po;if(was!==rwait())rfail();}"
             "function rpaint(){rh=0;if(!rpend||!rb)return;rpend=false;rb.classList.add('on');rfail();}"
-            "function rhold(){clearTimeout(rh);rh=0;rpend=true;if(rb)rb.classList.remove('on');clearTimeout(bfail);bfail=0;if(document.visibilityState!=='hidden')rh=setTimeout(rpaint,RHOLD);}"
+            "function rhold(){clearTimeout(rh);rh=0;rpend=true;if(rb)rb.classList.remove('on');clearTimeout(bfail);bfail=0;if(document.visibilityState!=='hidden'&&!rpk)rh=setTimeout(rpaint,RHOLD);}"
             "window.addEventListener('romp:wsdown',function(){rpo=false;ron=!!(rb&&rb.classList.contains('on'));});"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
             # the opaque sheet; the sheet stays for a genuinely empty pane (cold load / never
@@ -70043,6 +70049,10 @@ def _pane_spin(cid, ignore_id=""):
             "window.addEventListener('romp:wsfresh',function(){clearTimeout(rh);rh=0;rpend=false;});"
             "window.addEventListener('message',function(e){var m=e&&e.data;if(m&&(m.romp==='panes'||m.romp==='link')&&(m.link==='up'||m.link==='down'))rset(m.link,rpo);});"
             "document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden'){clearTimeout(rh);rh=0;return;}if(rpend||(rb&&rb.classList.contains('on')))rhold();});"
+            # the park pulls a pending or painted badge back and holds it with no timer; the unpark holds it from that moment,
+            # as turning visible does (the shim dispatches each before its wsdown, so that drop finds the hold pending)
+            "window.addEventListener('romp:parked',function(){rpk=true;if(rpend||(rb&&rb.classList.contains('on')))rhold();});"
+            "window.addEventListener('romp:unpark',function(){rpk=false;if(rpend||(rb&&rb.classList.contains('on')))rhold();});"
             "window.addEventListener('romp:wsfresh',function(){badge(false);});})();</script>")
 
 

@@ -172,8 +172,8 @@ class PaneLoaderFirstPaintHold(unittest.TestCase):
 
     def test_the_held_first_paint_stands_the_sheet_down_from_its_timer_and_the_release_re_arms_it(self):
         o = self._run()
-        self.assertEqual(o["boot"], {"live30": 1, "gone": False, "listeners": ["message", "romp:firstpaintheld", "romp:firstpaintreleased", "romp:wsdown", "romp:wsfresh", "romp:wsup"]},
-                         "at load the sheet is up with its 30 s failsafe armed, and the two hold events are listened for beside the socket's (wsdown and wsup each carry a second, fork listener since pass 3: the latch; the shell's link word, `message`, and two more socket listeners since iOS item 4: the badge's hold and failsafe latch)")
+        self.assertEqual(o["boot"], {"live30": 1, "gone": False, "listeners": ["message", "romp:firstpaintheld", "romp:firstpaintreleased", "romp:parked", "romp:unpark", "romp:wsdown", "romp:wsfresh", "romp:wsup"]},
+                         "at load the sheet is up with its 30 s failsafe armed, and the two hold events are listened for beside the socket's (wsdown and wsup each carry a second, fork listener since pass 3: the latch; the shell's link word, `message`, and two more socket listeners since iOS item 4: the badge's hold and failsafe latch; the shim's park and unpark since the parked-pane fix of 2026-10-02)")
         self.assertEqual(o["held"], {"live30": 0, "gone": False}, "the hold clears the failsafe: the sheet stands with no timer")
         self.assertFalse(o["after30"]["gone"], "30 s later the sheet is still up (before this the failsafe faded it over the empty list, and the tap revealed a blank pane)")
         self.assertEqual(o["released"], {"live30": 1, "gone": False}, "the release re-arms the 30 s backstop; the render's first child, not this event, retires the sheet (the observer)")
@@ -236,6 +236,7 @@ global.addEventListener = (t, f) => { (WIN[t] = WIN[t] || []).push(f); };
 const painted = () => BADGECLS.has('on');
 const task = (fn) => { fn(); PAINTS.push({ t: NOW, on: painted() }); };
 const fire = (type) => task(() => (WIN[type] || []).forEach((f) => f({ type })));
+const fires = (...types) => task(() => types.forEach((type) => (WIN[type] || []).forEach((f) => f({ type }))));   // several events in ONE task: the shim's park (romp:parked, then romp:wsdown) and its unpark (romp:unpark, then romp:wsdown)
 const msg = (data) => task(() => (WIN.message || []).forEach((f) => f({ data })));
 const vis = (s) => task(() => { document.visibilityState = s; (DOCL.visibilitychange || []).forEach((f) => f({ type: 'visibilitychange' })); });
 // the clock walks to `to`, firing each live timer due by then in due order, each as its own task
@@ -445,6 +446,50 @@ msg({ romp: 'link', link: 'down' }); const linkDown = live(30000);
 out({ noWord, panesDown, linkUp, linkDown });""")
         self.assertEqual(o, {"noWord": 1, "panesDown": 0, "linkUp": 1, "linkDown": 0, "textWrites": []},
                          "only a panes or link word's link field moves the latch")
+
+    # A parked pane (the shim's park: the phone's off-screen tabs at a return, D2) gets no fresh frame until its tap, so a hold run
+    # there painted the badge off screen and the tap showed it until that pane's first frame, on a healthy link too (finding of
+    # 2026-10-02, a 286 ms flash at a tap 2 s after a healthy return). The shim dispatches romp:parked before its park's wsdown and
+    # romp:unpark before its tap's wsdown, each in one task with it; tests/test_pane_shim_return.py ParkedPaneBadge composes the shim.
+    def test_a_parked_pane_holds_its_badge_with_no_timer_and_its_tap_on_a_healthy_link_paints_nothing(self):
+        o = self._run(r"""
+vis('hidden'); vis('visible');
+fires('romp:parked', 'romp:wsdown');                                  // the return parks this off-screen pane
+const atPark = { painted: painted(), live: live() };
+after(60000); const parked60 = painted();                             // a minute on another tab: nothing paints, nothing is armed
+vis('hidden'); vis('visible'); const reReturn = { painted: painted(), live: live() };   // a return while still parked arms nothing either
+fires('romp:unpark', 'romp:wsdown');                                  // the tap: the hold starts here
+const atTap = { painted: painted(), holds: live(RHOLD_T), live: live() };
+after(300); fire('romp:wsup'); after(50); fire('romp:wsfresh');       // the pane's dial opens and its first frame lands inside the hold
+after(60000);
+out({ atPark, parked60, reReturn, atTap, runs: runs(), liveEnd: live() });""")
+        self.assertEqual(o["atPark"], {"painted": False, "live": 0}, "parked: the badge is held with no timer (nobody sees the pane, and no frame can come)")
+        self.assertIs(o["parked60"], False)
+        self.assertEqual(o["reReturn"], {"painted": False, "live": 0})
+        self.assertEqual(o["atTap"], {"painted": False, "holds": 1, "live": 1}, "the tap is this pane's return: one hold from the tap, nothing else")
+        self.assertEqual(o["runs"], [], "the badge never painted: not off screen, not at the tap, not after its fresh frame")
+        self.assertEqual(o["liveEnd"], 0)
+
+    def test_a_badge_painted_before_the_park_is_pulled_back_and_a_tap_during_an_outage_paints_a_hold_after_the_tap(self):
+        o = self._run(r"""
+fire('romp:wsdown'); after(RHOLD_T); const before = painted();        // a drop on screen: painted at the hold
+fires('romp:parked', 'romp:wsdown'); const atPark = { painted: painted(), live: live() };   // the user moved to another tab and the return parked this pane
+msg({ romp: 'panes', on: {}, link: 'down' });                        // the shell's link goes down
+after(20000);
+fires('romp:unpark', 'romp:wsdown');                                  // the tap, with the link still down
+after(RHOLD_T - 1); const justBefore = painted();
+after(1); const atHold = { painted: painted(), live: live() };
+after(45000); const waiting = { painted: painted(), live: live() };
+msg({ romp: 'link', link: 'up' }); fire('romp:wsup'); fire('romp:wsfresh');
+out({ before, atPark, justBefore, atHold, waiting, afterFresh: painted(), runs: runs() });""")
+        self.assertIs(o["before"], True)
+        self.assertEqual(o["atPark"], {"painted": False, "live": 0}, "the park pulls a painted badge back and drops its failsafe: no timer while parked")
+        self.assertIs(o["justBefore"], False, "1 ms before a hold after the tap: nothing painted")
+        self.assertEqual(o["atHold"], {"painted": True, "live": 0}, "a hold after the tap it paints, with no failsafe under the down link")
+        self.assertEqual(o["waiting"], {"painted": True, "live": 0}, "and stays, with no timer of any length, while the link is down")
+        self.assertIs(o["afterFresh"], False)
+        self.assertEqual([r["on"] for r in o["runs"]], [True, False, True, False], "painted on screen, pulled back at the park, painted a hold after the tap, cleared at the fresh frame")
+        self.assertEqual(o["runs"][2]["t"], 2 * self.HOLD + 20000, "the second paint is a hold after the tap, not after the park")
 
     def test_the_fork_lines_sit_around_upstreams_badge_lines_which_stay_byte_for_byte(self):
         js = km._pane_spin("content", "live-ask")

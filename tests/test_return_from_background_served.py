@@ -374,20 +374,23 @@ class ReturnFromBackground(unittest.TestCase):
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
-    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False):
+    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False, post_tap=None):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "")
+        name = "%s-%s-%s-%ds%s%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "", "-posttap-" + post_tap if post_tap else "")
         eager = _eager(shell, None if unmarked else tap)   # a tapped pane's document is loaded before the suspend (on the re-tap, under abort or denied); an unmarked document runs no shim, so the tapped pane never joins the eager set (pass 5, the author's label, taking the reviewer's round-4 finding tests-1)
         # a derived set that came out empty would hand the driver a boot wait and a fresh wait that end at once with nothing witnessed
         # (review round 2, 2026-09-19: every derived expectation must fail when the derivation yields nothing)
         self.assertTrue(_eager(shell), "the eager set for the %s shell is not empty" % shell)
         self.assertTrue([a for a in eager if a in FRESH_APPS], "the fresh set is not empty: %r" % (eager,))
+        # a pane tapped after the return (post_tap, iOS item 4) is parked until that tap, so the return's fresh wait leaves it out (it
+        # files its return-fresh only after the tap); the tap's own wait is the driver's
+        fresh_apps = [a for a in eager if a in FRESH_APPS and a != post_tap]
         cfg = {"engine": engine, "shell": shell, "regime": regime, "outageMs": outage_s * 1000, "hiddenDwellMs": 400,
                "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "diag": self.diag, "apps": list(APPS),
-               "eagerApps": list(_eager(shell)), "freshApps": [a for a in eager if a in FRESH_APPS], "tapPane": tap,   # the boot wait is the eager panes' (a lazy pane has no shim to say up); the fresh wait includes a tapped pane
+               "eagerApps": list(_eager(shell)), "freshApps": fresh_apps, "tapPane": tap,   # the boot wait is the eager panes' (a lazy pane has no shim to say up); the fresh wait includes a tapped pane
                "abortPane": tap if (abort or denied) else "",   # HIGH 2 (review round 1): the tapped pane's first document fetch fails; the shell must say so and the re-tap must load it
                "retryEnter": bool(retry_enter),   # ui-1 (review round 4): after the failed state, Enter on the focused Try again button; the route still fails the fetch, and the driver reads the active element at the re-failure
                "abortMode": "unmarked" if unmarked else ("denied" if denied else "abort"),   # unmarked (pass 5, the reviewer's round-4 tests-1): the route hands the frame the kernel's real 200 with the shim's marker statement stripped, a stamped document with no shim: shown as served, never a failure. Else the failure's input: abort (the route aborts the navigation) or denied (review round 4, kernel-1 and tests-1: the route re-issues the pane's one request credential-less and hands the frame the REAL kernel's 403; not shown as served, the retry road stands)
@@ -397,6 +400,7 @@ class ReturnFromBackground(unittest.TestCase):
                # A leg names its own (active_sid); the boot-tab legs default to web, the held-full leg to web too (the kernel's one full is what is held)
                "activeSid": active_sid if active_sid is not None else (SESSIONS[0][0] if (boot_tab or hold_active_full_ms) else ""),
                "holdActiveFullMs": hold_active_full_ms,   # fresh-2 (review round 3): the driver's proxy holds the boot chat dial's frames naming the active tab for this long
+               "postTap": post_tap or "", "postTapMs": 2000, "cueHoldMs": cue_hold_ms() if post_tap else 0,   # iOS item 4: the tap after the return, 2 s on (inside the badge's 30 s failsafe, where the off-screen paint showed)
                "showFilesControl": tap == "files",   # extra9-2 (review round 3): the Files tab exists only with the gear's Files control on (romp:settings.showFilesControl, the literal true); the install seeds it before the shell parses
                "shots": os.path.join(self.lab, "return-harness-" + name) if os.environ.get("RETURN_HARNESS_SHOTS") else ""}
         cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the full result; the RESULT: line is a compact copy
@@ -503,6 +507,33 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertEqual(set(texts) - {CUE_WAIT}, set(), where + "a hung outage shorter than the cut keeps the wait line: %r" % (log,))
         else:
             self.assertTrue([x for x in texts if x and x.endswith(CUE_CONNECT)], where + "a refused try's connect line: %r" % (log,))
+
+    def _tapcue(self, name, r):
+        """The pane the return parked, tapped after the return (iOS item 4, finding of 2026-10-02): its corner badge read once per frame
+        from the tap through its first fresh frame and a hold past it. The tap is that pane's return for the badge: no frame paints it
+        when the fresh frame came inside the hold after the tap, and otherwise none paints it sooner than the hold. Before the fix the
+        hold ran off screen, where a parked pane gets no frame, so the badge was painted there at one second and the tap showed it from
+        the first frame until the pane's fresh frame, on a healthy link."""
+        where = name + ": "
+        hold = cue_hold_ms()
+        pt = r.get("postTap") or {}
+        self.assertEqual(pt.get("arm"), "armed", where + "the tapped pane's recorder armed: %r" % (pt.get("arm"),))
+        rec = pt.get("rec") or {}
+        tap = r["t"]["postTap"]
+        fresh = [x for x in (rec.get("fresh") or []) if x >= tap]
+        self.assertTrue(fresh, where + "the tapped pane stamped a fresh frame after the tap: %r" % ({k: rec.get(k) for k in ("fresh", "frames", "err")},))
+        self.assertGreater(rec.get("frames", 0), 0, where + "the tapped pane's frame loop ran")
+        self.assertGreaterEqual(rec.get("lastT", 0), fresh[0], where + "...through its fresh frame, so 'never painted' was read, not assumed")
+        badge = rec.get("badge") or []
+        ons = [b["t"] - tap for b in badge if b["on"] and b["t"] >= tap]
+        rel_fresh = fresh[0] - tap
+        type(self).measurements.setdefault(name, {})["postTapCue"] = {"pane": pt.get("pane"), "holdMs": hold, "armedOn": (rec.get("armed") or {}).get("on"),
+                                                                     "paintMs": ons, "clearMs": [b["t"] - tap for b in badge if not b["on"] and b["t"] >= tap], "freshMs": rel_fresh}
+        if rel_fresh < hold - 50:
+            self.assertEqual(ons, [], where + "a tap into a pane the return parked, whose first frame came %d ms after the tap, inside the %d ms hold, paints no badge: %r" % (rel_fresh, hold, badge))
+        else:
+            self.assertEqual(len(ons), 1, where + "its first frame came %d ms after the tap, past the hold: one paint: %r" % (rel_fresh, badge))
+            self.assertGreaterEqual(ons[0], hold - 20, where + "...no sooner than the hold after the tap: %r" % (ons,))
 
     # ---- the return's chain (the owner's decision, 2026-09-19): on the phone the redial reloads the visible tab alone ----
     def _return_chain(self, name, r, rows):
@@ -948,6 +979,21 @@ class ReturnFromBackground(unittest.TestCase):
 
     def test_phone_healthy_return_paints_no_badge(self):
         self._healthy("chromium")
+
+    # iOS item 4 (finding of 2026-10-02): the Waiting pane, loaded before the suspend and off screen at the return (parked), tapped 2 s
+    # after a healthy return (the finding's lab case was the Outline, which parks the same way). The tap is the pane's return: its
+    # badge must not show when its content lands inside the hold.
+    def _healthy_post_tap(self, engine):
+        name, r = self._drive("phone", "hung", 0, engine, tap="waiting", post_tap="waiting")
+        self._cue(name, r, "hung", 0)
+        self._tapcue(name, r)
+        Path(os.path.join(self.lab, "return-harness-%s.json" % name)).write_text(json.dumps(type(self).measurements.get(name, {}), indent=1, sort_keys=True))
+
+    def test_phone_healthy_return_then_a_parked_tab_tapped_paints_no_badge(self):
+        self._healthy_post_tap("chromium")
+
+    def test_webkit_phone_healthy_return_then_a_parked_tab_tapped_paints_no_badge(self):
+        self._healthy_post_tap("webkit")
 
     def test_webkit_phone_healthy_return_paints_no_badge(self):
         self._healthy("webkit")

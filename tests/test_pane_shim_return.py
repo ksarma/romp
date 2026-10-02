@@ -1528,11 +1528,133 @@ out({atPark:atPark,afterLink:afterLink,atTap:{sockets:sockets.length,parked:park
         # review round 1 (2026-09-18): the park ends the reload core's fresh hold on its own line, between the quiet-stale rule and the latch
         self.assertIn('raiseStale(qw+"-quiet");}\nfreshPending=false;window.__rompFreshPending=false;try{if(window.__rompReload)window.__rompReload.ended();}catch(e){}', js,
                       "park() ends the fresh hold the fast path armed, mirroring onmessage's resync line")
-        self.assertIn('if(onScreen===false&&parentMobile()===true&&APP!=="feed"){park();row.parked=true;returnDiag("return",row);return;}\nparked=false;', js,
-                      "the decision point, gated on the phone layout and the pane's app (the feed is exempt, the user's ruling of 2026-09-18); a return that passes it ends an earlier park on the next line")
+        self.assertIn('if(onScreen===false&&parentMobile()===true&&APP!=="feed"){park();row.parked=true;returnDiag("return",row);return;}\nif(parked)try{window.dispatchEvent(new Event("romp:unpark"));}catch(e){}parked=false;', js,
+                      "the decision point, gated on the phone layout and the pane's app (the feed is exempt, the user's ruling of 2026-09-18); a return that passes it ends an earlier park on the next line, "
+                      "telling the loader as the show branch does (iOS item 4, 2026-10-02; executed in ParkedPaneBadge)")
         self.assertEqual(js.count('netState("parked")'), 1, "one place says parked")
         self.assertIn("function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn===\"function\")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}", js,
                       "the shell is present when its probe is a function, as parentLink() reads the link (the ruling of 2026-09-18)")
+
+
+# The reconnect badge's loader (_pane_spin's script) composed with this shim on one timed clock (iOS item 4, 2026-10-02). The
+# harness's setTimeout gains a due time and runTo(t) fires the live timers due by t in due order, each its own task; dispatchEvent
+# also runs the listeners (the loader's); the pane's document answers the loader's three elements, a content container with one
+# thread among them (a drop over content raises the badge, not the sheet). step(fn) runs one task and records whether the badge is
+# painted after it, which is what a frame shows. The loader script runs BEFORE the shim core, as the pane pages serve them
+# (_pane_spin's markup precedes _shim's in every page's body), so its listeners run first in each event.
+_PARK_BADGE_BEFORE = r"""
+setTimeout=function(fn,ms){timers.push({fn:fn,ms:ms,live:true,at:NOW+(ms||0)});return timers.length;};
+var SPB=new Set(),SPS=new Set();
+function spCls(S){return {add:function(c){S.add(c);},remove:function(c){S.delete(c);},contains:function(c){return S.has(c);},toggle:function(c,on){if(on)S.add(c);else S.delete(c);return !!on;}};}
+var SPEL={"pane-spin":{classList:spCls(SPS)},"pane-reconn":{classList:spCls(SPB),style:{}},"content":{children:[{id:"thread-1"}]}};
+document.getElementById=function(id){return SPEL[id]||null;};
+window.dispatchEvent=function(e){winEvents.push(e.type);(winL[e.type]||[]).forEach(function(f){f(e);});return true;};
+var PAINTS=[];function painted(){return SPB.has("on");}
+function step(fn){fn();PAINTS.push({t:NOW,on:painted()});}
+function runTo(to){for(var g=0;g<10000;g++){var due=null;timers.forEach(function(t){if(t.live&&t.at!==undefined&&t.at<=to&&(!due||t.at<due.at))due=t;});if(!due)break;NOW=Math.max(NOW,due.at);due.live=false;step(due.fn);}NOW=to;}
+function holds(){return timers.filter(function(t){return t.live&&t.fn.name==="rpaint";}).length;}
+function paintRuns(t0){var r=[],prev=false;PAINTS.forEach(function(p){if(p.t>=t0&&p.on!==prev){r.push({t:p.t-t0,on:p.on});prev=p.on;}});return r;}
+"""
+
+
+def _loader_script():
+    js = km._pane_spin("content", "live-ask")
+    return js[js.index("<script>") + len("<script>"):js.index("</script>")]
+
+
+class ParkedPaneBadge(unittest.TestCase):
+    """iOS item 4 (finding of 2026-10-02): a pane the return PARKED (the phone's off-screen tabs, D2) shows no reconnect badge at its
+    tap when its content arrives inside the hold, whenever the tap comes. Before this the loader's one-second hold ran off screen,
+    where a parked pane can get no fresh frame until its tap, so the badge painted there at one second; a tap within the badge's 30 s
+    failsafe after that found it painted and kept it (a repeat drop never re-holds a painted badge), so 'reconnecting…' showed from
+    the tap to that pane's first frame on a healthy link (the lab: 286 ms on the Outline at a tap 2 s after the return; this class drives the Waiting pane, which parks the same way), and a later
+    tap showed nothing: the failsafe timer decided which. Now the shim tells the loader when it parks (romp:parked, before the park's
+    wsdown) and when the pane is on screen again (romp:unpark, before the tap's wsdown, and at a return that ends the park in a
+    layout no longer the phone's); the loader holds the badge with no timer while parked and starts the hold at the unpark. The real
+    shim core and the real loader script, on one timed clock (_PARK_BADGE_BEFORE)."""
+
+    BOOT = r"""parentMobileVal=true;parentLinkVal={up:true,connT:NOW};open();recv({type:"ka"});word({waiting:false},"up");
+step(hide);NOW+=46000;parentLinkVal={up:true,connT:NOW};step(show);   // the return, with this pane off screen: it parks
+var T0=NOW;var atReturn={painted:painted(),parked:parked,holds:holds(),sockets:sockets.length};
+"""
+
+    def _run(self, scenario):
+        return _run(scenario, app="waiting", before=_PARK_BADGE_BEFORE + _loader_script() + "\n")
+
+    def _parked_at_return(self, r):
+        # checked after each case's own assertions, so a red names what the user sees first and this mechanism second
+        self.assertEqual(r["atReturn"], {"painted": False, "parked": True, "holds": 0, "sockets": 1},
+                         "the return parks the pane and the loader holds its badge with no timer")
+
+    def _healthy_tap(self, tap_after):
+        return self._run(self.BOOT + r"""
+runTo(T0+%d);                                                        // on another tab, the link up throughout
+var beforeTap=paintRuns(T0);
+step(function(){word({waiting:true},"up");});                          // the tap: this pane's tab comes forward
+var T1=NOW;var atTap={painted:painted(),holds:holds(),parked:parked,sockets:sockets.length};
+runTo(NOW+300);step(open);runTo(NOW+50);step(function(){recv({type:"feed",asks:[]});});   // its dial opens and its first frame lands inside the hold
+var atFresh={painted:painted(),holds:holds()};
+runTo(NOW+60000);
+out({atReturn:atReturn,beforeTap:beforeTap,atTap:atTap,atFresh:atFresh,afterTap:paintRuns(T1)});""" % tap_after)
+
+    def test_a_tap_5s_after_a_healthy_return_paints_nothing(self):
+        r = self._healthy_tap(5000)
+        self.assertEqual(r["afterTap"], [], "never painted from the tap on (before this: painted from the tap to the fresh frame)")
+        self.assertEqual(r["beforeTap"], [], "nothing painted while parked (before this the hold painted the badge off screen at one second)")
+        self.assertEqual(r["atTap"], {"painted": False, "holds": 1, "parked": False, "sockets": 2}, "the tap unparks and dials; the badge is held from the tap")
+        self.assertEqual(r["atFresh"], {"painted": False, "holds": 0}, "the pane's first frame inside the hold ends the wait")
+        self._parked_at_return(r)
+
+    def test_a_tap_40s_after_a_healthy_return_paints_nothing_either(self):
+        # before this the badge's 30 s failsafe had hidden the off-screen paint by now, so this tap was held and the 5 s one was not:
+        # a timer decided which. Now both are the same case.
+        r = self._healthy_tap(40000)
+        self.assertEqual(r["afterTap"], [])
+        self.assertEqual(r["beforeTap"], [], "nothing painted while parked (before this: painted off screen from one second to the failsafe at 31 s)")
+        self.assertEqual(r["atTap"], {"painted": False, "holds": 1, "parked": False, "sockets": 2})
+        self._parked_at_return(r)
+
+    def test_a_tap_during_an_outage_paints_a_hold_after_the_tap_and_clears_at_the_panes_first_frame(self):
+        r = self._run(self.BOOT + r"""
+runTo(T0+3000);
+parentLinkVal={up:false,connT:NOW};fireWin("message",{romp:"link",link:"down"});   // the link goes down
+runTo(T0+5000);
+step(function(){word({waiting:true},"down");});                        // the tap with the link down: the pane awaits the link
+var T1=NOW;var atTap={painted:painted(),holds:holds(),awaiting:awaitLink,sockets:sockets.length};
+runTo(T1+%d-1);var justBefore=painted();
+runTo(T1+%d);var atHold=painted();
+runTo(T1+45000);var waiting=painted();
+parentLinkVal={up:true,connT:NOW};step(function(){fireWin("message",{romp:"link",link:"up"});});   // the link is up: the pane dials
+step(open);runTo(NOW+50);step(function(){recv({type:"feed",asks:[]});});
+out({atReturn:atReturn,beforeTap:paintRuns(T0).filter(function(x){return x.t<5000;}),atTap:atTap,justBefore:justBefore,atHold:atHold,waiting:waiting,afterFresh:painted(),afterTap:paintRuns(T1)});""" % (self.HOLD, self.HOLD))
+        self.assertEqual(r["beforeTap"], [], "nothing painted while parked, outage or not")
+        self.assertEqual(r["atTap"], {"painted": False, "holds": 1, "awaiting": True, "sockets": 1})
+        self.assertIs(r["justBefore"], False, "1 ms before a hold after the tap: nothing painted")
+        self.assertIs(r["atHold"], True, "a hold after the tap the badge paints: the pane is on screen and its content has not come")
+        self.assertIs(r["waiting"], True, "and stays while the link is down")
+        self.assertIs(r["afterFresh"], False, "the pane's first frame after the link came up clears it")
+        self.assertEqual([x["on"] for x in r["afterTap"]], [True, False], "one paint, one clear")
+        self.assertEqual(r["afterTap"][0]["t"], self.HOLD)
+        self._parked_at_return(r)
+
+    def test_a_return_that_ends_the_park_in_a_layout_no_longer_the_phones_holds_from_that_return(self):
+        # the shim's other unpark: a return on a parked pane with the layout no longer the phone's and no panes word yet ends the park
+        # in the fast path (D2 review round 1); the loader hears romp:unpark there too, or it would hold the badge with no timer for
+        # good and this pane, now on screen, would show no cue through an outage
+        r = self._run(self.BOOT + r"""
+runTo(T0+5000);
+parentMobileVal=false;parentLinkVal={up:false,connT:NOW};             // a rotation to the wide layout, the link down, no word yet
+step(hide);NOW+=1000;step(show);
+var T1=NOW;var atReturn2={painted:painted(),holds:holds(),parked:parked,awaiting:awaitLink};
+runTo(T1+%d-1);var justBefore=painted();
+runTo(T1+%d);
+out({atReturn:atReturn,atReturn2:atReturn2,justBefore:justBefore,atHold:painted(),afterReturn:paintRuns(T1)});""" % (self.HOLD, self.HOLD))
+        self.assertEqual(r["atReturn2"], {"painted": False, "holds": 1, "parked": False, "awaiting": True}, "the park ends and the hold runs from this return")
+        self.assertIs(r["justBefore"], False)
+        self.assertIs(r["atHold"], True, "the outage holds: the badge paints a hold after the return")
+        self._parked_at_return(r)
+
+    HOLD = getattr(km, "_RECONN_BADGE_HOLD_MS", 1000)
 
 
 if __name__ == "__main__":
