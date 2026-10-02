@@ -868,8 +868,9 @@ test('a profile refused at boot for one conflict and edited into another, onto a
 });
 
 // The line's key is the conflict, each part of it: the kernel, the kernel holding the root, the root and the reason. The
-// case above changes the holder, the root and the reason at once; the two below change one part, the holder alone and
-// the reason alone, and each is a new conflict, said once.
+// case above changes the holder, the root and the reason at once; the four below change one part each, the holder alone,
+// the reason alone, the kernel alone and the root alone, and each is a new conflict, said once. Each goes red when its
+// part is dropped from the key (spawnKernel's rootRefusalsSaid key).
 test('a refused profile whose root comes to be held by another kernel, with its root and reason the same, has the new holder said: two lines, the second naming it', async () => {
   const h = await world();
   try {
@@ -919,6 +920,66 @@ test('a refused profile whose reason changes, with its root and holder the same,
     assert.ok(lines[1].includes(`its kernels.json profile's stateDir ${JSON.stringify(named)} resolves to the primary kernel's state root ` +
                                 `${fs.realpathSync(h.state)},`), lines[1]);
     assert.deepEqual(h.at(aux), [], 'the refused profile was started');
+  } finally { await h.cleanup(); }
+});
+
+test('two profiles with no stateDir, the same holder, root and reason, are each refused at boot in a line of their own naming that profile', async () => {
+  const h = await world();
+  try {
+    const [pa, pb] = [await freePort(__filename), await freePort(__filename)];
+    h.writeKernels([{ id: 'a', port: pa }, { id: 'b', port: pb }]);
+    await h.start();
+    for (const port of [pa, pb]) {
+      for (let i = 0; i < 2; i++) {                         // the extension's retry
+        const r = await h.req(`/ensure?port=${port}`, 'POST');
+        assert.equal(r.code, 409, r.body);
+      }
+    }
+    await h.sleep(300);
+    for (const [id, port] of [['a', pa], ['b', pb]]) {
+      const lines = h.refusals(id);
+      assert.equal(lines.length, 1, `one line for '${id}', which another profile's line on the same conflict does not stand for:\n${h.log}`);
+      assert.match(lines[0], new RegExp(`^\\[romp-manager\\] kernel '${id}' \\(port ${port}\\) is not started: its kernels\\.json profile has no stateDir, ` +
+                                        'so it would run on the primary kernel\'s state root'), lines[0]);
+      assert.deepEqual(h.at(port), [], `'${id}' was started`);
+    }
+    assert.deepEqual((await h.kernels()).map((k) => k.id), ['main']);
+  } finally { await h.cleanup(); }
+});
+
+test('a refused profile whose root alone changes, its holder and its reason the same, has the new root said: two lines, the second naming it', async () => {
+  const h = await world();
+  try {
+    const [pe, ps] = [await freePort(__filename), await freePort(__filename)];
+    const r1 = path.join(h.dir, 'r1-state'), r2 = path.join(h.dir, 'r2-state'), link = path.join(h.dir, 'state-link');
+    for (const d of [r1, r2]) fs.mkdirSync(d);
+    fs.symlinkSync(r1, link);
+    h.writeKernels([{ id: 'e', port: pe, stateDir: r1 }, { id: 's', port: ps, stateDir: link }]);
+    await h.start();
+    await h.until(() => h.at(pe, 'serving').length === 1, 10000, 'e serves');
+    assert.equal(h.refusals('s').length, 1, `refused at boot:\n${h.log}`);
+    assert.ok(h.refusals('s')[0].includes(`its kernels.json profile's stateDir ${JSON.stringify(link)} resolves to the state root ` +
+                                          `${fs.realpathSync(r1)} of kernel 'e' (port ${pe}), ${RUNNING_HOLDER}`), h.refusals('s')[0]);
+    // e stops first, since a running kernel keeps the root it runs on and s would then start on the moved link; then e's
+    // entry and the link both move to r2. s's holder (e) and its reason (the stateDir as written, the link) stay the same,
+    // and only the root they resolve to changes
+    assert.equal((await h.req('/stop?kernel=e', 'POST')).code, 200);
+    await h.until(() => h.log.includes("kernel 'e' stopped"), 10000, 'e did not stop');
+    fs.unlinkSync(link);
+    fs.symlinkSync(r2, link);
+    h.writeKernels([{ id: 'e', port: pe, stateDir: r2 }, { id: 's', port: ps, stateDir: link }]);
+    for (let i = 0; i < 2; i++) {                           // the extension's retry
+      const r = await h.req(`/ensure?port=${ps}`, 'POST');
+      assert.equal(r.code, 409, r.body);
+      assert.ok(JSON.parse(r.body).error.includes(`resolves to the state root ${fs.realpathSync(r2)} of kernel 'e' (port ${pe}), ` +
+                                                  'whose profile comes before it in kernels.json'), r.body);
+    }
+    await h.sleep(300);
+    const lines = h.refusals('s');
+    assert.equal(lines.length, 2, `the new root was not said, or was said again:\n${h.log}`);
+    assert.ok(lines[1].includes(`its kernels.json profile's stateDir ${JSON.stringify(link)} resolves to the state root ` +
+                                `${fs.realpathSync(r2)} of kernel 'e' (port ${pe}), whose profile comes before it in kernels.json`), lines[1]);
+    assert.deepEqual(h.at(ps), [], 'the refused profile was started');
   } finally { await h.cleanup(); }
 });
 
