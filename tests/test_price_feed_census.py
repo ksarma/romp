@@ -8645,7 +8645,130 @@ def _as_module(tag, base, swap):
 
 
 AS_FILES = tuple((t, _as_module(t, base, swap)) for _n, t, base, swap, _k, _a, _p in AS_NEAR)
-AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES
+# (at) the page send's reader outside its statement shapes (the reviewer's 02:29Z ruling of 2026-10-02: each conjunct of _send_preamble,
+# its test() and its other helpers, _header_const and the gate's own body and helpers that a mutant left unheld is planted here, or
+# argued dominated beside it in the script): each aww's module with its swaps (_ae_module), refused at the definition with the gate's
+# reason at its line, or read, its fetch listed (the mutants and their reds are in the build record). atlf, page text holding a line
+# feed, read: the gate's CR or LF guard reads a constant only in a header call's arguments. atfc, a flag assigned after the codec,
+# refused: the preamble's roles stand before the codec, the first rebinding of the page to itself encoded. aten, the end_headers'
+# call assigned to a name, refused as an Assign before the end_headers (only an Expr stands at the end_headers); atea, the
+# end_headers read and not called; atec, end_headers called as a bare name; atex, end_headers called on an attribute of self; atep,
+# end_headers called on a parameter: each refused as an Expr before the end_headers, the gate taking for the end_headers only a call
+# of that name on self (atea, atec and atex each hold a conjunct whose drop raises on the node it guards). atmc, the flag's if
+# testing a module constant, and atxn, the flag's if testing a text name: each refused at that if, no flag. atpi, an injection whose
+# value reads the cache header's parameter, read: a parameter is no text name. atfs, a flag assigned a string constant in the
+# flag's if, and atbs, the page parameter assigned a string constant holding a fetch there: each refused at that if (the cache
+# header is a parameter other than the page, so the page's text is never a header constant the census leaves unread). atun, a name
+# assigned in the injection's if that no injection reads, refused there. atcb, a parameter assigned a bool constant, refused at that
+# assignment (the cache header holds a string). atcn, an injection whose count is a parameter; atgd, the injection's if's getattr
+# default a parameter; atic, its isinstance handed one argument; atsw, its startswith handed none; atcl, a call of a bare name among
+# its tests: each refused at the injection's if, and each holding a conjunct whose drop raises on the node it guards. The (at) read
+# plants: the nested text name renamed extra2 and read only in a statement after the injection's if, so that if is refused (its
+# extra2 read by no injection) before that statement, refused at its own line: a chained assignment (atr2), another name assigned a
+# replace on the page (atr3), a split (atr6), a replace on a parameter (atr7), a count handed by keyword (atr8), a fourth argument
+# (atr9), a first argument that is a parameter (atra), a count that is a parameter (atrb) or a string (atrc), a starred argument
+# (atrd), and another name assigned a replace on a parameter (atrn). atwl, a flag that a walrus in the injection's value binds too,
+# refused at the walrus (the flag read as a flag). atmt and atnb, an if testing a name bound after it only by a chained assignment
+# or only to an int: each refused at that if, no flag. atpf, a parameter assigned a bool constant before the codec, refused at that
+# assignment: the flags' own() and the flag role's own() each refuse it alone (argued, each dominated by the other), so it is the
+# pair's plant, read with both dropped. The (at) cut plants: the flag's if testing probe, a name assigned a bool only after a
+# statement shaped as a codec but not the kernel's, each refused at that statement (a codec found there would cut the preamble before
+# probe's flag, refusing the if before it): the page rebound to itself through a chained assignment (atk6), another name bound to the
+# page (atk7) or to a parameter (atk3), a replace handed "utf-8" (atkg), an encode on a parameter (atkh), an encode handed a second
+# argument (atki) or an errors keyword (atkj), another codec (atkm), and the codec's if-expression testing a call that is no
+# isinstance (atko), isinstance handed three arguments (atkp), a keyword (atkq), a parameter (atkr) or bytes (atks), testing a
+# parameter (atkt, whose drop of isinstance's call test raises too), or holding a parameter as its encoded (atku) or its other
+# branch (atkv); and atkl, the encode alone before the kernel's codec, the first codec so shaped, so the if before it is refused.
+_AT_EXTRA2 = '                extra = "%s"\n' % (FGH_PAGE % "awwe")
+_AT_IFFLAG = '        if flag:\n            cache = "no-store"\n'
+_AT_END = "        self.end_headers()\n"
+_AT_TEST = 'if getattr(self, "probe_ok"'
+_AT_CODEC = '        body = body.encode("utf-8") if isinstance(body, str) else body\n'
+_AT_INJ = "extra + _PROBE_AWW_INJ, 1)"
+
+
+def _at_read(stmt):
+    """An (at) read plant's swaps: aww's nested text name renamed extra2, and `stmt`, reading it, before the flag's if."""
+    return ((_AT_EXTRA2, _AT_EXTRA2.replace("extra =", "extra2 =")), (_AT_IFFLAG, "        %s\n" % stmt + _AT_IFFLAG))
+
+
+def _at_cut(stmt):
+    """An (at) cut plant's swaps: the flag's if testing probe, which only an assignment after `stmt` binds, before the codec."""
+    return ((_AT_IFFLAG, '        if probe:\n            cache = "no-store"\n        %s\n        probe = False\n' % stmt),)
+
+
+# (tag, what the plant is, its swaps, ("gate", the anchor of the line its reason names, the reason) or ("read", the fetches listed))
+AT_PLANTS = (("atlf", "page text holding a line feed", ((_AR_EXTRA, '            extra = "\\n%s"\n' % (FGH_PAGE % "atlf")),), ("read", ("atlf",))),
+             ("atfc", "a flag assigned after the codec", ((_AT_CODEC, _AT_CODEC + "        done = True\n"),), ("gate", "done = True", _AE_FLAG)),
+             ("aten", "the end_headers' call assigned to a name", ((_AT_END, "        done = self.end_headers()\n"),), ("gate", "done = self.end_headers()", _AE_FLAG)),
+             ("atea", "the end_headers read and not called", ((_AT_END, "        self.end_headers\n"),), ("gate", "self.end_headers", _B_EXPR)),
+             ("atec", "end_headers called as a bare name", ((_AT_END, "        end_headers()\n"),), ("gate", "end_headers()", _B_EXPR)),
+             ("atex", "end_headers called on an attribute of self", ((_AT_END, "        self.probe_more.end_headers()\n"),),
+              ("gate", "probe_more.end_headers()", _B_EXPR)),
+             ("atep", "end_headers called on a parameter", ((_AT_END, "        code.end_headers()\n"),), ("gate", "code.end_headers()", _B_EXPR)),
+             ("atmc", "the flag's if testing a module constant", ((_AE_NAME, _AE_NAME + "\n_PROBE_ATMC = 1"), ("        if flag:\n", "        if _PROBE_ATMC:\n")),
+              ("gate", "if _PROBE_ATMC:", _B_IF)),
+             ("atxn", "the flag's if testing a text name", (("        if flag:\n", "        if extra:\n"),), ("gate", "if extra:", _B_IF)),
+             ("atpi", "an injection whose value reads the cache header's parameter",
+              (('"<head>" + extra + _PROBE_AWW_INJ, 1)', '"<head>%s" + extra + cache, 1)' % (FGH_PAGE % "atpi")),), ("read", ("atpi",))),
+             ("atfs", "a flag assigned a string constant in the flag's if", (('            cache = "no-store"\n', '            flag = "no-store"\n'),),
+              ("gate", "if flag:", _B_IF)),
+             ("atbs", "the page parameter assigned a string constant holding a fetch in the flag's if",
+              (('            cache = "no-store"\n', '            body = "%s"\n' % (FGH_PAGE % "atbs")),), ("gate", "if flag:", _B_IF)),
+             ("atun", "a name assigned in the injection's if that no injection reads", ((_AR_EXTRA, '            probe = ""\n'),), ("gate", _AT_TEST, _B_IF)),
+             ("atcb", "a parameter assigned a bool constant", (("        flag = False\n", "        code = False\n"),), ("gate", "code = False", _AE_FLAG)),
+             ("atcn", "an injection whose count is a parameter", ((_AT_INJ, "extra + _PROBE_AWW_INJ, code)"),), ("gate", _AT_TEST, _B_IF)),
+             ("atgd", "the injection's if's getattr default a parameter", (('"probe_ok", False)', '"probe_ok", ctype)'),), ("gate", _AT_TEST, _B_IF)),
+             ("atic", "the injection's if's isinstance handed one argument", (("isinstance(body, str) and ctype", "isinstance(body) and ctype"),),
+              ("gate", _AT_TEST, _B_IF)),
+             ("atsw", "the injection's if's startswith handed no argument", (('ctype.startswith("text/html")', "ctype.startswith()"),), ("gate", _AT_TEST, _B_IF)),
+             ("atcl", "a call of a bare name among the injection's if's tests", (('ctype.startswith("text/html")', "callable(ctype)"),), ("gate", _AT_TEST, _B_IF)),
+             ("atr2", "a chained assignment reading the nested text name", _at_read('body = done = body.replace("<p>", extra2, 1)'), ("gate", _AT_TEST, _B_IF)),
+             ("atr3", "another name assigned a replace on the page reading it", _at_read('done = body.replace("<p>", extra2, 1)'), ("gate", _AT_TEST, _B_IF)),
+             ("atr6", "a split reading it", _at_read('body = body.split("<p>", extra2)'), ("gate", _AT_TEST, _B_IF)),
+             ("atr7", "a replace on a parameter reading it", _at_read('body = ctype.replace("<p>", extra2, 1)'), ("gate", _AT_TEST, _B_IF)),
+             ("atr8", "a replace whose count is a keyword reading it", _at_read('body = body.replace("<p>", extra2, count=1)'), ("gate", _AT_TEST, _B_IF)),
+             ("atr9", "a replace handed a fourth argument reading it", _at_read('body = body.replace("<p>", extra2, 1, 2)'), ("gate", _AT_TEST, _B_IF)),
+             ("atra", "a replace whose first argument is a parameter reading it", _at_read("body = body.replace(ctype, extra2, 1)"), ("gate", _AT_TEST, _B_IF)),
+             ("atrb", "a replace whose count is a parameter reading it", _at_read('body = body.replace("<p>", extra2, ctype)'), ("gate", _AT_TEST, _B_IF)),
+             ("atrc", "a replace whose count is a string reading it", _at_read('body = body.replace("<p>", extra2, "1")'), ("gate", _AT_TEST, _B_IF)),
+             ("atrd", "a replace handed a starred argument reading it", _at_read('body = body.replace("<p>", *extra2)'), ("gate", _AT_TEST, _B_IF)),
+             ("atrn", "another name assigned a replace on a parameter reading it", _at_read('done = ctype.replace("<p>", extra2, 1)'), ("gate", _AT_TEST, _B_IF)),
+             ("atwl", "a flag a walrus in the injection's value binds too", (("        flag = False\n", "        flag = False\n        probe = True\n"),
+                                                                            (_AT_INJ, 'extra + (probe := "") + _PROBE_AWW_INJ, 1)')),
+              ("gate", ':= ""', "a NamedExpr expression at line %d")),
+             ("atmt", "an if testing a name bound after it only by a chained assignment",
+              ((_AT_IFFLAG, '        if probe:\n            cache = "no-store"\n        probe = done = True\n'),), ("gate", "if probe:", _B_IF)),
+             ("atnb", "an if testing a name bound after it only to an int", ((_AT_IFFLAG, '        if probe:\n            cache = "no-store"\n        probe = 1\n'),),
+              ("gate", "if probe:", _B_IF)),
+             ("atpf", "a parameter assigned a bool constant before the codec", (("cache=None):", "cache=None, probe=None):"),
+                                                                                ("        flag = False\n", "        flag = False\n        probe = True\n")),
+              ("gate", "probe = True", _AE_FLAG)),
+             ("atk6", "the page rebound to itself through a chained assignment", _at_cut("body = done = body"), ("gate", "body = done = body", _AE_FLAG)),
+             ("atk7", "another name bound to the page", _at_cut("done = body"), ("gate", "done = body", _AE_FLAG)),
+             ("atk3", "another name bound to a parameter", _at_cut("done = ctype"), ("gate", "done = ctype", _AE_FLAG)),
+             ("atkg", "a replace handed utf-8", _at_cut('body = body.replace("utf-8")'), ("gate", 'body.replace("utf-8")', _AE_FLAG)),
+             ("atkh", "an encode on a parameter", _at_cut('body = ctype.encode("utf-8")'), ("gate", "ctype.encode(", _AE_FLAG)),
+             ("atki", "an encode handed a second argument", _at_cut('body = body.encode("utf-8", "strict")'), ("gate", '"utf-8", "strict"', _AE_FLAG)),
+             ("atkj", "an encode handed an errors keyword", _at_cut('body = body.encode("utf-8", errors="strict")'), ("gate", 'errors="strict"', _AE_FLAG)),
+             ("atkm", "another codec", _at_cut('body = body.encode("utf-16")'), ("gate", '"utf-16"', _AE_FLAG)),
+             ("atko", "the codec's if-expression testing a call that is no isinstance",
+              _at_cut('body = body.encode("utf-8") if callable(body, str) else body'), ("gate", "callable(body, str)", _AE_FLAG)),
+             ("atkp", "the codec's isinstance handed three arguments", _at_cut('body = body.encode("utf-8") if isinstance(body, str, bytes) else body'),
+              ("gate", "isinstance(body, str, bytes)", _AE_FLAG)),
+             ("atkq", "the codec's isinstance handed a keyword", _at_cut('body = body.encode("utf-8") if isinstance(body, str, k=1) else body'),
+              ("gate", "k=1)", _AE_FLAG)),
+             ("atkr", "the codec's isinstance of a parameter", _at_cut('body = body.encode("utf-8") if isinstance(ctype, str) else body'),
+              ("gate", "isinstance(ctype, str)", _AE_FLAG)),
+             ("atks", "the codec's isinstance of bytes", _at_cut('body = body.encode("utf-8") if isinstance(body, bytes) else body'),
+              ("gate", "isinstance(body, bytes)", _AE_FLAG)),
+             ("atkt", "the codec's if-expression testing a parameter", _at_cut('body = body.encode("utf-8") if code else body'), ("gate", "if code else", _AE_FLAG)),
+             ("atku", "the codec's encoded branch a parameter", _at_cut("body = ctype if isinstance(body, str) else body"), ("gate", "body = ctype if", _AE_FLAG)),
+             ("atkv", "the codec's other branch a parameter", _at_cut('body = body.encode("utf-8") if isinstance(body, str) else ctype'),
+              ("gate", "else ctype", _AE_FLAG)),
+             ("atkl", "the encode alone before the codec", _at_cut('body = body.encode("utf-8")'), ("gate", "if probe:", _B_IF)))
+AT_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AT_PLANTS)
+AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES + AT_FILES
 
 
 A_FILES = tuple((_a_rel(tag), text) for tag, text in (
@@ -10259,7 +10382,8 @@ class TheServedPagesAreScanned(_Scope):
     statement stands in (the (l) plants), and a `_send` definition read only when its every node is of a kind, in a role, the
     kernel's Handler._send holds, any other refused by its kind and line (the (t), (k) and (q) plants; since the reviewer's 02:29Z
     ruling of 2026-10-02 the roles are that definition's statement shapes, a statement in none of them refused naming the shape it
-    lacks, and since then the (as) plants pin each shape at a near miss), with the kernel's shape
+    lacks, and since then the (as) plants pin each shape at a near miss and the (at) plants each conjunct of the reader outside
+    the shapes that a mutant left unheld), with the kernel's shape
     read and that round's limits held at their witnesses, and a page read only in resolve's read arms, a lambda's body and a path
     join's operands among them, with the value slots the kernel's pages use and any other kind refused by name (the (v) plants),
     and each literal read on its own with the text of each listed join of string constants read beside it (a `.join` over a
@@ -14631,7 +14755,12 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
     shapes the census lists from the kernel's Handler._send has a near miss, aww's module or the kernel's shape with one statement
     changed, refused at that statement by a reason that names the shape among those listed for its kind at its place (asst to
     aswr), four more each refused by an operand's class (aslr, asbl, asml, askw), and aswn, the write inside an if, every statement
-    then outside the order; each shape's live statement is TheSendStatementsAreListedShapes'.
+    then outside the order; each shape's live statement is TheSendStatementsAreListedShapes'. The page send's reader outside those
+    shapes (the same ruling, AT_PLANTS): each conjunct of _send_preamble with its test() and other helpers, of _header_const and of
+    the gate's own body and helpers that a mutant left unheld has its plant, aww's module with its swaps, refused at the definition
+    with its reason at its line, or read: the end_headers search (aten, atea, atec, atex, atep), the preamble's roles and its ifs'
+    tests (atmc, atxn, atpi, atfs, atbs, atun, atcb, atcn, atgd, atic, atsw, atcl, atwl, atmt, atnb, atpf), the injections' read
+    names (atr2 to atrn), the codec's search (atfc and the cut plants atk3 to atkl) and the CR or LF guard's scope (atlf, read).
     The reds, each over a mutant of the fix script with one conjunct or arm dropped, are in the build record."""
 
     def setUp(self):
@@ -14762,6 +14891,21 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
                 self.assertIn(lacks, why, "the reason names the shape the statement lacks, or the order it stands outside")
                 self.assertEqual(len(srv), 1, "one refusal, at the definition: %r" % srv)
                 self.assertIn("whose page body the census does not read (%s, in Handler.do_GET)" % why, srv[0], "refused with its reason at its line")
+                self.assertFalse(self._is_site(tag), "%s's fetch is no site" % tag)
+
+    def test_each_conjunct_of_the_readers_preamble_and_gate_a_mutant_showed_unheld_has_its_plant(self):
+        files = dict(AD_FILES)
+        for tag, what, _swaps, outcome in AT_PLANTS:
+            with self.subTest(plant="(at) %s (%s)" % (what, tag)):
+                srv = self._served(tag)
+                if outcome[0] == "read":
+                    self.assertEqual(srv, [], "read: no SERVED line (%r)" % srv)
+                    for ft in outcome[1]:
+                        self.assertTrue(self._is_site(ft), "the plant's page text is read: %s a site" % ft)
+                    continue
+                self.assertEqual(len(srv), 1, "one refusal, at the definition: %r" % srv)
+                self.assertIn("whose page body the census does not read (%s, in Handler.do_GET)" % (outcome[2] % _a_line(files[tag], outcome[1])), srv[0],
+                              "refused with its reason at its line")
                 self.assertFalse(self._is_site(tag), "%s's fetch is no site" % tag)
 
     def test_the_leaf_and_a_compiled_pattern_by_binding_and_the_proofs_stated_limit(self):

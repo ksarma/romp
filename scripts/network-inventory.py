@@ -4270,7 +4270,20 @@ def _send_preamble(d, me, page, params, codec):
     and refuses any other statement naming the shape it lacks. Three conjuncts are dominated, kept and argued here (choice 5 of
     the eleventh round's rulings): a flag's every load is an if's test, so no flag is read in an injection's value, and neither the
     flag's `t not in read_in` nor the text name's `t not in flags` can decide; and `params` never holds self (the gate drops it), so
-    the cache header's `t != me` cannot either, and _body_param refuses a definition that binds self again before the gate reads it."""
+    the cache header's `t != me` cannot either, and _body_param refuses a definition that binds self again before the gate reads it.
+    Since the reviewer's 02:29Z ruling of 2026-10-02 (the gate's statement shapes) these are argued here too, each with the check that
+    decides first and that check's own red (test()'s are argued in it): own()'s `x != page`, since the page is a parameter, so
+    `x not in params` decides (its red on the plant atpi); own()'s `x != me`, since any role own() opens to self binds self, which
+    _body_param refuses before the gate (that refusal's own red: dropped, the (h) plants that rebind self are refused by the gate
+    instead); the flags' own() and the flag role's own(), each deciding what the other decides (no parameter is a flag), so neither
+    has a red alone and atpf, read with both dropped, is the pair's plant; the flags' `name(p.test, ...)`, since a name whose parent
+    is an if is that if's test (the `isinstance(p, ast.If)` before it decides, a raise when dropped); an if's `not s.orelse` and the
+    injection's `len(v.args) == 3`, which give only roles the gate does not read (an if's own and a count's), and the loop's
+    `len(s.targets) == 1`, whose drop gives roles only to a chained assignment, which the gate renders with every target, no listed
+    shape holding two (the gate's lookup of a statement's shape decides each, its own red: dropped, it refuses the kernel's own
+    Handler._send); the injection arm's `t == page`, since an injection's target is the page (the injections'
+    `name(s.targets[0], page)` decides, its red on atr3); and the flag arm's `type(v.value) is bool`, since every listed shape that
+    stores a flag holds a bool and the gate renders a constant by its type (the same lookup)."""
     top = list(d.body)
     cut = top.index(codec) if codec in top else len(top)
     roles, texts = {}, []
@@ -4291,6 +4304,18 @@ def _send_preamble(d, me, page, params, codec):
         return isinstance(e, ast.Constant) and type(e.value) is str
 
     def test(e):   # a preamble if's test, its nodes' roles recorded
+        # The gate reads one role this test records since the reviewer's 02:29Z ruling of 2026-10-02: the "test" role of a name that
+        # is the whole test, which leaf classes as a flag. Besides it the gate reads a role only on a stored name, and page text by
+        # the "text" role; and a name inside an `and` is a parameter, which leaf classes before it reads a role, or no flag (a flag's
+        # every load is an if's whole test). So these conjuncts decide nothing the census reads, each dominated by the if's shape,
+        # which verdict looks up in _SEND_SHAPES with every node of the test rendered by its class (that lookup's own red: dropped,
+        # it refuses the kernel's own Handler._send), and are kept and argued here (choice 5 of the eleventh round's rulings): the
+        # `and` arm's whole test, its `isinstance(e.op, ast.And)`, its all() and that all()'s element, and its `return False`; the
+        # name arm's `e.id in params` (leaf classes a parameter first) and its own(e.id) (only own names are flags); in each of the
+        # getattr, isinstance, startswith and `in` arms its whole test and every condition after its first (the first, the node's
+        # kind, raises when dropped, at a test of another kind), save four whose drop raises on the node they guard, each planted:
+        # getattr's `isinstance(e.args[2], ast.Constant)` (atgd), isinstance's `len(e.args) == 2` (atic), and startswith's
+        # `isinstance(e.func, ast.Attribute)` (atcl) and `len(e.args) == 1` (atsw); and the last `return False`.
         if isinstance(e, ast.BoolOp) and isinstance(e.op, ast.And):
             if all(test(v) for v in e.values):
                 roles[id(e)] = "test"; return True
@@ -4366,7 +4391,10 @@ def _header_const(consts, rebinds, name):
     census does not read. A CR or LF the value computes at run time from anything else, a call's return or a number formatted as a
     character, is not read: the stated limit, as a header value's text is not scanned, its witnesses aew (a call of chr) and aeq (a
     `%c` of an int). Walked iteratively: an explicit worklist and one visited set per query, each constant expanded once, in
-    _header_step, so the walk is linear in the module's constants and a cycle of them ends."""
+    _header_step, so the walk is linear in the module's constants and a cycle of them ends. One conjunct is dominated, kept and argued
+    here (choice 5 of the eleventh round's rulings): the callee set's `isinstance(x.func, ast.Name)`, since the set is read only for
+    a Name node, which a callee of any other kind is not (the walk's `isinstance(x, ast.Name)` decides, its own red: dropped, a name
+    a constant's value reads is no longer followed, so aet is read)."""
     seen, todo = set(), [name]
     while todo:
         k = todo.pop()
@@ -4421,10 +4449,18 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, co
       header call at line N").
     The first refusal in the definition's order is the reason, the outer node's at a tie. An attribute on self named as a write
     method is in the attribute class above, but _body_param refuses any read of an attribute so named, other than as the write's
-    callee, before the gate reads the definition. One conjunct is dominated, kept and argued here (choice 5 of the eleventh round's
-    rulings): the module constant class's `not star`, since a module constant stands in a listed shape only in the formatted header
-    under a getattr test, whose getattr in a module with a star import is no builtin, so that statement is in no listed shape
-    whatever the constant's class."""
+    callee, before the gate reads the definition. Conjuncts another dominates, kept and argued here (choice 5 of the eleventh round's
+    rulings), each with the check that decides first and that check's own red: the module constant class's `not star`, since a
+    module constant stands in a listed shape only in the formatted header under a getattr test, whose getattr in a module with a
+    star import is no builtin, so that statement is in no listed shape whatever the constant's class (the builtin class's
+    `not star` decides, its red on qgs); header()'s `me is not None`, `c.func.attr in _HEADER_ARITY` and `named(c.func.value, me)`,
+    since the CR or LF guard they scope decides only in a statement the gate reads, whose header calls are each a header method
+    called on self, and in any other statement that statement's own refusal stands first, at the same line and an earlier column
+    (the gate's lookup of a statement's shape decides, its own red: dropped, it refuses the kernel's own Handler._send); encode()'s
+    `type(e.args[0].value) is str`, since only a str equals "utf-8" (the next condition decides, its red on atkm); the end_headers
+    search's `me is not None`, since no name's id equals None (its last condition decides, its red on atep); and the limit's
+    `ends is not None`, since the one statement it moves is the end_headers, which place() names first (that arm's own red:
+    dropped, the kernel's end_headers is refused)."""
     a = d.args
     sig = ([(x, "a positional-only parameter") for x in a.posonlyargs] + [(x, "a keyword-only parameter") for x in a.kwonlyargs]
            + [(x, w) for x, w in ((a.vararg, "a *args parameter"), (a.kwarg, "a **kwargs parameter")) if x is not None]
