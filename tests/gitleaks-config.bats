@@ -241,6 +241,33 @@ history_scan_range() {   # <repo>: sets scan_revs and scan_scope
     [[ "$output" != *"$(probe_token)"* ]]        # --redact: the value stays out of the log
 }
 
+@test "RFC 6455's example WebSocket key is excused" {
+    # The handshake nonce the kernel's tests hand a fake request. High entropy by
+    # protocol design, published in the RFC, not a credential.
+    printf 'headers = {"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}\n' > "$TEST_DIR/probe.py"
+    run scan
+    [ "$status" -eq 0 ]
+}
+
+@test "the excuse is the EXACT nonce: a secret that merely contains it still trips" {
+    # Unanchored, the allowlist regex forgives any secret with the nonce as a substring. Anchored
+    # (^...$) it excuses only the one published value. Assembled from pieces at run time: the nonce
+    # itself is the excused value (fine to appear), but the full SUPERSTRING as one tracked literal
+    # would, correctly, trip the scan of this very repo.
+    printf 'api_key = "%s%s%s"\n' "dGhlIHNhbXBsZSBub25jZQ==" "Zk8vQ2xhdWRl" "U2VjcmV0OTk5" > "$TEST_DIR/probe.py"
+    run scan
+    [ "$status" -eq 2 ]
+}
+
+@test "the excuse is the value, not the header: another WebSocket key still trips" {
+    # The narrowness that makes the allowlist safe: it forgives one published
+    # string, not every line that mentions Sec-WebSocket-Key. Halves, because a
+    # whole one written here would trip the scan of this very repo.
+    printf 'headers = {"Sec-WebSocket-Key": "%s%s"}\n' "9kLm2QpXvTz7" "RbNc4WdY1A==" > "$TEST_DIR/probe.py"
+    run scan
+    [ "$status" -eq 2 ]
+}
+
 # ── the history case's range, on synthetic repositories ───────────────────
 # history_scan_range's choices, each on a repository built here, and the history case itself run
 # end to end over some of them as a child bats (history_case_over). The probe is probe_token's,
@@ -460,33 +487,6 @@ history_case_line() {   # <the child's output>
     history_scan_range "$R"
     [ -z "$scan_revs" ] || { echo "expected an empty range with HEAD an ancestor of main, got \"$scan_revs\""; false; }
     [ "$scan_scope" = "nothing to scan: HEAD (${c1:0:10}) is an ancestor of main, so the branch adds no commits over main" ] || { echo "scope: $scan_scope"; false; }
-}
-
-@test "RFC 6455's example WebSocket key is excused" {
-    # The handshake nonce the kernel's tests hand a fake request. High entropy by
-    # protocol design, published in the RFC, not a credential.
-    printf 'headers = {"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}\n' > "$TEST_DIR/probe.py"
-    run scan
-    [ "$status" -eq 0 ]
-}
-
-@test "the excuse is the EXACT nonce: a secret that merely contains it still trips" {
-    # Unanchored, the allowlist regex forgives any secret with the nonce as a substring. Anchored
-    # (^...$) it excuses only the one published value. Assembled from pieces at run time: the nonce
-    # itself is the excused value (fine to appear), but the full SUPERSTRING as one tracked literal
-    # would, correctly, trip the scan of this very repo.
-    printf 'api_key = "%s%s%s"\n' "dGhlIHNhbXBsZSBub25jZQ==" "Zk8vQ2xhdWRl" "U2VjcmV0OTk5" > "$TEST_DIR/probe.py"
-    run scan
-    [ "$status" -eq 2 ]
-}
-
-@test "the excuse is the value, not the header: another WebSocket key still trips" {
-    # The narrowness that makes the allowlist safe: it forgives one published
-    # string, not every line that mentions Sec-WebSocket-Key. Halves, because a
-    # whole one written here would trip the scan of this very repo.
-    printf 'headers = {"Sec-WebSocket-Key": "%s%s"}\n' "9kLm2QpXvTz7" "RbNc4WdY1A==" > "$TEST_DIR/probe.py"
-    run scan
-    [ "$status" -eq 2 ]
 }
 
 # ── the hook, with the real scanner ────────────────────────────────────────
