@@ -3077,7 +3077,7 @@ shOut({cut:cut,redial:shDialTimers().map(function(x){return x.ms;})});""")
         self.assertEqual(r["redial"], [2000], "a hung close outside any window: the blind SH_BLIND_MS redial, not the refused ladder")
 
     def test_1a_a_cut_fired_while_the_clock_reads_a_ms_short_is_still_a_hung_close_redialed_at_250ms(self):
-        # a timer can fire while Date.now() reads a ms short of SH_CONNECT_MS after the dial (measured on real timers: 36 of 240
+        # a timer can fire while Date.now() reads a ms short of SH_CONNECT_MS after the dial (measured on real timers: 33 of 160
         # cuts). onclose reads the cut by the event (shCutHere), so it is a HUNG close (250 ms inside the window), not a refusal
         # (the ladder's 1 s rung, with the rung advanced). A variant keying the refused rule on the clock alone reddens this.
         r = _run_probe(r"""
