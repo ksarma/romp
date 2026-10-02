@@ -3194,8 +3194,10 @@ def _import_statement_words(text):
 
 def _under_tests(path, root=None):
     """True for a path under tests/ (this module's directory; `root` in the plants of the target scan), read as given,
-    before any symlink is followed."""
-    return os.path.abspath(path).startswith((HERE if root is None else root) + os.sep)
+    before any symlink is followed. Both sides are normalised lexically (os.path.abspath, not os.path.realpath), so a
+    root spelled with a trailing separator or a dot-dot segment reads a file under it as under it, as its plain spelling
+    does (fork PR 952's round 1: the root was compared as spelled, and such a root read every file as outside it)."""
+    return os.path.abspath(path).startswith(os.path.abspath(HERE if root is None else root) + os.sep)
 
 
 def _tunnels_path():
@@ -3217,12 +3219,14 @@ def _resolver_targets(paths, root=None):
     statements (_import_statement_words, a superset read from the text). A census over no file under tests/ has no
     target and reads no text. A file the resolver reads that this missed is parsed a second time, which the parse-once
     pins red naming it. `root` stands in for tests/ in the plants of the target scan (a synthetic tree run through the
-    whole function); the census passes none."""
-    inside = [p for p in paths if _under_tests(p, root)]
+    whole function), normalised lexically (os.path.abspath) where it is compared and where it is walked, as _under_tests
+    reads it, so the files counted under it and the files walked under it are one directory's; the census passes none."""
+    base = os.path.abspath(HERE if root is None else root)
+    inside = [p for p in paths if _under_tests(p, base)]
     if not inside:
         return frozenset()
     words = set()
-    for p in sorted(set(_tests_tree_walk(root)) | set(paths)):
+    for p in sorted(set(_tests_tree_walk(base)) | set(paths)):
         with open(p, encoding="utf-8", errors="replace") as f:
             words |= _import_statement_words(f.read())
     return _named_by(inside, words)
@@ -3252,8 +3256,10 @@ def _import_line_named_files(paths, root=None):
     statement names: the rule reads text, before any tree is parsed, so a docstring, a comment or a string on an import
     line adds its words, the safe side (measured at round 2's thirty-first commit of fork PR #894: 73 files kept, where
     an ast read of every import statement under tests/ names 38, all among the 73; an ast read here would parse every
-    file a second time, which the parse-once rule forbids, and could not equal what the census keeps)."""
-    base = HERE if root is None else root
+    file a second time, which the parse-once rule forbids, and could not equal what the census keeps). `root` is
+    normalised lexically (os.path.abspath) where it is compared and where it is walked, as _under_tests reads it, so a
+    root spelled with a trailing separator or a dot-dot segment reads as its plain spelling does."""
+    base = os.path.abspath(HERE if root is None else root)
     by_name = collections.defaultdict(set)
     for p in paths:
         full = os.path.abspath(p)
@@ -4622,7 +4628,8 @@ def _census_build(paths, root=None):
     """THE DERIVATION behind module_level_env_census, run once per path tuple per run of this module (_census_derivation
     holds what it returns): a _Derivation (parsed, counts, records, walks, outlived, born, held_before,
     parts_outlived), `parsed` the modules (relative to tests/) that parsed, in order. `root` stands in for tests/ in deciding which trees the loop drops and
-    which files the resolver may read (_under_tests, _resolver_targets), for the plant of the drop's count, a synthetic
+    which files the resolver may read (_under_tests, _resolver_targets, each of which normalises it lexically, so a
+    trailing separator or a dot-dot segment reads as the plain spelling), for the plant of the drop's count, a synthetic
     tree run through the build; the census passes none. Each file is parsed by the census itself (_own_tree: once in
     this module's run, never through tests/parse_cache.py; the tree is read-only here), its tree held by the one owner
     until tearDownModule when the resolver may read the file later (_resolver_targets) or the file lies outside tests/,
@@ -20957,6 +20964,88 @@ class HermeticKernelPostal(unittest.TestCase):
         for reader in (_resolver_targets, _import_line_named_files):
             self.assertEqual(sorted(os.path.relpath(p, root) for p in reader(paths, root=root)), want,
                              "%s over a synthetic tree names exactly the files its import lines name" % reader.__name__)
+
+    def test_the_census_reads_a_root_spelled_with_a_trailing_separator_as_its_plain_spelling(self):
+        """The census's other root, the one _census_build is handed (`root`, standing in for tests/ in a plant), read by
+        _under_tests, _resolver_targets and _import_line_named_files, spelled with a trailing separator, reads as its
+        plain spelling does (fork PR 952's round 1: the three compared the root as spelled, so under a trailing separator
+        no file counted as under it, both readers named nothing, the build held every tree and `outlived` named every
+        file handed). Over a synthetic tree of its own for each spelling (_census_reads_under_a_root): each file handed
+        reads as under the root, and the one file an import names is what both readers name and the build keeps, its
+        outlived, held and parts-outlived files, the other dropped after its walk, for the plain root and the spelled
+        one alike."""
+        self._assert_a_root_spelling_reads_as_the_plain_one("a trailing separator", lambda root: root + os.sep)
+
+    def test_the_census_reads_a_root_spelled_with_a_dot_dot_segment_as_its_plain_spelling(self):
+        """The census's other root (the trailing separator's test above says which), spelled with a dot-dot segment,
+        reads as its plain spelling does (fork PR 952's round 1: compared as spelled, the root read every file as
+        outside it, as under a trailing separator). The segment climbs out of x, a name with no directory behind it, so
+        the root as spelled names nothing on disk and only a lexical read (os.path.abspath, as _under_tests reads a
+        path) finds the tree: a walk of the root as spelled finds no file, so a _resolver_targets that walked it would
+        miss kept_helper.py, which only a file in the tree that is not handed imports, and that walk is red here too.
+        The same reads, held the same way (_assert_a_root_spelling_reads_as_the_plain_one)."""
+        self._assert_a_root_spelling_reads_as_the_plain_one("a dot-dot segment",
+                                                            lambda root: os.path.join(root, "x", ".."))
+
+    def _assert_a_root_spelling_reads_as_the_plain_one(self, what, spell):
+        """Holds the census's reads over a synthetic tree whose root is handed as `spell` writes it, a spelling apart
+        from the plain root that normalises to it, equal to its reads over a tree handed by its plain root, and both
+        equal to what the tree holds: each file handed under the root, and the one file an import names
+        (kept_helper.py) as each reader's and the build's kept set (_census_reads_under_a_root says what each read
+        is). The expected value is written out, so two empty reads do not pass as equal."""
+        _root, _given, plain = self._census_reads_under_a_root(lambda root: root)
+        root, given, reads = self._census_reads_under_a_root(spell)
+        self.assertEqual((given != root, os.path.normpath(given) == root), (True, True),
+                         "the root is handed spelled apart from its plain spelling (%r, of %r), and normalises to it"
+                         % (given, root))
+        kept = ["kept_helper.py"]
+        want = {"under the root": [True, True], "resolver targets": kept, "the pin's own reader": kept,
+                "outlived": kept, "held": kept, "parts outlived": kept}
+        self.maxDiff = None
+        self.assertEqual({"the plain root": plain, "a root with %s" % what: reads},
+                         {"the plain root": want, "a root with %s" % what: want},
+                         "the census reads a root spelled with %s as its plain spelling: each file handed under it as "
+                         "under it, and the one file an import names as the file both readers name and the build keeps, "
+                         "the other dropped after its walk" % what)
+
+    def _census_reads_under_a_root(self, spell):
+        """What the census reads over a synthetic tree of its own standing in for tests/, its root handed as `spell`
+        writes it (a callable on the tree's realpath): the three files of the drop count's test, kept_helper.py, which
+        uses_it.py imports, and dropped.py, which no import names, of which the census is handed kept_helper.py and
+        dropped.py. The importer stays in the tree and is not handed, so kept_helper.py is a file the resolver may read
+        (its tree kept by the build) only through a read of the tree under the root: the walk of _resolver_targets and
+        of the census pin's own reader. The paths are joined from the plain root, as the census's callers join theirs;
+        only the root handed in is spelled apart. Returns (the plain root, the root as handed, reads), `reads` being
+        whether each file handed reads as under the root (_under_tests), the files _resolver_targets and the census
+        pin's own reader (_import_line_named_files) name, and, from _census_build over the files handed, the files
+        whose tree outlived its drop (`outlived`), whose tree the holder keeps, and of whose tree some node outlived
+        its drop (`parts_outlived`), each by its name in the tree. The build runs with _held_alive replaced by a read
+        of nothing, so it lists no object the collector tracks and its `born` is None: this pin reads no `born`, and
+        each such list costs more as the process grows (the drop count's test runs in a fresh interpreter for that
+        reason). Each call makes a tree of its own: a file the census parses twice in the module's run reds
+        tearDownModule."""
+        from unittest import mock
+        texts = {"kept_helper.py": "X = 1\n", "uses_it.py": "import kept_helper\n\nY = kept_helper.X\n",
+                 "dropped.py": "import os\n\n\ndef g(x):\n    return {x: [x, x + 1]}\n"}
+        root = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        for name, body in texts.items():
+            with open(os.path.join(root, name), "w", encoding="utf-8") as f:
+                f.write(body)
+        paths = (os.path.join(root, "dropped.py"), os.path.join(root, "kept_helper.py"))
+        given = spell(root)
+
+        def names(found):
+            return sorted(os.path.basename(p) for p in found)
+        reads = {"under the root": [_under_tests(p, given) for p in paths],
+                 "resolver targets": names(_resolver_targets(paths, given)),
+                 "the pin's own reader": names(_import_line_named_files(paths, given))}
+        with mock.patch.dict(globals(), {"_held_alive": lambda: None}):
+            build = _census_build(paths, given)
+        trees = _held()["trees"]
+        reads.update({"outlived": names(build.outlived), "held": names(p for p in paths if os.path.realpath(p) in trees),
+                      "parts outlived": names(build.parts_outlived)})
+        return root, given, reads
 
     def test_the_module_imports_no_copy_and_deep_copies_no_node(self):
         """The contract's no-deepcopy clause, held on this module's own tree rather than its text (a comment naming the
