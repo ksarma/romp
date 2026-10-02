@@ -3099,10 +3099,13 @@ shOut({cut:cut,redial:shDialTimers().map(function(x){return x.ms;})});""")
         self.assertEqual(r["redial"], [250], "the cut is a hung close inside the return window: 250 ms, not the refused ladder's 1 s")
 
     def test_1a_a_superseded_dials_late_cut_callback_closes_nothing_and_leaves_the_current_cut_in_force(self):
-        # a dial the next return replaced: the return's dial clears its cut timer, and a browser that had already queued the
-        # callback could still deliver it. The late callback closes nothing (its own socket is no longer CONNECTING), dials
-        # nothing, and leaves the current dial's timer handle alone, so the current dial's open still clears its own cut.
-        # A variant whose callback resets the handle unconditionally leaves the current cut armed after its open.
+        # a dial the next return replaced: the return's dial clears its cut timer. Under the HTML timer rules a cleared timer's
+        # callback is never delivered, so this is a defensive check of the callback's handle guard: delivered anyway, the late
+        # callback closes nothing (its own socket is no longer CONNECTING), dials nothing, and leaves shCutT as the current
+        # dial's handle, so the next dial still clears the current dial's cut through it and one cut is pending after that dial.
+        # A variant whose callback resets the handle unconditionally reddens it: the current dial's cut stays pending beside the
+        # next dial's. (Review round 1, 2026-10-02: the case read the handle through the current dial's open until the open and
+        # the close came to clear their own dial's handle, which made that read pass under the variant; the next dial reads it.)
         r = _run_probe(r"""
 shOpen();shRecv({type:'ka'});
 shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // return 1: dial A
@@ -3111,13 +3114,15 @@ SHNOW+=5000;shHide();SHNOW+=100;shShow();               // return 2 before A's c
 var B=shSock(),liveA=cutsA.map(function(t){return t.live;}),cutsB=shCutTimers().slice();
 SHNOW+=11000;cutsA.forEach(function(t){t.fn();});       // A's callback delivered late (16 s after A, 11 s after B)
 var afterLate={socks:SHSOCKS.length,B:B.readyState};
-shOpen();                                               // B opens
-shOut({armedA:cutsA.length,liveA:liveA,armedB:cutsB.length,afterLate:afterLate,liveBAfterOpen:cutsB.map(function(t){return t.live;})});""")
+SHNOW+=1000;shHide();SHNOW+=100;shShow();               // return 3 with B still CONNECTING: B put down, dial C
+var tC=SHNOW;
+shOut({armedA:cutsA.length,liveA:liveA,armedB:cutsB.length,afterLate:afterLate,liveBAfterC:cutsB.map(function(t){return t.live;}),cutsAfterC:shCutTimers().map(function(t){return t.at-tC;})});""")
         self.assertEqual(r["armedA"], 1, "dial A armed one cut timer")
         self.assertEqual(r["liveA"], [False], "return 2's dial cleared it")
         self.assertEqual(r["armedB"], 1, "dial B armed its own")
         self.assertEqual(r["afterLate"], {"socks": 3, "B": 0}, "boot, A, B: one socket per dial, and the late callback for A leaves B CONNECTING")
-        self.assertEqual(r["liveBAfterOpen"], [False], "B's open clears B's cut: the late callback did not take the handle")
+        self.assertEqual(r["liveBAfterC"], [False], "C's dial cleared B's cut through shCutT: the late callback left the handle B's")
+        self.assertEqual(r["cutsAfterC"], [15000], "one cut pending after C's dial, C's own")
 
     def test_1a_the_open_clears_the_cut_and_a_late_callback_leaves_the_open_socket_alone(self):
         r = _run_probe(r"""
