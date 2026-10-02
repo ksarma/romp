@@ -506,6 +506,12 @@ class RelaunchEnv(unittest.TestCase):
     holds it for the run. No kernel and no browser, so this runs everywhere; the served legs check the written file
     itself (_run_driver)."""
 
+    def _env(self, lab):
+        """kernel_env over the stand-in lab, whose postal port reservation is released when the test ends: the lab is a
+        path no kernel runs in, so nothing else would release it before the process exits."""
+        self.addCleanup(lab_ports.release, lab)
+        return kernel_env(lab, os.path.join(lab, "claude"), os.path.join(lab, "dist"), 4321, "testtok")
+
     def test_a_planted_name_never_reaches_the_relaunch_env_and_the_kernels_names_do(self):
         lab = os.path.join(os.sep, "lab")
         # the runner's shell: a live kernel's state export (it outranks the XDG root; kernel_env never takes it) and
@@ -515,7 +521,7 @@ class RelaunchEnv(unittest.TestCase):
                   "TMPDIR": os.path.join(lab, "tmp"),
                   "GIT_CONFIG_GLOBAL": os.path.join(lab, "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"}
         with mock.patch.dict(os.environ, runner):
-            env = kernel_env(lab, os.path.join(lab, "claude"), os.path.join(lab, "dist"), 4321, "testtok")
+            env = self._env(lab)
         env["RUNNER_SECRET_PROBE"] = "abc"       # a name outside the relaunch list, planted as the served labs do
         cfg = relaunch_cfg(env, os.path.join(lab, "kernel.log"))
         self.assertEqual(cfg["cmd"], os.path.join(BIN, "romp-kernel"))
@@ -542,7 +548,7 @@ class RelaunchEnv(unittest.TestCase):
                     "ROMP_SESSION_NAME": "web", "ROMP_BIN": os.path.join(lab, "bin", "romp")}
         runner = dict(identity, ROMP_TESTS_PROBE=os.path.join(lab, "probe"))
         with mock.patch.dict(os.environ, runner):
-            env = kernel_env(lab, os.path.join(lab, "claude"), os.path.join(lab, "dist"), 4321, "testtok")
+            env = self._env(lab)
         names = sorted(env)
         for name in runner:
             self.assertNotIn(name, names, "the runner's %s must never reach a lab kernel" % name)
@@ -592,6 +598,7 @@ class LabKernelEnv(unittest.TestCase):
     MACHINE_BUS_PORT = "25302"
 
     def _env(self, runner, **seams):
+        self.addCleanup(lab_ports.release, self.LAB)   # the stand-in lab's postal port, held until the test ends
         with mock.patch.dict(os.environ, runner):
             if "ROMP_POSTAL_PORT" not in runner:
                 os.environ.pop("ROMP_POSTAL_PORT", None)

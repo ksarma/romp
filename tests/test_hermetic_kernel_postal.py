@@ -362,6 +362,7 @@ else:                                  # nor its derived() (module_level_env_cen
     import parse_cache as PC           # noqa: E402
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
+import lab_ports   # noqa: E402  kernel_env reserves the lab's postal port there; the one test that calls it releases it
 if __package__:                        # fork PR #916's evaluator of CI's Run pytest step, its one copy (_proof_options):
     from .test_ci_pytest_workers import command_on, matrix_os_labels, python_job_steps, worker_counts
 else:                                  # the functions, not its classes, so pytest collects no test of it here
@@ -11732,6 +11733,7 @@ def tearDownModule():
 
 class HermeticKernelPostal(unittest.TestCase):
     def test_kernel_env_gives_every_lab_kernel_its_own_never_started_bus(self):
+        self.addCleanup(lab_ports.release, "/tmp/lab")   # the stand-in lab's postal port, held until the test ends
         env = _lab.kernel_env("/tmp/lab", "/tmp/lab/claude", "/tmp/lab/dist", 1, "tok")
         self.assertEqual(env.get("ROMP_POSTAL_CLIENT_ONLY"), "1", "the kernel's ensure starts no bus")
         self.assertEqual(env.get("ROMP_POSTAL_PEERS"), "0")

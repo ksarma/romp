@@ -14,7 +14,10 @@ to a fixed point, and tests/conftest.py, less the door itself. An import is foll
 can name another under tests/ by (`import x`, `import tests.x`, `from x import`, `from tests.x import`, `from tests
 import x`, `from . import x`, `from .x import`), each pinned by a planted helper. A glob matching nothing, a named file
 absent, an empty population or a population with no kernel spawn in it fails the run, so the census never passes on
-nothing.
+nothing. Rules R and A also read THE RESERVERS (reservers()): every other module under tests/ whose AST calls
+lab_ports.reserve or kernel_env, since a unit test that builds a lab kernel's environment holds the postal port as
+surely as a served lab does (three modules outside the served step left a postal port held for each kernel_env call
+until the process exited, 2026-10-02).
 
 THE RULES, each read per module by AST (scan()):
   D  no draw and release: in one scope (a function, a lambda, a class body or the module body), a socket bound to port 0
@@ -35,7 +38,10 @@ THE RULES, each read per module by AST (scan()):
      to: from subprocess import Popen as P, or P = subprocess.Popen) calls lab_ports.wait_owned; a spawn outside any
      function is an offence too.
   R  a module that reserves a port, through lab_ports.reserve or through kernel_env (which reserves the kernel's postal
-     port), calls lab_ports.release.
+     port), reads lab_ports.release (a call, or the function handed to addCleanup); and so does every class that
+     reserves in its own body, there or in a base class the module defines, so a class of stand-in tests that builds
+     environments in a module whose served lab releases its own is still held to releasing them. A release inherited
+     from a class another module defines is not read: such a class releases in its own body.
   A  the door is bound under its own name only and its members are read as lab_ports.<name>: no `import lab_ports as
      x`, no `import tests.lab_ports` (it binds tests), no `from tests import lab_ports as x` or `from . import lab_ports
      as x`, no from-import of its members (`from lab_ports import wait_owned`, `from .lab_ports import reserve`), and no
@@ -370,14 +376,50 @@ def scan(text, tree, name):
             off["K"].append((name, line, "a kernel spawn outside any function"))
         elif not any(isinstance(c, ast.Call) and _door_call(c, "wait_owned") for c in _own(fn)):
             off["K"].append((name, line, "%s starts the kernel and never calls lab_ports.wait_owned" % _scope_name(fn)))
-    calls = [c for c in ast.walk(tree) if isinstance(c, ast.Call)]
-    reserves = any(_door_call(c, "reserve") or _callee(c) == "kernel_env" for c in calls)
-    if reserves and not any(_door_call(c, "release") for c in calls):
-        off["R"].append((name, 1, "reserves ports (lab_ports.reserve or kernel_env) and never calls lab_ports.release"))
-    for line, what in _door_aliases(tree):
-        off["A"].append((name, line, what))
+    off.update(scan_reserves(tree, name))
     off["spawns"] = [(name, line, _scope_name(fn) if fn else "<module>") for line, fn in spawns]
     return off
+
+
+def scan_reserves(tree, name):
+    """{"R": [...], "A": [...]}: one module's offences under rules R and A, the two rules the census also reads in the
+    modules outside the served population that reserve a port (reservers())."""
+    off = {"R": [], "A": []}
+    if _reserves(tree) and not _reads_release(tree):
+        off["R"].append((name, 1, "reserves ports (lab_ports.reserve or kernel_env) and never releases them through "
+                                  "lab_ports.release"))
+    for line, cls in _unreleased_classes(tree):
+        off["R"].append((name, line, "class %s reserves ports (lab_ports.reserve or kernel_env) and neither it nor a base "
+                                     "class this module defines reads lab_ports.release" % cls))
+    for line, what in _door_aliases(tree):
+        off["A"].append((name, line, what))
+    return off
+
+
+def _reserves(node):
+    """The calls under `node` that reserve a port: lab_ports.reserve(...), or kernel_env(...) by any receiver (it reserves
+    the kernel's postal port under the lab it is given)."""
+    return [c for c in ast.walk(node) if isinstance(c, ast.Call) and (_door_call(c, "reserve") or _callee(c) == "kernel_env")]
+
+
+def _reads_release(node):
+    """Does `node` read lab_ports.release, by calling it or by handing it on (self.addCleanup(lab_ports.release, lab))?"""
+    return any(isinstance(a, ast.Attribute) and a.attr == "release" and isinstance(a.value, ast.Name) and a.value.id == DOOR
+               for a in ast.walk(node))
+
+
+def _unreleased_classes(tree):
+    """(line, name) of every class that reserves a port in its own body and reads lab_ports.release neither there nor in a
+    base class this module defines, followed through the bases to a fixed point (rule R per class)."""
+    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    releasing, grew = {c.name for c in classes if _reads_release(c)}, True
+    while grew:
+        grew = False
+        for c in classes:
+            if c.name not in releasing and any(_last(b) in releasing for b in c.bases):
+                releasing.add(c.name)
+                grew = True
+    return [(c.lineno, c.name) for c in classes if c.name not in releasing and _reserves(c)]
 
 
 def _door_aliases(tree):
@@ -404,14 +446,40 @@ def _door_aliases(tree):
     return out
 
 
+def reservers(root=ROOT, served=()):
+    """{name: (text, tree)} of every module under root/tests outside `served`, other than the door, that reserves a port
+    (lab_ports.reserve or kernel_env, read by AST in the files whose text names either). Rules R and A read them too: a
+    unit test that builds a lab kernel's environment holds a port as surely as a served lab does."""
+    tests = os.path.join(root, "tests")
+    out = {}
+    for f in sorted(os.listdir(tests)):
+        if not f.endswith(".py") or f in served or f == DOOR_FILE:
+            continue
+        path = os.path.join(tests, f)
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read()
+        if "kernel_env" not in raw and DOOR not in raw:
+            continue
+        text, tree = parse_cache.source_and_tree(path)
+        if _reserves(tree):
+            out[f] = (text, tree)
+    return out
+
+
 def census(root=ROOT, globs=None, files=None):
-    """(population names, {rule: offences, "spawns": spawning functions}) over the served population under `root`."""
+    """(population names, {rule: offences, "spawns": spawning functions, "reservers": the modules outside the population
+    that reserve, read under R and A}) over the served population under `root`."""
     names, read = population(root, globs, files)
     total = {r: [] for r in RULES + ("spawns",)}
     for f in names:
         text, tree = read[f]
         for k, v in scan(text, tree, f).items():
             total[k] += v
+    extra = reservers(root, set(read) | {DOOR_FILE})
+    for f in sorted(extra):
+        for k, v in scan_reserves(extra[f][1], f).items():
+            total[k] += v
+    total["reservers"] = sorted(extra)
     return names, total
 
 
@@ -492,6 +560,17 @@ PLANTS = {
                           '    urllib.request.urlopen(HZ % p, timeout=1)\n', "W"),
     "clean-driver-cfg": ('import json\ndef cfg(p, path):\n    c = {"healthz": "http://127.0.0.1:%d/healthz" % p}\n'
                          '    open(path, "w").write(json.dumps(c))\n    return c\n', None),
+    # R per class: the module releases (class A), and class B reserves and never does
+    "reserve-class-unreleased": ('import lab_ports\nclass A:\n    def up(self, lab):\n        self.p = lab_ports.reserve(lab)\n'
+                                 '    def down(self, lab):\n        lab_ports.release(lab)\nclass B:\n'
+                                 '    def up(self, lab):\n        self.p = lab_ports.reserve(lab)\n', "R"),
+    "clean-class-cleanup": ('import lab_ports, unittest\nimport test_ship_reship_served as _lab\n'
+                            'class T(unittest.TestCase):\n    def test_env(self):\n'
+                            '        self.addCleanup(lab_ports.release, "/lab")\n'
+                            '        _lab.kernel_env("/lab", "/lab/c", "/lab/d", 1, "t")\n', None),
+    "clean-class-inherits": ('import lab_ports, unittest\nclass Base(unittest.TestCase):\n    def setUp(self):\n'
+                             '        self.lab = "/lab"\n        self.addCleanup(lab_ports.release, self.lab)\n'
+                             'class T(Base):\n    def test_a(self):\n        lab_ports.reserve(self.lab)\n', None),
 }
 
 
@@ -510,8 +589,12 @@ class LabPortsCensus(unittest.TestCase):
         spawning = sorted({o[0] for o in total["spawns"]})
         self.assertTrue(total["spawns"], "the census found no kernel spawn in %d files: it reads nothing, so it proves nothing"
                         % len(names))
-        print("LABPORTS population=%d files, kernel spawns=%d in %d files" % (len(names), len(total["spawns"]), len(spawning)),
-              file=sys.stderr)
+        self.assertTrue(total["reservers"], "no module outside the served step reserves a port: R reads only the served "
+                                            "population, and kernel_env's unit tests are unread")
+        self.assertFalse(set(total["reservers"]) & set(names) | {DOOR_FILE} & set(total["reservers"]),
+                         "the reservers are outside the population, and the door is in neither")
+        print("LABPORTS population=%d files, kernel spawns=%d in %d files, reservers outside it=%d"
+              % (len(names), len(total["spawns"]), len(spawning), len(total["reservers"])), file=sys.stderr)
 
     def _rule(self, rule, what):
         names, total = _census_here()
@@ -578,6 +661,27 @@ class LabPortsCensus(unittest.TestCase):
                 self.assertEqual(names, ["boothelper.py", "test_planted_served.py"], "the helper is read")
                 self.assertEqual([(o[0], o[1]) for o in total["D"]], [("boothelper.py", 3)], "its draw is named")
 
+    def test_a_module_outside_the_served_step_that_reserves_is_held_to_releasing(self):
+        # a unit test that builds a lab kernel's environment holds the postal port kernel_env reserves; outside the served
+        # step it is read under R (and A) all the same, and a module that reserves nothing is not read at all
+        unit = ('import lab_ports, unittest\nimport test_ship_reship_served as _lab\nclass T(unittest.TestCase):\n'
+                '    def test_env(self):\n%s        _lab.kernel_env("/lab", "/lab/c", "/lab/d", 1, "t")\n')
+        for cleanup, want in (("", [("test_unit_env.py", 1), ("test_unit_env.py", 3)]),
+                              ('        self.addCleanup(lab_ports.release, "/lab")\n', [])):
+            with self.subTest(released=bool(cleanup)):
+                root = tempfile.mkdtemp(prefix="labports-census-")
+                self.addCleanup(shutil.rmtree, root, True)
+                os.makedirs(os.path.join(root, "tests"))
+                for f, src in (("test_clean_served.py", PLANTS["clean-door"][0]), ("test_unit_env.py", unit % cleanup),
+                               ("test_other.py", "import os\nx = os.sep\n"),
+                               (DOOR_FILE, "def reserve(owner):\n    return kernel_env(owner)\n")):
+                    with open(os.path.join(root, "tests", f), "w") as fh:
+                        fh.write(src)
+                names, total = census(root, ["tests/test_*_served.py"], [])
+                self.assertEqual(names, ["test_clean_served.py"])
+                self.assertEqual(total["reservers"], ["test_unit_env.py"], "the door and a module reserving nothing are not read")
+                self.assertEqual([(o[0], o[1]) for o in total["R"]], want)
+
     def test_an_empty_population_fails_loudly(self):
         root = tempfile.mkdtemp(prefix="labports-census-")
         self.addCleanup(shutil.rmtree, root, True)
@@ -593,7 +697,8 @@ class LabPortsCensus(unittest.TestCase):
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--table"]:
         names, total = census(sys.argv[2] if len(sys.argv) > 2 else ROOT)
-        print("population %d files" % len(names))
+        print("population %d files; reservers outside it, read under R and A: %d %s"
+              % (len(names), len(total["reservers"]), total["reservers"]))
         for r in RULES + ("spawns",):
             print("%s %d" % (r, len(total[r])))
             print(_lines(total[r], cap=10))
