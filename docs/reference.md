@@ -1843,8 +1843,10 @@ on `kernel.lock` in the state root, which a kernel takes before it writes
 anything there and holds until it exits (a SIGKILL releases it too). The file's
 one line names the holder: `<pid> serving`, or `<pid> draining <deadline>` once
 its drain has started, where the deadline is the end of the drain's grace. A
-kernel started while the holder drains waits for the holder to exit, up to that
-deadline, and then serves; if the holder still holds the lock at the deadline,
+kernel started while the holder drains waits for the lock, up to that
+deadline, and serves once it takes the lock. If, at the deadline, the holder
+still holds the lock or another waiting kernel has taken it first (the refusal
+then names that kernel),
 the new kernel is refused. A `kernels.json` profile without a `stateDir`, or an
 `/ensure` for a port that no profile names, starts a kernel on the primary
 kernel's root, so that kernel is refused: give it a profile with its own

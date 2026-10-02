@@ -29,14 +29,19 @@ The pins, each red on the kernel before the lock for the reason it names:
      place; and each writer of the line (the acquisition over a longer line, the drain's announcement) writes at offset
      0 first and never truncates to 0;
   7. repo-root: an in-process load writes none (read right after this module's load), the one call is main()'s after
-     the bind (a source pin; pin 2 executes it).
+     the bind (a source pin; pin 2 executes it);
+  8. a kernel still waiting at the drain's deadline names the holder it reads then: with two kernels waiting on a holder
+     that releases in time, exactly one serves and the other exits 75 at the deadline naming the kernel that took the
+     lock, not the holder that let it go; with the lock still held under the line of a drainer that is gone, the
+     refusal is worded as a new owner that has not yet written its line.
 
 Subprocess pins run bin/romp-kernel under sys.executable in a private lab. The environment comes from kernel_env
 (tests/test_ship_reship_served.py, the safe lab-kernel recipe: named variables only, the lab's roots, session hosts
 floored off, a free kernel port, a postal bus that is never started) with ROMP_STATE_DIR on the lab's state root, no
 serve token, and ROMP_POSTAL_PORT on a listener this test owns and counts connections on. Each child leads its own
 session, and the group kill plus wait is registered before it is spawned, so every road (pass, fail, the bound) ends
-the tree. All fixtures synthetic."""
+the tree. Pin 8's holder is a plain Python process (sys.executable -I -c, the standard library only) that leads its own
+session the same way. All fixtures synthetic."""
 import ast
 import contextlib
 import errno
@@ -91,6 +96,25 @@ EXPIRY_DEADLINE_S = 5.0       # pin 3's drain deadline: the kernel reaches its l
 #                               inside it, so it waits and its timer, not its arrival, decides the refusal
 EXPIRY_SLACK_S = 5.0          # pin 3's upper bound: the refusal comes before the deadline plus this (the timer fires at the
 #                               deadline, and the refusal is one line and an exit after it)
+TWO_WAITERS_DEADLINE_S = 6.0  # pin 8's drain deadline: both kernels reach their lock point (about a second each here)
+#                               well inside it, and the one that does not take the lock is refused at it
+# Pin 8's holder: takes the lock, writes "<its pid> draining <argv[2]>" as a kernel's drain announcement does, says so on
+# stdout, and releases by exiting when its stdin closes. With argv[3] == "fork" a child it forks first keeps the same open
+# file, so the lock stays held after the pid the line names has exited.
+HOLDER_SRC = r"""
+import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+line = ("%d draining %s\n" % (os.getpid(), sys.argv[2])).encode("ascii")
+os.pwrite(fd, line, 0)
+os.ftruncate(fd, len(line))
+if sys.argv[3] == "fork" and os.fork() == 0:
+    while True:
+        time.sleep(3600)
+sys.stdout.write("held\n")
+sys.stdout.flush()
+sys.stdin.read()
+"""
 WAITING_TEXT = "this kernel waits for its drain until"
 HANDOVER_TEXT = "this kernel holds it now"
 SERVING_TEXT = "romp-kernel: serving the ported UI at"
@@ -429,6 +453,123 @@ class NoOwnerLine(_Lab):
 
     def test_an_empty_file(self):
         self._refused_as_new_owner("", "(the file is empty)")
+
+
+class TheHolderAtTheDeadline(_Lab):
+    """Pin 8: a kernel still waiting when the drain's deadline comes is refused naming the holder it reads then, which
+    is the drainer only while the drainer's own line is there and the drainer runs."""
+
+    def holder(self, deadline, fork=False):
+        """Pin 8's holder (HOLDER_SRC) on this lab's lock with `deadline` in its line, its group kill plus wait registered
+        before the spawn; returns once it holds the lock and says so."""
+        slot = {}
+
+        def end():
+            h = slot.get("h")
+            if h is None:
+                return
+            try:
+                os.killpg(h.pid, signal.SIGKILL)    # the holder and, with fork, the child that keeps the lock
+            except (ProcessLookupError, PermissionError):
+                pass
+            for f in (h.stdin, h.stdout):
+                try:
+                    f.close()
+                except OSError:
+                    pass
+            try:
+                h.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
+
+        self.addCleanup(end)
+        slot["h"] = h = subprocess.Popen(
+            [sys.executable, "-I", "-c", HOLDER_SRC, self.lock_path, "%.3f" % deadline, "fork" if fork else "hold"],
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")}, cwd=self.lab, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+        ready, _, _ = select.select([h.stdout], [], [], BOUND_S)
+        self.assertTrue(ready and h.stdout.readline() == b"held\n", "the holder did not take the lock (exit %r)" % h.poll())
+        self.assertEqual(self.lock_line(), "%d draining %.3f" % (h.pid, deadline))
+        return h
+
+    def let_go(self, h):
+        """The holder's release: its stdin closes, it exits, and it is reaped (a zombie would still read as running)."""
+        h.stdin.close()
+        h.wait(timeout=BOUND_S)
+
+    def refusal_of(self, err):
+        lines = [ln for ln in err.splitlines() if "exits %d" % EXIT_REFUSED in ln]
+        self.assertEqual(len(lines), 1, "one refusal line: %r" % err)
+        return lines[0]
+
+    def test_of_two_waiting_kernels_the_one_that_does_not_take_the_lock_is_refused_naming_the_one_that_did(self):
+        os.makedirs(os.path.join(self.lab, "dist"))        # current bundles, as pin 2: the kernel that takes the lock
+        Path(self.lab, "dist", "render.js").write_text("")  # serves without building anything
+        deadline = time.time() + TWO_WAITERS_DEADLINE_S
+        h = self.holder(deadline)
+        a = self.spawn()
+        first_env = dict(self.env)
+        self.env = dict(self.env, ROMP_KERNEL_PORT=str(_lab._free_port()))   # a port of its own for the second kernel
+        b = self.spawn()
+        self.env = first_env
+        for p in (a, b):
+            self.assertTrue(self.read_until(p, WAITING_TEXT, BOUND_S),
+                            "kernel %d did not wait; stderr:\n%s" % (p.pid, self.stderr_of(p)[-3000:]))
+        self.let_go(h)
+        released = time.time()
+        winner = None
+        end = time.monotonic() + BOUND_S
+        while winner is None and time.monotonic() < end:
+            winner = next((p for p in (a, b) if self.read_until(p, HANDOVER_TEXT, 0.2)), None)
+        self.assertIsNotNone(winner, "neither kernel took the lock after the release; stderr:\n%s\n----\n%s"
+                             % (self.stderr_of(a)[-2000:], self.stderr_of(b)[-2000:]))
+        loser = b if winner is a else a
+        self.assertEqual(self.lock_line(), "%d serving" % winner.pid)
+        self.assertLess(released, deadline, "the release came after the deadline: the pin waited too long to release")
+        code, err, _, killed = self.verdict(loser, bound=max(0.0, deadline - time.time()) + BOUND_S)
+        refused = time.time()
+        self.assertEqual(code, EXIT_REFUSED, "the other kernel did not exit 75 (killed at the bound: %s); its stderr:\n%s"
+                         % (killed, err[-3000:]))
+        self.assertGreaterEqual(refused, deadline, "the other kernel was refused before the deadline: %s" % err[-2000:])
+        self.assertLess(refused, deadline + EXPIRY_SLACK_S, "the other kernel was refused %.1f s after the deadline"
+                        % (refused - deadline))
+        refusal = self.refusal_of(err)
+        self.assertIn("another kernel (pid %d) is serving" % winner.pid, refusal, "the refusal names the kernel that took "
+                                                                                   "the lock")
+        self.assertIsNone(re.search(r"pid %d\b" % h.pid, refusal), "the refusal names the holder that released: %s"
+                          % refusal)
+        self.assertNotIn(PAST_TEXT, refusal, "the holder released in time; its drain is not past its deadline")
+        self.assertIn(self.lock_path, refusal)
+        self.assertIn(REMEDY_TEXT, refusal)
+        self.assertNotIn(HANDOVER_TEXT, err)
+        self.assertNotIn(SERVING_TEXT, err, "only one kernel serves")
+        self.assertTrue(self.read_until(winner, SERVING_TEXT, BOOT_BOUND_S),
+                        "the kernel that took the lock never served; stderr:\n%s" % self.stderr_of(winner)[-4000:])
+        self.assertIsNone(winner.poll(), "the kernel that took the lock is still serving")
+        self.assertEqual(self.lock_line(), "%d serving" % winner.pid)
+
+    def test_a_lock_still_held_under_the_line_of_a_drainer_that_is_gone_is_refused_as_a_new_owner(self):
+        # the holder hands its open lock to a child and exits once the kernel waits, so at the deadline the lock is still
+        # held under the drainer's own line, naming a pid that is gone: a new owner whose line is not written yet
+        deadline = time.time() + EXPIRY_DEADLINE_S
+        h = self.holder(deadline, fork=True)
+        before = self.snapshot()
+        p = self.spawn()
+        self.assertTrue(self.read_until(p, WAITING_TEXT, BOUND_S),
+                        "the kernel did not wait; stderr:\n%s" % self.stderr_of(p)[-3000:])
+        self.let_go(h)
+        code, err, _, killed = self.verdict(p, bound=max(0.0, deadline - time.time()) + BOUND_S)
+        refused = time.time()
+        self.assertEqual(code, EXIT_REFUSED, "the kernel did not exit 75 (killed at the bound: %s); its stderr:\n%s"
+                         % (killed, err[-3000:]))
+        self.assertGreaterEqual(refused, deadline, "the kernel was refused before the deadline: %s" % err[-2000:])
+        self.assertLess(refused, deadline + EXPIRY_SLACK_S)
+        refusal = self.refusal_of(err)
+        self.assertIn(NEW_OWNER_TEXT, refusal)
+        self.assertIn("the line still names pid %d, which is not running" % h.pid, refusal)
+        self.assertNotIn(PAST_TEXT, refusal, "the drainer is gone: it did not keep the lock past its deadline")
+        self.assertEqual(self.lock_line(), "%d draining %.3f" % (h.pid, deadline), "the kernel wrote no line")
+        self.assertNothingWritten(before, "the refused kernel changed the roots")
 
 
 class InProcess(unittest.TestCase):

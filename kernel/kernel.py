@@ -65,10 +65,11 @@ jd = load_source("romp_judge", HERE / "judge.py")
 #
 # The file's one line names the holder: "<pid> serving", rewritten to "<pid> draining <deadline>"
 # (wall-clock epoch seconds) when _drain_and_exit starts. A kernel that finds the lock held by a
-# draining owner waits for it, bounded by that deadline: the owner's exit releases the lock, which
-# is the event the wait keys on. Any other holder (a serving line, a line naming a pid that is not
-# running, an empty or unreadable line, a deadline already past, or a wait that reached the
-# deadline) refuses this kernel: one stderr line,
+# draining owner waits for the lock, bounded by that deadline: the owner's exit releases it, which
+# is the event the wait keys on, and one waiting kernel takes it (with two waiting, the other keeps
+# waiting). Any other holder (a serving line, a line naming a pid that is not running, an empty or
+# unreadable line, a deadline already past, or a wait that reached the deadline) refuses this
+# kernel: one stderr line naming the holder it read (at a wait's deadline, the line read then),
 # then os._exit(KERNEL_LOCK_EXIT) with nothing written, so the manager's crash backoff retries it.
 # The file is opened without O_TRUNC (a loser truncating it would erase the holder's line), never
 # unlinked and never unlocked: the process exit releases it, a SIGKILL included. os.open makes the
@@ -178,8 +179,9 @@ def _kernel_lock_refusal(why):
 
 def _kernel_lock_holder_why(path, line):
     """The refusal's account of the process holding `path`, from the file's first `line`, for every holder this kernel
-    does not wait for. A pid that is not running holds nothing any more, so the holder is a new owner that took the
-    lock and has not yet written its own line (an empty file reads the same way)."""
+    does not wait for, and for the holder a wait finds at its deadline once the drainer's own line is gone. A pid that
+    is not running holds nothing any more, so the holder is a new owner that took the lock and has not yet written its
+    own line (an empty file reads the same way)."""
     m = _KERNEL_LOCK_SERVING_RE.fullmatch(line) or _KERNEL_LOCK_DRAINING_RE.fullmatch(line)
     if not line:
         return ("%s is held by a new owner that has not yet written its line (the file is empty), so another kernel "
@@ -196,10 +198,13 @@ def _kernel_lock_holder_why(path, line):
 
 def _kernel_lock_acquire(path, now=time.time):
     """Take the instance lock at `path`: (fd, None) once held, with "<this pid> serving" written; (None, refusal line)
-    when another process holds it and this kernel must not run. A draining owner whose deadline is still ahead is
-    waited for (_kernel_lock_wait), with one stderr line saying so; an owner that releases in time hands the lock over,
-    one that does not is refused as a drain past its deadline. Never raises for a held lock; an OSError opening the
-    file propagates, a fault the kernel cannot start past."""
+    when another process holds it and this kernel must not run. When the owner is draining and its deadline is still
+    ahead, this kernel waits for the lock (_kernel_lock_wait) up to that deadline, with one stderr line saying so. The
+    owner's release lets one waiting kernel take the lock: this one, unless another kernel waits too and takes it
+    first. A kernel still waiting at the deadline is refused, and the refusal names the holder it reads then: a drain
+    past its deadline when the owner still holds the lock under its own line, otherwise the kernel that took the lock
+    (or a new owner that has not yet written its line). Never raises for a held lock; an OSError opening the file
+    propagates, a fault the kernel cannot start past."""
     fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -225,10 +230,17 @@ def _kernel_lock_acquire(path, now=time.time):
                          "(%.1f s)\n" % (pid, path, _kernel_lock_when(deadline), remaining))
         sys.stderr.flush()
         if not _kernel_lock_wait(fd, remaining):
+            # The deadline came with the lock still held, and the line read now says by whom. The drainer's own line,
+            # with the drainer running, is a drain past its deadline. Anything else is a holder that took the lock
+            # after the drainer let go: another kernel that waited beside this one and took it first, or a new owner
+            # whose line is not written yet. The refusal names that holder as for one never waited for.
+            now_line = _kernel_lock_read(fd)
             os.close(fd)
-            return None, _kernel_lock_refusal((
-                "pid %d did not release %s by its drain's deadline of %s, so its drain is past its deadline"
-                % (pid, path, _kernel_lock_when(deadline))))
+            if now_line == line and _kernel_lock_pid_alive(pid):
+                return None, _kernel_lock_refusal((
+                    "pid %d did not release %s by its drain's deadline of %s, so its drain is past its deadline"
+                    % (pid, path, _kernel_lock_when(deadline))))
+            return None, _kernel_lock_refusal(_kernel_lock_holder_why(path, now_line))
         waited = pid
     else:
         waited = None
