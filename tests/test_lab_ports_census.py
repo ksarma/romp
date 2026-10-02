@@ -14,7 +14,7 @@ to a fixed point, and tests/conftest.py, less the door itself. An import is foll
 can name another under tests/ by (`import x`, `import tests.x`, `from x import`, `from tests.x import`, `from tests
 import x`, `from . import x`, `from .x import`), each pinned by a planted helper. A glob matching nothing, a named file
 absent, an empty population or a population with no kernel spawn in it fails the run, so the census never passes on
-nothing. Rules R and A also read THE RESERVERS (reservers()): every other module under tests/ whose AST calls
+nothing. Rules R, A and F also read THE RESERVERS (reservers()): every other module under tests/ whose AST calls
 lab_ports.reserve or kernel_env, or binds the door under another name (an alias would hide its reserves), since a unit test that builds a lab kernel's environment holds the postal port as
 surely as a served lab does (three modules outside the served step left a postal port held for each kernel_env call
 until the process exited, 2026-10-02).
@@ -22,9 +22,15 @@ until the process exited, 2026-10-02).
 THE RULES, each read per module by AST (scan()):
   D  no draw and release: in one scope (a function, a lambda, a class body or the module body), a socket bound to port 0
      (an address written in place, or a name the module binds to one: ADDR = ("127.0.0.1", 0); s.bind(ADDR)) whose port
-     is read (getsockname) and that is released in the same scope, by close(), by a with block, or by going out of scope
-     (a local name used only for its own methods), and that never listens there. A listener keeps its port and a holder
-     kept on an attribute keeps it too, so neither is a draw.
+     is read (getsockname) and that is released in the same scope, by close(), by a with block (one that binds it or is
+     entered on it), or by going out of scope (a local name used only for its own methods). A listener is read the same
+     way, released by close(), server_close() or a with block only: a socket that listens, a socket.create_server or
+     asyncio loop.create_server listener built on port 0, or a server of http.server or socketserver (SERVER_CLASSES:
+     HTTPServer, ThreadingHTTPServer, TCPServer and the rest, or a class the module derives from one) built on a port-0
+     address, its port read by getsockname, socket.getsockname, server_address, server_port or sockets. A listener left
+     open at the scope's end keeps its port (a thread serving from it can hold it past the scope), and so does a holder
+     kept on an attribute and closed by another method. By this reading a server built, served and closed within one
+     function is a draw, so a test that needs one hands its close to a cleanup (self.addCleanup(srv.server_close)).
   W  no hand-written /healthz wait: no call other than an assert* has an argument holding /healthz as a path or in a
      URL (at a string's start or right after a non-space: "http://127.0.0.1:%d/healthz", base + "/healthz", an
      f-string's "{p}/healthz"), written in place or through a name bound to such a string in the call's own scope or
@@ -45,6 +51,14 @@ THE RULES, each read per module by AST (scan()):
      class of stand-in tests that builds environments in a module whose served lab releases its own is still held to
      releasing them. A release inherited from a class another module defines is not read: such a class releases in its
      own body.
+  F  every class that reserves in its setUpClass (a reserve written there, a bare-name call of a function the module
+     defines that reserves, or a call through cls of a method the class defines that reserves, followed through such
+     methods: cls._boot()) releases on that setUpClass's failure path, where tearDownClass is never run. Each reserving
+     call is covered by cls.addClassCleanup(lab_ports.release, ...) as a statement of setUpClass's own body before the
+     one that holds the call (right after the lab is made), or by a try whose body holds it and whose every handler calls
+     cls.tearDownClass(), one of them catching broadly (bare, BaseException or Exception), in a class whose
+     tearDownClass (its own, or the first a base the module defines has) reads lab_ports.release. unittest and pytest
+     both run the class cleanups when setUpClass raises an Exception, SkipTest included.
   A  the door is bound under its own name only and its members are read as lab_ports.<name>: no `import lab_ports as x`,
      no `import tests.lab_ports` (it binds tests), no `from tests import lab_ports as x` or `from . import lab_ports as
      x`, no from-import of its members (`from lab_ports import wait_owned`, `from .lab_ports import reserve`), no
@@ -76,9 +90,13 @@ lab_ports or None, a lambda returning it), or reached through sys.modules, impor
 0 spelled by a name (s.bind(("127.0.0.1", ZERO))); a kernel started by asyncio.create_subprocess_exec; a URL bound to a
 name with /healthz as the right operand of % (url = "http://127.0.0.1:%d%s" % (p, "/healthz")); a port reserved through
 a function another module defines, other than kernel_env, or through a function of the module called by any spelling but
-its bare name. The planted modules below are each red under exactly the rule they break, and the clean shapes (a
-listener, a kept holder, the door's own use, a /healthz inside a JavaScript text, a driver's cfg holding a /healthz URL)
-are green.
+its bare name; a listener built by a server class another module derives or by a constructor outside SERVER_CLASSES, or
+one whose port is read through a call's result or a container; a reserve in setUp or setUpModule (F reads setUpClass
+only); a class cleanup handed an owner other than the one reserved (no rule compares owners); a tearDownClass that
+releases only through another method it calls (F reads it as no release, the safe side). The planted modules below are
+each red under exactly the rule they break, and the clean shapes (a listener that outlives its scope, a kept holder, a
+server whose close is handed to a cleanup, the door's own use, a /healthz inside a JavaScript text, a driver's cfg holding
+a /healthz URL, each form F accepts) are green.
 
 Synthetic: reads the tree only; no kernel, no browser, no socket.
 """
@@ -99,7 +117,7 @@ import test_served_labs_under_ci as _ci             # noqa: E402  the served ste
 
 DOOR = "lab_ports"
 DOOR_FILE = DOOR + ".py"
-RULES = ("D", "W", "K", "R", "A")
+RULES = ("D", "W", "K", "R", "A", "F")
 SPAWN_CALLEES = {"Popen"}
 KERNEL_NAME = "romp-kernel"
 
@@ -258,26 +276,92 @@ def _scope_name(scope):
     return getattr(scope, "name", None) or ("<lambda>" if isinstance(scope, ast.Lambda) else "<module>")
 
 
-def _draws(scope, zero=frozenset()):
+SERVER_CLASSES = frozenset({   # the stdlib's server classes that bind and listen on the address they are built with
+    "HTTPServer", "ThreadingHTTPServer",                                                  # http.server
+    "TCPServer", "UDPServer", "ThreadingTCPServer", "ThreadingUDPServer", "ForkingTCPServer", "ForkingUDPServer",   # socketserver
+})
+
+
+def _server_classes(tree):
+    """SERVER_CLASSES and every class the module defines with one of them as a base (by the base's last part), followed to
+    a fixed point (class _Quiet(ThreadingHTTPServer), and a class built on _Quiet)."""
+    names, classes, grew = set(SERVER_CLASSES), [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)], True
+    while grew:
+        grew = False
+        for c in classes:
+            if c.name not in names and any(_last(b) in names for b in c.bases):
+                names.add(c.name)
+                grew = True
+    return names
+
+
+def _arg(call, i, key):
+    """The call's argument at position `i`, else its keyword `key`, else None."""
+    if len(call.args) > i:
+        return call.args[i]
+    return next((k.value for k in call.keywords if k.arg == key), None)
+
+
+def _builds_listener(value, zero, servers):
+    """Is `value` (an await of one included) a listener built on port 0: socket.create_server(addr) with addr an address
+    with port 0 (or a spelling the module binds to one), a server class built on such an address (servers:
+    _server_classes), or asyncio's loop.create_server(factory, host, 0) (the port as its third argument or port=0)?"""
+    if isinstance(value, ast.Await):
+        value = value.value
+    if not isinstance(value, ast.Call):
+        return False
+    name = _callee(value)
+    if name == "create_server":
+        port = _arg(value, 2, "port")
+        return (_holds_port_zero(_arg(value, 0, "address"), zero)
+                or (isinstance(port, ast.Constant) and port.value == 0 and not isinstance(port.value, bool)))
+    return name in servers and _holds_port_zero(_arg(value, 0, "server_address"), zero)
+
+
+def _reads_port(recv, method, attrs):
+    """Does the scope read the port of the socket or server spelled `recv`: recv.getsockname(), recv.socket.getsockname(),
+    or recv.server_address, recv.server_port or recv.sockets (asyncio's server) read?"""
+    return (bool(method.get((recv, "getsockname")) or method.get((recv + ".socket", "getsockname")))
+            or any(recv + "." + a in attrs for a in ("server_address", "server_port", "sockets")))
+
+
+def _draws(scope, zero=frozenset(), servers=SERVER_CLASSES):
     """(line, receiver) of every draw and release in `scope` (rule D). `zero` holds the spellings the module binds to an
-    address with port 0 (ADDR = ("127.0.0.1", 0); s.bind(ADDR) is a bind to port 0 too)."""
+    address with port 0 (ADDR = ("127.0.0.1", 0); s.bind(ADDR) is a bind to port 0 too), and `servers` the server
+    classes a listener is built from (_server_classes)."""
     own = _own(scope)
     calls = [n for n in own if isinstance(n, ast.Call)]
     method = {}
     for c in calls:
         if isinstance(c.func, ast.Attribute):
             method.setdefault((_text(c.func.value), c.func.attr), []).append(c)
-    withs = {_text(i.optional_vars) for n in own if isinstance(n, (ast.With, ast.AsyncWith)) for i in n.items
-             if i.optional_vars is not None}
-    out = []
+    attrs = {_text(n) for n in own if isinstance(n, ast.Attribute)}
+    # a with block releases what it binds (with socket.socket() as s) and what it is entered on (async with srv)
+    withs = {_text(e) for n in own if isinstance(n, (ast.With, ast.AsyncWith)) for i in n.items
+             for e in (i.optional_vars, i.context_expr) if e is not None} - {None}
+    binds = []   # (line, receiver, listens)
     for c in calls:
-        if not (isinstance(c.func, ast.Attribute) and c.func.attr == "bind" and c.args
-                and _holds_port_zero(c.args[0], zero)):
+        if isinstance(c.func, ast.Attribute) and c.func.attr == "bind" and c.args and _holds_port_zero(c.args[0], zero):
+            recv = _text(c.func.value)
+            if recv is not None:
+                binds.append((c.lineno, recv, bool(method.get((recv, "listen")))))
+    built = [(t, v) for t, v in _assigns(own)] + [(i.optional_vars, i.context_expr) for n in own
+                                                  if isinstance(n, (ast.With, ast.AsyncWith)) for i in n.items
+                                                  if i.optional_vars is not None]
+    for t, v in built:
+        if _text(t) is not None and _builds_listener(v, zero, servers):
+            binds.append((v.lineno, _text(t), True))
+    out = []
+    for line, recv, listens in binds:
+        if not _reads_port(recv, method, attrs):
             continue
-        recv = _text(c.func.value)
-        if recv is None or not method.get((recv, "getsockname")) or method.get((recv, "listen")):
+        released = bool(method.get((recv, "close")) or method.get((recv, "server_close"))) or recv in withs
+        if listens:
+            # a listener is released only by a close, a server_close or a with block in this scope: one left open at the
+            # scope's end may be serving from a thread that holds it
+            if released:
+                out.append((line, recv))
             continue
-        released = bool(method.get((recv, "close"))) or recv in withs
         if not released and "." not in recv and not isinstance(scope, (ast.Module, ast.ClassDef)):
             # a local name that never escapes: every read of it is the receiver of one of its own methods, so the socket
             # is closed when the scope ends
@@ -285,7 +369,7 @@ def _draws(scope, zero=frozenset()):
             receivers = {id(a.value) for a in own if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name)}
             released = all(id(r) in receivers for r in reads)
         if released:
-            out.append((c.lineno, recv))
+            out.append((line, recv))
     return out
 
 
@@ -395,9 +479,9 @@ def scan(text, tree, name, package=None):
     key "spawns" (the census's floor reads them). `package` holds the names the package binds the door to
     (_package_door_names); None reads them from this checkout's tests/__init__.py."""
     off = {r: [] for r in RULES}
-    zero = _bound(_assigns(ast.walk(tree)), _holds_port_zero)
+    zero, servers = _bound(_assigns(ast.walk(tree)), _holds_port_zero), _server_classes(tree)
     for scope in _scopes(tree):
-        for line, recv in _draws(scope, zero):
+        for line, recv in _draws(scope, zero, servers):
             off["D"].append((name, line, "%s draws a port into %s and releases it" % (_scope_name(scope), recv)))
     for line, callee in _healthz_calls(tree):
         off["W"].append((name, line, "%s(...) asks /healthz by hand" % callee))
@@ -413,9 +497,9 @@ def scan(text, tree, name, package=None):
 
 
 def scan_reserves(tree, name, package=None):
-    """{"R": [...], "A": [...]}: one module's offences under rules R and A, the two rules the census also reads in the
-    modules outside the served population that reserve a port (reservers())."""
-    off = {"R": [], "A": []}
+    """{"R": [...], "A": [...], "F": [...]}: one module's offences under rules R, A and F, the three rules the census also
+    reads in the modules outside the served population that reserve a port (reservers())."""
+    off = {"R": [], "A": [], "F": []}
     if _reserves(tree) and not _reads_release(tree):
         off["R"].append((name, 1, "reserves ports (lab_ports.reserve or kernel_env) and never releases them through "
                                   "lab_ports.release"))
@@ -425,6 +509,10 @@ def scan_reserves(tree, name, package=None):
                                      "lab_ports.release" % cls))
     for line, what in _door_aliases(tree, package):
         off["A"].append((name, line, what))
+    for line, cls, at in _setup_unguarded(tree):
+        off["F"].append((name, line, "class %s reserves a port in setUpClass (line %d) with no release on its failure path "
+                                     "(cls.addClassCleanup(lab_ports.release, cls.lab) right after the lab is made, or a "
+                                     "try whose handlers call cls.tearDownClass())" % (cls, at)))
     return off
 
 
@@ -485,6 +573,100 @@ def _unreleased_classes(tree):
                 grew = True
     return [(c.lineno, c.name) for c in classes
             if c.name not in releasing and (_reserves(c) or _calls_by_name(c, helpers))]
+
+
+BROAD_CATCHES = ("BaseException", "Exception")   # a handler for either (or a bare except) catches a failed setUpClass
+
+
+def _first_param(fn):
+    return fn.args.args[0].arg if fn.args.args else None
+
+
+def _self_calls(fn, names):
+    """The calls in `fn` of a method in `names` through its first parameter (cls._boot(), self._kernel())."""
+    p = _first_param(fn)
+    return [c for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+            and isinstance(c.func.value, ast.Name) and c.func.value.id == p and c.func.attr in names]
+
+
+def _catches_broadly(handler):
+    """Does the except clause catch a failed setUpClass whatever it raised: bare, BaseException or Exception, alone or in a
+    tuple?"""
+    if handler.type is None:
+        return True
+    types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return any(_last(t) in BROAD_CATCHES for t in types)
+
+
+def _calls_teardown(node, param):
+    return any(isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "tearDownClass"
+               and isinstance(c.func.value, ast.Name) and c.func.value.id == param for c in ast.walk(node))
+
+
+def _teardown_releases(cls, classes):
+    """Does the tearDownClass `cls` runs read lab_ports.release: its own, else the first one a base the module defines
+    has (depth first, through the bases' last parts)? None defined in the module: no."""
+    seen, todo = set(), [cls]
+    while todo:
+        c = todo.pop(0)
+        if c.name in seen:
+            continue
+        seen.add(c.name)
+        td = next((n for n in c.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "tearDownClass"),
+                  None)
+        if td is not None:
+            return _reads_release(td)
+        todo[:0] = [classes[_last(b)] for b in c.bases if _last(b) in classes]
+    return False
+
+
+def _setup_unguarded(tree):
+    """(line, class, line of the reserve) of every class whose setUpClass reserves a port that a failure of setUpClass would
+    leave held (rule F). A class reserves in its setUpClass by a reserve written there (_reserves), a bare-name call of a
+    function the module defines that reserves (_reserving_functions), or a call through setUpClass's first parameter of a
+    method the class defines that reserves in one of those ways, followed through such methods (cls._boot()). Each such
+    call is covered by either of two forms: a statement of setUpClass's own body before the one holding the call that
+    hands lab_ports.release to cls.addClassCleanup (cls.addClassCleanup(lab_ports.release, cls.lab), right after the lab
+    is made), or a try in setUpClass whose body holds the call and whose every handler calls cls.tearDownClass(), one of
+    them catching broadly (_catches_broadly), in a class whose tearDownClass reads lab_ports.release
+    (_teardown_releases). The tearDownClass of a class is not run when its setUpClass raises, and the class cleanups are
+    (unittest and pytest both run them on an Exception, SkipTest included)."""
+    helpers = _reserving_functions(tree)
+    classes = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
+    out = []
+    for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+        meths = {n.name: n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        setup = meths.get("setUpClass")
+        if setup is None:
+            continue
+        reserving, grew = {m for m, fn in meths.items() if _reserves(fn) or _calls_by_name(fn, helpers)}, True
+        while grew:
+            grew = False
+            for m, fn in meths.items():
+                if m not in reserving and _self_calls(fn, reserving):
+                    reserving.add(m)
+                    grew = True
+        param = _first_param(setup)
+        calls = {id(c): c for c in _reserves(setup) + _calls_by_name(setup, helpers) + _self_calls(setup, reserving)}
+        if not calls:
+            continue
+        covered = set()
+        for i, stmt in enumerate(setup.body):
+            v = stmt.value if isinstance(stmt, ast.Expr) else None
+            if (isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "addClassCleanup"
+                    and isinstance(v.func.value, ast.Name) and v.func.value.id == param and v.args
+                    and _is_release(v.args[0])):
+                covered |= {id(c) for later in setup.body[i + 1:] for c in ast.walk(later)}
+                break
+        guards = _teardown_releases(cls, classes)
+        for t in ast.walk(setup) if guards else ():
+            if (isinstance(t, (ast.Try, getattr(ast, "TryStar", ast.Try))) and t.handlers
+                    and all(_calls_teardown(h, param) for h in t.handlers) and any(_catches_broadly(h) for h in t.handlers)):
+                covered |= {id(c) for s in t.body for c in ast.walk(s)}
+        bare = sorted(c.lineno for k, c in calls.items() if k not in covered)
+        if bare:
+            out.append((cls.lineno, cls.name, bare[0]))
+    return out
 
 
 def _package_door_names(root=ROOT):
@@ -550,8 +732,8 @@ def reservers(root=ROOT, served=()):
     """{name: (text, tree)} of every module under root/tests outside `served`, other than the door, that reserves a port
     (lab_ports.reserve or kernel_env) or binds the door under another name (rule A's offence, which would hide its
     reserves from R), read by AST in the files whose text names kernel_env, lab_ports or a name the package binds the
-    door to (_package_door_names). Rules R and A read them too: a unit test that builds a lab kernel's environment holds
-    a port as surely as a served lab does. tests/__init__.py is not read: it binds the door as _lab_ports only to
+    door to (_package_door_names). Rules R, A and F read them too: a unit test that builds a lab kernel's environment
+    holds a port as surely as a served lab does. tests/__init__.py is not read: it binds the door as _lab_ports only to
     register it under its bare name, and reserves nothing."""
     tests = os.path.join(root, "tests")
     package = _package_door_names(root)
@@ -573,7 +755,7 @@ def reservers(root=ROOT, served=()):
 
 def census(root=ROOT, globs=None, files=None):
     """(population names, {rule: offences, "spawns": spawning functions, "reservers": the modules outside the population
-    that reserve, read under R and A}) over the served population under `root`."""
+    that reserve, read under R, A and F}) over the served population under `root`."""
     names, read = population(root, globs, files)
     package = _package_door_names(root)
     total = {r: [] for r in RULES + ("spawns",)}
@@ -711,6 +893,137 @@ PLANTS = {
     # a release read but never called nor handed to a call releases nothing: the module and its class are both unreleased
     "reserve-release-only-read": ('import lab_ports\nclass B:\n    def up(self, lab):\n        rel = lab_ports.release\n'
                                   '        self.p = lab_ports.reserve(lab)\n', "R"),
+    # a listener whose port the scope reads and that the scope closes is a draw and release too, and so is a listener
+    # built on port 0 by socket.create_server, a server class of http.server or socketserver (or one the module derives
+    # from them) or asyncio's create_server
+    "draw-listener-closed": ('import socket\ndef pick():\n    s = socket.socket()\n    s.bind(("127.0.0.1", 0))\n'
+                             '    s.listen(8)\n    p = s.getsockname()[1]\n    s.close()\n    return p\n', "D"),
+    "draw-listener-with": ('import socket\ndef pick():\n    with socket.socket() as s:\n        s.bind(("127.0.0.1", 0))\n'
+                           '        s.listen(8)\n        return s.getsockname()[1]\n', "D"),
+    "draw-create-server-with": ('import socket\ndef pick():\n    with socket.create_server(("127.0.0.1", 0)) as s:\n'
+                                '        return s.getsockname()[1]\n', "D"),
+    "draw-create-server-closed": ('from socket import create_server\ndef pick():\n    s = create_server(("127.0.0.1", 0))\n'
+                                  '    p = s.getsockname()[1]\n    s.close()\n    return p\n', "D"),
+    "draw-http-server-closed": ('import http.server\ndef pick():\n    h = http.server.HTTPServer(("127.0.0.1", 0), None)\n'
+                                '    p = h.server_address[1]\n    h.server_close()\n    return p\n', "D"),
+    "draw-threading-http-server-with": ('from http.server import ThreadingHTTPServer\ndef pick():\n'
+                                        '    with ThreadingHTTPServer(("127.0.0.1", 0), None) as h:\n'
+                                        '        return h.server_port\n', "D"),
+    "draw-socketserver-closed": ('import socketserver\ndef pick():\n    srv = socketserver.TCPServer(("127.0.0.1", 0), None)\n'
+                                 '    p = srv.socket.getsockname()[1]\n    srv.server_close()\n    return p\n', "D"),
+    "draw-server-subclass": ('import socketserver\nclass Quiet(socketserver.ThreadingTCPServer):\n    daemon_threads = True\n'
+                             'class Quieter(Quiet):\n    pass\ndef pick():\n    s = Quieter(("127.0.0.1", 0), None)\n'
+                             '    p = s.server_address[1]\n    s.server_close()\n    return p\n', "D"),
+    "draw-asyncio-create-server": ('import asyncio\nasync def pick(loop):\n'
+                                   '    srv = await loop.create_server(asyncio.Protocol, "127.0.0.1", 0)\n'
+                                   '    p = srv.sockets[0].getsockname()[1]\n    srv.close()\n    return p\n', "D"),
+    "draw-asyncio-create-server-keyword": ('import asyncio\nasync def pick(loop):\n'
+                                           '    srv = await loop.create_server(asyncio.Protocol, host="127.0.0.1", port=0)\n'
+                                           '    async with srv:\n        return srv.sockets[0].getsockname()[1]\n', "D"),
+    # a server that serves past its scope keeps its port: its close handed to a cleanup (not called here), or the server
+    # kept on an attribute and closed by another method
+    "clean-server-cleanup": ('import http.server, threading, unittest\nclass T(unittest.TestCase):\n    def serve(self):\n'
+                             '        h = http.server.ThreadingHTTPServer(("127.0.0.1", 0), None)\n'
+                             '        threading.Thread(target=h.serve_forever, daemon=True).start()\n'
+                             '        self.addCleanup(h.server_close)\n        return h.server_port\n', None),
+    "clean-server-attribute": ('import http.server, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                               '    def setUpClass(cls):\n        cls.srv = http.server.HTTPServer(("127.0.0.1", 0), None)\n'
+                               '        cls.port = cls.srv.server_address[1]\n    @classmethod\n    def tearDownClass(cls):\n'
+                               '        cls.srv.server_close()\n', None),
+    # F: a class that reserves in setUpClass releases on its failure path, by a class cleanup registered before the first
+    # reserve, or by a try whose handlers all call tearDownClass (one catching broadly) in a class whose tearDownClass
+    # releases
+    "setup-unguarded": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                        '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n'
+                        '        cls.port = lab_ports.reserve(cls.lab)\n    @classmethod\n    def tearDownClass(cls):\n'
+                        '        lab_ports.release(cls.lab)\n', "F"),
+    "setup-unguarded-via-method": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                                   '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n        cls._boot()\n'
+                                   '    @classmethod\n    def _boot(cls):\n        cls._ports()\n    @classmethod\n'
+                                   '    def _ports(cls):\n        cls.port = lab_ports.reserve(cls.lab)\n    @classmethod\n'
+                                   '    def tearDownClass(cls):\n        lab_ports.release(cls.lab)\n', "F"),
+    "setup-unguarded-via-helper": ('import lab_ports, tempfile, unittest\nimport test_ship_reship_served as _lab\n'
+                                   'def _env(lab):\n    return _lab.kernel_env(lab, lab, lab, 1, "t")\n'
+                                   'class T(unittest.TestCase):\n    @classmethod\n    def setUpClass(cls):\n'
+                                   '        cls.lab = tempfile.mkdtemp()\n        cls.env = _env(cls.lab)\n'
+                                   '    @classmethod\n    def tearDownClass(cls):\n        lab_ports.release(cls.lab)\n', "F"),
+    "setup-cleanup-after-reserve": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                                    '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n'
+                                    '        cls.port = lab_ports.reserve(cls.lab)\n'
+                                    '        cls.addClassCleanup(lab_ports.release, cls.lab)\n', "F"),
+    "setup-cleanup-conditional": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                                  '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n        if cls.lab:\n'
+                                  '            cls.addClassCleanup(lab_ports.release, cls.lab)\n'
+                                  '        cls.port = lab_ports.reserve(cls.lab)\n', "F"),
+    "setup-cleanup-not-release": ('import lab_ports, shutil, tempfile, unittest\nclass T(unittest.TestCase):\n'
+                                  '    @classmethod\n    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n'
+                                  '        cls.addClassCleanup(shutil.rmtree, cls.lab)\n'
+                                  '        cls.port = lab_ports.reserve(cls.lab)\n    @classmethod\n    def tearDownClass(cls):\n'
+                                  '        lab_ports.release(cls.lab)\n', "F"),
+    "setup-cleanup-atexit": ('import atexit, lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                             '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n'
+                             '        atexit.register(lab_ports.release, cls.lab)\n        cls.port = lab_ports.reserve(cls.lab)\n',
+                             "F"),
+    # a registrar of the class's own that tearDownClass drains: a failed setUpClass never runs it
+    "setup-cleanup-own-registrar": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    _downs = []\n'
+                                    '    @classmethod\n    def _on_down(cls, fn, *args):\n        cls._downs.append((fn, args))\n'
+                                    '    @classmethod\n    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n'
+                                    '        cls._on_down(lab_ports.release, cls.lab)\n        cls.port = lab_ports.reserve(cls.lab)\n'
+                                    '    @classmethod\n    def tearDownClass(cls):\n        for fn, args in cls._downs:\n'
+                                    '            fn(*args)\n', "F"),
+    "setup-cleanup-other-class": ('import lab_ports, tempfile, unittest\nclass Other(unittest.TestCase):\n    pass\n'
+                                  'class T(unittest.TestCase):\n    @classmethod\n    def setUpClass(cls):\n'
+                                  '        cls.lab = tempfile.mkdtemp()\n        Other.addClassCleanup(lab_ports.release, cls.lab)\n'
+                                  '        cls.port = lab_ports.reserve(cls.lab)\n', "F"),
+    "setup-narrow-except": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                            '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n        try:\n'
+                            '            cls.port = lab_ports.reserve(cls.lab)\n        except unittest.SkipTest:\n'
+                            '            cls.tearDownClass()\n            raise\n    @classmethod\n    def tearDownClass(cls):\n'
+                            '        lab_ports.release(cls.lab)\n', "F"),
+    "setup-handler-skips-teardown": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                                     '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n        try:\n'
+                                     '            cls.port = lab_ports.reserve(cls.lab)\n        except unittest.SkipTest:\n'
+                                     '            raise\n        except BaseException:\n            cls.tearDownClass()\n'
+                                     '            raise\n    @classmethod\n    def tearDownClass(cls):\n'
+                                     '        lab_ports.release(cls.lab)\n', "F"),
+    "setup-reserve-outside-try": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                                  '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n'
+                                  '        cls.port = lab_ports.reserve(cls.lab)\n        try:\n            cls.n = 1\n'
+                                  '        except BaseException:\n            cls.tearDownClass()\n            raise\n'
+                                  '    @classmethod\n    def tearDownClass(cls):\n        lab_ports.release(cls.lab)\n', "F"),
+    "setup-teardown-keeps-port": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                                  '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n        try:\n'
+                                  '            cls.port = lab_ports.reserve(cls.lab)\n        except BaseException:\n'
+                                  '            cls.tearDownClass()\n            raise\n    @classmethod\n'
+                                  '    def tearDownClass(cls):\n        cls.lab = None\n    def test_down(self):\n'
+                                  '        lab_ports.release(self.lab)\n', "F"),
+    "clean-setup-class-cleanup": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                                  '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n'
+                                  '        cls.addClassCleanup(lab_ports.release, cls.lab)\n'
+                                  '        cls.port = lab_ports.reserve(cls.lab)\n', None),
+    "clean-setup-try-method": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                               '    def setUpClass(cls):\n        try:\n            cls._boot()\n        except BaseException:\n'
+                               '            cls.tearDownClass()\n            raise\n    @classmethod\n    def _boot(cls):\n'
+                               '        cls.lab = tempfile.mkdtemp()\n        cls.port = lab_ports.reserve(cls.lab)\n'
+                               '    @classmethod\n    def tearDownClass(cls):\n        lab_ports.release(getattr(cls, "lab", None))\n',
+                               None),
+    "clean-setup-try-exception": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                                  '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n        try:\n'
+                                  '            cls.port = lab_ports.reserve(cls.lab)\n        except (OSError, Exception):\n'
+                                  '            cls.tearDownClass()\n            raise\n    @classmethod\n    def tearDownClass(cls):\n'
+                                  '        lab_ports.release(cls.lab)\n', None),
+    "clean-setup-try-bare": ('import lab_ports, tempfile, unittest\nclass T(unittest.TestCase):\n    @classmethod\n'
+                             '    def setUpClass(cls):\n        cls.lab = tempfile.mkdtemp()\n        try:\n'
+                             '            cls.port = lab_ports.reserve(cls.lab)\n        except unittest.SkipTest:\n'
+                             '            cls.tearDownClass()\n            raise\n        except:\n'
+                             '            cls.tearDownClass()\n            raise\n    @classmethod\n    def tearDownClass(cls):\n'
+                             '        lab_ports.release(cls.lab)\n', None),
+    "clean-setup-teardown-inherited": ('import lab_ports, tempfile, unittest\nclass Base(unittest.TestCase):\n'
+                                       '    @classmethod\n    def tearDownClass(cls):\n        lab_ports.release(cls.lab)\n'
+                                       'class T(Base):\n    @classmethod\n    def setUpClass(cls):\n'
+                                       '        cls.lab = tempfile.mkdtemp()\n        try:\n'
+                                       '            cls.port = lab_ports.reserve(cls.lab)\n        except BaseException:\n'
+                                       '            cls.tearDownClass()\n            raise\n', None),
 }
 
 
@@ -756,6 +1069,9 @@ class LabPortsCensus(unittest.TestCase):
 
     def test_the_door_is_imported_by_its_own_name(self):
         self._rule("A", "imports of the door under another spelling (use `import lab_ports`)")
+
+    def test_every_class_that_reserves_in_setupclass_releases_on_its_failure_path(self):
+        self._rule("F", "classes that reserve in setUpClass and would hold the ports if it raised")
 
     def test_each_planted_module_is_red_under_exactly_its_rule_and_the_clean_shapes_are_green(self):
         got = {}
@@ -864,7 +1180,7 @@ class LabPortsCensus(unittest.TestCase):
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--table"]:
         names, total = census(sys.argv[2] if len(sys.argv) > 2 else ROOT)
-        print("population %d files; reservers outside it, read under R and A: %d %s"
+        print("population %d files; reservers outside it, read under R, A and F: %d %s"
               % (len(names), len(total["reservers"]), total["reservers"]))
         for r in RULES + ("spawns",):
             print("%s %d" % (r, len(total[r])))

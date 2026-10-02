@@ -39,7 +39,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   reserves the postal port under the kernel's lab itself), `lab_ports.wait_owned(proc,
   env)` after the `Popen`, with the exact environment handed to it, and
   `lab_ports.release(lab)` in the teardown once the lab's kernels are killed and
-  reaped. A port drawn by binding port 0 and closing the socket can be drawn again
+  reaped. A class that reserves in `setUpClass` releases on its failure path too,
+  since `tearDownClass` never runs after a `setUpClass` that raised:
+  `cls.addClassCleanup(lab_ports.release, cls.lab)` right after the lab is made, or
+  the reserve inside a `try` whose handler calls `cls.tearDownClass()` and re-raises.
+  A port drawn by binding port 0 and closing the socket can be drawn again
   before the kernel binds it, by the lab's next draw or by anything else on the
   machine, and a `/healthz` answer says nothing about which kernel gave it: a
   federated lab whose hub was handed its remote's port called the hub ready on the

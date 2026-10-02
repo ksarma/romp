@@ -81,6 +81,7 @@ class ServedBootParses(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.lab = tempfile.mkdtemp(prefix="romp-t323s1-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")

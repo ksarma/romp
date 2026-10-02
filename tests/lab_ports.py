@@ -44,8 +44,9 @@ THE DOOR. Every served module that boots a kernel takes its ports here and waits
                    some other way) or when `env` names no state root of its own.
 
 tests/test_lab_ports_census.py holds every served module to this door (no draw and release, no hand-written /healthz
-wait, every kernel spawn proved, every reserving module releasing); tests/test_lab_ports.py executes the door, against
-stand-ins and against two real kernels handed one port. Synthetic throughout: no real session data.
+wait, every kernel spawn proved, every reserving module releasing, and every class that reserves in setUpClass releasing
+on its failure path too); tests/test_lab_ports.py executes the door, against stand-ins and against two real kernels
+handed one port. Synthetic throughout: no real session data.
 """
 import os
 import socket
