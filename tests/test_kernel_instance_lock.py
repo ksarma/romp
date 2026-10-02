@@ -33,7 +33,8 @@ The pins, each red on the kernel before the lock for the reason it names:
      the bind (a source pin; pin 2 executes it);
   8. a kernel still waiting at the drain's deadline names the holder it reads then: with two kernels waiting on a holder
      that releases in time, exactly one serves and the other exits 75 at the deadline naming the kernel that took the
-     lock, not the holder that let it go; with the lock still held under the line of a drainer that is gone, the
+     lock, not the holder that let it go, and the same with the holder left a zombie when it lets go (exited and not
+     reaped, which kill(pid, 0) still finds); with the lock still held under the line of a drainer that is gone, the
      refusal is worded as a new owner that has not yet written its line; with the lock passed to a process that
      announced a drain of its own, the refusal names that process as draining until its deadline, not as serving.
 
@@ -530,7 +531,45 @@ class TheHolderAtTheDeadline(_Lab):
         self.assertEqual(len(lines), 1, "one refusal line: %r" % err)
         return lines[0]
 
+    @staticmethod
+    def proc_state(pid):
+        """The process's state letter ("Z" for a zombie, one that exited and is not yet reaped), from /proc/<pid>/stat,
+        else from ps; "gone" when neither finds it."""
+        try:
+            with open("/proc/%d/stat" % pid) as fh:
+                return fh.read().rsplit(")", 1)[1].split()[0]
+        except OSError:
+            pass
+        if os.path.isdir("/proc/self"):
+            return "gone"
+        out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        return out[:1] or "gone"
+
+    def let_go_unreaped(self, h):
+        """The holder's release without the reap: its stdin closes and it exits, and it stays a zombie, which kill(pid, 0)
+        still finds, until the test's cleanup reaps it (the holder's group kill plus wait)."""
+        h.stdin.close()
+        end = time.monotonic() + BOUND_S
+        while self.proc_state(h.pid) != "Z" and time.monotonic() < end:
+            time.sleep(0.02)
+        self.assertEqual(self.proc_state(h.pid), "Z", "the holder did not exit within %.0f s" % BOUND_S)
+
     def test_of_two_waiting_kernels_the_one_that_does_not_take_the_lock_is_refused_naming_the_one_that_did(self):
+        self._two_waiters(self.let_go)
+
+    def test_with_the_drainer_a_zombie_the_kernel_not_taking_the_lock_still_names_the_one_that_did(self):
+        # The drainer exits but is not reaped: kill(pid, 0) still finds it, so a deadline check that asked only whether the
+        # drainer's pid runs would read the drainer as holding past its deadline. The line read at the deadline is the
+        # winner's, which is what decides: the loser names the kernel that took the lock.
+        seen = {}
+        self._two_waiters(self.let_go_unreaped, at_verdict=lambda h: seen.setdefault("state", self.proc_state(h.pid)))
+        self.assertEqual(seen.get("state"), "Z", "the holder was not a zombie when the losing kernel exited, so the road "
+                                                 "did not run")
+
+    def _two_waiters(self, let_go, at_verdict=None):
+        """Two kernels wait on a holder that releases in time through `let_go(h)`: exactly one takes the lock and serves,
+        and the other exits 75 at the deadline naming the kernel that took the lock, not the holder that let it go.
+        `at_verdict(h)` runs the moment the losing kernel's exit is seen."""
         os.makedirs(os.path.join(self.lab, "dist"))        # current bundles, as pin 2: the kernel that takes the lock
         Path(self.lab, "dist", "render.js").write_text("")  # serves without building anything
         deadline = time.time() + TWO_WAITERS_DEADLINE_S
@@ -543,7 +582,7 @@ class TheHolderAtTheDeadline(_Lab):
         for p in (a, b):
             self.assertTrue(self.read_until(p, WAITING_TEXT, BOUND_S),
                             "kernel %d did not wait; stderr:\n%s" % (p.pid, self.stderr_of(p)[-3000:]))
-        self.let_go(h)
+        let_go(h)
         released = time.time()
         winner = None
         end = time.monotonic() + BOUND_S
@@ -556,6 +595,8 @@ class TheHolderAtTheDeadline(_Lab):
         self.assertLess(released, deadline, "the release came after the deadline: the pin waited too long to release")
         code, err, _, killed = self.verdict(loser, bound=max(0.0, deadline - time.time()) + BOUND_S)
         refused = time.time()
+        if at_verdict is not None:
+            at_verdict(h)
         self.assertEqual(code, EXIT_REFUSED, "the other kernel did not exit 75 (killed at the bound: %s); its stderr:\n%s"
                          % (killed, err[-3000:]))
         self.assertGreaterEqual(refused, deadline, "the other kernel was refused before the deadline: %s" % err[-2000:])
@@ -575,6 +616,7 @@ class TheHolderAtTheDeadline(_Lab):
                         "the kernel that took the lock never served; stderr:\n%s" % self.stderr_of(winner)[-4000:])
         self.assertIsNone(winner.poll(), "the kernel that took the lock is still serving")
         self.assertEqual(self.lock_line(), "%d serving" % winner.pid)
+        return h
 
     def test_a_lock_still_held_under_the_line_of_a_drainer_that_is_gone_is_refused_as_a_new_owner(self):
         # the holder hands its open lock to a child and exits once the kernel waits, so at the deadline the lock is still
