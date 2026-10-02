@@ -15,8 +15,9 @@ every other runner's to none or 0, and require a step before Run pytest that ins
 refuses -n, 0 included. The job's cap and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130 as merged,
 but for the Linux figure: the runs before 2026-09-30 they cite are romp-on/romp's Actions runs of its serial suite. With
 two workers the measurement put this fork's Linux cells at about half their serial time; the suite has grown since, and
-the Linux cap of 40 is sized from this fork's own two-worker run 36664031774 (the job's comment in ci.yml). Source pins, as
-tests/test_ci_bats_bound.py: the workflow text read by line shape, with no YAML library in the test deps."""
+the Linux cap of 50 is sized from the slowest finished two-worker Linux cell, the 3.14t cell of this fork's run
+37005067129 (the job's comment in ci.yml). Source pins, as tests/test_ci_bats_bound.py: the workflow text read by line
+shape, with no YAML library in the test deps."""
 import os
 import re
 import shlex

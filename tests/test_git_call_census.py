@@ -582,8 +582,9 @@ UNHELD_PLANTS = {
                                  "        pass\n        try:\n            proc = subprocess.Popen(argv,"),
     },
     "scripts/batch.py": {
-        "run_command's hold removed": ("    _hold_stops()\n    try:\n        p = subprocess.Popen(cmd, cwd=cwd)\n",
-                                       "    pass\n    try:\n        p = subprocess.Popen(cmd, cwd=cwd)\n"),
+        "run_command's hold removed": (
+            "    _hold_stops()\n    try:\n        p = subprocess.Popen(cmd, cwd=cwd, start_new_session=True)\n",
+            "    pass\n    try:\n        p = subprocess.Popen(cmd, cwd=cwd, start_new_session=True)\n"),
         "bisect's command through subprocess.run, as before the closing check wf_fb19febe-36b": (
             "    if run_command(args.cmd, wt) == 0:", "    if subprocess.run(args.cmd, cwd=wt).returncode == 0:"),
     },

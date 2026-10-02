@@ -416,18 +416,27 @@ subject; `verify` refuses the branch otherwise.
    bound (`finish` reports a `pr-orphans.sh` stopped at the bound as unread and carries on, the
    merge having happened). SIGTERM stops it, and so do SIGHUP and Ctrl-C (SIGINT) unless it was
    started with them ignored (under `nohup`, or as a shell's background job), which it keeps: any
-   process it is waiting on is killed (a `git`, or one of those two scripts, with its process group;
-   `gh`, or the command `bisect` runs, alone), its cleanup runs, and it exits 128 plus the signal's
-   number. Each step of that cleanup (the checkout of the batch branch and the `git bisect reset` in
-   `bisect`, the removal of the ledger check's temporary worktree in `verify`) runs to its end: a
+   process it is waiting on is ended with its process group (a `git`, one of those two scripts,
+   `gh`, or the command `bisect` runs, each started in a session of its own, so what it started goes
+   too; neither `gh` nor that command has a controlling terminal, so a prompt through `/dev/tty`
+   fails, while the descriptors they inherit work as before), its cleanup runs, and it exits 128 plus
+   the signal's number. Each step of that cleanup (the checkout of the batch branch and the
+   `git bisect reset` in `bisect`, the removal of the ledger check's temporary worktree in `verify`)
+   runs to its end: a
    SIGTERM, SIGHUP or Ctrl-C that lands inside one runs it again from its start, with later ones
-   ignored. A stop that arrives
+   ignored. The cleanup also runs for a stop during a step it undoes: one while `bisect` checks
+   out the base, or while its `git bisect start` runs, leaves the worktree on the batch branch with
+   no bisect in progress. When the worktree had no changes to tracked files before those steps, the
+   cleanup's checkout of the branch is forced (and in `bisect`'s cleanup after its steps it runs
+   before the `git bisect reset`), so the branch's tree is back even when the stop ended a checkout
+   after it had written the other commit's files and index and before it moved HEAD; a worktree
+   that had changes to tracked files gets the unforced checkout, which keeps them. A stop that arrives
    while it starts any of those processes, or the `git` of the sweep's excuse rule that `verify`,
    `plan` and `assemble --repin` run, is held until the process has started and then ends it the
-   same way. A `git` or one
-   of the two scripts gets SIGTERM first here too, then SIGKILL 10 s later, so a `git worktree add`
-   stopped or killed at the bound removes the worktree it was adding and its registration rather
-   than leaving them locked, and the next `assemble` is not refused on a lock it left. The files the
+   same way. Each of those processes gets SIGTERM first here too, then SIGKILL 10 s later, so a
+   `git worktree add` stopped or killed at the bound removes the worktree it was adding and its
+   registration rather than leaving them locked, and the next `assemble` is not refused on a lock it
+   left. The files the
    sweep and `scripts/batch.py` keep for themselves, which a leg can reach (the state dir from its
    log's path, your clone's common dir through its checkout's alternates), are created or opened
    without waiting, and eight reads of them fail closed. (1) Each leg's log is created afresh,

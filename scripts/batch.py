@@ -115,9 +115,11 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     having happened, and carries on. Not bounded: bisect's test command, which it runs at the tip, at the base and at
     each step, and gh, with anything it starts (gh reads the clone's remotes with a git of its own). SIGTERM, SIGHUP
     and SIGINT (Ctrl-C) stop the tool (but a SIGHUP or SIGINT the tool was started with ignored, as by nohup or as a
-    shell's background job, stays ignored): any process it is waiting on is killed (a git or a run_tool process with
-    its process group, gh or bisect's command alone), each step of the cleanup runs to its end (_cleanup_steps), and
-    it exits 128 plus the signal's number (Stopped);
+    shell's background job, stays ignored): any process it is waiting on is ended with its process group (a git, a
+    run_tool process, gh or bisect's command, each started in a session of its own, so what it started goes too), each
+    step of the cleanup runs to its end (_cleanup_steps), the cleanup runs for a stop during any step it undoes
+    (bisect's checkout of the base and its git bisect start included), and it exits 128 plus the signal's number
+    (Stopped);
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
 """
@@ -190,15 +192,16 @@ class Fail(Exception):
 # ── process helpers ──────────────────────────────────────────────────────────
 
 def _run(cmd, cwd=None, check=True, env=None, input_text=None):
-    """A process that is not git, run without a bound (gh, which reads the clone's remotes with a git of its own), in
-    this tool's own process group, its output read; every git call goes through run_git, and the two processes this
-    tool starts that run git in the clone, scripts/pr-orphans.sh and the ledger script, through run_tool. It starts under
-    the stop hold, as run_git's git does (the closing check wf_fb19febe-36b, its item 4), and any exception while it runs
-    kills it (_held_wait)."""
+    """A process that is not git, run without a bound (gh, which reads the clone's remotes with a git of its own), its
+    output read; every git call goes through run_git, and the two processes this tool starts that run git in the clone,
+    scripts/pr-orphans.sh and the ledger script, through run_tool. It starts under the stop hold, as run_git's git does
+    (the closing check wf_fb19febe-36b, its item 4), and in a session of its own, as run_tool's process does, so any
+    exception while it runs ends it with its process group, gh's git included (_held_wait)."""
     _hold_stops()
     try:
-        p = subprocess.Popen(cmd, cwd=cwd, env=env, text=True, stdin=None if input_text is None else subprocess.PIPE,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p = subprocess.Popen(cmd, cwd=cwd, env=env, text=True, start_new_session=True,
+                             stdin=None if input_text is None else subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
     except BaseException:
         _release_stops()
         raise
@@ -210,13 +213,17 @@ def _run(cmd, cwd=None, check=True, env=None, input_text=None):
 
 
 def run_command(cmd, cwd):
-    """The exit status of `cmd` run in `cwd`, bisect's command: in this tool's own process group, with its stdin, stdout
-    and stderr, and without a bound, since a test command can rightly take longer than any git call. It starts under the
-    stop hold, as _run's process does (the closing check wf_fb19febe-36b, its item 4), and any exception while it runs
-    kills it (_held_wait)."""
+    """The exit status of `cmd` run in `cwd`, bisect's command: with this tool's stdin, stdout and stderr, and without a
+    bound, since a test command can rightly take longer than any git call. It starts under the stop hold, as _run's
+    process does (the closing check wf_fb19febe-36b, its item 4), and in a session of its own, so any exception while it
+    runs ends it with its process group, what it started included (_held_wait). A session, not only a group: a group of
+    its own in this tool's session would be a background job of the terminal there, stopped (SIGTTIN) at its first read
+    of it. In a session of its own the terminal is not its controlling terminal: it reads and writes the descriptors it
+    inherits without job control, a prompt it opens /dev/tty for fails (run_git's git has no terminal either), and a
+    Ctrl-C at the terminal reaches this tool, whose stop then ends the command's group."""
     _hold_stops()
     try:
-        p = subprocess.Popen(cmd, cwd=cwd)
+        p = subprocess.Popen(cmd, cwd=cwd, start_new_session=True)
     except BaseException:
         _release_stops()
         raise
@@ -225,21 +232,24 @@ def run_command(cmd, cwd):
 
 
 def _held_wait(p, input_text=None):
-    """(stdout, stderr) of `p`, a process _run or run_command started in this tool's own process group, once it ends.
-    Any exception while it waits ends it first, then propagates: a stop held while `p` started among them, which
-    _release_stops raises here, inside the try, and a stop (Ctrl-C among them) that arrives while it runs. `p` alone is
-    killed (SIGKILL), as subprocess.run kills its child: it shares this tool's group, so there is no group of its own to
-    end; then it is reaped and its pipes closed unread."""
+    """(stdout, stderr) of `p`, a process _run or run_command started in a session of its own, once it ends. Any
+    exception while it waits ends it with its process group first (_end_group: SIGTERM to the group, SIGKILL to what is
+    left of it GIT_TERM_GRACE seconds later, `p` reaped and its pipes closed unread; its stdin, when it has one, is
+    closed too), then propagates: a stop held while `p` started among them, which _release_stops raises here, inside the
+    try, and a stop (Ctrl-C among them) that arrives while it runs. The group goes, as run_tool's does, so what `p`
+    started goes with it: when `p` was started in this tool's own group and killed alone, as subprocess.run kills its
+    child, gh's git or a child of bisect's command waiting on a FIFO ran on after the stop (the focused re-check
+    wf_e3f48b16-6ec; the 13:24Z ruling of 2026-10-02 on PR 926, its item 2)."""
     try:
         _release_stops()
         return p.communicate(input_text)
     except BaseException:
-        p.kill()
-        p.wait()
-        for f in (p.stdin, p.stdout, p.stderr):
-            if f is not None:
+        try:
+            _end_group(p)
+        finally:
+            if p.stdin is not None:
                 try:
-                    f.close()
+                    p.stdin.close()
                 except OSError:
                     pass
         raise
@@ -273,12 +283,13 @@ class GitBound(Fail):
 
 
 # The signals that stop the tool (the closing check wf_3b100f5e-b38, its item 4): each raises Stopped, a BaseException
-# as scripts/sweep.py's Stopped is, so the except path of run_git and run_tool kills the process it started, which runs
-# in a session of its own that no signal sent to batch.py or to its terminal's process group reaches, with that
-# process's group (_run and run_command, which start gh and bisect's command in batch.py's own group, kill their child
-# alone, on the same except path: _held_wait), and every finally block runs (the ledger check's temporary worktree is
-# removed); main prints the signal and exits 128 plus its number. SIGINT is one of them (the 05:30Z ruling of
-# 2026-10-02 on PR 926, its item 3), as in scripts/sweep.py, so Ctrl-C runs the same cleanup as SIGTERM and SIGHUP.
+# as scripts/sweep.py's Stopped is, so the except path of run_git, run_tool, _run and run_command ends the process it
+# started, which runs in a session of its own that no signal sent to batch.py or to its terminal's process group
+# reaches, with that process's group (_bounded_wait, _held_wait; _run and run_command started gh and bisect's command in
+# batch.py's own group and killed that process alone until the 13:24Z ruling of 2026-10-02 on PR 926, its item 2), and
+# every finally block runs (the ledger check's temporary worktree is removed); main prints the signal and exits 128 plus
+# its number. SIGINT is one of them (the 05:30Z ruling of 2026-10-02 on PR 926, its item 3), as in scripts/sweep.py, so
+# Ctrl-C runs the same cleanup as SIGTERM and SIGHUP.
 # Before, a Ctrl-C raised Python's KeyboardInterrupt, which _cleanup_steps did not catch, so one that landed inside a
 # cleanup step ended the cleanup there. A SIGHUP or SIGINT that batch.py was started with ignored (IGNORE_INHERITED:
 # nohup ignores SIGHUP, a non-interactive shell starts a background job with SIGINT ignored) stays ignored, as in
@@ -366,9 +377,16 @@ def _cleanup_steps(*steps):
 
 
 def install_stop_handlers(replaced):
-    """Make STOP_SIGNALS raise Stopped, leaving a SIGHUP or SIGINT the process was started with ignored
-    (IGNORE_INHERITED) as it is; each handler it replaces is recorded in `replaced` ({signal: handler}) before it is
-    replaced, and main puts them back when the command ends."""
+    """Give SIGCHLD its default action, and make STOP_SIGNALS raise Stopped, leaving a SIGHUP or SIGINT the process was
+    started with ignored (IGNORE_INHERITED) as it is; each handler it replaces is recorded in `replaced` ({signal:
+    handler}) before it is replaced, and main puts them back when the command ends. An ignored SIGCHLD survives exec,
+    and under it the kernel reaps each child as it exits, so a wait finds no exit status to read and subprocess reports
+    0 whatever the process returned: started so, batch.py read every failing git, script, gh or bisect command as one
+    that passed (the focused re-check wf_e3f48b16-6ec: verify read its git cat-file -e of the ledger script as finding
+    it, and the failed git worktree add that followed as done; the 13:24Z ruling of 2026-10-02 on PR 926, its item 3).
+    scripts/sweep.py's main sets the same default (install_stop_signals)."""
+    replaced[signal.SIGCHLD] = signal.getsignal(signal.SIGCHLD)
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     for s in STOP_SIGNALS:
         current = signal.getsignal(s)
         if s in IGNORE_INHERITED and current == signal.SIG_IGN:
@@ -462,14 +480,15 @@ def _bounded_wait(p, what, cwd):
         raise
 
 
-# How long a process run_git or run_tool ends (at the bound, or on a stop) has after SIGTERM to its process group before
-# what is left of the group gets SIGKILL. SIGTERM comes first because git's own handlers for it remove what the git had
-# made and not finished: its lock files, and a worktree it was adding with that worktree's registration. A SIGKILL
-# leaves them: the next git that wants the lock fails on it ("index.lock: File exists"; assemble's next run did, after
-# its worktree add was killed at the bound), and a registration stays locked ("initializing"), which neither git
-# worktree prune nor git worktree remove --force clears (the verify pass at the wf_3b100f5e-b38 build, its code
-# finding 1). Measured on 2026-10-01 (git 2.43.0): a git worktree add waiting on a FIFO at info/exclude exited on
-# SIGTERM with its registration and its half-made tree removed; under SIGKILL both stayed.
+# How long a process run_git or run_tool ends (at the bound, or on a stop), or one _run or run_command ends (on a stop;
+# neither has a bound), has after SIGTERM to its process group before what is left of the group gets SIGKILL. SIGTERM
+# comes first because git's own handlers for it remove what the git had made and not finished: its lock files, and a
+# worktree it was adding with that worktree's registration. A SIGKILL leaves them: the next git that wants the lock
+# fails on it ("index.lock: File exists"; assemble's next run did, after its worktree add was killed at the bound), and
+# a registration stays locked ("initializing"), which neither git worktree prune nor git worktree remove --force clears
+# (the verify pass at the wf_3b100f5e-b38 build, its code finding 1). Measured on 2026-10-01 (git 2.43.0): a git
+# worktree add waiting on a FIFO at info/exclude exited on SIGTERM with its registration and its half-made tree removed;
+# under SIGKILL both stayed.
 GIT_TERM_GRACE = 10
 
 
@@ -3365,11 +3384,25 @@ def cmd_bisect(args):
         raise Fail("%s is not checked out at %s (HEAD is %s)" % (wt, br, short(git("rev-parse", "HEAD", cwd=wt))))
     if run_command(args.cmd, wt) == 0:
         raise Fail("the command passes at the batch tip %s; nothing to bisect (does it run the failing test?)" % short(tip))
-    git("checkout", "--quiet", "--detach", base, cwd=wt)
+    # Each setup step is inside the try whose finally undoes it (the 13:24Z ruling of 2026-10-02 on PR 926, its item 1),
+    # so a stop that ends the step's git after it has moved HEAD (a post-checkout hook still running, say) still runs
+    # the cleanup: outside it, such a stop left the worktree detached at the base, or mid-bisect at the midpoint, while
+    # main said the cleanup ran. A bisect reset with no bisect in progress changes nothing (git says it is not
+    # bisecting, and the cleanup's check=False takes any exit). A checkout of the branch the worktree is already on keeps
+    # what its index and files hold, and a checkout's git writes the other commit's files and index before it moves
+    # HEAD: a stop between the two (git waiting on a FIFO planted at the worktree's logs/HEAD, which it writes in
+    # between) left the worktree on the branch with the base's or the midpoint's tree staged, and the next bisect
+    # refused, saying the command passes at the tip (the verify pass at the build of the 13:24Z ruling, its code finding
+    # 1). So when the worktree has no changes to tracked files before these steps, the cleanup's checkout of the branch
+    # is forced, putting the branch's tree back in the index and the files, and the bisect's cleanup runs that forced
+    # checkout before its reset, whose own checkout of the branch keeps them too. A worktree that had changes to
+    # tracked files keeps the unforced checkout and the reset alone, so the cleanup discards none of them.
+    force = ["--force"] if git("status", "--porcelain", "--untracked-files=no", cwd=wt) == "" else []
     try:
+        git("checkout", "--quiet", "--detach", base, cwd=wt)
         at_base = run_command(args.cmd, wt)
     finally:
-        _cleanup_steps(lambda: git("checkout", "--quiet", br, cwd=wt))
+        _cleanup_steps(lambda: git("checkout", "--quiet", *force, br, cwd=wt))
     if at_base != 0:
         raise Fail("the command fails at the base %s (%s) too; no member made it fail. Check the command and the environment before blaming a member"
                    % (short(base), remote_main()))
@@ -3380,8 +3413,8 @@ def cmd_bisect(args):
     # Each git step is bounded; the command is not, as the runs at the tip and the base above are not. Each step tests
     # another commit of the chain, so there are at most as many as it has commits, plus one.
     steps = int(git("rev-list", "--first-parent", "--count", "%s..%s" % (base, tip), cwd=wt)) + 1
-    proc = git_proc("bisect", "start", "--first-parent", tip, base, cwd=wt)
     try:
+        proc = git_proc("bisect", "start", "--first-parent", tip, base, cwd=wt)
         out = proc.stdout + proc.stderr
         m = _FIRST_BAD.search(out)
         while not m:
@@ -3399,7 +3432,8 @@ def cmd_bisect(args):
                 raise Fail("bisect did not name a first bad commit:\n%s" % out[-2000:])
         bad = m.group(1)
     finally:
-        _cleanup_steps(lambda: git("bisect", "reset", cwd=wt, check=False))
+        back = [lambda: git("checkout", "--quiet", "--force", br, cwd=wt)] if force else []
+        _cleanup_steps(*back, lambda: git("bisect", "reset", cwd=wt, check=False))
     members = members_by_n(state)
     hit = next((e for e in state["assembly"].get("merged", []) if e["merge"] == bad), None)
     if hit:

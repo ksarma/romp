@@ -37,7 +37,7 @@ class BatsStepBound(unittest.TestCase):
         secs = int(m.group(1))
         self.assertGreaterEqual(secs, 120, "below two minutes the slowest legitimate macOS test (the 60 s romp-serve probes) is at risk")
         self.assertLessEqual(secs, 600, "above ten minutes a hang still eats most of the Shell job's margin under its cap (45 "
-                             "minutes on Linux and 55 on macOS, a flat 35 when this bound was set)")
+                             "minutes on Linux and 60 on macOS, a flat 35 when this bound was set)")
 
     def test_the_step_still_runs_every_bats_file(self):
         self.assertIn("tests/*.bats", self.cmd)
@@ -58,15 +58,20 @@ class PythonJobCeiling(unittest.TestCase):
     the cap where about 20 plus 10 plus setup is about 31. Linux 35 to 40 on 2026-09-30 by the same rule (the PR's narrow
     landing delta, ruling 6): on this fork's dispatch run 36664031774, with two workers, the Linux cells' pytest steps
     took 1326 to 1572 s and their other steps at most 30 s, so the 3.10 cell's 1572 s plus the 600 s per-test timeout
-    plus 30 s of setup is 2202 s, about 36 min 42 s; the floor is 37, so a revert to 35 goes red, and the ceiling
-    stays 45."""
+    plus 30 s of setup is 2202 s, about 36 min 42 s; the floor was 37, so a revert to 35 went red, and the ceiling
+    stayed 45. Linux 40 to 50 on 2026-10-02 by the same rule, applied to the finished Linux cells among the runs on main,
+    on the batch branches and on the open PRs whose tests will land (a cell cancelled at a cap has no measured length):
+    the slowest, the 3.14t cell of run 37005067129, took 2219 s in its pytest step with two workers and 29 s in the steps
+    before it, so 2219 s plus the 600 s per-test timeout plus 29 s is 2848 s, about 47 min 28 s; the floor is 48, so a
+    revert to 40 or 45 goes red, and the ceiling is 50, the rule's figure, so a larger cap is sized again in the change
+    that sets it."""
     def setUp(self):
         src = open(WF).read()
         m = re.search(r"^  python:\n((?:    .*\n|\n)+?)    strategy:\n", src, re.M)
         self.assertTrue(m, "the python job's head moved: re-anchor this pin")
         self.head = m.group(1)
 
-    def test_macos_cells_get_sixty_minutes_and_linux_forty_and_neither_reverts_below_its_floor(self):
+    def test_macos_cells_get_sixty_minutes_and_linux_fifty_and_neither_reverts_below_its_floor(self):
         m = re.search(r"^    timeout-minutes: \$\{\{ matrix\.os == 'macos-latest' && (\d+) \|\| (\d+) \}\}$", self.head, re.M)
         self.assertTrue(m, "the python job's timeout-minutes is not the per-cell expression (macos-latest && N || M)")
         macos, linux = int(m.group(1)), int(m.group(2))
@@ -75,11 +80,12 @@ class PythonJobCeiling(unittest.TestCase):
                                 "into its pytest step, so its suite sits near 42 to 43 minutes; that plus the 600 s per-test timeout "
                                 "plus setup is 53 to 54, so a cap below 54 cuts a green run")
         self.assertLessEqual(macos, 60, "past an hour a hung macOS cell eats the dispatch")
-        self.assertGreaterEqual(linux, 37, "the Linux cells need the margin: on this fork's run 36664031774 (2026-09-30) the 3.10 "
-                                "Linux cell's pytest step took 1572 s with two workers and its other steps 30 s; that plus the 600 s "
-                                "per-test timeout is 2202 s, about 36 min 42 s, so a cap below 37 kills a stall that begins late in "
-                                "the run before the per-test timeout names it")
-        self.assertLessEqual(linux, 45, "a hung Linux cell past 45 minutes delays its run's verdict, a batch push's among them, for nothing")
+        self.assertGreaterEqual(linux, 48, "the Linux cells need the margin: the slowest finished Linux cell, the 3.14t cell of this "
+                                "fork's run 37005067129 (2026-10-02), took 2219 s in its pytest step with two workers and 29 s in the "
+                                "steps before it; that plus the 600 s per-test timeout is 2848 s, about 47 min 28 s, so a cap below 48 "
+                                "kills a stall that begins late in the run before the per-test timeout names it")
+        self.assertLessEqual(linux, 50, "a hung Linux cell past 50 minutes, the rule's figure from the slowest finished cell, delays its "
+                             "run's verdict, a batch push's among them, for nothing")
 
 
 class ExtensionJobCeiling(unittest.TestCase):

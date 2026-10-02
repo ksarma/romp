@@ -26,22 +26,26 @@ name: CI
 # test that hung (the same hang is in main's macOS runs), and the bats cell failed 11 s into its
 # test step without running a test (bats could not gather the tests: macOS's bash 3.2 rejected the
 # file-scope `declare -gA` that tests/pre-push-hook.bats had then; fork PR 937 has since moved it
-# into a helper, and the file now loads under bash 3.2), where a working run of the suite takes
-# about 22 minutes: the macOS bats job ran all 1606 tests in 21 min 39 s in run 36807078533 (a
-# dispatch of 2026-10-01) and in 22 min 10 s in run 36714942087 (a dispatch of fork PR 937's
-# branch on 2026-09-30), each job's time from the jobs API.
+# into a helper, and the file now loads under bash 3.2), where a run that gets through the suite
+# takes as long as 47 min 39 s: that is the slowest macOS bats job among the finished runs on main,
+# the batch branches and the open PRs whose tests will land (the runs the Shell job's cap comment
+# reads), in run 36998141959 (a dispatch of fork PR 940's branch on 2026-10-02, a branch that
+# installs gitleaks and a newer bash on macOS), its time from the jobs API.
 # Going private needs a change to this file before the first private batch push. The Linux Python
 # cells' two workers do not fit the private runner (they peak at 10.9 GB; the Run pytest step gives
 # the measurement), so the cells must run serially, and by the serial ratio measured there (1437 s
-# against 739 s) the cells of run 36716348831 would take about 40 to 53 minutes each, every one past
-# the 40-minute cap. So run them serially with a larger cap (T230b's rule, at the python job's
-# timeout, gives about 63 minutes for the slowest, past the 45-minute ceiling
-# tests/test_ci_bats_bound.py holds) or split the suite across more cells. Estimated so, a batch run's
-# Linux jobs would bill about 325 minutes there (each cell's pytest step scaled by that ratio, every
-# other job at its public time; nothing has been run on 2 CPUs).
+# against 739 s) the cells of run 36716348831 would take about 40 to 53 minutes each, and those of
+# run 37005067129, the run the python job's 50-minute Linux cap is sized from, about 54 to 72, every
+# one past that cap. So run them serially with a larger cap (T230b's rule, at the python job's
+# timeout, gives about 63 minutes for run 36716348831's slowest cell and about 82 for run
+# 37005067129's, both past the 50-minute ceiling tests/test_ci_bats_bound.py holds) or split the
+# suite across more cells. Estimated so, a batch run's Linux jobs would bill about 325 minutes there
+# by run 36716348831 and about 421 by run 37005067129, whose Linux jobs bill 266 on the public
+# runner (each cell's pytest step scaled by that ratio, every other job at its public time; nothing
+# has been run on 2 CPUs).
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
-# an earlier note here said it was billed), but the macOS cells are slow (the bats
-# suite alone is about 22 minutes, above) and the runners are scarcer, so they do NOT run
+# an earlier note here said it was billed), but the macOS cells are slow (a macOS bats
+# job alone has taken 47 min 39 s, above) and the runners are scarcer, so they do NOT run
 # on every push. They run once a week on a schedule (see `on:`) and
 # by hand from the Actions tab ("Run workflow") when you want a cross-platform
 # check before a release or after touching a platform-sensitive surface (launchd,
@@ -117,11 +121,16 @@ jobs:
     # the rule gave 53 to 54. macOS gets 60, the pin's ceiling (past an hour a hung cell eats the
     # dispatch); on the dispatch of 2026-09-30 (run 36664031774) the macOS 3.10 and 3.13 cells were
     # both cancelled at this cap, 3555 s and 3598 s into their pytest steps, so the macOS suite now
-    # runs longer than the ceiling allows. Linux gets 40 by the same rule: on that dispatch the
-    # Linux cells' pytest steps took 1326 to 1572 s with two workers (the 3.10 cell the longest)
-    # and their other steps at most 30 s, so the rule gives 1572 + 600 + 30 = 2202 s, about
-    # 36 min 42 s, past the 35 minutes the cap had, and 40 leaves about 3 min 18 s.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 40 }}
+    # runs longer than the ceiling allows. Linux gets 50 by the same rule, applied to the finished
+    # Linux cells among the runs on main, on the batch branches and on the open PRs whose tests will
+    # land (a cell cancelled at a cap has no measured length; the Shell job's cap reads the same
+    # runs), read at 14:54 UTC on 2026-10-02: the slowest, the 3.14t cell of run 37005067129 (a
+    # dispatch of fork PR 926's branch on 2026-10-02, job 110831307530), took 2219 s in its pytest
+    # step with two workers and 29 s in the steps before it, so the rule gives 2219 + 600 + 29 =
+    # 2848 s, about 47 min 28 s, past the 40 minutes the cap had (set on 2026-09-30 from run
+    # 36664031774, whose slowest Linux pytest step took 1572 s), and 50 leaves about 2 min 32 s.
+    # Each step's time is the jobs API's.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 50 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -383,7 +392,8 @@ jobs:
         # as merged, but for the Linux figure: the runs before 2026-09-30 they cite are
         # romp-on/romp's Actions runs of its serial suite. With two workers the measurement above
         # put this fork's Linux cells at about half their serial time; the suite has grown since,
-        # and the Linux cap of 40 is sized from this fork's own two-worker run 36664031774.
+        # and the Linux cap of 50 is sized from the slowest finished two-worker Linux cell, the
+        # 3.14t cell of this fork's run 37005067129 (the job's comment above).
         # Under the Linux cells' workers a timeout ends the worker process running the hung test:
         # xdist fails that test by name ("worker 'gw0' crashed while running '<test id>'") and the
         # other tests run on. The thread dump pytest-timeout writes goes to that worker's stdout,
@@ -425,17 +435,18 @@ jobs:
     # exceed the 180 s per-test bound bats is given below plus setup, the margin the python
     # job's rule requires over its own 600 s per-test bound. Linux, 45: the slowest Linux job
     # among the finished runs on main, on the batch branches and on the open PRs whose tests
-    # will land (a run cancelled at a cap has no measured length), read on 2026-10-02, took
-    # 33 min 52 s, in run 36879494226 (a dispatch of fork PR 940's branch on 2026-10-01, job
-    # 110427331629; its Run bats step 2000 s); 33 min 52 s plus 10 minutes is 43 min 52 s, so
-    # 45. macOS, 55: the slowest macOS job among the same runs took 44 min 34 s, in run
-    # 36879494226 too (job 110427331398; its Run bats step 2644 s; it concluded failure, which
-    # still gives a measured length); 44 min 34 s plus 10 minutes is 54 min 34 s, so 55. Fork
-    # PR 940's branch installs gitleaks and a newer bash on macOS, so the credential cases run
-    # there, and that PR sets the same line. Each job's time is the jobs API's.
+    # will land (a run cancelled at a cap has no measured length), read at 14:53 UTC on
+    # 2026-10-02, took 34 min 20 s, in run 36998140007 (a pull_request run of fork PR 940's
+    # branch on 2026-10-02, job 110809463925; its Run bats step 2047 s; it concluded failure,
+    # which still gives a measured length); 34 min 20 s plus 10 minutes is 44 min 20 s, so 45.
+    # macOS, 60: the slowest macOS job among the same runs took 47 min 39 s, in run 36998141959
+    # (a dispatch of that branch on 2026-10-02, job 110809474598; its Run bats step 2840 s; it
+    # concluded failure too); 47 min 39 s plus 10 minutes is 57 min 39 s, so 60. Fork PR 940's
+    # branch installs gitleaks and a newer bash on macOS, so the credential cases run there,
+    # and that PR sets the same line. Each job's time is the jobs API's.
     # The vendored tooling tests that ran after Run bats moved to a job of their own
     # (vendored-tooling, below) on 2026-09-28 instead of this cap being raised to hold them.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 45 }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 45 }}
     strategy:
       fail-fast: false
       matrix:

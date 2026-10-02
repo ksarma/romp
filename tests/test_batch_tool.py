@@ -29,6 +29,7 @@ import importlib.util
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import stat
@@ -1905,6 +1906,16 @@ def _groups_of(pids):
     return groups
 
 
+def _release_fifo(path):
+    """Open the FIFO `path` for writing without waiting, and close it, so a reader blocked on it (a hook or a child a red
+    case left waiting) reads its end; nothing happens when no reader is waiting (ENXIO) or the FIFO is gone."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError:
+        return
+    os.close(fd)
+
+
 def _recorded_pids(path):
     """The pids a fake git wrote to `path` (its own and its child's), or [] when it never wrote them."""
     try:
@@ -2456,9 +2467,13 @@ exec "$PLANT_REAL_GIT" "$@"
     # argv, joined by spaces, holds STOP_ON (it takes the file STOP_ARM, so no later call does): that one sends the signal
     # STOP_SIG names (TERM, or INT as Ctrl-C sends it) to the process that started it, batch.py, and waits to be ended
     # with its group, as a stop that lands as a cleanup git starts. A later call with the same argv runs the real git.
+    # With STOP_PASS set, the first such call takes that file instead and runs the real git, so the second is the one
+    # stopped (the forced checkout of the branch, which bisect's two cleanups both run).
     STOP_AT_GIT = r"""#!/bin/sh
 case " $* " in
-  *"$STOP_ON"*) if mv "$STOP_ARM" "$STOP_ARM.taken" 2>/dev/null; then
+  *"$STOP_ON"*) if [ -n "$STOP_PASS" ] && mv "$STOP_PASS" "$STOP_PASS.taken" 2>/dev/null; then
+      :
+    elif mv "$STOP_ARM" "$STOP_ARM.taken" 2>/dev/null; then
       kill -"$STOP_SIG" $PPID
       sleep 30
       exit 1
@@ -2467,47 +2482,196 @@ esac
 exec "$PLANT_REAL_GIT" "$@"
 """
 
-    def stop_at_git(self, call, sig=signal.SIGTERM):
-        """fx.env with STOP_AT_GIT first on PATH, armed to send `sig` to batch.py at the first git call holding `call`; and
-        a function saying whether that call was met (the arm taken). Once per fixture: the git lives in its temp dir."""
+    def stop_at_git(self, call, sig=signal.SIGTERM, second=False):
+        """fx.env with STOP_AT_GIT first on PATH, armed to send `sig` to batch.py at the first git call holding `call`, or
+        with `second` at the second one; and a function saying whether that call was met (the arm taken). Once per
+        fixture: the git lives in its temp dir."""
         fx = self.fx
         d = os.path.join(fx.tmp, "stop-at-git")
         os.makedirs(d)
         with open(os.path.join(d, "git"), "w") as f:
             f.write(self.STOP_AT_GIT)
         os.chmod(os.path.join(d, "git"), 0o755)
-        arm = os.path.join(d, "arm")
+        arm, first = os.path.join(d, "arm"), os.path.join(d, "pass")
         open(arm, "w").close()
         env = dict(fx.env, PATH=d + os.pathsep + fx.env["PATH"], STOP_ON=call, STOP_ARM=arm,
                    STOP_SIG=signal.Signals(sig).name[3:], PLANT_REAL_GIT=shutil.which("git", path=fx.env["PATH"]))
+        if second:
+            open(first, "w").close()
+            env["STOP_PASS"] = first
         return env, lambda: os.path.exists(arm + ".taken")
 
     def test_a_stop_as_bisects_cleanup_git_starts_still_leaves_the_worktree_on_the_branch_and_reset(self):
         """The verify pass at the closing check wf_fb19febe-36b's build, its code finding 4, in bisect: SIGTERM, or SIGINT
         as Ctrl-C sends it, reaches batch.py just as a cleanup git starts (STOP_AT_GIT; batch.py started with SIGINT's
-        handler Python's own, BATCH_TERMINAL_DRIVER), the checkout of the batch branch after the run at the base, or the
-        bisect reset after the steps. The stop ends that git, and the step runs again with the stop signals ignored
-        (_cleanup_steps), so batch.py exits 128 plus the signal's number naming it, with the worktree on batch/b1 at the
-        tip and no bisect in progress, and the next bisect names #101. Before this change the stop ended the cleanup
-        there: the worktree was left detached at the base (the next bisect refused it) or mid-bisect. SIGINT is a stop
-        like SIGTERM (the 05:30Z ruling of 2026-10-02 on PR 926, its item 3): with it left as Python's KeyboardInterrupt
-        (the mutant mIntDefault), which _cleanup_steps does not catch, a Ctrl-C there ended the cleanup the same way and
-        batch.py died of the signal."""
+        handler Python's own, BATCH_TERMINAL_DRIVER), the checkout of the batch branch after the run at the base, or,
+        after the steps, the checkout of the batch branch (the fixture's worktree has no changes, so both checkouts are
+        forced; the second is the second call with that argv) or the bisect reset that follows it. The stop ends that
+        git, and the step runs again with the stop signals ignored (_cleanup_steps), and so do the steps after it, so
+        batch.py exits 128 plus the signal's number naming it, with the worktree on batch/b1 at the tip and no bisect in
+        progress, and the next bisect names #101. Before this change the stop ended the cleanup there: the worktree was
+        left detached at the base (the next bisect refused it) or mid-bisect. SIGINT is a stop like SIGTERM (the 05:30Z
+        ruling of 2026-10-02 on PR 926, its item 3): with it left as Python's KeyboardInterrupt (the mutant
+        mIntDefault), which _cleanup_steps does not catch, a Ctrl-C there ended the cleanup the same way and batch.py
+        died of the signal."""
         n = 0
         for sig in (signal.SIGTERM, signal.SIGINT):
-            for call in ("checkout --quiet batch/b1", "bisect reset"):
-                with self.subTest(signal=sig, call=call):
+            for call, second in (("checkout --quiet --force batch/b1", False), ("checkout --quiet --force batch/b1", True),
+                                 ("bisect reset", False)):
+                with self.subTest(signal=sig, call=call, second=second):
                     if n:
                         self.fx = Fixture()
                         self.addCleanup(self.fx.close)
                     n += 1
                     tip, merge_101 = self.bisect_chain()
-                    env, met = self.stop_at_git(call, sig)
+                    env, met = self.stop_at_git(call, sig, second)
                     rc, out, err = self.bisect_with("exit 1", env=env, driver=BATCH_TERMINAL_DRIVER)
                     self.assertTrue(met(), "premise: the stop landed as `git %s` started" % call)
                     self.assertEqual((rc, out), (128 + sig, ""), out + err)
                     self.assertTrue(err.startswith("batch: stopped by signal %d;" % sig), err)
                     self.assert_reset_at_the_tip(tip)
+                    rc, out, err = self.bisect_with("exit 1")
+                    self.assertEqual((rc, err), (0, ""), out + err)
+                    self.assertIn("first bad: #101 ", out)
+
+    # A post-checkout hook for the bisect setup pins, inert unless SETUP_AT is set: the first checkout whose new HEAD is
+    # SETUP_AT (it takes the file SETUP_ARM, so no later one does) waits on the FIFO SETUP_FIFO, which only the test opens
+    # for writing, until it is ended; the step's git is then still running with HEAD already moved. Every other checkout
+    # passes at once.
+    SETUP_HOOK = r"""#!/bin/sh
+if [ -n "$SETUP_AT" ] && [ "$2" = "$SETUP_AT" ] && mv "$SETUP_ARM" "$SETUP_ARM.taken" 2>/dev/null; then
+  cat "$SETUP_FIFO" >/dev/null
+fi
+exit 0
+"""
+
+    def setup_hook(self, at):
+        """SETUP_HOOK as the fixture clone's post-checkout hook (the batch worktree runs its common dir's hooks), and
+        fx.env armed for the first checkout to `at`; returns (that env, the path that exists once that checkout has taken
+        the arm). On the way out the FIFO is opened for writing without waiting, so a hook a red case left waiting reads
+        its end and exits (_release_fifo)."""
+        fx = self.fx
+        d = os.path.join(fx.tmp, "setup-hook")
+        os.makedirs(d)
+        arm, fifo = os.path.join(d, "arm"), os.path.join(d, "fifo")
+        os.mkfifo(fifo)
+        self.addCleanup(_release_fifo, fifo)
+        hooks = os.path.join(fx.dev, ".git", "hooks")
+        os.makedirs(hooks, exist_ok=True)
+        with open(os.path.join(hooks, "post-checkout"), "w") as f:
+            f.write(self.SETUP_HOOK)
+        os.chmod(os.path.join(hooks, "post-checkout"), 0o755)
+        open(arm, "w").close()
+        return dict(fx.env, SETUP_AT=at, SETUP_ARM=arm, SETUP_FIFO=fifo), arm + ".taken"
+
+    def test_a_stop_during_bisects_setup_steps_leaves_the_worktree_on_the_branch_and_reset(self):
+        """The 13:24Z ruling of 2026-10-02 on PR 926, its item 1: SIGTERM, or SIGINT as Ctrl-C sends it (batch.py started
+        with SIGINT's handler Python's own, BATCH_TERMINAL_DRIVER), reaches batch.py while one of bisect's two setup
+        steps is still running with HEAD already moved: its post-checkout hook (SETUP_HOOK) waits on a FIFO the test
+        controls, in the detach checkout to the base, or in the checkout of the midpoint, #101's merge, that git bisect
+        start makes. The stop ends that git with its group, the hook included, and the cleanup the step needs runs (the
+        checkout of the batch branch; the bisect reset), so batch.py exits 128 plus the signal's number naming it, with
+        the worktree on batch/b1 at the tip and no bisect in progress, and the next bisect names #101. Before this change
+        both steps came before the try whose finally cleans up: the stop left the worktree detached at the base, or
+        mid-bisect at the midpoint (the next bisect refused it, naming HEAD), while batch.py said its cleanup ran (the
+        focused re-check wf_e3f48b16-6ec)."""
+        n = 0
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            for step in ("the checkout of the base", "git bisect start"):
+                with self.subTest(signal=sig, step=step):
+                    if n:
+                        self.fx = Fixture()
+                        self.addCleanup(self.fx.close)
+                    n += 1
+                    fx = self.fx
+                    tip, merge_101 = self.bisect_chain()
+                    base = fx.dev_git("merge-base", "origin/main", tip)
+                    env, taken = self.setup_hook(base if step == "the checkout of the base" else merge_101)
+                    rc, out, err = self.stop_when(lambda: os.path.exists(taken), "bisect", "b1", "--", "sh", "-c",
+                                                  self.BISECT_CMD % "exit 1", env=env, sig=sig,
+                                                  driver=BATCH_TERMINAL_DRIVER)
+                    self.assertEqual((rc, out), (128 + sig, ""), out + err)
+                    self.assertTrue(err.startswith("batch: stopped by signal %d;" % sig), err)
+                    self.assert_reset_at_the_tip(tip)
+                    rc, out, err = self.bisect_with("exit 1")
+                    self.assertEqual((rc, err), (0, ""), out + err)
+                    self.assertIn("first bad: #101 ", out)
+
+    # A reference-transaction hook for the window pins, inert unless WINDOW_AT is set: in the first transaction git
+    # prepares that moves HEAD to WINDOW_AT (it takes the file WINDOW_ARM, so no later one does) it waits on the FIFO
+    # WINDOW_FIFO, which only the test opens for writing, until it is ended. A checkout runs that hook after it has written
+    # the commit's files and the index and before HEAD moves, so the step's git is held there with HEAD not yet moved.
+    # Every other transaction passes at once.
+    WINDOW_HOOK = r"""#!/bin/sh
+while read -r old new ref; do
+  if [ "$1" = prepared ] && [ -n "$WINDOW_AT" ] && [ "$ref" = HEAD ] && [ "$new" = "$WINDOW_AT" ] &&
+     mv "$WINDOW_ARM" "$WINDOW_ARM.taken" 2>/dev/null; then
+    cat "$WINDOW_FIFO" >/dev/null
+  fi
+done
+exit 0
+"""
+
+    def window_hook(self, at):
+        """WINDOW_HOOK as the fixture clone's reference-transaction hook, and fx.env armed for the first move of HEAD to
+        `at`; returns (that env, the path that exists once that move has taken the arm). On the way out the FIFO is
+        opened for writing without waiting, so a hook a red case left waiting reads its end and exits (_release_fifo)."""
+        fx = self.fx
+        d = os.path.join(fx.tmp, "window-hook")
+        os.makedirs(d)
+        arm, fifo = os.path.join(d, "arm"), os.path.join(d, "fifo")
+        os.mkfifo(fifo)
+        self.addCleanup(_release_fifo, fifo)
+        hooks = os.path.join(fx.dev, ".git", "hooks")
+        os.makedirs(hooks, exist_ok=True)
+        with open(os.path.join(hooks, "reference-transaction"), "w") as f:
+            f.write(self.WINDOW_HOOK)
+        os.chmod(os.path.join(hooks, "reference-transaction"), 0o755)
+        open(arm, "w").close()
+        return dict(fx.env, WINDOW_AT=at, WINDOW_ARM=arm, WINDOW_FIFO=fifo), arm + ".taken"
+
+    def test_a_stop_after_a_setup_checkout_wrote_the_tree_and_before_head_moved_leaves_the_branchs_tree(self):
+        """The verify pass at the build of the 13:24Z ruling of 2026-10-02 on PR 926, its code finding 1: SIGTERM, or
+        SIGINT as Ctrl-C sends it (BATCH_TERMINAL_DRIVER), reaches batch.py while one of bisect's two setup checkouts
+        (the detach checkout to the base; the checkout of the midpoint, #101's merge, that git bisect start makes) has
+        written that commit's files and index and has not moved HEAD: git's reference-transaction hook (WINDOW_HOOK)
+        waits there on a FIFO the test controls, as git waits on a FIFO planted at the worktree's logs/HEAD, which it
+        writes between the two. HEAD is then still batch/b1 at the tip, with the other commit's tree staged (the
+        premise, read while the hook waits). The stop ends that git with its group, and the cleanup's checkout of the
+        branch, forced since the worktree had no changes to tracked files, puts the branch's tree back: batch.py exits
+        128 plus the signal's number naming it, with the worktree on batch/b1 at the tip, no changes to tracked files and
+        no bisect in progress, and the next bisect names #101. With the unforced checkout the cleanup had
+        (mBisectCleanupUnforced), the base's or the midpoint's tree stayed staged and the next bisect refused, saying
+        the command passes at the tip."""
+        n = 0
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            for step in ("the checkout of the base", "git bisect start"):
+                with self.subTest(signal=sig, step=step):
+                    if n:
+                        self.fx = Fixture()
+                        self.addCleanup(self.fx.close)
+                    n += 1
+                    fx = self.fx
+                    tip, merge_101 = self.bisect_chain()
+                    base = fx.dev_git("merge-base", "origin/main", tip)
+                    env, taken = self.window_hook(base if step == "the checkout of the base" else merge_101)
+                    wt, seen = fx.wt("b1"), {}
+
+                    def ready():
+                        # read once, while the hook waits: plumbing only, which writes neither the index nor a ref
+                        if not seen and os.path.exists(taken):
+                            seen.update(head=fx._git("rev-parse", "HEAD", cwd=wt),
+                                        staged=fx._git("diff-index", "--cached", "--name-only", "HEAD", cwd=wt))
+                        return bool(seen)
+                    rc, out, err = self.stop_when(ready, "bisect", "b1", "--", "sh", "-c", self.BISECT_CMD % "exit 1",
+                                                  env=env, sig=sig, driver=BATCH_TERMINAL_DRIVER)
+                    self.assertEqual(seen["head"], tip, "premise: HEAD had not moved when the stop came")
+                    self.assertNotEqual(seen["staged"], "", "premise: the step had written the other commit's tree")
+                    self.assertEqual((rc, out), (128 + sig, ""), out + err)
+                    self.assertTrue(err.startswith("batch: stopped by signal %d;" % sig), err)
+                    self.assert_reset_at_the_tip(tip)
+                    self.assertEqual(fx._git("status", "--porcelain", "--untracked-files=no", cwd=wt), "",
+                                     "the worktree holds the branch's tree")
                     rc, out, err = self.bisect_with("exit 1")
                     self.assertEqual((rc, err), (0, ""), out + err)
                     self.assertIn("first bad: #101 ", out)
@@ -3098,19 +3262,19 @@ if _child is not None:
                 out[name] = None
         return out
 
-    def stop_when(self, ready, *args, env=None):
-        """batch.py `args` (BATCH_BOUND_DRIVER with no call at a short bound, so batch.py's 600 s does not end the wait
-        here), started in a session of its own; once `ready()` is true, SIGTERM is sent to batch.py alone. Returns (rc,
-        stdout, stderr). batch.py's whole tree is killed on the way out when it is still running (kill_tree), and every
-        descendant of it read just before the signal, with that descendant's process group as read then, is killed on
-        the way out when it is still alive (_kill_groups, _kill_alive), so a red case leaves nothing running: a batch.py
-        the signal ended outright (a regression to no handler) has already exited by then, and the git it was waiting
-        on, in a session of its own, is no longer in the tree kill_tree walks, nor is a process that git started after
-        the read, which is in its group (_groups_of; the closing check wf_fb19febe-36b, its item 5;
-        StopPinsLeaveNothing holds it). The case fails by name if `ready()` is not true within 60 s or batch.py runs on
-        60 s after the signal."""
+    def stop_when(self, ready, *args, env=None, sig=signal.SIGTERM, driver=BATCH_BOUND_DRIVER):
+        """batch.py `args` (through `driver`, BATCH_BOUND_DRIVER or one of its variants, with no call at a short bound,
+        so batch.py's 600 s does not end the wait here), started in a session of its own; once `ready()` is true, `sig`
+        (SIGTERM unless given) is sent to batch.py alone. Returns (rc, stdout, stderr). batch.py's whole tree is killed
+        on the way out when it is still running (kill_tree), and every descendant of it read just before the signal,
+        with that descendant's process group as read then, is killed on the way out when it is still alive
+        (_kill_groups, _kill_alive), so a red case leaves nothing running: a batch.py the signal ended outright (a
+        regression to no handler) has already exited by then, and the git it was waiting on, in a session of its own, is
+        no longer in the tree kill_tree walks, nor is a process that git started after the read, which is in its group
+        (_groups_of; the closing check wf_fb19febe-36b, its item 5; StopPinsLeaveNothing holds it). The case fails by
+        name if `ready()` is not true within 60 s or batch.py runs on 60 s after the signal."""
         fx = self.fx
-        proc = subprocess.Popen([sys.executable, "-c", BATCH_BOUND_DRIVER, bound_spec(600), os.path.join(fx.dev, "scripts", "batch.py"),
+        proc = subprocess.Popen([sys.executable, "-c", driver, bound_spec(600), os.path.join(fx.dev, "scripts", "batch.py"),
                                  *args], cwd=fx.tmp, env=env or fx.env, text=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True)
         self.addCleanup(lambda: proc.poll() is None and kill_tree(proc.pid))
@@ -3127,13 +3291,13 @@ if _child is not None:
                       % (" ".join(args), proc.returncode, out, err))
         recorded.extend(_descendants(proc.pid))
         groups.extend(_groups_of(recorded))
-        os.kill(proc.pid, signal.SIGTERM)
+        os.kill(proc.pid, sig)
         try:
             out, err = proc.communicate(timeout=60)
         except subprocess.TimeoutExpired:
             kill_tree(proc.pid)
             out, err = proc.communicate()
-            self.fail("batch.py was still running 60 s after SIGTERM:\n%s%s" % (out, err))
+            self.fail("batch.py was still running 60 s after signal %d:\n%s%s" % (sig, out, err))
         return proc.returncode, out, err
 
     def planned(self):
@@ -3333,12 +3497,13 @@ except KeyboardInterrupt:
         """The closing check wf_fb19febe-36b, its item 4(a) and (b): SIGTERM, SIGHUP or SIGINT arrives right after _run
         has started its process (gh's runner; here sleepy, which execs sleep 300) or the excuse rule's git has started
         (scripts/sweep.py's run_git, in the module sweep_reader loads; a git first on PATH that starts a child and
-        waits), before the call is inside the try that ends it (START_WINDOW_DRIVER). The stop is held until that try and
-        raised there as Stopped: _run's process is killed (alone: it shares batch.py's group), and the git with its
-        group, its child included. Before this change _run started gh through subprocess.run, which raised the stop
-        inside the start and never killed the process, and the excuse rule's run_git held under sweep.py's own hold,
-        which batch.py's handlers do not read, so the stop was raised inside the start there too: each process ran on
-        after the call (the closing check's lens 2 and critic findings). Red under mRunUnheld and mNoBind."""
+        waits), before the call is inside the try that ends it (START_WINDOW_DRIVER). The stop is held until that try
+        and raised there as Stopped: _run's process is ended with its group (a session of its own since the 13:24Z
+        ruling of 2026-10-02 on PR 926, its item 2), and the git with its group, its child included. Before this change
+        _run started gh through subprocess.run, which raised the stop inside the start and never killed the process, and
+        the excuse rule's run_git held under sweep.py's own hold, which batch.py's handlers do not read, so the stop was
+        raised inside the start there too: each process ran on after the call (the closing check's lens 2 and critic
+        findings). Red under mRunUnheld and mNoBind."""
         tmp = tempfile.mkdtemp(prefix="batchwin-")
         self.addCleanup(shutil.rmtree, tmp, True)
         bindir = os.path.join(tmp, "bin")
@@ -3392,6 +3557,194 @@ except KeyboardInterrupt:
                 self.assertEqual(lines[-1], said, out + err)
                 self.assert_gone(recorded, "the command bisect started is gone")
                 self.assertEqual(fx._git("rev-parse", "HEAD", cwd=fx.wt("b1")), tip, "the batch worktree is still at the tip")
+
+    # The group pin's driver (the 13:24Z ruling of 2026-10-02 on PR 926, its item 2): it loads batch.py (argv[1]),
+    # installs its stop handlers as main does (SIGHUP's handler set to the default and SIGINT's to Python's own first, as
+    # a process started from a terminal has them), and runs _run (gh's runner) or run_command (bisect's command), argv[2],
+    # over the program argv[3] in the directory argv[4]. It prints what the call raised, or "returned".
+    GROUP_DRIVER = r"""
+import importlib.util, signal, sys
+spec = importlib.util.spec_from_file_location("batch_tool_group", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+which, prog, where = sys.argv[2:5]
+signal.signal(signal.SIGHUP, signal.SIG_DFL)
+signal.signal(signal.SIGINT, signal.default_int_handler)
+mod.install_stop_handlers({})
+try:
+    if which == "_run":
+        mod._run([prog], cwd=where)
+    else:
+        mod.run_command([prog], where)
+    print("returned", flush=True)
+except mod.Stopped as e:
+    print("Stopped %d" % e.signum, flush=True)
+except KeyboardInterrupt:
+    print("KeyboardInterrupt", flush=True)
+"""
+    # The program the group pin runs as gh or as bisect's command: it starts a git that reads the configuration of the
+    # repository GROUP_REPO, whose config is a FIFO no process writes, so that git waits, as gh's own git reading the
+    # clone's remotes waits on a FIFO planted there; then it writes its own pid and that git's to GROUP_PIDS and waits for
+    # the git. Its own output and the git's go to /dev/null, so neither, left running, holds the driver's pipes:
+    # run_command's process inherits the driver's stdout and stderr, and with a stop that no longer ended that process
+    # (_held_wait catching Exception alone) the waiter held them after the driver exited, so the watchdog's last read of
+    # the driver's output never ended (the verify pass at the build of the 13:24Z ruling, its code finding 2).
+    GROUP_WAITER = r"""#!/bin/sh
+exec >/dev/null 2>&1
+git -C "$GROUP_REPO" config --get remote.origin.url >/dev/null 2>&1 &
+echo $$ $! > "$GROUP_PIDS.tmp" && mv "$GROUP_PIDS.tmp" "$GROUP_PIDS"
+wait
+"""
+
+    def test_a_stop_while_gh_or_bisects_command_waits_ends_its_group_the_git_it_started_included(self):
+        """The 13:24Z ruling of 2026-10-02 on PR 926, its item 2: _run (gh's runner) and run_command (bisect's command)
+        start their process in a session of its own and, on a stop, end it with its process group (_held_wait,
+        _end_group), as run_tool does. The process (GROUP_WAITER) has started a git that waits on the FIFO at its
+        repository's config; once both have started, SIGTERM, SIGHUP or SIGINT reaches the driver (GROUP_DRIVER), the
+        call raises Stopped, and within 10 s neither the process nor its git is left. Before this change both calls
+        started their process in batch.py's own group and killed it alone: the git ran on after the driver exited,
+        blocked on the FIFO (the focused re-check wf_e3f48b16-6ec, 12 of 12 cases). Neither call has a bound, so a stop
+        is the one way either is ended early. Each driver runs in a session of its own under a 60 s watchdog, and the
+        pids the waiter recorded are killed when still alive before the watchdog's last read of the driver's output, and
+        again on the way out, since a driver that has exited has no descendants left for kill_tree to find."""
+        tmp = tempfile.mkdtemp(prefix="batchgroup-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        repo = os.path.join(tmp, "repo")
+        subprocess.run(["git", "init", "-q", repo], env=env, check=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+        config = os.path.join(repo, ".git", "config")
+        os.remove(config)
+        os.mkfifo(config)
+        self.addCleanup(_release_fifo, config)
+        waiter = os.path.join(tmp, "waiter")
+        with open(waiter, "w") as f:
+            f.write(self.GROUP_WAITER)
+        os.chmod(waiter, 0o755)
+        pids = os.path.join(tmp, "pids")
+        env.update(GROUP_REPO=repo, GROUP_PIDS=pids)
+        for which in ("_run", "run_command"):
+            for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+                with self.subTest(call=which, signal=sig):
+                    if os.path.exists(pids):
+                        os.remove(pids)
+                    p = subprocess.Popen([sys.executable, "-c", self.GROUP_DRIVER, str(SCRIPTS / "batch.py"), which, waiter,
+                                          tmp], cwd=tmp, env=env, text=True, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True)
+                    self.addCleanup(lambda p=p: p.poll() is None and kill_tree(p.pid))
+                    recorded = []
+                    self.addCleanup(_kill_alive, recorded)
+                    deadline = time.monotonic() + 60
+                    while not _recorded_pids(pids) and p.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    recorded.extend(_recorded_pids(pids))
+                    if len(recorded) != 2:
+                        kill_tree(p.pid)
+                        _kill_alive(recorded)
+                        out, err = p.communicate()
+                        self.fail("premise: the waiter never recorded itself and its git (rc %s):\n%s%s"
+                                  % (p.returncode, out, err))
+                    os.kill(p.pid, sig)
+                    try:
+                        out, err = p.communicate(timeout=60)
+                    except subprocess.TimeoutExpired:
+                        kill_tree(p.pid)
+                        _kill_alive(recorded)
+                        out, err = p.communicate()
+                        self.fail("the driver was still running 60 s after signal %d:\n%s%s" % (sig, out, err))
+                    self.assertEqual(out.splitlines()[-1:], ["Stopped %d" % sig], out + err)
+                    self.assert_gone(recorded, "the process the call started, and the git it started, are gone")
+
+    # The terminal pin's driver: started in a session of its own with a pty's slave as its stdin, stdout and stderr, it
+    # makes that pty its controlling terminal with its own group in the foreground, as a shell does for a command typed
+    # at it, and writes to argv[4] + ".premise" whether it is; then it loads batch.py (argv[1]), installs its stop
+    # handlers as main does, runs run_command over the shell text argv[3] in argv[2], and writes the exit status to
+    # argv[4] (whole, by a rename).
+    PTY_DRIVER = r"""
+import fcntl, importlib.util, os, signal, sys, termios
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+os.tcsetpgrp(0, os.getpgrp())
+signal.signal(signal.SIGTTOU, signal.SIG_DFL)
+signal.signal(signal.SIGTTIN, signal.SIG_DFL)
+with open(sys.argv[4] + ".premise", "w") as f:
+    f.write("%s\n" % (os.tcgetpgrp(0) == os.getpgrp()))
+spec = importlib.util.spec_from_file_location("batch_tool_pty", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.install_stop_handlers({})
+rc = mod.run_command(["sh", "-c", sys.argv[3]], sys.argv[2])
+with open(sys.argv[4] + ".tmp", "w") as f:
+    f.write("%d\n" % rc)
+os.replace(sys.argv[4] + ".tmp", sys.argv[4])
+"""
+    # The command the terminal pin runs: it writes its pid to PTY_PIDS (whole, by a rename), reads a line from its stdin,
+    # the terminal, and writes that line to PTY_GOT.
+    PTY_COMMAND = ('echo $$ > "$PTY_PIDS.tmp" && mv "$PTY_PIDS.tmp" "$PTY_PIDS"; read line; '
+                   'printf "%s\\n" "$line" > "$PTY_GOT"')
+
+    def test_bisects_command_reads_the_terminal_batch_py_runs_in_without_being_stopped(self):
+        """The 13:24Z ruling of 2026-10-02 on PR 926, its item 2, as run_command has it: bisect's command starts in a
+        session of its own, not only in a process group of its own (the verify pass at the build of that ruling, its
+        code finding 3). batch.py runs here with a pty as its controlling terminal and its group in the foreground
+        (PTY_DRIVER), and the command's stdin is that terminal; the command reads a line from it, which the test types
+        once the command has started, and run_command returns 0 with the line read. In a group of its own in batch.py's
+        session (the mutant mRunCommandGroupOnly, process_group=0 for start_new_session=True) the command is a
+        background job of that terminal: its read stops it (SIGTTIN), batch.py's wait never returns, and this case
+        fails after 30 s, killing the command while batch.py, its parent, has not reaped it (so the pid is still the
+        command's), then batch.py."""
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix="batchpty-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        pids, got, rc_file = (os.path.join(tmp, x) for x in ("pids", "got", "rc"))
+        master, slave = os.openpty()
+        self.addCleanup(os.close, master)
+        try:
+            p = subprocess.Popen([sys.executable, "-c", self.PTY_DRIVER, str(SCRIPTS / "batch.py"), tmp, self.PTY_COMMAND,
+                                  rc_file], env=dict(os.environ, PTY_PIDS=pids, PTY_GOT=got), stdin=slave, stdout=slave,
+                                 stderr=slave, start_new_session=True)
+        finally:
+            os.close(slave)
+        self.addCleanup(lambda: p.poll() is None and (p.kill(), p.wait()))
+        recorded = []
+        self.addCleanup(_kill_alive, recorded)
+        said = []
+
+        def drain(seconds, until):
+            """Read what the terminal shows (the driver's output and the echo of what is typed) until `until()` holds or
+            `seconds` pass; whether it holds."""
+            deadline = time.monotonic() + seconds
+            while not until() and time.monotonic() < deadline:
+                if select.select([master], [], [], 0.05)[0]:
+                    try:
+                        chunk = os.read(master, 4096)
+                    except OSError:              # EIO once no process holds the slave (Linux)
+                        chunk = b""
+                    said.append(chunk.decode(errors="replace"))
+                    if not chunk:
+                        time.sleep(0.05)
+            return until()
+
+        if not drain(60, lambda: os.path.exists(pids) or p.poll() is not None) or not os.path.exists(pids):
+            self.fail("premise: the command never started (driver rc %s):\n%s" % (p.poll(), "".join(said)))
+        recorded.extend(_recorded_pids(pids))
+        with open(rc_file + ".premise") as f:
+            self.assertEqual(f.read(), "True\n", "premise: the pty is batch.py's controlling terminal, its group in the "
+                             "foreground")
+        os.write(master, b"hello\n")
+        if not drain(30, lambda: os.path.exists(rc_file)):
+            state = "unknown"
+            try:
+                with open("/proc/%d/stat" % recorded[0]) as f:
+                    state = f.read().rsplit(")", 1)[1].split()[0]
+            except (OSError, IndexError):
+                pass
+            if p.poll() is None:
+                os.kill(recorded[0], signal.SIGKILL)
+            self.fail("bisect's command had not read the terminal 30 s after the line was typed (its state %s; T is "
+                      "stopped, as by SIGTTIN):\n%s" % (state, "".join(said)))
+        p.wait(timeout=60)
+        with open(got) as f, open(rc_file) as g:
+            self.assertEqual((f.read(), g.read()), ("hello\n", "0\n"), "".join(said))
 
     def test_a_stop_that_arrives_as_run_git_or_run_tool_starts_its_process_ends_that_process(self):
         """The verify pass at the wf_3b100f5e-b38 build, its code finding 2: SIGTERM, SIGHUP or SIGINT arrives right
@@ -3575,6 +3928,98 @@ def _kill_groups(pgids):
                 os.killpg(g, signal.SIGKILL)
             except OSError:
                 pass
+
+
+# Runs the rest of its argv (an interpreter's arguments) with SIGCHLD ignored, which exec keeps (the same driver as
+# tests/test_sweep_runner.py's IGNORE_SIGCHLD).
+IGNORE_SIGCHLD = ("import os, signal, sys; signal.signal(signal.SIGCHLD, signal.SIG_IGN); "
+                  "os.execv(sys.executable, [sys.executable] + sys.argv[1:])")
+# A git first on PATH for the SIGCHLD pin: it prints what git's rev-parse --show-toplevel --absolute-git-dir
+# --git-common-dir prints in a work tree, for the directory it runs in, and exits 1, so its exit status alone says
+# that the call failed.
+FAILING_GIT = r"""#!/bin/sh
+d=$(pwd -P)
+printf '%s\n%s\n%s\n' "$d" "$d/.git" "$d/.git"
+echo "planted failure" >&2
+exit 1
+"""
+
+
+class StartedWithSigchldIgnored(unittest.TestCase):
+    """The 13:24Z ruling of 2026-10-02 on PR 926, its item 3: an ignored SIGCHLD survives exec, and under it the kernel
+    reaps each child as it exits, so a wait finds no exit status to read and subprocess reports 0, whatever the process
+    returned. batch.py's main gives SIGCHLD its default action before any command runs (install_stop_handlers), as
+    scripts/sweep.py's does. Each run here starts batch.py with SIGCHLD ignored (IGNORE_SIGCHLD), in a session of its
+    own under a 60 s watchdog that kills its whole tree. Red at the head before this change, which had no reset: every
+    exit status read 0."""
+
+    # It prints whether SIGCHLD was ignored when this process started, loads batch.py (argv[1]), and runs its main as
+    # bisect, with cmd_bisect replaced by a probe that starts a process through each of the four runners in the
+    # directory argv[2] (run_git's git and run_tool's process, the FAILING_GIT first on PATH, which exits 1; _run's and
+    # run_command's, a shell that exits 4 and 3) and prints the exit status each returned and whether SIGCHLD was
+    # ignored when they ran.
+    DRIVER = r"""
+import importlib.util, json, os, signal, sys
+print(json.dumps({"started_ignored": signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN}), flush=True)
+spec = importlib.util.spec_from_file_location("batch_tool_sigchld", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+where = sys.argv[2]
+def probe(args):
+    repo = mod.GitRepo(where, None, None, os.path.dirname(where))
+    print(json.dumps({"run_git": mod.run_git(["status"], where, repo=repo).returncode,
+                      "run_tool": mod.run_tool(["git", "status"], where, repo=repo).returncode,
+                      "_run": mod._run(["sh", "-c", "exit 4"], cwd=where, check=False).returncode,
+                      "run_command": mod.run_command(["sh", "-c", "exit 3"], where),
+                      "ignored_at_call": signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN}), flush=True)
+mod.cmd_bisect = probe
+sys.exit(mod.main(["bisect", "b1", "--", "true"]))
+"""
+
+    def started_ignored(self, argv, env):
+        """(rc, stdout, stderr) of the interpreter run over `argv` with SIGCHLD ignored, under the watchdog."""
+        proc = subprocess.Popen([sys.executable, "-c", IGNORE_SIGCHLD, *argv], env=env, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and kill_tree(proc.pid))
+        try:
+            out, err = proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc.pid)
+            out, err = proc.communicate()
+            self.fail("the run was still going after 60 s:\n%s%s" % (out, err))
+        return proc.returncode, out, err
+
+    def test_batch_started_with_sigchld_ignored_reads_a_failing_git_as_failing(self):
+        """Started with SIGCHLD ignored, each runner returns its process's real exit status (DRIVER): run_git's and
+        run_tool's git, a FAILING_GIT that exits 1, return 1, and _run's and run_command's shells 4 and 3, with SIGCHLD
+        at its default when they ran. And batch.py run whole over a clone (ROMP_BATCH_REPO) whose git is FAILING_GIT is
+        refused at its first git call, the discovery, naming the failure: the git printed a work tree's three lines, so
+        the exit status is the one thing that tells the failure. With the reset dropped each runner returned 0, and the
+        discovery took the failing git's lines as the clone's."""
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix="batchsigchld-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        bindir, repo = os.path.join(tmp, "bin"), os.path.join(tmp, "repo")
+        os.makedirs(bindir)
+        os.makedirs(os.path.join(repo, ".git"))
+        with open(os.path.join(bindir, "git"), "w") as f:
+            f.write(FAILING_GIT)
+        os.chmod(os.path.join(bindir, "git"), 0o755)
+        env = {k: v for k, v in os.environ.items() if k not in ("ROMP_STATE_DIR", "ROMP_BATCH_REPO")}
+        env.update(PATH=bindir + os.pathsep + env.get("PATH", ""), XDG_STATE_HOME=os.path.join(tmp, "state"))
+        with self.subTest(case="the four runners"):
+            rc, out, err = self.started_ignored(["-c", self.DRIVER, str(SCRIPTS / "batch.py"), repo], env)
+            lines = [json.loads(x) for x in out.splitlines()]
+            self.assertEqual(lines[:1], [{"started_ignored": True}],
+                             "premise: the process started with SIGCHLD ignored:\n" + out + err)
+            self.assertEqual(lines[1:], [{"run_git": 1, "run_tool": 1, "_run": 4, "run_command": 3,
+                                          "ignored_at_call": False}], out + err)
+            self.assertEqual(rc, 0, out + err)
+        with self.subTest(case="batch.py whole"):
+            rc, out, err = self.started_ignored([str(SCRIPTS / "batch.py"), "bisect", "b1", "--", "true"],
+                                                dict(env, ROMP_BATCH_REPO=repo))
+            self.assertEqual((rc, out, err), (1, "", "batch: %s is not a git working tree that git recognizes (planted "
+                                                     "failure)\n" % repo))
 
 
 class StopPinsLeaveNothing(unittest.TestCase):
