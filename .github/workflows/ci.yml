@@ -381,7 +381,8 @@ jobs:
     # be4c8e0ab took 32 min 1 s in its PR run (job 110071521217) and 29 min 0 s in its dispatch
     # (job 110071618264); main's own Linux job took 26 min 39 s to 30 min 15 s over its three
     # runs before (jobs 110069374401 and 109591223429 the two ends), which gives 45 by this
-    # rule. macOS, 55: the dispatch at be4c8e0ab (job 110071618124), the first with gitleaks
+    # rule. macOS, 60: this rule on b5939b77a's measured run (below). Earlier, the dispatch at
+    # be4c8e0ab (job 110071618124), the first with gitleaks
     # installed in this cell and so the first to run the credential cases here, was cancelled at
     # 35 min 31 s by the flat 35-minute cap then in force, after 1,445 of its 1,631 cases
     # (1.45 s a case); the 186 cases left took 75 s in PR 937's macOS cell (job 109887118335,
@@ -391,12 +392,22 @@ jobs:
     # Measured at the PR's head d2091c2c1 (2026-10-01): Linux took 32 min 50 s in its dispatch
     # (run 36807971909, job 110198463325) and 33 min 8 s on its PR run's rerun (run 36807976002,
     # attempt 2, job 110209536820), 45 by the rule; macOS took 38 min 56 s (run 36807971909, job
-    # 110198463480), which gives 50 by the rule, so 55 stands on the projection above and the
-    # coordinator's ruling of 2026-09-30 (20:48Z). That macOS bats step again ended 272 s after
-    # its last case, and 298 s after the case whose fake head runs that sleep 300 ended.
+    # 110198463480), which gives 50 by the rule. The macOS cap was 55 from 2026-09-30, on the
+    # projection above (the coordinator's ruling, 20:48Z), and is 60 from 2026-10-02, on the
+    # measured run below (the coordinator's ruling, 12:51Z). That macOS bats step at d2091c2c1
+    # again ended 272 s after its last case, and 298 s after the case whose fake head runs that
+    # sleep 300 ended. Measured at b5939b77a (2026-10-02): macOS took 47 min 39 s in its
+    # dispatch (run 36998141959, job 110809474598); 47 min 39 s plus 10 minutes is 57 min 39 s,
+    # so 60. The rise from 38 min 56 s at d2091c2c1 (39 min 54 s at d5740856c, run 36886327450)
+    # is this PR's own added cost: the hook test file's cases took 1,877 s in that cell against
+    # 1,447 s at d5740856c, and the three new census cases took 198 s under macOS's awk (two
+    # existing census cases took 79 s more, the hook being longer). Linux took 34 min 20 s in
+    # that head's PR run (run 36998140007, job 110809463925) and 34 min 17 s in the dispatch
+    # (job 110809474650), and 33 min 55 s in the PR run at b13aae122 (run 37004344726, job
+    # 110828998958); 34 min 20 s plus 10 minutes is 44 min 20 s, so 45 by the rule.
     # The vendored tooling tests that ran after Run bats moved to a job of their own
     # (vendored-tooling, below) on 2026-09-28 instead of this cap being raised to hold them.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 45 }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 45 }}
     strategy:
       fail-fast: false
       matrix:

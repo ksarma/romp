@@ -46,8 +46,9 @@ literal, and any change to it is red until the literal changes with it, on purpo
    and that module says what the values held must mean (one weekly cron at a quiet hour Pacific, the manual dispatch kept)
    and ties them to every matrix expression's events, so a change made on purpose updates ON_LINES here and must still
    pass that module.
-4. The Shell job's cap line EQUALS SHELL_CAP_LINE (55 minutes on macOS, 45 on Linux, in the python job's per-OS form, set
-   from fork PR 940's measurement on 2026-09-30; a flat 35 until then): it is the only line at four spaces in that job holding
+4. The Shell job's cap line EQUALS SHELL_CAP_LINE (60 minutes on macOS, 45 on Linux, in the python job's per-OS form, set
+   from fork PR 940's measurements: 60 on macOS since 2026-10-02, on its measured run at b5939b77a, 55 from 2026-09-30, on
+   its projection; a flat 35 until then): it is the only line at four spaces in that job holding
    "timeout", so a second copy, bare, quoted or as an explicit key, is red too (one whose quoted key spells the word through
    an escape is not read here; actionlint and tests/test_ci_sdk_pin.py refuse it). And the Shell job's lines that name
    node as a word or hold --test EQUAL SHELL_NODE_LINES, the manager handshake step's name line and run line. The ruling
@@ -188,10 +189,13 @@ ON_LINES = (
 # The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
 # the slowest measured or projected job plus 10 minutes, rounded up to a multiple of 5 (ci.yml's comment above the line
 # carries the measurement: fork PR 940 at be4c8e0ab, Linux 32 min 1 s, macOS projected at about 41 min 19 s; at its head
-# d2091c2c1, Linux 32 min 50 s and 33 min 8 s, 45 by the rule, and macOS 38 min 56 s, 50 by the rule, so macOS's 55 rests
-# on be4c8e0ab's projection and the coordinator's ruling of 2026-09-30, 20:48Z; that macOS bats step's last 272 s followed
-# its last case, the orphaned sleep 300 of a fake head in tests/shell-portability.bats, most likely).
-SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 45 }}"
+# d2091c2c1, Linux 32 min 50 s and 33 min 8 s, 45 by the rule, and macOS 38 min 56 s, 50 by the rule; at b5939b77a, macOS
+# 47 min 39 s in its dispatch (run 36998141959), 60 by the rule, the rise being the PR's own added cost, and Linux 34 min
+# 20 s, with 33 min 55 s at b13aae122, 45 by the rule). The macOS cap was 55 from 2026-09-30, on be4c8e0ab's projection
+# and the coordinator's ruling of 20:48Z, and is 60 from 2026-10-02, on b5939b77a's measured run and the coordinator's
+# ruling of 12:51Z; both caps were a flat 35 before 2026-09-30. The d2091c2c1 macOS bats step's last 272 s followed its
+# last case, the orphaned sleep 300 of a fake head in tests/shell-portability.bats, most likely.
+SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 45 }}"
 # The Shell job's lines that name node as a word or hold --test: the manager handshake step's name and run lines (T224).
 SHELL_NODE_LINES = (
     "      - name: Manager handshake tests (node --test)",
@@ -571,12 +575,12 @@ class VendoredToolingJob(unittest.TestCase):
             "printed above, check that tests/test_ci_macos_schedule.py still passes, and say in the commit why the triggers "
             "changed."))
 
-    def test_4_the_shell_cap_is_55_on_macos_and_45_on_linux(self):
+    def test_4_the_shell_cap_is_60_on_macos_and_45_on_linux(self):
         self.assertNoFaults(check_shell_cap(raw()), (
             "The Shell job's cap changed (above). It is set per OS from a measurement, the slowest measured or projected "
             "job plus 10 minutes rounded up to a multiple of 5 (ci.yml's comment above the line: fork PR 940 at "
-            "be4c8e0ab, Linux 32 min 1 s, macOS projected at about 41 min 19 s after the 35-minute cap cancelled it at 35 "
-            "min 31 s). A higher cap hides growth the vendored tooling move was meant to show, and a lower one cuts a "
+            "b5939b77a, macOS 47 min 39 s in its dispatch and Linux 34 min 20 s in its PR run). A higher cap hides growth "
+            "the vendored tooling move was meant to show, and a lower one cuts a "
             "passing cell. If the change is meant, measure the job again, update SHELL_CAP_LINE in "
             "tests/test_ci_vendored_job.py and ci.yml's comment, and say why in the commit."))
 
@@ -737,14 +741,14 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
             (check_top_keys, "a second, quoted on key", "top", "concurrency:", ["\"on\": [workflow_dispatch]", "concurrency:"]),
             (check_shell_cap, "the Shell cap back to the flat 35", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 35"]),
             (check_shell_cap, "the Shell cap a flat 45", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 45"]),
-            (check_shell_cap, "the macOS Shell cap 55 to 60", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 55", "&& 60")]),
-            (check_shell_cap, "the macOS Shell cap 55 to 50", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 55", "&& 50")]),
+            (check_shell_cap, "the macOS Shell cap 60 to 65", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 60", "&& 65")]),
+            (check_shell_cap, "the macOS Shell cap 60 to 55", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 60", "&& 55")]),
             (check_shell_cap, "the Linux Shell cap 45 to 35", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 45", "|| 35")]),
             (check_shell_cap, "the Linux Shell cap 45 to 50", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 45", "|| 50")]),
             (check_shell_cap, "the two Shell caps swapped", "shell", SHELL_CAP_LINE,
-             ["    timeout-minutes: ${{ matrix.os == 'macos-latest' && 45 || 55 }}"]),
+             ["    timeout-minutes: ${{ matrix.os == 'macos-latest' && 45 || 60 }}"]),
             (check_shell_cap, "the Shell caps keyed on the other OS", "shell", SHELL_CAP_LINE,
-             ["    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 55 || 45 }}"]),
+             ["    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 60 || 45 }}"]),
             (check_shell_cap, "a second Shell cap after the steps", "shell", SHELL_NODE_LINES[1],
              [SHELL_NODE_LINES[1], "    \"timeout-minutes\": 90"]),
             (check_shell_node, "the step put back in the Shell job", "shell", SHELL_NODE_LINES[1],
