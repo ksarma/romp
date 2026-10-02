@@ -8694,10 +8694,10 @@ AS_TIMES = (("the codec", "asc2", "aww", (_AS_CODEC, _AS_CODEC + '        body =
 AS_FILES += tuple((t, _as_module(t, base, swap)) for _n, t, base, swap, _k, _a in AS_TIMES)
 # (at) the page send's reader outside its statement shapes (the reviewer's 02:29Z ruling of 2026-10-02: each conjunct of _send_preamble,
 # its test() and its other helpers, _header_const and the gate's own body and helpers that a mutant left unheld is planted here, or
-# argued dominated beside it in the script; beside them, one plant for each expression kind the kind table excludes, in page text, and
-# atq2 for the CR or LF guard there): each aww's module with its swaps (_ae_module), refused at the definition with the gate's reason
-# at its line, refused by the served pass at a text the definition puts in the page (atq3), or read, its fetch listed (the mutants
-# and their reds are in the build record). atlf, page text holding a line
+# argued dominated beside it in the script; beside them, one plant for each expression kind the kind table excludes but the three the
+# script argues, in page text, and atq2 for the CR or LF guard there): each aww's module with its swaps (_ae_module), refused at the
+# definition with the gate's reason at its line, refused by the served pass at a text the definition puts in the page (atq3), or read,
+# its fetch listed (the mutants and their reds are in the build record). atlf, page text holding a line
 # feed, read: the gate's CR or LF guard reads a constant only in a header call's arguments. atfc, a flag assigned after the codec,
 # refused: the preamble's roles stand before the codec, the first rebinding of the page to itself encoded. aten, the end_headers'
 # call assigned to a name, refused as an Assign before the end_headers (only an Expr stands at the end_headers); atea, the
@@ -8725,10 +8725,11 @@ AS_FILES += tuple((t, _as_module(t, base, swap)) for _n, t, base, swap, _k, _a i
 # whose drop raises on the node they guard: atg2, the injection's inner getattr handed two arguments, and atsc, its startswith called
 # on a string constant, each refused at the injection's if; and atc2, an injection handed two arguments, no count, refused there (the
 # injection role's count, set true, raises on it). The kind table inside page text, which a statement's shape reads as one leaf: one
-# plant for each expression kind the table excludes, in the injection's value, each refused at that node by its kind alone and each
-# red when its kind is added to the table: atsb, a subscript, then refused at its slice, a kind the table excludes too; atla, a lambda
-# called there, then refused by the served pass at the call; atuo a unary operator, atsr a starred argument, atdx a dict
-# comprehension, ataw an await, atyd a yield and atyf a yield from, each then refused by the served pass at that node; atst a set
+# plant for each expression kind the table excludes but the three named below, in the injection's value, each refused at that node by
+# its kind alone and each red when its kind is added to the table: atsb, a subscript, then refused at its slice, a kind the table
+# excludes too; atla, a lambda called there, then refused by the served pass at the call; atuo a unary operator, atsr a starred
+# argument, atdx a dict comprehension, ataw an await, atyd a yield and atyf a yield from, each then refused by the served pass at that
+# node; atst a set
 # display, atli a list display, atlc a list comprehension, atsx a set comprehension and atge a generator expression, each then read,
 # aww's three texts listed; atjs an f-string, then refused at its FormattedValue; and, on the interpreters that parse it (3.14 and
 # later, gated as hyt is), atts a t-string, then refused at its Interpolation (atwl, above, is the NamedExpr's, then read). The three
@@ -10976,8 +10977,9 @@ class TheServedPagesAreScanned(_Scope):
         shape at most as many times as that definition holds it, with isinstance, str, len and getattr unbound and unrebound; and a
         signature of positional parameters, none positional-only, with None defaults and no annotation. Any other statement
         refuses by its kind, its line and the shape it lacks, a statement outside the order by the order, one past its shape's
-        count by the shape and its count, one in a listed shape whose builtin or module constant fails its proof by that proof, and
-        a node of another kind by its kind and its line (_send_gate). The reader's stated limits stand beside that rule, each held at its witness: an override
+        count by the shape and its count, one in a listed shape whose builtin or module constant fails its proof by that proof,
+        one in a listed shape holding a string constant with a CR or LF in a header call's arguments by that constant and its
+        line, and a node of another kind by its kind and its line (_send_gate). The reader's stated limits stand beside that rule, each held at its witness: an override
         of `_send` in a subclass another file defines (probe_lox, the seventh round's limits case); code behind a name the
         definition calls or reads on self, a header method, a property or `__getattr__` and any stream it writes (probe_lgs's
         module-global stream and probe_lse's own end_headers); a `_send` replaced at run time through a name no code spells
@@ -11118,7 +11120,7 @@ class TheServedPagesAreScanned(_Scope):
         in one of that definition's statement shapes, which replaced the roles (_send_gate, after every named reason the reviewed
         head gives; a refused statement's reason names the shape it lacks among those listed for its kind at its place, or the order
         it stands outside, or, past its shape's count, the shape and its count, or, in a listed shape, the proof its builtin or
-        module constant fails). (t) The
+        module constant fails or a string constant holding a CR or LF in a header call's arguments). (t) The
         ruling's executed plants: the page parameter rebound to a module constant, to itself and a module constant, behind a
         literal prefix, by a replace, to an f-string, by an augmented assignment, a walrus statement, a walrus in an if's test, an
         annotated assignment, a loop target, a with target, a join, an encode through a module constant, an encode joined to

@@ -4187,17 +4187,17 @@ _WRITE_NAMES = ("write", "writelines", "send", "sendall", "sendfile", "sendmsg")
 _HEADER_ARITY = {"send_response": 1, "send_header": 2, "end_headers": 0}          # the header methods a `_send` calls on self, each with its arguments
 # The node kinds of the kernel's Handler._send (kernel/kernel.py): the gate (_send_gate) refuses a statement or an expression of any
 # other kind by its kind and line, and reads a statement of these only in a listed shape (_SEND_SHAPES). Derived from that definition
-# by a walk of its syntax tree; the fix commit of the eighth round's review records the command. Every statement and expression kind
-# the running interpreter's syntax tree holds outside the table has a plant in the census module that reds when the kind is added
-# here: for a statement kind, a statement of it (its (k) plants: with the kind added, no listed shape holds the statement, so it is
-# refused by its shape instead); for an expression kind, an expression of it in page text, which a statement's shape reads as one
-# leaf (its (at) plants: with the kind added, the page is read, its texts listed, or the served pass refuses the text, or a node of
-# another excluded kind inside it is refused). Three expression kinds have no plant of their own: each stands only inside another
-# excluded kind, which starts no later in the source and is refused first (the gate takes the first refusal in the source's order,
-# the outer node at a tie), so with it alone added nothing moves: a Slice, only in a Subscript's index; a FormattedValue, only in a
-# JoinedStr; and an Interpolation, only in a TemplateStr (3.14 and later). Each outer kind's plant shows the inner one decided: with
-# Subscript added atsb is refused at its Slice, with JoinedStr added atjs at its FormattedValue, and with TemplateStr added atts at
-# its Interpolation
+# by a walk of its syntax tree; the fix commit of the eighth round's review records the command. Every statement kind the running
+# interpreter's syntax tree holds outside the table, and every such expression kind but the three argued below, has a plant in the
+# census module that reds when the kind is added here: for a statement kind, a statement of it (its (k) plants: with the kind added,
+# no listed shape holds the statement, so it is refused by its shape instead); for an expression kind, an expression of it in page
+# text, which a statement's shape reads as one leaf (its (at) plants: with the kind added, the page is read, its texts listed, or
+# the served pass refuses the text, or a node of another excluded kind inside it is refused). Three expression kinds have no plant
+# of their own: each stands only inside another excluded kind, which starts no later in the source and is refused first (the gate
+# takes the first refusal in the source's order, the outer node at a tie), so with it alone added nothing moves: a Slice, only in a
+# Subscript's index; a FormattedValue, only in a JoinedStr; and an Interpolation, only in a TemplateStr (3.14 and later). Each outer
+# kind's plant shows the inner one decided: with Subscript added atsb is refused at its Slice, with JoinedStr added atjs at its
+# FormattedValue, and with TemplateStr added atts at its Interpolation
 _SEND_KINDS = ("Expr", "Assign", "For", "If", "Call", "Attribute", "Name", "Tuple", "Constant", "BinOp", "BoolOp", "Dict", "IfExp", "Compare")
 _SEND_STORES = {"page": "<the page>", "flag": "<a flag>", "textname": "<a text name>", "cache": "<a header parameter>"}   # the names a
 # preamble role binds (_send_preamble), each a class of _send_gate's shapes by its role
@@ -4290,7 +4290,9 @@ def _send_preamble(d, me, page, params, codec):
     Each name in a role is the definition's own (a parameter, or a local only these roles bind); the gate (_send_gate) reads a
     statement only in one of the kernel's definition's shapes (_SEND_SHAPES), its page text the text these roles hand the served pass,
     and refuses any other statement naming the shape it lacks or the order it stands outside, a statement in a listed shape past that
-    shape's count (_SEND_TIMES) naming the shape and its count, and one whose builtin or module constant fails its proof by that proof.
+    shape's count (_SEND_TIMES) naming the shape and its count, one whose builtin or module constant fails its proof by that proof,
+    one holding a string constant with a CR or LF in a header call's arguments by that constant and its line, and a node of a kind the
+    kernel's definition holds none of by its kind and line.
     Three conjuncts are dominated, kept and argued here (choice 5 of the eleventh round's rulings): a flag's every load is an if's
     test, so no flag is read in an injection's value, and neither the flag's `t not in read_in` nor the text name's `t not in flags`
     can decide; and `params` never holds self (the gate drops it), so the cache header's `t != me` cannot either, and _body_param
@@ -4690,9 +4692,11 @@ def _body_param(d, pos, me, tree, rebinds=(), shadow=False, texts=None):
     codec, in their roles (_send_preamble). Any other statement refuses by its kind, its line and the shape it lacks ("an Expr
     statement at line N in no shape the census lists for an Expr before the end_headers (the response line, ...)"), or the count
     its shape is listed for ("an Assign statement at line N in the shape of the codec, which the census lists once"), or the order
-    it stands outside ("an Expr statement at line N outside the order (...)"), and a node of another kind by its kind and line ("a
-    With statement at line N", "a FunctionDef statement at line N"): among them a statement after the end_headers (end_headers
-    writes the header buffer to the stream, so a header call after it would reach the body), a second end_headers, a definition
+    it stands outside ("an Expr statement at line N outside the order (...)"), a statement in a listed shape holding a string
+    constant with a CR or LF in a header call's arguments by that constant and its line ("a Constant holding a CR or LF in a
+    header call at line N"), and a node of another kind by its kind and line ("a With statement at line N", "a FunctionDef
+    statement at line N"): among them a statement after the end_headers (end_headers writes the header buffer to the stream, so a
+    header call after it would reach the body), a second end_headers, a definition
     with none, and any other rebinding of the page parameter (another assignment, an augmented or annotated assignment, a walrus,
     a loop or with target, an import, an except name, a del, a match capture, a def, class or nested parameter of its name),
     another codec name or a second argument to `.encode` (either can name a codec or an error handler the file registers at run
@@ -5264,8 +5268,9 @@ def routes_of(rel, tree, sc, res):
     any other script-running call (a keyword body, a starred or `**` call, a definition with any other output, whose written body is
     another parameter, a local or an expression, or that writes nothing, and a definition holding any other statement, among them a
     call or a store in no listed shape, a statement past the count its shape is listed for, and a statement outside the order, or a
-    node of another kind, a nested def among them) is a SERVED line by name, its reason naming the road, or the statement's kind, its
-    line and the shape it lacks, the count it is past or the order it stands outside, or the node's kind and line (_unread_body), and
+    node of another kind, a nested def among them) is a SERVED line by name, its reason naming the road, or the statement's kind,
+    its line and the shape it lacks, the count it is past, the order it stands outside, the proof a builtin or a module constant in
+    it fails or a string constant holding a CR or LF in a header call's arguments, or the node's kind and line (_unread_body), and
     no route. What the definition's text does not hold is not read: a header value, and a response a Content-Type in the headers
     argument, passed or defaulted, makes a page (the call is typed by its
     content-type argument);
