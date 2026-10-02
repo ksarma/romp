@@ -205,12 +205,11 @@ function copyInstallCommand(): void {
 // Ports are CONFIGURABLE so different VS Code windows can attach to different kernels (each kernel
 // scopes its own group of agents). Precedence: the VS Code setting (if set) → env var → default.
 // The kernel port must be the primary kernel's or that of a kernels.json profile whose stateDir no
-// other kernel uses. For a port no profile names, or a profile on another kernel's state root, the
-// manager starts nothing and answers /ensure with 409, whose error the attach toast shows
-// (bin/romp-manager rootConflict). Two exceptions. For any port a running kernel serves, /ensure
-// answers for that kernel with 200 and spawned false, even when its entry has left kernels.json or
-// has named another kernel's root since it started. And for a port no profile names and no running
-// kernel serves, if a profile is named k<port>, /ensure acts on that profile, which runs on its own port.
+// other kernel uses. /ensure maps a port to a running kernel on it, else the profile on it, else the
+// primary for the manager's own kernel port, else the name k<port> (which a profile may carry). It
+// answers 409, starting nothing, for a kernel the manager refuses (a spec whose state root another
+// kernel holds, which includes every k<port> no profile carries), and the attach toast shows that
+// error (bin/romp-manager idForPort, rootConflict).
 function cfgPort(key: "kernelPort" | "managerPort", env: string | undefined, dflt: number): number {
   const v = vscode.workspace.getConfiguration("romp").get<number>(key);
   if (typeof v === "number" && v > 0) return v;

@@ -1266,28 +1266,25 @@ header:
   no front end uses it.
 - `POST /stop`: `romp down`.
 - `POST /ensure`: a front end asking for a kernel on a port (the VS Code
-  extension). The manager starts a kernel only for the primary kernel's port or
-  for a `kernels.json` profile whose state root no other kernel holds. It starts
-  the primary first and never refuses it. A running kernel keeps the root it was
-  started on until it stops, wherever its entry sits in the file, even after its
-  entry has left the file or names another `stateDir`. Among the profiles that
-  are not running, the file's order decides: the manager refuses a profile
-  whose state root resolves to the root of a profile listed before it.
-  A profile with no `stateDir` resolves to the primary kernel's root, and a
-  `stateDir` that names another kernel's root through a symlink or with a
-  trailing slash is that root. For a refused profile, and for a port no profile
-  names, `/ensure` answers 409 and starts nothing. The body names the kernel,
-  the kernel whose root it would share (as running, when it is), the primary
-  kernel's port and the remedy. If `kernels.json` dropped a malformed entry for
-  that port, the body says so and why; for a dropped `main` entry, which carries
-  a port only, the remedy is to repair that port. Two exceptions predate these
-  rules. For any port a running kernel serves, `/ensure` answers for that kernel
-  with 200 and `spawned: false`, even when its entry has left the file or has
-  named another kernel's root since it started. And for a port no profile names
-  and no running kernel serves, if a profile is named `k<port>` (the name
-  `/ensure` gives such a port), `/ensure` acts on that profile, which runs on its
-  own port. The manager
-  never starts a refused profile at boot, on a restart or on a respawn either.
+  extension). The manager maps the port to a kernel in this order: a running
+  kernel on that port; else the `kernels.json` profile on it; else the primary
+  kernel, for the manager's own kernel port (`ROMP_KERNEL_PORT` or the default,
+  even when `kernels.json` has moved the primary elsewhere); else the name
+  `k<port>`, which a profile may also carry. It answers 200 for a kernel that
+  runs (`spawned: false`) or that it starts, and 409, starting nothing, for one
+  it refuses. It never refuses the primary. It refuses a spec whose state root
+  resolves to a root another kernel holds: a running kernel keeps the root it
+  was started on until it stops, wherever its entry sits in the file, and among
+  the profiles that are not running, the file's order decides. A profile with
+  no `stateDir`, and every `k<port>` that no profile carries, resolves to the
+  primary kernel's root, and a `stateDir` that names another kernel's root
+  through a symlink or with a trailing slash is that root. The 409 body names
+  the kernel, the kernel whose root it would share (as running, when it is),
+  the primary kernel's port and the remedy. If `kernels.json` dropped a
+  malformed entry for that port, the body says so and why; for a dropped `main`
+  entry, which carries a port only, the remedy is to repair that port. The
+  manager never starts a refused profile at boot, on a restart or on a respawn
+  either.
   It logs one line per distinct conflict per manager life (the refused kernel,
   the kernel whose root it is, that root and why), plus one when a refusal ends
   a running kernel, and nothing per retry or per tick: a conflict that differs
@@ -1890,8 +1887,8 @@ entry sits in the file, so a profile added or edited onto that root is refused
 even when it is listed first; among profiles that are not running, the one
 listed first gets the root. That holds for one manager's life, through the
 kernel's own restarts and crash respawns on that root; a restart after its entry
-names another `stateDir` is a new start on that other root, where the file's
-order applies. A manager restart starts the profiles
+names another root is a new start on that root, where the file's order
+applies. A manager restart starts the profiles
 in the file's order again, so the root can go to a profile listed before the
 kernel that held it. Such a restart includes the self-restart that
 `romp refresh`, a `/restart` or a crash respawn triggers under a supervisor once
