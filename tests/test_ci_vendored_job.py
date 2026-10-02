@@ -9,7 +9,7 @@ a file's tests one after another, and the tests of one file, tools/romp-track-ba
 in that run's log (the slowest single test 222 s). With the step inside the Shell job, a PR that added more than about three
 minutes of bats time (the job's margin at 1d591384e was 190 s) ran the job past its cap. Raising the Shell cap was declined,
 since it would hide the growth; the step moved to its own job instead. The Shell cap was raised later, on 2026-10-01, for the
-bats suite's own growth (Run bats alone took 1822 s on Linux in run 36858358700), and check 4 holds the new line.
+bats suite's own growth (Run bats alone took 1850 s on Linux in run 36716348831), and check 4 holds the new line.
 
 THE PIN IS EXACT EQUALITY, read as text: CI's Python cells install no YAML library, as the other tests/test_ci_*.py modules
 note. This module first held the job through a closed line reader that enumerated the shapes a line could take and the
@@ -191,8 +191,9 @@ ON_LINES = (
 )
 # The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
 # the slowest measured or projected job plus 10 minutes, rounded up to a multiple of 5 (ci.yml's comment above the line
-# carries the measurement: Linux 30 min 51 s in run 36858358700, its Run bats step 1822 s, so 45; macOS 22 min 18 s in the
-# same run, 35 by the rule, set at 55, fork PR 940's value for that cell, so both PRs carry the same line).
+# carries the measurement: Linux 31 min 21 s in run 36716348831, the slowest at fork PR 926's heads, its Run bats step
+# 1850 s, so 45; macOS 22 min 18 s in run 36858358700, 35 by the rule, set at 55, fork PR 940's value for that cell, so
+# both PRs carry the same line).
 SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 45 }}"
 # The Shell job's lines that name node as a word or hold --test: the manager handshake step's name and run lines (T224).
 SHELL_NODE_LINES = (
@@ -577,11 +578,11 @@ class VendoredToolingJob(unittest.TestCase):
     def test_4_the_shell_cap_is_55_on_macos_and_45_on_linux(self):
         self.assertNoFaults(check_shell_cap(raw()), (
             "The Shell job's cap changed (above). It is set per OS from a measurement, the slowest measured or projected "
-            "job plus 10 minutes rounded up to a multiple of 5 (ci.yml's comment above the line: Linux 30 min 51 s in run "
-            "36858358700, under the flat 35-minute cap then in force, so 45; macOS 55, fork PR 940's value for that cell). "
-            "A higher cap hides growth the vendored tooling move was meant to show, and a lower one cuts a passing cell. If "
-            "the change is meant, measure the job again, update SHELL_CAP_LINE in tests/test_ci_vendored_job.py and ci.yml's "
-            "comment, and say why in the commit."))
+            "job plus 10 minutes rounded up to a multiple of 5 (ci.yml's comment above the line: Linux 31 min 21 s in run "
+            "36716348831, the slowest at fork PR 926's heads, under the flat 35-minute cap then in force, so 45; macOS 55, "
+            "fork PR 940's value for that cell). A higher cap hides growth the vendored tooling move was meant to show, and "
+            "a lower one cuts a passing cell. If the change is meant, measure the job again, update SHELL_CAP_LINE in "
+            "tests/test_ci_vendored_job.py and ci.yml's comment, and say why in the commit."))
 
     def test_4_the_shell_job_runs_no_node_test_but_the_handshake(self):
         self.assertNoFaults(check_shell_node(raw()), (

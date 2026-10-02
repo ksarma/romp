@@ -75,6 +75,11 @@ SID = "11111111-2222-3333-4444-555555555555"
 # Read from PYTEST_LEGS, the legs pytest runs, whose first is the pytest leg whatever LEGS' order.
 PYTEST_LEG = sweep.PYTEST_LEGS[0]
 assert PYTEST_LEG == "pytest", sweep.LEGS
+# The remedy check's and verify's line names for a result file run keeps and refuses (load_history), written out here,
+# not read from the runner: run's own, since the closing check wf_fb19febe-36b, its item 8, for a file _load cannot read,
+# and since the verify pass at that check's build for one of another schema or recording another sha.
+KEPT_REMEDY = ("; it is kept, since results are append-only, and a run at this sha is refused while it is there: "
+                     "move it aside to sweep this sha again")
 
 FAKE = r'''#!%(python)s
 import glob, json, os, re, shutil, signal, subprocess, sys, time
@@ -1846,10 +1851,20 @@ def _kill_quietly(pid):
         pass
 
 
+# The states /proc/<pid>/stat gives a process that has exited: Z, a zombie its parent has not reaped, and X, dead while
+# its reaper releases it. With Z alone counted as exited, a read in the X window counted as alive: the watchdog pin
+# read Z, left its wait, and its check then read X and failed, "outlived the watchdog's kill" (measured on 2026-10-02:
+# one red in a 3.12 module run; in a loop of the pin's steps beside two module runs, the wait read Z and the check X in 6
+# of 1000 iterations, and the check failed the same way in 5 of 600 more, whose states were not recorded).
+DEAD_STATES = ("Z", "X")
+
+
 def _alive(pid):
+    """Whether the process `pid` is alive, read from /proc (Linux): one in DEAD_STATES has exited. False where there is
+    no such file."""
     try:
         with open("/proc/%d/stat" % pid) as f:
-            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+            return f.read().rsplit(")", 1)[1].split()[0] not in DEAD_STATES
     except OSError:
         return False
 
@@ -1864,6 +1879,22 @@ def _kill_alive(pids):
                 os.kill(pid, signal.SIGKILL)
             except OSError:
                 pass
+
+
+def _groups_of(pids):
+    """The process groups of `pids`, read now, but the test's own and any group at or below 1. Each git the runner starts
+    leads a group of its own (a session of its own), and a process that git starts later joins that group, so it is
+    killed with the group though it was not running when the descendants were read (tests/test_batch_tool.py's copy says
+    where that was seen)."""
+    own, groups = os.getpgrp(), []
+    for pid in pids:
+        try:
+            group = os.getpgid(pid)
+        except OSError:
+            continue
+        if group > 1 and group != own and group not in groups:
+            groups.append(group)
+    return groups
 
 
 def _recorded_pids(path):
@@ -1955,20 +1986,55 @@ CAP_SHIM = ("import os, resource, sys\n"
 # file type, so a read that follows the symlink fails on its value. On Linux, test_the_address_cap_is_live holds the cap
 # to its word.
 ZERO_CAPPED = sys.platform.startswith("linux")
-# Runs scripts/sweep.py's main (argv[3], then its argv) with GIT_BOUND at argv[1] seconds, and with argv[2] "lstat-passes"
-# its cannot_read passing every file, as a file swapped in after the runner's own lstat and before git's open would: the
-# 02:43Z ruling's pins (GitBoundPins), whose planted files a git waits on, end at that bound rather than 120 s.
+# Runs scripts/sweep.py's main (argv[3], then its argv) with a short GIT_BOUND on the planted calls alone, and with argv[2]
+# "lstat-passes" its cannot_read passing every file, as a file swapped in after the runner's own lstat and before git's
+# open would: the 02:43Z ruling's pins (GitBoundPins), whose planted files a git waits on, end at that bound rather than
+# 120 s. argv[1] is bound_spec's JSON: {"bound": seconds, "on": [[a call's leading words, a leg's name or null], ...]}. A
+# run_git call whose arguments, joined by spaces, start with one of those, made (for one that names a leg) after that leg
+# has started, since the file it meets is that leg's plant, has `bound` seconds; every other call keeps the runner's
+# GIT_BOUND (the 22:21Z ruling on the merge of fork main, item 1: a bound of 3 s on every call ended a normal checkout
+# under load on 3.10, so the pin read the load, not the planted event). With "log" a path in that JSON, each call
+# appends the bound it ran at, how it ended ("bound" for GitBound, "ended" for a return, "raised" for any other
+# exception) and the call, a line of three tab-separated fields.
 BOUND_DRIVER = r"""
-import importlib.util, sys
-bound, mode, path, argv = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+import importlib.util, json, sys
+spec_, mode, path, argv = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4:]
 spec = importlib.util.spec_from_file_location("sweep_runner", path)
 sweep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sweep)
-sweep.GIT_BOUND = int(bound)
+full, short, planted, started, log = sweep.GIT_BOUND, spec_["bound"], spec_["on"], set(), spec_.get("log")
+run_git, run_leg = sweep.run_git, sweep.run_leg
+def planted_run_git(repo, *args, **kwargs):
+    call = " ".join(args)
+    hit = any(call.startswith(words) and (leg is None or leg in started) for words, leg in planted)
+    sweep.GIT_BOUND, ended = short if hit else full, "raised"
+    try:
+        result = run_git(repo, *args, **kwargs)
+        ended = "ended"
+        return result
+    except sweep.GitBound:
+        ended = "bound"
+        raise
+    finally:
+        if log:
+            with open(log, "a") as f:
+                f.write("%s\t%s\t%s\n" % (sweep.GIT_BOUND, ended, call))
+        sweep.GIT_BOUND = full
+def leg_started(tree, name, *args, **kwargs):
+    started.add(name)
+    return run_leg(tree, name, *args, **kwargs)
+sweep.run_git, sweep.run_leg = planted_run_git, leg_started
 if mode == "lstat-passes":
     sweep.cannot_read = lambda path: None
 sys.exit(sweep.main(argv))
 """
+
+
+def bound_spec(bound, *on, log=None):
+    """BOUND_DRIVER's argv[1]: `bound` seconds for the calls `on` names, each a call's leading words or (those words, the
+    leg after whose start the call meets the plant); every other call keeps the runner's GIT_BOUND. With `log`, the
+    driver appends a line per call to that path."""
+    return json.dumps({"bound": bound, "on": [[c, None] if isinstance(c, str) else list(c) for c in on], "log": log})
 ZERO_SKIP = "a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is enforced: Linux"
 
 
@@ -2669,7 +2735,7 @@ class Checkout(_Base):
         self.assertTrue(p.stdout.startswith("refused: "), "a child under the address cap mapped twice the cap: the cap is not "
                                                           "live (%s)" % (p.stdout + p.stderr).strip())
 
-    def run_bounded(self, w, *extra, bound=90, argv=None, git_bound=None, lstat_passes=False, env=None, cwd=None):
+    def run_bounded(self, w, *extra, bound=90, argv=None, git_bound=None, lstat_passes=False, env=None, cwd=None, planted=()):
         """The runner over `w` (with `extra`; or `argv`, a whole subcommand line, such as check's) under a watchdog, for the
         pins whose regression is a wait or a read without end (the closing check's items 1 and 2): it runs in a process
         group of its own, with its address space capped (CAP_SHIM), and has `bound` seconds to end. One still running
@@ -2678,11 +2744,18 @@ class Checkout(_Base):
         started is left running; one that reads a symlink to /dev/zero without end stops at the cap with a
         MemoryError (exit 1), and never takes the machine's memory: on Linux, the only place such a symlink is planted
         (ZERO_CAPPED). pytest's --timeout is the outer bound. With `git_bound` the runner is BOUND_DRIVER, its GIT_BOUND
-        that many seconds (and with `lstat_passes` its cannot_read passing every file). `env` replaces w.env, and `cwd` is
+        that many seconds on the calls `planted` names (bound_spec) and the runner's own on every other (and with
+        `lstat_passes` its cannot_read passing every file), and every call that ran at that bound must have ended at it
+        (GitBound), or the case fails naming the call: the short bound then reached a call that met no plant, which
+        ends early under load (the 22:21Z ruling on the merge of fork main, item 1). `env` replaces w.env, and `cwd` is
         the directory it runs in (default: this process's). Returns (rc, stdout, stderr)."""
         argv = argv or ["run", "--tree", w.tree, "--python", w.python, "--workers", "2", *extra]
-        runner = [str(SWEEP)] if git_bound is None else ["-c", BOUND_DRIVER, str(git_bound), "lstat-passes" if lstat_passes
-                                                         else "plain", str(SWEEP)]
+        log = None
+        if git_bound is not None:
+            fd, log = tempfile.mkstemp(prefix="bound-calls-", suffix=".log", dir=w.tmp)
+            os.close(fd)
+        runner = [str(SWEEP)] if git_bound is None else ["-c", BOUND_DRIVER, bound_spec(git_bound, *planted, log=log),
+                                                         "lstat-passes" if lstat_passes else "plain", str(SWEEP)]
         proc = subprocess.Popen([sys.executable, "-c", CAP_SHIM, str(ADDRESS_CAP), sys.executable, *runner, *argv],
                                 env=env or w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 stdin=subprocess.DEVNULL, start_new_session=True, cwd=cwd)
@@ -2697,6 +2770,11 @@ class Checkout(_Base):
             out, err = proc.communicate()
             self.fail("the runner was still running after %d s, waiting without end on a file it, or a git it started, "
                       "opened:\n%s%s" % (bound, out, err))
+        if log is not None:
+            with open(log) as f:
+                calls = [line.rstrip("\n").split("\t", 2) for line in f]
+            self.assertEqual([c for c in calls if c[0] == str(git_bound) and c[1] != "bound"], [],
+                             "a call at the short bound that did not end at it: the bound reached a call that met no plant")
         return proc.returncode, out, err
 
     # The kinds of file the shallow and git state file pins plant where a regular file belongs, and the type each is
@@ -4194,15 +4272,20 @@ class ReapWhileLegRuns(unittest.TestCase):
         """wait_leg reaps every child but the leg while a leg runs. That is right only while the leg is the one child
         the runner will wait for: the runner has no thread, and run_leg's Popen is its one launcher that returns before
         its child is reaped. A new such launcher, or a thread (whose subprocess.run child wait_leg could reap, leaving
-        its status read as 0), makes this red: wait_leg must then leave that child alone. run_git's Popen (the 02:43Z
-        ruling, item 1(a): Popen, so it can kill the git's process group at the bound) is the one other: its child is
-        reaped before run_git returns, by communicate or, on any exception, by _end_git's wait, and the runner starts no
-        git while a leg runs (test_a_git_the_runner_starts_is_killed_with_its_process_group_at_the_bound holds the reap)."""
+        its status read as 0), makes this red: wait_leg must then leave that child alone. The other Popens each reap
+        their child before the call returns, and none is made while a leg runs: run_git's (the 02:43Z ruling, item 1(a):
+        Popen, so it can kill the git's process group at the bound), by communicate or, on any exception, by _end_git's
+        wait (test_a_git_the_runner_starts_is_killed_with_its_process_group_at_the_bound holds the reap); and those of
+        tool_versions, probe and a venv build's step (the closing check wf_fb19febe-36b, its item 4: Popen, so each
+        starts under the stop hold), by communicate or, on any exception, by _held_wait's wait, as subprocess.run reaps."""
         threads, launchers = child_launchers(SWEEP.read_text())
         self.assertEqual(threads, [], "the runner has one thread")
-        self.assertEqual(launchers, [("subprocess.Popen", "run_git"), ("subprocess.Popen", "run_leg")],
+        self.assertEqual(launchers, [("subprocess.Popen", "run_git"), ("subprocess.Popen", "probe"),
+                                     ("subprocess.Popen", "tool_versions"), ("subprocess.Popen", "step"),
+                                     ("subprocess.Popen", "run_leg")],
                          "the launchers whose child outlives the call are run_leg's Popen, the leg wait_leg waits for, and "
-                         "run_git's, whose git it reaps before it returns")
+                         "run_git's, tool_versions', probe's and the venv build step's, each of which reaps its child "
+                         "before it returns")
 
     def test_the_census_reads_a_launcher_however_it_is_spelled(self):
         """The census above is only as good as the spellings it reads: a module bound under another name, pty's forks,
@@ -4533,7 +4616,8 @@ class ShallowBatcher(unittest.TestCase):
 
 class GitBoundPins(unittest.TestCase):
     """The 02:43Z ruling on PR 926, item 1: every git process the runner starts has a bounded wait (GIT_BOUND; each pin
-    runs the runner with a bound of BOUND seconds, BOUND_DRIVER) and names the repository it means (GIT_DIR, GIT_COMMON_DIR
+    runs the runner with a bound of BOUND seconds on the call that meets its plant alone, BOUND_DRIVER, and the runner's
+    own on every other call) and names the repository it means (GIT_DIR, GIT_COMMON_DIR
     and GIT_WORK_TREE explicit, GIT_CEILING_DIRECTORIES above it). A git that waits on a file a leg planted is killed at
     the bound and the run ends invalid naming the call, or the next run, or check, is refused naming it; a .git git
     does not recognize fails the call instead of sending git to an enclosing repository. Each pin runs under the
@@ -4548,8 +4632,10 @@ class GitBoundPins(unittest.TestCase):
         self.addCleanup(w.close)
         return w
 
-    def bounded(self, w, *extra, argv=None, **kw):
-        return self.run_bounded(w, *extra, bound=60, argv=argv, git_bound=self.BOUND, **kw)
+    def bounded(self, w, *extra, argv=None, planted=(), **kw):
+        """run_bounded with a 60 s watchdog and the calls `planted` names (bound_spec) at BOUND seconds: the calls that
+        meet the case's plant, so the case keys on that call, not on how long a normal call takes under load."""
+        return self.run_bounded(w, *extra, bound=60, argv=argv, git_bound=self.BOUND, planted=planted, **kw)
 
     def killed(self, call, where):
         return "git %s in %s did not end within %d s and was killed" % (call, where, self.BOUND)
@@ -4579,26 +4665,38 @@ class GitBoundPins(unittest.TestCase):
         os.mkfifo(os.path.join(tree, ".git", "config"))
         for argv in (None, ["check", "--tree", w.tree]):
             with self.subTest(argv=argv and argv[0]):
-                rc, out, err = self.bounded(w, argv=argv)
+                rc, out, err = self.bounded(w, argv=argv, planted=[self.DISCOVERY])
                 self.assertEqual(rc, 2, out + err)
                 self.assertIn(self.killed(self.DISCOVERY, tree), err)
                 self.assertEqual(len(w.calls()), before, "no leg ran")
 
     def watch_run(self, w, path, stop):
-        """The runner over `w` (BOUND_DRIVER, its GIT_BOUND BOUND seconds, or 600 with `stop`) in a session of its own,
+        """The runner over `w` (BOUND_DRIVER, its git status in your tree at BOUND seconds, or with `stop` no call at a short
+        bound) in a session of its own,
         while the case watches for `path` to exist; with `stop`, SIGTERM is sent to the runner alone once it does.
         Returns (rc, stdout, stderr, whether `path` was seen). The runner's whole tree is killed on the way out when it
-        is still running (kill_tree), and the case fails by name if the runner runs on for 60 s."""
+        is still running (kill_tree), and with `stop` every descendant of it read just before the signal, with that
+        descendant's process group as read then, is killed on the way out when it is still alive (_kill_groups,
+        _kill_alive): a runner the signal ended outright (a regression to no handler) has exited by then, and the git it
+        was waiting on, in a session of its own, is no longer in the tree kill_tree walks, nor is a process that git
+        started after the read, which is in its group (_groups_of; the closing check wf_fb19febe-36b, its item 5;
+        StopPinsLeaveNothing holds it). The case fails by name if the runner runs on for 60 s."""
         argv = ["run", "--tree", w.tree, "--python", w.python, "--workers", "2"]
-        proc = subprocess.Popen([sys.executable, "-c", BOUND_DRIVER, "600" if stop else str(self.BOUND), "plain", str(SWEEP),
+        spec = bound_spec(self.BOUND) if stop else bound_spec(self.BOUND, self.STATUS)
+        proc = subprocess.Popen([sys.executable, "-c", BOUND_DRIVER, spec, "plain", str(SWEEP),
                                  *argv], env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 stdin=subprocess.DEVNULL, start_new_session=True)
         self.addCleanup(lambda: proc.poll() is None and kill_tree(proc.pid))
+        recorded, groups = [], []
+        self.addCleanup(lambda: _kill_alive(recorded))
+        self.addCleanup(lambda: _kill_groups(groups))
         seen, deadline = False, time.monotonic() + 60
         while proc.poll() is None and time.monotonic() < deadline:
             if not seen and os.path.lexists(path):
                 seen = True
                 if stop:
+                    recorded.extend(_descendants(proc.pid))
+                    groups.extend(_groups_of(recorded))
                     os.kill(proc.pid, signal.SIGTERM)
             time.sleep(0.01)
         if proc.poll() is None:
@@ -4609,13 +4707,13 @@ class GitBoundPins(unittest.TestCase):
         return proc.returncode, out, err, seen
 
     def test_a_git_status_ended_at_the_bound_or_on_a_stop_leaves_no_index_lock_in_your_repository(self):
-        """The verify pass at PR 926's build head, its code finding 1, in the runner: run's git status in the batcher's
-        tree (uncommitted_count) takes that tree's .git/index.lock (an optional lock, to write the refreshed index back)
-        and holds it while it reads info/exclude, here a FIFO, so it waits holding the lock. Killed at the bound (3 s
-        here), the run is refused (exit 2) naming the call; stopped by SIGTERM once the lock is there, the runner exits
-        143. Either way the git gets SIGTERM with its process group first (_end_git) and removes the lock, and your
-        repository is left with no index.lock. Before this change the group got SIGKILL and the lock stayed, so every
-        later git add or commit in your tree failed on it until it was removed by hand."""
+        """The verify pass at the wf_3b100f5e-b38 build, its code finding 1, in the runner: run's git status in the
+        batcher's tree (uncommitted_count) takes that tree's .git/index.lock (an optional lock, to write the refreshed
+        index back) and holds it while it reads info/exclude, here a FIFO, so it waits holding the lock. Killed at the
+        bound (3 s here), the run is refused (exit 2) naming the call; stopped by SIGTERM once the lock is there, the
+        runner exits 143. Either way the git gets SIGTERM with its process group first (_end_git) and removes the lock,
+        and your repository is left with no index.lock. Before this change the group got SIGKILL and the lock stayed, so
+        every later git add or commit in your tree failed on it until it was removed by hand."""
         for how in ("bound", "stop"):
             with self.subTest(how=how):
                 w = self.world()
@@ -4636,17 +4734,22 @@ class GitBoundPins(unittest.TestCase):
                 self.assertFalse(os.path.lexists(lock), "the killed git status left .git/index.lock in your repository")
                 self.assertEqual(w.calls(), [], "no leg ran")
 
-    # The start-window pin's driver (the verify pass at PR 926's build head, its code finding 2): it loads sweep.py
-    # (argv[1]), installs its stop handlers as cmd_run does (SIGHUP's handler set to the default and SIGINT's to
-    # Python's own first, so the runner catches both), and makes subprocess.Popen send the signal argv[2] to this
-    # process right after each process it starts is started, so the signal arrives after run_git's start and before
-    # run_git is inside the try that ends the git. It prints the started process's pid, then what run_git raised.
+    # The start-window pins' driver (the verify pass at the wf_3b100f5e-b38 build, its code finding 2): it loads
+    # sweep.py (argv[1]), installs its stop handlers as cmd_run does (SIGHUP's handler set to the default and SIGINT's
+    # to Python's own first, so the runner catches both), and makes subprocess.Popen send the signal argv[2] to this
+    # process right after a process it starts is started (each one, or with argv[5] only one whose program's name is
+    # that), so the signal arrives after the start and before the call is inside the try that ends the process. The call
+    # is argv[4] (default run_git): run_git, or one of the runner's other launch sites (the closing check
+    # wf_fb19febe-36b, its item 4), each over a program in <argv[3]>/bin. It prints the started process's pid, then what
+    # the call raised.
     START_WINDOW_DRIVER = r"""
 import importlib.util, os, signal, subprocess, sys
 spec = importlib.util.spec_from_file_location("sweep_runner_window", sys.argv[1])
 sweep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sweep)
 sig, where = int(sys.argv[2]), sys.argv[3]
+which, only = (sys.argv[4], sys.argv[5]) if len(sys.argv) > 5 else ("run_git", "")
+bindir = os.path.join(where, "bin")
 signal.signal(signal.SIGHUP, signal.SIG_DFL)
 signal.signal(signal.SIGINT, signal.default_int_handler)
 sweep.install_stop_handlers()
@@ -4654,22 +4757,35 @@ real = subprocess.Popen
 class SignalledPopen(real):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        print("started %d" % self.pid, flush=True)
-        os.kill(os.getpid(), sig)
+        argv = args[0] if args else kwargs["args"]
+        if not only or os.path.basename(argv[0]) == only:
+            print("started %d" % self.pid, flush=True)
+            os.kill(os.getpid(), sig)
 subprocess.Popen = SignalledPopen
 try:
-    sweep.run_git(sweep.GitRepo(where, None, None, os.path.dirname(where)), "status")
+    if which == "run_git":
+        sweep.run_git(sweep.GitRepo(where, None, None, os.path.dirname(where)), "status")
+    elif which == "probe":
+        sweep.probe(os.path.join(bindir, "sleepy"), dict(os.environ))
+    elif which == "tool_versions":
+        sweep.tool_versions(sweep.leg_context(where, sys.executable, env=dict(os.environ)))
+    elif which == "step":
+        sweep._build_venv(os.path.join(where, "venv"), os.path.join(bindir, "sleepy"), {"ensurepip": True}, [],
+                          dict(os.environ), os.path.join(where, "venv.log"), where, "the window's venv")
+    elif which == "run_leg":
+        sweep.run_leg(where, "ledger", {"owed": True, "cmd": [os.path.join(bindir, "git")]}, {},
+                      sweep.leg_context(where, sys.executable), where)
     print("returned", flush=True)
 except sweep.Stopped as e:
     print("Stopped %d" % e.signum, flush=True)
 """
 
     def test_a_stop_that_arrives_as_run_git_starts_its_git_ends_that_git(self):
-        """The verify pass at PR 926's build head, its code finding 2, in the runner: SIGTERM, SIGHUP or SIGINT arrives
-        right after run_git has started its git (one first on PATH that starts a child and waits) and before run_git is
-        inside the try that ends it (START_WINDOW_DRIVER). The stop is held until that try, raised there as Stopped, and
-        the git and its child are ended with its group. Before this change Stopped was raised as the signal arrived,
-        outside that try, and the git and its child ran on after the runner had stopped."""
+        """The verify pass at the wf_3b100f5e-b38 build, its code finding 2, in the runner: SIGTERM, SIGHUP or SIGINT
+        arrives right after run_git has started its git (one first on PATH that starts a child and waits) and before
+        run_git is inside the try that ends it (START_WINDOW_DRIVER). The stop is held until that try, raised there as
+        Stopped, and the git and its child are ended with its group. Before this change Stopped was raised as the signal
+        arrived, outside that try, and the git and its child ran on after the runner had stopped."""
         tmp = tempfile.mkdtemp(prefix="sweepwin-")
         self.addCleanup(shutil.rmtree, tmp, True)
         bindir = os.path.join(tmp, "bin")
@@ -4709,6 +4825,256 @@ except sweep.Stopped as e:
                 self.assertEqual([x for x in started + _recorded_pids(pids) if _alive(x)], [],
                                  "the git run_git started, and its child, are gone")
 
+    def test_a_stop_that_arrives_as_any_launch_site_starts_its_process_ends_that_process(self):
+        """The closing check wf_fb19febe-36b, its item 4: every process the runner starts is started under the stop hold,
+        not run_git's git alone. SIGTERM, SIGHUP or SIGINT arrives right after each other launch site has started its
+        process and before the call is inside the try that ends it (START_WINDOW_DRIVER): probe and a venv build's step
+        over a program that waits (sleepy, which execs sleep 300), tool_versions over a node that does, and run_leg over a
+        leg that starts a child and waits. The stop is held until that try and raised there as Stopped; the process is
+        killed (probe, the step and tool_versions: the process alone, which shares the runner's group, as subprocess.run
+        kills its child) or stopped with its group (run_leg's stop_leg: the leg and its child). Before this change each
+        started its process through subprocess.run or a Popen outside the hold: the stop was raised inside the start and
+        the process ran on (in a run, until the reap of the run's descendants on the way out killed it, on Linux; off
+        Linux, or for a call outside a run, never). Red when a site's hold is dropped (mProbeUnheld, mLegUnheld)."""
+        tmp = tempfile.mkdtemp(prefix="sweepwin-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        bindir = os.path.join(tmp, "bin")
+        os.makedirs(bindir)
+        pids = os.path.join(tmp, "pids")
+        with open(os.path.join(bindir, "git"), "w") as f:
+            f.write("#!/bin/sh\nsleep 300 &\necho $$ $! > %s.tmp && mv %s.tmp %s\nwait\n" % (pids, pids, pids))
+        for name in ("sleepy", "node"):
+            with open(os.path.join(bindir, name), "w") as f:
+                f.write("#!/bin/sh\nexec sleep 300\n")
+        for name in ("git", "sleepy", "node"):
+            os.chmod(os.path.join(bindir, name), 0o755)
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""))
+        for which, only in (("probe", "sleepy"), ("tool_versions", "node"), ("step", "sleepy"), ("run_leg", "env")):
+            for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+                with self.subTest(call=which, signal=sig):
+                    if os.path.exists(pids):
+                        os.remove(pids)
+                    p = subprocess.Popen([sys.executable, "-c", self.START_WINDOW_DRIVER, str(SWEEP), str(int(sig)), tmp,
+                                          which, only], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         stdin=subprocess.DEVNULL, start_new_session=True)
+                    self.addCleanup(lambda p=p: p.poll() is None and kill_tree(p.pid))
+                    recorded = []
+                    self.addCleanup(lambda r=recorded: _kill_alive(r))
+                    try:
+                        out, err = p.communicate(timeout=60)
+                    except subprocess.TimeoutExpired:
+                        kill_tree(p.pid)
+                        out, err = p.communicate()
+                        self.fail("the driver was still running after 60 s:\n%s%s" % (out, err))
+                    lines = out.splitlines()
+                    started = [int(x.split()[1]) for x in lines if x.startswith("started ")]
+                    if which == "run_leg":
+                        deadline = time.monotonic() + 10       # the leg's pids, written by the leg once it runs
+                        while time.monotonic() < deadline and not _recorded_pids(pids) and any(_alive(x) for x in started):
+                            time.sleep(0.05)
+                    recorded.extend(started + _recorded_pids(pids))
+                    self.assertEqual(len(started), 1, out + err)
+                    self.assertEqual(lines[-1], "Stopped %d" % sig, out + err)
+                    if not os.path.isdir("/proc"):
+                        continue                 # no /proc to tell a live process by (macOS): what the call raised alone
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline and any(_alive(x) for x in started + _recorded_pids(pids)):
+                        time.sleep(0.05)
+                    recorded.extend(_recorded_pids(pids))
+                    self.assertEqual([x for x in started + _recorded_pids(pids) if _alive(x)], [],
+                                     "the process the call started, and any child of it, are gone")
+
+    def test_check_stopped_while_its_git_waits_ends_that_git(self):
+        """The closing check wf_fb19febe-36b, its item 4(c): every command installs the stop handlers (main), check
+        among them. check's first git, find_repo's discovery, waits on a FIFO at the repository's .git/config, started
+        through a git first on PATH that starts a child (sleep 300) and records both pids before it execs the real git;
+        once the git is waiting, SIGTERM or SIGHUP reaches check alone. check exits 128 plus the signal's number, naming
+        it, and the git and its child are gone, ended with the git's group (run_git's except path). Before this change
+        only run installed the handlers: check died of the signal, and the git, in a session of its own, waited on with
+        its child after check had exited. Red under mCheckNoHandlers (main installs none)."""
+        real = shutil.which("git")
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=sig):
+                tmp = tempfile.mkdtemp(prefix="sweepcheck-")
+                self.addCleanup(shutil.rmtree, tmp, True)
+                repo, bindir, pids = os.path.join(tmp, "repo"), os.path.join(tmp, "bin"), os.path.join(tmp, "pids")
+                os.makedirs(bindir)
+                subprocess.run([real, "init", "-q", repo], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                os.remove(os.path.join(repo, ".git", "config"))
+                os.mkfifo(os.path.join(repo, ".git", "config"))
+                with open(os.path.join(bindir, "git"), "w") as f:
+                    f.write("#!/bin/sh\nsleep 300 &\necho $$ $! > %s.tmp && mv %s.tmp %s\nexec %s \"$@\"\n"
+                            % (pids, pids, pids, shlex.quote(real)))
+                os.chmod(os.path.join(bindir, "git"), 0o755)
+                env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""))
+                proc = subprocess.Popen([sys.executable, str(SWEEP), "check", "--tree", repo], env=env, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                        start_new_session=True)
+                self.addCleanup(lambda proc=proc: proc.poll() is None and kill_tree(proc.pid))
+                recorded = []
+                self.addCleanup(lambda r=recorded: _kill_alive(r))
+
+                def waiting():
+                    """The git has exec'd from the shim (its command line is git's) and is waiting, on the FIFO; off
+                    Linux, with no /proc to read, that the shim has recorded the pids, after which nothing but the
+                    FIFO's open is left before the git would read the config."""
+                    got = _recorded_pids(pids)
+                    if len(got) != 2:
+                        return False
+                    if not os.path.isdir("/proc"):
+                        return True
+                    try:
+                        with open("/proc/%d/cmdline" % got[0], "rb") as f:
+                            cmd = f.read().split(b"\0")
+                        with open("/proc/%d/stat" % got[0]) as f:
+                            state = f.read().rsplit(")", 1)[1].split()[0]
+                    except OSError:
+                        return False
+                    return b"rev-parse" in cmd and os.path.basename(cmd[0]) != b"sh" and state == "S"
+                deadline = time.monotonic() + 60
+                while proc.poll() is None and not waiting() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                recorded.extend(_recorded_pids(pids))
+                if not waiting():
+                    kill_tree(proc.pid)
+                    out, err = proc.communicate()
+                    self.fail("premise: check's git never waited on the FIFO (rc %s):\n%s%s" % (proc.returncode, out, err))
+                os.kill(proc.pid, sig)
+                try:
+                    out, err = proc.communicate(timeout=60)
+                except subprocess.TimeoutExpired:
+                    kill_tree(proc.pid)
+                    out, err = proc.communicate()
+                    self.fail("check was still running 60 s after the signal:\n%s%s" % (out, err))
+                self.assertEqual(proc.returncode, 128 + sig, out + err)
+                self.assertEqual(err, "sweep: stopped by signal %d; the git it was waiting on was killed\n" % sig)
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and any(_alive(x) for x in recorded):
+                    time.sleep(0.05)
+                self.assertEqual([x for x in recorded if _alive(x)], [], "the git and its child are gone")
+
+    # The no-git stop pin's driver: it loads sweep.py (argv[1]) and runs its main over the rest of argv, with SIGHUP and
+    # SIGINT at their defaults first (so a caller that ignores them does not decide the case) and assess sending argv[2]'s
+    # signal to this process before it reads anything, so the stop reaches check after its git calls of find_repo and
+    # rev-parse have ended and before the next, with no git running.
+    STOP_IN_ASSESS_DRIVER = r"""
+import importlib.util, os, signal, sys
+spec = importlib.util.spec_from_file_location("sweep_runner", sys.argv[1])
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+signal.signal(signal.SIGHUP, signal.SIG_DFL)
+signal.signal(signal.SIGINT, signal.default_int_handler)
+sig, assess = int(sys.argv[2]), sweep.assess
+def stopping_assess(*args, **kwargs):
+    os.kill(os.getpid(), sig)
+    return assess(*args, **kwargs)
+sweep.assess = stopping_assess
+sys.exit(sweep.main(sys.argv[3:]))
+"""
+
+    def test_check_stopped_with_no_git_running_says_none_was(self):
+        """The verify pass at the closing check wf_fb19febe-36b's build, its code finding 3 (its texts finding 4): a stop
+        that reaches check between two git calls (STOP_IN_ASSESS_DRIVER) ends no git, so check says no git was running,
+        and exits 128 plus the signal's number; a stop that ends the git check is waiting on still says that git was
+        killed (test_check_stopped_while_its_git_waits_ends_that_git). Before this change check said a git was killed
+        whether one was running or not."""
+        w = self.world()
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            with self.subTest(signal=sig):
+                proc = subprocess.Popen([sys.executable, "-c", self.STOP_IN_ASSESS_DRIVER, str(SWEEP), str(int(sig)), "check",
+                                         "--tree", w.tree], env=w.env, text=True, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True)
+                self.addCleanup(lambda proc=proc: proc.poll() is None and kill_tree(proc.pid))
+                try:
+                    out, err = proc.communicate(timeout=60)
+                except subprocess.TimeoutExpired:
+                    kill_tree(proc.pid)
+                    out, err = proc.communicate()
+                    self.fail("check was still running after 60 s:\n%s%s" % (out, err))
+                self.assertEqual((proc.returncode, err), (128 + sig, "sweep: stopped by signal %d; no git was running\n" % sig),
+                                 out)
+
+    # The TERM grace pin's git, first on PATH: it logs each SIGTERM it gets, with the time (python3's: macOS's date has
+    # no %N), to TRAP_LOG and keeps running, and its child ignores SIGTERM (trap '' TERM, kept across the exec), so only
+    # a SIGKILL ends either; it writes its pid and the child's to TRAP_PIDS (whole, by a rename) and waits for the child
+    # for as long as the child lives.
+    TERM_IGNORING_GIT = r"""#!/bin/sh
+trap 'echo "TERM $(python3 -c "import time; print(time.time())")" >> "$TRAP_LOG"' TERM
+(trap '' TERM; exec sleep 300) &
+child=$!
+echo $$ $child > "$TRAP_PIDS.tmp" && mv "$TRAP_PIDS.tmp" "$TRAP_PIDS"
+while kill -0 $child 2>/dev/null; do wait $child; done
+"""
+    # The TERM grace pin's driver: it loads sweep.py (argv[1]), sets GIT_BOUND and GIT_TERM_GRACE to argv[2] and argv[3]
+    # seconds, calls run_git in argv[4] and prints what it raised, with the times the call started and ended.
+    TERM_GRACE_DRIVER = r"""
+import importlib.util, os, sys, time
+spec = importlib.util.spec_from_file_location("sweep_runner_grace", sys.argv[1])
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+sweep.GIT_BOUND, sweep.GIT_TERM_GRACE = int(sys.argv[2]), int(sys.argv[3])
+where = sys.argv[4]
+t0 = time.time()
+try:
+    sweep.run_git(sweep.GitRepo(where, None, None, os.path.dirname(where)), "status")
+    print("returned", flush=True)
+except sweep.GitBound as e:
+    print("GitBound %.3f %.3f %s" % (t0, time.time(), e), flush=True)
+"""
+
+    def test_a_git_that_ignores_sigterm_is_killed_after_the_term_grace(self):
+        """The closing check wf_fb19febe-36b, its item 3: a git run_git ends at the bound gets SIGTERM with its group, and
+        what is left of the group GIT_TERM_GRACE seconds later gets SIGKILL (_end_git). Here GIT_BOUND is 2 s and the grace
+        2 s (TERM_GRACE_DRIVER), and the git (TERM_IGNORING_GIT) logs the SIGTERM and keeps running, with a child that
+        ignores it: GitBound is raised between 4 s and 9 s after the call started, the SIGTERM was logged after the bound
+        and before the raise, and the git and its child are both gone. With the SIGKILL dropped (the mutant
+        mNoGraceKillSweep, `pass` in its place) run_git waited without end on the git, and the case fails at its 30 s
+        watchdog, by name, with the recorded pids killed. No other pin reached the SIGKILL: every other fake git dies on
+        the SIGTERM."""
+        bound, grace, slack = 2, 2, 5
+        tmp = tempfile.mkdtemp(prefix="sweepgrace-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        bindir = os.path.join(tmp, "bin")
+        os.makedirs(bindir)
+        log, pids = os.path.join(tmp, "term.log"), os.path.join(tmp, "pids")
+        with open(os.path.join(bindir, "git"), "w") as f:
+            f.write(self.TERM_IGNORING_GIT)
+        os.chmod(os.path.join(bindir, "git"), 0o755)
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""), TRAP_LOG=log, TRAP_PIDS=pids)
+        p = subprocess.Popen([sys.executable, "-c", self.TERM_GRACE_DRIVER, str(SWEEP), str(bound), str(grace), tmp],
+                             env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                             start_new_session=True)
+        self.addCleanup(lambda: p.poll() is None and kill_tree(p.pid))
+        recorded = []
+        self.addCleanup(lambda: _kill_alive(recorded))
+        try:
+            out, err = p.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            recorded.extend(_recorded_pids(pids))
+            kill_tree(p.pid)
+            _kill_alive(recorded)
+            out, err = p.communicate()
+            self.fail("run_git was still waiting 30 s after its call: the git that ignores SIGTERM was not killed after "
+                      "the grace:\n%s%s" % (out, err))
+        recorded.extend(_recorded_pids(pids))
+        self.assertEqual(len(recorded), 2, "premise: the git started its child and recorded both:\n" + out + err)
+        last = (out.splitlines() or [""])[-1].split(" ", 3)
+        self.assertEqual(last[0], "GitBound", out + err)
+        t0, t1 = float(last[1]), float(last[2])
+        self.assertIn("did not end within %d s and was killed" % bound, last[3])
+        self.assertGreaterEqual(t1 - t0, bound + grace, out)
+        self.assertLessEqual(t1 - t0, bound + grace + slack, out)
+        with open(log) as f:
+            terms = [float(x.split()[1]) for x in f.read().splitlines()]
+        self.assertEqual(len(terms), 1, "one SIGTERM, logged by the git that kept running")
+        self.assertTrue(t0 + bound <= terms[0] <= t1, (t0, terms, t1))
+        if not os.path.isdir("/proc"):
+            return                               # no /proc to tell a live process by (macOS): what run_git raised alone
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and any(_alive(x) for x in recorded):
+            time.sleep(0.05)
+        self.assertEqual([x for x in recorded if _alive(x)], [], "the git and its child are gone")
+
     def test_a_fifo_shallow_file_the_lstat_passed_refuses_the_run_and_check_naming_the_git_call(self):
         """The 02:43Z ruling's fourth road, the gap between the runner's lstat and git's own open by name, at the batcher's
         shallow file: a FIFO there that the check at the top of run and check passes (cannot_read stubbed to pass, as a
@@ -4723,7 +5089,7 @@ except sweep.Stopped as e:
         os.mkfifo(os.path.join(tree, ".git", "shallow"))
         for argv, call in ((None, self.STATUS), (["check", "--tree", w.tree], "rev-parse --verify HEAD^{commit}")):
             with self.subTest(argv=argv and argv[0]):
-                rc, out, err = self.bounded(w, argv=argv, lstat_passes=True)
+                rc, out, err = self.bounded(w, argv=argv, lstat_passes=True, planted=[call])
                 self.assertEqual(rc, 2, out + err)
                 self.assertIn(self.killed(call, tree), err)
                 self.assertEqual(out, "", "no verdict and no notice printed")
@@ -4737,6 +5103,11 @@ except sweep.Stopped as e:
     # info/exclude), is refused; check reads config and HEAD at find_repo, and neither index nor info/exclude.
     # objects/info/alternates is read by the next job's checkout, which makes the planting run invalid, by the next
     # run's git status, which compares the index with HEAD's tree, and by check's rev-parse of the commit.
+    # (where the pytest leg plants the FIFO, the planting run's exit, its invalid mark or None, the call the next run is
+    # refused at, (check's exit, the call it is refused at or None)). The planting run's one call that meets the plant,
+    # for alternates, is the next job's checkout after the pytest leg (PLANTING_CALL); the normal checkout before it
+    # keeps the runner's bound.
+    CHECKOUT = "-c core.hooksPath=/dev/null checkout"
     BATCHER_FIFOS = (
         ("config", 0, None, DISCOVERY, (2, DISCOVERY)),
         ("HEAD", 0, None, DISCOVERY, (2, DISCOVERY)),
@@ -4746,6 +5117,7 @@ except sweep.Stopped as e:
                                        r"--detach [0-9a-f]{40} in \S+ did not end within 3 s and was killed\); the legs after "
                                        r"it did not run", STATUS, (2, "rev-parse --verify HEAD^{commit}")),
     )
+    PLANTING_CALL = {"objects/info/alternates": (CHECKOUT, PYTEST_LEG)}
 
     def test_a_fifo_a_leg_plants_in_the_batchers_repository_ends_that_run_or_the_next_naming_the_call(self):
         """The closing check wf_bbe8b843-8bf, its finding 1 (config, HEAD, objects/info/alternates) and its third medium
@@ -4759,7 +5131,7 @@ except sweep.Stopped as e:
                 w = self.world()
                 tree, sha = os.path.realpath(w.tree), w.head()     # read before the FIFO: the World's own git reads it too
                 w.ctl({"action": {PYTEST_LEG: "special"}, "special": {"where": "batcher:" + where, "kind": "fifo"}})
-                rc, out, err = self.bounded(w)
+                rc, out, err = self.bounded(w, planted=[self.PLANTING_CALL[where]] if where in self.PLANTING_CALL else [])
                 self.assertEqual(rc, rc_plant, out + err)
                 if mark is None:
                     self.assertIsNone(w.result(sha)["invalid"])
@@ -4767,11 +5139,11 @@ except sweep.Stopped as e:
                     self.assertRegex(w.result(sha)["invalid"], "^" + mark + "$")
                 ran = len(w.calls())
                 w.ctl({})
-                rc, out, err = self.bounded(w)
+                rc, out, err = self.bounded(w, planted=[next_call])
                 self.assertEqual(rc, 2, out + err)
                 self.assertIn(self.killed(next_call, tree), err)
                 self.assertEqual(len(w.calls()), ran, "the next run ran no leg")
-                rc, out, err = self.bounded(w, argv=["check", "--tree", w.tree])
+                rc, out, err = self.bounded(w, argv=["check", "--tree", w.tree], planted=[check_call] if check_call else [])
                 self.assertEqual(rc, rc_check, out + err)
                 if check_call is not None:
                     self.assertIn(self.killed(check_call, tree), err)
@@ -4795,7 +5167,7 @@ except sweep.Stopped as e:
             with self.subTest(road=label):
                 w = self.world()
                 w.ctl(ctl)
-                rc, out, err = self.bounded(w, lstat_passes=lstat_passes)
+                rc, out, err = self.bounded(w, lstat_passes=lstat_passes, planted=[(self.CHECK_IGNORE, PYTEST_LEG)])
                 self.assertEqual(rc, 3, out + err)
                 self.assertRegex(w.result()["invalid"], r"^the re-read after the pytest leg: git %s in \S+ did not end within 3 s "
                                                         r"and was killed; the legs after it did not run$" % self.CHECK_IGNORE)
@@ -4904,10 +5276,10 @@ except sweep.Stopped as e:
                         w.git("rev-parse", "HEAD", cwd=encl))
 
     def test_an_empty_tree_is_refused_and_never_read_as_the_current_directory(self):
-        """The verify pass at PR 926's build head, its code finding 5: --tree '' (what an unset shell variable gives),
-        from a subdirectory of the batcher's tree. run and check are each refused (exit 2) naming the empty path, no leg
-        run, nothing recorded. Before this change an empty --tree read as no --tree and the cwd was walked up from: check
-        read the batcher's HEAD and run swept it."""
+        """The verify pass at the wf_3b100f5e-b38 build, its code finding 5: --tree '' (what an unset shell variable
+        gives), from a subdirectory of the batcher's tree. run and check are each refused (exit 2) naming the empty
+        path, no leg run, nothing recorded. Before this change an empty --tree read as no --tree and the cwd was walked
+        up from: check read the batcher's HEAD and run swept it."""
         w = self.world()
         sha = w.head()
         sub = os.path.join(w.tree, "sub")
@@ -4921,11 +5293,11 @@ except sweep.Stopped as e:
                 self.assertFalse(os.path.exists(w.result_path(sha)), "nothing recorded for the batcher's head")
 
     def test_check_from_a_subdirectory_names_the_work_tree_in_its_remedy(self):
-        """The verify pass at PR 926's build head, its code finding 4: check with no --tree, from a subdirectory of the
-        batcher's tree (find_repo walks up from the cwd there), finds no result, and its remedy names `run --tree` with
-        the work tree, not the subdirectory, so the remedy is one run accepts: check with that --tree reads the same
-        missing result rather than being refused. Before this change the remedy named the subdirectory, which run refuses
-        since the explicit-start change (no .git in it)."""
+        """The verify pass at the wf_3b100f5e-b38 build, its code finding 4: check with no --tree, from a subdirectory
+        of the batcher's tree (find_repo walks up from the cwd there), finds no result, and its remedy names
+        `run --tree` with the work tree, not the subdirectory, so the remedy is one run accepts: check with that --tree
+        reads the same missing result rather than being refused. Before this change the remedy named the subdirectory,
+        which run refuses since the explicit-start change (no .git in it)."""
         w = self.world()
         tree = os.path.realpath(w.tree)
         sub = os.path.join(tree, "sub")
@@ -4957,6 +5329,77 @@ except sweep.Stopped as e:
                                    "and is its work tree" % (tree, other))
         self.assertFalse(os.path.exists(w.result_path(sha)), "nothing recorded")
 
+    # find_repo, loaded in a child with a 60 s bound, given a tree whose git reports its work tree as the text TOP (each
+    # line of git's answer but the first kept), on a filesystem where the tree's name in its other letter case names the
+    # tree, as on a case-insensitive filesystem (os.stat maps that spelling, and only that one, to the tree; os.lstat, and
+    # so os.path.realpath, is left as it is, which keeps a path's case as given on such a filesystem too). Prints, for
+    # each TOP, whether find_repo accepted the tree (and the work tree it returned) or refused it (and why).
+    IDENTITY_DRIVER = (
+        "import importlib.util, json, os, sys\n"
+        "spec = importlib.util.spec_from_file_location('sweep_runner', sys.argv[1])\n"
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n"
+        "tree, other = os.path.realpath(sys.argv[2]), os.path.realpath(sys.argv[3])\n"
+        "variant = os.path.join(os.path.dirname(tree), os.path.basename(tree).swapcase())\n"
+        "assert variant != tree, 'premise: the tree has a letter in its name'\n"
+        "assert not os.path.lexists(variant) or os.path.samefile(variant, tree), 'premise: the other case names no other'\n"
+        "real_stat = os.stat\n"
+        "def case_blind_stat(path, *a, **k):\n"
+        "    if isinstance(path, str) and (path == variant or path.startswith(variant + os.sep)):\n"
+        "        path = tree + path[len(variant):]\n"
+        "    return real_stat(path, *a, **k)\n"
+        "os.stat = case_blind_stat\n"
+        "real_run_git, top = mod.run_git, None\n"
+        "def run_git(repo, *args, **kw):\n"
+        "    p = real_run_git(repo, *args, **kw)\n"
+        "    if '--show-toplevel' in args and p.returncode == 0:\n"
+        "        p.stdout = '\\n'.join([top] + p.stdout.split('\\n')[1:])\n"
+        "    return p\n"
+        "mod.run_git = run_git\n"
+        "out = {}\n"
+        "for label, top in (('the other case', variant), ('another directory', other)):\n"
+        "    try:\n"
+        "        out[label] = ['accepted', mod.find_repo(tree).work_tree]\n"
+        "    except mod.Refused as e:\n"
+        "        out[label] = ['refused', str(e)]\n"
+        "print(json.dumps({'variant': variant, 'found': out}))\n")
+
+    def test_a_tree_named_through_a_symlink_or_in_another_spelling_is_accepted_and_another_directory_refused(self):
+        """The closing check wf_fb19febe-36b, its item 9: find_repo compares git's work tree with the directory holding
+        .git by identity (same_dir, os.path.samefile), not by their real paths' text. A --tree given through a symlink to
+        the batcher's tree is accepted: run sweeps the head and check passes it. Then, by IDENTITY_DRIVER, git's work
+        tree reported in the tree's other letter case, on a filesystem where that names the tree, is accepted, and the
+        work tree returned is git's spelling; git's work tree reported as another directory that exists is refused,
+        naming both. The case-insensitive filesystem is simulated, so the case reads the same on a case-sensitive one: on
+        a real one, git prints the work tree as getcwd gives it, in the case on disk, and os.path.realpath keeps the case
+        a path was given in. Before this change find_repo compared os.path.realpath(top) with the directory, so
+        the other case was refused, blaming a core.worktree that does not exist; the symlink and another directory read
+        as now."""
+        w = self.world()
+        sha = w.head()
+        link = os.path.join(w.tmp, "tree-link")
+        os.symlink(w.tree, link)
+        rc, out, err = self.bounded(w, argv=["run", "--tree", link, "--python", w.python, "--workers", "2"])
+        self.assertEqual(rc, 0, out + err)
+        self.assertTrue(os.path.exists(w.result_path(sha)), "the run recorded the head")
+        rc, out, err = self.bounded(w, argv=["check", "--tree", link])
+        self.assertEqual(rc, 0, out + err)
+        other = os.path.join(w.tmp, "another-work-tree")
+        os.makedirs(other)
+        try:
+            p = subprocess.run([sys.executable, "-c", self.IDENTITY_DRIVER, str(SWEEP), w.tree, other], text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=60)
+        except subprocess.TimeoutExpired:
+            self.fail("find_repo was still running after 60 s")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        got = json.loads(p.stdout)
+        tree, other = os.path.realpath(w.tree), os.path.realpath(other)
+        self.assertEqual(got["found"], {
+            "the other case": ["accepted", got["variant"]],
+            "another directory": ["refused", "%s is not the work tree git reads for the .git in it: git's work tree there is "
+                                             "%s (a core.worktree in the repository's config names it); give the directory "
+                                             "that holds .git and is its work tree" % (tree, other)]})
+
     def test_the_watchdog_kills_what_the_runner_started_in_a_session_of_its_own(self):
         """kill_tree, the kill run_bounded makes when its bound runs out, takes a process the watched one started in a
         session of its own, as run_git starts each git: here a stand-in for the runner, in a group of its own, starts such
@@ -4983,6 +5426,18 @@ except sweep.Stopped as e:
         while time.monotonic() < deadline and _alive(child):
             time.sleep(0.05)
         self.assertFalse(_alive(child), "the child in a session of its own outlived the watchdog's kill")
+
+    def test_a_process_that_is_dead_or_a_zombie_reads_as_not_alive(self):
+        """_alive, which the watchdog pin and the stop pins read: a stat line whose state is Z (a zombie) or X (dead, as
+        its reaper releases it) reads as exited, any other state as alive, with a command name holding a parenthesis.
+        With Z alone (the mutant mAliveZOnly) X read as alive, and the watchdog pin went red when its check landed in
+        that window (DEAD_STATES)."""
+        for state, alive in (("R", True), ("S", True), ("D", True), ("T", True), ("Z", False), ("X", False)):
+            with self.subTest(state=state):
+                stat = "4242 (a (b) c) %s 1 4242 4242 0 -1 4194304\n" % state
+                with unittest.mock.patch.object(sys.modules[__name__], "open", unittest.mock.mock_open(read_data=stat),
+                                                create=True):
+                    self.assertEqual(_alive(4242), alive)
 
     def test_a_batchers_linked_worktree_whose_git_file_is_swapped_after_discovery_is_still_the_one_swept(self):
         """The 02:43Z ruling, item 1(b), its GIT_DIR (the verify pass at PR 926's build head, its code finding 3): the
@@ -5066,6 +5521,91 @@ except sweep.Stopped as e:
         while time.monotonic() < deadline and any(_alive(x) for x in recorded):
             time.sleep(0.05)
         self.assertEqual([x for x in recorded if _alive(x)], [], "the git and its child are gone")
+
+
+# StopPinsLeaveNothing's mutant of sweep.py, written to a copy the pin runs in its place: no stop signal is given the
+# runner's handler (signal.signal(s, _on_stop) not called), so SIGTERM ends the runner outright and the git it waits on,
+# in a session of its own, runs on; and every process the runner starts is logged by its pid, its group's id for one
+# started in a session of its own, to the file STOP_PINS_LOG names.
+NO_HANDLER_MUTATION = (("        signal.signal(s, _on_stop)\n", "        pass\n"),
+                       ('\n\nif __name__ == "__main__":\n', '''
+
+
+class _LoggedPopen(subprocess.Popen):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        with open(os.environ["STOP_PINS_LOG"], "a") as f:
+            f.write("%d\\n" % self.pid)
+
+
+subprocess.Popen = _LoggedPopen
+
+
+if __name__ == "__main__":
+'''))
+
+
+def _group_alive(pgid):
+    """Whether any process of the process group `pgid` is left."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _kill_groups(pgids):
+    for g in pgids:
+        if _group_alive(g):
+            try:
+                os.killpg(g, signal.SIGKILL)
+            except OSError:
+                pass
+
+
+class StopPinsLeaveNothing(unittest.TestCase):
+    """The closing check wf_fb19febe-36b, its item 5, in the runner: a stop pin that a mutant turns red leaves no process
+    of it running. GitBoundPins' stop pin over git (watch_run with a stop) is run whole against NO_HANDLER_MUTATION, a
+    copy of sweep.py put in its place (SWEEP), so the SIGTERM the pin sends ends the runner outright and the pin is red;
+    once the pin's run is done, no process group the runner started (the mutant logs each) has a process left. Without
+    watch_run's own recording, the runner's descendants and their process groups read before the signal and killed on
+    the way out (the mutant mWatchRunNoRecord drops it), the git status waiting on the FIFO ran on after the pin."""
+
+    PIN = "test_a_git_status_ended_at_the_bound_or_on_a_stop_leaves_no_index_lock_in_your_repository"
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "the pins record the descendants they kill from /proc (Linux); off it "
+                                                   "their watchdog kills the watched group alone")
+    def test_a_stop_pin_a_mutant_turns_red_leaves_no_process_of_it_running(self):
+        tmp = tempfile.mkdtemp(prefix="stoppins-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        log = os.path.join(tmp, "pids")
+        open(log, "w").close()
+        with open(SWEEP) as f:
+            src = f.read()
+        for old, new in NO_HANDLER_MUTATION:
+            self.assertEqual(src.count(old), 1, "premise: the mutation's text is in sweep.py once")
+            src = src.replace(old, new)
+        mutant = os.path.join(tmp, "sweep.py")
+        with open(mutant, "w") as f:
+            f.write(src)
+        result = unittest.TestResult()
+        with unittest.mock.patch.dict(globals(), {"SWEEP": Path(mutant)}), \
+                unittest.mock.patch.dict(os.environ, {"STOP_PINS_LOG": log}):
+            GitBoundPins(self.PIN).run(result)
+        with open(log) as f:
+            groups = [int(x) for x in f.read().split()]
+        self.addCleanup(_kill_groups, groups)               # this pin leaves nothing running either
+        self.assertEqual((len(result.failures), len(result.errors), result.testsRun), (1, 0, 1),
+                         "premise: the mutant turned the stop pin red: %s" % (result.failures + result.errors))
+        self.assertIn("-15", result.failures[0][1], "premise: red because SIGTERM ended the runner outright")
+        self.assertTrue(groups, "premise: the runner started processes and the mutant logged them")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and any(_group_alive(g) for g in groups):
+            time.sleep(0.05)
+        self.assertEqual([g for g in groups if _group_alive(g)], [],
+                         "no process group the runner started has a process left once the red pin is done")
 
 
 class RunnerOwnFiles(unittest.TestCase):
@@ -5191,7 +5731,8 @@ class RunnerOwnFiles(unittest.TestCase):
         self.assertTrue(stat.S_ISFIFO(os.lstat(result).st_mode), "premise: the result is a FIFO")
         swept = w.head()
         rc, out, err = self.run_bounded(w, argv=["check", seed, "--tree", w.tree], bound=60)
-        self.assertEqual((rc, out), (1, "FAIL sweep unreadable: %s: a FIFO, not a regular file; sweep again\n" % result), err)
+        self.assertEqual((rc, out), (1, "FAIL sweep unreadable: %s: a FIFO, not a regular file%s\n" % (result, KEPT_REMEDY)),
+                         err)
         w.change({"README.md": "# notes-api, a third commit\n"})
         rc, out, err = self.run_bounded(w, argv=["check", "--tree", w.tree], bound=60)
         self.assertEqual(rc, 1, out + err)
@@ -5202,7 +5743,9 @@ class RunnerOwnFiles(unittest.TestCase):
         does not exist. assess tests the path with os.path.lexists, so check reads it through _load and fails it as
         unreadable naming the file (exit 1), and run refuses that sha naming it (exit 2), the two agreeing; the symlink is
         kept and its target not created. At the head before it, os.path.exists followed the symlink and check said the
-        result was missing, whose remedy, a run, run refused."""
+        result was missing, whose remedy, a run, run refused. Since the closing check wf_fb19febe-36b, its item 8, check's
+        line names the remedy run's refusal names, moving the file aside, where it said "sweep again", which run refused;
+        the case then follows it: with the symlink moved aside the run sweeps the sha and check passes it."""
         w = self.world()
         sha = w.head()
         os.makedirs(self.sweeps(w), mode=0o700, exist_ok=True)
@@ -5210,7 +5753,8 @@ class RunnerOwnFiles(unittest.TestCase):
         target = os.path.join(w.tmp, "no-such-result.json")
         os.symlink(target, result)
         rc, out, err = self.run_bounded(w, argv=["check", "--tree", w.tree], bound=60)
-        self.assertEqual((rc, out), (1, "FAIL sweep unreadable: %s: a symlink, not a regular file; sweep again\n" % result), err)
+        self.assertEqual((rc, out), (1, "FAIL sweep unreadable: %s: a symlink, not a regular file%s\n" % (result, KEPT_REMEDY)),
+                         err)
         rc, out, err = self.run_bounded(w, bound=60)
         self.assertEqual(rc, 2, out + err)
         self.assertIn("sweep: the result at %s is unreadable (a symlink, not a regular file); it is kept, since results are "
@@ -5218,6 +5762,49 @@ class RunnerOwnFiles(unittest.TestCase):
         self.assertEqual(w.calls(), [], "no leg ran")
         self.assertTrue(os.path.islink(result), "the symlink is kept")
         self.assertFalse(os.path.lexists(target), "its target was not created")
+        os.rename(result, result + ".aside")
+        rc, out, err = self.run_bounded(w, bound=60)
+        self.assertEqual(rc, 0, out + err)
+        self.assertNotEqual(w.calls(), [], "the legs ran")
+        rc, out, err = self.run_bounded(w, argv=["check", "--tree", w.tree], bound=60)
+        self.assertEqual(rc, 0, out + err)
+        self.assertTrue(os.path.islink(result + ".aside"), "what was moved aside is left as it was")
+
+    def test_a_result_of_another_schema_or_sha_names_runs_remedy_in_check_and_the_run_follows_it(self):
+        """The verify pass at the closing check wf_fb19febe-36b's build (its code finding 2, its texts finding 1), the two
+        lines of item 8's kind beside the one that item fixed: the file at the head's result path is a regular file run
+        keeps and refuses (load_history), of schema 3, of this schema's number written as a string, or of this schema
+        recording another sha. check fails it naming the file (exit 1), with run's remedy, moving the file aside, where
+        it said to sweep again, which run refused; run refuses that sha (exit 2), naming the file, runs no leg and keeps
+        it; with the file moved aside the run sweeps the sha and check passes it."""
+        other = "ab" * 20
+        for label, record in (("schema 3", {"schema": 3}), ("schema as a string", {"schema": str(sweep.SCHEMA)}),
+                              ("another sha", {"schema": sweep.SCHEMA, "sha": other})):
+            with self.subTest(label):
+                w = self.world()
+                sha = w.head()
+                os.makedirs(self.sweeps(w), mode=0o700, exist_ok=True)
+                result = w.result_path(sha)
+                with open(result, "w") as f:
+                    json.dump(dict({"sha": sha, "branch": None}, **record, runs=[{"sha": record.get("sha", sha), "legs": {}}]), f)
+                line = {"schema 3": "unreadable: %s: schema 3, and this reader reads schema %d" % (result, sweep.SCHEMA),
+                        "schema as a string": "unreadable: %s: schema '%d', and this reader reads schema %d"
+                                              % (result, sweep.SCHEMA, sweep.SCHEMA),
+                        "another sha": "stale: %s records sha %s, not HEAD %s" % (result, other[:10], sha[:10])}[label]
+                rc, out, err = self.run_bounded(w, argv=["check", "--tree", w.tree], bound=60)
+                self.assertEqual((rc, out), (1, "FAIL sweep %s%s\n" % (line, KEPT_REMEDY)), err)
+                rc, out, err = self.run_bounded(w, bound=60)
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn("sweep: the result at %s is not a record of %s this runner writes (" % (result, sha[:10]), err)
+                self.assertIn("); it is kept, since results are append-only: move it aside to sweep this sha again\n", err)
+                self.assertEqual(w.calls(), [], "no leg ran")
+                self.assertTrue(os.path.isfile(result), "the file is kept")
+                os.rename(result, result + ".aside")
+                rc, out, err = self.run_bounded(w, bound=60)
+                self.assertEqual(rc, 0, out + err)
+                self.assertNotEqual(w.calls(), [], "the legs ran")
+                rc, out, err = self.run_bounded(w, argv=["check", "--tree", w.tree], bound=60)
+                self.assertEqual(rc, 0, out + err)
 
     def test_a_fifo_at_a_checkout_marker_or_a_lock_does_not_hold_the_next_run(self):
         """The pytest leg plants, under the state dir, a FIFO at a checkout's marker with no checkout, or a marker naming
@@ -5240,15 +5827,21 @@ class RunnerOwnFiles(unittest.TestCase):
                 self.assertFalse(os.path.lexists(path), "the next run removed the marker of no checkout")
 
     # What the lock pins plant at a lock's name, and the type the refusal names: a FIFO; a symlink whose target does not
-    # exist (open(path, "a+") followed it and created the target); and a symlink to a regular file (which a lock open that
-    # follows symlinks takes as the lock, and the run goes on).
-    LOCK_KINDS = (("fifo", "a FIFO"), ("dangling", "a symlink"), ("link", "a symlink"))
+    # exist (open(path, "a+") followed it and created the target); a symlink to a regular file (which a lock open that
+    # follows symlinks takes as the lock, and the run goes on); and a directory (open_lock maps the open's EISDIR to the
+    # type, where the error's own text would say "Is a directory"; the closing check wf_fb19febe-36b, its item 7). These
+    # are the three types open_lock's docstring and the module docstring name.
+    LOCK_KINDS = (("fifo", "a FIFO"), ("dangling", "a symlink"), ("link", "a symlink"), ("dir", "a directory"))
 
     @staticmethod
     def plant_lock(path, kind):
-        """Make `path` (absent) `kind` of LOCK_KINDS; returns the symlink's target, or None for the FIFO."""
+        """Make `path` (absent) `kind` of LOCK_KINDS; returns the symlink's target, or None for the FIFO and the directory
+        (each is removed with the world's temp tree)."""
         if kind == "fifo":
             os.mkfifo(path)
+            return None
+        if kind == "dir":
+            os.mkdir(path)
             return None
         target = path + ".target"
         if kind == "link":
@@ -5257,13 +5850,14 @@ class RunnerOwnFiles(unittest.TestCase):
         os.symlink(target, path)
         return target
 
-    def test_a_fifo_or_a_symlink_at_the_runs_lock_refuses_the_run_naming_it(self):
+    def test_a_fifo_a_symlink_or_a_directory_at_the_runs_lock_refuses_the_run_naming_it(self):
         """The closing check wf_3b100f5e-b38, its item 2, at the run's per-sha lock (<state dir>/sweeps/<sha>.lock, which
-        a leg reaches from its log's path): a FIFO, a dangling symlink and a symlink to a regular file. The lock opens
-        through open_lock (no wait, no symlink followed, a regular file only), so each run is refused (exit 2) naming the
-        lock and its type, no leg run, nothing recorded, and the dangling symlink's target is not created. At the head
-        before it, open(path, "a+") ended the FIFO's run with a traceback (exit 1, io.UnsupportedOperation, the path not
-        named), and followed each symlink: the run swept, and the dangling one's target was created."""
+        a leg reaches from its log's path): a FIFO, a dangling symlink, a symlink to a regular file and a directory (the
+        closing check wf_fb19febe-36b, its item 7). The lock opens through open_lock (no wait, no symlink followed, a
+        regular file only), so each run is refused (exit 2) naming the lock and its type, no leg run, nothing recorded,
+        and the dangling symlink's target is not created. At the head before it, open(path, "a+") ended the FIFO's run
+        with a traceback (exit 1, io.UnsupportedOperation, the path not named) and the directory's with one too (exit 1,
+        IsADirectoryError), and followed each symlink: the run swept, and the dangling one's target was created."""
         for kind, word in self.LOCK_KINDS:
             with self.subTest(kind=kind):
                 w = self.world()
@@ -5280,14 +5874,15 @@ class RunnerOwnFiles(unittest.TestCase):
                 if kind == "dangling":
                     self.assertFalse(os.path.lexists(target), "the symlink's target was not created")
 
-    def test_a_fifo_or_a_symlink_at_a_venvs_lock_refuses_the_next_run_naming_it(self):
+    def test_a_fifo_a_symlink_or_a_directory_at_a_venvs_lock_refuses_the_next_run_naming_it(self):
         """The closing check wf_3b100f5e-b38, its item 2, at a venv's lock (<key>.lock beside the venv, the pytest leg's
         under sweeps/sdk and the served leg's under sweeps/served, which a leg running in the venv reaches): after a run
-        that built both, each lock is replaced by a FIFO, a dangling symlink or a symlink to a regular file. The next run
-        opens it through open_lock, so it is refused (exit 2) naming the lock and its type, before any leg, nothing
-        recorded for the new head, and the dangling symlink's target is not created. At the head before it, open(path,
-        "a+") ended the FIFO's run with a traceback (exit 1, the path not named) and followed each symlink, the run going
-        on."""
+        that built both, each lock is replaced by a FIFO, a dangling symlink, a symlink to a regular file or a directory
+        (the closing check wf_fb19febe-36b, its item 7). The next run opens it through open_lock, so it is refused (exit
+        2) naming the lock and its type, before any leg, nothing recorded for the new head, and the dangling symlink's
+        target is not created. At the head before it, open(path, "a+") ended the FIFO's run with a traceback (exit 1, the
+        path not named) and the directory's with one too (exit 1, IsADirectoryError), and followed each symlink, the run
+        going on."""
         for root in ("sdk", "served"):
             for kind, word in self.LOCK_KINDS:
                 with self.subTest(venv=root, kind=kind):
@@ -8794,7 +9389,7 @@ class Reader(unittest.TestCase):
                     json.dump(data, f)
                 case, line = self.case()
                 self.assertEqual(case, "unreadable", line)
-                self.assertIn("sweep unreadable: %s: %s; sweep again" % (path, named), line)
+                self.assertIn("sweep unreadable: %s: %s%s" % (path, named, KEPT_REMEDY), line)
         os.remove(path)
         other = sweep.result_path(self.OTHER, self.env)
         with open(other, "w") as f:

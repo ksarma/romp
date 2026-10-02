@@ -38,6 +38,13 @@ class KnownHostMemory(unittest.TestCase):
     def setUp(self):
         km._remotes.clear()
         km._known.clear()
+        # A detach or a trust change tells the bus, and conftest gives this module's kernel a dead BUS_PORT for the test
+        # (the reviewer's ruling of round 1 on fork PR #894: at the import-time 25302 the notify reached the machine's own
+        # bus), so the notify is refused on every box and kicks the revive, which would run a real romp-postal-service
+        # ensure from this process: stubbed for the test, put back by a cleanup.
+        revive = km._revive_postal_bus
+        km._revive_postal_bus = lambda: None
+        self.addCleanup(setattr, km, "_revive_postal_bus", revive)
 
     def test_detach_remembers_the_host_and_its_trust(self):
         km._remotes["TESTHOST"] = _row("TESTHOST", trust="trusted")

@@ -415,9 +415,15 @@ subject; `verify` refuses the branch otherwise.
    batch worktree, or the ledger check's temporary worktree, for the ledger script) and the same
    bound (`finish` reports a `pr-orphans.sh` stopped at the bound as unread and carries on, the
    merge having happened). SIGTERM, SIGHUP (unless it was
-   started with it ignored) and Ctrl-C stop it: the process it is waiting on is killed (a `git`, or
+   started with it ignored) and Ctrl-C stop it: any process it is waiting on is killed (a `git`, or
    one of those two scripts, with its process group; `gh`, or the command `bisect` runs, alone), its
-   cleanup runs, and a stop by SIGTERM or SIGHUP exits 128 plus the signal's number. A `git` or one
+   cleanup runs, and a stop by SIGTERM or SIGHUP exits 128 plus the signal's number. Each step of
+   that cleanup (the checkout of the batch branch and the `git bisect reset` in `bisect`, the
+   removal of the ledger check's temporary worktree in `verify`) runs to its end: a SIGTERM or SIGHUP
+   that lands inside one runs it again from its start, with later ones ignored. A stop that arrives
+   while it starts any of those processes, or the `git` of the sweep's excuse rule that `verify`,
+   `plan` and `assemble --repin` run, is held until the process has started and then ends it the
+   same way. A `git` or one
    of the two scripts gets SIGTERM first here too, then SIGKILL 10 s later, so a `git worktree add`
    stopped or killed at the bound removes the worktree it was adding and its registration rather
    than leaving them locked, and the next `assemble` is not refused on a lock it left. The files the
@@ -432,7 +438,8 @@ subject; `verify` refuses the branch otherwise.
    symlink) is not read, and the `served` leg is red, naming why, while one it replaced with another
    regular file is read as if the leg had written it. (3) A result that is not a regular file (a
    FIFO, a directory, or a symlink, a dangling one included) is never read and reads as unreadable:
-   `check` and `verify` fail it, naming the file, and the next sweep at its sha is refused. (4) A
+   `check` and `verify` fail it, naming the file, and the next sweep at its sha is refused, keeping
+   the file, so their line says to move it aside to sweep that sha again. (4) A
    checkout's marker that is not a regular file reads as no marker, and the checkout is removed as
    stale. (5) A venv's marker that is not a regular file
    reads as no finished build, and the venv is built again. (6) A venv's build log that is not a
@@ -481,7 +488,11 @@ subject; `verify` refuses the branch otherwise.
    run is invalid, so the flake for a failure in an invalid run is spent on a full run. SIGTERM
    stops the runner, and so do SIGHUP and Ctrl-C (SIGINT) unless it was started with them ignored
    (under `nohup`, or as a shell's background job), which it keeps; a stopped run removes its
-   checkouts and TMPDIRs, and the legs start with both signals at their default action either way. A leg that
+   checkouts and TMPDIRs, and the legs start with both signals at their default action either way.
+   `check` stops on the same signals and kills the `git` it is waiting on with its process group,
+   exiting 128 plus the signal's number. A stop that arrives while the sweep starts a process (a
+   `git`, a leg, a probe of an interpreter, a step of a venv's build, a read of a tool's version)
+   is held until the process has started and then ends it. A leg that
    fails is written to the result as soon as it exits, so stopping the runner during the re-read
    after it, or during that write itself, keeps the failure (a stop inside the write lets it finish
    first, as it does for the write of an invalid mark); a stop between the leg's exit and the
@@ -509,7 +520,10 @@ subject; `verify` refuses the branch otherwise.
    fails by name when it is missing, stale (recorded at another commit), unfinished, red (a red run
    no later run excused counts too), invalid (a result recorded under another sweep.py's leg
    environment is), incomplete or unreadable (a schema-1 result, from the runner that swept the
-   batcher's own tree, is, and so is a result with a run that records no private checkout). A missing result names the directory verify read and the variable it
+   batcher's own tree, is, and so is a result with a run that records no private checkout). For a
+   result file the next sweep at that sha keeps and refuses (one it cannot read, one of another
+   schema, or one that records another sha), the line says to move the file aside and sweep again,
+   the remedy that refusal names. A missing result names the directory verify read and the variable it
    came from (`ROMP_STATE_DIR`, `XDG_STATE_HOME` or `HOME`): a sweep run with another environment
    wrote its result somewhere else. It also fails as "behind" when the batch head does not contain
    main as origin has it now: `ci.yml` does not run on the merge to main, so a batch should land only when

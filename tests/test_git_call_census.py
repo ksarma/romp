@@ -22,8 +22,8 @@ name, to follow a chain of names through them. A launch site is a reference, cal
     os.path.os.system): each dotted name is walked from its first module, a name that is itself a module is followed
     (the live module's attribute, or, where this interpreter's module lacks it, a module a table names spelled as the
     attribute is, its leading underscores dropped: shlex.os is gone in Python 3.14), and the name after each module is
-    read against that module's rule (the verify pass at PR 926's build head, its code finding 3: the census read only
-    the first name after a known module, and eight of the inert modules hold os, sys or posix);
+    read against that module's rule (the verify pass at the wf_3b100f5e-b38 build, its code finding 3: the census read
+    only the first name after a known module, and eight of the inert modules hold os, sys or posix);
   - a call through a ctypes library handle (an attribute of a name bound to one), since native code can start a process;
   - such a module handed on whole (a bare reference to it, getattr on it with a name that is not a literal, or its
     __dict__), and so a module that holds one (shutil), and a name imported from one with `from ... import`, at the
@@ -121,12 +121,14 @@ ALLOWED = {
         ("run_git", "launch"): (1, "the helper every git call goes through: GIT_BOUND, the process group killed at the "
                                    "bound, the repository named explicitly"),
         ("tool_versions", "launch"): (1, "each tool's version flag (git --version among them) as the legs' own tool, from "
-                                         "their PATH and in a leg's environment, bounded at 60 s; it reads no repository"),
-        ("probe", "launch"): (1, "OPEN: the PROBE in an interpreter, --python's or a venv's, bounded at 120 s"),
+                                         "their PATH and in a leg's environment, bounded at 60 s, under the stop hold; "
+                                         "it reads no repository"),
+        ("probe", "launch"): (1, "OPEN: the PROBE in an interpreter, --python's or a venv's, bounded at 120 s, under the "
+                                 "stop hold"),
         ("_build_venv.step", "launch"): (1, "OPEN: one step of a venv's build (python -m venv, pip install, get-pip.py), "
-                                            "bounded at SDK_STEP_TIMEOUT"),
+                                            "bounded at SDK_STEP_TIMEOUT, under the stop hold"),
         ("run_leg", "launch"): (1, "OPEN, the legs' launcher: a leg's command in its checkout and its own process group, "
-                                   "which the runner reaps and stops"),
+                                   "under the stop hold, which the runner reaps and stops"),
         ("_become_subreaper", "launch"): (2, "ctypes loads the C library and calls prctl(PR_SET_CHILD_SUBREAPER) through "
                                              "it, the one native call the runner makes"),
         ("_venv_check", "probe"): (1, "the PROBE in a venv the runner built, to check it still holds its build"),
@@ -142,11 +144,12 @@ ALLOWED = {
     "scripts/batch.py": {
         ("run_git", "launch"): (1, "the helper every git call goes through: GIT_BOUND, the process group killed at the "
                                    "bound, the repository named explicitly"),
-        ("_run", "launch"): (1, "OPEN, the runner for gh, whose callers are named below"),
+        ("_run", "launch"): (1, "OPEN, the runner for gh, whose callers are named below, under the stop hold"),
         ("run_tool", "launch"): (1, "OPEN, the runner for the processes that run git in the clone (the ledger script, "
                                     "scripts/pr-orphans.sh): run_git's bound, process-group kill and repository"),
-        ("cmd_bisect", "launch"): (3, "the user's bisect command at the tip, at the base and at each step, unbounded on "
-                                      "purpose: a test command can rightly take longer than any git call"),
+        ("run_command", "launch"): (1, "OPEN, the runner for bisect's command, under the stop hold and unbounded on "
+                                       "purpose: a test command can rightly take longer than any git call"),
+        ("cmd_bisect", "run_command"): (3, "the user's bisect command at the tip, at the base and at each step"),
         ("sweep_reader", "load"): (2, "scripts/sweep.py, loaded from beside this file (spec_from_file_location and "
                                       "exec_module) for its reader and excuse rule"),
         ("gh", "_run"): (1, "gh, the program gh_bin() finds"),
@@ -158,7 +161,12 @@ ALLOWED = {
 }
 # The helpers on ALLOWED that start whatever their caller hands them (a program or a command from a parameter): each
 # reference to one is a site of that runner's kind, in the function it is written in.
-OPEN = {"scripts/sweep.py": {"probe", "run_leg", "_build_venv.step"}, "scripts/batch.py": {"_run", "run_tool"}}
+OPEN = {"scripts/sweep.py": {"probe", "run_leg", "_build_venv.step"}, "scripts/batch.py": {"_run", "run_tool", "run_command"}}
+# The closing check wf_fb19febe-36b, its item 4: every process either script starts is started under the stop hold, so
+# every "launch" site is held (unheld_launches), but these, which start no process: (function, why).
+NOT_A_PROCESS = {"scripts/sweep.py": {"_become_subreaper": "ctypes loads the C library and calls prctl through it, the "
+                                                           "one native call the runner makes; no process starts"},
+                 "scripts/batch.py": {}}
 # The file each allowed load site's function loads; each must be in SCRIPTS.
 LOADS = {"scripts/sweep.py": {}, "scripts/batch.py": {"sweep_reader": "scripts/sweep.py"}}
 
@@ -477,8 +485,8 @@ PLANTS = {
     "a file loaded by path": ("import importlib.util\ndef planted(path):\n"
                               "    spec = importlib.util.spec_from_file_location('m', path)\n"),
     # Spellings that reach a launcher through a module that holds os or posix, or through a namespace (the verify pass at
-    # PR 926's build head, its code finding 3): the census before it found none of these. Each imports what it uses, so
-    # each is a launch in either script.
+    # the wf_3b100f5e-b38 build, its code finding 3): the census before it found none of these. Each imports what it
+    # uses, so each is a launch in either script.
     "os through shutil": "import shutil\ndef planted(t):\n    shutil.os.system(t)\n",
     "posix through shutil": "import shutil\ndef planted(t):\n    shutil.posix.system(t)\n",
     "os through tempfile's _os": "import tempfile\ndef planted(t):\n    return tempfile._os.popen(t).read()\n",
@@ -510,7 +518,8 @@ OPEN_PLANTS = {
                          "run_leg": "def planted(*a):\n    return run_leg(*a)\n"},
     "scripts/batch.py": {"_run": "def planted():\n    return _run(['true'])\n",
                          "run_tool": "def planted(root):\n    return run_tool(['true'], root)\n",
-                         "_run bound to a name": "def planted():\n    r = _run\n    return r(['true'])\n"},
+                         "_run bound to a name": "def planted():\n    r = _run\n    return r(['true'])\n",
+                         "run_command": "def planted(root):\n    return run_command(['true'], root)\n"},
 }
 # One more launch written into an allowed function: (the text it goes before or after, the text with it), per file.
 EXTRA_IN_ALLOWED = {
@@ -518,6 +527,66 @@ EXTRA_IN_ALLOWED = {
                          "    subprocess.run(['true'])\n    return out\n\n\ndef npm_builtin(ctx):"),
     "scripts/batch.py": ("    return _run([gh_bin(), *args], cwd=cwd, check=check)\n",
                          "    _run(['true'])\n    return _run([gh_bin(), *args], cwd=cwd, check=check)\n"),
+}
+
+
+def _calls(stmt, name):
+    """Whether the statement `stmt` is a bare call of the function `name`: `name()`."""
+    return (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call) and isinstance(stmt.value.func, ast.Name)
+            and stmt.value.func.id == name and not stmt.value.args and not stmt.value.keywords)
+
+
+def _held(node, parent):
+    """Whether `node` is in the body of a try statement that comes right after a `_hold_stops()` statement and has a
+    handler whose first statement is `_release_stops()`: the shape that starts a process under the stop hold (run_git's).
+    The walk up stops at the function `node` is in, so a hold outside it does not count."""
+    child, up = node, parent.get(id(node))
+    while up is not None and not isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+        if isinstance(up, ast.Try) and any(child is st for st in up.body):
+            holder = parent.get(id(up))
+            for field in ("body", "orelse", "finalbody"):
+                seq = getattr(holder, field, None)
+                if isinstance(seq, list) and any(st is up for st in seq):
+                    i = next(k for k, st in enumerate(seq) if st is up)
+                    if (i > 0 and _calls(seq[i - 1], "_hold_stops")
+                            and any(h.body and _calls(h.body[0], "_release_stops") for h in up.handlers)):
+                        return True
+        child, up = up, parent.get(id(up))
+    return False
+
+
+def unheld_launches(source):
+    """Every "launch" site of `source` (launch_sites: a reference to a standard library name that starts a process) that
+    is not started under the stop hold (_held), as (line, the function it is in or None, the text). A launcher bound to
+    a name, or handed on, is not in a held start, so it is one."""
+    tree = ast.parse(source)
+    nodes, parent, _owner = _index(tree)
+    wanted = {(line, text) for line, _fn, kind, text in launch_sites(source) if kind == "launch"}
+    found = []
+    for n in nodes:
+        if getattr(n, "lineno", None) is None or not isinstance(n, (ast.Attribute, ast.Name, ast.ImportFrom)):
+            continue
+        key = (n.lineno, ast.unparse(n)[:120])
+        if key in wanted and not _held(n, parent):
+            found.append((n.lineno, _owner.get(id(n)), key[1]))
+            wanted.discard(key)
+    return sorted(found, key=lambda f: (f[0], str(f[1]), f[2]))
+
+
+# Plants for the held rule, each written over its script's real source (old, new): a launch site whose hold is removed.
+UNHELD_PLANTS = {
+    "scripts/sweep.py": {
+        "run_git's hold removed": ("    argv = [\"git\", *args]\n    _hold_stops()\n    try:\n        p = subprocess.Popen(",
+                                   "    argv = [\"git\", *args]\n    pass\n    try:\n        p = subprocess.Popen("),
+        "probe's hold removed": ("        _hold_stops()\n        try:\n            proc = subprocess.Popen(argv,",
+                                 "        pass\n        try:\n            proc = subprocess.Popen(argv,"),
+    },
+    "scripts/batch.py": {
+        "run_command's hold removed": ("    _hold_stops()\n    try:\n        p = subprocess.Popen(cmd, cwd=cwd)\n",
+                                       "    pass\n    try:\n        p = subprocess.Popen(cmd, cwd=cwd)\n"),
+        "bisect's command through subprocess.run, as before the closing check wf_fb19febe-36b": (
+            "    if run_command(args.cmd, wt) == 0:", "    if subprocess.run(args.cmd, cwd=wt).returncode == 0:"),
+    },
 }
 
 
@@ -546,7 +615,7 @@ class LaunchSiteCensus(unittest.TestCase):
                 for loaded in LOADS[rel].values():
                     self.assertIn(loaded, SCRIPTS)
                 # every entry says how many sites its function holds and why each is legitimate (the verify pass at
-                # PR 926's build head, its code finding 6: every reason blanked, the census stayed green)
+                # the wf_3b100f5e-b38 build, its code finding 6: every reason blanked, the census stayed green)
                 for (fn, kind), (count, why) in ALLOWED[rel].items():
                     self.assertTrue(isinstance(count, int) and count > 0, (fn, kind, count))
                     self.assertTrue(isinstance(why, str) and why.strip(), "the entry %s, %s gives no reason" % (fn, kind))
@@ -617,6 +686,52 @@ class LaunchSiteCensus(unittest.TestCase):
                 else:
                     self.assertEqual(len(found), 1, found)
                     self.assertTrue(found[0][1].startswith(want), found)
+
+    def test_every_launch_site_starts_its_process_under_the_stop_hold(self):
+        """The closing check wf_fb19febe-36b, its item 4: every process either script starts is started under the stop
+        hold, so a stop that arrives while it starts is raised inside the try that ends it. Every launch site in each
+        file is held (_held: right after `_hold_stops()`, in a try whose handler starts with `_release_stops()`), but
+        those NOT_A_PROCESS names; the behavioural pins (the START_WINDOW_DRIVER pins in tests/test_sweep_runner.py and
+        tests/test_batch_tool.py) hold what the shape does."""
+        for rel in SCRIPTS:
+            with self.subTest(script=rel):
+                source = self.read(rel)
+                launches = [s for s in launch_sites(source) if s[2] == "launch"]
+                self.assertTrue(any(fn == "run_git" for _l, fn, _k, _t in launches), "premise: run_git's launch is read")
+                self.assertEqual([u for u in unheld_launches(source) if u[1] not in NOT_A_PROCESS[rel]], [])
+                for fn in NOT_A_PROCESS[rel]:
+                    self.assertIn(fn, {f for _l, f, _k, _t in launches}, "a NOT_A_PROCESS entry the code no longer needs")
+
+    def test_an_unheld_launch_is_found(self):
+        """The held rule's red: a launch with no hold, a hold with no try after it, a try that does not release in its
+        handler, a hold in another function, and a launcher bound to a name are each found; the held shape is not. In
+        each script's real source, a launch site whose hold is removed (UNHELD_PLANTS), and bisect's command started
+        through subprocess.run again, as before this rule, are found where the plant went."""
+        head = "import subprocess\n"
+        cases = {
+            "def f():\n    return subprocess.Popen(['true'])\n": 1,
+            "def f():\n    _hold_stops()\n    p = subprocess.Popen(['true'])\n": 1,
+            "def f():\n    _hold_stops()\n    try:\n        p = subprocess.Popen(['true'])\n    except BaseException:\n"
+            "        raise\n": 1,
+            "def g():\n    _hold_stops()\n    f()\ndef f():\n    try:\n        p = subprocess.Popen(['true'])\n"
+            "    except BaseException:\n        _release_stops()\n        raise\n": 1,
+            "def f():\n    run = subprocess.run\n    _hold_stops()\n    try:\n        p = run(['true'])\n"
+            "    except BaseException:\n        _release_stops()\n        raise\n": 1,
+            "def f():\n    _hold_stops()\n    try:\n        p = subprocess.Popen(['true'])\n    except BaseException:\n"
+            "        _release_stops()\n        raise\n    return p\n": 0,
+        }
+        for source, want in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(len(unheld_launches(head + source)), want, unheld_launches(head + source))
+        for rel, plants in UNHELD_PLANTS.items():
+            base = self.read(rel)
+            for label, (old, new) in plants.items():
+                with self.subTest(script=rel, plant=label):
+                    self.assertEqual(base.count(old), 1, "premise: the plant's text is in %s once" % rel)
+                    planted = base.replace(old, new)
+                    line = planted[:planted.index(new)].count("\n") + 1
+                    found = unheld_launches(planted)
+                    self.assertTrue(any(line <= f[0] <= line + new.count("\n") + 1 for f in found), (line, found))
 
     def test_names_that_start_no_process_are_not_sites(self):
         """subprocess's constants, exceptions and CompletedProcess, os's other names (os.path, os.kill, os.O_NOFOLLOW

@@ -1059,6 +1059,12 @@ def newest_for_branch(branch, env=None):
     return best
 
 
+# The remedy check's and verify's line names for a result file at the sha's path that run keeps and refuses to sweep
+# that sha over (load_history), in the words of run's refusal.
+KEPT_REMEDY = ("; it is kept, since results are append-only, and a run at this sha is refused while it is there: move it "
+               "aside to sweep this sha again")
+
+
 def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None):
     """Read the result for `sha` and name its case: {"case", "line", "path", "result"}. The case is pass, or one of
     missing, stale, unfinished, red, invalid, incomplete, unreadable; `line` is the text a caller prints after
@@ -1094,19 +1100,24 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
                                "or its result goes to another directory" % (subject, sha, d, state_dir_source(env),
                                                                             "" if os.path.isdir(d) else "; the directory does "
                                                                             "not exist", hint, PYTHON_REMEDY))
+    # The three lines below that name KEPT_REMEDY are for the files run keeps and refuses (load_history): one _load
+    # cannot read, one of another schema than 1 or this reader's, and one that records another sha. Their remedy is the
+    # one run's refusal names, not "sweep again", which run refuses (the closing check wf_fb19febe-36b, its item 8, for
+    # the first; the verify pass at that check's build for the other two). A schema-1 file run moves aside itself, so
+    # its line can say to sweep again.
     try:
         data = _load(path)
     except (OSError, ValueError) as e:
-        return done("unreadable", "sweep unreadable: %s: %s; sweep again" % (path, e))
+        return done("unreadable", "sweep unreadable: %s: %s%s" % (path, e, KEPT_REMEDY))
     if type(data.get("schema")) is int and data.get("schema") == 1:
         return done("unreadable", "sweep unreadable: %s: schema 1, %s; sweep again with this checkout's scripts/sweep.py"
                     % (path, SCHEMA_1_TEXT), data)
     if type(data.get("schema")) is not int or data.get("schema") != SCHEMA:
-        return done("unreadable", "sweep unreadable: %s: schema %r, and this reader reads schema %d; sweep again with this "
-                                  "checkout's scripts/sweep.py" % (path, data.get("schema"), SCHEMA), data)
+        return done("unreadable", "sweep unreadable: %s: schema %r, and this reader reads schema %d%s"
+                    % (path, data.get("schema"), SCHEMA, KEPT_REMEDY), data)
     if data.get("sha") != sha:
-        return done("stale", "sweep stale: %s records sha %s, not %s %s; sweep again at %s"
-                    % (path, short(str(data.get("sha"))), subject, short(sha), subject), data)
+        return done("stale", "sweep stale: %s records sha %s, not %s %s%s"
+                    % (path, short(str(data.get("sha"))), subject, short(sha), KEPT_REMEDY), data)
     rec, why = effective(data)
     never = "sweep invalid at %s: %s, which the runner never records; sweep again with this checkout's scripts/sweep.py"
     if rec is None:
@@ -1306,7 +1317,10 @@ def run_git(repo, *args, input=None, text=True, cwd=None):
     given, in a session of its own, and has GIT_BOUND seconds to end. One that has not (waiting on a FIFO, reading without
     end) is killed with its process group and reaped, and GitBound is raised naming the call; a stop signal that arrives
     while it runs kills it the same way before the stop propagates, and one that arrives while it starts is held until
-    the git is started and raised then, inside the same try, so no git the runner started outlives the call."""
+    the git is started and raised then, inside the same try, so no git the runner started outlives the call. That holds
+    under every command, each of which installs the stop handlers (main), and in batch.py's process, which runs this
+    function through the module sweep_reader loads and binds that module's hold to its own handlers' (the closing check
+    wf_fb19febe-36b, its item 4)."""
     argv = ["git", *args]
     _hold_stops()
     try:
@@ -1324,6 +1338,8 @@ def run_git(repo, *args, input=None, text=True, cwd=None):
         if isinstance(e, subprocess.TimeoutExpired):
             raise GitBound("git %s in %s did not end within %d s and was killed" % (" ".join(args), cwd or repo.work_tree,
                                                                                      GIT_BOUND)) from None
+        if isinstance(e, Stopped):
+            e.ended_git = True
         raise
     return subprocess.CompletedProcess(argv, p.returncode, out, err)
 
@@ -1332,9 +1348,9 @@ def run_git(repo, *args, input=None, text=True, cwd=None):
 # the group gets SIGKILL. SIGTERM comes first because git's own handlers for it remove the lock files it holds: git status
 # in the batcher's tree takes its index.lock (an optional lock, to write the refreshed index back) and holds it while it
 # reads info/exclude, so a SIGKILL there left .git/index.lock in your repository, and every later git add or commit
-# there failed on it until you removed it by hand (the verify pass at PR 926's build head, its code finding 1, the same
-# class). Measured on 2026-10-01 (git 2.43.0): that git status, waiting on a FIFO at info/exclude, exited on SIGTERM
-# with the lock removed; under SIGKILL the lock stayed.
+# there failed on it until you removed it by hand (the verify pass at the wf_3b100f5e-b38 build, its code finding 1, the
+# same class). Measured on 2026-10-01 (git 2.43.0): that git status, waiting on a FIFO at info/exclude, exited on
+# SIGTERM with the lock removed; under SIGKILL the lock stayed.
 GIT_TERM_GRACE = 10
 
 
@@ -1407,11 +1423,12 @@ def find_repo(start, walk=False):
     parent, so a .git that git does not recognize there is refused, naming the directory, and never sends git on to an
     enclosing repository (a leg can reach the batcher's repository through its clone's alternates and remove its HEAD,
     for one; the 02:43Z ruling, item 1(b)); and the directory is refused unless git's work tree there is that directory
-    itself, so a core.worktree in the repository's config that names another directory is refused here rather than
-    taken as the work tree of every later call. Every later call into the repository names it explicitly (GitRepo)."""
+    itself (same_dir, by identity), so a core.worktree in the repository's config that names another directory is
+    refused here rather than taken as the work tree of every later call. Every later call into the repository names it
+    explicitly (GitRepo)."""
     if not start:
         # an empty --tree (what an unset shell variable gives) names no directory; os.path.realpath would read it as the
-        # current one (the verify pass at PR 926's build head, its code finding 5)
+        # current one (the verify pass at the wf_3b100f5e-b38 build, its code finding 5)
         raise Refused("an empty path ('') is not a git working tree: give the directory that holds .git")
     d = os.path.realpath(start)
     if walk:
@@ -1428,10 +1445,21 @@ def find_repo(start, walk=False):
     if len(found) != 3:
         raise Refused("%s is not a git working tree that git recognizes (%s)" % (d, (p.stderr or p.stdout).strip()))
     top, git_dir, common = found
-    if os.path.realpath(top) != d:
+    if not same_dir(top, d):
         raise Refused("%s is not the work tree git reads for the .git in it: git's work tree there is %s (a core.worktree in "
                       "the repository's config names it); give the directory that holds .git and is its work tree" % (d, top))
     return GitRepo(top, git_dir, common, os.path.dirname(top))
+
+
+def same_dir(a, b):
+    """Whether the paths `a` and `b` name one directory, compared by identity (os.path.samefile: the same device and
+    inode), not by their real paths' text: git prints its work tree as getcwd gives it, which on a case-insensitive
+    filesystem is the case on disk, not the case the path was given in, and os.path.realpath does not change a path's
+    case (the closing check wf_fb19febe-36b, its item 9). False when either cannot be stat'ed."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _no_git_why(d):
@@ -2158,18 +2186,21 @@ IGNORE_INHERITED = (signal.SIGHUP, signal.SIGINT)
 
 
 class Stopped(BaseException):
-    """A stop signal (STOP_SIGNALS) reached the runner: its legs are stopped and TMPDIR and the checkout removed on the
-    way out."""
+    """A stop signal (STOP_SIGNALS) reached the runner. Under run its legs are stopped and TMPDIR and the checkout
+    removed on the way out; under check, which starts no process but git, the git it was waiting on, if one was
+    running, is ended (run_git's except path, which sets ended_git so main says so)."""
 
     def __init__(self, signum):
         super().__init__(signum)
         self.signum = signum
+        self.ended_git = False
 
 
-# A stop that arrives while run_git starts its git is held until the git is started and run_git is inside the try that
-# ends it (_hold_stops, _release_stops), and raised there: raised as it arrived, between the start and that try, it left
-# the git running, never ended (the verify pass at PR 926's build head, its code finding 2, measured in scripts/batch.py's
-# run_git, whose shape this one had). _holding: whether a start is in progress; _held: the first stop signal that
+# A stop that arrives while the runner starts a process is held until the process is started and the runner is inside
+# the try that ends it (_hold_stops, _release_stops), and raised there: raised as it arrived, between the start and that
+# try, it left the process running, never ended (the verify pass at the wf_3b100f5e-b38 build, its code finding 2,
+# measured in scripts/batch.py's run_git, whose shape run_git had; the closing check wf_fb19febe-36b, its item 4, for
+# every other process the runner starts). _holding: whether a start is in progress; _held: the first stop signal that
 # arrived meanwhile, or None.
 _holding = False
 _held = None
@@ -2188,19 +2219,46 @@ def _on_stop(signum, _frame):
 
 
 def _hold_stops():
-    """Hold every stop signal from here until _release_stops: called just before run_git starts its git."""
+    """Hold every stop signal from here until _release_stops: called just before each process the runner starts
+    (run_git's git, tool_versions' tools, probe's interpreter, a venv build's step, run_leg's leg;
+    tests/test_git_call_census.py's unheld_launches finds a start without it), and in scripts/batch.py's process
+    replaced by that tool's own (sweep_reader)."""
     global _holding
     _holding = True
 
 
 def _release_stops():
     """End the hold, and raise Stopped for the stop signal held during it, if one was: called inside the try that ends
-    the git once it is started, so the git is ended as on any other stop (or, when the start failed, on the way out)."""
+    the process once it is started, so the process is ended as on any other stop (or, when the start failed, on the way
+    out)."""
     global _holding, _held
     _holding = False
     held, _held = _held, None
     if held is not None:
         raise Stopped(held)
+
+
+def _held_wait(p, timeout, input=None):
+    """(stdout, stderr) of `p`, a process tool_versions, probe or a venv build's step started under the stop hold in the
+    runner's own process group, once it ends within `timeout` seconds, as subprocess.run reads them. Any exception while
+    it waits ends it first, then propagates: subprocess.TimeoutExpired at the timeout, a stop held while `p` started,
+    which _release_stops raises here, inside the try, and a stop that arrives while it runs. `p` alone is killed
+    (SIGKILL), as subprocess.run kills its child at its timeout: it shares the runner's group, so there is no group of
+    its own to end (what it started is reparented to the runner, a child subreaper during a run, and killed with the
+    rest of the run's descendants on the way out: reap_descendants); then it is reaped and its pipes closed unread."""
+    try:
+        _release_stops()
+        return p.communicate(input, timeout=timeout)
+    except BaseException:
+        p.kill()
+        p.wait()
+        for f in (p.stdin, p.stdout, p.stderr):
+            if f is not None:
+                try:
+                    f.close()
+                except OSError:
+                    pass
+        raise
 
 
 # Whether install_stop_handlers made this process a child subreaper; wait_leg reads it, and each run records it
@@ -2214,6 +2272,25 @@ PR_SET_CHILD_SUBREAPER = 36
 # The stop signals install_stop_handlers left ignored, as the runner's caller started it (IGNORE_INHERITED); run_leg
 # reads it.
 _kept_ignored = ()
+
+
+def install_stop_signals():
+    """The stop signals' part of install_stop_handlers, which main applies to every command (the closing check
+    wf_fb19febe-36b, its item 4(c): check, which starts git through run_git, installed none, so a SIGTERM or SIGHUP that
+    reached it while its git waited ended check and left the git running, in a session of its own): SIGCHLD at its
+    default action, and each of STOP_SIGNALS raising Stopped (_on_stop), but for a SIGHUP or SIGINT the process was
+    started with ignored (IGNORE_INHERITED), which stays ignored and is recorded in _kept_ignored. install_stop_handlers
+    gives the reasons; it applies this again for run, where it is a no-op the second time, and makes the runner a child
+    subreaper, which no other command needs: only run starts legs."""
+    global _kept_ignored
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    kept = []
+    for s in STOP_SIGNALS:
+        if s in IGNORE_INHERITED and signal.getsignal(s) == signal.SIG_IGN:
+            kept.append(s)
+            continue
+        signal.signal(s, _on_stop)
+    _kept_ignored = tuple(kept)
 
 
 def install_stop_handlers(platform=None):
@@ -2235,18 +2312,12 @@ def install_stop_handlers(platform=None):
     reason (runner.subreaper false, runner.subreaper_why).
 
     An ignored SIGCHLD survives exec, so a parent that ignores it hands the runner a disposition under which the kernel
-    reaps every child itself: every exit status, the leg's and each subprocess.run's, would read 0, and wait_leg, which
+    reaps every child itself: every exit status, the leg's and every other child's, would read 0, and wait_leg, which
     blocks until some child is waitable, would wait until the runner had no child left (a leg's daemon kept it waiting
-    until it exited). The default action is set here, before the runner starts any child, and the legs inherit it."""
-    global _subreaper, _subreaper_why, _kept_ignored
-    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-    kept = []
-    for s in STOP_SIGNALS:
-        if s in IGNORE_INHERITED and signal.getsignal(s) == signal.SIG_IGN:
-            kept.append(s)
-            continue
-        signal.signal(s, _on_stop)
-    _kept_ignored = tuple(kept)
+    until it exited). The default action is set here, before the runner starts any child, and the legs inherit it. The
+    signals' part is install_stop_signals, which main applies to every command before this runs."""
+    global _subreaper, _subreaper_why
+    install_stop_signals()
     platform = sys.platform if platform is None else platform
     if platform.startswith("linux"):
         _become_subreaper()
@@ -2335,8 +2406,9 @@ def wait_leg(p):
     zombies pile up until the leg ends. So the runner blocks until some child of its has exited, reads which one
     without reaping it (waitid with WNOWAIT), and reaps it unless it is the leg, whose status Popen reads. The leg is
     the one child here that the runner will wait for: legs run one at a time on the runner's one thread, and every
-    other child the runner starts comes from subprocess.run, which reaps it before returning (ReapWhileLegRuns in
-    tests/test_sweep_runner.py holds that census). So every other child that exits here was reparented to the
+    other child the runner starts is reaped before the call that started it returns (run_git's, and tool_versions',
+    probe's and a venv build step's, each through _held_wait; ReapWhileLegRuns in tests/test_sweep_runner.py holds
+    that census). So every other child that exits here was reparented to the
     runner, and nothing else will wait for it. Without the subreaper nothing is adopted and Popen.wait is exact."""
     if not _subreaper:
         return p.wait()
@@ -2573,9 +2645,15 @@ def tool_versions(ctx):
         rec = {"path": path, "version": None}
         if path:
             try:
-                p = subprocess.run([path, arg], env=env, cwd=ctx["tmpdir"], text=True, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
-                rec["version"] = (p.stdout.strip().splitlines() or [""])[0][:200]
+                _hold_stops()
+                try:
+                    p = subprocess.Popen([path, arg], env=env, cwd=ctx["tmpdir"], text=True, stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                except BaseException:
+                    _release_stops()
+                    raise
+                stdout, _err = _held_wait(p, 60)
+                rec["version"] = (stdout.strip().splitlines() or [""])[0][:200]
             except (OSError, subprocess.SubprocessError) as e:
                 rec["error"] = str(e)[:200]
         out[tool] = rec
@@ -2715,10 +2793,17 @@ def probe(python, env, dists=(), what="the pytest interpreter", modules=(), whol
     """The PROBE's answer from `python`, run in `env` (build_env), for the distributions `dists` and the top-level
     modules `modules`, and with `whole` every distribution and pytest plugin it holds; Refused when it cannot run or
     does not answer."""
+    argv = [python, "-c", PROBE, *dists, *("import:" + m for m in modules), *(["all:"] if whole else [])]
     try:
-        p = subprocess.run([python, "-c", PROBE, *dists, *("import:" + m for m in modules), *(["all:"] if whole else [])],
-                           env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
-                           timeout=120)
+        _hold_stops()
+        try:
+            proc = subprocess.Popen(argv, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    stdin=subprocess.DEVNULL)
+        except BaseException:
+            _release_stops()
+            raise
+        stdout, stderr = _held_wait(proc, 120)
+        p = subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
     except (OSError, subprocess.SubprocessError) as e:
         raise Refused("%s %s cannot run: %s" % (what, python, e))
     if p.returncode != 0:
@@ -3439,8 +3524,14 @@ def _build_venv(venv, python, base, steps, env, log, tmpdir, where):
             out.write("# %s: %s\n" % (label, " ".join(shlex.quote(a) for a in argv)))
             out.flush()
             try:
-                p = subprocess.run(argv, env=env, cwd=tmpdir, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                                   timeout=SDK_STEP_TIMEOUT)
+                _hold_stops()
+                try:
+                    p = subprocess.Popen(argv, env=env, cwd=tmpdir, stdin=subprocess.DEVNULL, stdout=out,
+                                         stderr=subprocess.STDOUT)
+                except BaseException:
+                    _release_stops()
+                    raise
+                _held_wait(p, SDK_STEP_TIMEOUT)
             except subprocess.TimeoutExpired:
                 raise Refused("%s: the step %r did not finish in %d s (%s); log %s" % (where, label, SDK_STEP_TIMEOUT, argv[-1], log))
             except OSError as e:
@@ -4303,10 +4394,18 @@ def run_leg(tree, name, rec, wraps, ctx, logdir):
                     # its own process group, so a stop reaches all of it (stop_leg). A stop signal the runner kept ignored
                     # (install_stop_handlers) is set back to its default action in the leg's process before it execs, so
                     # no leg inherits the runner's caller's ignore (the owner's build question 5).
-                    p = subprocess.Popen(argv, cwd=cwd, env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=out,
-                                         stderr=subprocess.STDOUT, start_new_session=True,
-                                         preexec_fn=_default_kept_signals if _kept_ignored else None)
+                    # Started under the stop hold, as run_git's git is (the closing check wf_fb19febe-36b, its item 4): a stop
+                    # that arrives while it starts is raised inside the try that stops it.
+                    _hold_stops()
                     try:
+                        p = subprocess.Popen(argv, cwd=cwd, env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=out,
+                                             stderr=subprocess.STDOUT, start_new_session=True,
+                                             preexec_fn=_default_kept_signals if _kept_ignored else None)
+                    except BaseException:
+                        _release_stops()
+                        raise
+                    try:
+                        _release_stops()
                         rc = wait_leg(p)
                     except BaseException:
                         stop_leg(p)
@@ -4896,7 +4995,8 @@ def cmd_check(args):
     rule against the sha's tree."""
     repo = find_repo(args.tree, walk=False) if args.tree is not None else find_repo(os.getcwd(), walk=True)
     # the work tree find_repo found, not the directory check ran in: the missing remedy's --tree must be one run accepts,
-    # and run refuses a --tree that does not hold .git (the verify pass at PR 926's build head, its code finding 4)
+    # and run refuses a --tree that does not hold .git (the verify pass at the wf_3b100f5e-b38 build, its code
+    # finding 4)
     tree = repo.work_tree
     # Before the first git call that parses a commit, as in cmd_run: rev-parse's ^{commit} reads the shallow file, so
     # one that is not a regular file refuses here, naming it, instead of waiting (the closing check's verify, code 2).
@@ -4994,12 +5094,20 @@ def main(argv=None):
     p.set_defaults(func=cmd_check)
     args = ap.parse_args(argv)
     try:
+        # Every command starts git, so every command installs the stop handlers (the closing check wf_fb19febe-36b, its
+        # item 4(c)); run makes itself a child subreaper too (install_stop_handlers).
+        install_stop_signals()
         return args.func(args)
     except Refused as e:
         print("sweep: %s" % e, file=sys.stderr)
         return EXIT_REFUSED
     except Stopped as e:
-        print("sweep: stopped by signal %d; the legs were stopped and TMPDIR and the checkout removed" % e.signum, file=sys.stderr)
+        # check names a git as killed only when run_git ended one on this stop (the verify pass at the closing check
+        # wf_fb19febe-36b's build, its code finding 3): a stop between two git calls ended none
+        print("sweep: stopped by signal %d; %s" % (e.signum, "the legs were stopped and TMPDIR and the checkout removed"
+                                                    if args.subcommand == "run" else "the git it was waiting on was killed"
+                                                    if e.ended_git else "no git was running"),
+              file=sys.stderr)
         return 128 + e.signum
 
 
