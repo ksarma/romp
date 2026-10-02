@@ -1874,7 +1874,16 @@ kernel started while the holder drains waits for the lock, up to that
 deadline, and serves once it takes the lock. If, at the deadline, the holder
 still holds the lock or another waiting kernel has taken it first (the refusal
 then names that kernel, or says that a new owner has not yet written its line),
-the new kernel is refused.
+the new kernel is refused. A draining line whose deadline lies more than the
+kernel's shutdown grace plus 30 seconds ahead is no drain's announcement, and
+the kernel is refused at once, without waiting. A kernel whose lock step fails
+with an error is refused the same way, with status 75 and one stderr line naming
+the lock file, the step that failed and the error, never a traceback: a
+`kernel.lock` this user cannot open, read and write as a regular file, or a
+state root on a filesystem that cannot take an flock (`ENOLCK`, `EOPNOTSUPP` or
+`EINVAL`, as on an NFS mount whose lock manager does not answer). Such a state
+root served before the lock existed and is now refused: put the state root on a
+filesystem that supports flock, or set `ROMP_STATE_DIR` to a directory on one.
 
 The lock cannot tell one kernel from another on its root: the root goes to
 whichever kernel takes the lock first. So the manager keeps a second kernel off

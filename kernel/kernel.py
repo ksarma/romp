@@ -71,18 +71,43 @@ jd = load_source("romp_judge", HERE / "judge.py")
 #
 # The file's one line names the holder: "<pid> serving", rewritten to "<pid> draining <deadline>"
 # (wall-clock epoch seconds) when _drain_and_exit starts. A kernel that finds the lock held by a
-# draining owner waits for the lock, bounded by that deadline: the owner's exit releases it, which
-# is the event the wait keys on, and one waiting kernel takes it (with two waiting, the other keeps
-# waiting). Any other holder (a serving line, a line naming a pid that is not running, an empty or
-# unreadable line, a deadline already past, or a wait that reached the deadline) refuses this
+# running draining owner whose deadline is ahead, by no more than this kernel's EXIT_GRACE_S plus
+# KERNEL_LOCK_DEADLINE_MARGIN_S, waits for the lock, bounded by that deadline: the owner's exit
+# releases it, which is the event the wait keys on, and one waiting kernel takes it (with two
+# waiting, the other keeps waiting). Any other holder (a serving line, a line naming a pid that is
+# not running, an empty line or one that names no owner, a deadline already past or further ahead
+# than that bound, a wait that reached the deadline or whose timer could not be armed) refuses this
 # kernel: one stderr line naming the holder it read (at a wait's deadline, the line read then),
 # then os._exit(KERNEL_LOCK_EXIT) with nothing written, so the manager's crash backoff retries it.
+# A lock step that fails for any other reason refuses the kernel the same way, never with a
+# traceback: the open (a directory at the path, no permission), a flock with any errno but
+# EWOULDBLOCK, the non-blocking one or the blocking one in the wait (a filesystem that cannot take
+# an flock gives ENOLCK, EOPNOTSUPP or EINVAL), and a read of the line (a FIFO gives ESPIPE). Its one
+# line names the path, the step and the error, and the remedy, never another kernel as the holder
+# (_kernel_lock_fault); such a kernel created at most the lock file and wrote nothing else.
 # The file is opened without O_TRUNC (a loser truncating it would erase the holder's line), never
 # unlinked and never unlocked: the process exit releases it, a SIGKILL included. os.open makes the
 # descriptor non-inheritable, so no child (an SDK session, the judges' child, the detached update
 # shell) holds the lock past this process; a future self-re-exec would have to pass it on and take
 # it again.
-KERNEL_LOCK_EXIT = 75          # EX_TEMPFAIL: another kernel holds this state root; retrying later is the remedy
+#
+# EXIT_GRACE_S is the manager's SIGTERM grace this kernel runs under (ROMP_SHUTDOWN_GRACE_MS, which
+# the manager passes to the kernel it spawns; 5 s when absent). It is defined here, before the lock
+# step, because the lock step bounds a draining holder's deadline by it; the exit's budgets are
+# shares of it (_EXIT_SHARE_S, further down).
+EXIT_GRACE_S = float(os.environ.get("ROMP_SHUTDOWN_GRACE_MS", "5000")) / 1000.0
+# How far beyond this kernel's EXIT_GRACE_S a draining holder's deadline may lie and still be waited
+# for. A drain announces now plus the drainer's own EXIT_GRACE_S (_kernel_lock_announce_drain), which
+# under one manager is this kernel's too (both read the grace the manager passes). The margin covers
+# a drainer whose grace was longer than this kernel's (a kernel the manager spawned under its 8 s
+# default, met by a kernel started by hand under the bare 5 s, or a kernel left from a manager since
+# restarted with a shorter ROMP_SHUTDOWN_GRACE_MS) and a wall clock stepped back after the
+# announcement. A deadline further ahead is no drain this release announces, and a wait for it would
+# hold this kernel off its root for nothing (one about 9.2e9 s ahead would also overflow setitimer),
+# so it is refused at once. A drain that a too-small margin refuses is retried by the manager's
+# crash backoff, which costs a delay; a margin too large only lengthens a wait that is still bounded.
+KERNEL_LOCK_DEADLINE_MARGIN_S = 30.0
+KERNEL_LOCK_EXIT = 75          # EX_TEMPFAIL: the lock step refused this kernel (another holder, or a lock it could not take)
 KERNEL_LOCK_LINE_MAX = 256     # the most of the file's first line a reader reads
 _KERNEL_LOCK_FD = None         # the held lock's descriptor in a kernel run as __main__; None in every in-process load
 _KERNEL_LOCK_SERVING_RE = re.compile(r"(\d+) serving")
@@ -109,9 +134,57 @@ def _kernel_lock_write(fd, line):
 
 def _kernel_lock_read(fd):
     """The lock file's first line as read through `fd` (at most KERNEL_LOCK_LINE_MAX bytes, newline dropped), "" for
-    an empty file; undecodable bytes are replaced, never raised on, so the reader still names what it found."""
+    an empty file; undecodable bytes are replaced, never raised on, so the reader still names what it found. The pread's
+    own OSError propagates (a FIFO at the path gives ESPIPE); _kernel_lock_acquire refuses on it (_kernel_lock_fault)."""
     data = os.pread(fd, KERNEL_LOCK_LINE_MAX, 0)
     return data.split(b"\n", 1)[0].decode("ascii", "replace").strip()
+
+
+def _kernel_lock_parse(line):
+    """The holder's line as ("serving", pid, None) or ("draining", pid, deadline), else None: a line that names no owner,
+    an empty one included. Never raises: digits that do not convert are a line that names no owner too."""
+    try:
+        m = _KERNEL_LOCK_SERVING_RE.fullmatch(line)
+        if m:
+            return "serving", int(m.group(1)), None
+        m = _KERNEL_LOCK_DRAINING_RE.fullmatch(line)
+        if m:
+            return "draining", int(m.group(1)), float(m.group(2))
+    except (ValueError, OverflowError):
+        pass
+    return None
+
+
+# A flock that fails with one of these is a filesystem that cannot take an flock (an NFS mount whose lock manager does
+# not answer, a FUSE or 9p mount without locking): no retry mends it, and the remedy is a state root on another filesystem.
+_KERNEL_LOCK_CANNOT_LOCK = frozenset((errno.ENOLCK, errno.EOPNOTSUPP, getattr(errno, "ENOTSUP", errno.EOPNOTSUPP), errno.EINVAL))
+
+
+def _kernel_lock_fault(path, step, err):
+    """The one stderr line a refused kernel prints when its lock step failed with an error rather than meeting a holder
+    it can name: `step` is what failed ("opening it", "its non-blocking flock", ...) and `err` the error it raised. The
+    line names the lock's path, the step and the error (its errno name and message), and what mends it; it never says
+    another kernel holds the root, which _kernel_lock_refusal says and which is not known here, and it never says the
+    kernel wrote nothing, since the open may have created the lock file. A flock that fails with ENOLCK, EOPNOTSUPP
+    (ENOTSUP) or EINVAL is a filesystem that cannot take an flock, and the remedy is a state root on one that can."""
+    code = getattr(err, "errno", None)
+    if code is None:
+        name = type(err).__name__
+    elif code == errno.EOPNOTSUPP:
+        name = "EOPNOTSUPP"           # Linux's errno table names 95 ENOTSUP; flock's man page and the kernel say EOPNOTSUPP
+    else:
+        name = errno.errorcode.get(code, "errno %d" % code)
+    text = (getattr(err, "strerror", None) or str(err) or type(err).__name__)[:120]
+    if "flock" in step and code in _KERNEL_LOCK_CANNOT_LOCK:
+        remedy = ("The filesystem under this state root cannot take an flock, which a kernel needs to keep a second kernel "
+                  "off its root: put the state root on a filesystem that supports flock, or set ROMP_STATE_DIR to a "
+                  "directory on one.")
+    else:
+        remedy = ("The lock file must be a regular file this user can read, write and lock: mend what is at that path or "
+                  "the filesystem under it.")
+    return ("romp-kernel: the instance lock %s could not be taken: %s failed with %s (%s). %s This kernel created at "
+            "most that file, wrote nothing else under its state root, and exits %d.\n"
+            % (path, step, name, text, remedy, KERNEL_LOCK_EXIT))
 
 
 def _kernel_lock_pid_alive(pid):
@@ -141,7 +214,9 @@ def _kernel_lock_wait(fd, remaining):
     interrupted flock unless the handler raises). The handler raises only while the wait is armed, and the arm drops
     the moment flock returns, so the one alarm cannot land anywhere but inside the wait or right after it, where it is
     caught and read as the deadline reached (the lock is then released by this process's exit). The finally cancels the
-    timer and restores the previous SIGALRM handler.
+    timer and restores the previous SIGALRM handler. Anything else propagates, the timer cancelled and the handler
+    restored all the same: the flock's OSError (ENOLCK on a filesystem whose locking failed mid-wait) and setitimer's
+    OverflowError, ValueError or ItimerError for a bound it cannot arm. _kernel_lock_acquire refuses on each.
 
     Safe only because this process runs one thread here: CPython runs a Python signal handler on the main thread, but a
     process-directed SIGALRM interrupts the blocking flock only when it is delivered to the thread making that call, and
@@ -182,7 +257,8 @@ def _kernel_lock_refusal(why):
     holder is the kernel before this one or a kernel started outside the manager, and the manager's crash backoff starts
     this kernel again. A kernel started by hand is outside the manager's view: a second kernel started by hand on this
     root needs its own state root, ROMP_STATE_DIR, and a kernels.json profile whose root such a kernel holds needs a
-    stateDir no other kernel uses."""
+    stateDir no other kernel uses. Only for a holder: a lock step that failed with an error is _kernel_lock_fault's
+    line."""
     return ("romp-kernel: %s; this kernel wrote nothing and exits %d. The manager never starts two kernels on one state "
             "root, so under the manager the holder is the kernel before this one or a kernel started outside the manager, "
             "and the manager's crash backoff starts this kernel again. A kernel started by hand is outside the manager's "
@@ -198,72 +274,120 @@ def _kernel_lock_holder_why(path, line):
     lock and has not yet written its own line (an empty file reads the same way). A running pid's draining line is a
     kernel that took the lock and is draining in turn (a wait's deadline can find one: the kernel that took the lock
     after the drainer let go was then told to stop), so it is named as draining, with its deadline, never as serving."""
-    m = _KERNEL_LOCK_SERVING_RE.fullmatch(line) or _KERNEL_LOCK_DRAINING_RE.fullmatch(line)
+    parsed = _kernel_lock_parse(line)
     if not line:
         return ("%s is held by a new owner that has not yet written its line (the file is empty), so another kernel "
                 "is starting on this state root" % path)
-    if not m:
+    if parsed is None:
         return ("%s is held by a process whose line reads %r, which names no owner, so another kernel holds this state "
                 "root" % (path, line[:80]))
-    pid = int(m.group(1))
+    kind, pid, deadline = parsed
     if not _kernel_lock_pid_alive(pid):
         return ("%s is held by a new owner that has not yet written its line (the line still names pid %d, which is "
                 "not running), so another kernel is starting on this state root" % (path, pid))
-    draining = _KERNEL_LOCK_DRAINING_RE.fullmatch(line)
-    if draining:
-        return ("another kernel (pid %d) is draining until %s and holds %s"
-                % (pid, _kernel_lock_when(float(draining.group(2))), path))
+    if kind == "draining":
+        return "another kernel (pid %d) is draining until %s and holds %s" % (pid, _kernel_lock_when(deadline), path)
     return "another kernel (pid %d) is serving from this state root and holds %s" % (pid, path)
 
 
 def _kernel_lock_acquire(path, now=time.time):
     """Take the instance lock at `path`: (fd, None) once held, with "<this pid> serving" written; (None, refusal line)
-    when another process holds it and this kernel must not run. When the owner is draining and its deadline is still
-    ahead, this kernel waits for the lock (_kernel_lock_wait) up to that deadline, with one stderr line saying so. The
-    owner's release lets one waiting kernel take the lock: this one, unless another kernel waits too and takes it
-    first. A kernel still waiting at the deadline is refused, and the refusal names the holder it reads then: a drain
+    when this kernel must not run. Never raises: every way the lock step can fail ends in a refusal line, which the
+    caller prints before os._exit(KERNEL_LOCK_EXIT) (_kernel_lock_refuse).
+
+    Another process holds the lock (the non-blocking flock's EWOULDBLOCK): when its line names a running owner that is
+    draining, with a deadline ahead by no more than EXIT_GRACE_S plus KERNEL_LOCK_DEADLINE_MARGIN_S, and this process
+    runs one thread, this kernel waits for the lock (_kernel_lock_wait) up to that deadline, with one stderr line saying
+    so. The owner's release lets one waiting kernel take the lock: this one, unless another kernel waits too and takes
+    it first. A kernel still waiting at the deadline is refused, and the refusal names the holder it reads then: a drain
     past its deadline when the owner still holds the lock under its own line, otherwise the kernel that took the lock
-    (or a new owner that has not yet written its line). Never raises for a held lock; an OSError opening the file
-    propagates, a fault the kernel cannot start past."""
-    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+    (or a new owner that has not yet written its line). Every other holder is refused at once, before any waiting line,
+    with _kernel_lock_refusal: a line that names no live draining owner (_kernel_lock_holder_why), a deadline already
+    past or further ahead than that bound, more than one thread, and a wait whose timer setitimer cannot arm.
+
+    The lock step fails with an error instead (the open; the non-blocking flock with any errno but EWOULDBLOCK; the
+    blocking flock in the wait; a read of the line, at the start or at the deadline): refused with _kernel_lock_fault,
+    which names the path, the step and the error, and the remedy for a filesystem that cannot take an flock.
+
+    A refused kernel created at most the lock file (its open, when the file was absent) and wrote nothing else. A
+    serving line that cannot be written does not refuse: the lock is held, and the kernel serves without its label."""
+    try:
+        fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as e:
+        return None, _kernel_lock_fault(path, "opening it", e)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        line = _kernel_lock_read(fd)
-        m = _KERNEL_LOCK_DRAINING_RE.fullmatch(line)
-        if not (m and _kernel_lock_pid_alive(int(m.group(1)))):
-            os.close(fd)
-            return None, _kernel_lock_refusal(_kernel_lock_holder_why(path, line))
-        pid, deadline = int(m.group(1)), float(m.group(2))
-        remaining = deadline - now()
-        if remaining <= 0:
-            os.close(fd)
-            return None, _kernel_lock_refusal((
-                "pid %d holds %s and announced its drain with a deadline of %s, which has passed, so its drain is past "
-                "its deadline" % (pid, path, _kernel_lock_when(deadline))))
-        if threading.active_count() != 1:
-            os.close(fd)
-            return None, _kernel_lock_refusal((
-                "pid %d holds %s and is draining until %s, but this process already runs %d threads, so a wait for it "
-                "could not be bounded" % (pid, path, _kernel_lock_when(deadline), threading.active_count())))
-        sys.stderr.write("romp-kernel: pid %d holds %s and is draining; this kernel waits for its drain until %s "
-                         "(%.1f s)\n" % (pid, path, _kernel_lock_when(deadline), remaining))
-        sys.stderr.flush()
-        if not _kernel_lock_wait(fd, remaining):
-            # The deadline came with the lock still held, and the line read now says by whom. The drainer's own line,
-            # with the drainer running, is a drain past its deadline. Anything else is a holder that took the lock
-            # after the drainer let go: another kernel that waited beside this one and took it first, or a new owner
-            # whose line is not written yet. The refusal names that holder as for one never waited for.
-            now_line = _kernel_lock_read(fd)
-            os.close(fd)
-            if now_line == line and _kernel_lock_pid_alive(pid):
-                return None, _kernel_lock_refusal((
-                    "pid %d did not release %s by its drain's deadline of %s, so its drain is past its deadline"
-                    % (pid, path, _kernel_lock_when(deadline))))
-            return None, _kernel_lock_refusal(_kernel_lock_holder_why(path, now_line))
-        waited = pid
+    except BlockingIOError:     # a subclass of OSError: another process holds the lock, which this branch names
+        pass
+    except OSError as e:
+        os.close(fd)
+        return None, _kernel_lock_fault(path, "its non-blocking flock", e)
     else:
-        waited = None
+        return _kernel_lock_label(fd, path, None)
+    try:
+        line = _kernel_lock_read(fd)
+    except OSError as e:
+        os.close(fd)
+        return None, _kernel_lock_fault(path, "reading its line (another process holds it)", e)
+    parsed = _kernel_lock_parse(line)
+    if not (parsed and parsed[0] == "draining" and _kernel_lock_pid_alive(parsed[1])):
+        os.close(fd)
+        return None, _kernel_lock_refusal(_kernel_lock_holder_why(path, line))
+    _, pid, deadline = parsed
+    remaining = deadline - now()
+    if remaining <= 0:
+        os.close(fd)
+        return None, _kernel_lock_refusal((
+            "pid %d holds %s and announced its drain with a deadline of %s, which has passed, so its drain is past "
+            "its deadline" % (pid, path, _kernel_lock_when(deadline))))
+    bound = float(EXIT_GRACE_S) + KERNEL_LOCK_DEADLINE_MARGIN_S
+    if not remaining <= bound:   # written so, a NaN is out of range too
+        os.close(fd)
+        return None, _kernel_lock_refusal((
+            "pid %d holds %s and its draining line announces a deadline of %s, %.6g s ahead, more than this kernel's "
+            "shutdown grace (%g s) plus a %g s margin, which no drain announces, so this kernel does not wait for it"
+            % (pid, path, _kernel_lock_when(deadline), remaining, float(EXIT_GRACE_S), KERNEL_LOCK_DEADLINE_MARGIN_S)))
+    if threading.active_count() != 1:
+        os.close(fd)
+        return None, _kernel_lock_refusal((
+            "pid %d holds %s and is draining until %s, but this process already runs %d threads, so a wait for it "
+            "could not be bounded" % (pid, path, _kernel_lock_when(deadline), threading.active_count())))
+    sys.stderr.write("romp-kernel: pid %d holds %s and is draining; this kernel waits for its drain until %s "
+                     "(%.1f s)\n" % (pid, path, _kernel_lock_when(deadline), remaining))
+    sys.stderr.flush()
+    try:
+        took = _kernel_lock_wait(fd, remaining)
+    except (OverflowError, ValueError, signal.ItimerError) as e:   # setitimer could not arm the bound
+        os.close(fd)
+        return None, _kernel_lock_refusal((
+            "pid %d holds %s and is draining until %s, but the timer that bounds a wait for it could not be armed "
+            "(%s: %s), so a wait for it could not be bounded"
+            % (pid, path, _kernel_lock_when(deadline), type(e).__name__, str(e)[:120])))
+    except OSError as e:
+        os.close(fd)
+        return None, _kernel_lock_fault(path, "its blocking flock (the wait for a draining holder)", e)
+    if took:
+        return _kernel_lock_label(fd, path, pid)
+    # The deadline came with the lock still held, and the line read now says by whom. The drainer's own line, with the
+    # drainer running, is a drain past its deadline. Anything else is a holder that took the lock after the drainer let
+    # go: another kernel that waited beside this one and took it first, or a new owner whose line is not written yet.
+    # The refusal names that holder as for one never waited for.
+    try:
+        now_line = _kernel_lock_read(fd)
+    except OSError as e:
+        os.close(fd)
+        return None, _kernel_lock_fault(path, "reading its line at the drain's deadline (another process holds it)", e)
+    os.close(fd)
+    if now_line == line and _kernel_lock_pid_alive(pid):
+        return None, _kernel_lock_refusal((
+            "pid %d did not release %s by its drain's deadline of %s, so its drain is past its deadline"
+            % (pid, path, _kernel_lock_when(deadline))))
+    return None, _kernel_lock_refusal(_kernel_lock_holder_why(path, now_line))
+
+
+def _kernel_lock_label(fd, path, waited):
+    """The held lock's label: write "<this pid> serving" over the line, and, after a wait for the draining holder
+    `waited`, say this kernel holds the lock now. (fd, None), _kernel_lock_acquire's answer once the lock is held."""
     try:
         _kernel_lock_write(fd, "%d serving\n" % os.getpid())
     except OSError as e:
@@ -32140,12 +32264,12 @@ def _kernel_sample_tick(now=None):
         return False
 
 
-# The exit's budgets are shares of the manager's SIGTERM grace (ROMP_SHUTDOWN_GRACE_MS, which the manager passes to the
-# kernel it spawns; 5 s when absent) less a 0.5 s margin for the cut row and one slow file: priming 10 %, checkpoint
-# writes 35 %, assembly documents 20 %, the SDK drain 35 %. 2026-09-11: fixed budgets summed to 4.5 s against a 5 s
-# grace and the exit met the SIGKILL twice behind a pusher cycle holding the interpreter lock; the checkpoint budget left
-# 21 to 34 files dirty at every exit. An explicit ROMP_EXIT_*_BUDGET_S still sets one outright.
-EXIT_GRACE_S = float(os.environ.get("ROMP_SHUTDOWN_GRACE_MS", "5000")) / 1000.0
+# The exit's budgets are shares of the manager's SIGTERM grace (EXIT_GRACE_S, defined with the instance lock near the top
+# of this module: ROMP_SHUTDOWN_GRACE_MS, which the manager passes to the kernel it spawns; 5 s when absent) less a 0.5 s
+# margin for the cut row and one slow file: priming 10 %, checkpoint writes 35 %, assembly documents 20 %, the SDK drain
+# 35 %. 2026-09-11: fixed budgets summed to 4.5 s against a 5 s grace and the exit met the SIGKILL twice behind a pusher
+# cycle holding the interpreter lock; the checkpoint budget left 21 to 34 files dirty at every exit. An explicit
+# ROMP_EXIT_*_BUDGET_S still sets one outright.
 _EXIT_SHARE_S = max(1.0, EXIT_GRACE_S - 0.5)
 EXIT_PRIME_BUDGET_S = float(os.environ.get("ROMP_EXIT_PRIME_BUDGET_S", "%.3f" % (0.10 * _EXIT_SHARE_S)))       # the exit's fold priming
 EXIT_CKPT_WRITE_BUDGET_S = float(os.environ.get("ROMP_EXIT_CKPT_WRITE_BUDGET_S", "%.3f" % (0.35 * _EXIT_SHARE_S)))   # its fold checkpoint writes

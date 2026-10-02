@@ -5,8 +5,9 @@ A kernel run as __main__ takes an exclusive flock on <state>/kernel.lock right a
 (which fixes the state root and creates it), before any import-time write, and holds it until the process exits. The
 file's one line names the holder: "<pid> serving", rewritten to "<pid> draining <deadline>" as the first act of
 _drain_and_exit. A kernel that finds the lock held waits only for a holder that has announced its drain, bounded by
-that deadline; any other holder refuses it with one stderr line and exit 75, having written nothing. The repo-root
-record moved from import time into main(), after the bind. An in-process load of the kernel never locks.
+that deadline; any other holder refuses it with one stderr line and exit 75, having written nothing, and so does a lock
+step that fails with an error (the kernel then created at most the lock file). The repo-root record moved from import
+time into main(), after the bind. An in-process load of the kernel never locks.
 
 The pins, each red on the kernel before the lock for the reason it names:
   1. a serving holder: exit 75 within the bound; stderr names the holder's pid, the lock path and the remedy on each
@@ -37,7 +38,14 @@ The pins, each red on the kernel before the lock for the reason it names:
      lock, not the holder that let it go, and the same with the holder left a zombie when it lets go (exited and not
      reaped, which kill(pid, 0) still finds); with the lock still held under the line of a drainer that is gone, the
      refusal is worded as a new owner that has not yet written its line; with the lock passed to a process that
-     announced a drain of its own, the refusal names that process as draining until its deadline, not as serving.
+     announced a drain of its own, the refusal names that process as draining until its deadline, not as serving;
+  9. every failure of the lock step is a named refusal: exit 75, one stderr line naming the lock's path and the cause, no
+     traceback, nothing written beyond the lock file. A lock file this user cannot open (EACCES), a directory at the path
+     (EISDIR), a held FIFO whose line cannot be read (ESPIPE), the non-blocking flock failing (ENOLCK, EOPNOTSUPP and
+     EINVAL with the filesystem's remedy, EIO with the file's; through a sitecustomize shim in the child), an empty line
+     and one that names no owner, a draining deadline beyond the grace plus the margin and one that would overflow
+     setitimer (both refused before any waiting line); in process, the blocking flock failing in the wait, a wait whose
+     timer cannot be armed, and the line's read failing at the drain's deadline.
 
 Subprocess pins run bin/romp-kernel under sys.executable in a private lab. The environment comes from kernel_env
 (tests/test_ship_reship_served.py, the safe lab-kernel recipe: named variables only, the lab's roots, session hosts
@@ -50,6 +58,7 @@ import ast
 import contextlib
 import errno
 import fcntl
+import io
 import json
 import os
 import re
@@ -147,18 +156,58 @@ REMEDY_TEXT = "a second kernel started by hand on this root needs its own state 
 PROFILE_REMEDY_TEXT = "a kernels.json profile whose root such a kernel holds needs a stateDir no other kernel uses"
 NEW_OWNER_TEXT = "is held by a new owner that has not yet written its line"
 PAST_TEXT = "so its drain is past its deadline"
+TRACEBACK_TEXT = "Traceback (most recent call last)"
+# the two remedies of a lock step that failed with an error (kernel.py's _kernel_lock_fault)
+FS_REMEDY_TEXT = ("The filesystem under this state root cannot take an flock, which a kernel needs to keep a second kernel "
+                  "off its root: put the state root on a filesystem that supports flock, or set ROMP_STATE_DIR to a "
+                  "directory on one.")
+FILE_REMEDY_TEXT = "The lock file must be a regular file this user can read, write and lock"
+# Pin 9's deadline cases run the kernel under a grace of GRACE_MS. DEADLINE_MARGIN_S is kernel.py's
+# KERNEL_LOCK_DEADLINE_MARGIN_S, written out here so a kernel without the bound is red on what it does, not on a missing name
+GRACE_MS = "5000"
+DEADLINE_MARGIN_S = 30.0
+BEYOND_S = 15.0               # how far past the grace plus the margin pin 9's first deadline lies: room for the kernel to reach
+#                               its lock point (about a second here) with the deadline still beyond the bound
+# Pin 9's flock shim: a sitecustomize on the child's PYTHONPATH that makes fcntl.flock raise the errno named by
+# KERNEL_LOCK_SHIM_ERRNO for the file at KERNEL_LOCK_SHIM_PATH alone (by device and inode), and say so on stderr, so the pin
+# can tell the shim ran; every other flock goes through.
+FLOCK_SHIM_SRC = r"""
+import errno, fcntl, os, sys
+_path = os.environ.get("KERNEL_LOCK_SHIM_PATH")
+_name = os.environ.get("KERNEL_LOCK_SHIM_ERRNO", "")
+_code = getattr(errno, _name, None) if _name else None
+if _path and _code:
+    _real = fcntl.flock
+
+    def _flock(fd, op):
+        n = fd if isinstance(fd, int) else fd.fileno()
+        try:
+            st, want = os.fstat(n), os.stat(_path)
+            mine = (st.st_dev, st.st_ino) == (want.st_dev, want.st_ino)
+        except OSError:
+            mine = False
+        if not mine:
+            return _real(fd, op)
+        sys.stderr.write("kernel-lock-shim: flock on %s raises %s\n" % (_path, _name))
+        sys.stderr.flush()
+        raise OSError(_code, os.strerror(_code))
+
+    fcntl.flock = _flock
+"""
+SHIM_TEXT = "kernel-lock-shim: flock on"
 
 
 def _snapshot(root):
-    """Relative path -> (file type, mode, mtime_ns, bytes or link target) for `root` and everything under it."""
+    """Relative path -> (file type, mode, mtime_ns, bytes or link target) for `root` and everything under it. A file that
+    is neither regular nor a link (a directory, a FIFO) has no bytes here: a FIFO's read would block on its writer."""
     out = {}
 
     def one(p):
         st = os.lstat(p)
-        if stat.S_ISDIR(st.st_mode):
-            body = None
-        elif stat.S_ISLNK(st.st_mode):
+        if stat.S_ISLNK(st.st_mode):
             body = os.readlink(p)
+        elif not stat.S_ISREG(st.st_mode):
+            body = None
         else:
             with open(p, "rb") as fh:
                 body = fh.read()
@@ -343,6 +392,32 @@ class _Lab(unittest.TestCase):
 
     def assertNothingWritten(self, before, why):
         self.assertEqual(_snapshot_diff(before, self.snapshot()), [], why)
+
+    def refused_once(self, before, needles):
+        """Run the kernel to the lock step's refusal and hold it to the class's contract: exit 75 within the bound, no
+        traceback, exactly one stderr line from the kernel carrying every needle, nothing under the roots changed beyond
+        the lock file (created by the kernel's open when it was absent, and then left empty; an existing one untouched),
+        and no connection to the postal listener. Returns (the line, the whole stderr)."""
+        p = self.spawn()
+        code, err, _, killed = self.verdict(p)
+        self.assertEqual(code, EXIT_REFUSED, "the kernel did not exit 75 within %.0f s (killed at the bound: %s); its "
+                                             "stderr:\n%s" % (BOUND_S, killed, err[-3000:]))
+        self.assertNotIn(TRACEBACK_TEXT, err, "the refusal is a named line, never a traceback:\n%s" % err[-3000:])
+        lines = [ln for ln in err.splitlines() if ln.startswith("romp-kernel:")]
+        self.assertEqual(len(lines), 1, "one stderr line from the kernel: %r" % err)
+        for needle in needles:
+            self.assertIn(needle, lines[0], "the refusal does not say %r" % needle)
+        rel = os.path.relpath(self.lock_path, self.lab)
+        created = "+ %s (new)" % rel
+        diff = _snapshot_diff(before, self.snapshot())
+        # creating the lock file is the one write allowed, and it moves its directory's mtime with it
+        allowed = {created, "~ %s (mtime)" % os.path.dirname(rel)} if created in diff else set()
+        self.assertEqual([d for d in diff if d not in allowed], [], "the refused kernel changed the roots beyond "
+                                                                    "creating the lock file")
+        if created in diff:
+            self.assertEqual(os.path.getsize(self.lock_path), 0, "the refused kernel wrote into the lock file it created")
+        self.assertEqual(self.connections(), 0, "the refused kernel dialled the postal port")
+        return lines[0], err
 
 
 class SecondKernelIsRefused(_Lab):
@@ -686,6 +761,189 @@ class TheHolderAtTheDeadline(_Lab):
         self.assertNothingWritten(before, "the refused kernel changed the roots")
 
 
+class LockStepFailures(_Lab):
+    """Pin 9: every failure of the lock step ends in a named refusal (refused_once's contract: exit 75, no traceback, one
+    line naming the path and the cause, nothing written beyond the lock file). A lock step that fails with an error is
+    _kernel_lock_fault's line, which names the step and the errno and never another kernel as the holder; a holder whose
+    line names no owner, or whose drain announces a deadline beyond the grace plus the margin, is _kernel_lock_refusal's."""
+
+    def test_a_lock_file_this_user_cannot_open_for_writing_is_refused_naming_eacces(self):
+        if os.geteuid() == 0:
+            self.skipTest("root opens a read-only file for writing")
+        self.seed()
+        Path(self.lock_path).write_text("")
+        os.chmod(self.lock_path, 0o400)               # readable, so the snapshot reads it; the kernel's O_RDWR open is refused
+        before = self.snapshot()
+        line, _ = self.refused_once(before, (self.lock_path, "opening it failed with EACCES (Permission denied)",
+                                             FILE_REMEDY_TEXT))
+        self.assertNotIn("another kernel", line, "a file this user cannot open is no other kernel's doing")
+
+    def test_a_directory_at_the_lock_path_is_refused_naming_eisdir(self):
+        self.seed()
+        os.mkdir(self.lock_path)
+        before = self.snapshot()
+        line, _ = self.refused_once(before, (self.lock_path, "opening it failed with EISDIR (Is a directory)",
+                                             FILE_REMEDY_TEXT))
+        self.assertNotIn("another kernel", line)
+
+    def test_a_held_fifo_at_the_lock_path_is_refused_naming_espipe_from_the_read(self):
+        self.seed()
+        os.mkfifo(self.lock_path, 0o600)
+        fd = os.open(self.lock_path, os.O_RDWR)       # read and write: neither end blocks, and the kernel's open does not either
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)   # held, so the kernel reads the holder's line, which a FIFO cannot give
+        before = self.snapshot()
+        line, _ = self.refused_once(before, (self.lock_path, "reading its line (another process holds it) failed with "
+                                                             "ESPIPE (Illegal seek)", FILE_REMEDY_TEXT))
+        self.assertNotIn("another kernel", line)
+
+    def _flock_fails_with(self, name, remedy, not_remedy):
+        """The kernel's own flock on its lock file raises errno `name` (FLOCK_SHIM_SRC, a sitecustomize on the child's
+        PYTHONPATH, for that file only): refused naming the non-blocking flock, the errno and `remedy`, never
+        `not_remedy`. The shim lives outside the lab, whose snapshot would otherwise count its bytecode cache."""
+        shim = tempfile.mkdtemp(prefix="kernel-lock-shim-")
+        self.addCleanup(shutil.rmtree, shim, True)
+        Path(shim, "sitecustomize.py").write_text(FLOCK_SHIM_SRC)
+        self.env = dict(self.env, PYTHONPATH=shim, KERNEL_LOCK_SHIM_PATH=self.lock_path, KERNEL_LOCK_SHIM_ERRNO=name)
+        self.seed()
+        before = self.snapshot()
+        code = getattr(errno, name)
+        line, err = self.refused_once(before, (self.lock_path, "its non-blocking flock failed with %s (%s)"
+                                               % (name, os.strerror(code)), remedy))
+        self.assertIn("%s %s raises %s" % (SHIM_TEXT, self.lock_path, name), err, "the shim did not run, so the pin did not")
+        self.assertNotIn(not_remedy, line)
+        self.assertNotIn("another kernel", line, "a filesystem fault is no other kernel's doing")
+
+    def test_enolck_from_the_flock_is_refused_with_the_filesystem_remedy(self):
+        self._flock_fails_with("ENOLCK", FS_REMEDY_TEXT, FILE_REMEDY_TEXT)
+
+    def test_eopnotsupp_from_the_flock_is_refused_with_the_filesystem_remedy(self):
+        self._flock_fails_with("EOPNOTSUPP", FS_REMEDY_TEXT, FILE_REMEDY_TEXT)
+
+    def test_einval_from_the_flock_is_refused_with_the_filesystem_remedy(self):
+        self._flock_fails_with("EINVAL", FS_REMEDY_TEXT, FILE_REMEDY_TEXT)
+
+    def test_another_errno_from_the_flock_is_refused_with_the_file_remedy(self):
+        self._flock_fails_with("EIO", FILE_REMEDY_TEXT, FS_REMEDY_TEXT)
+
+    def test_an_empty_line_is_refused_as_a_new_owner_with_no_traceback(self):
+        self.seed()
+        self.hold("")
+        before = self.snapshot()
+        self.refused_once(before, (self.lock_path, NEW_OWNER_TEXT, "(the file is empty)", REMEDY_TEXT))
+        self.assertEqual(self.lock_line(), "", "the holder's line is untouched")
+
+    def test_an_unparseable_line_is_refused_as_naming_no_owner_with_no_traceback(self):
+        self.seed()
+        self.hold("not a holder line\n")
+        before = self.snapshot()
+        self.refused_once(before, (self.lock_path, "whose line reads 'not a holder line', which names no owner",
+                                   REMEDY_TEXT))
+        self.assertEqual(self.lock_line(), "not a holder line", "the holder's line is untouched")
+
+    def _deadline_beyond_the_bound(self, deadline_text):
+        """A live holder (this test) whose draining line announces `deadline_text`, under a grace of GRACE_MS: refused at
+        once, before any waiting line, naming the holder, the deadline's distance and the bound."""
+        self.env = dict(self.env, ROMP_SHUTDOWN_GRACE_MS=GRACE_MS)
+        self.seed()
+        self.hold("%d draining %s\n" % (os.getpid(), deadline_text))
+        before = self.snapshot()
+        grace = float(GRACE_MS) / 1000.0
+        line, err = self.refused_once(before, (
+            "pid %d holds %s and its draining line announces a deadline of" % (os.getpid(), self.lock_path),
+            "more than this kernel's shutdown grace (%g s) plus a %g s margin, which no drain announces, so this kernel "
+            "does not wait for it" % (grace, DEADLINE_MARGIN_S), REMEDY_TEXT))
+        self.assertNotIn(WAITING_TEXT, err, "a deadline beyond the bound is refused before any waiting line")
+        self.assertEqual(self.lock_line(), "%d draining %s" % (os.getpid(), deadline_text), "the holder's line is untouched")
+
+    def test_a_deadline_beyond_the_grace_plus_the_margin_is_refused_without_waiting(self):
+        grace = float(GRACE_MS) / 1000.0
+        self._deadline_beyond_the_bound("%.3f" % (time.time() + grace + DEADLINE_MARGIN_S + BEYOND_S))
+
+    def test_a_deadline_that_would_overflow_the_timer_is_refused_without_waiting(self):
+        # setitimer refuses a delay above about 9.22e9 s with OverflowError; this one is about 1e11 s ahead
+        self._deadline_beyond_the_bound("99999999999")
+
+
+class LockStepFailuresInProcess(unittest.TestCase):
+    """Pin 9 in process, the failures a subprocess cannot reach cheaply: the blocking flock in the wait failing, a wait
+    whose timer setitimer cannot arm, and the line's read at the drain's deadline failing. Each is a refusal line out of
+    _kernel_lock_acquire, never a raise. The lock is held through a second descriptor of this process (flock locks belong
+    to the open file, so the helper's own open meets EWOULDBLOCK), and the thread count is mocked to one, the waiting
+    kernel's (the helper refuses to wait with more threads, and a test runner may run some)."""
+
+    def setUp(self):
+        self.assertTrue(hasattr(km, "_kernel_lock_acquire"), "the kernel has no instance lock")
+        self.dir = tempfile.mkdtemp(prefix="kernel-lock-fault-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.path = os.path.join(self.dir, "kernel.lock")
+        held = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, held)
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.held = held
+
+    def announce(self, deadline_text):
+        line = "%d draining %s\n" % (os.getpid(), deadline_text)
+        os.pwrite(self.held, line.encode("ascii"), 0)
+        os.ftruncate(self.held, len(line))
+
+    def acquire(self):
+        """_kernel_lock_acquire on this test's held lock, one thread counted, its stderr kept: (fd, refusal, stderr)."""
+        err = io.StringIO()
+        with mock.patch.object(km.threading, "active_count", return_value=1), contextlib.redirect_stderr(err):
+            try:
+                fd, refusal = km._kernel_lock_acquire(Path(self.path))
+            except Exception as e:      # the defect this class pins: a failure that escapes as a traceback
+                self.fail("_kernel_lock_acquire raised %s: %s" % (type(e).__name__, e))
+        if fd is not None:
+            self.addCleanup(os.close, fd)
+        return fd, refusal, err.getvalue()
+
+    def test_the_blocking_flock_failing_in_the_wait_is_refused_with_the_filesystem_remedy(self):
+        self.announce("%.3f" % (time.time() + 3))
+        with mock.patch.object(km, "_kernel_lock_wait", side_effect=OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))):
+            fd, refusal, err = self.acquire()
+        self.assertIsNone(fd)
+        self.assertIn(WAITING_TEXT, err, "the wait began")
+        self.assertIn("romp-kernel: the instance lock %s could not be taken: its blocking flock (the wait for a draining "
+                      "holder) failed with ENOLCK (No locks available)" % self.path, refusal)
+        self.assertIn(FS_REMEDY_TEXT, refusal)
+        self.assertNotIn("another kernel", refusal)
+        self.assertIn("exits %d" % EXIT_REFUSED, refusal)
+
+    def test_a_wait_whose_timer_cannot_be_armed_is_refused_and_leaves_no_timer_or_handler_behind(self):
+        # a grace so large that a deadline about 1e10 s ahead passes the bound, which setitimer then cannot arm
+        self.announce("%.3f" % (time.time() + 1e10))
+        before = signal.getsignal(signal.SIGALRM)
+        with mock.patch.object(km, "EXIT_GRACE_S", 1e11):
+            fd, refusal, err = self.acquire()
+        self.assertIsNone(fd)
+        self.assertIn(WAITING_TEXT, err, "the wait began")
+        self.assertIn("pid %d holds %s and is draining until" % (os.getpid(), self.path), refusal)
+        self.assertIn("but the timer that bounds a wait for it could not be armed (OverflowError", refusal)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0), "no timer left armed")
+        self.assertIs(signal.getsignal(signal.SIGALRM), before, "the SIGALRM handler put back")
+
+    def test_a_read_failing_at_the_drains_deadline_is_refused_naming_the_read(self):
+        self.announce("%.3f" % (time.time() + 3))
+        reads = [km._kernel_lock_read, OSError(errno.EIO, os.strerror(errno.EIO))]
+
+        def read(fd):
+            step = reads.pop(0)
+            if isinstance(step, Exception):
+                raise step
+            return step(fd)
+        with mock.patch.object(km, "_kernel_lock_wait", return_value=False), \
+             mock.patch.object(km, "_kernel_lock_read", side_effect=read):
+            fd, refusal, err = self.acquire()
+        self.assertIsNone(fd)
+        self.assertEqual(reads, [], "the line was read at the start and again at the deadline")
+        self.assertIn("romp-kernel: the instance lock %s could not be taken: reading its line at the drain's deadline "
+                      "(another process holds it) failed with EIO (Input/output error)" % self.path, refusal)
+        self.assertIn(FILE_REMEDY_TEXT, refusal)
+        self.assertNotIn(FS_REMEDY_TEXT, refusal)
+
+
 class InProcess(unittest.TestCase):
     """Pin 6 in process: the helper's success path, its refusal to wait with threads running, and no lock held by an
     in-process load. The setUp's check makes each red on a kernel without the lock name that absence."""
@@ -723,7 +981,9 @@ class InProcess(unittest.TestCase):
         held = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
         self.addCleanup(os.close, held)
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        os.pwrite(held, ("%d draining %.3f\n" % (os.getpid(), time.time() + 60)).encode(), 0)
+        # a deadline inside the bound on a draining holder's deadline (any grace plus the margin), so the thread count
+        # is what refuses
+        os.pwrite(held, ("%d draining %.3f\n" % (os.getpid(), time.time() + 3)).encode(), 0)
         with mock.patch.object(km.threading, "active_count", return_value=2), \
              mock.patch.object(km, "_kernel_lock_wait", side_effect=AssertionError("waited")):
             fd, refusal = km._kernel_lock_acquire(Path(path))
