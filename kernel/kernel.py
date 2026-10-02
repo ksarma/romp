@@ -189,9 +189,11 @@ def _kernel_lock_refusal(why):
 
 def _kernel_lock_holder_why(path, line):
     """The refusal's account of the process holding `path`, from the file's first `line`, for every holder this kernel
-    does not wait for, and for the holder a wait finds at its deadline once the drainer's own line is gone. A pid that
-    is not running holds nothing any more, so the holder is a new owner that took the lock and has not yet written its
-    own line (an empty file reads the same way)."""
+    does not wait for, and for the holder a wait finds at its deadline, unless that is still the drainer's own line with
+    the drainer running. A pid that is not running holds nothing any more, so the holder is a new owner that took the
+    lock and has not yet written its own line (an empty file reads the same way). A running pid's draining line is a
+    kernel that took the lock and is draining in turn (a wait's deadline can find one: the kernel that took the lock
+    after the drainer let go was then told to stop), so it is named as draining, with its deadline, never as serving."""
     m = _KERNEL_LOCK_SERVING_RE.fullmatch(line) or _KERNEL_LOCK_DRAINING_RE.fullmatch(line)
     if not line:
         return ("%s is held by a new owner that has not yet written its line (the file is empty), so another kernel "
@@ -203,6 +205,10 @@ def _kernel_lock_holder_why(path, line):
     if not _kernel_lock_pid_alive(pid):
         return ("%s is held by a new owner that has not yet written its line (the line still names pid %d, which is "
                 "not running), so another kernel is starting on this state root" % (path, pid))
+    draining = _KERNEL_LOCK_DRAINING_RE.fullmatch(line)
+    if draining:
+        return ("another kernel (pid %d) is draining until %s and holds %s"
+                % (pid, _kernel_lock_when(float(draining.group(2))), path))
     return "another kernel (pid %d) is serving from this state root and holds %s" % (pid, path)
 
 
