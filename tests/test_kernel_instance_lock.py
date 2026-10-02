@@ -23,10 +23,11 @@ The pins, each red on the kernel before the lock for the reason it names:
   5. a pid that is not running in the line (a serving line, a draining line) and an empty file: refused, worded as a
      new owner that has not yet written its line;
   6. in process: the helper's success path over a longer previous line, a non-inheritable descriptor; the drain's
-     announcement as the first act of _drain_and_exit, which never raises; nothing written with no lock held; an
-     in-process load holds no lock; every way out of the wait (the lock taken, the deadline reached, a flock that
-     raises) leaves no timer armed and the SIGALRM handler it found in place; and each writer of the line (the
-     acquisition over a longer line, the drain's announcement) writes at offset 0 first and never truncates to 0;
+     announcement as the first act of _drain_and_exit, which never raises (a failed one is exactly one line before the
+     drain's own); nothing written with no lock held; an in-process load holds no lock; every way out of the wait (the
+     lock taken, the deadline reached, a flock that raises) leaves no timer armed and the SIGALRM handler it found in
+     place; and each writer of the line (the acquisition over a longer line, the drain's announcement) writes at offset
+     0 first and never truncates to 0;
   7. repo-root: an in-process load writes none (read right after this module's load), the one call is main()'s after
      the bind (a source pin; pin 2 executes it).
 
@@ -690,7 +691,11 @@ class DrainAnnouncement(unittest.TestCase):
         with mock.patch.object(km, "_exit_log", side_effect=lines.append):
             ex = self._drain(ro)
         ex.assert_called_once_with(0)
-        self.assertTrue(any("draining line was not written" in ln for ln in lines), lines)
+        drain = [i for i, ln in enumerate(lines) if ln.startswith("romp-kernel: SIGTERM, draining SDK sessions")]
+        self.assertTrue(drain, "the drain's own first line: %r" % lines)
+        before = lines[:drain[0]]
+        self.assertEqual(len(before), 1, "exactly one instance-lock line before the drain's own lines: %r" % before)
+        self.assertIn("the instance lock's draining line was not written", before[0])
 
     def test_with_no_lock_held_the_drain_writes_no_lock_file(self):
         Path(self.path).write_text("4242 serving\n")
