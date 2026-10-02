@@ -421,30 +421,34 @@ definition's statement shapes, which the census lists from it (_SEND_SHAPES): a
 statement's place in the order, its kind, each operator, each attribute's name,
 the codec's name by its value, and each other operand by its class: self (the
 method's first parameter); the page (its second positional parameter); another
-parameter; a name a loop's target binds, read in that loop; any other name a
-statement stores that is no parameter, a local (a loop's target among them); a
-constant by its type (a string, a bool, an int, None); a builtin by its name
-(str, len, isinstance and getattr in the shapes below), where neither the
-definition nor the module binds the name, nothing rebinds it (no function binds
-it under a `global` declaration, no module-level statement writes it, and the
-file does none of the writes listed below that rebind every builtin) and the
-module holds no star import; a module constant (a name one top-level plain
-assignment binds and nothing else at module level, that nothing rebinds and no
-local or parameter of the definition names, in a module with no star import that
-writes no name of its module namespace through a computed name and may not
-rewrite it at run time) whose bound text holds no CR or LF as the census reads
-it (below); an attribute on self other than a header method or wfile, one class
-whatever its name; and page text, which the served pass reads. The shapes,
-`<str>` a string constant and every if and loop with no else: before the
-end_headers, any number of each of the stamp `<page> = <page text>`; a flag
+parameter; a name a loop's target binds, read in that loop; a flag, a text name
+and the header parameter, each a name a preamble role below binds, a flag also
+where it is an if's whole test; any other name a statement stores that is no
+parameter, a local (a loop's target among them); a constant by its type (a
+string, a bool, an int, None); a builtin by its name (str, len, isinstance and
+getattr in the shapes below), where neither the definition nor the module binds
+the name, nothing rebinds it (no function binds it under a `global` declaration,
+no module-level statement writes it, and the file does none of the writes listed
+below that rebind every builtin) and the module holds no star import; a module
+constant (a name one top-level plain assignment binds and nothing else at module
+level, that nothing rebinds and no local or parameter of the definition names,
+in a module with no star import that writes no name of its module namespace
+through a computed name and may not rewrite it at run time) whose bound text
+holds no CR or LF as the census reads it (below); an attribute on self other
+than a header method or wfile, one class whatever its name; and page text, which
+the served pass reads; any other name (a parameter a statement stores outside
+those roles among them) stands in no listed shape. The shapes, each matched by
+as many statements as the kernel's definition holds in it (a constant header by
+four, every other shape by one), `<str>` a string constant and every if and loop
+with no else: before the end_headers, the stamp `<page> = <page text>`; a flag
 `<flag> = <a bool constant>`; the injection's if, `if getattr(self, <str>, <a
 bool constant>) and isinstance(<page>, str) and <parameter>.startswith(<str>)
 and <str> in <page>:` whose body is `<text name> = <page text>`, then `if
 getattr(self, <str>, None):` holding `<text name> = <page text>` and `<flag> =
 <a bool constant>`, then `<page> = <page>.replace(<str>, <page text>, <an int
-constant>)`; the flag's if, `if <flag>: <parameter> = <str>`; the codec, `<page>
-= <page>.encode("utf-8") if isinstance(<page>, str) else <page>`; the response
-line, `self.send_response(<parameter>)`; a header from a parameter,
+constant>)`; the flag's if, `if <flag>: <header parameter> = <str>`; the codec,
+`<page> = <page>.encode("utf-8") if isinstance(<page>, str) else <page>`; the
+response line, `self.send_response(<parameter>)`; a header from a parameter,
 `self.send_header(<str>, <parameter>)`; the length header,
 `self.send_header(<str>, str(len(<page>)))`; a constant header,
 `self.send_header(<str>, <str>)`; a constant header under a getattr test, `if
@@ -466,41 +470,41 @@ plain def and reads its returns; an injection's value; and the value of a text
 name, a name no parameter, the page or self names, read where an injection's
 value reads it. A flag is a name no parameter, the page or self names, assigned
 a bool constant and read only as an if's test, any other assignment of it
-refused; the parameter the flag's if assigns is a non-body header write, neither
-the page nor self, its string constant holding no CR or LF. Any other
-script-running call fails the run by name, its reason naming the road (a second
-write, a write through an alias, a print to a stream; a node of a kind the
-shapes hold none of, by its kind and line; any other statement by its kind and
-line and the shape it lacks, named among those the census lists for its kind at
-its place, or by the order it stands outside; and in a statement of a listed
-shape, a builtin or a module constant whose proof fails, by that proof), among
-them a keyword body, a starred or `**` call, a definition whose one write is of
-another parameter, a local or an expression, or that writes nothing, a method's
-definition that binds self again, in any form (a lambda's or a nested def's
-parameter among them), or declares it global, any other read of an attribute
-named `write`, `writelines`, `send`, `sendall`, `sendfile` or `sendmsg`, called
-or not, a string constant equal to one of those names, a reference to the
-write's receiver other than as its receiver, and in the definition a statement
-after the end_headers (which writes the header buffer to the stream, so a header
-call after it would reach the body), a second end_headers or none, any other
-rebinding of the page parameter, another codec name or a second argument to
-`.encode` (either can name a codec or an error handler the file registers at run
-time), a store or delete of an attribute or a subscript, a read of a name the
-module binds other than a module constant in a formatted header's tuple or in
-page text, a module constant there whose bound text holds a CR or LF or reads a
-name the census does not follow by binding (by name), a string constant holding
-a CR or LF in a header call (by name), a call in no listed shape, and a nested
-def, class or lambda. The reader governs the definition's own text, and
-code the definition runs from outside that text is not read: a header value is
-not scanned (a module constant used as one is read only for a CR or LF: each
-string or bytes constant in its value and in the value of each module constant
-that value names, followed by binding (a method call's receiver, as `T` in
-`T.lower()`, among the names followed), any other name there refusing it, save a
-bare name a call calls (`f` in `f(...)`); a CR or LF the value computes at run
-time, a call's return or a
-number formatted as a character, is not read, its witnesses a CR LF from chr and
-one from a `%c` of an int), and a response that a Content-Type in its headers
-argument, passed
+refused; the header parameter, the parameter the flag's if assigns, is a
+non-body header write, neither the page nor self, its string constant holding no
+CR or LF. Any other script-running call fails the run by name, its reason naming
+the road (a second write, a write through an alias, a print to a stream; a node
+of a kind the shapes hold none of, by its kind and line; any other statement by
+its kind and line and the shape it lacks, named among those the census lists for
+its kind at its place, or by the order it stands outside; a statement in a
+listed shape past its count, by that shape and its count; and in a statement of
+a listed shape, a builtin or a module constant whose proof fails, by that
+proof), among them a keyword body, a starred or `**` call, a definition whose
+one write is of another parameter, a local or an expression, or that writes
+nothing, a method's definition that binds self again, in any form (a lambda's or
+a nested def's parameter among them), or declares it global, any other read of
+an attribute named `write`, `writelines`, `send`, `sendall`, `sendfile` or
+`sendmsg`, called or not, a string constant equal to one of those names, a
+reference to the write's receiver other than as its receiver, and in the
+definition a statement after the end_headers (which writes the header buffer to
+the stream, so a header call after it would reach the body), a second
+end_headers or none, any other rebinding of the page parameter, another codec
+name or a second argument to `.encode` (either can name a codec or an error
+handler the file registers at run time), a store or delete of an attribute or a
+subscript, a read of a name the module binds other than a module constant in a
+formatted header's tuple or in page text, a module constant there whose bound
+text holds a CR or LF or reads a name the census does not follow by binding (by
+name), a string constant holding a CR or LF in a header call (by name), a call
+in no listed shape, and a nested def, class or lambda. The reader governs the
+definition's own text, and code the definition runs from outside that text is
+not read: a header value is not scanned (a module constant used as one is read
+only for a CR or LF: each string or bytes constant in its value and in the value
+of each module constant that value names, followed by binding (a method call's
+receiver, as `T` in `T.lower()`, among the names followed), any other name there
+refusing it, save a bare name a call calls (`f` in `f(...)`); a CR or LF the
+value computes at run time, a call's return or a number formatted as a
+character, is not read, its witnesses a CR LF from chr and one from a `%c` of an
+int), and a response that a Content-Type in its headers argument, passed
 or defaulted, makes a page is outside the served pass, the call being typed by
 its content-type argument; nor is code the definition runs through an object it
 is handed (a parameter's methods, its mapping's items, its __str__), code behind

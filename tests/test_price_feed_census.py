@@ -1341,20 +1341,23 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "no node in its body of a kind the kernel's Handler._send holds none of, and every statement of its own body one of that "
                 "definition's statement shapes, which the census lists from it (_SEND_SHAPES): a statement's place in the order, its kind, each "
                 "operator, each attribute's name, the codec's name by its value, and each other operand by its class: self (the method's first "
-                "parameter); the page (its second positional parameter); another parameter; a name a loop's target binds, read in that loop; any "
-                "other name a statement stores that is no parameter, a local (a loop's target among them); a constant by its type (a string, a "
+                "parameter); the page (its second positional parameter); another parameter; a name a loop's target binds, read in that loop; a "
+                "flag, a text name and the header parameter, each a name a preamble role below binds, a flag also where it is an if's whole test; "
+                "any other name a statement stores that is no parameter, a local (a loop's target among them); a constant by its type (a string, a "
                 "bool, an int, None); a builtin by its name (str, len, isinstance and getattr in the shapes below), where neither the definition "
                 "nor the module binds the name, nothing rebinds it (no function binds it under a `global` declaration, no module-level statement "
                 "writes it, and the file does none of the writes listed below that rebind every builtin) and the module holds no star import; a "
                 "module constant (a name one top-level plain assignment binds and nothing else at module level, that nothing rebinds and no local "
                 "or parameter of the definition names, in a module with no star import that writes no name of its module namespace through a "
                 "computed name and may not rewrite it at run time) whose bound text holds no CR or LF as the census reads it (below); an "
-                "attribute on self other than a header method or wfile, one class whatever its name; and page text, which the served pass reads. "
-                "The shapes, `<str>` a string constant and every if and loop with no else: before the end_headers, any number of each of the "
+                "attribute on self other than a header method or wfile, one class whatever its name; and page text, which the served pass reads; "
+                "any other name (a parameter a statement stores outside those roles among them) stands in no listed shape. The shapes, each "
+                "matched by as many statements as the kernel's definition holds in it (a constant header by four, every other shape by one), "
+                "`<str>` a string constant and every if and loop with no else: before the end_headers, the "
                 "stamp `<page> = <page text>`; a flag `<flag> = <a bool constant>`; the injection's if, `if getattr(self, <str>, <a bool "
                 "constant>) and isinstance(<page>, str) and <parameter>.startswith(<str>) and <str> in <page>:` whose body is `<text name> = "
                 "<page text>`, then `if getattr(self, <str>, None):` holding `<text name> = <page text>` and `<flag> = <a bool constant>`, then "
-                "`<page> = <page>.replace(<str>, <page text>, <an int constant>)`; the flag's if, `if <flag>: <parameter> = <str>`; the codec, "
+                "`<page> = <page>.replace(<str>, <page text>, <an int constant>)`; the flag's if, `if <flag>: <header parameter> = <str>`; the codec, "
                 "`<page> = <page>.encode(\"utf-8\") if isinstance(<page>, str) else <page>`; the response line, "
                 "`self.send_response(<parameter>)`; a header from a parameter, `self.send_header(<str>, <parameter>)`; the length header, "
                 "`self.send_header(<str>, str(len(<page>)))`; a constant header, `self.send_header(<str>, <str>)`; a constant header under a "
@@ -1369,10 +1372,12 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "the served pass follows only where it proves a module function a plain def and reads its returns; an injection's value; and the "
                 "value of a text name, a name no parameter, the page or self names, read where an injection's value reads it. A flag is a name no "
                 "parameter, the page or self names, assigned a bool constant and read only as an if's test, any other assignment of it refused; "
-                "the parameter the flag's if assigns is a non-body header write, neither the page nor self, its string constant holding no CR or "
+                "the header parameter, the parameter the flag's if assigns, is a non-body header write, neither the page nor self, its string "
+                "constant holding no CR or "
                 "LF. Any other script-running call fails the run by name, its reason naming the road (a second write, a write through an alias, a "
                 "print to a stream; a node of a kind the shapes hold none of, by its kind and line; any other statement by its kind and line and "
-                "the shape it lacks, named among those the census lists for its kind at its place, or by the order it stands outside; and in a "
+                "the shape it lacks, named among those the census lists for its kind at its place, or by the order it stands outside; a statement "
+                "in a listed shape past its count, by that shape and its count; and in a "
                 "statement of a listed shape, a builtin or a module constant whose proof fails, by that proof), among them a keyword body, a "
                 "starred or `**` call, a definition whose one write is of another parameter, a local or an expression, or that writes nothing, a "
                 "method's definition that binds self again, in any form (a lambda's or a nested def's parameter among them), or declares it "
@@ -3763,12 +3768,15 @@ def _a_why(why, text):
 # call's string constant and a second argument to send_response (the two closures ruled for header values). (k) One plant per node
 # kind the table excludes that a (t) or (h) plant exercises, holding that kind and nothing else outside the table (its operator,
 # argument list, context or pattern counted with it), its other nodes a parameter, self or a string constant in their listed roles:
-# the plant a mutant that adds the kind reds where the statement is of that kind, its refusal moving to the statement's shape; since
-# the reviewer's 02:29Z ruling a kind inside a statement (a BinOp Add, a Compare, an int Constant, JoinedStr, Lambda, List,
-# NamedExpr, Pass in an if's body, Subscript) leaves that statement in no listed shape, refused by its shape, which no added kind
-# changes. (q) The builtin allowance: len rebound under a global declaration in a module function, getattr bound by a module-level
-# def and getattr rebound under a global declaration, each read at the reviewed head, and len in a module that holds a star import,
-# refused there as "a call the reader does not read".
+# the plant a mutant that adds the kind reds where the statement is of that kind, its refusal moving to the statement's shape. Since
+# the reviewer's 02:29Z ruling a node inside a statement, in a header value or an if's body, leaves that statement in no listed shape,
+# refused by its shape at its own line before the node: a node of a kind the table excludes (JoinedStr, Lambda, List, NamedExpr, Pass
+# in an if's body, Subscript), whose refusal no kind added to the table moves, and a node of a kind it holds in a form no shape holds
+# (kad's BinOp Add, kco's Compare, kci's int Constant). Inside page text, which a statement's shape reads as one leaf, a node of a kind
+# the table excludes is refused by its kind alone (the (at) plants atwl, atsb and atla), the table the gate's one check there. (q) The
+# builtin allowance: len rebound under a global declaration in a module function, getattr bound by a module-level def and getattr
+# rebound under a global declaration, each read at the reviewed head, and len in a module that holds a star import, refused there as
+# "a call the reader does not read".
 _B_W = "_W = None\n"   # a module name the plants reach; code the definition ran on it could write more text
 _B_HDR = '        self.send_header("X-Probe", "1")\n'
 # tests-4 (the eighth round's ruling B, carried out): tc4's module registers the codec "probe_e4", whose encoder returns _EXTRA's bytes, so the
@@ -8586,17 +8594,17 @@ AR_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AR_PLANTS)
 # allowlist of exact statement shapes derived from the kernel's Handler._send). Each shape is pinned twice: its live statement matches
 # it (TheSendStatementsAreListedShapes reads kernel/kernel.py's definition through the gate), and its near miss here, aww's module or
 # the kernel's shape (rks's, B_KERNEL_SEND) with one statement changed, is refused at that statement with the gate's reason, which
-# names the shape among those the census lists for the statement's kind at its place. The gate read seven of these near misses before
+# names the shape among those the census lists for the statement's kind at its place. The gate read eleven of these near misses before
 # the ruling: asin (the injection's if with its tests in another order), asfi (the flag's if testing a parameter), ascd (the encode
 # alone, no if-expression), ashp (a header whose name is a parameter), aslh (len with no str), asch (a header valued None), ascg (a
 # constant header under a getattr test with a None default), aslp (the headers loop over one target), aspt (a constant header under a
 # parameter's test), asfg (the formatted header's tuple in the other order) and asag (the attribute header's two calls in the other
-# order); the rest it refused, by the node kind and role that held no plant. Four more each hold one operand class of the shapes:
+# order); the rest it refused, by the node kind and role that held no plant. Three more each hold one operand class of the shapes:
 # aslr, the headers loop's target binding a parameter (a stored name that is a parameter is no local); asbl, len bound by a loop's
 # target, so the length header's len is no builtin; asml, the formatted header's module constant's name bound by a loop's target, so
-# it is no module constant; askw, the response line handed a keyword (a keyword is part of the shape). And aswn, the write inside an
-# if, no statement of the definition's own body: every statement then stands outside the order, the first refused so. (shape, tag,
-# base, (the text it replaces, its replacement), the refused statement's kind, the anchor of its line, its place)
+# it is no module constant. askw, the response line handed a keyword, holds the keyword (a keyword is part of the shape). And aswn,
+# the write inside an if, no statement of the definition's own body: every statement then stands outside the order, the first refused
+# so. (shape, tag, base, (the text it replaces, its replacement), the refused statement's kind, the anchor of its line, its place)
 _AS_BEFORE = "before the end_headers"
 AS_NEAR = (("the stamp", "asst", "aww", ("        body = _probe_aww_stamp(code, body, ctype)\n", "        body = _PROBE_AWW_INJ\n"), "Assign",
             "body = _PROBE_AWW_INJ", _AS_BEFORE),
@@ -8645,6 +8653,22 @@ def _as_module(tag, base, swap):
 
 
 AS_FILES = tuple((t, _as_module(t, base, swap)) for _n, t, base, swap, _k, _a, _p in AS_NEAR)
+# Each shape is read as many times as the kernel's definition holds it (_SEND_TIMES: a constant header four times, every other shape
+# once; TheSendStatementsAreListedShapes counts the live statements), and a statement in a listed shape past that count is refused,
+# naming the shape and its count: asc2, a second codec after aww's (before the reviewer's 02:29Z ruling the gate read one codec too,
+# the first so shaped, and one loop, the first); asl2, a second headers loop after the kernel's shape's; asc5, the kernel's shape with
+# four more constant headers, five in all, the fifth refused. (shape, tag, base, (the text it replaces, its replacement), the refused
+# statement's kind, the anchor of its line)
+_AS_LOOP = "        for k, v in (headers or {}).items():\n            self.send_header(k, v)\n"
+_AS_CONST = '        self.send_header("X-Content-Type-Options", "nosniff")\n'
+_AS_CODEC = '        body = body.encode("utf-8") if isinstance(body, str) else body\n'
+AS_TIMES = (("the codec", "asc2", "aww", (_AS_CODEC, _AS_CODEC + '        body = (body.encode("utf-8") if isinstance(body, str) else body)\n'),
+             "Assign", "body = (body.encode"),
+            ("the headers loop", "asl2", "rks", (_AS_LOOP, _AS_LOOP + "        for k2, v2 in (headers or {}).items():\n            self.send_header(k2, v2)\n"),
+             "For", "for k2, v2 in"),
+            ("a constant header", "asc5", "rks", (_AS_CONST, _AS_CONST + "".join('        self.send_header("X-Probe-%d", "1")\n' % i for i in range(1, 5))),
+             "Expr", '"X-Probe-4"'))
+AS_FILES += tuple((t, _as_module(t, base, swap)) for _n, t, base, swap, _k, _a in AS_TIMES)
 # (at) the page send's reader outside its statement shapes (the reviewer's 02:29Z ruling of 2026-10-02: each conjunct of _send_preamble,
 # its test() and its other helpers, _header_const and the gate's own body and helpers that a mutant left unheld is planted here, or
 # argued dominated beside it in the script): each aww's module with its swaps (_ae_module), refused at the definition with the gate's
@@ -8667,18 +8691,26 @@ AS_FILES = tuple((t, _as_module(t, base, swap)) for _n, t, base, swap, _k, _a, _
 # extra2 read by no injection) before that statement, refused at its own line: a chained assignment (atr2), another name assigned a
 # replace on the page (atr3), a split (atr6), a replace on a parameter (atr7), a count handed by keyword (atr8), a fourth argument
 # (atr9), a first argument that is a parameter (atra), a count that is a parameter (atrb) or a string (atrc), a starred argument
-# (atrd), and another name assigned a replace on a parameter (atrn). atwl, a flag that a walrus in the injection's value binds too,
-# refused at the walrus (the flag read as a flag). atmt and atnb, an if testing a name bound after it only by a chained assignment
-# or only to an int: each refused at that if, no flag. atpf, a parameter assigned a bool constant before the codec, refused at that
-# assignment: the flags' own() and the flag role's own() each refuse it alone (argued, each dominated by the other), so it is the
-# pair's plant, read with both dropped. The (at) cut plants: the flag's if testing probe, a name assigned a bool only after a
-# statement shaped as a codec but not the kernel's, each refused at that statement (a codec found there would cut the preamble before
-# probe's flag, refusing the if before it): the page rebound to itself through a chained assignment (atk6), another name bound to the
-# page (atk7) or to a parameter (atk3), a replace handed "utf-8" (atkg), an encode on a parameter (atkh), an encode handed a second
-# argument (atki) or an errors keyword (atkj), another codec (atkm), and the codec's if-expression testing a call that is no
-# isinstance (atko), isinstance handed three arguments (atkp), a keyword (atkq), a parameter (atkr) or bytes (atks), testing a
-# parameter (atkt, whose drop of isinstance's call test raises too), or holding a parameter as its encoded (atku) or its other
-# branch (atkv); and atkl, the encode alone before the kernel's codec, the first codec so shaped, so the if before it is refused.
+# (atrd), and another name assigned a replace on a parameter (atrn). atwl, aww's flag bound once more by a walrus in the injection's
+# value, refused at the walrus by its kind (the flag still a flag: the names an injection's value reads are those it loads). The CR or
+# LF guard's scope, each in page text, which a statement in a listed shape may hold any call in: atq1, a header method's name called on
+# a parameter and handed a line feed, read (the guard reads a header method called on self); atq3, a method of self that is no header
+# method handed one, refused by the served pass at that call, which it does not follow, not by the guard. test()'s two more conditions
+# whose drop raises on the node they guard: atg2, the injection's inner getattr handed two arguments, and atsc, its startswith called
+# on a string constant, each refused at the injection's if; and atc2, an injection handed two arguments, no count, refused there (the
+# injection role's count, set true, raises on it). The kind table inside page text, which a statement's shape reads as one leaf: atsb,
+# a subscript in the injection's value, and atla, a lambda called there, each refused by its kind alone (with the kind admitted, the
+# served pass refuses the text it cannot read). atmt and atnb, an if testing a name bound after it only by a chained assignment or only
+# to an int: each refused at that if, no flag. atpf, a parameter assigned a bool constant before the codec, refused at that assignment:
+# the flags' own() and the flag role's own() each refuse it alone (argued, each dominated by the other), so it is the pair's plant,
+# read with both dropped. The (at) cut plants: the flag's if testing probe, a name assigned a bool only after a statement shaped as a
+# codec but not the kernel's, each refused at that statement (a codec found there would cut the preamble before probe's flag, refusing
+# the if before it): the page rebound to itself through a chained assignment (atk6), another name bound to the page (atk7) or to a
+# parameter (atk3), a replace handed "utf-8" (atkg), an encode on a parameter (atkh), an encode handed a second argument (atki) or an
+# errors keyword (atkj), another codec (atkm), and the codec's if-expression testing a call that is no isinstance (atko), isinstance
+# handed three arguments (atkp), a keyword (atkq), a parameter (atkr) or bytes (atks), testing a parameter (atkt, whose drop of
+# isinstance's call test raises too), or holding a parameter as its encoded (atku) or its other branch (atkv); and atkl, the encode
+# alone before the kernel's codec, the first codec so shaped, so the if before it is refused.
 _AT_EXTRA2 = '                extra = "%s"\n' % (FGH_PAGE % "awwe")
 _AT_IFFLAG = '        if flag:\n            cache = "no-store"\n'
 _AT_END = "        self.end_headers()\n"
@@ -8734,9 +8766,20 @@ AT_PLANTS = (("atlf", "page text holding a line feed", ((_AR_EXTRA, '           
              ("atrc", "a replace whose count is a string reading it", _at_read('body = body.replace("<p>", extra2, "1")'), ("gate", _AT_TEST, _B_IF)),
              ("atrd", "a replace handed a starred argument reading it", _at_read('body = body.replace("<p>", *extra2)'), ("gate", _AT_TEST, _B_IF)),
              ("atrn", "another name assigned a replace on a parameter reading it", _at_read('done = ctype.replace("<p>", extra2, 1)'), ("gate", _AT_TEST, _B_IF)),
-             ("atwl", "a flag a walrus in the injection's value binds too", (("        flag = False\n", "        flag = False\n        probe = True\n"),
-                                                                            (_AT_INJ, 'extra + (probe := "") + _PROBE_AWW_INJ, 1)')),
+             ("atwl", "the flag bound once more by a walrus in the injection's value", ((_AT_INJ, 'extra + (flag := "") + _PROBE_AWW_INJ, 1)'),),
               ("gate", ':= ""', "a NamedExpr expression at line %d")),
+             ("atq1", "a header method's name called on a parameter in page text, handed a line feed",
+              ((_AR_EXTRA, '            extra = "%s" + code.send_header("a\\nb")\n' % (FGH_PAGE % "atq1")),), ("read", ("atq1",))),
+             ("atq3", "a method of self handed a line feed in page text", ((_AR_EXTRA, '            extra = self.probe_q("a\\nb")\n'),),
+              ("served", "self.probe_q('a\\nb')", "a method called on self that no def statement of a class of the file defines first")),
+             ("atg2", "the injection's inner getattr handed two arguments", (('            if getattr(self, "probe_more", None):\n',
+                                                                            '            if getattr(self, "probe_more"):\n'),), ("gate", _AT_TEST, _B_IF)),
+             ("atsc", "the injection's startswith called on a string constant", (('ctype.startswith("text/html")', '"text/html".startswith("text/html")'),),
+              ("gate", _AT_TEST, _B_IF)),
+             ("atc2", "an injection handed two arguments", ((_AT_INJ, "extra + _PROBE_AWW_INJ)"),), ("gate", _AT_TEST, _B_IF)),
+             ("atsb", "a subscript in the injection's value", ((_AT_INJ, "extra[0:] + _PROBE_AWW_INJ, 1)"),), ("gate", "extra[0:]", "a Subscript expression at line %d")),
+             ("atla", "a lambda called in the injection's value", ((_AT_INJ, 'extra + (lambda: "")() + _PROBE_AWW_INJ, 1)'),),
+              ("gate", "(lambda:", "a Lambda expression at line %d")),
              ("atmt", "an if testing a name bound after it only by a chained assignment",
               ((_AT_IFFLAG, '        if probe:\n            cache = "no-store"\n        probe = done = True\n'),), ("gate", "if probe:", _B_IF)),
              ("atnb", "an if testing a name bound after it only to an int", ((_AT_IFFLAG, '        if probe:\n            cache = "no-store"\n        probe = 1\n'),),
@@ -10382,8 +10425,8 @@ class TheServedPagesAreScanned(_Scope):
     statement stands in (the (l) plants), and a `_send` definition read only when its every node is of a kind, in a role, the
     kernel's Handler._send holds, any other refused by its kind and line (the (t), (k) and (q) plants; since the reviewer's 02:29Z
     ruling of 2026-10-02 the roles are that definition's statement shapes, a statement in none of them refused naming the shape it
-    lacks, and since then the (as) plants pin each shape at a near miss and the (at) plants each conjunct of the reader outside
-    the shapes that a mutant left unheld), with the kernel's shape
+    lacks, and since then the (as) plants pin each shape at a near miss and at a statement past its count, and the (at) plants
+    each conjunct of the reader outside the shapes that a mutant left unheld and no argument beside it holds), with the kernel's shape
     read and that round's limits held at their witnesses, and a page read only in resolve's read arms, a lambda's body and a path
     join's operands among them, with the value slots the kernel's pages use and any other kind refused by name (the (v) plants),
     and each literal read on its own with the text of each listed join of string constants read beside it (a `.join` over a
@@ -11033,8 +11076,10 @@ class TheServedPagesAreScanned(_Scope):
         One plant per node kind the table excludes that a (t) or (h) plant exercises, each holding that kind and
         nothing else outside the table: AnnAssign, AugAssign, a BinOp Add, ClassDef, Compare, an int Constant, Delete, JoinedStr,
         FunctionDef, Global, Import, ImportFrom, Lambda, List, Match, NamedExpr, Pass, Return, Subscript, Try and With; each a
-        statement of that kind refused by the kind, and each kind inside a statement (a BinOp Add, Compare, an int Constant,
-        JoinedStr, Lambda, List, NamedExpr, Pass in an if's body, Subscript) by that statement's shape. (q) The
+        statement of that kind refused by the kind, and each node inside a statement, in a header value or an if's body (a BinOp
+        Add, a Compare and an int Constant, kinds the table holds in forms no shape holds, and JoinedStr, Lambda, List, NamedExpr,
+        Pass in an if's body and Subscript, kinds it excludes), by that statement's shape; inside page text, which the shape reads
+        as one leaf, a kind the table excludes is refused by its kind alone (the landing rulings' (at) plants atwl, atsb, atla). (q) The
         builtin allowance, decided in the gate alone, requires that neither the definition nor the module binds the name, that
         nothing rebinds it and that the module holds no star import (and, since the fix's own checks, that the file names no
         `__builtins__` as a name, imports no builtins module, writes no module that may be the builtins module and writes no name of
@@ -11042,7 +11087,8 @@ class TheServedPagesAreScanned(_Scope):
         `__builtins__` name and its `__dict__`, and vxt, held by a store on `sys.modules["builtins"]`; and since the review's calls on those checks, that the file may rewrite neither namespace at
         run time, the (u) case's gate plants): len rebound under a global declaration in a module function
         (qgl), getattr bound by a module-level def (qgd), getattr rebound under a global declaration (qgg) and len in a module
-        that holds a star import (qgs) each refuse at the name. Read, each page's fetch listed: len with nothing binding or
+        that holds a star import (qgs) each refuse by its statement's shape, the name then no builtin (a name the census does not
+        prove). Read, each page's fetch listed: len with nothing binding or
         rebinding it (qgc) and the kernel's shape (rks: the codec line, the loop over a headers argument, a cache test and two
         getattr tests, one guarding a constant header and one an attribute of self and a constant header). At the reviewed head
         every refused plant here is read, its
@@ -14754,13 +14800,17 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
     constant, read. The page send's statement shapes (the reviewer's 02:29Z ruling of 2026-10-02, AS_NEAR): each of the sixteen
     shapes the census lists from the kernel's Handler._send has a near miss, aww's module or the kernel's shape with one statement
     changed, refused at that statement by a reason that names the shape among those listed for its kind at its place (asst to
-    aswr), four more each refused by an operand's class (aslr, asbl, asml, askw), and aswn, the write inside an if, every statement
-    then outside the order; each shape's live statement is TheSendStatementsAreListedShapes'. The page send's reader outside those
-    shapes (the same ruling, AT_PLANTS): each conjunct of _send_preamble with its test() and other helpers, of _header_const and of
-    the gate's own body and helpers that a mutant left unheld has its plant, aww's module with its swaps, refused at the definition
-    with its reason at its line, or read: the end_headers search (aten, atea, atec, atex, atep), the preamble's roles and its ifs'
-    tests (atmc, atxn, atpi, atfs, atbs, atun, atcb, atcn, atgd, atic, atsw, atcl, atwl, atmt, atnb, atpf), the injections' read
-    names (atr2 to atrn), the codec's search (atfc and the cut plants atk3 to atkl) and the CR or LF guard's scope (atlf, read).
+    aswr), three more each refused by an operand's class (aslr, asbl, asml) and askw by its keyword, and aswn, the write inside an
+    if, every statement then outside the order; and a statement past the count its shape is listed for, refused naming the shape
+    and its count (AS_TIMES: asc2 a second codec, asl2 a second headers loop, asc5 a fifth constant header); each shape's live
+    statement, and its count, is TheSendStatementsAreListedShapes'. The page send's reader outside those shapes (the same ruling,
+    AT_PLANTS): each conjunct of _send_preamble with its test() and other helpers, of _header_const and of the gate's own body and
+    helpers that a mutant left unheld is planted here, aww's module with its swaps, refused at the definition with its reason at
+    its line, refused by the served pass, or read, or argued dominated beside it in the script. The plants hold the end_headers
+    search (aten, atea, atec, atex, atep), the preamble's roles and its ifs' tests (atmc, atxn, atpi, atfs, atbs, atun, atcb,
+    atcn, atgd, atic, atsw, atcl, atg2, atsc, atc2, atwl, atmt, atnb, atpf), the injections' read names (atr2 to atrn), the codec's
+    search (atfc and the cut plants atk6, atk7, atk3, atkg to atkv and atkl, in AT_PLANTS' order), the CR or LF guard's scope
+    (atlf and atq1, read, and atq3, refused by the served pass) and the kind table inside page text (atsb, atla).
     The reds, each over a mutant of the fix script with one conjunct or arm dropped, are in the build record."""
 
     def setUp(self):
@@ -14879,6 +14929,17 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
                               "refused with its reason at its line")
                 self.assertFalse(self._is_site(tag), "%s's fetch is no site" % tag)
 
+    def test_each_shape_is_read_only_as_many_times_as_the_kernels_definition_holds_it(self):
+        files = dict(AD_FILES)
+        for name, tag, _base, _swap, kind, anchor in AS_TIMES:
+            with self.subTest(plant="(as) %s past its count (%s)" % (name, tag)):
+                srv, most = self._served(tag), script_module(ROOT)._SEND_TIMES.get(name, 1)
+                why = "%s %s statement at line %d in the shape of %s, which the census lists %s" % (
+                    "an" if kind[0] in "AEIO" else "a", kind, _a_line(files[tag], anchor), name, "once" if most == 1 else "%d times" % most)
+                self.assertEqual(len(srv), 1, "one refusal, at the definition: %r" % srv)
+                self.assertIn("whose page body the census does not read (%s, in Handler.do_GET)" % why, srv[0], "refused naming the shape and its count")
+                self.assertFalse(self._is_site(tag), "%s's fetch is no site" % tag)
+
     def test_each_listed_shape_has_a_near_miss_refused_naming_it(self):
         files = dict(AD_FILES)
         self.assertEqual({n for n, *_r in AS_NEAR}, set(LIVE_SHAPES), "a near miss for each listed shape")
@@ -14893,7 +14954,7 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
                 self.assertIn("whose page body the census does not read (%s, in Handler.do_GET)" % why, srv[0], "refused with its reason at its line")
                 self.assertFalse(self._is_site(tag), "%s's fetch is no site" % tag)
 
-    def test_each_conjunct_of_the_readers_preamble_and_gate_a_mutant_showed_unheld_has_its_plant(self):
+    def test_each_plant_of_a_conjunct_of_the_readers_preamble_and_gate_holds_its_outcome(self):
         files = dict(AD_FILES)
         for tag, what, _swaps, outcome in AT_PLANTS:
             with self.subTest(plant="(at) %s (%s)" % (what, tag)):
@@ -14902,6 +14963,10 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
                     self.assertEqual(srv, [], "read: no SERVED line (%r)" % srv)
                     for ft in outcome[1]:
                         self.assertTrue(self._is_site(ft), "the plant's page text is read: %s a site" % ft)
+                    continue
+                if outcome[0] == "served":   # the definition read, the served pass refusing a text it puts in the page
+                    self.assertEqual(len(srv), 1, "one refusal, the served pass's: %r" % srv)
+                    self.assertIn("builds a served page from %s (%s" % (outcome[1], outcome[2]), srv[0], "refused by the served pass with its reason")
                     continue
                 self.assertEqual(len(srv), 1, "one refusal, at the definition: %r" % srv)
                 self.assertIn("whose page body the census does not read (%s, in Handler.do_GET)" % (outcome[2] % _a_line(files[tag], outcome[1])), srv[0],
@@ -14923,8 +14988,8 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
 
 
 # The kernel's Handler._send, statement by statement in its own body's order, by the name of the listed shape each matches
-# (_SEND_SHAPES): the stamp, the flag, the injection's if and the flag's if build the page before the codec; then the headers; then
-# the end_headers and the write
+# (_SEND_SHAPES), each shape as many times as _SEND_TIMES lists it: before the codec the stamp and the injection's if, which build the
+# page, the flag the flag's if tests and that if, which sets the cache header; then the headers; then the end_headers and the write
 LIVE_SHAPES = ("the stamp", "a flag", "the injection's if", "the flag's if", "the codec", "the response line", "a header from a parameter",
                "the length header", "a constant header", "a constant header", "a constant header", "a constant header",
                "a constant header under a getattr test", "the headers loop", "a header under its parameter's test",
@@ -14935,10 +15000,11 @@ class TheSendStatementsAreListedShapes(unittest.TestCase):
     """The gate's ok() is an allowlist of exact statement shapes (the reviewer's 02:29Z ruling of 2026-10-02): a statement of a `_send`
     definition's own body is read only where its place in the order, its kind and its shape (each operator and attribute, page text one
     leaf and every other leaf its class by binding) are one the census lists, _SEND_SHAPES, which holds the shapes of the kernel's
-    Handler._send and no other. This case is each shape's live pin: kernel/kernel.py's Handler._send is read through the gate
-    (_body_param) with the gate's one lookup (_send_shape_name) recorded from outside the script, and each of its statements matches
-    the shape LIVE_SHAPES names for it, in order, every listed shape matching one. Each shape's near miss, refused naming it, is
-    TheLandingRulingsPlantsAreScanned's (as) plants."""
+    Handler._send and no other, each read as many times as that definition holds it (_SEND_TIMES). This case is each shape's live
+    pin: kernel/kernel.py's Handler._send is read through the gate (_body_param) with the gate's one lookup (_send_shape_name)
+    recorded from outside the script, and each of its statements matches the shape LIVE_SHAPES names for it, in order, every listed
+    shape matching one and each as many times as _SEND_TIMES lists it. Each shape's near miss, refused naming it, and a statement
+    past a shape's count, refused naming the shape and its count, are TheLandingRulingsPlantsAreScanned's (as) plants."""
 
     def test_each_statement_of_the_kernels_send_matches_its_listed_shape(self):
         mod, res = script_module(ROOT), _tree().res
@@ -14959,6 +15025,8 @@ class TheSendStatementsAreListedShapes(unittest.TestCase):
         self.assertEqual(got, ("body", None), "the kernel's Handler._send is read, its body parameter the page")
         self.assertEqual(tuple(seen), LIVE_SHAPES, "each statement matches its listed shape, in the definition's order")
         self.assertEqual(sorted(mod._SEND_SHAPES.values()), sorted(set(LIVE_SHAPES)), "every listed shape is a live statement's, each listed once")
+        self.assertEqual({n: LIVE_SHAPES.count(n) for n in LIVE_SHAPES}, {n: mod._SEND_TIMES.get(n, 1) for n in mod._SEND_SHAPES.values()},
+                         "each shape is read as many times as the kernel's definition holds it (_SEND_TIMES)")
 
 
 if __name__ == "__main__":
