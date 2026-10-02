@@ -35,7 +35,7 @@ kernel is on, and let co-located kernels message each other through the postal f
    go to a profile listed before the kernel that held it.
    `/ensure` answers 409 for a kernel the manager refuses, and for a port a running kernel serves
    answers for that kernel
-   (bin/romp-manager `rootConflict`). The kernel's own lock, `kernel.lock`,
+   (bin/romp-manager `idForPort`, `rootConflict`). The kernel's own lock, `kernel.lock`,
    keeps kernels apart in the cases the manager does not decide: a kernel's successor and the
    kernel draining before it, and the kernels started outside the manager (a kernel started by
    hand, the far-host fallback, an orphaned kernel, the test labs); a kernel started on a root

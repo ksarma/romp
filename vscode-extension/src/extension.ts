@@ -208,7 +208,7 @@ function copyInstallCommand(): void {
 // other kernel uses. /ensure maps a port to a running kernel on it, else the profile on it, else the
 // primary for the manager's own kernel port, else the name k<port> (which a profile may carry). It
 // answers 409, starting nothing, for a kernel the manager refuses (a spec whose state root another
-// kernel holds, which includes every k<port> no profile carries), and the attach toast shows that
+// kernel holds, as a k<port> started for a port nothing else maps to would), and the attach toast shows that
 // error (bin/romp-manager idForPort, rootConflict).
 function cfgPort(key: "kernelPort" | "managerPort", env: string | undefined, dflt: number): number {
   const v = vscode.workspace.getConfiguration("romp").get<number>(key);

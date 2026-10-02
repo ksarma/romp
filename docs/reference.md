@@ -1276,13 +1276,14 @@ header:
   resolves to a root another kernel holds: a running kernel keeps the root it
   was started on until it stops, wherever its entry sits in the file, and among
   the profiles that are not running, the file's order decides. A profile with
-  no `stateDir`, and every `k<port>` that no profile carries, resolves to the
-  primary kernel's root, and a `stateDir` that names another kernel's root
-  through a symlink or with a trailing slash is that root. The 409 body names
-  the kernel, the kernel whose root it would share (as running, when it is),
-  the primary kernel's port and the remedy. If `kernels.json` dropped a
-  malformed entry for that port, the body says so and why; for a dropped `main`
-  entry, which carries a port only, the remedy is to repair that port. The
+  no `stateDir` resolves to the primary kernel's root, as does a `k<port>` the
+  manager would start for a port nothing else maps to, and a `stateDir` that
+  names another kernel's root through a symlink or with a trailing slash is
+  that root. The 409 body names the kernel, the kernel whose root it would
+  share (as running, when it is), the primary kernel's port and the remedy. If
+  `kernels.json` dropped a malformed entry for a port no profile names, the
+  body says so and why; for a dropped `main` entry, which carries a port only,
+  the remedy is to repair that port. The
   manager never starts a refused profile at boot, on a restart or on a respawn
   either.
   It logs one line per distinct conflict per manager life (the refused kernel,
