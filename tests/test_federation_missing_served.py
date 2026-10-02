@@ -436,6 +436,7 @@ class FedMissingLabKernelEnv(unittest.TestCase):
     MACHINE_BUS_PORT = "25302"
 
     def test_a_live_kernels_exports_never_reach_the_lab_kernel(self):
+        self.addCleanup(lab_ports.release, self.LAB)   # the stand-in lab's postal port, held until the test ends
         with mock.patch.dict(os.environ, self.LIVE):
             os.environ.pop("ROMP_POSTAL_PORT", None)   # the runner names no bus: the lab must still get one of its own
             env = lab_kernel_env(self.LAB, os.path.join(self.LAB, "claude"), os.path.join(self.LAB, "dist"), 4321,

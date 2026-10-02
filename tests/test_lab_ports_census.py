@@ -39,9 +39,11 @@ THE RULES, each read per module by AST (scan()):
      function is an offence too.
   R  a module that reserves a port, through lab_ports.reserve or through kernel_env (which reserves the kernel's postal
      port), reads lab_ports.release (a call, or the function handed to addCleanup); and so does every class that
-     reserves in its own body, there or in a base class the module defines, so a class of stand-in tests that builds
-     environments in a module whose served lab releases its own is still held to releasing them. A release inherited
-     from a class another module defines is not read: such a class releases in its own body.
+     reserves in its own body, by a reserve written there or by a bare-name call of a function the module defines at
+     its top level that reserves (directly or through another such function), reading the release there or in a base
+     class the module defines, so a class of stand-in tests that builds environments in a module whose served lab
+     releases its own is still held to releasing them. A release inherited from a class another module defines is not
+     read: such a class releases in its own body.
   A  the door is bound under its own name only and its members are read as lab_ports.<name>: no `import lab_ports as
      x`, no `import tests.lab_ports` (it binds tests), no `from tests import lab_ports as x` or `from . import lab_ports
      as x`, no from-import of its members (`from lab_ports import wait_owned`, `from .lab_ports import reserve`), no
@@ -70,9 +72,11 @@ mock.patch.object(lab_ports, ...) in tests/test_federated_linkdrop_served.py is 
 a for, a with or a default argument, bound through an expression that holds it (lp = lab_ports if c else None, lp =
 lab_ports or None, a lambda returning it), or reached through sys.modules, importlib.import_module or __import__; a port
 0 spelled by a name (s.bind(("127.0.0.1", ZERO))); a kernel started by asyncio.create_subprocess_exec; a URL bound to a
-name with /healthz as the right operand of % (url = "http://127.0.0.1:%d%s" % (p, "/healthz")). The planted modules
-below are each red under exactly the rule they break, and the clean shapes (a listener, a kept holder, the door's own
-use, a /healthz inside a JavaScript text, a driver's cfg holding a /healthz URL) are green.
+name with /healthz as the right operand of % (url = "http://127.0.0.1:%d%s" % (p, "/healthz")); a port reserved through
+a function another module defines, other than kernel_env, or through a function of the module called by any spelling but
+its bare name. The planted modules below are each red under exactly the rule they break, and the clean shapes (a
+listener, a kept holder, the door's own use, a /healthz inside a JavaScript text, a driver's cfg holding a /healthz URL)
+are green.
 
 Synthetic: reads the tree only; no kernel, no browser, no socket.
 """
@@ -414,8 +418,9 @@ def scan_reserves(tree, name, package=None):
         off["R"].append((name, 1, "reserves ports (lab_ports.reserve or kernel_env) and never releases them through "
                                   "lab_ports.release"))
     for line, cls in _unreleased_classes(tree):
-        off["R"].append((name, line, "class %s reserves ports (lab_ports.reserve or kernel_env) and neither it nor a base "
-                                     "class this module defines reads lab_ports.release" % cls))
+        off["R"].append((name, line, "class %s reserves ports (lab_ports.reserve, kernel_env, or a function this module "
+                                     "defines that reserves) and neither it nor a base class this module defines reads "
+                                     "lab_ports.release" % cls))
     for line, what in _door_aliases(tree, package):
         off["A"].append((name, line, what))
     return off
@@ -433,9 +438,31 @@ def _reads_release(node):
                for a in ast.walk(node))
 
 
+def _reserving_functions(tree):
+    """The names of the functions the module defines at its top level that reserve a port: a def whose body reserves
+    (_reserves), or calls by its bare name another such function, followed to a fixed point (def env(lab): return
+    _lab.kernel_env(...), and a def that calls env(lab))."""
+    defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    out, grew = {d.name for d in defs if _reserves(d)}, True
+    while grew:
+        grew = False
+        for d in defs:
+            if d.name not in out and _calls_by_name(d, out):
+                out.add(d.name)
+                grew = True
+    return out
+
+
+def _calls_by_name(node, names):
+    """The calls under `node` of a bare name in `names` (env(lab), never self.env(lab))."""
+    return [c for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id in names]
+
+
 def _unreleased_classes(tree):
-    """(line, name) of every class that reserves a port in its own body and reads lab_ports.release neither there nor in a
+    """(line, name) of every class that reserves a port in its own body (a reserve, or a call by its bare name of a
+    function the module defines that reserves, _reserving_functions) and reads lab_ports.release neither there nor in a
     base class this module defines, followed through the bases to a fixed point (rule R per class)."""
+    helpers = _reserving_functions(tree)
     classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
     releasing, grew = {c.name for c in classes if _reads_release(c)}, True
     while grew:
@@ -444,7 +471,8 @@ def _unreleased_classes(tree):
             if c.name not in releasing and any(_last(b) in releasing for b in c.bases):
                 releasing.add(c.name)
                 grew = True
-    return [(c.lineno, c.name) for c in classes if c.name not in releasing and _reserves(c)]
+    return [(c.lineno, c.name) for c in classes
+            if c.name not in releasing and (_reserves(c) or _calls_by_name(c, helpers))]
 
 
 def _package_door_names(root=ROOT):
@@ -655,6 +683,19 @@ PLANTS = {
     "clean-class-inherits": ('import lab_ports, unittest\nclass Base(unittest.TestCase):\n    def setUp(self):\n'
                              '        self.lab = "/lab"\n        self.addCleanup(lab_ports.release, self.lab)\n'
                              'class T(Base):\n    def test_a(self):\n        lab_ports.reserve(self.lab)\n', None),
+    # R per class through a function the module defines: the module releases (class A), and class B reserves only by
+    # calling a module function that reserves, directly or through a chain of them defined outer first
+    "reserve-class-via-helper": ('import lab_ports\nimport test_ship_reship_served as _lab\ndef _env(lab):\n'
+                                 '    return _lab.kernel_env(lab, lab, lab, 1, "t")\nclass A:\n    def down(self, lab):\n'
+                                 '        lab_ports.release(lab)\nclass B:\n    def up(self, lab):\n        return _env(lab)\n', "R"),
+    "reserve-class-via-helper-chain": ('import lab_ports\ndef _boot(lab):\n    return _mid(lab)\ndef _mid(lab):\n'
+                                       '    return _port(lab)\ndef _port(lab):\n    return lab_ports.reserve(lab)\nclass A:\n'
+                                       '    def down(self, lab):\n        lab_ports.release(lab)\nclass B:\n'
+                                       '    def up(self, lab):\n        return _boot(lab)\n', "R"),
+    "clean-class-via-helper": ('import lab_ports, unittest\nimport test_ship_reship_served as _lab\ndef _env(lab):\n'
+                               '    return _lab.kernel_env(lab, lab, lab, 1, "t")\nclass T(unittest.TestCase):\n'
+                               '    def test_env(self):\n        self.addCleanup(lab_ports.release, "/lab")\n'
+                               '        _env("/lab")\n', None),
 }
 
 

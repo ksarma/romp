@@ -49,10 +49,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   its state root records the port; otherwise it returns the reason, for the lab's
   skip. `tests/test_lab_ports_census.py` holds every module CI's served step names,
   and every module under `tests/` they import, to that rule. A test that calls
-  `kernel_env` without booting a kernel holds the postal port too, so it releases
-  the lab it named (`self.addCleanup(lab_ports.release, lab)`); the census reads
-  every module under `tests/` that reserves, and every class in it that does, for
-  that release.
+  `kernel_env`, directly or through a helper, without booting a kernel holds the
+  postal port too, so it releases the lab it named
+  (`self.addCleanup(lab_ports.release, lab)`); the census reads every module under
+  `tests/` that reserves, and every class in it that does, in its own body or
+  through a function its module defines, for that release.
   Golden transcript fixtures: `test_romp_events_golden.py` + `fixtures/`.
   Run: `python3 -m pytest tests/ -q` (~20s; a stalled run is a hang, not slow).
   The `_HAVE_SDK`-gated classes in `test_sdk_backend.py` (OptionsAssembly, the
