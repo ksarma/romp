@@ -2555,8 +2555,11 @@ class MobileShellDiagExecutes(unittest.TestCase):
 # ── the shell socket as the page's link probe (D3, 2026-09-18) ──────────────────────────────────────
 # The shell script runs under node against the fit harness's window plus controllable timers, a fake WebSocket
 # and a mutable clock (the pattern MobileShellDiagExecutes uses at PR 762's head). D3 makes the shell socket the
-# page's ONE link probe: one attempt in flight, a 15 s connect cut (SH_CONNECT_MS), the refused ladder 1/2/4/4 s
-# reset by an open, a return-probe row filed per return, and window.__rompLink for the panes to follow.
+# page's ONE link probe: one attempt in flight, a 15 s connect cut (SH_CONNECT_MS; on each dial's own timer since iOS item 1a,
+# 2026-10-02, with the watchdog's CONNECTING arm as its backstop), the refused ladder 1/2/4/4 s reset by an open, a
+# return-probe row filed per return, and window.__rompLink for the panes to follow. The harness fires no timer by itself: a
+# case fires the redials (shFireDials) or the cut timers (shRunDue) it means to, so a timer a case never fires is one the
+# browser lost.
 _SHELL_PROBE_HARNESS = r"""
 var SHNOW=1000000;Date.now=function(){return SHNOW;};
 var SHTIMERS=[];global.setTimeout=function(fn,ms){SHTIMERS.push({fn:fn,ms:ms,live:true,at:SHNOW+ms});return SHTIMERS.length;};   // at: when the timer is due on the fake clock (shRunRefused walks them in order)
@@ -2586,6 +2589,11 @@ var next=live[0];live.forEach(function(t){if(t.at<next.at)next=t;});if(next.at>u
 SHNOW=Math.max(SHNOW,next.at);next.live=false;next.fn();var s=shSock();if(s.readyState===0){s.readyState=3;s.onclose({code:1006});}peek();}
 return maxLive;}
 function shRefuseNow(){var s=shSock();if(s.readyState===0){s.readyState=3;s.onclose({code:1006});}}
+// iOS item 1a (2026-10-02): the live timers that are not redials (the dial's own connect cut, the one other timer the shell arms
+// here), and a walk that fires those due by `until` in due order, moving the fake clock to each; the redials stay the case's to fire
+function shCutTimers(){return SHTIMERS.filter(function(t){return t.live&&t.fn.name!=='shellWS';});}
+function shRunDue(until){for(var g=0;g<100;g++){var due=shCutTimers().filter(function(t){return t.at<=until;});if(!due.length)break;
+var n=due[0];due.forEach(function(t){if(t.at<n.at)n=t;});SHNOW=Math.max(SHNOW,n.at);n.live=false;n.fn();}SHNOW=Math.max(SHNOW,until);}
 function shOut(o){process.stdout.write(JSON.stringify(o));}
 """
 
@@ -2652,7 +2660,10 @@ class ShellLinkProbe(unittest.TestCase):
 
     Review round 3 (2026-09-18) added the two linked cases at the tail (_run_linked: the shell script and one pane's shim
     in one node process, the pane reading the shell's real publication), the loop-alive stamp's two halves, each pinned
-    by the pane's own response."""
+    by the pane's own response.
+
+    iOS item 1a (2026-10-02) added the test_1a_* cases at the tail (the connect cut on each dial's own timer) and turned the
+    two tick-cut cases into the cases of a cut timer the browser lost."""
 
     def test_the_shell_dials_one_socket_with_the_dashboards_wid_and_publishes_the_link(self):
         r = _run_probe(r"""
@@ -2681,19 +2692,25 @@ shOut({dialedAtReturn:dialedAtReturn,probe:shProbeRows()});""")
         self.assertEqual(sorted(r["probe"][0].keys()), sorted(["decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms"]))
         self.assertEqual(r["probe"][0]["decision"], "redial-closed", "a dead socket at the return")
 
-    def test_a_hung_attempt_is_cut_at_15s_and_one_attempt_is_in_flight(self):
+    def test_a_hung_attempt_whose_cut_timer_is_lost_is_cut_by_the_tick_past_15s_and_one_attempt_is_in_flight(self):
+        # iOS item 1a (2026-10-02): the dial's own timer is the cut now (the 1a cases below). This case never delivers that timer,
+        # so it is the case of a timer the browser lost: the watchdog's CONNECTING arm, kept as the backstop, closes the dial
+        # once it is past SH_CONNECT_MS, as it was the cut itself before 1a. A variant without the arm leaves the dial CONNECTING.
         r = _run_probe(r"""
 shOpen();shRecv({type:'ka'});
 shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // dial a fresh socket; the path hangs, so it stays CONNECTING
-var dialed=SHSOCKS.length;
+var dialed=SHSOCKS.length,armed=shCutTimers().length;   // the dial armed its own cut timer, which the browser never delivers here
 SHNOW+=5000;shTick();var beforeCut=SHSOCKS.length;      // <15 s: no cut, still ONE attempt in flight
 SHNOW+=11000;shTick();var cutRs=SHSOCKS[1].readyState;  // >15 s since the dial: the tick closes the CONNECTING socket
 SHSOCKS[1].onclose({code:1006});var armedAfterCut=SHSOCKS.length;   // the browser's onclose then arms the redial
+var cutLeft=shCutTimers().length;                       // the close cleared the lost timer
 shFireDials();var afterRedial=SHSOCKS.length;
-shOut({dialed:dialed,beforeCut:beforeCut,cutRs:cutRs,armedAfterCut:armedAfterCut,afterRedial:afterRedial});""")
+shOut({dialed:dialed,armed:armed,beforeCut:beforeCut,cutRs:cutRs,armedAfterCut:armedAfterCut,cutLeft:cutLeft,afterRedial:afterRedial});""")
         self.assertEqual(r["dialed"], 2, "one fresh attempt at the return")
+        self.assertEqual(r["armed"], 1, "the dial armed its own cut timer (never delivered in this case: the browser lost it)")
         self.assertEqual(r["beforeCut"], 2, "the tick does not dial a second while one attempt is in flight and young")
-        self.assertEqual(r["cutRs"], 3, "the 15 s connect cut closes the hung CONNECTING socket")
+        self.assertEqual(r["cutRs"], 3, "the tick's backstop closes the hung CONNECTING socket past SH_CONNECT_MS when its own cut timer never fired")
+        self.assertEqual(r["cutLeft"], 0, "the close clears the lost cut timer")
         self.assertEqual(r["armedAfterCut"], 2, "its onclose arms a redial, no new socket yet")
         self.assertEqual(r["afterRedial"], 3, "the redial dials the next single attempt")
 
@@ -2835,11 +2852,11 @@ shOut({fn:t.fn.name,ms:t.ms,live:t.live});""")
         r = _run_probe(r"""
 shOpen();shRecv({type:'ka'});
 shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the fast path dials; the path hangs
-SHNOW+=16000;shTick();var cut=SHSOCKS[1].readyState;    // past the 15 s cut: the tick closes it
+SHNOW+=16000;shTick();var cut=SHSOCKS[1].readyState;    // past the 15 s cut with the dial's own timer undelivered (lost): the tick's backstop closes it
 SHSOCKS[1].onclose({code:1006});var t=SHTIMERS[SHTIMERS.length-1];   // the browser's onclose, 16 s into the return window
 shOut({cut:cut,fn:t.fn.name,ms:t.ms});""")
         self.assertEqual(r["cut"], 3)
-        self.assertEqual([r["fn"], r["ms"]], ["shellWS", 250], "a hung attempt the cut paced, inside the window: the prompt 250 ms redial")
+        self.assertEqual([r["fn"], r["ms"]], ["shellWS", 250], "a hung attempt the cut paced, inside the window: the prompt 250 ms redial (the tick's backstop cut here; the dial's own timer in the 1a cases)")
 
     # ---- review round 1: the three shell fixes of that round
     def test_a_return_during_an_outage_makes_one_redial_chain_the_dial_clears_the_pending_blind_timer(self):
@@ -3029,6 +3046,164 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
         self.assertEqual(r["backstop"], 0, "no link-backstop row: the shell's loop was alive throughout")
         self.assertEqual(len(r["rf"]), 1)
         self.assertEqual(r["rf"][0]["linkUpMs"], 5000, "the word's time")
+
+    # ---- iOS item 1a (2026-10-02): the connect cut on the dial's own timer. Before it the watchdog tick was the cut, so a hung
+    # dial was cut 15 to 20 s after it was made (SH_CONNECT_MS, then the wait for the next 5 s tick); now each dial arms a timer
+    # of SH_CONNECT_MS that its open, its close and the next dial clear, and the tick's CONNECTING arm is the backstop for a
+    # timer the browser loses (the re-scoped case above). One socket at a time and PR 768's guard are unchanged: the timer
+    # closes its own dial's socket and never dials. Cases 1, 2, 3, 8 and 9 are red at 919fde73b by behaviour (no cut without
+    # a tick, a cut late by up to a tick, a dead loop). Cases 4 to 6 are red there only because no timer exists; each also
+    # reddens under its own mutant (the cut-reset guard, the clear at the open, the clear at the close).
+    def test_1a_a_hung_return_dial_is_cut_at_exactly_sh_connect_ms_on_its_own_timer_with_no_tick(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the fast path dials once; the path hangs
+var d=shSock(),t0=SHNOW;
+shRunDue(t0+14999);var at14999=d.readyState;
+shRunDue(t0+15000);var at15000=d.readyState;
+shOut({socks:SHSOCKS.length,at14999:at14999,at15000:at15000});""")
+        self.assertEqual(r["socks"], 2)
+        self.assertEqual(r["at14999"], 0, "no cut one ms under SH_CONNECT_MS")
+        self.assertEqual(r["at15000"], 3, "the dial's own timer cuts it at SH_CONNECT_MS, with no watchdog tick")
+
+    def test_1a_the_boot_dial_is_cut_on_its_own_timer_and_redials_on_the_blind_cadence(self):
+        # outside any return window the cut's close is a HUNG close: the blind SH_BLIND_MS redial, not the refused ladder
+        r = _run_probe(r"""
+var d=SHSOCKS[0],t0=SHNOW;                               // the boot dial, never opened
+shRunDue(t0+15000);var cut=d.readyState;
+if(cut===3)d.onclose({code:1006});
+shOut({cut:cut,redial:shDialTimers().map(function(x){return x.ms;})});""")
+        self.assertEqual(r["cut"], 3)
+        self.assertEqual(r["redial"], [2000], "a hung close outside any window: the blind SH_BLIND_MS redial, not the refused ladder")
+
+    def test_1a_a_cut_fired_while_the_clock_reads_a_ms_short_is_still_a_hung_close_redialed_at_250ms(self):
+        # a timer can fire while Date.now() reads a ms short of SH_CONNECT_MS after the dial (measured on real timers: 36 of 240
+        # cuts). onclose reads the cut by the event (shCutHere), so it is a HUNG close (250 ms inside the window), not a refusal
+        # (the ladder's 1 s rung, with the rung advanced). A variant keying the refused rule on the clock alone reddens this.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var d=shSock(),t0=SHNOW;
+SHNOW=t0+14999;shCutTimers().forEach(function(t){t.live=false;t.fn();});   // the cut timer fires with the wall clock a ms short
+var cut=d.readyState;if(cut===3)d.onclose({code:1006});
+shOut({cut:cut,redial:shDialTimers().map(function(x){return x.ms;})});""")
+        self.assertEqual(r["cut"], 3)
+        self.assertEqual(r["redial"], [250], "the cut is a hung close inside the return window: 250 ms, not the refused ladder's 1 s")
+
+    def test_1a_a_superseded_dials_late_cut_callback_closes_nothing_and_leaves_the_current_cut_in_force(self):
+        # a dial the next return replaced: the return's dial clears its cut timer, and a browser that had already queued the
+        # callback could still deliver it. The late callback closes nothing (its own socket is no longer CONNECTING), dials
+        # nothing, and leaves the current dial's timer handle alone, so the current dial's open still clears its own cut.
+        # A variant whose callback resets the handle unconditionally leaves the current cut armed after its open.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // return 1: dial A
+var A=shSock(),cutsA=shCutTimers().slice();
+SHNOW+=5000;shHide();SHNOW+=100;shShow();               // return 2 before A's cut: A put down, dial B
+var B=shSock(),liveA=cutsA.map(function(t){return t.live;}),cutsB=shCutTimers().slice();
+SHNOW+=11000;cutsA.forEach(function(t){t.fn();});       // A's callback delivered late (16 s after A, 11 s after B)
+var afterLate={socks:SHSOCKS.length,B:B.readyState};
+shOpen();                                               // B opens
+shOut({armedA:cutsA.length,liveA:liveA,armedB:cutsB.length,afterLate:afterLate,liveBAfterOpen:cutsB.map(function(t){return t.live;})});""")
+        self.assertEqual(r["armedA"], 1, "dial A armed one cut timer")
+        self.assertEqual(r["liveA"], [False], "return 2's dial cleared it")
+        self.assertEqual(r["armedB"], 1, "dial B armed its own")
+        self.assertEqual(r["afterLate"], {"socks": 3, "B": 0}, "boot, A, B: one socket per dial, and the late callback for A leaves B CONNECTING")
+        self.assertEqual(r["liveBAfterOpen"], [False], "B's open clears B's cut: the late callback did not take the handle")
+
+    def test_1a_the_open_clears_the_cut_and_a_late_callback_leaves_the_open_socket_alone(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var cuts=shCutTimers().slice();shOpen();
+var liveAfterOpen=cuts.map(function(t){return t.live;});
+SHNOW+=15000;cuts.forEach(function(t){t.fn();});        // a browser that delivers it anyway
+shOut({armed:cuts.length,liveAfterOpen:liveAfterOpen,rs:shSock().readyState,socks:SHSOCKS.length});""")
+        self.assertEqual(r["armed"], 1)
+        self.assertEqual(r["liveAfterOpen"], [False], "the open clears the dial's cut timer")
+        self.assertEqual([r["rs"], r["socks"]], [1, 2], "a late callback leaves the OPEN socket alone")
+
+    def test_1a_a_refused_close_clears_the_cut_and_climbs_the_ladder(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var cuts=shCutTimers().slice();SHNOW+=300;shRefuseNow();
+shOut({armed:cuts.length,live:cuts.map(function(t){return t.live;}),redial:shDialTimers().map(function(x){return x.ms;})});""")
+        self.assertEqual(r["armed"], 1)
+        self.assertEqual(r["live"], [False], "the close clears the dial's cut timer")
+        self.assertEqual(r["redial"], [1000], "a refusal 300 ms after the dial (no cut made it): the ladder's first rung")
+
+    def test_1a_a_tick_between_the_cuts_close_and_its_redial_dials_once_and_leaves_one_chain(self):
+        # the one new interplay (accepted and pinned): before 1a the tick WAS the cut, so the next tick came 5 s later; now a
+        # tick can land between a timer cut's close and its pending redial. It finds the socket CLOSED and its dial past
+        # SH_REDIAL_MS, so its CLOSED arm dials then, ahead of the redial: earlier, never later, and one chain, because the
+        # dial clears the pending redial.
+        r = _run_probe(r"""
+var d=SHSOCKS[0],t0=SHNOW;                               // the boot dial hangs, outside any return window
+shRunDue(t0+15000);d.onclose({code:1006});              // the cut, then its close event: the blind redial arms
+var armed=shDialTimers().map(function(x){return x.ms;});
+SHNOW+=100;shTick();                                    // a watchdog tick 100 ms after the cut's close
+shOut({armed:armed,socks:SHSOCKS.length,rs:shSock().readyState,redialsLive:shDialTimers().length,cutsLive:shCutTimers().length});""")
+        self.assertEqual(r["armed"], [2000], "the cut's close armed the blind redial")
+        self.assertEqual(r["socks"], 2, "the tick's CLOSED arm dialed one socket ahead of it")
+        self.assertEqual(r["rs"], 0)
+        self.assertEqual(r["redialsLive"], 0, "and its dial cleared the pending redial: one chain")
+        self.assertEqual(r["cutsLive"], 1, "the new dial armed its own cut")
+
+    def test_1a_a_hung_outage_walked_on_the_clock_cuts_each_dial_at_sh_connect_ms_one_socket_at_a_time(self):
+        # 60 s of a hung path after a return, every timer fired at its due time and the watchdog ticking on its own phase (2.3 s
+        # after the return's dial), each cut's close event delivered at once. Every dial is cut exactly SH_CONNECT_MS after it was
+        # made; no moment has two sockets CONNECTING or OPEN, two redials pending or two cuts pending. The dial times read the
+        # cadence: the return's dial; 250 ms after the first cut (inside the return window); 2 s after the second (outside it, the
+        # blind redial); then a tick 50 ms after the third cut's close dials ahead of that cut's 2 s redial (the case above).
+        # Before 1a the tick made each cut, 2.3 s late here.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the return's dial; the path hangs from here on
+var t0=SHNOW,nextTick=t0+2300,end=t0+60000,dials=[{n:SHSOCKS.length,at:0}],cuts=[],closed={},maxSocks=0,maxRedials=0,maxCuts=0;
+function live(){return SHSOCKS.filter(function(s){return s.readyState===0||s.readyState===1;}).length;}
+function note(){maxSocks=Math.max(maxSocks,live());maxRedials=Math.max(maxRedials,shDialTimers().length);maxCuts=Math.max(maxCuts,shCutTimers().length);
+if(dials[dials.length-1].n!==SHSOCKS.length)dials.push({n:SHSOCKS.length,at:SHNOW-t0});
+var s=shSock();if(s.readyState===3&&!closed[SHSOCKS.length]){closed[SHSOCKS.length]=1;cuts.push(SHNOW-t0);s.onclose({code:1006});note();}}
+note();
+for(var g=0;g<200;g++){var nt=null;SHTIMERS.forEach(function(t){if(t.live&&(!nt||t.at<nt.at))nt=t;});
+var at=Math.min(nt?nt.at:Infinity,nextTick);if(at>end)break;SHNOW=at;
+if(nt&&nt.at===at){nt.live=false;nt.fn();}else{shTick();nextTick+=5000;}note();}
+shOut({dials:dials.map(function(x){return x.at;}),cuts:cuts,maxSocks:maxSocks,maxRedials:maxRedials,maxCuts:maxCuts});""")
+        self.assertEqual(r["dials"], [0, 15250, 32250, 47300], "the return's dial; +250 ms after the first cut (in the window); +2 s after the second (blind); a tick ahead of the third's redial")
+        self.assertEqual(r["cuts"], [15000, 30250, 47250], "each dial cut exactly SH_CONNECT_MS after it was made, not on the next tick")
+        self.assertEqual(r["maxSocks"], 1, "one socket CONNECTING or OPEN at a time")
+        self.assertEqual(r["maxRedials"], 1, "one pending redial at a time")
+        self.assertEqual(r["maxCuts"], 1, "one pending cut at a time")
+
+    def test_1a_a_shell_whose_tick_is_lost_still_cuts_and_redials_on_its_own_timer_so_the_pane_files_no_backstop(self):
+        # the pane's 25 s link backstop (kernel.py _shim) calls the shell's loop dead when connT stops renewing. With the dial's
+        # own timer a shell whose watchdog interval the browser lost is still alive: each hung dial is cut at SH_CONNECT_MS and
+        # redialed, and each dial renews connT, the longest gap being the cut plus the blind redial (17 s), inside the bound.
+        # The pane, awaiting the link, polls every 5 s through 45 s of a hung path and never calls the loop dead. Before 1a the
+        # tick was the only cut, so a lost tick left the dial CONNECTING for good: connT aged past the bound and the pane
+        # dialed on its own with its link-backstop row. (SHNOW follows NOW at every shell event, so the shell's timers carry
+        # their due times on the page's one clock.)
+        r = _run_linked(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});               // the shell's socket and the pane's, both OPEN and fresh
+NOW+=5000;shTick();tick();                                            // one tick each with a socket
+shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;   // both sockets dead in the background
+SHNOW=NOW;shShow();                                                   // the shell's return: one dial, the path hangs
+show();                                                               // the pane's return: the link down, so it awaits
+var t0=NOW,nextPane=t0+5000,end=t0+45000,closed={},walk=[];
+// from here the shell's watchdog interval is lost (shTick never runs); its timers fire at their due times, the pane ticks every 5 s
+for(var g=0;g<200;g++){var nt=null;SHTIMERS.forEach(function(t){if(t.live&&(!nt||t.at<nt.at))nt=t;});
+var at=Math.min(nt?nt.at:Infinity,nextPane);if(at>end)break;NOW=at;SHNOW=at;
+if(nt&&nt.at===at){nt.live=false;nt.fn();var s=shSock();if(s.readyState===3&&!closed[SHSOCKS.length]){closed[SHSOCKS.length]=1;s.onclose({code:1006});}}
+else{tick();nextPane+=5000;walk.push({stale:NOW-global.__rompLink().connT,sockets:sockets.length,awaiting:awaitLink});}}
+out({walk:walk,shellDials:SHSOCKS.length-1,backstop:queued("link-backstop").length+rows(sock(),"link-backstop").length});""")
+        self.assertEqual(len(r["walk"]), 9, "nine pane polls in 45 s")
+        self.assertGreaterEqual(r["shellDials"], 3, "the shell kept cutting and redialing on its own timers: %r" % r["shellDials"])
+        self.assertLess(max(w["stale"] for w in r["walk"]), 25000, "connT never ages to the pane's bound: %r" % [w["stale"] for w in r["walk"]])
+        self.assertLessEqual(max(w["stale"] for w in r["walk"]), 17000, "...the longest gap is the cut plus the blind redial")
+        self.assertEqual([w["sockets"] for w in r["walk"]], [1] * 9, "the pane dials nothing on its own")
+        self.assertEqual([w["awaiting"] for w in r["walk"]], [True] * 9, "it keeps awaiting the link")
+        self.assertEqual(r["backstop"], 0, "and files no link-backstop row")
 
 
 # ── the lazy panes and the phone's skeleton first dial, shell + shim (stage 0, 2026-09-18) ────────────────────────

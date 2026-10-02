@@ -276,7 +276,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   boot dial is the probe), the `hiddenMs` and `quietMs` gaps, and the path's
   recovery on that one socket, `attempts`, `firstFailMs` and `ms` (foreground to
   open); `ms` and `firstFailMs` are -1 when the next return came before the
-  open, the row filed at that return with the attempts as they stood. A pane
+  open, the row filed at that return with the attempts as they stood. Each
+  attempt that hangs is cut 15 s after its dial, on the dial's own timer, so
+  on a return whose first attempt hung `ms` minus `firstFailMs` reads about
+  15,000 (earlier builds read 15,000 to 20,000: a 5 s watchdog tick made the
+  cut). A pane
   whose wait outlived the shell's loop-alive stamp (its `connT`, the later of
   its last dial and its watchdog's last tick with a socket to watch, 25 s stale)
   dials on its own and files a `link-backstop` stale row, the loud sign that the

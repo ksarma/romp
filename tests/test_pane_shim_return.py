@@ -1039,7 +1039,9 @@ out({delays:connectTimers().map(function(t){return t.ms;}),awaiting:awaitLink,ws
         # constants (the 15 s cut, the tick that performs it, the 2 s blind redial: 22 s, rounded up to the next tick,
         # 25 s; tests/test_kernel_ws_heartbeat.py pins the sum). The 20 s bound omitted the redial, so a pane tick landing
         # in the loop's last two seconds called an alive loop dead. Two-sided: nothing at the cycle's worst case (22 s)
-        # nor at 24,999 ms; a dial and a link-backstop row at 25,001 ms.
+        # nor at 24,999 ms; a dial and a link-backstop row at 25,001 ms. Since iOS item 1a (2026-10-02) the shell cuts each
+        # dial on its own timer at 15 s, so 22 s is the worst case only for a cut timer the browser lost (the tick then
+        # performs the cut); on the timer the cycle is 17 s, and the bound stays 25 s above both.
         r = _run(r"""
 open();recv({type:"ka"});hide();NOW+=46000;
 parentLinkVal={up:false,connT:NOW};show();                         // connT fresh at the return: the shell's loop is alive
@@ -1054,7 +1056,7 @@ backstop:rows(sock(),"link-backstop").length});""")
         self.assertIs(r["awaiting"], True)
         self.assertEqual(r["dialedAtReturn"], 1, "no dial at the return while the link is down")
         self.assertEqual(r["afterFirstTick"], 1, "no dial while the link is down and its loop young")
-        self.assertEqual(r["at22000"], 1, "no dial at 22 s stale: the shell's loop can still be alive there (cut + tick + blind redial)")
+        self.assertEqual(r["at22000"], 1, "no dial at 22 s stale: the shell's loop can still be alive there (cut + tick + blind redial, when the tick backs up a lost cut timer)")
         self.assertEqual(r["at24999"], 1, "no dial one ms under the bound")
         self.assertEqual(r["at25001"], 2, "the backstop dials anyway once the shell's connT is stale past the whole cycle")
         self.assertEqual(r["backstop"], 1, "...and files a loud link-backstop diag row")
