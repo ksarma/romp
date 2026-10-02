@@ -169,9 +169,9 @@ def _kernel_lock_wait(fd, remaining):
 
 
 def _kernel_lock_refusal(why):
-    """The one stderr line a refused kernel prints: `why` (what holds the lock, naming the owner's pid as read and the
-    lock's path), that this kernel wrote nothing, its exit status, and the remedy when this is a second kernel by
-    configuration."""
+    """The one stderr line a refused kernel prints: `why` (what holds the lock as its line reads, the owner's pid or a
+    new owner that has not yet written its line, and the lock's path), that this kernel wrote nothing, its exit status,
+    and the remedy when this is a second kernel by configuration."""
     return ("romp-kernel: %s; this kernel wrote nothing and exits %d. If this is a second kernel by configuration, give "
             "its kernels.json profile a stateDir (or set ROMP_STATE_DIR) so it has its own state root.\n"
             % (why, KERNEL_LOCK_EXIT))
