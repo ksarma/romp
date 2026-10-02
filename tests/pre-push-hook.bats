@@ -4908,8 +4908,11 @@ CENSUS_TOOLS='git|grep|egrep|fgrep|awk|gawk|mawk|sed|tr|wc|od|cat|cut|sort|uniq|
 # ^ the census's BOUND: a command line is a read only when it runs one of these (the tools the hook reads with today,
 # git, grep, awk, sed, tr, wc, od, cat, sort and head, and the reading tools it might start running); a read made with
 # a tool outside the list is not counted, and this line is where the list is widened. Outside on purpose: mktemp
-# (make_scratch, a writer whose failure its callers refuse) and the scanner binary (run through a variable, its exit
-# judged under a marker); command -v resolves the scanner's path and runs nothing.
+# (make_scratch, a writer whose failure its callers refuse), the scanner binary (run through a variable, its exit
+# judged under a marker) and, since the closing check at b7415b347 (its 1), locale (pusher_charset_read's locale
+# charmap, run before the body's export, whose answer pusher_charset_verdict judges: a status other than 0 or no single
+# name falls to the locale's codeset suffix, and a name with none refuses a denylist holding a byte of 0x80 or above);
+# command -v resolves the scanner's path and runs nothing.
 # What the census reads (round 8b, the round 7 rulings' B, widened in round 9b by the round 8 rulings' F): each simple
 # command census_records finds, the masked text split at ||, &&, |, |&, a lone &, ;, the substitutions' and subshells'
 # parentheses, the backtick, a brace that opens no ${, a case pattern's close and a judged_read call's first --. Its
@@ -18243,7 +18246,10 @@ STATES
 # tests do not, since such an input can turn the gate off where the body stays armed; a name of the hook's own state
 # that the body's arming tests read and no function among them assigns, whose value the gate's test never sees; a
 # function defined twice; and a function defined after the gate's call that the gate's test calls or the body's
-# arming tests look up. With the hook as it is it prints one line, set -euo pipefail's: the gate's test calls
+# arming tests look up. Since the closing check at b7415b347 (its 1), a statement there that calls alone a function the
+# file defines (pusher_charset_read, which reads the pusher's locale before the export) is read through that
+# function's lines by the same rules, the one command substitution of locale charmap, run with stdin and stderr closed,
+# excepted. With the hook as it is it prints one line, set -euo pipefail's: the gate's test calls
 # identifier_scan_armed and gitleaks_resolved, the functions the body's arming tests read the denylist's path and the
 # scanner through, and reads ROMP_NO_GITLEAKS as credential_scan_armed does.
 arming_inputs() {   # <hook text>: prints a line per departure (above), the shell options the body runs under among them; set -euo pipefail's line alone when the gate's test reads every arming input of the body
@@ -18306,6 +18312,35 @@ arming_inputs() {   # <hook text>: prints a line per departure (above), the shel
         }
         function whole(f, side, where,   i) { for (i = 1; i <= len[f]; i++) { take(fl[f, i], side, where); closure(fl[f, i], side, where) } }
         function wrote(nm, st) { if (nm in watch) print "a statement between the call of bash_gate and the EXIT trap that writes " nm ", which the body'"'"'s arming tests read after the gate'"'"'s test: " st }
+        # one statement between the call of bash_gate and the EXIT trap (from: empty), or a line of the function such a
+        # statement calls alone (from: its name), which is read line by line by the same rules (the closing check at
+        # b7415b347, its 1: pusher_charset_read, called there to read the locale of the pusher before the export); in
+        # such a function the one command substitution excepted is the one of locale charmap, run with stdin and stderr
+        # closed, which answers a character set and writes nothing the arming tests read
+        function stcheck(st, from,   t, u, nm, n, sg, j, w, na, asg, a, nw, ww, v, f, k, x, p, at) {
+            t = st; gsub(q "[^" q "]*" q, "", t)
+            f = t; sub(/^[ \t]+/, "", f); sub(/[ \t]+$/, "", f)
+            if (from == "" && (f in len)) { for (k = 1; k <= len[f]; k++) stcheck(fl[f, k], f); return }
+            at = (from == "") ? st : st " (in " from ", called there)"
+            if (from != "") { x = "$(locale charmap 0<&- 2>&-)"; while ((p = index(t, x)) > 0) t = substr(t, 1, p - 1) substr(t, p + length(x)) }
+            u = t; gsub(/>&[0-9-]/, "", u)
+            if (u ~ /\$\(|`|>|<\(/) print "a statement between the call of bash_gate and the EXIT trap that runs a command substitution or writes a file, which the gate'"'"'s no-op does not: " at
+            u = t
+            while (match(u, /\$\{[A-Za-z_][A-Za-z0-9_]*:?=/)) { nm = substr(u, RSTART + 2, RLENGTH - 2); u = substr(u, RSTART + RLENGTH); sub(/:?=$/, "", nm); wrote(nm, at) }
+            n = split(t, sg, /;|&&|\|\||\|/)
+            for (j = 1; j <= n; j++) {
+                w = sg[j]
+                sub(/^[ \t!({]+/, "", w)
+                while (w ~ /^(if|while|until|elif|then|do|else)([ \t]|$)/) { sub(/^[a-z]+[ \t]*/, "", w); sub(/^[ \t!({]+/, "", w) }
+                na = 0
+                while (match(w, /^[A-Za-z_][A-Za-z0-9_]*=[^ \t]*([ \t]|$)/)) { a = substr(w, 1, RLENGTH); sub(/=.*/, "", a); asg[++na] = a; w = substr(w, RLENGTH + 1); sub(/^[ \t]+/, "", w) }
+                nw = split(w, ww, /[ \t]+/)
+                if (ww[1] == "") { for (a = 1; a <= na; a++) wrote(asg[a], at); continue }
+                if (ww[1] ~ /^(set|shopt)$/) { print "a shell option set between the call of bash_gate and the EXIT trap, which the body'"'"'s arming tests run under and the gate'"'"'s test does not: " at; continue }
+                if (ww[1] ~ /^(export|unset|read)$/) { for (a = 2; a <= nw; a++) { v = ww[a]; if (v ~ /^-/) continue; sub(/=.*/, "", v); if (v ~ /^[A-Za-z_][A-Za-z0-9_]*$/) wrote(v, at) } continue }
+                if (ww[1] !~ /^(trap|\[|test|:|true|done|fi)$/) print "a statement between the call of bash_gate and the EXIT trap that the gate'"'"'s no-op does not run: " at
+            }
+        }
         {
             raw = $0
             if (inq) { if (gsub(q, q, raw) % 2) inq = 0; next }
@@ -18353,27 +18388,7 @@ arming_inputs() {   # <hook text>: prints a line per departure (above), the shel
             for (i = k + 1; i <= m; i++) { take(fl["bash_gate", i], "gate", "bash_gate"); closure(fl["bash_gate", i], "gate", "bash_gate") }
             watch["PATH"] = 1; watch["IFS"] = 1
             for (i = 1; i <= nbody; i++) if (border[i] ~ /^variable /) { nm = border[i]; sub(/^variable /, "", nm); watch[nm] = 1 }
-            for (i = call + 1; i < trap; i++) {       # the statements the gate no-op does not run, and what the allowed ones change
-                st = top[i]
-                t = st; gsub(q "[^" q "]*" q, "", t)
-                u = t; gsub(/>&[0-9-]/, "", u)
-                if (u ~ /\$\(|`|>|<\(/) print "a statement between the call of bash_gate and the EXIT trap that runs a command substitution or writes a file, which the gate'"'"'s no-op does not: " st
-                u = t
-                while (match(u, /\$\{[A-Za-z_][A-Za-z0-9_]*:?=/)) { nm = substr(u, RSTART + 2, RLENGTH - 2); u = substr(u, RSTART + RLENGTH); sub(/:?=$/, "", nm); wrote(nm, st) }
-                n = split(t, seg, /;|&&|\|\||\|/)
-                for (j = 1; j <= n; j++) {
-                    w = seg[j]
-                    sub(/^[ \t!({]+/, "", w)
-                    while (w ~ /^(if|while|until|elif|then|do|else)([ \t]|$)/) { sub(/^[a-z]+[ \t]*/, "", w); sub(/^[ \t!({]+/, "", w) }
-                    na = 0
-                    while (match(w, /^[A-Za-z_][A-Za-z0-9_]*=[^ \t]*([ \t]|$)/)) { a = substr(w, 1, RLENGTH); sub(/=.*/, "", a); asg[++na] = a; w = substr(w, RLENGTH + 1); sub(/^[ \t]+/, "", w) }
-                    nw = split(w, ww, /[ \t]+/)
-                    if (ww[1] == "") { for (a = 1; a <= na; a++) wrote(asg[a], st); continue }
-                    if (ww[1] ~ /^(set|shopt)$/) { print "a shell option set between the call of bash_gate and the EXIT trap, which the body'"'"'s arming tests run under and the gate'"'"'s test does not: " st; continue }
-                    if (ww[1] ~ /^(export|unset|read)$/) { for (a = 2; a <= nw; a++) { v = ww[a]; if (v ~ /^-/) continue; sub(/=.*/, "", v); if (v ~ /^[A-Za-z_][A-Za-z0-9_]*$/) wrote(v, st) } continue }
-                    if (ww[1] !~ /^(trap|\[|test|:|true|done|fi)$/) print "a statement between the call of bash_gate and the EXIT trap that the gate'"'"'s no-op does not run: " st
-                }
-            }
+            for (i = call + 1; i < trap; i++) stcheck(top[i], "")      # the statements the gate no-op does not run, and what the allowed ones change
             for (f in twice) print "a function defined twice, so the gate'"'"'s test and the body can run different texts under one name: " f
             for (f in len) if (defat[f] >= call && ((("gate", f) in seen))) print "a function defined after the call of bash_gate that the gate'"'"'s test calls: " f
             for (i = 1; i <= nbody; i++) if (border[i] ~ /^lookup /) { nm = border[i]; sub(/.* /, "", nm); if ((nm in defat) && defat[nm] >= call) print "a function defined after the call of bash_gate that the body'"'"'s arming tests look up and the gate'"'"'s test cannot see: " nm }
@@ -18384,7 +18399,7 @@ arming_inputs() {   # <hook text>: prints a line per departure (above), the shel
         }' "$1"
 }
 
-@test "the gate's armed test (2026-09-30, 13:37Z, the arming inputs, under every bash): arming_inputs finds every input the body's arming tests read (the steps after the EXIT trap, each up to its early return, and the functions they call) among those the gate's no-op reads, and none the no-op reads that the body's do not; a statement between the gate's call and the trap that runs nothing but set, export, unset, read, trap, test and assignments, none of which writes an input of the body's arming tests, PATH or IFS, runs a command substitution or writes a file; every step with an early return and a verdict that reads the hook's own state alone; and for the hook it prints one line, naming set -euo pipefail as the shell option the body's arming tests run under (the case on the armed test's answers runs them under it); a copy whose credential_scan_armed also reads a variable, whose scan_identifiers arms on one more, that adds a step with a predicate of its own, whose gitleaks_binary looks the scanner up with type -P, that prints between the gate's call and the trap, that adds a step with no early return, or whose replace-ref step loses its arming line (its next return then reads the listing) is each named; since the gate audit's GATE-2, so is a copy that exports PATH with a directory added between the gate's call and the trap (M9), that sets one more shell option there, that unsets ROMP_NO_GITLEAKS, assigns IFS, sets ROMP_GITLEAKS by an assignment expansion or writes the denylist's file there, whose gate's test also skips on a variable the body does not read (M8), whose scan_identifiers arms on a name of the hook's own state, that defines identifier_scan_armed again after the trap, or that defines a function named gitleaks after the trap (until GATE-2 the helper printed nothing for M8 and M9, and the whole file passed with either); and a copy whose private_strings_file reads one more variable, which the gate's test reads through the same function, is not (a property, not a spelling)" {
+@test "the gate's armed test (2026-09-30, 13:37Z, the arming inputs, under every bash): arming_inputs finds every input the body's arming tests read (the steps after the EXIT trap, each up to its early return, and the functions they call) among those the gate's no-op reads, and none the no-op reads that the body's do not; a statement between the gate's call and the trap that runs nothing but set, export, unset, read, trap, test and assignments, none of which writes an input of the body's arming tests, PATH or IFS, runs a command substitution or writes a file; every step with an early return and a verdict that reads the hook's own state alone; and for the hook it prints one line, naming set -euo pipefail as the shell option the body's arming tests run under (the case on the armed test's answers runs them under it); a copy whose credential_scan_armed also reads a variable, whose scan_identifiers arms on one more, that adds a step with a predicate of its own, whose gitleaks_binary looks the scanner up with type -P, that prints between the gate's call and the trap, that adds a step with no early return, or whose replace-ref step loses its arming line (its next return then reads the listing) is each named; since the gate audit's GATE-2, so is a copy that exports PATH with a directory added between the gate's call and the trap (M9), that sets one more shell option there, that unsets ROMP_NO_GITLEAKS, assigns IFS, sets ROMP_GITLEAKS by an assignment expansion or writes the denylist's file there, whose gate's test also skips on a variable the body does not read (M8), whose scan_identifiers arms on a name of the hook's own state, that defines identifier_scan_armed again after the trap, or that defines a function named gitleaks after the trap (until GATE-2 the helper printed nothing for M8 and M9, and the whole file passed with either); and a copy whose private_strings_file reads one more variable, which the gate's test reads through the same function, is not (a property, not a spelling); and since the closing check at b7415b347 (its 1), pusher_charset_read, called alone between the gate's call and the trap, is read line by line by the same rules, its one substitution, locale charmap's with stdin and stderr closed, excepted, so a copy whose pusher_charset_read exports PATH, runs another substitution, or runs locale charmap with stdin kept is named" {
     local plant opt
     opt="a shell option set between the call of bash_gate and the EXIT trap, which the body's arming tests run under and the gate's test does not: set -euo pipefail"
     run arming_inputs "$HOOK"
@@ -18487,6 +18502,26 @@ arming_inputs() {   # <hook text>: prints a line per departure (above), the shel
     run arming_inputs "$plant"
     [ "$status" -eq 0 ]
     [ "$output" = "$opt" ]
+    # since the closing check at b7415b347 (its 1): pusher_charset_read, called alone between the gate's call and the
+    # trap, is read line by line by the same rules, the one substitution of locale charmap with stdin and stderr closed
+    # excepted; a copy whose function exports PATH, runs another substitution, or runs locale charmap with stdin kept
+    # is named, the line ending with the function's name
+    local cs="(in pusher_charset_read, called there)"
+    plant="$TEST_DIR/arm-charset-path"
+    awk '{ print } /^pusher_charset_read\(\) \{/ { print "    export PATH=\"/zz:$PATH\"" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^    export PATH="/zz:\$PATH"$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "a statement between the call of bash_gate and the EXIT trap that writes PATH, which the body's arming tests read after the gate's test:     export PATH=\"/zz:\$PATH\" $cs"$'\n'"$opt" ]
+    plant="$TEST_DIR/arm-charset-substitution"
+    awk '{ print } /^pusher_charset_read\(\) \{/ { print "    zzx=$(git config core.zz)" }' "$HOOK" > "$plant"
+    [ "$(grep -c '^    zzx=\$(git config core.zz)$' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "a statement between the call of bash_gate and the EXIT trap that runs a command substitution or writes a file, which the gate's no-op does not:     zzx=\$(git config core.zz) $cs"$'\n'"a statement between the call of bash_gate and the EXIT trap that the gate's no-op does not run:     zzx=\$(git config core.zz) $cs"$'\n'"$opt" ]
+    plant="$TEST_DIR/arm-charset-stdin"
+    sed 's/^    pusher_charmap=\$(locale charmap 0<&- 2>&-) || pusher_charmap_rc=\$?$/    pusher_charmap=$(locale charmap 2>\&-) || pusher_charmap_rc=$?/' "$HOOK" > "$plant"
+    [ "$(grep -c -F -x '    pusher_charmap=$(locale charmap 2>&-) || pusher_charmap_rc=$?' "$plant")" -eq 1 ]
+    run arming_inputs "$plant"
+    [ "$output" = "a statement between the call of bash_gate and the EXIT trap that runs a command substitution or writes a file, which the gate's no-op does not:     pusher_charmap=\$(locale charmap 2>&-) || pusher_charmap_rc=\$? $cs"$'\n'"a statement between the call of bash_gate and the EXIT trap that the gate's no-op does not run:     pusher_charmap=\$(locale charmap 2>&-) || pusher_charmap_rc=\$? $cs"$'\n'"$opt" ]
 }
 
 # ── the work tree's .gitleaks.toml told absent from cannot-tell (2026-09-30, the gate audit's S1, ruled at 13:37Z) ──
@@ -19866,6 +19901,15 @@ trim_locale() {   # sets loc, the caller's, to the UTF-8 locale the trim's cases
         skip "no UTF-8 locale on this system"
     fi
 }
+# Since the closing check at b7415b347 (its 1) a denylist holding a byte of 0x80 or above refuses a push made under a
+# locale whose character set is not UTF-8, the C locale among them, naming the locale, and the scan goes on, so a hit is
+# still named beside that line. The three cases below whose push under the C locale published (an entry of spaces alone,
+# a space inside an entry, entries of spaces alone read as blank) hold that refusal there, and that no commit is named.
+c_locale_refused() {   # <denylist path>: the push just made under LC_ALL=C was refused by the locale's line, the remote at its base
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the DENYLIST $1 holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (LC_ALL=C, whose character set locale charmap reads as "* ]] || false
+}
 
 @test "build 6 (item 40, the trim's set, one row per member of the set at each edge; the three glibc's class adds since build 7, U+0085 and U+200B since build 8): a denylist of 44 entries, each a bare string edged by one member of the set (each of U+0085, U+00A0, U+1680, U+2000 to U+200B, U+2028, U+2029, U+202F, U+205F and U+3000 at the leading edge and at the trailing edge, U+FEFF at the leading edge), or by runs of them mixed with ASCII whitespace at the leading edge, the trailing edge and both, through one real push under a UTF-8 locale (LC_ALL) and one under the C locale of 44 commits, each adding a line that holds one bare string, removed at the tip, is refused naming every one of the 44 commits and its file, the remote at its base (at c4dbf4d96 the trim kept every one of those spaces and the push PUBLISHED; at build 6's text the six rows of U+1680, U+2028 and U+2029 went unnamed, and at build 7's text the four rows of U+0085 and U+200B)" {
     local loc strings="$TEST_DIR/private-strings-set.txt" c k n l bare
@@ -19935,7 +19979,7 @@ trim_locale() {   # sets loc, the caller's, to the UTF-8 locale the trim's cases
     done
 }
 
-@test "build 6 (item 40, the trim's set, an entry of spaces alone; the mark's line since the build's audit, T3): a denylist holding an entry of an ideographic space, a tab, a no-break space, a space and a figure space (E3 80 80, 09, C2 A0, 20, E2 80 87), and one of a byte-order mark alone, beside zzreal, reads both as blank and skips them, as a blank line is skipped: through a real push under a UTF-8 locale (LC_ALL) and under the C locale, a commit adding a line holding the first entry's bytes exactly and then a byte-order mark (EF BB BF) publishes with no romp line, so neither entry is grepped for, and a commit adding a line holding zzreal is refused naming the commit, the remote at its base (at c4dbf4d96 both entries were grepped for as their bytes and the first push was refused naming the commit)" {
+@test "build 6 (item 40, the trim's set, an entry of spaces alone; the mark's line since the build's audit, T3): a denylist holding an entry of an ideographic space, a tab, a no-break space, a space and a figure space (E3 80 80, 09, C2 A0, 20, E2 80 87), and one of a byte-order mark alone, beside zzreal, reads both as blank and skips them, as a blank line is skipped: through a real push under a UTF-8 locale (LC_ALL), a commit adding a line holding the first entry's bytes exactly and then a byte-order mark (EF BB BF) publishes with no romp line, so neither entry is grepped for, and under the C locale it is refused by the locale's line alone (since the closing check at b7415b347, its 1: the denylist holds bytes of 0x80 or above), no commit named; and under either locale a commit adding a line holding zzreal is refused naming the commit, the remote at its base (at c4dbf4d96 both entries were grepped for as their bytes and the first push was refused naming the commit; at b7415b347 it published under the C locale too)" {
     local loc strings="$TEST_DIR/private-strings-blank.txt" sha l
     trim_locale
     printf '# synthetic\n\343\200\200\t\302\240 \342\200\207\n\357\273\277\nzzreal\n' > "$strings"
@@ -19955,10 +19999,15 @@ trim_locale() {   # sets loc, the caller's, to the UTF-8 locale the trim's cases
         echo "locale: $l (the spaces)"
         export LC_ALL="$l"
         push_main_through_hook_with_shim
-        [ "$status" -eq 0 ]
-        [[ "$output" != *"romp pre-push"* ]] || false
-        at_remote_main
-        rewind_remote main "$BASE"
+        if [ "$l" = C ]; then
+            c_locale_refused "$strings"
+            [[ "$output" != *"personal identifier"* ]] || false              # refused by the locale alone: the scan went on and grepped for none of the entries
+        else
+            [ "$status" -eq 0 ]
+            [[ "$output" != *"romp pre-push"* ]] || false
+            at_remote_main
+            rewind_remote main "$BASE"
+        fi
     done
     commit_file real.txt "seen zzreal here" "the real entry"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -19974,7 +20023,7 @@ trim_locale() {   # sets loc, the caller's, to the UTF-8 locale the trim's cases
     done
 }
 
-@test "build 6 (item 40, the trim's set, a space inside an entry): a denylist entry zzin, an ideographic space (E3 80 80), side, edged by a no-break space before it and an em space after it, through a real push under a UTF-8 locale (LC_ALL) and under the C locale, publishes a commit adding a line that holds zzinside and zzin side (the inside space dropped, and an ASCII space in its place) with no romp line, and refuses a commit adding a line that holds zzin, the ideographic space, side, naming the commit, the remote at its base: only the edges are trimmed (at c4dbf4d96 the entry kept its edges' spaces and the second push PUBLISHED)" {
+@test "build 6 (item 40, the trim's set, a space inside an entry): a denylist entry zzin, an ideographic space (E3 80 80), side, edged by a no-break space before it and an em space after it, through a real push under a UTF-8 locale (LC_ALL), publishes a commit adding a line that holds zzinside and zzin side (the inside space dropped, and an ASCII space in its place) with no romp line, and under the C locale refuses it by the locale's line alone (since the closing check at b7415b347, its 1), no commit named; and under either locale it refuses a commit adding a line that holds zzin, the ideographic space, side, naming the commit, the remote at its base: only the edges are trimmed (at c4dbf4d96 the entry kept its edges' spaces and the second push PUBLISHED; at b7415b347 the first published under the C locale too)" {
     local loc strings="$TEST_DIR/private-strings-inside.txt" sha l
     trim_locale
     printf '# synthetic\n\302\240zzin\343\200\200side\342\200\203\n' > "$strings"
@@ -19991,10 +20040,15 @@ trim_locale() {   # sets loc, the caller's, to the UTF-8 locale the trim's cases
         echo "locale: $l (the near misses)"
         export LC_ALL="$l"
         push_main_through_hook_with_shim
-        [ "$status" -eq 0 ]
-        [[ "$output" != *"romp pre-push"* ]] || false
-        at_remote_main
-        rewind_remote main "$BASE"
+        if [ "$l" = C ]; then
+            c_locale_refused "$strings"
+            [[ "$output" != *"personal identifier"* ]] || false              # refused by the locale alone: the scan went on and grepped for none of the entries
+        else
+            [ "$status" -eq 0 ]
+            [[ "$output" != *"romp pre-push"* ]] || false
+            at_remote_main
+            rewind_remote main "$BASE"
+        fi
     done
     printf 'seen zzin\343\200\200side here\n' > "$REPO/inner.txt"
     git -C "$REPO" add inner.txt
@@ -20123,7 +20177,7 @@ DERIVE
     [ -z "$bad" ] || { echo "the trim took bytes off an entry whose edge holds no member of its set:$bad" >&2; false; }
 }
 
-@test "build 7 (item 40, entries of spaces alone read as blank, accepted; the coordinator's ruling of 20:21Z 2026-10-01, its 2): a denylist holding an entry of a no-break space alone (C2 A0), one of U+1680, a space, U+2028, a tab and U+2029 (E1 9A 80, 20, E2 80 A8, 09, E2 80 A9), and one of every member of the set run together (U+0085 and U+200B among them since build 8), a byte-order mark first, beside zzreal, reads the three as blank and skips them, as a blank line is skipped: through a real push under a UTF-8 locale (LC_ALL) and under the C locale, a commit adding a line that holds each entry's bytes exactly publishes with no romp line, so none of the three is grepped for, and a commit adding a line holding zzreal is refused naming the commit, the remote at its base (at d5740856c the three were grepped for as their bytes and the first push was refused naming the commit; at build 6's text the second and the third, which hold U+1680, U+2028 and U+2029, were; at build 7's text the third, which holds U+0085 and U+200B, was)" {
+@test "build 7 (item 40, entries of spaces alone read as blank, accepted; the coordinator's ruling of 20:21Z 2026-10-01, its 2): a denylist holding an entry of a no-break space alone (C2 A0), one of U+1680, a space, U+2028, a tab and U+2029 (E1 9A 80, 20, E2 80 A8, 09, E2 80 A9), and one of every member of the set run together (U+0085 and U+200B among them since build 8), a byte-order mark first, beside zzreal, reads the three as blank and skips them, as a blank line is skipped: through a real push under a UTF-8 locale (LC_ALL), a commit adding a line that holds each entry's bytes exactly publishes with no romp line, so none of the three is grepped for, and under the C locale it is refused by the locale's line alone (since the closing check at b7415b347, its 1), no commit named; and under either locale a commit adding a line holding zzreal is refused naming the commit, the remote at its base (at d5740856c the three were grepped for as their bytes and the first push was refused naming the commit; at build 6's text the second and the third, which hold U+1680, U+2028 and U+2029, were; at build 7's text the third, which holds U+0085 and U+200B, was; at b7415b347 the first push published under the C locale too)" {
     local loc strings="$TEST_DIR/private-strings-blank7.txt" all sha l
     trim_locale
     all='\357\273\277\302\240\302\205\341\232\200\342\200\200\342\200\201\342\200\202\342\200\203\342\200\204\342\200\205\342\200\206\342\200\207\342\200\210\342\200\211\342\200\212\342\200\213\342\200\250\342\200\251\342\200\257\342\201\237\343\200\200'
@@ -20145,10 +20199,15 @@ DERIVE
         echo "locale: $l (the spaces)"                                       # names the locale when a line below fails
         export LC_ALL="$l"
         push_main_through_hook_with_shim
-        [ "$status" -eq 0 ]
-        [[ "$output" != *"romp pre-push"* ]] || false
-        at_remote_main
-        rewind_remote main "$BASE"
+        if [ "$l" = C ]; then
+            c_locale_refused "$strings"
+            [[ "$output" != *"personal identifier"* ]] || false              # refused by the locale alone: the scan went on and grepped for none of the entries
+        else
+            [ "$status" -eq 0 ]
+            [[ "$output" != *"romp pre-push"* ]] || false
+            at_remote_main
+            rewind_remote main "$BASE"
+        fi
     done
     commit_file real.txt "seen zzreal here" "the real entry"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -20262,7 +20321,18 @@ DERIVE
 # here-document went to the delimiter, and such a group was listed as judged, where bash, when it cannot make the
 # document, prints its line, skips the group and goes on; a delimiter ahead of a read's variable was read as the
 # read's first name; and a here-document in a command's prefix hid the read from the census, the delimiter taken for
-# the command, so such a read was neither listed nor failed). A compound with a redirection around a CALL of the read's
+# the command, so such a read was neither listed nor failed). Since the closing check at b7415b347 (its 7) the
+# document's body is passed over too: its lines, up to the one that holds its delimiter alone (after leading tabs, for
+# <<-; the delimiter read with its quotes removed, as bash matches it), are read as no code, where until then a body
+# line then or fi was read as the keyword, and a read in an if condition after such a body was listed as one that ends
+# the hook; a document whose delimiter no later line holds fails the census, which then read no line after it as code.
+# The body is skipped whole, so a read in a command substitution inside an unquoted document's body goes unread, and
+# the masker still reads a body's quote characters, so a body holding an unpaired quote masks the code after it, which
+# the census then fails (census_unread_shapes pins here-documents absent from the hook). And since its 8 every mapfile
+# or readarray fails the census (spelled as a token; a quoted or escaped one, like such a read, is no token here): each
+# returns 0 at the end of its input and on a read error alike (by execution, a read error after the open left each at
+# 0 with no line), so no form here can tell a read error from the end.
+# A compound with a redirection around a CALL of the read's
 # function, whose failed open skips the call whole (no read runs, so none fails), is outside this rule and outside
 # the census; the hook holds none whose failure lets it go on around a call of a function holding a read (by a probe
 # of build 8's over the hook, which lists every call of a function the hook defines with each compound with a
@@ -20324,6 +20394,21 @@ function word(s, w) { return s ~ ("(^|[^A-Za-z0-9_])" w "([^A-Za-z0-9_]|$)") }
 function fend(from,   i) { for (i = from; i <= nr && i < from + 400; i++) if (raw[i] == "}") return i; return (i > nr ? nr : i) }
 function span(a, b,   i, s) { s = ""; for (i = a; i <= b; i++) s = s code(i) "\n"; return s }
 function quote(s) { gsub(/[][\\^$.*+?(){}|]/, "\\\\&", s); return s }
+# A here-document's delimiter word, read from the raw text at byte i (after the operator and its -): blanks skipped,
+# then the word to an unquoted blank or operator byte, its quotes removed ('...' and "..." kept as their bytes, \x as x),
+# so a quoted delimiter is matched by its bytes, as bash matches it (the closing check at b7415b347, its 7)
+function hdword(s, i,   n, w, c, q) {
+    n = length(s); w = ""
+    while (i <= n && substr(s, i, 1) ~ /[ \t]/) i++
+    while (i <= n) {
+        c = substr(s, i, 1)
+        if (c ~ /[ \t;&|()<>]/) break
+        if (c == "\\") { w = w substr(s, i + 1, 1); i += 2; continue }
+        if (c == "'" || c == "\"") { q = index(substr(s, i + 1), c); if (!q) { w = w substr(s, i + 1); break } w = w substr(s, i + 1, q - 1); i += q + 1; continue }
+        w = w c; i++
+    }
+    return w
+}
 # The one-shot census (build 6 of item 40): a read outside every loop runs where its failure ends the hook, or its status
 # is judged. ctxwhy: why a command (a read, or a call of the function a read is in) is a place where errexit does not end
 # the hook, or "": a ! before it, an || beside it, an && after it, a pipe or a & beside it, a coproc, a condition it
@@ -20605,11 +20690,19 @@ function ownread(r,   w) {
     else one[++no1] = "FAIL " bline[r] ": " w ": " raw[bline[r]]
 }
 BEGIN {
-    nl = 0; sp = 0; cur = 0; start = 1; csp = 0; nc = 0; nb = 0; pfn = 0; lastsep = "nl"; after = 0; skipnext = 0; skipop = 0; preredir = 0; cmdpfx = 0; timep = 0; no1 = 0
+    nl = 0; sp = 0; cur = 0; start = 1; csp = 0; nc = 0; nb = 0; pfn = 0; lastsep = "nl"; after = 0; skipnext = 0; skipop = 0; preredir = 0; cmdpfx = 0; timep = 0; no1 = 0; hdi = 1; hdn = 0; hdq = 0; nmapf = 0
     nr = 0; while ((getline l < rawf) > 0) raw[++nr] = l; close(rawf)
 }
 {
     masked[NR] = $0
+    # a here-document's body is data: its lines, to the one that holds its delimiter alone (after leading tabs, for
+    # <<-), are read as no code (the closing check at b7415b347, its 7: until then a body line then or fi was read as
+    # the keyword, and a read in an if condition after such a body was listed as one that ends the hook)
+    if (hdi <= hdn) {
+        l = raw[NR]; if (hdstrip[hdi]) sub(/^\t+/, "", l)
+        if (l == hdw[hdi]) hdi++
+        next
+    }
     line = $0; gsub(/\001/, " \005 ", line)
     # a backquote opens or closes a command substitution, so the word after it starts a command (an escaped one is a
     # byte of a word)
@@ -20714,6 +20807,9 @@ BEGIN {
         if (t ~ /^(then|else|elif|!)$/) continue
         if (t ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=/) continue
         cmdstart(t)
+        # mapfile and readarray return 0 at the end of their input and on a read error alike, so no form here can tell a
+        # read error from the end (the closing check at b7415b347, its 8): each one in the file fails
+        if (t == "mapfile" || t == "readarray") mapf[++nmapf] = "FAIL " NR ": " t ", whose status is 0 at the end of its input and on a read error alike, so a read error would pass as the end, and no form here can tell the two apart: " raw[NR]
         if (t == "set") {
             # errexit's line (the file's first set -e outside every compound), and a set +e, which turns it off in the
             # function it runs in, or in the file
@@ -20733,6 +20829,20 @@ BEGIN {
         }
         start = 0
     }
+    # the here-document operators on this line (a << that is not <<<, outside an arithmetic (( )), its quoted bytes
+    # masked), each queued with its delimiter word, read from the raw text; their bodies start on the line after the
+    # command line ends (a line continued by a backslash carries them on)
+    hm = $0; hq = 1
+    while ((hp = index(substr(hm, hq), "<<")) > 0) {
+        hp += hq - 1
+        if (substr(hm, hp, 3) == "<<<") { hq = hp + 3; continue }
+        ho = substr(hm, 1, hp - 1); hopen = gsub(/\(\(/, "", ho); ho = substr(hm, 1, hp - 1); hclose = gsub(/\)\)/, "", ho)
+        if (hopen > hclose) { hq = hp + 2; continue }
+        hd = (substr(raw[NR], hp + 2, 1) == "-")
+        hdq++; hdw[hdq] = hdword(raw[NR], hp + 2 + hd); hdstrip[hdq] = hd; hdl[hdq] = NR
+        hq = hp + 2 + hd
+    }
+    if (!cont) hdn = hdq
     if (!cont) { cmdend("nl"); lastk = "nl"; bang = 0; endbread(); after = 0; start = 1; lastsep = "nl"; skipop = 0; preredir = 0; cmdpfx = 0; timep = 0 }
 }
 END {
@@ -20859,6 +20969,8 @@ END {
     for (r = 1; r <= no1; r++) print one[r]
     for (r = 1; r <= nos; r++) print os[r]
     for (r = 1; r <= nil; r++) print il[r]
+    for (r = 1; r <= nmapf; r++) print mapf[r]
+    for (r = hdi; r <= hdq; r++) print "FAIL " hdl[r] ": a here-document whose delimiter, " hdw[r] ", no later line holds alone, so its body runs to the end of the file and the census read no line after it as code: " raw[hdl[r]]
 }
 AWK
     fi
@@ -20966,7 +21078,7 @@ census_plant() {   # <hook copy> <lines to insert after the EXIT trap's line, on
     done
 }
 
-@test "build 6 (item 40, the one-shot reads, a population under the read census' rule; the coordinator's ruling of 16:36Z 2026-10-01, its 3; repaired after the build's audit, OS-1 to OS-3): every read outside every loop of the hook, 14, has its status judged in the hook's own shell, and the census lists each with its form (13 by the first variable unset before the read and tested as \${name+set} after it, unscanned on the unset side, one of them, join_short_detail's, in judged_read's -d function, and the denylist's split by an if ! whose then opens with unscanned); copies planting a one-shot read in an if condition, after an ||, under !, in a function called from a condition, with an || : swallowing its status, before an &&, in a pipeline, in the background, in a command substitution, in a subshell, in backquotes, in a coproc, in a braced group an || follows, under !, before an &&, in a pipeline, in the background or in a condition, after an || ahead of its braced group, before the file's set -e, after a set +e or a shopt -u -o errexit in the file (which, since build 7, names the hook's five reads in loop bodies that end it as well), in a function that runs set +e, set +o errexit or shopt -uo errexit, in a function named as another command's argument or inside quotes, in a function called by one called from a condition, two reads on one line, a decoy of each judged form (an unset with no test, an if ! whose then does not refuse, an || that assigns, a test after an assignment, a test of the wrong sense, an if ! condition holding an ||, the unset of another name), each judged form whose refusal is lost (in a function called in a command substitution, piped, put in the background or named as judged_read's command, in a braced group put in the background, the refusal piped, a function named after a -d that is no judged_read's or after judged_read's --), and the end form out of place (an assignment, printf -v, \${name:=}, mapfile, an arithmetic assignment or another read between the unset and the test, the test in an if's branch, in an elif condition, in a case, in another branch of a case, in an if opened in another branch, or after an &&, the unset in a branch or in a function, or after an &&, the read in a function defined between, a return between) are each named on their line with the reason; copies planting a read at the top level after set -e, in a function called plainly or defined by the function keyword, called as the last part of an && list or through a chain of plain calls, in a braced group with a redirection, in each judged form, a judged form in a function called from a condition or before an ||, in judged_read's -d function or one it calls, in a case branch, in an elif condition, and after an assignment ahead of its unset pass, listed with their forms; a copy calling attr_reads in a command substitution names its two judged reads, and a copy whose judged_read no longer refuses after the -d function's splice names join_short_detail's" {
+@test "build 6 (item 40, the one-shot reads, a population under the read census' rule; the coordinator's ruling of 16:36Z 2026-10-01, its 3; repaired after the build's audit, OS-1 to OS-3): every read outside every loop of the hook, 14, has its status judged in the hook's own shell, and the census lists each with its form (13 by the first variable unset before the read and tested as \${name+set} after it, unscanned on the unset side, one of them, join_short_detail's, in judged_read's -d function, and the denylist's split by an if ! whose then opens with unscanned); copies planting a one-shot read in an if condition, after an ||, under !, in a function called from a condition, with an || : swallowing its status, before an &&, in a pipeline, in the background, in a command substitution, in a subshell, in backquotes, in a coproc, in a braced group an || follows, under !, before an &&, in a pipeline, in the background or in a condition, after an || ahead of its braced group, before the file's set -e, after a set +e or a shopt -u -o errexit in the file (which, since build 7, names the hook's five reads in loop bodies that end it as well), in a function that runs set +e, set +o errexit or shopt -uo errexit, in a function named as another command's argument or inside quotes, in a function called by one called from a condition, two reads on one line, a decoy of each judged form (an unset with no test, an if ! whose then does not refuse, an || that assigns, a test after an assignment, a test of the wrong sense, an if ! condition holding an ||, the unset of another name), each judged form whose refusal is lost (in a function called in a command substitution, piped, put in the background or named as judged_read's command, in a braced group put in the background, the refusal piped, a function named after a -d that is no judged_read's or after judged_read's --), and the end form out of place (an assignment, printf -v, \${name:=}, mapfile (failed on its own line too since the closing check at b7415b347, its 8), an arithmetic assignment or another read between the unset and the test, the test in an if's branch, in an elif condition, in a case, in another branch of a case, in an if opened in another branch, or after an &&, the unset in a branch or in a function, or after an &&, the read in a function defined between, a return between) are each named on their line with the reason; copies planting a read at the top level after set -e, in a function called plainly or defined by the function keyword, called as the last part of an && list or through a chain of plain calls, in a braced group with a redirection, in each judged form, a judged form in a function called from a condition or before an ||, in judged_read's -d function or one it calls, in a case branch, in an elif condition, and after an assignment ahead of its unset pass, listed with their forms; a copy calling attr_reads in a command substitution names its two judged reads, and a copy whose judged_read no longer refuses after the -d function's splice names join_short_detail's" {
     local i
     run read_loop_census "$HOOK"
     [ "$status" -eq 0 ]
@@ -21073,7 +21185,12 @@ census_plant() {   # <hook copy> <lines to insert after the EXIT trap's line, on
         run cmp -s "$HOOK" "$TEST_DIR/l-${lost[i]}.sh"
         [ "$status" -ne 0 ]
         run read_loop_census "$TEST_DIR/l-${lost[i]}.sh"
-        [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ]
+        case "${lost[i]}" in
+            mapfile)                                                         # since the closing check at b7415b347 (its 8) the mapfile fails on its own line too
+                [ "$(grep -c '^FAIL ' <<< "$output")" -eq 2 ]
+                [ "$(grep -c '^FAIL [0-9]*: mapfile, whose status is 0 at the end of its input and on a read error alike' <<< "$output")" -eq 1 ] ;;
+            *) [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ] ;;
+        esac
         [[ "$output" == *"FAIL "*": a one-shot read neither ends the hook on its failure ("*") nor has its status judged (${lostpre[i]}"*"${lostpost[i]}"*"): ${lostline[i]}"* ]] || false
         [ "$(grep -c '^one-shot [0-9]* ' <<< "$output")" -eq 14 ]
     done
@@ -21425,15 +21542,28 @@ BLOCK
     [ "$(grep -c "^in-loop $((tl + 11)) judged (unset z9, \${z9+set}, unscanned): .*unset z9; read -r z9 " <<< "$output")" -eq 1 ]
 }
 
-lc_all_first_body() {   # <bash file>: the first non-comment, non-blank line after 'bash_gate "$@"'; empty when there is no bash_gate call
-    awk '
-        seen && NF { sub(/^[ \t]+/, "", $0); if ($0 !~ /^#/) { print; exit } }
+lc_all_first_body() {   # <bash file> [<n>]: the n-th (default the first) non-comment, non-blank line after 'bash_gate "$@"'; empty when there is no bash_gate call or no such line
+    awk -v n="${2:-1}" '
+        seen && NF { sub(/^[ \t]+/, "", $0); if ($0 !~ /^#/ && ++k == n) { print; exit } }
         $0 == "bash_gate \"$@\"" { seen = 1 }
     ' "$1"
 }
+charset_read_departures() {   # <bash file>: a line per departure of pusher_charset_read's masked body from a read of the pusher's locale that runs no pattern operation and no program but locale (the export pin's case); nothing when it holds
+    masked_text "$1" | LC_ALL=C awk -v tools="$CENSUS_TOOLS" '
+        /^pusher_charset_read\(\) \{/ { inf = 1; seen = 1; next }
+        inf && /^\}/ { inf = 0; next }
+        !inf { next }
+        /\$\{[A-Za-z_][A-Za-z0-9_]*(#|%|\/|\^|,)/ || /\[\[/ || /(^|[^A-Za-z0-9_])case[ \t]/ || /=~/ { print "a pattern operation: " $0 }
+        { l = " " $0 " "; if (l ~ ("[^A-Za-z0-9_/.-](" tools ")[^A-Za-z0-9_.-]")) print "a reading tool: " $0 }
+        END { if (!seen) print "no pusher_charset_read" }'
+}
 
-@test "build 5 (item 40, the locale class, the export pin, subsuming F3): LC_ALL=C is exported as the FIRST body statement, right after the gate's call and before any text tool or pattern operation; a mutant that moves the export after a statement, or removes it, or inserts an awk before it, reds this" {
-    [ "$(lc_all_first_body "$HOOK")" = "export LC_ALL=C" ]
+@test "build 5 (item 40, the locale class, the export pin, subsuming F3; the pusher's locale read ahead of it since the closing check at b7415b347, its 1): the first body statement, right after the gate's call, is the call of pusher_charset_read, whose body runs no pattern operation and no program but locale, and LC_ALL=C is exported as the SECOND, before any text tool or pattern operation; a mutant that moves the export after a statement, or removes it, or inserts an awk before it, or moves the charset read after the export, or removes it, or gives it a pattern operation or a text tool, reds this" {
+    [ "$(lc_all_first_body "$HOOK" 1)" = "pusher_charset_read" ]
+    [ "$(lc_all_first_body "$HOOK" 2)" = "export LC_ALL=C" ]
+    run charset_read_departures "$HOOK"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
     # and the export precedes every awk, grep, sed, tr, cut, wc, od and sort the body runs (read from the masked text, so the tool names in this paragraph's own comments are not counted)
     local exp first
     exp=$(grep -n '^export LC_ALL=C$' "$HOOK" | head -1 | cut -d: -f1)
@@ -21448,16 +21578,33 @@ lc_all_first_body() {   # <bash file>: the first non-comment, non-blank line aft
     # mutant: move the export down, after 'set -euo pipefail'
     awk '$0 == "export LC_ALL=C" { next } { print } $0 == "set -euo pipefail" { print "export LC_ALL=C" }' "$HOOK" > "$TEST_DIR/lc-moved.sh"
     [ "$(grep -c '^export LC_ALL=C$' "$TEST_DIR/lc-moved.sh")" -eq 1 ]
-    [ "$(lc_all_first_body "$TEST_DIR/lc-moved.sh")" = "set -euo pipefail" ]
-    [ "$(lc_all_first_body "$TEST_DIR/lc-moved.sh")" != "export LC_ALL=C" ]
+    [ "$(lc_all_first_body "$TEST_DIR/lc-moved.sh" 2)" = "set -euo pipefail" ]
+    [ "$(lc_all_first_body "$TEST_DIR/lc-moved.sh" 2)" != "export LC_ALL=C" ]
     # mutant: remove the export entirely
     awk '$0 == "export LC_ALL=C" { next } { print }' "$HOOK" > "$TEST_DIR/lc-gone.sh"
     [ "$(grep -c '^export LC_ALL=C$' "$TEST_DIR/lc-gone.sh")" -eq 0 ]
-    [ "$(lc_all_first_body "$TEST_DIR/lc-gone.sh")" != "export LC_ALL=C" ]
+    [ "$(lc_all_first_body "$TEST_DIR/lc-gone.sh" 2)" != "export LC_ALL=C" ]
     # mutant: a text tool inserted before the export
     awk '{ print } $0 == "bash_gate \"$@\"" { print "x=$(awk \"BEGIN{print 1}\")" }' "$HOOK" > "$TEST_DIR/lc-awk-first.sh"
     [ "$(grep -c 'x=\$(awk' "$TEST_DIR/lc-awk-first.sh")" -eq 1 ]
-    [ "$(lc_all_first_body "$TEST_DIR/lc-awk-first.sh")" != "export LC_ALL=C" ]
+    [ "$(lc_all_first_body "$TEST_DIR/lc-awk-first.sh" 1)" != "pusher_charset_read" ]
+    [ "$(lc_all_first_body "$TEST_DIR/lc-awk-first.sh" 2)" != "export LC_ALL=C" ]
+    # mutant: the charset read moved after the export, where the pusher's locale is gone
+    awk '$0 == "pusher_charset_read" { next } { print } $0 == "export LC_ALL=C" { print "pusher_charset_read" }' "$HOOK" > "$TEST_DIR/lc-read-after.sh"
+    [ "$(grep -c -x 'pusher_charset_read' "$TEST_DIR/lc-read-after.sh")" -eq 1 ]
+    [ "$(lc_all_first_body "$TEST_DIR/lc-read-after.sh" 1)" = "export LC_ALL=C" ]
+    # mutant: the charset read removed
+    awk '$0 == "pusher_charset_read" { next } { print }' "$HOOK" > "$TEST_DIR/lc-read-gone.sh"
+    [ "$(grep -c -x 'pusher_charset_read' "$TEST_DIR/lc-read-gone.sh")" -eq 0 ]
+    [ "$(lc_all_first_body "$TEST_DIR/lc-read-gone.sh" 1)" != "pusher_charset_read" ]
+    # mutants: a pattern operation, and a text tool, in the charset read, which runs in the pusher's locale
+    awk '{ print } /^pusher_charset_read\(\) \{/ { print "    pusher_locale=${LANG%%@*}" }' "$HOOK" > "$TEST_DIR/lc-read-pattern.sh"
+    awk '{ print } /^pusher_charset_read\(\) \{/ { print "    pusher_locale=$(printf %s \"${LANG:-}\" | cut -d. -f2)" }' "$HOOK" > "$TEST_DIR/lc-read-tool.sh"
+    run charset_read_departures "$TEST_DIR/lc-read-pattern.sh"
+    [ "$output" = 'a pattern operation:     pusher_locale=${LANG%%@*}' ]
+    run charset_read_departures "$TEST_DIR/lc-read-tool.sh"
+    [[ "$output" == "a reading tool: "*"| cut -d. -f2)" ]] || false
+    [ "$(grep -c . <<< "$output")" -eq 1 ]
 }
 
 # The census of the body's locale words (the audit of build 5, LOC-2): the export pin above holds where the C locale
@@ -22364,7 +22511,8 @@ bof_push() {   # <ref>... -- <NAME=value>...: push_refs_through_hook under the o
 # none of their refusals is such an open (round 11a's absent extend file is the config's: a file that does not exist).
 OP96_SHELL="romp pre-push: BLOCKED. The credential scan could not be run whole; the cause is named above."$'\n'"  The push is refused rather than published unscanned. Repair what is named above and push again, or set ROMP_NO_GITLEAKS=1 for one push."
 OP96_SCANNER="romp pre-push: BLOCKED. gitleaks could not scan; its error is above."
-op96_refused() {   # <shell|both>: the push just made landed its fault and was refused within the 60 s bound, the remote at its base, closing with the shell's lines, and with the scanner's too (both) or without them (shell)
+OP96_EXITED="romp pre-push: BLOCKED. gitleaks could not scan: it exited with a status other than 0 (clean) or 2 (a finding), named above."
+op96_refused() {   # <shell|both|exited>: the push just made landed its fault and was refused within the 60 s bound, the remote at its base, closing with the shell's lines, and with the scanner's too (both), with the scanner's for an exit alone (exited, since the closing check at b7415b347, its 5), or without them (shell)
     [ "$BOF_FAULTS" -gt 0 ]
     [ "$status" -ne 124 ]
     [ "$status" -ne 0 ]
@@ -22372,12 +22520,15 @@ op96_refused() {   # <shell|both>: the push just made landed its fault and was r
     [[ "$output" == *"$OP96_SHELL"* ]] || false
     if [ "$1" = both ]; then
         [[ "$output" == *"$OP96_SCANNER"* ]] || false
+    elif [ "$1" = exited ]; then
+        [[ "$output" == *"$OP96_EXITED"* ]] || false
+        [[ "$output" != *"$OP96_SCANNER"* ]] || false
     else
         [[ "$output" != *"$OP96_SCANNER"* ]] || false
         [[ "$output" != *"Fix the scanner"* ]] || false
     fi
 }
-@test "OP9-6 (item 40, the credential scan's closing lines by cause; the coordinator's ruling of 09:48Z 2026-10-02 on the repair after the audit of build 9): under the real scanner and the open library, real pushes of a clean commit, each refused naming the open the library failed, within the 60 s bound, the remote at its base: with the diff settings' answer unopened (creds.diffcfg, open_in), the one refusal, the push closes with the shell's lines, the credential scan could not be run whole and its cause named above, and not the scanner's, gitleaks could not scan; with the feed's input unopened (creds.list, judged_read's -i) beside a scan of record exiting 3, and with the parent counts' here-string unmade (open_str) beside a scan of record logging an error, it closes with both; with GITLEAKS_CONFIG_TOML's here-string unmade, with the config's copy unopened (creds.cfg.0.toml) under a work tree .gitleaks.toml, with that .gitleaks.toml, a file that exists, unopened at its read and apart as its byte count's input, and with the skip canary's config unopened (creds.canary.toml) under an honest per-rule path allowlist, with the shell's alone; and with a feed git printing a foreign line beside the scan of record's log unopened (creds.log), with the feed's advice and the shell's lines, not the scanner's (at the build's text before OP9-6 each push closed with the scanner's lines and none with the shell's; at OP9-6's first text, push 7 closed with the scanner's lines alone)" {
+@test "OP9-6 (item 40, the credential scan's closing lines by cause; the coordinator's ruling of 09:48Z 2026-10-02 on the repair after the audit of build 9): under the real scanner and the open library, real pushes of a clean commit, each refused naming the open the library failed, within the 60 s bound, the remote at its base: with the diff settings' answer unopened (creds.diffcfg, open_in), the one refusal, the push closes with the shell's lines, the credential scan could not be run whole and its cause named above, and not the scanner's, gitleaks could not scan; with the feed's input unopened (creds.list, judged_read's -i) beside a scan of record exiting 3, it closes with the shell's lines and, since the closing check at b7415b347 (its 5), the scanner's saying it exited with a status other than 0 or 2, that exit named on a line of its own; with the parent counts' here-string unmade (open_str) beside a scan of record logging an error, it closes with both; with GITLEAKS_CONFIG_TOML's here-string unmade, with the config's copy unopened (creds.cfg.0.toml) under a work tree .gitleaks.toml, with that .gitleaks.toml, a file that exists, unopened at its read and apart as its byte count's input, and with the skip canary's config unopened (creds.canary.toml) under an honest per-rule path allowlist, with the shell's alone; and with a feed git printing a foreign line beside the scan of record's log unopened (creds.log), with the feed's advice and the shell's lines, not the scanner's (at the build's text before OP9-6 each push closed with the scanner's lines and none with the shell's; at OP9-6's first text, push 7 closed with the scanner's lines alone)" {
     local sha
     bash_open_shim
     r9d_base
@@ -22390,7 +22541,8 @@ op96_refused() {   # <shell|both>: the push just made landed its fault and was r
     echo "push 2: the feed's input (judged_read -i), beside a scan of record exiting 3"
     scanner_wrapper '' 's=3'
     bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/creds.list BOF_DIR=r
-    op96_refused both
+    op96_refused exited
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan exited 3, neither 0 (clean) nor 2 (a finding), so what it read is unknown; "* ]] || false
     [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk was not run: its input file "*"/creds.list could not be opened for reading); "* ]] || false
     echo "push 3: the parent counts' here-string (open_str), beside a scan of record logging an error"
     scanner_wrapper 'echo "1:00AM ERR a planted error" >&2'
@@ -22780,34 +22932,157 @@ op96_refused() {   # <shell|both>: the push just made landed its fault and was r
 }
 
 # The class's pins (build 9 of item 40, on the coordinator's ruling of 04:26Z 2026-10-02: a refusal names its actual
-# cause). judged_inputs reads the masked text: a judged_read call (its line joined with its continuations) whose
-# command, after the --, carries an input redirection of its own (< or <<< on the call, which a failed open skips
-# whole), and a line of a function the hook hands to judged_read whole (the first word after a call's --, when the
-# file defines it) that opens an input by a redirection of its own (<, <<< or a process substitution), each printed
-# as "<line>: <text>"; a duplicating redirection (<&4) opens nothing and is passed. null_redirections reads the body
+# cause). judged_inputs reads the masked text, each finding printed as "<line>: <text>", a duplicating redirection
+# (<&4) passed everywhere, since it opens nothing: (1) a judged_read call carrying an input redirection (a < not
+# followed by &: a file, a here-string, a here-document or a process substitution) anywhere in its own simple command
+# (its line joined with its continuations, from the separator before the call to the one after it, the parentheses
+# of a command substitution holding the call among them), which a failed open skips whole, the call returning 1 with
+# no refusal and read_rc and read_out left as the read before set them;
+# (2) a call of a function the file defines that holds a judged_read call, directly or by a call of one that does,
+# carrying such a redirection in its own simple command; (3) a line of a function the hook hands to judged_read whole
+# (the first word after a call's --, when the file defines it) that opens an input by a redirection of its own; and
+# (4) a compound (a braced group, a subshell, an if, a case or a loop) whose close carries such a redirection (on the
+# close's line joined with its continuations) around a judged_read call or a call of a function that holds one, but a
+# line loop (a while or until loop whose condition runs
+# the read builtin), which the census of the read loops holds by its form after the done. Until the closing check at
+# b7415b347 (its 6) the census read only a redirection after the call's -- and a blank, and found none of four shapes
+# the check planted: wc -c<"$f" on the call, a redirection ahead of the --, a braced group around the call fed by a
+# file across two lines, and a function wrapping the call, called with a redirection (each skips the call, by a demo
+# with a stub, read_rc left as it was). null_redirections reads the body
 # (after the gate's call): a line that redirects to or from /dev/null other than a judged open of it on a descriptor
 # ({ exec 8>/dev/null; } || or { exec 8<>/dev/null; } ||), a judged_read call's -i /dev/null, or a read for a refused
 # push's report alone, marked so ("outside judged_read: for the report"), whose failed open leaves the line a fact
 # fewer and names no command.
-judged_inputs() {   # <bash file>: the census above, one line per call or line it names
+judged_inputs() {   # <bash file>: the census above, one line per call, line, compound or call of a wrapping function it names
     masked_text "$1" | LC_ALL=C awk -v rawf="$1" '
         BEGIN { while ((getline l < rawf) > 0) raw[++nr] = l; close(rawf) }
         { m[NR] = $0 }
-        END {
-            for (i = 1; i <= NR; i++) {
-                if (m[i] !~ /(^|[^A-Za-z0-9_])judged_read[ \t]/ || m[i] ~ /^[ \t]*judged_read\(\)/) continue
-                s = m[i]; j = i
-                while (s ~ /\\$/ && j < NR) { j++; s = substr(s, 1, length(s) - 1) m[j] }
-                p = index(s, " -- "); if (!p) continue
-                c = substr(s, p + 4)
-                if (c ~ /(^|[ \t])[0-9]*<([^&]|$)/) print i ": " raw[i]
-                split(c, w, /[ \t]+/)
-                if (w[1] ~ /^[A-Za-z_][A-Za-z0-9_]*$/) handed[w[1]] = 1
+        # a word w at position i of s: bounded by a byte that is not part of a name or a path on each side
+        function wordat(s, i, w,   b, a) {
+            if (substr(s, i, length(w)) != w) return 0
+            b = (i == 1) ? " " : substr(s, i - 1, 1); a = substr(s, i + length(w), 1)
+            return b ~ /[ \t;&|(`!{]/ && (a == "" || a ~ /[ \t;&|)<>]/)
+        }
+        function joined(i,   s, j) { s = m[i]; j = i; while (s ~ /\\$/ && j < NR) { j++; s = substr(s, 1, length(s) - 1) m[j] } return s }
+        # the simple command around byte p of s: from the separator before it to the one after it (; | & ( ) { } and the
+        # ends of the line), each substitution in it ($( ) and $(( ))) read as one word, a copy of a descriptor (<&, >&) no
+        # separator; so a redirection on a compound around the command, or on the next command, is not its own. A command
+        # substitution holding byte p is not blanked: it bounds the command by its own parentheses (its $ alone blanked),
+        # so a call inside one is read with the redirections it carries there
+        function simple(s, p,   t, a, b, q) {
+            t = s
+            while (match(t, /\$\([^()]*\)/)) {
+                if (p > RSTART && p < RSTART + RLENGTH) t = substr(t, 1, RSTART - 1) " " substr(t, RSTART + 1)
+                else t = substr(t, 1, RSTART - 1) sprintf("%" RLENGTH "s", "") substr(t, RSTART + RLENGTH)
             }
+            while (match(t, /\$\(\([^()]*\)\)/)) t = substr(t, 1, RSTART - 1) sprintf("%" RLENGTH "s", "") substr(t, RSTART + RLENGTH)
+            gsub(/<&/, "<@", t); gsub(/>&/, ">@", t)
+            a = 1; for (q = p - 1; q >= 1; q--) if (substr(t, q, 1) ~ /[;|&(){}]/) { a = q + 1; break }
+            b = length(t); for (q = p; q <= length(t); q++) if (substr(t, q, 1) ~ /[;|&()]/) { b = q - 1; break }
+            return substr(t, a, b - a + 1)
+        }
+        function inredir(c) { return c ~ /<([^@]|$)/ }
+        # the redirections after a compound close at byte k of line i, its line joined with its continuations, up to the
+        # next separator: an input one is a < not followed by & (a here-string, a here-document, a file or a process
+        # substitution)
+        function redin(i, k,   r, p) {
+            r = substr(joined(i), k)
+            p = match(r, /[;|)]|&&/); if (p) r = substr(r, 1, p - 1)
+            return r ~ /<([^&]|$)/
+        }
+        # a line loop: a while or until loop whose condition, from its keyword at byte k of line o to its do, runs the read
+        # builtin (the census of the read loops holds such a loop by its form after the done, which refuses a loop whose
+        # failed open ran no pass)
+        function lineloop(o, k,   c, j, p) {
+            if (!wordat(m[o], k, "while") && !wordat(m[o], k, "until")) return 0
+            c = " " substr(m[o], k); j = o
+            while (c !~ /[ \t;]do([ \t;]|$)/ && j < NR && j < o + 20) { j++; c = c " " m[j] }
+            p = match(c, /[ \t;]do([ \t;]|$)/); if (p) c = substr(c, 1, p)
+            return c ~ /[ \t;!]read[ \t]/
+        }
+        END {
+            # the functions this file defines, and those that hold a judged_read call, directly or by a call of one that does
+            for (i = 1; i <= NR; i++) {
+                if (m[i] ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/) { f = substr(m[i], 1, index(m[i], "(") - 1); def[f] = i; cur = f; continue }
+                if (m[i] ~ /^\}/) { cur = ""; continue }
+                if (cur != "") body[cur] = body[cur] " " m[i]
+            }
+            for (f in def) if (f != "judged_read" && (" " body[f] " ") ~ /[^A-Za-z0-9_]judged_read[ \t]/) wraps[f] = 1
+            do {
+                grew = 0
+                for (f in def) {
+                    if (f in wraps || f == "judged_read") continue
+                    for (g in wraps) if ((" " body[f] " ") ~ ("[^A-Za-z0-9_]" g "([^A-Za-z0-9_]|$)")) { wraps[f] = 1; grew = 1; break }
+                }
+            } while (grew)
+            for (i = 1; i <= NR; i++) {
+                if (m[i] ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/) continue
+                s = joined(i)
+                # (1) a judged_read call carrying an input redirection anywhere on its joined line: before its --, after it,
+                # spaced from its word or not (until the closing check at b7415b347, its 6, only after the -- and a blank)
+                if (match(m[i], /(^|[^A-Za-z0-9_])judged_read[ \t]/)) {
+                    if (inredir(simple(s, RSTART + 1))) { print i ": " raw[i]; continue }
+                    p = index(s, " -- "); if (!p) continue
+                    c = substr(s, p + 4)
+                    split(c, w, /[ \t]+/)
+                    if (w[1] ~ /^[A-Za-z_][A-Za-z0-9_]*$/) handed[w[1]] = 1
+                    continue
+                }
+                # (2) a call of a function that holds a judged_read call, carrying an input redirection on its joined line
+                if (s ~ /<([^&]|$)/) {
+                    t = " " m[i] " "
+                    for (g in wraps) if (match(t, ("[ \t;&|(!{`]" g "([ \t;&|)<>]|$)")) && inredir(simple(s, RSTART))) { print i ": " raw[i]; break }
+                }
+            }
+            # (3) a line of a function handed to judged_read whole that opens an input by a redirection of its own
             for (i = 1; i <= NR; i++) {
                 if (m[i] ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/) { f = substr(m[i], 1, index(m[i], "(") - 1); infn = (f in handed); continue }
                 if (m[i] ~ /^\}/) { infn = 0; continue }
                 if (infn && m[i] ~ /(^|[ \t])[0-9]*<([^&]|$)/) print i ": " raw[i]
+            }
+            # (4) a compound (a braced group, a subshell, an if, a case or a loop) whose close carries an input redirection,
+            # around a judged_read call or a call of a function that holds one: its failed open skips the compound whole
+            sp = 0
+            for (i = 1; i <= NR; i++) {
+                s = m[i]; n = length(s); k = 1
+                while (k <= n) {
+                    ch = substr(s, k, 1)
+                    if (ch == "$" && substr(s, k + 1, 1) == "{") { d = 0; for (q = k + 1; q <= n; q++) { cq = substr(s, q, 1); if (cq == "{") d++; else if (cq == "}" && --d == 0) break } k = q + 1; continue }
+                    if (substr(s, k, 3) == "$((") { st[++sp] = "arith"; sl[sp] = i; k += 3; continue }
+                    if (substr(s, k, 2) == "$(") { st[++sp] = "cs"; sl[sp] = i; k += 2; continue }
+                    if (substr(s, k, 2) == "((") { st[++sp] = "arith"; sl[sp] = i; k += 2; continue }
+                    if (ch == "(") { st[++sp] = "sub"; sl[sp] = i; k++; continue }
+                    if (ch == ")") {
+                        if (sp > 0 && st[sp] == "arith") { sp--; k += (substr(s, k + 1, 1) == ")") ? 2 : 1; continue }
+                        if (sp > 0 && (st[sp] == "sub" || st[sp] == "cs")) { kind = st[sp]; o = sl[sp]; sp--; if (kind == "sub" && redin(i, k + 1)) cand[++nc] = o " " i }
+                        k++; continue
+                    }
+                    if (ch == "{" && wordat(s, k, "{")) { st[++sp] = "brace"; sl[sp] = i; k++; continue }
+                    if (ch == "}" && wordat(s, k, "}")) { if (sp > 0 && st[sp] == "brace") { o = sl[sp]; sp--; if (redin(i, k + 1)) cand[++nc] = o " " i } k++; continue }
+                    if (ch ~ /[a-z]/) {
+                        if (wordat(s, k, "if")) { st[++sp] = "if"; sl[sp] = i; k += 2; continue }
+                        if (wordat(s, k, "case")) { st[++sp] = "case"; sl[sp] = i; k += 4; continue }
+                        if (wordat(s, k, "while") || wordat(s, k, "until")) { st[++sp] = "loop"; sl[sp] = i; sk[sp] = k; k += 5; continue }
+                        if (wordat(s, k, "for")) { st[++sp] = "loop"; sl[sp] = i; sk[sp] = k; k += 3; continue }
+                        if (wordat(s, k, "select")) { st[++sp] = "loop"; sl[sp] = i; sk[sp] = k; k += 6; continue }
+                        if (wordat(s, k, "fi") && sp > 0 && st[sp] == "if") { o = sl[sp]; sp--; if (redin(i, k + 2)) cand[++nc] = o " " i; k += 2; continue }
+                        if (wordat(s, k, "esac") && sp > 0 && st[sp] == "case") { o = sl[sp]; sp--; if (redin(i, k + 4)) cand[++nc] = o " " i; k += 4; continue }
+                        if (wordat(s, k, "done") && sp > 0 && st[sp] == "loop") { o = sl[sp]; ok = sk[sp]; sp--; if (redin(i, k + 4) && !lineloop(o, ok)) cand[++nc] = o " " i; k += 4; continue }
+                        while (k <= n && substr(s, k, 1) ~ /[A-Za-z0-9_]/) k++
+                        continue
+                    }
+                    k++
+                }
+            }
+            for (x = 1; x <= nc; x++) {
+                split(cand[x], oc, " ")
+                hit = 0
+                for (i = oc[1]; i <= oc[2] && !hit; i++) {
+                    t = " " m[i] " "
+                    if (t ~ /[^A-Za-z0-9_]judged_read[ \t]/ && m[i] !~ /^judged_read\(\)/) hit = 1
+                    else for (g in wraps) if (t ~ ("[ \t;&|(!{`]" g "([ \t;&|)<>]|$)")) { hit = 1; break }
+                }
+                if (hit) print oc[2] ": " raw[oc[2]]
             }
         }'
 }
@@ -23249,4 +23524,387 @@ COPY
     [[ "$output" == *"  The addresses this clone is configured to use could not be compared with an address named (the shell could not make a here-string of them, refused above), so whether it chose that address is unknown: repair what the line above names and push again; configuring an address changes nothing until then."* ]] || false
     [[ "$output" != *"an address this clone is not configured to use, whose domain"* ]] || false
     [[ "$output" != *"if it is yours, say so"* ]] || false
+}
+
+# ── the closing check at b7415b347 (item 40; the coordinator's ruling of 14:58Z 2026-10-02) ──
+# Its 1, the pusher's locale: the denylist's trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, in
+# bytes, so for a pusher whose locale's character set is not UTF-8 a space of that character set at an edge stayed on
+# the entry, and a line holding the bare string published where d2091c2c1, whose trim ran in the pusher's locale,
+# refused it (the closing check, by real pushes under ja_JP.EUC-JP and zh_CN.GB18030 built with localedef). The hook
+# now reads the pusher's locale before its export of LC_ALL=C (pusher_charset_read: the name LC_ALL, LC_CTYPE or LANG
+# gives, and locale charmap's answer, the C library's resolution of it) and refuses a push whose denylist holds a byte
+# of 0x80 or above unless that character set is UTF-8, naming the locale and the remedy (push under a UTF-8 locale);
+# where locale charmap answers no single name, the name's codeset suffix is read, and the refusal says which. A
+# denylist of ASCII bytes alone is never refused for this. The witness builds ja_JP.EUC-JP with glibc's localedef into
+# the case's own directory and names it through LOCPATH (about half a second; zh_CN.GB18030, the other locale the check
+# ran, takes several seconds to build and shows the same space, A1 A1), and skips, naming why, where it cannot (no
+# localedef, as on macOS, or no ja_JP source or EUC-JP charmap on the system).
+euc_jp_locpath() {   # builds ja_JP.EUC-JP under $TEST_DIR/locales and sets LOCDIR to that directory; status 1, with the reason in LOCWHY, where it cannot
+    LOCDIR="$TEST_DIR/locales"; LOCWHY=""
+    command -v localedef > /dev/null 2>&1 || { LOCWHY="no localedef on PATH (glibc's tool) builds the EUC-JP locale"; return 1; }
+    mkdir -p "$LOCDIR"
+    localedef -i ja_JP -f EUC-JP "$LOCDIR/ja_JP.EUC-JP" > "$TEST_DIR/localedef.out" 2>&1 || :   # localedef exits 1 on warnings alone; the directory decides
+    [ -d "$LOCDIR/ja_JP.EUC-JP" ] || { LOCWHY="localedef could not build ja_JP.EUC-JP (the ja_JP source or the EUC-JP charmap is missing): $(head -n 1 "$TEST_DIR/localedef.out")"; return 1; }
+    [ "$(LOCPATH="$LOCDIR" LC_ALL=ja_JP.EUC-JP locale charmap 2> /dev/null)" = EUC-JP ] || { LOCWHY="the C library does not load the locale localedef built through LOCPATH"; return 1; }
+}
+locale_base() {   # a remote holding a clean base, pushed, at BASE
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+}
+
+@test "the closing check at b7415b347 (item 40, its 1, a locale whose character set is not UTF-8, the witness): with ja_JP.EUC-JP built by localedef and named through LOCPATH, a denylist entry zqxgbent led by EUC-JP's ideographic space (A1 A1, which that locale's [[:space:]] matches), through a real push under LC_ALL=ja_JP.EUC-JP of a commit adding a line holding ZQXGBENT, is refused naming the denylist as holding a byte of 0x80 or above while the locale is not UTF-8, the locale (LC_ALL=ja_JP.EUC-JP) and the character set locale charmap reads (EUC-JP), and the remedy, a UTF-8 locale, the remote at its base; and the entry ended by that space, through the same push with the locale in LANG alone, is refused naming LANG=ja_JP.EUC-JP (at b7415b347 and at d5740856c both pushes PUBLISHED, the trim keeping the space on the entry; at d2091c2c1, whose trim ran in the pusher's locale, both were refused naming the commit)" {
+    local strings="$TEST_DIR/private-strings-euc.txt"
+    euc_jp_locpath || skip "$LOCWHY"
+    LOCPATH="$LOCDIR" LC_ALL=ja_JP.EUC-JP "$NEWER_BASH" -c 'x=$1; [[ ${x:0:1} == [[:space:]] ]]' _ "$(printf '\241\241zq')"   # the premise: EUC-JP's [[:space:]] matches A1 A1, the trim d2091c2c1 made in that locale
+    locale_base
+    printf 'notes: ZQXGBENT here\n' > "$REPO/leak.txt"
+    git -C "$REPO" add leak.txt
+    git -C "$REPO" commit -qm "a line holding the bare string"
+    export LOCPATH="$LOCDIR"
+    printf '# synthetic\n\241\241zqxgbent\n' > "$strings"
+    [ "$(od -An -tx1 "$strings" | tr -d ' \n')" = 232073796e7468657469630aa1a17a71786762656e740a ]   # the plant landed, byte for byte
+    export ROMP_PRIVATE_STRINGS="$strings" LC_ALL=ja_JP.EUC-JP
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (LC_ALL=ja_JP.EUC-JP, whose character set locale charmap reads as EUC-JP): the trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, so a space of that character set at an edge would stay on the entry, and a line holding the bare string could publish; push again under a UTF-8 locale (LC_ALL=C.UTF-8 or LC_ALL=en_US.UTF-8, whichever locale -a lists, ahead of git push); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"personal identifier"* ]] || false                    # no hit: the entry is grepped with the space on it
+    printf '# synthetic\nzqxgbent\241\241\n' > "$strings"
+    unset LC_ALL LC_CTYPE
+    export LANG=ja_JP.EUC-JP
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (LANG=ja_JP.EUC-JP, whose character set locale charmap reads as EUC-JP): "* ]] || false
+}
+
+@test "the closing check at b7415b347 (item 40, its 1, the C locale): a denylist holding a byte of 0x80 or above (an entry with an e-acute, C3 A9), through a real push of a clean commit, is refused naming the locale and that its character set is not UTF-8, the remote at its base, under LC_ALL=C, LC_ALL=POSIX, LC_CTYPE=C alone, no locale variable set, and LC_ALL naming a UTF-8 locale this system does not have (zz_ZZ.UTF-8, which the C library resolves to the C locale, as locale charmap answers, though its name ends in UTF-8); under a UTF-8 locale this system has, the same push passes (at b7415b347 each push passed, the trim in bytes taking no account of the locale)" {
+    local strings="$TEST_DIR/private-strings-accent.txt" loc row
+    loc=$(utf8_locale)
+    if [ -z "$loc" ]; then
+        if [ "${CI:-}" = true ]; then echo "no UTF-8 locale in a CI cell, where the case must run" >&2; return 1; fi
+        skip "no UTF-8 locale on this system"
+    fi
+    locale_base
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    printf '# synthetic\nzzjos\303\251\nzzsynthuser\n' > "$strings"
+    export ROMP_PRIVATE_STRINGS="$strings"
+    for row in "LC_ALL=C" "LC_ALL=POSIX" "LC_CTYPE=C" "none" "LC_ALL=zz_ZZ.UTF-8"; do
+        echo "row: $row"                                                     # names the row when a line below fails
+        unset LC_ALL LC_CTYPE LANG
+        [ "$row" = none ] || export "${row?}"
+        push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        at_base
+        if [ "$row" = none ]; then
+            [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (no LC_ALL, LC_CTYPE or LANG set, whose character set locale charmap reads as "* ]] || false
+        else
+            [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 ($row, whose character set locale charmap reads as "* ]] || false
+        fi
+        [[ "$output" != *"reads as UTF-8)"* ]] || false
+    done
+    unset LC_ALL LC_CTYPE LANG
+    export LC_ALL="$loc"
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]] || false
+}
+
+@test "the closing check at b7415b347 (item 40, its 1, a denylist of ASCII bytes alone, a guard): setup's denylist, ASCII alone, through a real push of a clean commit, passes with no romp line under LC_ALL=C, LC_ALL=POSIX, no locale variable set, LC_ALL=zz_ZZ.UTF-8 (not on this system), LANG=en_ZZ (a name with no codeset), a UTF-8 locale, and ja_JP.EUC-JP where localedef builds it; and a commit adding a line holding TESTHOST is refused under LC_ALL=C by its hit alone, no line naming the locale (green at b7415b347 by design: the rule refuses a denylist that holds a byte of 0x80 or above, never one of ASCII alone)" {
+    local loc row leak
+    loc=$(utf8_locale)
+    locale_base
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    local -a rows=("LC_ALL=C" "LC_ALL=POSIX" "none" "LC_ALL=zz_ZZ.UTF-8" "LANG=en_ZZ")
+    [ -z "$loc" ] || rows+=("LC_ALL=$loc")
+    if euc_jp_locpath; then export LOCPATH="$LOCDIR"; rows+=("LC_ALL=ja_JP.EUC-JP"); fi
+    for row in "${rows[@]}"; do
+        echo "row: $row"
+        unset LC_ALL LC_CTYPE LANG
+        [ "$row" = none ] || export "${row?}"
+        push_main_through_hook_with_shim
+        [ "$status" -eq 0 ]
+        [[ "$output" != *"romp pre-push"* ]] || false
+        rewind_remote main "$BASE"
+    done
+    commit_file leak.txt "seen on TESTHOST" "a banned host"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    unset LC_ALL LC_CTYPE LANG LOCPATH
+    export LC_ALL=C
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/main (${leak:0:10}) would publish a personal identifier in:"* ]] || false
+    [[ "$output" != *"the DENYLIST"* ]] || false
+}
+
+# locale charmap's stand-ins (pusher_charset_read): a locale first on the hook's PATH, the shim directory, that answers
+# the charmap question as the case says; every other question exits 1.
+locale_stub() {   # <shell commands run for "locale charmap", after which the stand-in exits 0 unless they exit first>
+    mkdir -p "$TEST_DIR/shim"
+    { printf '#!/usr/bin/env bash\n'; printf 'if [ "${1:-}" = charmap ]; then\n%s\nexit 0\nfi\nexit 1\n' "$1"; } > "$TEST_DIR/shim/locale"
+    chmod 755 "$TEST_DIR/shim/locale"
+}
+
+@test "the closing check at b7415b347 (item 40, its 1, the codeset suffix where locale charmap answers no single name): with a locale first on PATH that exits 1 on the charmap question, a denylist holding a byte of 0x80 or above, through a real push of a clean commit, is refused under LC_ALL=ja_JP.EUC-JP naming the character set its codeset suffix reads (EUC-JP) and that locale charmap exited 1, under LANG=en_ZZ naming the character set as one that cannot be told (no codeset suffix), and under LC_ALL=C as the C locale's, ASCII, and passes under LC_ALL=C.UTF-8 and LC_ALL=en_US.utf8 (the suffix read as UTF-8); with a locale that answers two words, the suffix is read the same way (EUC-JP refused, naming the answer as no single name), and with one that answers UTF-8 under LC_ALL=ja_JP.EUC-JP, its answer is what is read, and the push passes (at b7415b347 each push passed)" {
+    local strings="$TEST_DIR/private-strings-accent.txt" row
+    locale_base
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    printf '# synthetic\nzzjos\303\251\n' > "$strings"
+    export ROMP_PRIVATE_STRINGS="$strings"
+    locale_stub 'exit 1'
+    for row in "LC_ALL=ja_JP.EUC-JP|refused|LC_ALL=ja_JP.EUC-JP, whose character set its codeset suffix reads as EUC-JP (locale charmap exited 1)" \
+               "LANG=en_ZZ|unknown|LANG=en_ZZ, whose character set cannot be told (locale charmap exited 1, and the name carries no codeset suffix)" \
+               "LC_ALL=C|refused|LC_ALL=C, the C locale, whose character set is ASCII (locale charmap exited 1)" \
+               "LC_ALL=C.UTF-8|passed|" "LC_ALL=en_US.utf8|passed|"; do
+        echo "row: $row"
+        unset LC_ALL LC_CTYPE LANG
+        export "${row%%|*}"
+        push_main_through_hook_with_shim
+        case "$row" in
+            *"|passed|"*) [ "$status" -eq 0 ]; [[ "$output" != *"romp pre-push"* ]] || false; rewind_remote main "$BASE" ;;
+            *"|unknown|"*) [ "$status" -ne 0 ]; at_base; [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while whether the locale this push runs under is UTF-8 cannot be told (${row##*|}): "* ]] || false ;;
+            *) [ "$status" -ne 0 ]; at_base; [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (${row##*|}): "* ]] || false ;;
+        esac
+    done
+    locale_stub 'echo "UTF-8 extra"'
+    unset LC_ALL LC_CTYPE LANG
+    export LC_ALL=ja_JP.EUC-JP
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"(LC_ALL=ja_JP.EUC-JP, whose character set its codeset suffix reads as EUC-JP (locale charmap answered no single name)): "* ]] || false
+    locale_stub 'echo UTF-8'
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]] || false
+}
+
+@test "the closing check at b7415b347 (item 40, its 1, locale charmap's stdin and stderr): a locale first on PATH that reads its stdin to the end, writes a line to stderr and answers UTF-8, through a real push of a commit adding a line holding TESTHOST, cannot take the ref list the hook reads after it (stdin closed), so the push is refused naming the commit, the remote at its base, and its stderr line is printed nowhere (stderr closed); a copy of the hook whose locale charmap keeps stdin publishes the push, nothing printed, and one whose locale charmap keeps stderr prints the line (b7415b347 runs no locale: there the first push is refused as here, and the case is red on the line its two mutants rewrite, which that text lacks; the mutants are the guard's witnesses)" {
+    local leak copy
+    locale_base
+    commit_file leak.txt "seen on TESTHOST" "a banned host"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    locale_stub 'cat > /dev/null 2>&1 || :; echo "zz-locale-stub: a warning" >&2; echo UTF-8; exit 0'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/main (${leak:0:10}) would publish a personal identifier in:"* ]] || false
+    [[ "$output" != *"zz-locale-stub"* ]] || false
+    [ "$(grep -c -F -x '    pusher_charmap=$(locale charmap 0<&- 2>&-) || pusher_charmap_rc=$?' "$HOOK")" -eq 1 ]   # the line both mutants rewrite
+    copy="$TEST_DIR/hook-stdin"
+    sed 's/^    pusher_charmap=\$(locale charmap 0<&- 2>&-) || pusher_charmap_rc=\$?$/    pusher_charmap=$(locale charmap 2>\&-) || pusher_charmap_rc=$?/' "$HOOK" > "$copy"
+    [ "$(grep -c -F -x '    pusher_charmap=$(locale charmap 2>&-) || pusher_charmap_rc=$?' "$copy")" -eq 1 ]   # the mutant landed
+    chmod 755 "$copy"
+    HOOK="$copy" push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]] || false
+    rewind_remote main "$BASE"
+    copy="$TEST_DIR/hook-stderr"
+    sed 's/^    pusher_charmap=\$(locale charmap 0<&- 2>&-) || pusher_charmap_rc=\$?$/    pusher_charmap=$(locale charmap 0<\&-) || pusher_charmap_rc=$?/' "$HOOK" > "$copy"
+    [ "$(grep -c -F -x '    pusher_charmap=$(locale charmap 0<&-) || pusher_charmap_rc=$?' "$copy")" -eq 1 ]
+    chmod 755 "$copy"
+    HOOK="$copy" push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"zz-locale-stub: a warning"* ]] || false
+}
+
+# Its 3, the ninth site of build 9's class: the EMPTY TREE name's read (refuse_hidden_paths), whose input, /dev/null,
+# sat on the judged_read call at d5740856c, so a failed open skipped the call whole, the else branch set nothing but
+# numstat_ok, the type change's addition went unjudged, and a text file git calls binary published (the closing check,
+# by a real push). Since build 9 judged_read opens it (-i /dev/null) and names the open. The library arms after the
+# first open of the scratch directory (BOF_AFTER), so the gate's own /dev/null, opened under a bash older than 5.1
+# before the re-run, passes, and in the body the empty tree's input is the one open of /dev/null for reading alone.
+@test "the closing check at b7415b347 (item 40, its 3, the ninth site, the EMPTY TREE name's input): a symlink replaced by a text file under -diff that holds a banned string (a type change, its addition judged against the empty tree), the file gone at the tip, through a real push with the library failing the shell's open of /dev/null for reading after the scratch directory's first open (the empty tree name's input, judged_read's -i), is refused on that read's line naming /dev/null as its input file that could not be opened for reading, the remote at its base, within the 60 s bound (at d5740856c, and at d2091c2c1, /dev/null sat on the call, the failed open skipped it whole, the addition went unjudged and the push PUBLISHED; with no fault each of those hooks refuses the same push, naming the file as one its diff attribute hides)" {
+    local sha
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    attributes 'thing -diff'
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    symlink_commit thing "nothing to see" "a clean symlink"
+    rm "$REPO/thing"
+    commit_file thing "seen on TESTHOST" "the symlink replaced by a -diff text file holding a banned string"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file thing "remove it"                                             # gone at the tip: the commit's verdicts decide, the type change's addition among them
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-commit-id "$1" -- thing' _ "$sha"
+    [[ "$output" == ":120000 100644 "*" T"$'\t'"thing" ]] || false            # the premise: a type change, its addition judged against the empty tree
+    bof_push main -- BOF_AFTER=/romp-pre-push. BOF_PATH=/dev/null BOF_DIR=r
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${sha:0:10} could not be read (git hash-object, asked for the empty tree's name, was not run: its input file /dev/null could not be opened for reading); the scan is incomplete, so the push is refused"* ]] || false
+}
+
+# Its 5: the scan of record and the additive run (scanner_run's record and names modes) printed no line for a scanner
+# exit other than 0 or 2, and record mode shows a log line only at the five levels, so a scanner that printed a line
+# of another form and exited left the push refused with no line naming the exit, the closing lines saying its error was
+# above (the closing check: a wrapper printing a plain error line and exiting 1). Each mode now names the status, the
+# line saying where the log is, and the scanner's closing block says what happened: it exited so (each exit is named
+# above), or it exited so and the scan met another error, or, with no exit, its error is above, as before.
+@test "the closing check at b7415b347 (item 40, its 5, a scanner exit other than 0 or 2 in the scan of record and in the additive run): through real pushes, a scanner wrapper that, on the scan of record's run, writes a plain error line and exits 3, then 137, without scanning, is refused with a line naming the CREDENTIAL scan's exit status and where its log is (the plain line, of no level, not shown), the closing block saying gitleaks exited with a status other than 0 or 2, named above, and never that its error is above; one that exits 3 on the additive run alone (the path-scoped rules, over a cert.p12) is refused naming that run's status the same way; one that exits 3 on both runs closes saying it exited so (each exit counted, no other cause); and one that exits 3 on the scan of record while the additive run logs an error closes saying it exited so and the scan met another error, each named above; the remote at its base each time (at b7415b347 no line named an exit of either run, and each push closed saying gitleaks' error was above)" {
+    local code
+    r9d_base
+    commit_file k.py "k = 1" "a clean commit"
+    for code in 3 137; do
+        echo "push: the scan of record exiting $code"
+        scanner_wrapper "if [ \"\${PWD##*/}\" = creds.d ]; then echo 'zz-scanner: a plain error line' >&2; exit $code; fi"
+        push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: the CREDENTIAL scan exited $code, neither 0 (clean) nor 2 (a finding), so what it read is unknown; the lines of its log at a level the hook shows (INF, WRN, ERR, FTL or PNC), if it wrote any, are above, and a line of any other form is not shown; the scan is incomplete, so the push is refused"* ]] || false
+        [[ "$output" == *"romp pre-push: BLOCKED. gitleaks could not scan: it exited with a status other than 0 (clean) or 2 (a finding), named above."$'\n'"  The push is refused rather than published unscanned. Fix the scanner"* ]] || false
+        [[ "$output" != *"its error is above"* ]] || false
+        [[ "$output" != *"zz-scanner: a plain error line"* ]] || false
+    done
+    echo "push: the additive run exiting 3"
+    r9d_witness pkcs12-file
+    git -C "$REPO" add -- "$wfile"
+    git -C "$REPO" commit -qm "a file the path-scoped rules name"
+    scanner_wrapper "if [ \"\${PWD##*/}\" = creds.p ]; then exit 3; fi"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan under the path-scoped rules exited 3, neither 0 (clean) nor 2 (a finding), so what it read is unknown; its log, if it wrote one, is above; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: BLOCKED. gitleaks could not scan: it exited with a status other than 0 (clean) or 2 (a finding), named above."* ]] || false
+    [[ "$output" != *"its error is above"* ]] || false
+    echo "push: the scan of record and the additive run each exiting 3, and nothing else"
+    scanner_wrapper "if [ \"\${PWD##*/}\" = creds.d ] || [ \"\${PWD##*/}\" = creds.p ]; then exit 3; fi"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan exited 3, neither 0 (clean) nor 2 (a finding), so what it read is unknown; "* ]] || false
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan under the path-scoped rules exited 3, neither 0 (clean) nor 2 (a finding), so what it read is unknown; "* ]] || false
+    [[ "$output" == *"romp pre-push: BLOCKED. gitleaks could not scan: it exited with a status other than 0 (clean) or 2 (a finding), named above."* ]] || false
+    [[ "$output" != *"met another error"* ]] || false                         # two exits, each counted, and no other cause
+    echo "push: the scan of record exiting 3, the additive run logging an error"
+    scanner_wrapper "if [ \"\${PWD##*/}\" = creds.d ]; then exit 3; fi; if [ \"\${PWD##*/}\" = creds.p ]; then echo '1:00AM ERR a planted error' >&2; fi"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan exited 3, neither 0 (clean) nor 2 (a finding), so what it read is unknown; "* ]] || false
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan under the path-scoped rules did not complete: gitleaks logged an error (a planted error); "* ]] || false
+    [[ "$output" == *"romp pre-push: BLOCKED. gitleaks could not scan: it exited with a status other than 0 (clean) or 2 (a finding), and the scan met another error; each is named above."* ]] || false
+    [[ "$output" != *"its error is above"* ]] || false
+}
+
+# Its 6, judged_inputs widened (the comment above judged_inputs): the four shapes the closing check planted, each of
+# which skips the call whole (by a demo with a stub, under bash 5.2 and 3.2: status 1, read_rc as the read before left
+# it), and the compounds and wrapping calls of the same class, each named once; the duplicating redirections, an output
+# redirection, a line loop and a compound around no judged read are passed. A call inside a command substitution with
+# a file on it, and a braced group and a while-colon loop around a call whose file follows the close after a
+# backslash-newline, are named too (each skips the call by the same demo).
+@test "the closing check at b7415b347 (item 40, its 6, the census of judged_read's inputs widened): judged_inputs names nothing in the hook, and in a copy names, once each, a call carrying wc -c<\"\$f\" with no blank before the <, one carrying < \"\$f\" ahead of its --, a braced group around a call fed by a file across two lines, a call of a function wrapping a judged_read call fed by a file, a here-string on a call of a function that calls that wrapper, a for loop's done fed by a file around a call, and an if, a subshell (fed by a process substitution), a case and a while-colon loop around a call or a wrapper, each fed by a file, a call inside a command substitution carrying < \"\$f\" and one carrying a here-string, and a braced group and a multi-line while-colon loop around a call, each fed by a file on the line after its close (a backslash-newline between); and passes a wrapper, a braced group and a call itself fed by a copy of a descriptor (<&4), a braced group around a call with an output redirection, a one-line while-read loop fed by a file around a call (a line loop, the read census's), a multi-line one, and a braced group fed by a file around no judged read (until this check the census named only a redirection after the call's -- and a blank, and none of the closing check's four shapes)" {
+    local tl k
+    run judged_inputs "$HOOK"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    tl=$(grep -n '^trap .exit_trap' "$HOOK" | head -n 1 | cut -d: -f1)
+    census_plant "$TEST_DIR/ji-named.sh" \
+        'judged_read gate="the ZZ b2" 0 "zz (wc exited {rc})" -- wc -c<"$zzf" || :' \
+        'judged_read gate="the ZZ b3" 0 "zz (wc exited {rc})" < "$zzf" -- wc -c || :' \
+        '{ judged_read gate="the ZZ b8" 0 "zz (wc exited {rc})" \' \
+        '    -- wc -c; } < "$zzf" || :' \
+        'zzwrap() {' \
+        '    judged_read gate="the ZZ b15" 0 "zz (wc exited {rc})" -- wc -c' \
+        '}' \
+        'zzwrap < "$zzf" || :' \
+        'zzouter() {' \
+        '    zzwrap "$1"' \
+        '}' \
+        'zzouter x <<< "$zzt" || :' \
+        'for zz in a b; do' \
+        '    judged_read gate="the ZZ for" 0 "zz (wc exited {rc})" -- wc -c || :' \
+        'done < "$zzf" || :' \
+        'if :; then judged_read gate="the ZZ if" 0 "zz (wc exited {rc})" -- wc -c; fi < "$zzf" || :' \
+        '( judged_read gate="the ZZ sub" 0 "zz (wc exited {rc})" -- wc -c ) < <(echo x) || :' \
+        'case x in x) judged_read gate="the ZZ case" 0 "zz (wc exited {rc})" -- wc -c ;; esac < "$zzf" || :' \
+        'while :; do zzwrap; break; done < "$zzf" || :' \
+        'zzx=$(judged_read gate="the ZZ cs" 0 "zz (wc exited {rc})" -- wc -c < "$zzf") || :' \
+        'zzx=$(judged_read gate="the ZZ cs2" 0,1 "zz (grep exited {rc})" -- grep -c zz <<< "$zzt") || :' \
+        '{ judged_read gate="the ZZ brace2" 0 "zz (wc exited {rc})" -- wc -c; } \' \
+        '    < "$zzf" || :' \
+        'while :; do' \
+        '    judged_read gate="the ZZ loop2" 0 "zz (wc exited {rc})" -- wc -c || :' \
+        '    break' \
+        'done \' \
+        '    < "$zzf" || :'
+    [ "$(sed -n "$((tl + 1))p" "$TEST_DIR/ji-named.sh")" = 'judged_read gate="the ZZ b2" 0 "zz (wc exited {rc})" -- wc -c<"$zzf" || :' ]   # the plant landed
+    run judged_inputs "$TEST_DIR/ji-named.sh"
+    [ "$status" -eq 0 ]
+    [ "$(grep -c . <<< "$output")" -eq 14 ]
+    for k in 1 2 4 8 12 15 16 17 18 19 20 21 22 27; do
+        echo "plant line: tl + $k"                                           # names the plant when a line below fails
+        [ "$(grep -c "^$((tl + k)): " <<< "$output")" -eq 1 ]
+        grep -q -F -x "$((tl + k)): $(sed -n "$((tl + k))p" "$TEST_DIR/ji-named.sh")" <<< "$output"
+    done
+    census_plant "$TEST_DIR/ji-passed.sh" \
+        'zzwrap() {' \
+        '    judged_read gate="the ZZ b15" 0 "zz (wc exited {rc})" -- wc -c' \
+        '}' \
+        'zzwrap <&4 || :' \
+        '{ judged_read gate="the ZZ dup" 0 "zz (wc exited {rc})" -- wc -c; } <&4 || :' \
+        'judged_read gate="the ZZ dup2" 0 "zz (wc exited {rc})" -- wc -c <&4 || :' \
+        '{ judged_read gate="the ZZ out" 0 "zz (wc exited {rc})" -- wc -c; } > "$zzf" || :' \
+        'while IFS= read -r zl; do judged_read gate="the ZZ line loop" 0 "zz (wc exited {rc})" -- wc -c || :; done < "$zzf"' \
+        'while IFS= read -r zl; do' \
+        '    judged_read gate="the ZZ line loop 2" 0 "zz (wc exited {rc})" -- wc -c || :' \
+        'done < "$zzf"' \
+        '{ zznone; } < "$zzf" || :'
+    [ "$(sed -n "$((tl + 4))p" "$TEST_DIR/ji-passed.sh")" = 'zzwrap <&4 || :' ]   # the plant landed
+    run judged_inputs "$TEST_DIR/ji-passed.sh"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# Its 7 and 8, the census of the read loops: a here-document's body read as no code (honouring <<- and a quoted
+# delimiter), a document whose delimiter no line holds failed, and every mapfile or readarray failed (the census comment
+# above read_loop_census). The witness is the closing check's: an if whose condition is : fed by a here-document whose
+# body holds then and fi lines, then a read in the same condition, whose failure does not end the hook (by a demo under
+# set -e, bash 5.2 and 3.2: the else branch runs).
+@test "the closing check at b7415b347 (item 40, its 7 and 8, the read census, here-documents' bodies and mapfile): a copy planting an if whose condition is : fed by a here-document whose body holds a then line and a fi line, then a read of a file in the same condition, fails that read as one that neither ends the hook on its failure (in a condition) nor has its status judged, with the delimiter spaced from <<, after <<- with the body and the delimiter led by tabs, quoted whole, and quoted in part (until this check the census read the body's then and fi as keywords and listed the read as a one-shot read that aborts); a document whose delimiter no line holds is failed on its operator's line; a body holding a while-read loop's lines is read as no code (nothing failed), and a << in an arithmetic expansion opens no document; and a mapfile in a for loop's body, a readarray at the top level and a builtin mapfile are each failed on their line (until this check nothing named them)" {
+    local tl f t=$'\t'
+    run read_loop_census "$HOOK"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *FAIL* ]] || false
+    tl=$(grep -n '^trap .exit_trap' "$HOOK" | head -n 1 | cut -d: -f1)
+    census_plant "$TEST_DIR/hd-spaced.sh" 'if : << ZEOF' 'then' 'fi' 'ZEOF' 'IFS= read -r zw < "$zzf"' 'then :; fi'
+    census_plant "$TEST_DIR/hd-dash.sh" 'if : <<- ZEOF' "${t}then" "${t}fi" "${t}ZEOF" 'IFS= read -r zw < "$zzf"' 'then :; fi'
+    census_plant "$TEST_DIR/hd-quoted.sh" "if : << 'ZEOF'" 'then' 'fi' 'ZEOF' 'IFS= read -r zw < "$zzf"' 'then :; fi'
+    census_plant "$TEST_DIR/hd-part.sh" 'if : <<"ZE"OF' 'then' 'fi' 'ZEOF' 'IFS= read -r zw < "$zzf"' 'then :; fi'
+    for f in spaced dash quoted part; do
+        echo "plant: hd-$f"                                                  # names the plant when a line below fails
+        [ "$(sed -n "$((tl + 5))p" "$TEST_DIR/hd-$f.sh")" = 'IFS= read -r zw < "$zzf"' ]   # the plant landed
+        run read_loop_census "$TEST_DIR/hd-$f.sh"
+        [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ]
+        [[ "$output" == *"FAIL $((tl + 5)): a one-shot read neither ends the hook on its failure (in a condition) nor has its status judged ("*"): IFS= read -r zw < \"\$zzf\""* ]] || false
+        [[ "$output" != *"one-shot $((tl + 5)) aborts"* ]] || false
+    done
+    census_plant "$TEST_DIR/hd-open.sh" 'if : << ZEOF' 'then' 'fi' 'IFS= read -r zw < "$zzf"' 'then :; fi'
+    run read_loop_census "$TEST_DIR/hd-open.sh"
+    [[ "$output" == *"FAIL $((tl + 1)): a here-document whose delimiter, ZEOF, no later line holds alone, so its body runs to the end of the file and the census read no line after it as code: if : << ZEOF"* ]] || false
+    census_plant "$TEST_DIR/hd-loop.sh" ': << ZEOF' 'while read -r zz; do' 'done' 'ZEOF'
+    run read_loop_census "$TEST_DIR/hd-loop.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *FAIL* ]] || false
+    census_plant "$TEST_DIR/hd-arith.sh" 'zq=$((1 << 2))'
+    run read_loop_census "$TEST_DIR/hd-arith.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *FAIL* ]] || false
+    [ "$(grep -c '^ok [0-9]* (ii) ' <<< "$output")" -ge 39 ]                # a shift in an arithmetic expansion opens no document: the hook's line loops after it are still read
+    census_plant "$TEST_DIR/mf-loop.sh" 'for zz in a b; do mapfile -t zarr < "$zzf" || :; done'
+    census_plant "$TEST_DIR/mf-top.sh" 'readarray -t zarr < "$zzf"'
+    census_plant "$TEST_DIR/mf-builtin.sh" 'builtin mapfile -t zarr < "$zzf" || :'
+    for f in loop:mapfile top:readarray builtin:mapfile; do
+        echo "plant: mf-${f%%:*}"
+        run read_loop_census "$TEST_DIR/mf-${f%%:*}.sh"
+        [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ]
+        [[ "$output" == *"FAIL $((tl + 1)): ${f#*:}, whose status is 0 at the end of its input and on a read error alike, so a read error would pass as the end, and no form here can tell the two apart: $(sed -n "$((tl + 1))p" "$TEST_DIR/mf-${f%%:*}.sh")"* ]] || false
+    done
 }

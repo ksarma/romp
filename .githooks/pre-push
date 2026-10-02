@@ -15,7 +15,10 @@
 #                 of those alone is blank and skipped), matched
 #                 case-insensitively in ASCII letters alone (a letter outside
 #                 ASCII matches only as the bytes the line holds; the export
-#                 of the C locale, below, states the cost). Where the hook
+#                 of the C locale, below, states the cost). A denylist that
+#                 holds a byte of 0x80 or above is scanned only under a
+#                 UTF-8 locale: under any other the push is refused, naming
+#                 the locale (pusher_charset_read). Where the hook
 #                 can tell that nothing is at that path, the scan stays out of
 #                 your way, so on a clone that never set one up (any
 #                 contributor's machine) it is a no-op; where it cannot tell
@@ -2176,7 +2179,50 @@ bash_gate() {   # <the hook's arguments>: returns under bash 5.1 or later; under
     echo "  To bypass for one push (you are sure it is fine): git push --no-verify" >&2
     exit 1
 }
+# The pusher's locale, read before the body's export of LC_ALL=C below (the
+# coordinator's ruling of 14:58Z 2026-10-02 on the closing check at
+# b7415b347, its 1). The denylist's trim takes off ASCII whitespace and a set
+# of UTF-8 spaces, in bytes (scan_identifiers' paragraph), so for a pusher in
+# a locale whose character set is not UTF-8, a space of that character set at
+# an entry's edge stays on the entry: the ideographic space of EUC-JP and of
+# GB18030, the bytes A1 A1, which d2091c2c1's trim, run in the pusher's
+# locale, took off. A line holding the bare string then published where
+# d2091c2c1 refused it (the closing check, by real pushes at b7415b347 under
+# zh_CN.GB18030 and ja_JP.EUC-JP built with localedef; d5740856c published
+# too, and d2091c2c1 refused under zh_CN.GB18030). So
+# scan_identifiers refuses a push whose denylist, as read, comments included,
+# holds a byte of 0x80 or above unless the pusher's character set is UTF-8:
+# one that is not, or one that cannot be told, is the unverified side and
+# fails closed, and a denylist of ASCII bytes alone is never refused for
+# this. pusher_charset_read records what that verdict needs while the
+# pusher's locale is still in force: the locale's name (LC_ALL, else
+# LC_CTYPE, else LANG, the first that holds a value, the order the C library
+# reads them in) and the answer of locale charmap, the C library's own
+# resolution of that name (a name it cannot load resolves to the C locale,
+# as the shell's own locale does). The verdict (pusher_charset_verdict) reads
+# that answer, or, where locale charmap answers no single name (no locale
+# program on PATH, or a status other than 0), the name's codeset suffix (the
+# text after its first . and before any @), in the body's C locale, and the
+# refusal says which of the two it read. No pattern operation runs here, in
+# the pusher's locale. locale runs with stdin closed (0<&-), so it cannot
+# take the ref list the body reads next, and with stderr closed (2>&-), so a
+# name the C library cannot load prints locale's warnings nowhere (the shell
+# prints its own). Under bash 5.1 or later it is the one program the hook
+# runs before the ref list is read (under an older bash the gate asks its
+# candidates their version first, with stdin from /dev/null).
+pusher_charset_read() {   # before the body's export of LC_ALL=C: sets pusher_locale_var and pusher_locale (the variable that names the locale for character handling, and its value; both empty when none holds one), pusher_charmap and pusher_charmap_rc (locale charmap's answer and status)
+    pusher_locale_var=""; pusher_locale=""
+    if [ -n "${LC_ALL:-}" ]; then pusher_locale_var=LC_ALL; pusher_locale=$LC_ALL
+    elif [ -n "${LC_CTYPE:-}" ]; then pusher_locale_var=LC_CTYPE; pusher_locale=$LC_CTYPE
+    elif [ -n "${LANG:-}" ]; then pusher_locale_var=LANG; pusher_locale=$LANG
+    fi
+    pusher_charmap_rc=0
+    pusher_charmap=$(locale charmap 0<&- 2>&-) || pusher_charmap_rc=$?
+}
 bash_gate "$@"
+# The pusher's locale, while it is still in force (the paragraph above
+# pusher_charset_read); the export of the C locale follows.
+pusher_charset_read
 # The C locale for the whole body (the coordinator's ruling on the audit of
 # item 40's build 4, 2026-10-01 09:58Z, its A), set here, ahead of the body's
 # first text tool and its first pattern operation, and reset by nothing after
@@ -2245,7 +2291,10 @@ bash_gate "$@"
 # it under LC_ALL=C themselves). Nothing after this line sets LC_ALL,
 # LC_CTYPE, another LC_ variable, LANG or LANGUAGE to anything but C, unsets
 # or un-exports one, or runs env -i, env -u, env - or exec -c (the same file's
-# census of the body's locale words, after the export's pin, holds that). The
+# census of the body's locale words, after the export's pin, holds that).
+# pusher_charset_read, called just above, reads the pusher's locale before
+# this line and runs no pattern operation (its paragraph; the export's pin
+# holds the call first and this export second). The
 # gate above runs before this line, in the pusher's locale: its pattern
 # operations on bytes the pusher supplies (the walk up the denylist's path in
 # denylist_state, bash_gate's split of ROMP_HOOK_BASHES and of a candidate's
@@ -2269,7 +2318,10 @@ export GIT_NO_REPLACE_OBJECTS=1
 # hook's stdin (a configuration read, of log.showRoot, ran here until round 8
 # and was retired in round 9, and a git that drained stdin on it, exit 0 and
 # nothing printed, emptied the list the same way through a real push; the
-# round 7 refuters, 2026-09-23). The
+# round 7 refuters, 2026-09-23). The one program that runs ahead of the read,
+# pusher_charset_read's locale charmap, runs with stdin closed, so it cannot
+# take the list (tests/pre-push-hook.bats, the case of a locale that drains
+# its stdin). The
 # `|| [ -n "${line-}" ]` keeps a last line git wrote without a newline. line
 # is UNSET before each read: read returns 1 at the end of the input and on a
 # read error alike, and assigns its variable at the end (the empty string
@@ -2304,7 +2356,7 @@ unscanned_n=0           # every refusal unscanned made, counted: list_commits co
 failed_creds=0          # a subset of failed_scan: the credential scan could not complete, with advice of its own by cause: the shell's own failed open (open_n), the scanner's for any other (scan_credentials' closing lines)
 failed_feed=0           # a subset of failed_scan, apart from failed_creds: the credential feed or the merges' first-parent read printed a line of none of the shapes it reads (a foreign line), with advice of its own that names neither the scanner nor a single read, the refusal line above it naming the read (round 12t, the closing check's CC3; round 12u, on round 12t's audit, F1); a count of those refusals, one each, since OP9-6, so the closing lines can tell the credential scan's other refusals apart
 open_n=0                # every refusal unscanned_open made, counted, a subset of unscanned_n: a file, a here-string or /dev/null the shell could not open, so the credential scan's closing lines can tell such a cause from the rest (OP9-6)
-scanner_exited=0        # a subset of failed_creds: a scanner run exited neither 0 nor 2, which in the scan of record and the additive run prints no refusal line of its own (gitleaks' log above is its error), so the closing lines read this rather than a count of lines
+scanner_exited=0        # a subset of failed_creds: the scanner runs that exited neither 0 nor 2, counted, each named by a refusal line of its own in every mode since the closing check at b7415b347 (its 5), so the closing lines can say a run exited and tell that cause from the scan's other refusals
 hidden_paths=0          # a subset of failed_scan: git calls a text file binary and the identifier scan skipped it, with a remedy of its own
 hidden_unnamed=0        # a subset of hidden_paths: no diff attribute accounts for the verdict, so the advice names the configuration key too
 hidden_attr=0           # a subset of hidden_paths: a refused line named the path's diff attribute as the cause, or could not read it, so the advice names the attribute's remedy
@@ -2791,10 +2843,15 @@ pair_end() {   # <${a+set}> <${pair_whole+set}> <${b+set}>: prints set when the 
 # read as a status of the command not run: the read's refusal said "a read
 # error", a tool's said it exited 1 or answered short, and a judged_read call
 # made in a condition or before an || returned as a read that found nothing,
-# with no refusal at all (the survey of build 9, item 40's part (26): the
-# message grep, the address and tagger greps, the hit paths' sort, the tag's
-# byte count, the added lines' count and the newline test's three counts let a
-# push publish, and the symlink target's grep let a tip pass). So such an
+# with no refusal at all (the survey of build 9, item 40's part (26), and
+# the closing check at b7415b347, its 3 and 4: the message grep, the address
+# and tagger greps, the hit paths' sort, the tag's byte count, the newline
+# test's three counts and the empty tree's name, read for a type change's
+# addition, let a push publish a banned string; the symlink target's grep let
+# a tip pass; and the added lines' count passed a clean commit's failed count,
+# its check of the capture's length skipped, which would publish a banned
+# string only with a capture cut short under exit 0, since the added lines'
+# grep reads the capture whatever the count did). So such an
 # input is opened ONCE, on a descriptor of its own, before the command, and
 # the open is judged on its own, as judged_read opens its output file: open_in
 # and open_str below for a read's input (descriptor 4, closed again after the
@@ -4639,11 +4696,52 @@ byte_length() {   # <text>: prints its length in bytes
     local LC_ALL=C
     printf '%s' "${#1}"
 }
+# The verdict on the pusher's character set (the paragraph above
+# pusher_charset_read), read in the body's C locale from what that function
+# recorded before the export. charset_is is utf8 when the name read is UTF-8
+# (any case, with or without the hyphen), other when it is another name (the
+# C locale's, ASCII, among them), and unknown when no name can be read.
+# locale charmap's answer is read when it is one name (status 0 and nothing
+# but letters, digits and . _ : + -); otherwise the locale's own name is read:
+# no name, C or POSIX is the C locale, whose character set is ASCII, and any
+# other name is read by its codeset suffix, the text after its first . and
+# before any @, which a name with no . or an empty suffix does not carry
+# (unknown). charset_said names the locale, the character set and the read
+# that gave it, for the refusal.
+pusher_charset_verdict() {   # sets charset_is (utf8, other or unknown) and charset_said
+    local cs="" name why
+    if [ -n "$pusher_locale_var" ]; then name="$pusher_locale_var=$pusher_locale"; else name="no LC_ALL, LC_CTYPE or LANG set"; fi
+    if [ "$pusher_charmap_rc" -eq 0 ] && [ -n "$pusher_charmap" ] && [ -z "${pusher_charmap//[A-Za-z0-9._:+-]/}" ]; then
+        cs=$pusher_charmap
+        charset_said="$name, whose character set locale charmap reads as $cs"
+    else
+        if [ "$pusher_charmap_rc" -ne 0 ]; then why="exited $pusher_charmap_rc"; elif [ -z "$pusher_charmap" ]; then why="answered nothing"; else why="answered no single name"; fi
+        case "$pusher_locale" in
+            ''|C|POSIX)
+                cs=ASCII
+                charset_said="$name, the C locale, whose character set is ASCII (locale charmap $why)" ;;
+            *.*)
+                cs=${pusher_locale#*.}; cs=${cs%%@*}
+                if [ -n "$cs" ]; then
+                    charset_said="$name, whose character set its codeset suffix reads as $cs (locale charmap $why)"
+                else
+                    charset_said="$name, whose character set cannot be told (locale charmap $why, and the name's codeset suffix is empty)"
+                fi ;;
+            *)
+                charset_said="$name, whose character set cannot be told (locale charmap $why, and the name carries no codeset suffix)" ;;
+        esac
+    fi
+    case "$cs" in
+        [Uu][Tt][Ff]-8|[Uu][Tt][Ff]8) charset_is=utf8 ;;
+        '') charset_is=unknown ;;
+        *) charset_is=other ;;
+    esac
+}
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen chosen_unread
     local rc errs hits listing link blob link_path target size revs rev n msg addrs inner kind tip_listed tip_entries rev_counts iref_n cg_n errs_n hits_n
     local peeled peeled_read paths count linecount tag_read hdr tag_bytes tag_nonl links_n addrs_n
-    local target_bytes read_as whole_what enc_revs="" text nb added_run chosen_rc
+    local target_bytes read_as whole_what enc_revs="" text nb added_run chosen_rc charset_is charset_said
     local -a words deny_lines
     strings_file="$(private_strings_file)"
     identifier_scan_armed || return 0
@@ -4780,6 +4878,23 @@ scan_identifiers() {
         return 0
     fi
     exec 4<&-
+    # A denylist holding a byte of 0x80 or above, anywhere in it, is scanned
+    # only for a pusher whose character set is UTF-8 (the paragraph above
+    # pusher_charset_read): the trim below knows UTF-8's spaces alone, so
+    # under another character set, or one that cannot be told, the push is
+    # refused naming the locale and the remedy. The scan goes on all the same,
+    # so a hit is named in the same push; it can only add refusals, since a
+    # trim that takes off bytes another character set reads otherwise leaves
+    # a shorter string, matched by every line the whole entry matches.
+    case "$text" in
+        *[$'\x80'-$'\xff']*)
+            pusher_charset_verdict
+            case "$charset_is" in
+                utf8) ;;
+                other) unscanned "the DENYLIST $strings_file holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 ($charset_said): the trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, so a space of that character set at an edge would stay on the entry, and a line holding the bare string could publish; push again under a UTF-8 locale (LC_ALL=C.UTF-8 or LC_ALL=en_US.UTF-8, whichever locale -a lists, ahead of git push)" ;;
+                *) unscanned "the DENYLIST $strings_file holds a byte of 0x80 or above while whether the locale this push runs under is UTF-8 cannot be told ($charset_said): the trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, so a space of another character set at an edge would stay on the entry, and a line holding the bare string could publish; push again under a UTF-8 locale (LC_ALL=C.UTF-8 or LC_ALL=en_US.UTF-8, whichever locale -a lists, ahead of git push)" ;;
+            esac ;;
+    esac
     for line in ${deny_lines[@]+"${deny_lines[@]}"}; do
         line="${line%%#*}"
         # The edges, in bytes (the paragraph above): each pass takes off the
@@ -7277,7 +7392,14 @@ tl_note() {   # <map variable> <line> <first segment> <one past the last> <L|T>:
 # slash (a copy lives in its piece's directory, whatever its own name); a
 # line cut inside, or naming no piece, is skipped, a line printed once for
 # the push (seen_lines, the caller's, so a credential two runs find is named
-# once), and a report naming fewer findings than the log counts says so.
+# once), and a report naming fewer findings than the log counts says so. An
+# exit other than 0 or 2 in either is named after the log, the line saying
+# where the log is (the coordinator's ruling of 14:58Z 2026-10-02 on the
+# closing check at b7415b347, its 5: until then neither mode printed a line
+# for one, and record mode shows a log line only at the five levels, so a
+# scanner that printed a line of another form and exited 1 left the push
+# refused with no line naming the exit, the closing lines saying its error
+# was above).
 # probe, the probe run (the header): every probe is a finding, so its
 # findings are never shown (its stdout goes to /dev/null) and exit 2 sets
 # nothing; its log is shown only when the run fails (an exit other than 0 or
@@ -7292,7 +7414,7 @@ tl_note() {   # <map variable> <line> <first segment> <one past the last> <L|T>:
 # is named, and the ERR line and the byte figure are read as in every run;
 # then canary_check reads the log for the skip lines. Sets blocked_creds,
 # failed_scan, failed_creds and run_rc (the scanner's exit), the caller's,
-# and scanner_exited, the global, for an exit other than 0 or 2.
+# and counts in scanner_exited, the global, each exit other than 0 or 2.
 scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <bytes written there, or empty when the feed was refused> <report file> <record|names|probe|canary> [<scanner option>...]
     local gl="$1" what="$2" dir="$3" want="$4" rep="$5" mode="$6" rc log logf line err got start rule term piece line_out nrec leaks judged=$unscanned_n trace=0 sopen smask
     local kind sa sb snamed sd send swhere spath sline sseen="" shown='^[^ ]+ (INF|WRN|ERR|FTL|PNC)( |$)'
@@ -7363,7 +7485,9 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
         *)
             [ "$mode" != probe ] || unscanned "$what exited $rc, neither 0 (clean) nor 2 (a finding), so what it read is unknown; its log follows"
             [ "$mode" != canary ] || unscanned "$what exited $rc, neither 0 (clean) nor 2 (a finding), so whether it logs the skip line the scan of record reads is unknown; re-verify the hook against that gitleaks, or set ROMP_NO_GITLEAKS=1 for one push"
-            failed_scan=1; failed_creds=1; scanner_exited=1 ;;
+            [ "$mode" != record ] || unscanned "$what exited $rc, neither 0 (clean) nor 2 (a finding), so what it read is unknown; the lines of its log at a level the hook shows (INF, WRN, ERR, FTL or PNC), if it wrote any, are above, and a line of any other form is not shown"
+            [ "$mode" != names ] || unscanned "$what exited $rc, neither 0 (clean) nor 2 (a finding), so what it read is unknown; its log, if it wrote one, is above"
+            failed_scan=1; failed_creds=1; scanner_exited=$((scanner_exited + 1)) ;;
     esac
     if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
         # The ERR line's awk answers a WORD whatever the log holds: none for a
@@ -8076,7 +8200,7 @@ piece_dirs() {   # <directory>...: makes each; prints nothing on stdout
 # refuses the push with no run made; a push the scanner would not run over
 # reads neither.
 scan_credentials() {
-    local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what un0 on0 nopen nother
+    local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what un0 on0 nopen nother ex0 nexit
     # shellcheck disable=SC2034  # cfg_name: set by gitleaks_config, for the lines that name the config the runs read
     local rdone rpieces rbytes rpbytes rbin rmerge="" rlisted="" fwhole=0 rest piece fsha fpath fterm data pdone plisted pbig pmerge nbig pcount scanning dmade=0 dmiss dfirst d cfg_name="" cfg_forms="" gl_version="" drv_tc="" cref_n
     local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend qseen seen_lines="" run_rc=0
@@ -8085,7 +8209,7 @@ scan_credentials() {
         gitleaks_notice                                 # silent under a skip, else the notice (its comment)
         return 0
     fi
-    un0=$unscanned_n; on0=$open_n                   # the refusals before this scan, for its closing lines
+    un0=$unscanned_n; on0=$open_n; ex0=$scanner_exited   # the refusals and the scanner exits before this scan, for its closing lines
     gl="$(gitleaks_binary)"
     case "$gl" in /*) ;; *) gl="$(pwd -P)/$gl" ;; esac        # scanner_run runs it from another directory
     if ! make_scratch; then
@@ -8511,21 +8635,34 @@ scan_credentials() {
     # cause, with the scanner's advice as before: a refusal of this scan that
     # is neither such an open nor the feed's foreign line (failed_feed counts
     # those, which have advice of their own), or a scanner exit
-    # (scanner_exited: the scan of record and the additive run print no
-    # refusal line for one). Both print when both kinds were there. Every
+    # (scanner_exited). Both print when both kinds were there. Every
     # refusal this scan makes sets failed_creds or failed_feed, and every
-    # failed_creds follows a refusal of its own cause or is a scanner exit,
-    # so the counts give the kinds; a failed_creds with neither (none today)
-    # takes the scanner's advice, as every one did until then.
-    nopen=$((open_n - on0)); nother=$((unscanned_n - un0 - nopen - failed_feed))
+    # failed_creds follows a refusal of its own cause, so the counts give the
+    # kinds; a failed_creds with neither (none today) takes the scanner's
+    # advice, as every one did until then. The scanner's block says what
+    # happened (the ruling of 14:58Z 2026-10-02 on the closing check at
+    # b7415b347, its 5): a run that exited neither 0 nor 2 is named above by
+    # a refusal line in every mode (scanner_run), counted in scanner_exited
+    # and among the other refusals, so where those are all exits the block
+    # says gitleaks exited so, where there are others too it says both, and
+    # otherwise it says the error is above, as before (until that ruling it
+    # said so after an exit too, where the scan of record and the additive
+    # run printed no line for one).
+    nopen=$((open_n - on0)); nother=$((unscanned_n - un0 - nopen - failed_feed)); nexit=$((scanner_exited - ex0))
     if [ "$failed_creds" -ne 0 ] && [ "$nopen" -gt 0 ]; then
         echo "" >&2
         echo "romp pre-push: BLOCKED. The credential scan could not be run whole; the cause is named above." >&2
         echo "  The push is refused rather than published unscanned. Repair what is named above and push again, or set ROMP_NO_GITLEAKS=1 for one push." >&2
     fi
-    if [ "$failed_creds" -ne 0 ] && { [ "$scanner_exited" -ne 0 ] || [ "$nother" -gt 0 ] || [ "$nopen" -eq 0 ]; }; then
+    if [ "$failed_creds" -ne 0 ] && { [ "$nexit" -gt 0 ] || [ "$nother" -gt 0 ] || [ "$nopen" -eq 0 ]; }; then
         echo "" >&2
-        echo "romp pre-push: BLOCKED. gitleaks could not scan; its error is above." >&2
+        if [ "$nexit" -gt 0 ] && [ "$nother" -le "$nexit" ]; then
+            echo "romp pre-push: BLOCKED. gitleaks could not scan: it exited with a status other than 0 (clean) or 2 (a finding), named above." >&2
+        elif [ "$nexit" -gt 0 ]; then
+            echo "romp pre-push: BLOCKED. gitleaks could not scan: it exited with a status other than 0 (clean) or 2 (a finding), and the scan met another error; each is named above." >&2
+        else
+            echo "romp pre-push: BLOCKED. gitleaks could not scan; its error is above." >&2
+        fi
         echo "  The push is refused rather than published unscanned. Fix the scanner (gitleaks 8.25.0 or later) or its config, or set ROMP_NO_GITLEAKS=1 for one push." >&2
     fi
 }
