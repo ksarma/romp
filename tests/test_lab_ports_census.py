@@ -51,6 +51,10 @@ THE RULES, each read per module by AST (scan()):
      the rules read, lab_ports.reserve or lab_ports.wait_owned, alone or as an element of a tuple or list value (`r =
      lab_ports.reserve`). Each would hide the calls the rules above read. `import lab_ports`, `from tests import
      lab_ports` and `from . import lab_ports` all bind the name lab_ports.
+D, K and W read a name as bound by any assignment to it (plain, annotated, augmented or walrus). A tuple or list target
+is read element by element against a tuple or list value of its length with nothing starred on either side, so that
+ADDR, N = ("127.0.0.1", 0), 1 binds ADDR to the address; any other tuple or list target binds each of its elements to
+the whole value.
 At run time wait_owned itself refuses a port that was not reserved in the process, which covers a port drawn by a road
 the AST does not read.
 
@@ -62,11 +66,13 @@ outside the module; a module imported by a computed name; readiness read by anot
 /healthz; a /healthz URL bound in an enclosing function or a class body (W reads the call's own scope and the module's;
 D and K read every assignment in the module by spelling); an address, a URL or Popen that reaches its use through a
 container, a call's result or a parameter; the door handed to a call as an argument (getattr(lab_ports, name); the
-mock.patch.object(lab_ports, ...) in tests/test_federated_linkdrop_served.py is such a hand-off and is green), bound
-by a for, a with or a default argument, bound through an expression that holds it (lp = lab_ports if c else None, lp =
-lab_ports or None, a lambda returning it), or reached through sys.modules, importlib.import_module or __import__. The
-planted modules below are each red under exactly the rule they break, and the clean shapes (a listener, a kept holder,
-the door's own use, a /healthz inside a JavaScript text, a driver's cfg holding a /healthz URL) are green.
+mock.patch.object(lab_ports, ...) in tests/test_federated_linkdrop_served.py is such a hand-off and is green), bound by
+a for, a with or a default argument, bound through an expression that holds it (lp = lab_ports if c else None, lp =
+lab_ports or None, a lambda returning it), or reached through sys.modules, importlib.import_module or __import__; a port
+0 spelled by a name (s.bind(("127.0.0.1", ZERO))); a kernel started by asyncio.create_subprocess_exec; a URL bound to a
+name with /healthz as the right operand of % (url = "http://127.0.0.1:%d%s" % (p, "/healthz")). The planted modules
+below are each red under exactly the rule they break, and the clean shapes (a listener, a kept holder, the door's own
+use, a /healthz inside a JavaScript text, a driver's cfg holding a /healthz URL) are green.
 
 Synthetic: reads the tree only; no kernel, no browser, no socket.
 """
@@ -176,9 +182,22 @@ def _port_zero(arg):
             and arg.elts[1].value == 0 and not isinstance(arg.elts[1].value, bool))
 
 
+def _pairs(target, value):
+    """(target, value) pairs for one assignment target: a tuple or list target against a tuple or list value of the same
+    length with no starred element on either side is paired element by element (ADDR, N = ("127.0.0.1", 0), 1 binds
+    ADDR to the address), each pair read the same way in turn; any other tuple or list target pairs each of its elements
+    with the whole value; a single target pairs with the value."""
+    if not isinstance(target, (ast.Tuple, ast.List)):
+        return [(target, value)]
+    if (isinstance(value, (ast.Tuple, ast.List)) and len(value.elts) == len(target.elts)
+            and not any(isinstance(e, ast.Starred) for e in target.elts + value.elts)):
+        return [p for t, v in zip(target.elts, value.elts) for p in _pairs(t, v)]
+    return [p for t in target.elts for p in _pairs(t, value)]
+
+
 def _assigns(nodes):
     """(target, value) of every assignment among `nodes` (plain, annotated, augmented or walrus), a tuple or list target
-    taken element by element."""
+    taken element by element (_pairs)."""
     out = []
     for n in nodes:
         if isinstance(n, ast.Assign):
@@ -188,7 +207,7 @@ def _assigns(nodes):
         else:
             continue
         for t, v in pairs:
-            out += [(tt, v) for tt in (t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t])]
+            out += _pairs(t, v)
     return out
 
 
@@ -618,6 +637,13 @@ PLANTS = {
                           '    urllib.request.urlopen(HZ % p, timeout=1)\n', "W"),
     "clean-driver-cfg": ('import json\ndef cfg(p, path):\n    c = {"healthz": "http://127.0.0.1:%d/healthz" % p}\n'
                          '    open(path, "w").write(json.dumps(c))\n    return c\n', None),
+    # the same three reached through one element of a tuple assignment, which binds each target to its own element
+    "draw-tuple-unpacked-address": ('import socket\nADDR, N = ("127.0.0.1", 0), 1\ndef pick():\n    s = socket.socket()\n'
+                                    '    s.bind(ADDR)\n    p = s.getsockname()[1]\n    s.close()\n    return p\n', "D"),
+    "spawn-tuple-unpacked-popen": ('import os, subprocess\nrun, x = subprocess.Popen, 1\ndef boot(env):\n'
+                                   '    return run([os.path.join("bin", "romp-' 'kernel")], env=env)\n', "K"),
+    "wait-tuple-unpacked-url": ('import urllib.request\ndef wait(p):\n    url, n = "http://127.0.0.1:%d/healthz" % p, 9\n'
+                                '    urllib.request.urlopen(url, timeout=1)\n', "W"),
     # R per class: the module releases (class A), and class B reserves and never does
     "reserve-class-unreleased": ('import lab_ports\nclass A:\n    def up(self, lab):\n        self.p = lab_ports.reserve(lab)\n'
                                  '    def down(self, lab):\n        lab_ports.release(lab)\nclass B:\n'
