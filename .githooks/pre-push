@@ -15,10 +15,11 @@
 #                 of those alone is blank and skipped), matched
 #                 case-insensitively in ASCII letters alone (a letter outside
 #                 ASCII matches only as the bytes the line holds; the export
-#                 of the C locale, below, states the cost). A denylist that
-#                 holds a byte of 0x80 or above is scanned only under a
-#                 UTF-8 locale: under any other the push is refused, naming
-#                 the locale (pusher_charset_read). Where the hook
+#                 of the C locale, below, states the cost). A denylist whose
+#                 entries (not its comments) hold a byte of 0x80 or above is
+#                 scanned only under a UTF-8 locale, and only when every
+#                 entry is valid UTF-8: otherwise the push is refused, naming
+#                 the locale or the list (pusher_charset_read). Where the hook
 #                 can tell that nothing is at that path, the scan stays out of
 #                 your way, so on a clone that never set one up (any
 #                 contributor's machine) it is a no-op; where it cannot tell
@@ -2190,11 +2191,36 @@ bash_gate() {   # <the hook's arguments>: returns under bash 5.1 or later; under
 # d2091c2c1 refused it (the closing check, by real pushes at b7415b347 under
 # zh_CN.GB18030 and ja_JP.EUC-JP built with localedef; d5740856c published
 # too, and d2091c2c1 refused under zh_CN.GB18030). So
-# scan_identifiers refuses a push whose denylist, as read, comments included,
-# holds a byte of 0x80 or above unless the pusher's character set is UTF-8:
-# one that is not, or one that cannot be told, is the unverified side and
-# fails closed, and a denylist of ASCII bytes alone is never refused for
-# this. pusher_charset_read records what that verdict needs while the
+# scan_identifiers refuses a push whose denylist holds a byte of 0x80 or
+# above in an ENTRY unless the pusher's character set is UTF-8: one that is
+# not, or one that cannot be told, is the unverified side and fails closed,
+# and a denylist whose entries are ASCII bytes alone is never refused for
+# this. An entry is a line's text before its first #, the comment the scan's
+# own parser strips, so a byte of 0x80 or above in a comment alone refuses
+# nothing (the narrow re-check at ce073c374, ruled 19:58Z 2026-10-02, its 2;
+# ce073c374 read the whole list, comments included). Under a UTF-8 character
+# set every entry must also be valid UTF-8 (that re-check's 1): the trim
+# reads an entry as UTF-8, so a list in another encoding, an EUC-JP or
+# GB18030 list whose entry is edged by that encoding's ideographic space (A1
+# A1, which UTF-8 never allows there), kept the space on the entry and
+# published the bare string at ce073c374 under C.UTF-8, a locale the
+# refusal above named as its remedy, where main's hook and d2091c2c1 refused
+# the push (by accident: their git grep exited 128 on a pattern that is not
+# valid UTF-8). utf8_valid reads each entry in bytes, in the body's C locale,
+# and an entry holding a byte sequence that is not well-formed UTF-8 (an
+# overlong form, a surrogate, a code point above U+10FFFF, a stray
+# continuation byte or a lead byte cut short) refuses the push, its remedy to
+# convert the list to UTF-8. The check also covers a UTF-8 name the C library
+# cannot load, read through its codeset suffix where no locale program
+# answers (that re-check's fourth finding): a list that is not valid UTF-8 is
+# refused under it, and a list that is valid UTF-8 has its entries trimmed of
+# UTF-8's spaces, in bytes, whatever locale the C library resolved. What the
+# check cannot see is a list in another encoding whose bytes happen to form
+# valid UTF-8: an EUC-JP entry whose last character is F0 A1, edged by the
+# ideographic space, ends in F0 A1 A1 A1, one well-formed UTF-8 character,
+# so the space stays on the entry, as it did under main's hook and
+# d2091c2c1, whose trim, run in the pusher's UTF-8 locale, read the same
+# character. pusher_charset_read records what that verdict needs while the
 # pusher's locale is still in force: the locale's name (LC_ALL, else
 # LC_CTYPE, else LANG, the first that holds a value, the order the C library
 # reads them in) and the answer of locale charmap, the C library's own
@@ -4737,11 +4763,38 @@ pusher_charset_verdict() {   # sets charset_is (utf8, other or unknown) and char
         *) charset_is=other ;;
     esac
 }
+# Whether a denylist entry is valid UTF-8, read in bytes in the C locale (the
+# paragraph above pusher_charset_read). Each pass replaces every sequence of
+# one of the well-formed shapes (RFC 3629's table: C2-DF then one
+# continuation byte; E0 then A0-BF, E1-EC or EE-EF then 80-BF, or ED then
+# 80-9F, each then one more; F0 then 90-BF, F1-F3 then 80-BF, or F4 then
+# 80-8F, each then two more) with an ASCII byte, which no later pass can read
+# as part of a sequence, and any byte of 0x80 or above left over belongs to
+# no well-formed sequence: an overlong form (C0, C1, E0 80-9F, F0 80-8F), a
+# surrogate (ED A0-BF), a code point above U+10FFFF (F4 90-BF, F5-FF), a
+# stray continuation byte or a lead byte cut short. A lead byte opens a
+# sequence of one length alone and a continuation byte opens none, so a text
+# is left with no such byte exactly when it splits into ASCII bytes and
+# well-formed sequences. The time grows faster than the entry's length (about
+# 0.2 s for an entry of 100,000 bytes of two-byte characters, 17 s for one of
+# a million), and an entry of ASCII bytes alone is answered by its first test.
+utf8_valid() {   # <text>: status 0 when it is valid UTF-8, 1 when it is not
+    local LC_ALL=C t=$1 c=[$'\x80'-$'\xbf']
+    case "$t" in *[$'\x80'-$'\xff']*) ;; *) return 0 ;; esac
+    t=${t//[$'\xc2'-$'\xdf']$c/.}
+    t=${t//$'\xe0'[$'\xa0'-$'\xbf']$c/.}
+    t=${t//[$'\xe1'-$'\xec'$'\xee'$'\xef']$c$c/.}
+    t=${t//$'\xed'[$'\x80'-$'\x9f']$c/.}
+    t=${t//$'\xf0'[$'\x90'-$'\xbf']$c$c/.}
+    t=${t//[$'\xf1'-$'\xf3']$c$c$c/.}
+    t=${t//$'\xf4'[$'\x80'-$'\x8f']$c$c/.}
+    case "$t" in *[$'\x80'-$'\xff']*) return 1 ;; esac
+}
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen chosen_unread
     local rc errs hits listing link blob link_path target size revs rev n msg addrs inner kind tip_listed tip_entries rev_counts iref_n cg_n errs_n hits_n
     local peeled peeled_read paths count linecount tag_read hdr tag_bytes tag_nonl links_n addrs_n
-    local target_bytes read_as whole_what enc_revs="" text nb added_run chosen_rc charset_is charset_said
+    local target_bytes read_as whole_what enc_revs="" text nb added_run chosen_rc charset_is charset_said deny_high entry
     local -a words deny_lines
     strings_file="$(private_strings_file)"
     identifier_scan_armed || return 0
@@ -4878,23 +4931,35 @@ scan_identifiers() {
         return 0
     fi
     exec 4<&-
-    # A denylist holding a byte of 0x80 or above, anywhere in it, is scanned
-    # only for a pusher whose character set is UTF-8 (the paragraph above
+    # A denylist whose ENTRIES hold a byte of 0x80 or above (an entry being a
+    # line's text before its first #, as the loop below strips the comment)
+    # is scanned only for a pusher whose character set is UTF-8, and only
+    # when every entry is valid UTF-8 (the paragraph above
     # pusher_charset_read): the trim below knows UTF-8's spaces alone, so
     # under another character set, or one that cannot be told, the push is
-    # refused naming the locale and the remedy. The scan goes on all the same,
-    # so a hit is named in the same push; it can only add refusals, since a
-    # trim that takes off bytes another character set reads otherwise leaves
-    # a shorter string, matched by every line the whole entry matches.
-    case "$text" in
-        *[$'\x80'-$'\xff']*)
-            pusher_charset_verdict
-            case "$charset_is" in
-                utf8) ;;
-                other) unscanned "the DENYLIST $strings_file holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 ($charset_said): the trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, so a space of that character set at an edge would stay on the entry, and a line holding the bare string could publish; push again under a UTF-8 locale (LC_ALL=C.UTF-8 or LC_ALL=en_US.UTF-8, whichever locale -a lists, ahead of git push)" ;;
-                *) unscanned "the DENYLIST $strings_file holds a byte of 0x80 or above while whether the locale this push runs under is UTF-8 cannot be told ($charset_said): the trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, so a space of another character set at an edge would stay on the entry, and a line holding the bare string could publish; push again under a UTF-8 locale (LC_ALL=C.UTF-8 or LC_ALL=en_US.UTF-8, whichever locale -a lists, ahead of git push)" ;;
-            esac ;;
-    esac
+    # refused naming the locale and the remedy, and under UTF-8 an entry that
+    # is not valid UTF-8 refuses it naming the list. A byte of 0x80 or above
+    # in a comment alone refuses nothing. The scan goes on all the same, so a
+    # hit is named in the same push; it can only add refusals, since a trim
+    # that takes off bytes another character set reads otherwise leaves a
+    # shorter string, matched by every line the whole entry matches.
+    deny_high=0
+    for entry in ${deny_lines[@]+"${deny_lines[@]}"}; do
+        case "${entry%%#*}" in *[$'\x80'-$'\xff']*) deny_high=1; break ;; esac
+    done
+    if [ "$deny_high" -eq 1 ]; then
+        pusher_charset_verdict
+        case "$charset_is" in
+            utf8)
+                for entry in ${deny_lines[@]+"${deny_lines[@]}"}; do
+                    utf8_valid "${entry%%#*}" && continue
+                    unscanned "the DENYLIST $strings_file holds an entry that is not valid UTF-8 (a byte sequence UTF-8 does not allow) while the locale this push runs under is UTF-8 ($charset_said): the trim reads each entry as UTF-8, so a list written in another character set keeps that character set's spaces on an entry's edges (EUC-JP's and GB18030's ideographic space, the bytes A1 A1, among them), and a line holding the bare string could publish; convert the list to UTF-8 and push again"
+                    break
+                done ;;
+            other) unscanned "the DENYLIST $strings_file holds a byte of 0x80 or above in an entry while the locale this push runs under is not UTF-8 ($charset_said): the trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, so a space of that character set at an edge would stay on the entry, and a line holding the bare string could publish; convert the list to UTF-8, then push under a UTF-8 locale (LC_ALL=C.UTF-8 or LC_ALL=en_US.UTF-8, whichever locale -a lists, ahead of git push)" ;;
+            *) unscanned "the DENYLIST $strings_file holds a byte of 0x80 or above in an entry while whether the locale this push runs under is UTF-8 cannot be told ($charset_said): the trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, so a space of another character set at an edge would stay on the entry, and a line holding the bare string could publish; convert the list to UTF-8, then push under a UTF-8 locale (LC_ALL=C.UTF-8 or LC_ALL=en_US.UTF-8, whichever locale -a lists, ahead of git push)" ;;
+        esac
+    fi
     for line in ${deny_lines[@]+"${deny_lines[@]}"}; do
         line="${line%%#*}"
         # The edges, in bytes (the paragraph above): each pass takes off the

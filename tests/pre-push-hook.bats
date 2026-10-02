@@ -19420,7 +19420,7 @@ utf8_locale() {   # prints the first UTF-8 locale this system offers among C.UTF
 # Mac: macOS's grep reads its patterns and lines in the pusher's locale, and the audit read Apple's sources as skipping,
 # under a UTF-8 locale, a line in which a byte that is not valid UTF-8 comes before the banned string, so on the macOS
 # cell either may go red at a grep rather than at the read it pins (the audit's H2, for the coordinator's ruling).
-@test "the re-check at d2091c2c1 (2026-10-01, the denylist's bytes under a UTF-8 locale): a private-strings file whose first entry starts with the bytes C3 5C (not valid UTF-8, a backslash second), read under a UTF-8 locale (LC_ALL), through a real push of a commit adding a line that holds that entry's bytes, is refused naming the commit as adding a personal identifier in the file, and never as a denylist read short, the remote at its base, since the capture's marker is stripped in the C locale and its lines are split byte for byte (the audit of build 4: that build's text, which stripped the marker in the pusher's locale, refused the push as read short before any scan ran; its split by pattern removal in the pusher's locale, with the strip in the C locale, read the entry as other bytes, which the added-lines grep did not find; a git whose grep compiles a pattern that is not ASCII with PCRE2 refuses the entry at the tip's git grep too, as not UTF-8, a line this case allows)" {
+@test "the re-check at d2091c2c1 (2026-10-01, the denylist's bytes under a UTF-8 locale): a private-strings file whose first entry starts with the bytes C3 5C (not valid UTF-8, a backslash second), read under a UTF-8 locale (LC_ALL), through a real push of a commit adding a line that holds that entry's bytes, is refused naming the commit as adding a personal identifier in the file, and never as a denylist read short, the remote at its base, since the capture's marker is stripped in the C locale and its lines are split byte for byte (the audit of build 4: that build's text, which stripped the marker in the pusher's locale, refused the push as read short before any scan ran; its split by pattern removal in the pusher's locale, with the strip in the C locale, read the entry as other bytes, which the added-lines grep did not find; a git whose grep compiles a pattern that is not ASCII with PCRE2 refuses the entry at the tip's git grep too, as not UTF-8, a line this case allows; since the narrow re-check at ce073c374, its 1, the push is also refused by the line naming the denylist as holding an entry that is not valid UTF-8, C3 5C being no UTF-8 sequence, and the scan goes on to name the commit)" {
     local loc strings="$TEST_DIR/private-strings-c35c.txt" sha
     loc=$(utf8_locale)
     if [ -z "$loc" ]; then
@@ -19448,6 +19448,7 @@ utf8_locale() {   # prints the first UTF-8 locale this system offers among C.UTF
     at_base
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  pair.txt"* ]] || false
     [[ "$output" != *"was read short"* ]] || false
+    [[ "$output" == *"romp pre-push: the DENYLIST $strings holds an entry that is not valid UTF-8 (a byte sequence UTF-8 does not allow) while the locale this push runs under is UTF-8 (LC_ALL=$loc, "* ]] || false
 }
 
 @test "the re-check at d2091c2c1 (2026-10-01, a Latin-1 comment ahead of an entry under a UTF-8 locale): a private-strings file whose comment line ends with a Latin-1 letter (the byte E9, which UTF-8 reads as the first of three) and whose next line is an entry, read under a UTF-8 locale (LC_ALL), through a real push of a commit adding that entry, is refused naming the commit, the remote at its base, since the read that splits the capture runs in the C locale (at d2091c2c1 the loop's read, in the pusher's locale, took the newline after E9 into the comment's line, the entry with it, so the denylist held no entry, the identifier scan was off and the push PUBLISHED)" {
@@ -19726,7 +19727,7 @@ PY
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  menu.txt"* ]] || false
 }
 
-@test "build 5 (item 40, the locale class, the re-check's F2; the LANG-alone push added by the repair after the audit of build 5): a denylist entry starting with a UTF-8 lead byte then a backslash (C3 5C) with a TRAILING SPACE, read under a UTF-8 locale in LC_ALL and then in LANG alone (LC_ALL and LC_CTYPE unset), through a real push of a commit adding a line holding that entry's bytes (removed at the tip), is refused naming the commit as adding a personal identifier, since the whole body runs under LC_ALL=C so the entry's trim keeps its bytes (at d2091c2c1 bash 5.2's trim in the pusher's UTF-8 locale turned the entry into other bytes each run, the scan greps for bytes no line holds, and the commit is not named as adding the identifier)" {
+@test "build 5 (item 40, the locale class, the re-check's F2; the LANG-alone push added by the repair after the audit of build 5): a denylist entry starting with a UTF-8 lead byte then a backslash (C3 5C) with a TRAILING SPACE, read under a UTF-8 locale in LC_ALL and then in LANG alone (LC_ALL and LC_CTYPE unset), through a real push of a commit adding a line holding that entry's bytes (removed at the tip), is refused naming the commit as adding a personal identifier, since the whole body runs under LC_ALL=C so the entry's trim keeps its bytes (at d2091c2c1 bash 5.2's trim in the pusher's UTF-8 locale turned the entry into other bytes each run, the scan greps for bytes no line holds, and the commit is not named as adding the identifier; since the narrow re-check at ce073c374, its 1, each push is also refused by the line naming the denylist as holding an entry that is not valid UTF-8, and the scan goes on to name the commit)" {
     local loc strings="$TEST_DIR/private-strings-f2.txt" sha
     loc=$(utf8_locale)
     if [ -z "$loc" ]; then
@@ -19755,12 +19756,14 @@ PY
     [ "$status" -ne 0 ]
     at_base
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  pair.txt"* ]] || false
+    [[ "$output" == *"romp pre-push: the DENYLIST $strings holds an entry that is not valid UTF-8 (a byte sequence UTF-8 does not allow) while the locale this push runs under is UTF-8 (LC_ALL=$loc, "* ]] || false
     unset LC_ALL LC_CTYPE
     export LANG="$loc"
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     at_base
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  pair.txt"* ]] || false
+    [[ "$output" == *"romp pre-push: the DENYLIST $strings holds an entry that is not valid UTF-8 (a byte sequence UTF-8 does not allow) while the locale this push runs under is UTF-8 (LANG=$loc, "* ]] || false
 }
 
 # The C locale's cost (the audit of build 5, LOC-1): the ways the whole-body C locale answers a pusher in a UTF-8 locale
@@ -19901,14 +19904,15 @@ trim_locale() {   # sets loc, the caller's, to the UTF-8 locale the trim's cases
         skip "no UTF-8 locale on this system"
     fi
 }
-# Since the closing check at b7415b347 (its 1) a denylist holding a byte of 0x80 or above refuses a push made under a
-# locale whose character set is not UTF-8, the C locale among them, naming the locale, and the scan goes on, so a hit is
-# still named beside that line. The three cases below whose push under the C locale published (an entry of spaces alone,
-# a space inside an entry, entries of spaces alone read as blank) hold that refusal there, and that no commit is named.
+# Since the closing check at b7415b347 (its 1) a denylist holding a byte of 0x80 or above (in an entry, since the narrow
+# re-check at ce073c374, its 2) refuses a push made under a locale whose character set is not UTF-8, the C locale among
+# them, naming the locale, and the scan goes on, so a hit is still named beside that line. The three cases below whose
+# push under the C locale published (an entry of spaces alone, a space inside an entry, entries of spaces alone read as
+# blank) hold that refusal there, and that no commit is named.
 c_locale_refused() {   # <denylist path>: the push just made under LC_ALL=C was refused by the locale's line, the remote at its base
     [ "$status" -ne 0 ]
     at_base
-    [[ "$output" == *"romp pre-push: the DENYLIST $1 holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (LC_ALL=C, whose character set locale charmap reads as "* ]] || false
+    [[ "$output" == *"romp pre-push: the DENYLIST $1 holds a byte of 0x80 or above in an entry while the locale this push runs under is not UTF-8 (LC_ALL=C, whose character set locale charmap reads as "* ]] || false
 }
 
 @test "build 6 (item 40, the trim's set, one row per member of the set at each edge; the three glibc's class adds since build 7, U+0085 and U+200B since build 8): a denylist of 44 entries, each a bare string edged by one member of the set (each of U+0085, U+00A0, U+1680, U+2000 to U+200B, U+2028, U+2029, U+202F, U+205F and U+3000 at the leading edge and at the trailing edge, U+FEFF at the leading edge), or by runs of them mixed with ASCII whitespace at the leading edge, the trailing edge and both, through one real push under a UTF-8 locale (LC_ALL) and one under the C locale of 44 commits, each adding a line that holds one bare string, removed at the tip, is refused naming every one of the 44 commits and its file, the remote at its base (at c4dbf4d96 the trim kept every one of those spaces and the push PUBLISHED; at build 6's text the six rows of U+1680, U+2028 and U+2029 went unnamed, and at build 7's text the four rows of U+0085 and U+200B)" {
@@ -22948,15 +22952,42 @@ op96_refused() {   # <shell|both|exited>: the push just made landed its fault an
 # b7415b347 (its 6) the census read only a redirection after the call's -- and a blank, and found none of four shapes
 # the check planted: wc -c<"$f" on the call, a redirection ahead of the --, a braced group around the call fed by a
 # file across two lines, and a function wrapping the call, called with a redirection (each skips the call, by a demo
-# with a stub, read_rc left as it was). null_redirections reads the body
+# with a stub, read_rc left as it was). Each word is read unquoted, as census_unquote reads one, so judged_read, or a
+# wrapping function's name, in double quotes, in single quotes, after a backslash, in dollar quotes or quoted in part
+# is read as the call bash runs it as (the narrow re-check at ce073c374, its 3: until then a quoted name was dots in the
+# masked text and its call went unread, though bash runs it and a failed open skips it whole, by a demo with a stub);
+# a word holding the name among other bytes is no call. null_redirections reads the body
 # (after the gate's call): a line that redirects to or from /dev/null other than a judged open of it on a descriptor
 # ({ exec 8>/dev/null; } || or { exec 8<>/dev/null; } ||), a judged_read call's -i /dev/null, or a read for a refused
 # push's report alone, marked so ("outside judged_read: for the report"), whose failed open leaves the line a fact
 # fewer and names no command.
 judged_inputs() {   # <bash file>: the census above, one line per call, line, compound or call of a wrapping function it names
     masked_text "$1" | LC_ALL=C awk -v rawf="$1" '
-        BEGIN { while ((getline l < rawf) > 0) raw[++nr] = l; close(rawf) }
+        BEGIN { while ((getline l < rawf) > 0) raw[++nr] = l; close(rawf); q = sprintf("%c", 39) }
         { m[NR] = $0 }
+        # line i of the masked text with each word read unquoted, as census_unquote reads one (the quotes and backslashes of
+        # the word removed, and a $ before a quote with them): a word whose raw text so read is judged_read, or the name of
+        # a function this file defines, and differs from it is written over its masked bytes as that name, padded with
+        # blanks to the same length, so the name in double quotes, in single quotes, after a backslash, in $ quotes or
+        # quoted in part is read as the call bash runs it as (a word: a run of bytes up to a blank or an operator byte, one
+        # of ; & | ( ) < > and the backquote)
+        function unquoted(i,   s, r, k, a, n, w, u, x, ch) {
+            s = m[i]; r = raw[i]; k = 1
+            while (match(substr(s, k), /[^ \t;&|()<>`]+/)) {
+                a = k + RSTART - 1; n = RLENGTH; k = a + n
+                w = substr(r, a, n)
+                if (!index(w, "\"") && !index(w, q) && !index(w, "\\")) continue
+                u = ""
+                for (x = 1; x <= n; x++) {
+                    ch = substr(w, x, 1)
+                    if (ch == "\"" || ch == q || ch == "\\") continue
+                    if (ch == "$" && (substr(w, x + 1, 1) == "\"" || substr(w, x + 1, 1) == q)) continue
+                    u = u ch
+                }
+                if (u == "judged_read" || (u in def)) s = substr(s, 1, a - 1) u sprintf("%" (n - length(u)) "s", "") substr(s, a + n)
+            }
+            return s
+        }
         # a word w at position i of s: bounded by a byte that is not part of a name or a path on each side
         function wordat(s, i, w,   b, a) {
             if (substr(s, i, length(w)) != w) return 0
@@ -23001,6 +23032,9 @@ judged_inputs() {   # <bash file>: the census above, one line per call, line, co
             return c ~ /[ \t;!]read[ \t]/
         }
         END {
+            # the functions this file defines (by their headers, which hold no quote), then every line read unquoted (above)
+            for (i = 1; i <= NR; i++) if (m[i] ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/) def[substr(m[i], 1, index(m[i], "(") - 1)] = i
+            for (i = 1; i <= NR; i++) m[i] = unquoted(i)
             # the functions this file defines, and those that hold a judged_read call, directly or by a call of one that does
             for (i = 1; i <= NR; i++) {
                 if (m[i] ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/) { f = substr(m[i], 1, index(m[i], "(") - 1); def[f] = i; cur = f; continue }
@@ -23533,12 +23567,13 @@ COPY
 # refused it (the closing check, by real pushes under ja_JP.EUC-JP and zh_CN.GB18030 built with localedef). The hook
 # now reads the pusher's locale before its export of LC_ALL=C (pusher_charset_read: the name LC_ALL, LC_CTYPE or LANG
 # gives, and locale charmap's answer, the C library's resolution of it) and refuses a push whose denylist holds a byte
-# of 0x80 or above unless that character set is UTF-8, naming the locale and the remedy (push under a UTF-8 locale);
-# where locale charmap answers no single name, the name's codeset suffix is read, and the refusal says which. A
-# denylist of ASCII bytes alone is never refused for this. The witness builds ja_JP.EUC-JP with glibc's localedef into
-# the case's own directory and names it through LOCPATH (about half a second; zh_CN.GB18030, the other locale the check
-# ran, takes several seconds to build and shows the same space, A1 A1), and skips, naming why, where it cannot (no
-# localedef, as on macOS, or no ja_JP source or EUC-JP charmap on the system).
+# of 0x80 or above unless that character set is UTF-8, naming the locale and the remedy (since the narrow re-check at
+# ce073c374, its 1: convert the list to UTF-8, then push under a UTF-8 locale; the byte read in the list's entries
+# alone since its 2); where locale charmap answers no single name, the name's codeset suffix is read, and the refusal
+# says which. A denylist of ASCII bytes alone is never refused for this. The witness builds ja_JP.EUC-JP with glibc's
+# localedef into the case's own directory and names it through LOCPATH (about half a second; zh_CN.GB18030, the other
+# locale the check ran, takes several seconds to build and shows the same space, A1 A1), and skips, naming why, where
+# it cannot (no localedef, as on macOS, or no ja_JP source or EUC-JP charmap on the system).
 euc_jp_locpath() {   # builds ja_JP.EUC-JP under $TEST_DIR/locales and sets LOCDIR to that directory; status 1, with the reason in LOCWHY, where it cannot
     LOCDIR="$TEST_DIR/locales"; LOCWHY=""
     command -v localedef > /dev/null 2>&1 || { LOCWHY="no localedef on PATH (glibc's tool) builds the EUC-JP locale"; return 1; }
@@ -23554,7 +23589,7 @@ locale_base() {   # a remote holding a clean base, pushed, at BASE
     BASE="$(git -C "$REPO" rev-parse HEAD)"
 }
 
-@test "the closing check at b7415b347 (item 40, its 1, a locale whose character set is not UTF-8, the witness): with ja_JP.EUC-JP built by localedef and named through LOCPATH, a denylist entry zqxgbent led by EUC-JP's ideographic space (A1 A1, which that locale's [[:space:]] matches), through a real push under LC_ALL=ja_JP.EUC-JP of a commit adding a line holding ZQXGBENT, is refused naming the denylist as holding a byte of 0x80 or above while the locale is not UTF-8, the locale (LC_ALL=ja_JP.EUC-JP) and the character set locale charmap reads (EUC-JP), and the remedy, a UTF-8 locale, the remote at its base; and the entry ended by that space, through the same push with the locale in LANG alone, is refused naming LANG=ja_JP.EUC-JP (at b7415b347 and at d5740856c both pushes PUBLISHED, the trim keeping the space on the entry; at d2091c2c1, whose trim ran in the pusher's locale, both were refused naming the commit)" {
+@test "the closing check at b7415b347 (item 40, its 1, a locale whose character set is not UTF-8, the witness): with ja_JP.EUC-JP built by localedef and named through LOCPATH, a denylist entry zqxgbent led by EUC-JP's ideographic space (A1 A1, which that locale's [[:space:]] matches), through a real push under LC_ALL=ja_JP.EUC-JP of a commit adding a line holding ZQXGBENT, is refused naming the denylist as holding a byte of 0x80 or above while the locale is not UTF-8, the locale (LC_ALL=ja_JP.EUC-JP) and the character set locale charmap reads (EUC-JP), and the remedy, converting the list to UTF-8 and then a UTF-8 locale (since the narrow re-check at ce073c374, its 1), the remote at its base; and the entry ended by that space, through the same push with the locale in LANG alone, is refused naming LANG=ja_JP.EUC-JP (at b7415b347 and at d5740856c both pushes PUBLISHED, the trim keeping the space on the entry; at d2091c2c1, whose trim ran in the pusher's locale, both were refused naming the commit)" {
     local strings="$TEST_DIR/private-strings-euc.txt"
     euc_jp_locpath || skip "$LOCWHY"
     LOCPATH="$LOCDIR" LC_ALL=ja_JP.EUC-JP "$NEWER_BASH" -c 'x=$1; [[ ${x:0:1} == [[:space:]] ]]' _ "$(printf '\241\241zq')"   # the premise: EUC-JP's [[:space:]] matches A1 A1, the trim d2091c2c1 made in that locale
@@ -23569,7 +23604,7 @@ locale_base() {   # a remote holding a clean base, pushed, at BASE
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     at_base
-    [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (LC_ALL=ja_JP.EUC-JP, whose character set locale charmap reads as EUC-JP): the trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, so a space of that character set at an edge would stay on the entry, and a line holding the bare string could publish; push again under a UTF-8 locale (LC_ALL=C.UTF-8 or LC_ALL=en_US.UTF-8, whichever locale -a lists, ahead of git push); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above in an entry while the locale this push runs under is not UTF-8 (LC_ALL=ja_JP.EUC-JP, whose character set locale charmap reads as EUC-JP): the trim takes ASCII whitespace and UTF-8's spaces off an entry's edges, so a space of that character set at an edge would stay on the entry, and a line holding the bare string could publish; convert the list to UTF-8, then push under a UTF-8 locale (LC_ALL=C.UTF-8 or LC_ALL=en_US.UTF-8, whichever locale -a lists, ahead of git push); the scan is incomplete, so the push is refused"* ]] || false
     [[ "$output" != *"personal identifier"* ]] || false                    # no hit: the entry is grepped with the space on it
     printf '# synthetic\nzqxgbent\241\241\n' > "$strings"
     unset LC_ALL LC_CTYPE
@@ -23577,7 +23612,7 @@ locale_base() {   # a remote holding a clean base, pushed, at BASE
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     at_base
-    [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (LANG=ja_JP.EUC-JP, whose character set locale charmap reads as EUC-JP): "* ]] || false
+    [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above in an entry while the locale this push runs under is not UTF-8 (LANG=ja_JP.EUC-JP, whose character set locale charmap reads as EUC-JP): "* ]] || false
 }
 
 @test "the closing check at b7415b347 (item 40, its 1, the C locale): a denylist holding a byte of 0x80 or above (an entry with an e-acute, C3 A9), through a real push of a clean commit, is refused naming the locale and that its character set is not UTF-8, the remote at its base, under LC_ALL=C, LC_ALL=POSIX, LC_CTYPE=C alone, no locale variable set, and LC_ALL naming a UTF-8 locale this system does not have (zz_ZZ.UTF-8, which the C library resolves to the C locale, as locale charmap answers, though its name ends in UTF-8); under a UTF-8 locale this system has, the same push passes (at b7415b347 each push passed, the trim in bytes taking no account of the locale)" {
@@ -23599,9 +23634,9 @@ locale_base() {   # a remote holding a clean base, pushed, at BASE
         [ "$status" -ne 0 ]
         at_base
         if [ "$row" = none ]; then
-            [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (no LC_ALL, LC_CTYPE or LANG set, whose character set locale charmap reads as "* ]] || false
+            [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above in an entry while the locale this push runs under is not UTF-8 (no LC_ALL, LC_CTYPE or LANG set, whose character set locale charmap reads as "* ]] || false
         else
-            [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 ($row, whose character set locale charmap reads as "* ]] || false
+            [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above in an entry while the locale this push runs under is not UTF-8 ($row, whose character set locale charmap reads as "* ]] || false
         fi
         [[ "$output" != *"reads as UTF-8)"* ]] || false
     done
@@ -23665,8 +23700,8 @@ locale_stub() {   # <shell commands run for "locale charmap", after which the st
         push_main_through_hook_with_shim
         case "$row" in
             *"|passed|"*) [ "$status" -eq 0 ]; [[ "$output" != *"romp pre-push"* ]] || false; rewind_remote main "$BASE" ;;
-            *"|unknown|"*) [ "$status" -ne 0 ]; at_base; [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while whether the locale this push runs under is UTF-8 cannot be told (${row##*|}): "* ]] || false ;;
-            *) [ "$status" -ne 0 ]; at_base; [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above while the locale this push runs under is not UTF-8 (${row##*|}): "* ]] || false ;;
+            *"|unknown|"*) [ "$status" -ne 0 ]; at_base; [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above in an entry while whether the locale this push runs under is UTF-8 cannot be told (${row##*|}): "* ]] || false ;;
+            *) [ "$status" -ne 0 ]; at_base; [[ "$output" == *"romp pre-push: the DENYLIST $strings holds a byte of 0x80 or above in an entry while the locale this push runs under is not UTF-8 (${row##*|}): "* ]] || false ;;
         esac
     done
     locale_stub 'echo "UTF-8 extra"'
@@ -23907,4 +23942,203 @@ locale_stub() {   # <shell commands run for "locale charmap", after which the st
         [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ]
         [[ "$output" == *"FAIL $((tl + 1)): ${f#*:}, whose status is 0 at the end of its input and on a read error alike, so a read error would pass as the end, and no form here can tell the two apart: $(sed -n "$((tl + 1))p" "$TEST_DIR/mf-${f%%:*}.sh")"* ]] || false
     done
+}
+
+# ── the narrow re-check at ce073c374 (item 40; the coordinator's ruling of 19:58Z 2026-10-02) ──
+# Its 1, a list that is not valid UTF-8 under a UTF-8 locale: the denylist's trim reads an entry as UTF-8, in bytes, so
+# a list in another encoding, an EUC-JP or GB18030 list whose entry is edged by that encoding's ideographic space (A1
+# A1, which UTF-8 never allows there), kept the space on the entry, and through a real push under C.UTF-8, the remedy
+# the closing check's refusal named, the bare string PUBLISHED at ce073c374, where main's hook and d2091c2c1 refused the
+# push (their git grep exiting 128 on a pattern that is not valid UTF-8). The hook now reads each entry in bytes
+# (utf8_valid) and refuses an entry that is not valid UTF-8, naming the remedy, converting the list to UTF-8. The same
+# check covers a UTF-8 name the C library cannot load, read through its codeset suffix where no locale program answers
+# (the re-check's fourth finding, which published at ce073c374). Its 2: that refusal and the closing check's (its 1)
+# read the list's ENTRIES, a line's text before its first #, the comment the scan's own parser strips, so a byte of
+# 0x80 or above, or a sequence UTF-8 does not allow, in a comment alone refuses nothing. Every list holds invented
+# strings alone.
+recheck_utf8_locale() {   # sets LOC to a UTF-8 locale this system has and LOCCM to locale charmap's answer for it (a UTF-8 name); skips the case where it has none, and fails it in a CI cell, where it must run
+    LOC=$(utf8_locale)
+    if [ -z "$LOC" ]; then
+        if [ "${CI:-}" = true ]; then echo "no UTF-8 locale in a CI cell, where the case must run" >&2; return 1; fi
+        skip "no UTF-8 locale on this system"
+    fi
+    LOCCM=$(LC_ALL=$LOC locale charmap 2> /dev/null)
+    case "$LOCCM" in [Uu][Tt][Ff]-8|[Uu][Tt][Ff]8) ;; *) echo "locale charmap answers \"$LOCCM\" for $LOC, not a UTF-8 name" >&2; return 1 ;; esac
+}
+not_utf8_refused() {   # <denylist path> <the locale as the line names it, with its character set and the read that gave it>: the push just made was refused by the line naming the list as holding an entry that is not valid UTF-8, the remote at its base
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the DENYLIST $1 holds an entry that is not valid UTF-8 (a byte sequence UTF-8 does not allow) while the locale this push runs under is UTF-8 ($2): the trim reads each entry as UTF-8, so a list written in another character set keeps that character set's spaces on an entry's edges (EUC-JP's and GB18030's ideographic space, the bytes A1 A1, among them), and a line holding the bare string could publish; convert the list to UTF-8 and push again; the scan is incomplete, so the push is refused"* ]] || false
+}
+
+@test "the narrow re-check at ce073c374 (item 40, its 1, a list that is not valid UTF-8 under a UTF-8 locale, the witness): a denylist entry zqxgbent led by the ideographic space of EUC-JP and of GB18030 (A1 A1), through a real push under a UTF-8 locale (LC_ALL) of a commit adding a line holding ZQXGBENT, is refused naming the denylist as holding an entry that is not valid UTF-8, the locale, the character set locale charmap reads (UTF-8) and the remedy, converting the list to UTF-8, the remote at its base and no line naming the commit; the entry ended by that space, through the same push with the locale in LANG alone, and an entry led by GB18030's no-break space (81 30 84 36) are refused the same way; and with a locale first on PATH that exits 127 on the charmap question, as the shell does for a program it cannot find, under LC_ALL=zz_ZZ.UTF-8 (a name this system does not have, read by its codeset suffix as UTF-8: the re-check's fourth finding), the first list is refused the same way, naming the suffix's read, while a UTF-8 list whose entry zqxgbent is led by U+3000 (E3 80 80) refuses the same push by its hit, the trim taking the space off (at ce073c374 the four pushes refused here PUBLISHED, the trim keeping the space on the entry)" {
+    local strings="$TEST_DIR/private-strings-notutf8.txt" leak row ent hex
+    recheck_utf8_locale
+    locale_base
+    printf 'notes: ZQXGBENT here\n' > "$REPO/leak.txt"
+    git -C "$REPO" add leak.txt
+    git -C "$REPO" commit -qm "a line holding the bare string"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    export ROMP_PRIVATE_STRINGS="$strings"
+    for row in 'LC_ALL|\241\241zqxgbent|a1a17a71786762656e74' 'LANG|zqxgbent\241\241|7a71786762656e74a1a1' 'LC_ALL|\201\060\204\066zqxgbent|813084367a71786762656e74'; do
+        echo "row: $row"                                                     # names the row when a line below fails
+        ent=${row#*|}; hex=${ent#*|}; ent=${ent%%|*}
+        printf "# synthetic\n$ent\n" > "$strings"
+        [ "$(od -An -tx1 "$strings" | tr -d ' \n')" = "232073796e7468657469630a${hex}0a" ]   # the plant landed, byte for byte
+        unset LC_ALL LC_CTYPE LANG
+        export "${row%%|*}=$LOC"
+        push_main_through_hook_with_shim
+        not_utf8_refused "$strings" "${row%%|*}=$LOC, whose character set locale charmap reads as $LOCCM"
+        [[ "$output" != *"personal identifier"* ]] || false                # no hit: the entry is grepped with the space on it
+    done
+    locale_stub 'exit 127'
+    printf '# synthetic\n\241\241zqxgbent\n' > "$strings"
+    unset LC_ALL LC_CTYPE LANG
+    export LC_ALL=zz_ZZ.UTF-8
+    push_main_through_hook_with_shim
+    not_utf8_refused "$strings" "LC_ALL=zz_ZZ.UTF-8, whose character set its codeset suffix reads as UTF-8 (locale charmap exited 127)"
+    [[ "$output" != *"personal identifier"* ]] || false
+    printf '# synthetic\n\343\200\200zqxgbent\n' > "$strings"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/main (${leak:0:10}) would publish a personal identifier in:"* ]] || false
+    [[ "$output" != *"the DENYLIST"* ]] || false
+}
+
+@test "the narrow re-check at ce073c374 (item 40, its 1, each kind of byte sequence UTF-8 does not allow, and the edges of the well-formed shapes): under a UTF-8 locale (LC_ALL), a denylist whose entry holds, between ASCII letters, an overlong form (C0 AF, C1 BF, E0 80 AF or F0 80 80 AF), a surrogate (ED A0 80 or ED BF BF), a code point above U+10FFFF (F4 90 80 80, or F5 80 80 80), the byte FF, a stray continuation byte (80 alone, or A9 after a whole C3 A9), or a lead byte cut short (E3 80 before an ASCII letter, or C3 at the entry's end), through a real push of a clean commit, is refused naming the denylist as holding an entry that is not valid UTF-8, the remote at its base, each list on a push of its own; and a list whose entries each end in a character at an edge of a well-formed shape (U+0080, U+07FF, U+0800, U+D7FF, U+E000, U+FFFF, U+10000, U+40000, U+FFFFF, U+100000 and U+10FFFF), one holding an e-acute, passes with no romp line, a commit adding a line that holds the U+10FFFF entry then refused by its hit alone, naming the commit, no line naming the denylist (at ce073c374 each push of a list refused here passed)" {
+    local strings="$TEST_DIR/private-strings-kinds.txt" row sha
+    recheck_utf8_locale
+    locale_base
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    export ROMP_PRIVATE_STRINGS="$strings" LC_ALL="$LOC"
+    for row in 'overlong two-byte, C0|zq\300\257tail' 'overlong two-byte, C1|zq\301\277tail' 'overlong three-byte|zq\340\200\257tail' \
+               'overlong four-byte|zq\360\200\200\257tail' 'surrogate U+D800|zq\355\240\200tail' 'surrogate U+DFFF|zq\355\277\277tail' \
+               'above U+10FFFF, F4 90|zq\364\220\200\200tail' 'above U+10FFFF, F5|zq\365\200\200\200tail' 'the byte FF|zq\377tail' \
+               'a stray continuation byte|zq\200tail' 'a continuation byte after a whole character|zq\303\251\251tail' \
+               'a lead byte cut short before ASCII|zq\343\200tail' 'a lead byte cut short at the end|zqtail\303'; do
+        echo "row: ${row%%|*}"
+        printf "# synthetic\nzzsynthuser\n${row#*|}\n" > "$strings"
+        push_main_through_hook_with_shim
+        not_utf8_refused "$strings" "LC_ALL=$LOC, whose character set locale charmap reads as $LOCCM"
+    done
+    printf '# synthetic\nzzb1\302\200\nzzb2\337\277\nzzb3\340\240\200\nzzb4\355\237\277\nzzb5\356\200\200\nzzb6\357\277\277\nzzb7\360\220\200\200\nzzb8\361\200\200\200\nzzb9\363\277\277\277\nzzba\364\200\200\200\nzzbb\364\217\277\277\nzzjos\303\251\n' > "$strings"
+    [ "$(LC_ALL=C grep -c '^zzb' "$strings")" -eq 11 ]                      # the plant landed: eleven edge entries
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]] || false
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'seen zzbb\364\217\277\277 here\n' > "$REPO/edge.txt"
+    git -C "$REPO" add edge.txt
+    git -C "$REPO" commit -qm "a line holding the U+10FFFF entry"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  edge.txt"* ]] || false
+    [[ "$output" != *"the DENYLIST"* ]] || false
+}
+
+@test "the narrow re-check at ce073c374 (item 40, its 2, bytes of 0x80 or above in comments alone, under a locale that is not UTF-8): a denylist whose bytes of 0x80 or above lie in its comments alone (a comment line ending in a Latin-1 e-acute, E9; one holding a UTF-8 e-acute, C3 A9; and an entry's trailing comment holding EUC-JP's ideographic space, A1 A1), through a real push of a clean commit, passes with no romp line under LC_ALL=C, with no locale variable set, and under ja_JP.EUC-JP where localedef builds it; a commit adding a line holding TESTHOST is refused under LC_ALL=C by its hit alone, no line naming the denylist; and the same list with the Latin-1 e-acute moved into an entry is refused under LC_ALL=C naming the denylist as holding a byte of 0x80 or above in an entry (at ce073c374 each clean push was refused, the test reading the whole list, comments included)" {
+    local strings="$TEST_DIR/private-strings-comments.txt" row leak
+    local -a rows=("LC_ALL=C" "none")
+    locale_base
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    printf '# synthetic caf\351\n# caf\303\251 too\nzzsynthuser # \241\241 a trailing comment\nTESTHOST\n' > "$strings"
+    [ "$(od -An -tx1 "$strings" | tr -d ' \n')" = 232073796e74686574696320636166e90a2320636166c3a920746f6f0a7a7a73796e746875736572202320a1a1206120747261696c696e6720636f6d6d656e740a54455354484f53540a ]   # the plant landed, byte for byte
+    export ROMP_PRIVATE_STRINGS="$strings"
+    if euc_jp_locpath; then export LOCPATH="$LOCDIR"; rows+=("LC_ALL=ja_JP.EUC-JP"); fi
+    for row in "${rows[@]}"; do
+        echo "row: $row"
+        unset LC_ALL LC_CTYPE LANG
+        [ "$row" = none ] || export "${row?}"
+        push_main_through_hook_with_shim
+        [ "$status" -eq 0 ]
+        [[ "$output" != *"romp pre-push"* ]] || false
+        rewind_remote main "$BASE"
+    done
+    unset LC_ALL LC_CTYPE LANG LOCPATH
+    export LC_ALL=C
+    commit_file leak.txt "seen on TESTHOST" "a banned host"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/main (${leak:0:10}) would publish a personal identifier in:"* ]] || false
+    [[ "$output" != *"the DENYLIST"* ]] || false
+    git -C "$REPO" reset -q --hard HEAD~1
+    printf '# synthetic\n# caf\303\251 too\nzzsynthuser # \241\241 a trailing comment\nzzcaf\351\n' > "$strings"
+    push_main_through_hook_with_shim
+    c_locale_refused "$strings"
+}
+
+@test "the narrow re-check at ce073c374 (item 40, its 2, sequences UTF-8 does not allow in comments alone, under a UTF-8 locale): under a UTF-8 locale (LC_ALL), a denylist whose byte sequences UTF-8 does not allow lie in its comments alone (a comment line ending in a Latin-1 e-acute, E9; one led by EUC-JP's ideographic space, A1 A1; and entries' trailing comments holding a lead byte cut short, C3, and a surrogate, ED A0 80), beside an entry holding a UTF-8 e-acute (C3 A9), so that its entries are read for UTF-8, through a real push of a clean commit, passes with no romp line; a commit adding a line holding TESTHOST is refused by its hit alone, no line naming the denylist; and the same list with the ideographic space moved to an entry's edge is refused naming the denylist as holding an entry that is not valid UTF-8 (at ce073c374 that push passed, no entry read for UTF-8)" {
+    local strings="$TEST_DIR/private-strings-comments8.txt" leak
+    recheck_utf8_locale
+    locale_base
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    printf '# synthetic caf\351\n#\241\241 an edge\nzzsynthuser # cut \303\nTESTHOST #\355\240\200\nzzjos\303\251\n' > "$strings"
+    [ "$(od -An -tx1 "$strings" | tr -d ' \n')" = 232073796e74686574696320636166e90a23a1a120616e20656467650a7a7a73796e74687573657220232063757420c30a54455354484f53542023eda0800a7a7a6a6f73c3a90a ]   # the plant landed, byte for byte
+    export ROMP_PRIVATE_STRINGS="$strings" LC_ALL="$LOC"
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]] || false
+    rewind_remote main "$BASE"
+    commit_file leak.txt "seen on TESTHOST" "a banned host"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/main (${leak:0:10}) would publish a personal identifier in:"* ]] || false
+    [[ "$output" != *"the DENYLIST"* ]] || false
+    git -C "$REPO" reset -q --hard HEAD~1
+    printf '# synthetic caf\351\n\241\241zzedge\nzzsynthuser # cut \303\nTESTHOST #\355\240\200\nzzjos\303\251\n' > "$strings"
+    push_main_through_hook_with_shim
+    not_utf8_refused "$strings" "LC_ALL=$LOC, whose character set locale charmap reads as $LOCCM"
+}
+
+# Its 3, judged_inputs reads a word unquoted, as census_unquote reads one (the comment in judged_inputs): bash runs
+# judged_read quoted in double quotes, in single quotes, after a backslash, in dollar quotes or quoted in part as the
+# function itself, and a failed open on such a call skips it whole (by a demo with a stub, under bash 5.2, 5.1 and 3.2),
+# so each spelling is a judged call; a wrapping function called quoted, and one whose body holds a quoted call, are
+# read the same way. A word that only holds the name among other bytes is no call.
+@test "the narrow re-check at ce073c374 (item 40, its 3, judged_inputs reads a word unquoted): judged_inputs names nothing in the hook, and in a copy names, once each, a judged_read call fed by a file whose command word is quoted in double quotes, in single quotes, after a backslash, in ANSI-C dollar quotes, in locale dollar quotes, quoted in part and escaped inside, a call of a wrapper whose body holds the call in single quotes, that wrapper called in double quotes, a braced group fed by a file around a call in double quotes, and a call in double quotes inside a command substitution, fed by a file there; and passes a double-quoted word holding the name and more, an assignment of the name, and a call in double quotes fed by a copy of a descriptor (<&4) (at ce073c374 the census named the backslash spelling alone, reading the masked text, in which a quoted name is dots)" {
+    local tl k
+    run judged_inputs "$HOOK"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    tl=$(grep -n '^trap .exit_trap' "$HOOK" | head -n 1 | cut -d: -f1)
+    census_plant "$TEST_DIR/jq-named.sh" \
+        '"judged_read" gate="the ZZ dq" 0 "zz (wc exited {rc})" -- wc -c < "$zzf" || :' \
+        "'judged_read' gate=\"the ZZ sq\" 0 \"zz (wc exited {rc})\" -- wc -c < \"\$zzf\" || :" \
+        '\judged_read gate="the ZZ bs" 0 "zz (wc exited {rc})" -- wc -c < "$zzf" || :' \
+        "\$'judged_read' gate=\"the ZZ ansi\" 0 \"zz (wc exited {rc})\" -- wc -c < \"\$zzf\" || :" \
+        '$"judged_read" gate="the ZZ loc" 0 "zz (wc exited {rc})" -- wc -c < "$zzf" || :' \
+        'judged_"read" gate="the ZZ part" 0 "zz (wc exited {rc})" -- wc -c < "$zzf" || :' \
+        'ju\dged_read gate="the ZZ mid" 0 "zz (wc exited {rc})" -- wc -c < "$zzf" || :' \
+        'zzqwrap() {' \
+        "    'judged_read' gate=\"the ZZ qw\" 0 \"zz (wc exited {rc})\" -- wc -c" \
+        '}' \
+        'zzqwrap < "$zzf" || :' \
+        '"zzqwrap" < "$zzf" || :' \
+        '{ "judged_read" gate="the ZZ qbrace" 0 "zz (wc exited {rc})" -- wc -c; } < "$zzf" || :' \
+        'zzx=$("judged_read" gate="the ZZ qcs" 0 "zz (wc exited {rc})" -- wc -c < "$zzf") || :'
+    [ "$(sed -n "$((tl + 2))p" "$TEST_DIR/jq-named.sh")" = "'judged_read' gate=\"the ZZ sq\" 0 \"zz (wc exited {rc})\" -- wc -c < \"\$zzf\" || :" ]   # the plant landed
+    [ "$(sed -n "$((tl + 4))p" "$TEST_DIR/jq-named.sh")" = "\$'judged_read' gate=\"the ZZ ansi\" 0 \"zz (wc exited {rc})\" -- wc -c < \"\$zzf\" || :" ]
+    run judged_inputs "$TEST_DIR/jq-named.sh"
+    [ "$status" -eq 0 ]
+    [ "$(grep -c . <<< "$output")" -eq 11 ]
+    for k in 1 2 3 4 5 6 7 11 12 13 14; do
+        echo "plant line: tl + $k"                                           # names the plant when a line below fails
+        [ "$(grep -c "^$((tl + k)): " <<< "$output")" -eq 1 ]
+        grep -q -F -x "$((tl + k)): $(sed -n "$((tl + k))p" "$TEST_DIR/jq-named.sh")" <<< "$output"
+    done
+    census_plant "$TEST_DIR/jq-passed.sh" \
+        'echo "judged_read here" < "$zzf" || :' \
+        'zz="judged_read" < "$zzf" || :' \
+        '"judged_read" gate="the ZZ qdup" 0 "zz (wc exited {rc})" -- wc -c <&4 || :'
+    [ "$(sed -n "$((tl + 1))p" "$TEST_DIR/jq-passed.sh")" = 'echo "judged_read here" < "$zzf" || :' ]   # the plant landed
+    run judged_inputs "$TEST_DIR/jq-passed.sh"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }
