@@ -20,7 +20,8 @@ The pins, each red on the kernel before the lock for the reason it names:
      reached the postal listener; no postal/server.pid;
   2. a draining holder that releases: the waiting line; while the holder holds, the waiting process runs one thread,
      has written nothing and has not taken the lock; once the holder releases, the kernel takes it ("<its pid> serving")
-     before the deadline, and then serves, its repo-root record written after the bind, and still runs 2 s after the old
+     before the deadline, and then serves, its repo-root record written by then (that the record waits for the bind is
+     pin 7's executed pin, not this one's), and still runs 2 s after the old
      owner's deadline (a wait that left its timer armed is ended by SIGALRM at that deadline);
   3. a draining holder that keeps the lock past its deadline: exit 75 no earlier than the deadline and less than 5 s
      after it (EXPIRY_SLACK_S), naming the pid, after waiting for it, nothing touched;
@@ -34,7 +35,9 @@ The pins, each red on the kernel before the lock for the reason it names:
      place; and each writer of the line (the acquisition over a longer line, the drain's announcement) writes at offset
      0 first and never truncates to 0;
   7. repo-root: an in-process load writes none (read right after this module's load), the one call is main()'s after
-     the bind (a source pin; pin 2 executes it);
+     the bind (a source pin on where the call lives), and a kernel that dies at its bind, its port held by this test,
+     leaves no repo-root and no serve-port record (the executed pin, RepoRootAfterTheBind: red when the call runs before
+     the bind, at import or at main()'s first line);
   8. a kernel still waiting at the drain's deadline names the holder it reads then: with two kernels waiting on a holder
      that releases in time, exactly one serves and the other exits 75 at the deadline naming the kernel that took the
      lock, not the holder that let it go, and the same with the holder left a zombie when it lets go (exited and not
@@ -496,7 +499,8 @@ class DrainingHolderIsWaitedFor(_Lab):
         self.assertTrue(self.read_until(p, SERVING_TEXT, BOOT_BOUND_S),
                         "the handed-over kernel never served; stderr:\n%s" % self.stderr_of(p)[-4000:])
         self.assertEqual(Path(self.state, "repo-root").read_text().strip(), os.path.realpath(ROOT),
-                         "the repo-root record lands with the bind (pin 7's executed half)")
+                         "the handed-over kernel wrote its repo-root record by the time it served (that the record waits "
+                         "for the bind is RepoRootAfterTheBind's, pin 7's executed pin)")
         self.assertEqual(self.lock_line(), "%d serving" % p.pid)
         # the old owner's deadline passes while the kernel serves: a wait that left its one-shot timer armed delivers
         # SIGALRM at that deadline, and the default handler, back in place, ends the kernel (pin 6's timer half)
@@ -1138,8 +1142,7 @@ class RepoRootRecord(unittest.TestCase):
 
     def test_the_one_repo_root_call_is_mains_after_the_bind(self):
         # A pin on WHERE the call lives: it guards the call staying after the bind in main() and out of module level.
-        # The behaviour (the record lands once the kernel serves, and not while it waits) is executed by pin 2,
-        # DrainingHolderIsWaitedFor.
+        # The behaviour, a kernel that does not get past its bind writing no record, is executed by RepoRootAfterTheBind.
         tree = ast.parse(open(KERNEL_SRC_PATH, encoding="utf-8").read())
         calls = []
         for node in ast.walk(tree):
@@ -1162,6 +1165,35 @@ class RepoRootRecord(unittest.TestCase):
         self.assertEqual(sorted(idx), ["bind", "port", "repo"], "main() binds, records the port, records the repo root")
         self.assertLess(idx["bind"], idx["repo"], "the repo-root record follows the bind")
         self.assertEqual(idx["repo"], idx["port"] + 1, "beside the serve-port record")
+
+
+class RepoRootAfterTheBind(_Lab):
+    """Pin 7's executed pin: a kernel whose bind fails, its port held by a listening socket this test owns, gets past
+    the lock and through main()'s boot to the bind and dies there, leaving no repo-root and no serve-port record under
+    its state root. A call that ran before the bind (at import, or anywhere in main() ahead of it) leaves repo-root."""
+
+    def test_a_kernel_that_dies_at_its_bind_writes_no_repo_root_and_no_serve_port(self):
+        os.makedirs(os.path.join(self.lab, "dist"))         # current bundles, as pin 2: nothing is built in the checkout
+        Path(self.lab, "dist", "render.js").write_text("")
+        squat = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(squat.close)
+        squat.bind(("127.0.0.1", 0))
+        squat.listen(1)
+        self.env = dict(self.env, ROMP_KERNEL_PORT=str(squat.getsockname()[1]))
+        p = self.spawn()
+        code, err, _, killed = self.verdict(p, bound=BOOT_BOUND_S)
+        self.assertFalse(killed, "the kernel did not exit within %.0f s; its stderr:\n%s" % (BOOT_BOUND_S, err[-3000:]))
+        self.assertFalse(os.path.exists(os.path.join(self.state, "repo-root")),
+                         "a kernel that died at its bind wrote repo-root, so the record was written before the bind")
+        self.assertFalse(os.path.exists(os.path.join(self.state, "serve-port")),
+                         "a kernel that died at its bind wrote serve-port")
+        # that it died AT the bind, so the absences above are due: past the lock (its own serving line), out with the
+        # bind's error, never serving
+        self.assertNotIn(code, (0, EXIT_REFUSED), "the kernel exited %r; its stderr:\n%s" % (code, err[-3000:]))
+        self.assertRegex(err, r"\[Errno %d\]|Address already in use" % errno.EADDRINUSE,
+                         "the kernel did not die at its bind; its stderr:\n%s" % err[-3000:])
+        self.assertEqual(self.lock_line(), "%d serving" % p.pid, "the kernel took the lock before its bind")
+        self.assertNotIn(SERVING_TEXT, err)
 
 
 class DrainAnnouncement(unittest.TestCase):
