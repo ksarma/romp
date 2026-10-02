@@ -798,9 +798,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `vscode-extension/`. Many pin lines of `kernel/kernel.py` as strings — run
   BOTH this and pytest on every kernel change.
 - **`manager-*.test.js`** — the node supervisor (`bin/romp-manager`): restart
-  gating, the kernel registry and its refusal to start a second kernel on the
-  primary's state root (`manager-registry.test.js`, whose stand-in kernel runs
-  under `python3` for the kernel lock's flock), and the drain-poll handshake. Run:
+  gating, the kernel registry and its refusal to start two kernels on one state
+  root (`manager-registry.test.js`, whose stand-in kernel runs under `python3`
+  for the kernel lock's flock, with HOME and XDG_STATE_HOME floored under the
+  test's own directory), and the drain-poll handshake. Run:
   `node --test tests/manager-*.test.js`. The runner runs the files
   concurrently, so a file that starts a real manager takes its ports from
   `tests/manager-ports.js` (`freePort(__filename)`), which owns a disjoint

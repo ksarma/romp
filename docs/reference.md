@@ -1266,13 +1266,24 @@ header:
   no front end uses it.
 - `POST /stop`: `romp down`.
 - `POST /ensure`: a front end asking for a kernel on a port (the VS Code
-  extension). The port must be the primary kernel's or that of a `kernels.json`
-  profile with its own `stateDir`. For any other port, and for a profile whose
-  state root resolves to the primary kernel's (no `stateDir`, or one naming that
-  root through a symlink or with a trailing slash), the manager answers 409 with
-  a body naming the kernel, the primary kernel's port and the remedy, and starts
-  nothing. It never starts such a profile at boot or on a respawn either, and
-  logs one line naming the profile and the remedy: a `stateDir` of its own.
+  extension). The manager starts a kernel only for the primary kernel's port or
+  for a `kernels.json` profile whose state root no earlier kernel uses: it
+  starts the primary first, then the profiles in the file's order, and refuses a
+  profile whose state root resolves to the root of a kernel started before it.
+  A profile with no `stateDir` resolves to the primary kernel's root, and a
+  `stateDir` that names another kernel's root through a symlink or with a
+  trailing slash is that root. A running kernel whose entry has left the file
+  keeps its root until it stops. For a refused profile, and for a port no
+  profile names, `/ensure` answers 409 and starts nothing. The body names the
+  kernel, the kernel whose root it would share, the primary kernel's port and
+  the remedy; if `kernels.json` dropped a malformed entry for that port, the
+  body says so and why. One exception predates these rules: if a profile is
+  named `k<port>` (the name `/ensure` gives a port no profile names), `/ensure`
+  for that port answers for that profile, on the profile's own port. The
+  manager never starts a refused profile at boot or on a respawn either. It
+  logs one line per distinct refusal per kernel per manager life, plus one when
+  a refusal ends a running kernel, and nothing per retry or per tick; it logs
+  each `kernels.json` error once per manager life.
 
 The token is the same 0600 file the kernel gates its own writes with
 (`~/.local/state/romp/serve-token`, or `ROMP_SERVE_TOKEN`). The manager accepts
@@ -1858,18 +1869,22 @@ still holds the lock or another waiting kernel has taken it first (the refusal
 then names that kernel, or says that a new owner has not yet written its line),
 the new kernel is refused.
 
-The lock cannot tell the primary kernel from a second kernel on its root: the
-root goes to whichever kernel takes the lock first. So the manager keeps a
-second kernel off the primary kernel's root before it starts: it never starts a
-`kernels.json` profile whose state root resolves to the primary kernel's (no
-`stateDir`, or one naming that root through a symlink or with a trailing
-slash), and it answers `/ensure` for a port no profile names with 409 (see
-[The manager's control port](#the-managers-control-port)). The lock is the
-guard for the cases where every contender is a primary: a successor and the
-kernel draining before it, and the kernels started outside the manager (the
-far-host fallback, an orphaned kernel, the test labs). A second kernel you
-start by hand on a root another kernel serves is refused; give it its own
-state root with `ROMP_STATE_DIR`.
+The lock cannot tell one kernel from another on its root: the root goes to
+whichever kernel takes the lock first. So the manager keeps a second kernel off
+a root before it starts it. It starts the primary kernel first and the
+`kernels.json` profiles in the file's order, and never starts a profile whose
+state root resolves to the root of a kernel started before it (a profile with
+no `stateDir` resolves to the primary kernel's root, and a `stateDir` naming
+another kernel's root through a symlink or with a trailing slash is that root).
+It answers `/ensure` for such a profile, and for a port no profile names, with
+409 (see [The manager's control port](#the-managers-control-port)). The lock
+keeps kernels apart in the cases the manager does not decide: a kernel's
+successor and the kernel draining before it, and the kernels started outside
+the manager, which it cannot see (a kernel you start by hand, the far-host
+fallback, an orphaned kernel, the test labs). The remedy depends on how the
+second kernel was started: a `kernels.json` profile needs a `stateDir` no other
+kernel uses, and a kernel you start by hand on a root another kernel serves is
+refused until you give it its own state root with `ROMP_STATE_DIR`.
 
 The dashboard page stays on screen across a restart. Its panes reconnect as they
 do after a dropped socket (the watched tab rebuilt whole, the other tabs as
