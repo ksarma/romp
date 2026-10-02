@@ -1879,14 +1879,18 @@ than the new kernel waits for (its own shutdown grace plus 30 seconds) refuses
 it at once, without waiting. A drainer whose shutdown grace is more than 30
 seconds longer than the new kernel's announces such a deadline, so a kernel
 started early in that drain is refused this way too, and under the manager the
-crash backoff starts it again. A kernel whose lock step fails
-with an error is refused the same way, with status 75 and one stderr line naming
-the lock file, the step that failed and the error, never a traceback: a
-`kernel.lock` this user cannot open, read and write as a regular file, or a
-state root on a filesystem that cannot take an flock (`ENOLCK`, `EOPNOTSUPP` or
-`EINVAL`, as on an NFS mount whose lock manager does not answer). Such a state
-root served before the lock existed and is now refused: put the state root on a
-filesystem that supports flock, or set `ROMP_STATE_DIR` to a directory on one.
+crash backoff starts it again. A kernel whose lock step fails with an error is
+refused the same way, with status 75 and one stderr line naming the lock file,
+the step that failed and the error, never a traceback: a `kernel.lock` this
+user cannot open (no permission, or a directory at the path), one whose line
+cannot be read while another process holds it (a FIFO), or a state root on a
+filesystem that cannot take an flock (`ENOLCK`, `EOPNOTSUPP` or `EINVAL`, as on
+an NFS mount whose lock manager does not answer). Such a state root served
+before the lock existed and is now refused: put the state root on a filesystem
+that supports flock, or set `ROMP_STATE_DIR` to a directory on one. A lock the
+kernel takes but whose serving line it cannot write (a FIFO no other process
+holds, a full disk) does not refuse it: the kernel serves without that label,
+and prints one stderr line saying the line was not written.
 
 The lock cannot tell one kernel from another on its root: the root goes to
 whichever kernel takes the lock first. So the manager keeps a second kernel off
