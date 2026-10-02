@@ -658,23 +658,28 @@ class PerfBench(unittest.TestCase):
     def test_refuses_the_live_default_dir_without_the_flag(self):
         root = self._scratch_root("perf-bench-live-")
         state, claude = build_synthetic(root, web_turns=3)
-        # The refusal comes before run(), whose census fingerprints the copy before it imports the kernel: a
-        # refused run that printed no census line never imported the kernel against the live directory. (This
-        # used to read the repo-root marker's absence, which said the same while the kernel wrote it at import;
-        # the kernel now writes it in main() after its bind, so an import would leave no marker either.)
+        # What each check shows. The census line's absence shows only that the run stopped before run(), which
+        # prints the census: a tool that imported the kernel before its refusal would stop there too and print none.
+        # The import witness is the tree hash and mtime check at the end: an import of the kernel against this
+        # directory leaves a path in it, which today is serve-token.lock (the serve-token mint takes that lock at
+        # import), so the directory would no longer hash the same. (The witness used to be the repo-root marker,
+        # which the kernel wrote at import until its instance lock moved that record into main(), after the bind.)
         census = "writes into the state copy"
         before = (_tree_hash(state), {str(p): os.stat(p).st_mtime_ns for p in Path(state).rglob("*")})
         r = run_tool(["--state", state, "--claude-dir", claude, "--repo", ROOT, "--iters", "1"],
                      env_extra={"XDG_STATE_HOME": root})
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("--i-know-this-is-live", r.stderr)
-        self.assertNotIn(census, r.stdout, "the run stopped before its census, so before any kernel import")
+        self.assertNotIn(census, r.stdout, "the run reached run() and its census (whether it imported the kernel is the "
+                                           "tree hash check's to say)")
         r = run_tool(["--state", state, "--claude-dir", claude, "--repo", ROOT, "--iters", "1"],
                      env_extra={"ROMP_STATE_DIR": state})
         self.assertEqual(r.returncode, 2, "ROMP_STATE_DIR names the live dir too")
-        self.assertNotIn(census, r.stdout, "the run stopped before its census, so before any kernel import")
+        self.assertNotIn(census, r.stdout, "the run reached run() and its census (whether it imported the kernel is the "
+                                           "tree hash check's to say)")
         self.assertEqual((_tree_hash(state), {str(p): os.stat(p).st_mtime_ns for p in Path(state).rglob("*")}), before,
-                         "both refusals left the live directory's bytes and mtimes as they were")
+                         "a refusal changed the live directory's bytes, paths or mtimes: the import witness, since a "
+                         "kernel import leaves serve-token.lock there")
 
     def test_live_flag_benches_a_mirror_and_leaves_the_original_alone(self):
         root = self._scratch_root("perf-bench-live-")
