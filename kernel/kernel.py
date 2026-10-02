@@ -84,11 +84,16 @@ jd = load_source("romp_judge", HERE / "judge.py")
 # then os._exit(KERNEL_LOCK_EXIT) with nothing written; under the manager its crash backoff retries it
 # (a kernel started by hand is not retried).
 # A lock step that fails for any other reason refuses the kernel the same way, never with a
-# traceback: the open (a directory at the path, no permission), a flock with any errno but
-# EWOULDBLOCK, the non-blocking one or the blocking one in the wait (a filesystem that cannot take
-# an flock gives ENOLCK, EOPNOTSUPP or EINVAL), and a read of the line (a FIFO gives ESPIPE). Its one
-# line names the path, the step and the error, and the remedy, never another kernel as the holder
-# (_kernel_lock_fault); such a kernel created at most the lock file and wrote nothing else.
+# traceback: the open (a directory at the path, no permission, or a state root where the lock file
+# cannot be made: missing where judge.py's best-effort mkdir could not create it, not a directory,
+# or, with no kernel.lock in it yet, not writable by this user, which its best-effort chmod could
+# not mend), a flock with any errno but EWOULDBLOCK, the non-blocking one or the blocking one in
+# the wait (a filesystem that cannot take an flock gives ENOLCK, EOPNOTSUPP or EINVAL), and a read
+# of the line (a FIFO gives ESPIPE). Its one line names the path, the step and the error, and the
+# remedy (the state root's for a root where the lock file cannot be made; a kernel.lock that
+# already exists, in a root this user can search, keeps the lock file's), never another kernel as
+# the holder (_kernel_lock_fault); such a kernel created at most the lock file and wrote nothing
+# else.
 # The file is opened without O_TRUNC (a loser truncating it would erase the holder's line), never
 # unlinked and never unlocked: the process exit releases it, a SIGKILL included. os.open makes the
 # descriptor non-inheritable, so no child (an SDK session, the judges' child, the detached update
@@ -171,9 +176,21 @@ def _kernel_lock_fault(path, step, err):
     """The one stderr line a refused kernel prints when its lock step failed with an error rather than meeting a holder
     it can name: `step` is what failed ("opening it", "its non-blocking flock", ...) and `err` the error it raised. The
     line names the lock's path, the step and the error (its errno name and message), and what mends it; it never says
-    another kernel holds the root, which _kernel_lock_refusal says and which is not known here, and it never says the
-    kernel wrote nothing, since the open may have created the lock file. A flock that fails with ENOLCK, EOPNOTSUPP
-    (ENOTSUP) or EINVAL is a filesystem that cannot take an flock, and the remedy is a state root on one that can."""
+    another kernel holds the root, which _kernel_lock_refusal says and which is not known here. A flock that fails with
+    ENOLCK, EOPNOTSUPP (ENOTSUP) or EINVAL is a filesystem that cannot take an flock, and the remedy is a state root on
+    one that can. A line with the lock file's remedy, or the filesystem's, never says the kernel wrote nothing, since
+    the open may have created the lock file: it says the kernel created at most that file.
+
+    An open that failed because of the state root, not the lock file, names the root (the path's directory, "." for a
+    bare file name) and its remedy, and says the kernel created no lock file and wrote nothing under the root: ENOENT,
+    ENOTDIR, ELOOP or ENAMETOOLONG with the root not a directory (missing, a regular file, a symlink loop, a name too
+    long; a root of "." that is a deleted working directory, which still stats as a directory, counts as missing), and
+    EACCES or EROFS with nothing at the path (a root this user cannot write, or cannot reach, where no lock file can be
+    made). judge.py's mkdir and chmod of the root are best-effort, so a root they could not create or make writable
+    reaches this step as it was. A lock file that exists and cannot be opened keeps the lock file's remedy (in a root
+    this user can search: in one it cannot, the file's existence cannot be read, and the root's remedy is given), and so
+    does an ENOENT, ENOTDIR, ELOOP or ENAMETOOLONG from a lock path inside a root that is a directory (a symlink into a
+    missing directory, a symlink loop at the path)."""
     code = getattr(err, "errno", None)
     if code is None:
         name = type(err).__name__
@@ -182,16 +199,38 @@ def _kernel_lock_fault(path, step, err):
     else:
         name = errno.errorcode.get(code, "errno %d" % code)
     text = (getattr(err, "strerror", None) or str(err) or type(err).__name__)[:120]
+    # "." for a bare file name (ROMP_STATE_DIR=.), never "": os.curdir, not os.path.abspath, whose os.getcwd raises in a
+    # deleted working directory, where the open meets ENOENT
+    root = os.path.dirname(os.fspath(path)) or os.curdir
+    # The root test for the open's ENOENT, ENOTDIR, ELOOP or ENAMETOOLONG: the root is not a directory. A deleted working
+    # directory, reached as ".", still stats as a directory although the open in it meets ENOENT; os.getcwd raises
+    # there, so such a "." counts as missing
+    root_missing = False
+    if step == "opening it" and code in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG):
+        root_missing = not os.path.isdir(root)
+        if not root_missing and root == os.curdir:
+            try:
+                os.getcwd()
+            except OSError:
+                root_missing = True
+    made = "This kernel created at most that file, wrote nothing else under its state root"
     if "flock" in step and code in _KERNEL_LOCK_CANNOT_LOCK:
         remedy = ("The filesystem under this state root cannot take an flock, which a kernel needs to keep a second kernel "
                   "off its root: put the state root on a filesystem that supports flock, or set ROMP_STATE_DIR to a "
                   "directory on one.")
+    elif root_missing:
+        remedy = ("The state root %s does not exist or is not a directory, so the lock file cannot be made there: create "
+                  "it as a directory this user can write, or set ROMP_STATE_DIR to one." % root)
+        made = "This kernel created no lock file, wrote nothing under its state root"
+    elif step == "opening it" and code in (errno.EACCES, errno.EROFS) and not os.path.lexists(path):
+        remedy = ("The state root %s is not a directory this user can write, so the lock file cannot be made there: make "
+                  "it writable by this user, or set ROMP_STATE_DIR to a directory this user can write." % root)
+        made = "This kernel created no lock file, wrote nothing under its state root"
     else:
         remedy = ("The lock file must be a regular file this user can read, write and lock: mend what is at that path or "
                   "the filesystem under it.")
-    return ("romp-kernel: the instance lock %s could not be taken: %s failed with %s (%s). %s This kernel created at "
-            "most that file, wrote nothing else under its state root, and exits %d.\n"
-            % (path, step, name, text, remedy, KERNEL_LOCK_EXIT))
+    return ("romp-kernel: the instance lock %s could not be taken: %s failed with %s (%s). %s %s, and exits %d.\n"
+            % (path, step, name, text, remedy, made, KERNEL_LOCK_EXIT))
 
 
 def _kernel_lock_pid_alive(pid):
@@ -317,7 +356,8 @@ def _kernel_lock_acquire(path, now=time.time):
 
     The lock step fails with an error instead (the open; the non-blocking flock with any errno but EWOULDBLOCK; the
     blocking flock in the wait; a read of the line, at the start or at the deadline): refused with _kernel_lock_fault,
-    which names the path, the step and the error, and the remedy for a filesystem that cannot take an flock.
+    which names the path, the step and the error, and the remedy: the state root's when the open failed for the root,
+    the filesystem's for a flock it cannot take, else the lock file's.
 
     A refused kernel created at most the lock file (its open, when the file was absent) and wrote nothing else. A
     serving line that cannot be written does not refuse: the lock is held, and the kernel serves without its label."""

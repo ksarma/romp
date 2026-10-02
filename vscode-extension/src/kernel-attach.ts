@@ -41,7 +41,7 @@ export type AttachResult =
   | { ok: true }
   | { ok: false; reason: "no-manager" }        // nothing serving the port AND no manager to ask
   | { ok: false; reason: "manager-refused"; status: number; detail: string }   // a manager answered, and said no
-  | { ok: false; reason: "kernel-didnt-start" }; // manager acked but the kernel never came up (port in use?)
+  | { ok: false; reason: "kernel-didnt-start" }; // manager acked but the kernel never came up (its port in use, or its state root's lock refused it)
 
 export async function ensureThenAttach(d: AttachDeps): Promise<AttachResult> {
   // 1. Already a kernel on our port? Attach straight away — the common case.
@@ -60,7 +60,10 @@ export async function ensureThenAttach(d: AttachDeps): Promise<AttachResult> {
     await d.delay(ms);
     if (await d.healthz()) return { ok: true };
   }
-  // 4. Manager answered but no kernel came up — most often the port is held by a foreign process.
+  // 4. The manager answered but no kernel came up: most often the port is held by another process, or the kernel's
+  //    instance lock refused it (exit 75: kernel.lock under its state root is held by another kernel, or could not be
+  //    taken). Neither /ensure nor /status carries the kernel's exit status, so the toast cannot tell these apart and
+  //    names both, pointing to the manager log, where the kernel's own line names the cause.
   return { ok: false, reason: "kernel-didnt-start" };
 }
 
@@ -138,7 +141,13 @@ export function attachFailureToast(res: Exclude<AttachResult, { ok: true }>,
     return `romp: no kernel on port ${ctx.port} and no manager on ${mp}; start it with \`romp up\` in a terminal.`;
   }
   if (res.reason === "kernel-didnt-start") {
-    return `romp: the manager couldn't bring up a kernel on port ${ctx.port}; is that port already in use? Check \`romp status\`.`;
+    // Two causes, which the extension cannot tell apart: no answer the manager gives (/ensure, /status) carries the
+    // kernel's exit status, so a kernel its instance lock refused (exit 75) reads the same as one whose port was taken.
+    // The kernel's own line in the manager log names the cause, and a lock refusal's line names the remedy too.
+    // `romp status` shows neither, so it is not the pointer.
+    return `romp: the manager couldn't bring up a kernel on port ${ctx.port}. The port may be in use, or the kernel could `
+      + `not take its state root's lock (kernel.lock); the kernel's own line in the manager log names the cause and, for `
+      + `the lock, the remedy.`;
   }
   const src = ctx.tokenFromEnv ? "ROMP_SERVE_TOKEN" : ctx.tokenFile;
   if (res.status === 401 && !ctx.hadToken) {

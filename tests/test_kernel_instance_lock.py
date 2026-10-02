@@ -49,14 +49,31 @@ The pins, each red on the kernel before the lock for the reason it names:
   9. every failure of the lock step is a named refusal: exit 75, one stderr line naming the lock's path and the cause, no
      traceback, nothing written beyond the lock file. A lock file this user cannot open (EACCES), a directory at the path
      (EISDIR), a held FIFO whose line cannot be read (ESPIPE), the non-blocking flock failing (ENOLCK, EOPNOTSUPP and
-     EINVAL with the filesystem's remedy, EIO with the file's; through a sitecustomize shim in the child), an empty line
-     and one that names no owner, a draining deadline beyond the grace plus the margin and one that would overflow
-     setitimer (both refused before any waiting line); in process, the blocking flock failing in the wait, a wait whose
-     timer cannot be armed, and the line's read failing at the drain's deadline. Every one of these that failed with an
-     error (the open, the flock, the read; not the empty or unparseable line, the deadlines or the timer, which are
-     refusals naming a holder) holds its line to _kernel_lock_fault's shape (_assert_fault_line): it starts by naming the
-     lock that could not be taken and carries neither the holder text nor "this kernel wrote nothing", so a fault worded
-     through _kernel_lock_refusal is red;
+     EINVAL with the filesystem's remedy, EIO with the file's; through a sitecustomize shim in the child), a state root
+     the open cannot use (missing under a parent this user cannot write, ENOENT; a regular file, ENOTDIR; a directory
+     this user cannot write, EACCES, its chmod at import failing through a shim as another user's directory's does; a
+     symlink loop, ELOOP; a path component of 300 characters, ENAMETOOLONG), each named with the state root's remedy,
+     never the lock file's, and nothing created (_assert_state_root_fault_line), a lock file under a root that is a
+     directory that links into a missing directory (ENOENT) or links to itself (ELOOP), each with the lock file's
+     remedy, never the state root's, the link untouched, an empty line and one that names no owner, a line naming a pid
+     beyond kill's range (refused as a new owner, which is not running), a draining deadline beyond the grace plus the
+     margin, one that would overflow setitimer and one past datetime's last year, which the refusal prints as epoch
+     seconds (all three refused before any waiting line, under a grace other than the bare 5 s default, so a refusal
+     stating a fixed 5 s is red); in process, the open failing with EINVAL and the line's read failing with EOPNOTSUPP
+     (each with the lock file's remedy, never the filesystem's: those errnos mean a filesystem that cannot lock only
+     from a flock), the fault line for a bare lock name (a state root of ".", whose dirname is ""), which names the root
+     "." and asks whether "." is a directory, the same line from a working directory since deleted, which still stats
+     as a directory (ENOENT with the state root's remedy: os.getcwd raising there counts the root "." missing), the
+     blocking flock failing in the wait, a wait whose timer cannot be armed, and the line's read failing at the drain's
+     deadline. Every one of these that failed with an error (the open, the flock, the read; not the empty or
+     unparseable line, the pid, the deadlines or the timer, which are refusals naming a holder) holds its line to
+     _kernel_lock_fault's shape (_assert_fault_line): it starts by naming the lock that could not be taken and carries
+     neither the holder text nor "this kernel wrote nothing", so a fault worded through _kernel_lock_refusal is red. The
+     empty-line and unparseable-line pins are regression guards: red on the kernel before the lock, they already passed
+     on the lock step as it stood when they were written, which refused both holders with exit 75 and one line. The
+     pins of a lock file linked into a missing directory and of one linked to itself are regression guards too: each
+     passed on the lock step, state root's remedy included, as it stood when the pin was written, and guards that
+     remedy's question whether the root is a directory, red when the question is dropped for its errno (ENOENT, ELOOP);
  10. the lock step's stderr lines are best-effort: a kernel whose stderr is a pipe with no reader meets a draining holder
      that keeps the lock past its deadline, still waits for it, and exits 75 at the deadline, never 120 out of the
      waiting line's BrokenPipeError (a sitecustomize hook in the child writes what it raised to a file the message
@@ -182,14 +199,26 @@ FS_REMEDY_TEXT = ("The filesystem under this state root cannot take an flock, wh
                   "off its root: put the state root on a filesystem that supports flock, or set ROMP_STATE_DIR to a "
                   "directory on one.")
 FILE_REMEDY_TEXT = "The lock file must be a regular file this user can read, write and lock"
+# the open's fault for a state root it cannot use (kernel.py's _kernel_lock_fault): the root's cause and remedy, one pair for
+# a root that is missing or not a directory and one for a root this user cannot write, and what the kernel created (no lock
+# file, where the lock file's variant says at most that file)
+ROOT_MISSING_TEXT = ("does not exist or is not a directory, so the lock file cannot be made there: create it as a directory "
+                     "this user can write, or set ROMP_STATE_DIR to one.")
+ROOT_UNWRITABLE_TEXT = ("is not a directory this user can write, so the lock file cannot be made there: make it writable by "
+                        "this user, or set ROMP_STATE_DIR to a directory this user can write.")
+ROOT_MADE_TEXT = "This kernel created no lock file, wrote nothing under its state root, and exits 75."
+FILE_MADE_TEXT = "created at most that file"
 # how a fault's line starts (kernel.py's _kernel_lock_fault), and two texts of the holder's refusal (_kernel_lock_refusal)
 # that a fault's line never carries: _assert_fault_line
 FAULT_PREFIX_TEXT = "romp-kernel: the instance lock %s could not be taken: "
 HOLDER_IS_TEXT = "the holder is"
 WROTE_NOTHING_TEXT = "this kernel wrote nothing"
 # Pin 9's deadline cases run the kernel under a grace of GRACE_MS. DEADLINE_MARGIN_S is kernel.py's
-# KERNEL_LOCK_DEADLINE_MARGIN_S, written out here so a kernel without the bound is red on what it does, not on a missing name
-GRACE_MS = "5000"
+# KERNEL_LOCK_DEADLINE_MARGIN_S, written out here so a kernel without the bound is red on what it does, not on a missing name.
+# GRACE_MS is not the bare 5 s default on purpose: under "5000" the needles derived from it (the refusal's "its shutdown
+# grace, 5 s") also match a kernel that ignores its own grace and states a fixed 5 s, so a change back to "5000" disarms
+# the pin
+GRACE_MS = "7000"
 DEADLINE_MARGIN_S = 30.0
 BEYOND_S = 15.0               # how far past the grace plus the margin pin 9's first deadline lies: room for the kernel to reach
 #                               its lock point (about a second here) with the deadline still beyond the bound
@@ -220,6 +249,30 @@ if _path and _code:
     fcntl.flock = _flock
 """
 SHIM_TEXT = "kernel-lock-shim: flock on"
+# Pin 9's chmod shim: a sitecustomize on the child's PYTHONPATH that makes os.chmod of the path KERNEL_LOCK_CHMOD_SHIM_PATH
+# names raise EPERM, as a chmod of a directory another user owns does, and say so on stderr; every other chmod goes through.
+# judge.py's import chmods the state root 0700, which makes a root of this user's at 0500 writable again, so a root this
+# user cannot write reaches the lock step only where that chmod fails.
+CHMOD_SHIM_SRC = r"""
+import errno, os, sys
+_path = os.environ.get("KERNEL_LOCK_CHMOD_SHIM_PATH")
+if _path:
+    _real = os.chmod
+
+    def _chmod(path, mode, *args, **kwargs):
+        try:
+            mine = os.path.realpath(os.fspath(path)) == os.path.realpath(_path)
+        except (TypeError, ValueError):
+            mine = False
+        if not mine:
+            return _real(path, mode, *args, **kwargs)
+        sys.stderr.write("kernel-lock-shim: chmod of %s raises EPERM\n" % _path)
+        sys.stderr.flush()
+        raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), os.fspath(path))
+
+    os.chmod = _chmod
+"""
+CHMOD_SHIM_TEXT = "kernel-lock-shim: chmod of"
 # Pin 10's hook: a sitecustomize on the child's PYTHONPATH that appends an uncaught exception's traceback to the file
 # KERNEL_LOCK_HOOK_OUT names, since the child's stderr, a pipe with no reader, cannot carry it; the pin's message quotes it
 EXCEPTHOOK_SHIM_SRC = r"""
@@ -288,6 +341,21 @@ def _assert_fault_line(tc, line, path):
     tc.assertNotIn(HOLDER_IS_TEXT, line, "a fault line carries the holder's refusal text, but a fault knows no holder")
     tc.assertNotIn(WROTE_NOTHING_TEXT, line, "a fault line says this kernel wrote nothing, but its open may have created "
                                              "the lock file")
+
+
+def _assert_state_root_fault_line(tc, line, path, cause):
+    """Hold the open's fault line for a state root it cannot use to _kernel_lock_fault's shape (_assert_fault_line) and to
+    the state root's variant of it: it names the root, `path`'s directory, with `cause` (ROOT_MISSING_TEXT or
+    ROOT_UNWRITABLE_TEXT, each ending in its remedy), says the kernel created no lock file, and carries neither the lock
+    file's remedy nor the filesystem's nor the lock file's account of what the kernel created. The root's path alone is no
+    needle: it is a prefix of the lock's path, which every fault line names."""
+    _assert_fault_line(tc, line, path)
+    tc.assertIn("The state root %s %s" % (os.path.dirname(path), cause), line,
+                "the refusal names the state root, its cause and its remedy")
+    tc.assertIn(ROOT_MADE_TEXT, line, "the refusal says the kernel created no lock file")
+    tc.assertNotIn(FILE_REMEDY_TEXT, line, "the lock file's remedy, for a state root the lock file cannot be made in")
+    tc.assertNotIn(FS_REMEDY_TEXT, line, "the filesystem's remedy, for an open that is no flock")
+    tc.assertNotIn(FILE_MADE_TEXT, line, "the lock file's account of what the kernel created, for an open that made nothing")
 
 
 class _Lab(unittest.TestCase):
@@ -896,6 +964,100 @@ class LockStepFailures(_Lab):
     def test_another_errno_from_the_flock_is_refused_with_the_file_remedy(self):
         self._flock_fails_with("EIO", FILE_REMEDY_TEXT, FS_REMEDY_TEXT)
 
+    def _state_root_refused(self, root, name, cause):
+        """The kernel run on state root `root`, which the open of its lock cannot use (judge.py's mkdir and chmod of the
+        root at import are best-effort, so the root reaches the lock step as it is): refused with the open failing with
+        errno `name`, the line naming the root with `cause` and its remedy, never the lock file's remedy
+        (_assert_state_root_fault_line), and nothing under the lab created or changed. Returns the whole stderr."""
+        self.lock_path = os.path.join(root, "kernel.lock")
+        self.env = dict(self.env, ROMP_STATE_DIR=root)
+        before = self.snapshot()
+        line, err = self.refused_once(before, (self.lock_path, "opening it failed with %s (%s)"
+                                               % (name, os.strerror(getattr(errno, name)))))
+        _assert_state_root_fault_line(self, line, self.lock_path, cause)
+        self.assertNotIn("another kernel", line, "a state root the open cannot use is no other kernel's doing")
+        self.assertNothingWritten(before, "the refused kernel created or changed something under the lab")
+        self.assertFalse(os.path.lexists(self.lock_path), "the refused kernel created the lock file")
+        return err
+
+    def test_a_missing_state_root_is_refused_naming_the_root_and_its_remedy(self):
+        if os.geteuid() == 0:
+            self.skipTest("root creates the state root under a parent whose mode denies it")
+        parent = os.path.join(self.lab, "unwritable")
+        os.mkdir(parent)
+        os.chmod(parent, 0o500)                       # judge.py's mkdir of the root under it fails, and the root stays missing
+        self.addCleanup(os.chmod, parent, 0o700)
+        self._state_root_refused(os.path.join(parent, "romp"), "ENOENT", ROOT_MISSING_TEXT)
+
+    def test_a_state_root_that_is_a_regular_file_is_refused_naming_the_root_and_its_remedy(self):
+        root = os.path.join(self.lab, "root-file")
+        Path(root).write_text("")                     # judge.py's mkdir raises on it, so its chmod never runs
+        self._state_root_refused(root, "ENOTDIR", ROOT_MISSING_TEXT)
+
+    def test_a_state_root_this_user_cannot_write_is_refused_naming_the_root_and_its_remedy(self):
+        if os.geteuid() == 0:
+            self.skipTest("root writes into a directory whose mode denies it")
+        root = os.path.join(self.lab, "unwritable-root")
+        os.mkdir(root)
+        os.chmod(root, 0o500)
+        self.addCleanup(os.chmod, root, 0o700)
+        # judge.py's chmod of the root to 0700 would make it writable again: the shim fails it, as it fails on a directory
+        # another user owns. It lives outside the lab, whose snapshot would otherwise count its bytecode cache.
+        shim = tempfile.mkdtemp(prefix="kernel-lock-shim-")
+        self.addCleanup(shutil.rmtree, shim, True)
+        Path(shim, "sitecustomize.py").write_text(CHMOD_SHIM_SRC)
+        self.env = dict(self.env, PYTHONPATH=shim, KERNEL_LOCK_CHMOD_SHIM_PATH=root)
+        err = self._state_root_refused(root, "EACCES", ROOT_UNWRITABLE_TEXT)
+        self.assertIn("%s %s raises EPERM" % (CHMOD_SHIM_TEXT, root), err, "the shim did not run, so the pin did not")
+
+    def test_a_state_root_that_is_a_symlink_loop_is_refused_naming_the_root_and_its_remedy(self):
+        root = os.path.join(self.lab, "loop-root")
+        # judge.py's mkdir raises on it (the link exists), so its chmod never runs; the open of the lock under it meets ELOOP
+        os.symlink(root, root)
+        self._state_root_refused(root, "ELOOP", ROOT_MISSING_TEXT)
+        self.assertEqual(os.readlink(root), root, "the refused kernel changed the state root's link")
+
+    def test_a_state_root_whose_name_is_too_long_is_refused_naming_the_root_and_its_remedy(self):
+        # one path component of 300 characters, past the 255 a file name may have: judge.py's mkdir of the root fails
+        # (best-effort), and the open of the lock under it meets ENAMETOOLONG. Red when ENAMETOOLONG is not among the
+        # errnos the state root's branch of _kernel_lock_fault reads
+        self._state_root_refused(os.path.join(self.lab, "r" * 300), "ENAMETOOLONG", ROOT_MISSING_TEXT)
+
+    def test_a_lock_file_that_is_a_symlink_into_a_missing_directory_is_refused_with_the_lock_files_remedy(self):
+        # The state root is a directory, so the open's ENOENT is the lock file's: kernel.lock links to a path whose
+        # directory is missing, and the open's O_CREAT creates a link's target but never its directory. Red when the
+        # state root's branch of _kernel_lock_fault reads ENOENT without asking whether the root is a directory.
+        self.seed()
+        target = os.path.join(self.lab, "missing", "kernel.lock")
+        os.symlink(target, self.lock_path)
+        before = self.snapshot()
+        line, _ = self.refused_once(before, (self.lock_path,
+                                             "opening it failed with ENOENT (%s)" % os.strerror(errno.ENOENT),
+                                             FILE_REMEDY_TEXT, FILE_MADE_TEXT))
+        _assert_fault_line(self, line, self.lock_path)
+        self.assertNotIn("The state root", line, "the state root is a directory: the lock file's link is what fails")
+        self.assertNotIn(ROOT_MADE_TEXT, line, "the state root's account of what the kernel created, for the lock "
+                                               "file's fault")
+        self.assertNothingWritten(before, "the refused kernel created or changed something under the lab")
+        self.assertEqual(os.readlink(self.lock_path), target, "the refused kernel changed the lock file's link")
+        self.assertFalse(os.path.lexists(os.path.dirname(target)), "the refused kernel created the link's directory")
+
+    def test_a_lock_file_that_is_a_symlink_loop_is_refused_with_the_lock_files_remedy(self):
+        # The state root is a directory, so the open's ELOOP is the lock file's: kernel.lock links to itself. Red when the
+        # state root's branch of _kernel_lock_fault reads ELOOP without asking whether the root is a directory.
+        self.seed()
+        os.symlink(self.lock_path, self.lock_path)
+        before = self.snapshot()
+        line, _ = self.refused_once(before, (self.lock_path,
+                                             "opening it failed with ELOOP (%s)" % os.strerror(errno.ELOOP),
+                                             FILE_REMEDY_TEXT, FILE_MADE_TEXT))
+        _assert_fault_line(self, line, self.lock_path)
+        self.assertNotIn("The state root", line, "the state root is a directory: the lock file's link is what fails")
+        self.assertNotIn(ROOT_MADE_TEXT, line, "the state root's account of what the kernel created, for the lock "
+                                               "file's fault")
+        self.assertNothingWritten(before, "the refused kernel created or changed something under the lab")
+        self.assertEqual(os.readlink(self.lock_path), self.lock_path, "the refused kernel changed the lock file's link")
+
     def test_an_empty_line_is_refused_as_a_new_owner_with_no_traceback(self):
         self.seed()
         self.hold("")
@@ -911,9 +1073,19 @@ class LockStepFailures(_Lab):
                                    REMEDY_TEXT))
         self.assertEqual(self.lock_line(), "not a holder line", "the holder's line is untouched")
 
+    def test_a_pid_beyond_kills_range_is_refused_as_a_new_owner_with_no_traceback(self):
+        # the line parses, but kill(pid, 0) cannot take the pid (OverflowError): _kernel_lock_pid_alive counts it as not
+        # running, so the holder is a new owner that has not yet written its line, never a traceback
+        self.seed()
+        self.hold("99999999999999999999 serving\n")
+        before = self.snapshot()
+        line, _ = self.refused_once(before, (self.lock_path, NEW_OWNER_TEXT, "which is not running", REMEDY_TEXT))
+        self.assertIn("pid 99999999999999999999", line, "the refusal names the pid as the line reads it")
+        self.assertEqual(self.lock_line(), "99999999999999999999 serving", "the holder's line is untouched")
+
     def _deadline_beyond_the_bound(self, deadline_text):
         """A live holder (this test) whose draining line announces `deadline_text`, under a grace of GRACE_MS: refused at
-        once, before any waiting line, naming the holder, the deadline's distance and the bound."""
+        once, before any waiting line, naming the holder, the deadline's distance and the bound. Returns the line."""
         self.env = dict(self.env, ROMP_SHUTDOWN_GRACE_MS=GRACE_MS)
         self.seed()
         self.hold("%d draining %s\n" % (os.getpid(), deadline_text))
@@ -931,6 +1103,7 @@ class LockStepFailures(_Lab):
                                                      "longer grace announces a deadline beyond it")
         self.assertNotIn(WAITING_TEXT, err, "a deadline beyond the bound is refused before any waiting line")
         self.assertEqual(self.lock_line(), "%d draining %s" % (os.getpid(), deadline_text), "the holder's line is untouched")
+        return line
 
     def test_a_deadline_beyond_the_grace_plus_the_margin_is_refused_without_waiting(self):
         grace = float(GRACE_MS) / 1000.0
@@ -940,13 +1113,23 @@ class LockStepFailures(_Lab):
         # setitimer refuses a delay above about 9.22e9 s with OverflowError; this one is about 1e11 s ahead
         self._deadline_beyond_the_bound("99999999999")
 
+    def test_a_deadline_past_datetimes_last_year_is_refused_without_waiting(self):
+        # 1e12 s falls in the year 33658, past datetime's year 9999, so _kernel_lock_when cannot format it (ValueError) and
+        # prints the epoch seconds instead; the deadline above, in the year 5138, never reaches that fallback
+        line = self._deadline_beyond_the_bound("1000000000000")
+        self.assertIn("announces a deadline of 1000000000000.000, ", line, "the deadline printed as epoch seconds")
+
 
 class LockStepFailuresInProcess(unittest.TestCase):
-    """Pin 9 in process, the failures a subprocess cannot reach cheaply: the blocking flock in the wait failing, a wait
-    whose timer setitimer cannot arm, and the line's read at the drain's deadline failing. Each is a refusal line out of
-    _kernel_lock_acquire, never a raise. The lock is held through a second descriptor of this process (flock locks belong
-    to the open file, so the helper's own open meets EWOULDBLOCK), and the thread count is mocked to one, the waiting
-    kernel's (the helper refuses to wait with more threads, and a test runner may run some)."""
+    """Pin 9 in process, the failures a subprocess cannot reach cheaply: the open failing with EINVAL and the line's read
+    failing with EOPNOTSUPP (errnos the remedy choice reads as a filesystem that cannot lock only from a flock), the
+    blocking flock in the wait failing, a wait whose timer setitimer cannot arm, and the line's read at the drain's
+    deadline failing. Each is a refusal line out of _kernel_lock_acquire, never a raise. Two more call _kernel_lock_fault
+    itself: the fault line for a bare lock name, whose state root is ".", from an empty working directory and from one
+    since deleted. The lock is held through a second
+    descriptor of this process (flock locks belong to the open file, so the helper's own open meets EWOULDBLOCK), and the
+    thread count is mocked to one, the waiting kernel's (the helper refuses to wait with more threads, and a test runner
+    may run some)."""
 
     def setUp(self):
         self.assertTrue(hasattr(km, "_kernel_lock_acquire"), "the kernel has no instance lock")
@@ -974,6 +1157,75 @@ class LockStepFailuresInProcess(unittest.TestCase):
         if fd is not None:
             self.addCleanup(os.close, fd)
         return fd, refusal, err.getvalue()
+
+    # EINVAL and EOPNOTSUPP are among the flock's errnos that mean a filesystem that cannot take an flock
+    # (_KERNEL_LOCK_CANNOT_LOCK), but only from a flock: from the open or the read they are the lock file's fault, and the
+    # remedy says so. These two are red when the remedy choice reads the errno without the step.
+    def test_the_open_failing_with_einval_is_refused_with_the_lock_files_remedy_not_the_filesystems(self):
+        real_open = os.open
+
+        def fake_open(path, *args, **kwargs):
+            if os.fspath(path) == self.path:
+                raise OSError(errno.EINVAL, os.strerror(errno.EINVAL))
+            return real_open(path, *args, **kwargs)     # km.os is the os module itself: every other open goes through
+        with mock.patch.object(km.os, "open", side_effect=fake_open):
+            fd, refusal, err = self.acquire()
+        self.assertIsNone(fd)
+        self.assertIn("romp-kernel: the instance lock %s could not be taken: opening it failed with EINVAL (%s)"
+                      % (self.path, os.strerror(errno.EINVAL)), refusal)
+        self.assertIn(FILE_REMEDY_TEXT, refusal)
+        self.assertNotIn(FS_REMEDY_TEXT, refusal, "an open that fails with EINVAL is no flock the filesystem cannot take")
+        self.assertNotIn("The state root", refusal, "the state root exists and the lock file is in it")
+        _assert_fault_line(self, refusal, self.path)
+
+    def test_the_read_failing_with_eopnotsupp_is_refused_with_the_lock_files_remedy_not_the_filesystems(self):
+        self.announce("%.3f" % (time.time() + 3))
+        failure = OSError(errno.EOPNOTSUPP, os.strerror(errno.EOPNOTSUPP))
+        with mock.patch.object(km, "_kernel_lock_read", side_effect=failure):
+            fd, refusal, err = self.acquire()
+        self.assertIsNone(fd)
+        self.assertNotIn(WAITING_TEXT, err, "the read failed before any wait")
+        self.assertIn("romp-kernel: the instance lock %s could not be taken: reading its line (another process holds it) "
+                      "failed with EOPNOTSUPP (%s)" % (self.path, os.strerror(errno.EOPNOTSUPP)), refusal)
+        self.assertIn(FILE_REMEDY_TEXT, refusal)
+        self.assertNotIn(FS_REMEDY_TEXT, refusal, "a read that fails with EOPNOTSUPP is no flock the filesystem cannot take")
+        _assert_fault_line(self, refusal, self.path)
+
+    def test_a_bare_lock_name_names_its_state_root_as_the_current_directory(self):
+        # ROMP_STATE_DIR=. makes the lock's path the bare name kernel.lock, whose dirname is "": the root is ".", so the
+        # line names it and the remedy choice asks about "." (a directory here), never about "", which isdir calls no
+        # directory. From an empty working directory, so nothing is at the path.
+        cwd = tempfile.mkdtemp(prefix="kernel-lock-cwd-")
+        self.addCleanup(shutil.rmtree, cwd, True)
+        self.addCleanup(os.chdir, os.getcwd())          # registered after the rmtree, so it runs first
+        os.chdir(cwd)
+        path = Path("kernel.lock")
+        line = km._kernel_lock_fault(path, "opening it", OSError(errno.EACCES, os.strerror(errno.EACCES)))
+        _assert_fault_line(self, line, "kernel.lock")
+        self.assertIn("The state root . %s" % ROOT_UNWRITABLE_TEXT, line, "the root of a bare lock name is .")
+        self.assertIn(ROOT_MADE_TEXT, line)
+        # ENOENT with "." a directory is the lock file's fault (a link into a missing directory), not the root's
+        line = km._kernel_lock_fault(path, "opening it", OSError(errno.ENOENT, os.strerror(errno.ENOENT)))
+        _assert_fault_line(self, line, "kernel.lock")
+        self.assertIn(FILE_REMEDY_TEXT, line, "the root . is a directory, so an ENOENT is the lock file's")
+        self.assertNotIn("The state root", line, "the root . is a directory, so an ENOENT is the lock file's")
+
+    def test_a_bare_lock_name_in_a_deleted_working_directory_names_its_state_root_missing(self):
+        # A working directory removed after the chdir still stats as a directory through ".", but nothing can be made in
+        # it, and the open of the bare name kernel.lock meets ENOENT: the root "." is missing, so the line gives the state
+        # root's remedy, never the lock file's. Red when the root test asks isdir alone.
+        gone = tempfile.mkdtemp(prefix="kernel-lock-gone-")
+        self.addCleanup(shutil.rmtree, gone, True)       # a no-op once the rmdir below has run
+        self.addCleanup(os.chdir, os.getcwd())          # registered before the chdir, and after the rmtree, so it runs first
+        os.chdir(gone)
+        os.rmdir(gone)
+        self.assertTrue(os.path.isdir(os.curdir), "premise: a deleted working directory still stats as a directory, so "
+                                                  "isdir alone calls the root a directory")
+        line = km._kernel_lock_fault(Path("kernel.lock"), "opening it", OSError(errno.ENOENT, os.strerror(errno.ENOENT)))
+        _assert_fault_line(self, line, "kernel.lock")
+        self.assertIn("The state root . %s" % ROOT_MISSING_TEXT, line, "the deleted working directory . is the missing root")
+        self.assertIn(ROOT_MADE_TEXT, line)
+        self.assertNotIn(FILE_REMEDY_TEXT, line, "the lock file's remedy, for a state root that is gone")
 
     def test_the_blocking_flock_failing_in_the_wait_is_refused_with_the_filesystem_remedy(self):
         self.announce("%.3f" % (time.time() + 3))

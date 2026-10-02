@@ -1887,7 +1887,14 @@ cannot be read while another process holds it (a FIFO), or a state root on a
 filesystem that cannot take an flock (`ENOLCK`, `EOPNOTSUPP` or `EINVAL`, as on
 an NFS mount whose lock manager does not answer). Such a state root served
 before the lock existed and is now refused: put the state root on a filesystem
-that supports flock, or set `ROMP_STATE_DIR` to a directory on one. A lock the
+that supports flock, or set `ROMP_STATE_DIR` to a directory on one. A state
+root where the lock file cannot be made (missing where the kernel cannot create
+it, not a directory, or, with no `kernel.lock` in it yet, not writable by this
+user) is refused the same way, and the line names the state root and the
+remedy: a directory this user can write at that path, or `ROMP_STATE_DIR` set
+to one. Where `kernel.lock` already exists in a state root this user can
+search, a failure to open it is refused as a `kernel.lock` this user cannot
+open, even if this user cannot write the state root. A lock the
 kernel takes but whose serving line it cannot write (a FIFO no other process
 holds, a full disk) does not refuse it: the kernel serves without that label,
 and prints one stderr line saying the line was not written.
