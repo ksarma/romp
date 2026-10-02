@@ -1040,8 +1040,9 @@ out({delays:connectTimers().map(function(t){return t.ms;}),awaiting:awaitLink,ws
         # 25 s; tests/test_kernel_ws_heartbeat.py pins the sum). The 20 s bound omitted the redial, so a pane tick landing
         # in the loop's last two seconds called an alive loop dead. Two-sided: nothing at the cycle's worst case (22 s)
         # nor at 24,999 ms; a dial and a link-backstop row at 25,001 ms. Since iOS item 1a (2026-10-02) the shell cuts each
-        # dial on its own timer at 15 s, so 22 s is the worst case only for a cut timer the browser lost (the tick then
-        # performs the cut); on the timer the cycle is 17 s, and the bound stays 25 s above both.
+        # hung dial on its own timer at 15 s, so 22 s is the worst case only for a cut timer the browser lost (the tick then
+        # performs the cut); on the timer the cycle is 17 s, or under 19 s for a refusal just inside the cut on the ladder's
+        # top rung, and the bound stays 25 s above all of them.
         r = _run(r"""
 open();recv({type:"ka"});hide();NOW+=46000;
 parentLinkVal={up:false,connT:NOW};show();                         // connT fresh at the return: the shell's loop is alive

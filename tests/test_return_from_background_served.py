@@ -37,7 +37,8 @@ What is recorded per leg, from `<lab xdg>/romp/client-diag.jsonl` (the shim's ro
 the driver's own log, into `<lab>/return-harness-<shell>-<regime>-<s>s.json` and, at the end, one combined
 `return-harness-measurements.json` (copied to $RETURN_HARNESS_OUT when set): per pane the `return` decision and
 `hiddenMs`, `wsconnfail` attempts, `wsclose` count, `watchdog-close` by why, `return-fresh` ms / bytesSince / redialed,
-the shell's `return-probe` rows (none today), federation `hostconn` rows by ev and why (none without an attached host),
+the shell's `return-probe` rows (one per return since D3) and, since iOS item 1a, its first cut after the return
+(`shellFirstCutMs`, the page's reading and the route's), federation `hostconn` rows by ev and why (none without an attached host),
 the kernel's `wsopen` rows per app at boot and in the return window (the storm as the kernel saw it), the beacon's `perf`
 rows with `vis`, `wsBytes`, `free`, `rafGap`, `marks` when present (perfShare is on in the lab's romp:settings), the
 sockets dialed per return by verdict, and the order in which the eight documents' visibilitychange handlers ran (the shell, the settings frame at about:blank and the six panes).
@@ -764,15 +765,20 @@ class ReturnFromBackground(unittest.TestCase):
                 self.assertGreater(ls.get("height", 0), 0, where + "…with a box: %r" % (ls,))
                 self.assertLessEqual(ls.get("bottom", 1e9), ls.get("barTop", 0) + 1, where + "…that stops at the tab bar (the bar stays tappable): %r" % (ls,))
 
-    # ---- iOS item 1a (2026-10-02): the shell's first hung dial is cut on its own timer, at SH_CONNECT_MS ----
+    # ---- iOS item 1a (2026-10-02): the shell's first cut after a hung return, a smoke check in a real browser ----
     def _shell_cut(self, name, m, regime, outage_s):
         """Since iOS item 1a the shell cuts each dial on the dial's own timer (SH_CONNECT_MS, 15 s); before it the 5 s watchdog
-        tick made the cut, 15 to 20 s after the dial (16.9 s in this harness's timeline, one Chromium run at 919fde73b). Read on
-        a hung leg whose outage outlasts the cut (the 30 s legs): the page's figure (measure: the return-probe row's ms minus
-        firstFailMs, the return dial's life as the page saw it) lands within 1 s of 15,000 ms, slack for a loaded box's timer
-        and close-event latency that stays well under the tick's 5 s. The route's figure for the same cut is recorded beside
-        it in the artifact. This is the mechanism only: the harness hangs a dial by never answering its route, and cannot
-        produce the phone's accepted-but-unanswered handshake."""
+        tick made the cut, anywhere from 15 to 20 s after the dial. Read on a hung leg whose outage outlasts the cut (the 30 s
+        legs): the page's figure (measure: the return-probe row's ms minus firstFailMs, the return dial's life as the page saw
+        it) lands within 1 s of 15,000 ms, slack for a loaded box's timer and close-event latency. The route's figure for the
+        same cut is recorded beside it in the artifact.
+
+        This is a smoke check that the cut lands near SH_CONNECT_MS in a real browser, not proof that the dial's own timer made
+        it (the coordinator's ruling of 2026-10-02): a tick cut at the base can land inside the same window. At 919fde73b
+        WebKit read 15,802, 16,004 and 16,024 ms in three runs, one inside the window and two just past it; Chromium, on this
+        harness's near-fixed timeline, read 16.8 to 16.9 s, outside it. The pins of the timer are ShellLinkProbe's test_1a_*
+        cases in tests/test_kernel_mobile.py. The harness
+        hangs a dial by never answering its route, and cannot produce the phone's accepted-but-unanswered handshake."""
         if regime != "hung" or outage_s * 1000 <= 15000 + 1000:
             return
         where = name + ": "
@@ -782,7 +788,7 @@ class ReturnFromBackground(unittest.TestCase):
         cut = m["shellFirstCutMs"]["page"]
         self.assertIsInstance(cut, int, where + "the row times the first cut: %r" % (probes,))
         self.assertGreaterEqual(cut, 15000 - 50, where + "the first cut came no earlier than SH_CONNECT_MS after the dial: %r ms (row %r)" % (cut, probes[0]))
-        self.assertLessEqual(cut, 15000 + 1000, where + "the first cut came at SH_CONNECT_MS on the dial's own timer, not up to a 5 s tick later: %r ms (row %r; route %r ms)"
+        self.assertLessEqual(cut, 15000 + 1000, where + "the first cut came within 1 s of SH_CONNECT_MS: %r ms (row %r; route %r ms)"
                              % (cut, probes[0], m["shellFirstCutMs"]["route"]))
 
     # ---- D2's count pin (2026-09-18): which panes parked, through the wsState words the driver recorded ----

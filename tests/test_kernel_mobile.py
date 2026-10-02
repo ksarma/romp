@@ -3059,9 +3059,10 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
     # dial was cut 15 to 20 s after it was made (SH_CONNECT_MS, then the wait for the next 5 s tick); now each dial arms a timer
     # of SH_CONNECT_MS that its open, its close and the next dial clear, and the tick's CONNECTING arm is the backstop for a
     # timer the browser loses (the re-scoped case above). One socket at a time and PR 768's guard are unchanged: the timer
-    # closes its own dial's socket and never dials. Cases 1, 2, 3, 8 and 9 are red at 919fde73b by behaviour (no cut without
-    # a tick, a cut late by up to a tick, a dead loop). Cases 4 to 6 are red there only because no timer exists; each also
-    # reddens under its own mutant (the cut-reset guard, the clear at the open, the clear at the close).
+    # closes its own dial's socket and never dials. Cases 1, 2, 3, 7, 8 and 9 are red at 919fde73b by behaviour (no cut without
+    # a tick, a cut late by up to a tick, a tick that finds the dial still CONNECTING and cuts it instead of dialing after the
+    # cut, a dead loop). Cases 4 to 6 are red there only because no timer exists; each also reddens under its own mutant (the
+    # cut-reset guard, the clear at the open, the clear at the close).
     def test_1a_a_hung_return_dial_is_cut_at_exactly_sh_connect_ms_on_its_own_timer_with_no_tick(self):
         r = _run_probe(r"""
 shOpen();shRecv({type:'ka'});
