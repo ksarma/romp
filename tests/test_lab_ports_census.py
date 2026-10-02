@@ -44,9 +44,13 @@ THE RULES, each read per module by AST (scan()):
      from a class another module defines is not read: such a class releases in its own body.
   A  the door is bound under its own name only and its members are read as lab_ports.<name>: no `import lab_ports as
      x`, no `import tests.lab_ports` (it binds tests), no `from tests import lab_ports as x` or `from . import lab_ports
-     as x`, no from-import of its members (`from lab_ports import wait_owned`, `from .lab_ports import reserve`), and no
-     assignment of the bare name lab_ports (`lp = lab_ports`). Each would hide the calls the rules above read.
-     `import lab_ports`, `from tests import lab_ports` and `from . import lab_ports` all bind the name lab_ports.
+     as x`, no from-import of its members (`from lab_ports import wait_owned`, `from .lab_ports import reserve`), no
+     from-import from the package (`from tests import`, `from . import`) of a name tests/__init__.py binds the door to
+     (_lab_ports today, read from that file), no read of the door or of such a name as an attribute (`tests.lab_ports`,
+     `tests._lab_ports`), no assignment of the bare name lab_ports (`lp = lab_ports`), and no assignment of a member
+     the rules read, lab_ports.reserve or lab_ports.wait_owned, alone or as an element of a tuple or list value (`r =
+     lab_ports.reserve`). Each would hide the calls the rules above read. `import lab_ports`, `from tests import
+     lab_ports` and `from . import lab_ports` all bind the name lab_ports.
 At run time wait_owned itself refuses a port that was not reserved in the process, which covers a port drawn by a road
 the AST does not read.
 
@@ -58,10 +62,11 @@ outside the module; a module imported by a computed name; readiness read by anot
 /healthz; a /healthz URL bound in an enclosing function or a class body (W reads the call's own scope and the module's;
 D and K read every assignment in the module by spelling); an address, a URL or Popen that reaches its use through a
 container, a call's result or a parameter; the door handed to a call as an argument (getattr(lab_ports, name); the
-mock.patch.object(lab_ports, ...) in tests/test_federated_linkdrop_served.py is such a hand-off and is green) or bound
-by a for, a with or a default argument. The planted modules below are each red under exactly the rule they break, and
-the clean shapes (a listener, a kept holder, the door's own use, a /healthz inside a JavaScript text, a driver's cfg
-holding a /healthz URL) are green.
+mock.patch.object(lab_ports, ...) in tests/test_federated_linkdrop_served.py is such a hand-off and is green), bound
+by a for, a with or a default argument, bound through an expression that holds it (lp = lab_ports if c else None, lp =
+lab_ports or None, a lambda returning it), or reached through sys.modules, importlib.import_module or __import__. The
+planted modules below are each red under exactly the rule they break, and the clean shapes (a listener, a kept holder,
+the door's own use, a /healthz inside a JavaScript text, a driver's cfg holding a /healthz URL) are green.
 
 Synthetic: reads the tree only; no kernel, no browser, no socket.
 """
@@ -360,9 +365,10 @@ def _kernel_spawns(tree):
     return out
 
 
-def scan(text, tree, name):
+def scan(text, tree, name, package=None):
     """{rule: [(file, line, what)]}: one module's offences under each rule, and its kernel-spawning functions under the
-    key "spawns" (the census's floor reads them)."""
+    key "spawns" (the census's floor reads them). `package` holds the names the package binds the door to
+    (_package_door_names); None reads them from this checkout's tests/__init__.py."""
     off = {r: [] for r in RULES}
     zero = _bound(_assigns(ast.walk(tree)), _holds_port_zero)
     for scope in _scopes(tree):
@@ -376,12 +382,12 @@ def scan(text, tree, name):
             off["K"].append((name, line, "a kernel spawn outside any function"))
         elif not any(isinstance(c, ast.Call) and _door_call(c, "wait_owned") for c in _own(fn)):
             off["K"].append((name, line, "%s starts the kernel and never calls lab_ports.wait_owned" % _scope_name(fn)))
-    off.update(scan_reserves(tree, name))
+    off.update(scan_reserves(tree, name, package))
     off["spawns"] = [(name, line, _scope_name(fn) if fn else "<module>") for line, fn in spawns]
     return off
 
 
-def scan_reserves(tree, name):
+def scan_reserves(tree, name, package=None):
     """{"R": [...], "A": [...]}: one module's offences under rules R and A, the two rules the census also reads in the
     modules outside the served population that reserve a port (reservers())."""
     off = {"R": [], "A": []}
@@ -391,7 +397,7 @@ def scan_reserves(tree, name):
     for line, cls in _unreleased_classes(tree):
         off["R"].append((name, line, "class %s reserves ports (lab_ports.reserve or kernel_env) and neither it nor a base "
                                      "class this module defines reads lab_ports.release" % cls))
-    for line, what in _door_aliases(tree):
+    for line, what in _door_aliases(tree, package):
         off["A"].append((name, line, what))
     return off
 
@@ -422,11 +428,40 @@ def _unreleased_classes(tree):
     return [(c.lineno, c.name) for c in classes if c.name not in releasing and _reserves(c)]
 
 
-def _door_aliases(tree):
-    """(line, what) of every binding of the door under a name other than its own, and of every from-import of its
-    members (rule A)."""
+def _package_door_names(root=ROOT):
+    """The names tests/__init__.py under `root` binds the door to other than its own: today _lab_ports, which it binds
+    (`from . import lab_ports as _lab_ports`) to register the door under its bare name. A module that from-imports one of
+    them from the package, or reads one as the package's attribute, holds the door under that name. Read from the
+    package's own imports of the door (`from . import lab_ports as x`, `from tests import lab_ports as x`, `import
+    tests.lab_ports as x`) and its assignments of a name so bound (`y = x`), followed to a fixed point, so a renamed alias
+    is still refused. No tests/__init__.py under `root`, no names."""
+    path = os.path.join(root, "tests", "__init__.py")
+    if not os.path.isfile(path):
+        return frozenset()
+    _, tree = parse_cache.source_and_tree(path)
+    seed = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and ((n.level == 1 and not n.module) or (not n.level and n.module == "tests")):
+            seed |= {a.asname for a in n.names if a.name == DOOR and a.asname}
+        elif isinstance(n, ast.Import):
+            seed |= {a.asname for a in n.names if a.name in ("tests." + DOOR, DOOR) and a.asname}
+    bound = _bound(_assigns(ast.walk(tree)), lambda v, b: isinstance(v, ast.Name) and v.id in b, seed | {DOOR})
+    return frozenset(bound - {DOOR})
+
+
+DOOR_MEMBERS_READ = ("reserve", "wait_owned")   # the members rules R and K read by their spelling, lab_ports.<name>(...)
+
+
+def _door_aliases(tree, package=None):
+    """(line, what) of every binding of the door under a name other than its own, of every from-import of its members,
+    of every from-import from the package of a name `package` holds (the names tests/__init__.py binds the door to,
+    _package_door_names()), of every read of the door, or of one of those names, as an attribute (tests.lab_ports), and
+    of every assignment of a member the rules read (r = lab_ports.reserve) (rule A)."""
+    package = _package_door_names() if package is None else package
     out = []
     for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute) and (n.attr == DOOR or n.attr in package):
+            out.append((n.lineno, "reads the door as an attribute, %s" % ast.unparse(n)))
         if isinstance(n, ast.Import):
             for a in n.names:
                 bound = a.asname or a.name.split(".")[0]
@@ -439,20 +474,29 @@ def _door_aliases(tree):
             for a in n.names:
                 if a.name == DOOR and a.asname not in (None, DOOR):
                     out.append((n.lineno, "from-imports %s from %s as %s" % (DOOR, source, a.asname)))
+                if a.name in package and ((n.level == 1 and not n.module) or (not n.level and n.module == "tests")):
+                    out.append((n.lineno, "from-imports %s, the package's name for the door, from %s" % (a.name, source)))
         elif isinstance(n, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and n.value is not None:
             values = n.value.elts if isinstance(n.value, (ast.Tuple, ast.List)) else [n.value]
             if any(isinstance(v, ast.Name) and v.id == DOOR for v in values):
                 out.append((n.lineno, "assigns the bare name %s to another name" % DOOR))
+            for v in values:
+                if (isinstance(v, ast.Attribute) and v.attr in DOOR_MEMBERS_READ and isinstance(v.value, ast.Name)
+                        and v.value.id == DOOR):
+                    out.append((n.lineno, "assigns %s.%s to another name" % (DOOR, v.attr)))
     return out
 
 
 def reservers(root=ROOT, served=()):
     """{name: (text, tree)} of every module under root/tests outside `served`, other than the door, that reserves a port
     (lab_ports.reserve or kernel_env) or binds the door under another name (rule A's offence, which would hide its
-    reserves from R), read by AST in the files whose text names kernel_env or lab_ports. Rules R and A read them too: a
-    unit test that builds a lab kernel's environment holds a port as surely as a served lab does. tests/__init__.py is
-    not read: it binds the door as _lab_ports only to register it under its bare name, and reserves nothing."""
+    reserves from R), read by AST in the files whose text names kernel_env, lab_ports or a name the package binds the
+    door to (_package_door_names). Rules R and A read them too: a unit test that builds a lab kernel's environment holds
+    a port as surely as a served lab does. tests/__init__.py is not read: it binds the door as _lab_ports only to
+    register it under its bare name, and reserves nothing."""
     tests = os.path.join(root, "tests")
+    package = _package_door_names(root)
+    words = ("kernel_env", DOOR) + tuple(sorted(package))
     out = {}
     for f in sorted(os.listdir(tests)):
         if not f.endswith(".py") or f in served or f in (DOOR_FILE, "__init__.py"):
@@ -460,10 +504,10 @@ def reservers(root=ROOT, served=()):
         path = os.path.join(tests, f)
         with open(path, encoding="utf-8") as fh:
             raw = fh.read()
-        if "kernel_env" not in raw and DOOR not in raw:
+        if not any(w in raw for w in words):
             continue
         text, tree = parse_cache.source_and_tree(path)
-        if _reserves(tree) or _door_aliases(tree):
+        if _reserves(tree) or _door_aliases(tree, package):
             out[f] = (text, tree)
     return out
 
@@ -472,14 +516,15 @@ def census(root=ROOT, globs=None, files=None):
     """(population names, {rule: offences, "spawns": spawning functions, "reservers": the modules outside the population
     that reserve, read under R and A}) over the served population under `root`."""
     names, read = population(root, globs, files)
+    package = _package_door_names(root)
     total = {r: [] for r in RULES + ("spawns",)}
     for f in names:
         text, tree = read[f]
-        for k, v in scan(text, tree, f).items():
+        for k, v in scan(text, tree, f, package).items():
             total[k] += v
     extra = reservers(root, set(read) | {DOOR_FILE})
     for f in sorted(extra):
-        for k, v in scan_reserves(extra[f][1], f).items():
+        for k, v in scan_reserves(extra[f][1], f, package).items():
             total[k] += v
     total["reservers"] = sorted(extra)
     return names, total
@@ -529,6 +574,17 @@ PLANTS = {
     "door-relative-aliased": ('from . import lab_ports as lp\ndef boot(lab):\n    return lp.reserve(lab)\n', "A"),
     "door-assigned": ('import lab_ports\nlp = lab_ports\ndef boot(lab):\n    return lp.reserve(lab)\n', "A"),
     "door-dotted": ('import tests.lab_ports\ndef boot(lab):\n    return tests.lab_ports.reserve(lab)\n', "A"),
+    # roads to the door those four leave open, each reserving or proving through a spelling the other rules do not read:
+    # the name tests/__init__.py binds the door to, from-imported from the package (read from that file, so a renamed
+    # alias is still refused); the door, or that name, read as the package's attribute; and a member the rules read
+    # bound to another name, alone or as an element of a tuple
+    "door-package-alias": ('from tests import _lab_ports\ndef boot(lab):\n    return _lab_ports.reserve(lab)\n', "A"),
+    "door-package-alias-relative": ('from . import _lab_ports\ndef boot(lab):\n    return _lab_ports.reserve(lab)\n', "A"),
+    "door-package-attribute": ('import tests\ndef boot(lab):\n    return tests.lab_ports.reserve(lab)\n', "A"),
+    "door-package-attribute-assigned": ('import tests\nlp = tests.lab_ports\ndef boot(lab):\n    return lp.reserve(lab)\n', "A"),
+    "door-package-alias-attribute": ('import tests\ndef boot(lab):\n    return tests._lab_ports.reserve(lab)\n', "A"),
+    "door-member-assigned": ('import lab_ports\nr = lab_ports.reserve\ndef boot(lab):\n    return r(lab)\n', "A"),
+    "door-member-in-tuple": ('import lab_ports\nw, n = lab_ports.wait_owned, 1\ndef ready(proc, env):\n    return w(proc, env)\n', "A"),
     "clean-door-from-tests": ('from tests import lab_ports\ndef boot(lab):\n    p = lab_ports.reserve(lab)\n'
                               '    lab_ports.release(lab)\n    return p\n', None),
     "clean-door-patched": ('import lab_ports\nfrom unittest import mock\ndef t():\n'
@@ -625,6 +681,8 @@ class LabPortsCensus(unittest.TestCase):
             off = _scan_plant(src, name + ".py")
             got[name] = sorted(r for r in RULES if off[r])
         want = {name: [rule] if rule else [] for name, (_, rule) in PLANTS.items()}
+        self.assertTrue(_package_door_names(), "tests/__init__.py binds the door under a name of its own, which the "
+                                               "door-package-alias plants from-import; none was read from it")
         self.assertEqual(got, want)
         for rule in RULES:
             self.assertIn(rule, {r for _, r in PLANTS.values()}, "a red plant for rule %s" % rule)
@@ -686,17 +744,28 @@ class LabPortsCensus(unittest.TestCase):
 
     def test_a_module_outside_the_served_step_that_aliases_the_door_is_read_under_a(self):
         # a module outside the served step that reserves only through an alias calls no lab_ports.reserve, so the reserve
-        # read alone would leave it unread; binding the door under another name brings it in, and A names it
-        root = tempfile.mkdtemp(prefix="labports-census-")
-        self.addCleanup(shutil.rmtree, root, True)
-        os.makedirs(os.path.join(root, "tests"))
-        for f, src in (("test_clean_served.py", PLANTS["clean-door"][0]),
-                       ("test_unit_alias.py", PLANTS["door-from-tests-aliased"][0])):
-            with open(os.path.join(root, "tests", f), "w") as fh:
-                fh.write(src)
-        names, total = census(root, ["tests/test_*_served.py"], [])
-        self.assertEqual(total["reservers"], ["test_unit_alias.py"])
-        self.assertEqual([(o[0], o[1]) for o in total["A"]], [("test_unit_alias.py", 1)])
+        # read alone would leave it unread; binding the door under another name brings it in, and A names it. The
+        # package's names for the door are read from the root's own tests/__init__.py: under a package that binds it as
+        # _door, a module from-importing _door is read and named although its text never spells lab_ports
+        init = "from . import lab_ports as _lab_ports\nimport sys\nsys.modules.setdefault('lab_ports', _lab_ports)\n"
+        cases = [(init, name, PLANTS[name][0], lines) for name, lines in (
+            ("door-from-tests-aliased", [1]), ("door-package-alias", [1]), ("door-package-alias-relative", [1]),
+            ("door-package-attribute", [3]), ("door-package-attribute-assigned", [2]),
+            ("door-package-alias-attribute", [3]), ("door-member-assigned", [2]), ("door-member-in-tuple", [2]))]
+        cases.append(("from . import lab_ports as _door\n", "renamed-package-alias",
+                      "from tests import _door\ndef boot(lab):\n    return _door.reserve(lab)\n", [1]))
+        for init_src, name, src, lines in cases:
+            with self.subTest(plant=name):
+                root = tempfile.mkdtemp(prefix="labports-census-")
+                self.addCleanup(shutil.rmtree, root, True)
+                os.makedirs(os.path.join(root, "tests"))
+                for f, text in (("__init__.py", init_src), ("test_clean_served.py", PLANTS["clean-door"][0]),
+                                ("test_unit_alias.py", src)):
+                    with open(os.path.join(root, "tests", f), "w") as fh:
+                        fh.write(text)
+                names, total = census(root, ["tests/test_*_served.py"], [])
+                self.assertEqual(total["reservers"], ["test_unit_alias.py"])
+                self.assertEqual([(o[0], o[1]) for o in total["A"]], [("test_unit_alias.py", n) for n in lines])
 
     def test_an_empty_population_fails_loudly(self):
         root = tempfile.mkdtemp(prefix="labports-census-")
