@@ -179,15 +179,15 @@ def _kernel_lock_refusal(why):
     owner that has not yet written its line, or the line itself, quoted (its first 80 characters), when it names no
     owner; and the lock's path), that this kernel wrote nothing, its exit status, and what follows from it on each road.
     The manager never starts two kernels on one state root (bin/romp-manager rootConflict), so under the manager the
-    kernels this lock keeps apart are one kernel's successor and the kernel before it, and the manager's crash backoff
-    starts the successor again. A kernel started by hand is outside the manager's view: a second kernel started by hand
-    on this root needs its own state root, ROMP_STATE_DIR, and a kernels.json profile whose root such a kernel holds
-    needs a stateDir no other kernel uses."""
+    holder is the kernel before this one or a kernel started outside the manager, and the manager's crash backoff starts
+    this kernel again. A kernel started by hand is outside the manager's view: a second kernel started by hand on this
+    root needs its own state root, ROMP_STATE_DIR, and a kernels.json profile whose root such a kernel holds needs a
+    stateDir no other kernel uses."""
     return ("romp-kernel: %s; this kernel wrote nothing and exits %d. The manager never starts two kernels on one state "
-            "root, so under the manager this is one kernel's successor meeting the kernel before it, and the manager's "
-            "crash backoff starts it again. A kernel started by hand is outside the manager's view: a second kernel "
-            "started by hand on this root needs its own state root (set ROMP_STATE_DIR), and a kernels.json profile "
-            "whose root such a kernel holds needs a stateDir no other kernel uses.\n"
+            "root, so under the manager the holder is the kernel before this one or a kernel started outside the manager, "
+            "and the manager's crash backoff starts this kernel again. A kernel started by hand is outside the manager's "
+            "view: a second kernel started by hand on this root needs its own state root (set ROMP_STATE_DIR), and a "
+            "kernels.json profile whose root such a kernel holds needs a stateDir no other kernel uses.\n"
             % (why, KERNEL_LOCK_EXIT))
 
 
