@@ -204,9 +204,12 @@ function specEnv(spec, base, ids) {
 // crash-looped on it. The manager knows the order it starts kernels in, so the refusal sits here:
 // spawnKernel, the one road every start takes (the boot pass, the crash respawn, /ensure), never
 // starts two kernels on one state root. The primary is one instance of that rule: main is started
-// first and never refused, then the kernels.json profiles in the file's order, so of two kernels on
-// one root the earlier one runs and the later one is refused at the source, whichever is asked for
-// first. Keyed on the root each kernel RESOLVES, not on a missing stateDir: a stateDir naming another
+// first and never refused. A running kernel was started before any kernel being started now, so it
+// keeps the root it was started on until it stops, wherever its entry sits in kernels.json (and when
+// its entry has left the file or names another stateDir since). Among the profiles that are not
+// running the file's order decides: the boot pass starts them in that order, so of two such profiles
+// on one root the one listed first runs and the other is refused at the source, whichever is asked
+// for first. Keyed on the root each kernel RESOLVES, not on a missing stateDir: a stateDir naming another
 // kernel's root through a symlink or with a trailing slash is the same conflict. The kernel's lock
 // stays the guard where the manager is not the road: a kernel's successor and the kernel draining
 // before it, and the kernels started outside the manager (a kernel started by hand, the far-host
@@ -245,62 +248,89 @@ function resolveStateRoot(p) {
   return path.resolve(p);
 }
 
-// The refusal for starting `spec` (rootConflict's answer, {error, primaryPort, root, holder}) when its state root
-// resolves to the root of a kernel the manager starts before it, else null. Before it, in this order: main (the
-// primary; main itself is never refused), then every running kernel whose spec kernels.json no longer holds, then
-// the kernels.json profiles ahead of `spec` in the file. The middle group is the registry's: a running kernel whose
-// entry left the file keeps the spec it was started from (spawnKernel's re-read finds no entry for it) and still
-// holds that spec's root, so it counts as started before any spec that is not its own record, and a profile added
-// on its root is refused until it stops. A spec the file does not hold (an /ensure for a port no profile names,
-// whose root is the manager's own and so always main's, or the respawn of such a running kernel) is compared with
-// main and that group only. Each root is read the same way (specStateRoot, then resolveStateRoot). `specs` and
-// `dropped` are the loadSpecs answer the start was resolved from. The primary is the registry's main while main
-// runs, else main's entry in `specs`: a main port edited in kernels.json lands at main's next start, and until then
-// the primary serves the port it was started on, so `primaryPort`, and the port the refusal names, are the running
-// primary's when there is one and the configured one otherwise.
-// `error` is the whole account, one line: the kernel, why its root is another kernel's (for a port no profile names
-// whose entry kernels.json carried and loadSpecs dropped, that entry and why it was dropped), which kernel that is,
-// and the remedy for each road: a kernels.json profile needs a stateDir no other kernel uses, and a kernel started
-// by hand, which the manager cannot see, needs its own ROMP_STATE_DIR.
+// The refusal for starting `spec` (rootConflict's answer, {error, reason, primaryPort, root, holder}) when its state
+// root resolves to the root another kernel holds, else null. The holders, in this order:
+//   1. main, the primary, which is started first; main itself is never refused.
+//   2. every running kernel but main and `spec`'s own record, at the root it was STARTED on (the spec its registry
+//      record keeps), wherever its entry sits in kernels.json: a running kernel was started before any kernel being
+//      started now, and keeps its root until it stops. Its entry may come after `spec`'s (a profile added or edited
+//      ahead of it), may have left the file, or may name another stateDir since (the edit lands at its next start,
+//      spawnKernel's re-read): in each case it still holds the root it runs on, so a profile on that root is refused.
+//   3. the kernels.json profiles ahead of `spec` in the file that are not running, at the root their entries name:
+//      among the profiles that are not running the file's order decides, as the boot pass starts them in it. A spec
+//      with a running record of its own that is started again on the root that record holds (a crash respawn, a
+//      restart, restart-all) skips this group: it is one of the running kernels, which keep their roots ahead of
+//      every profile not running, so a profile listed before it and refused for its root does not take the root at
+//      its next respawn. On another root (its entry edited since it started) it is a new start there, and the file's
+//      order applies as for any spec not running.
+// A spec the file does not hold (an /ensure for a port no profile names, whose root is the manager's own and so
+// always main's, or the respawn of a running kernel whose entry left the file) meets groups 1 and 2 only. Each root
+// is read the same way (specStateRoot, then resolveStateRoot). `specs` and `dropped` are the loadSpecs answer the
+// start was resolved from. The primary is the registry's main while main runs, else main's entry in `specs`: a main
+// port edited in kernels.json lands at main's next start, and until then the primary serves the port it was started
+// on, so `primaryPort`, and the port the refusal names, are the running primary's when there is one and the
+// configured one otherwise.
+// `error` is the whole account, one line: the kernel, why its root is another kernel's (`reason`; for a port no
+// profile names whose entry kernels.json carried and loadSpecs dropped, that entry and why it was dropped), which
+// kernel holds it (a running one is named as running, and keeps that root until it stops), and the remedy for each
+// road: a kernels.json profile needs a stateDir no other kernel uses (a dropped main entry, which carries a port
+// only, needs its port repaired), and a kernel started by hand, which the manager cannot see, needs its own
+// ROMP_STATE_DIR.
 function rootConflict(spec, specs, dropped) {
   if (!spec || spec.id === 'main') return null;
   const list = specs || [];
   const mainRec = kernels.get('main');
   const main = mainRec ? mainRec.spec : (list.find((s) => s.id === 'main') || { id: 'main', port: KERNEL_PORT });
-  const inFile = new Set(list.map((s) => s.id));
+  const rootOf = (s) => resolveStateRoot(specStateRoot(s));
+  const root = rootOf(spec);
   const at = list.findIndex((s) => s.id === spec.id);
-  const before = [{ s: main, how: 'primary' }]
-    .concat([...kernels].filter(([id]) => !inFile.has(id) && id !== spec.id).map(([, r]) => ({ s: r.spec, how: 'unlisted' })))
-    .concat((at > 0 ? list.slice(1, at) : []).map((s) => ({ s, how: 'earlier' })));
-  const root = resolveStateRoot(specStateRoot(spec));
-  const holder = before.find((b) => resolveStateRoot(specStateRoot(b.s)) === root);
+  const running = [...kernels].filter(([id]) => id !== 'main' && id !== spec.id).map(([id, r]) => {
+    const entry = list.find((s) => s.id === id);
+    return { s: r.spec, how: !entry ? 'unlisted' : rootOf(entry) === rootOf(r.spec) ? 'running' : 'moved' };
+  });
+  const own = kernels.get(spec.id);
+  const keeps = !!own && rootOf(own.spec) === root;
+  const earlier = keeps || at <= 0 ? []
+    : list.slice(1, at).filter((s) => !kernels.has(s.id)).map((s) => ({ s, how: 'earlier' }));
+  const holder = [{ s: main, how: 'primary' }].concat(running, earlier).find((b) => rootOf(b.s) === root);
   if (!holder) return null;
   const drop = at > 0 || spec.stateDir ? null : (dropped || []).find((d) => d.port === Number(spec.port));
   const why = at > 0
     ? (spec.stateDir ? `its kernels.json profile's stateDir ${JSON.stringify(spec.stateDir)} resolves to`
       : 'its kernels.json profile has no stateDir, so it would run on')
     : spec.stateDir ? `its stateDir ${JSON.stringify(spec.stateDir)}, from a profile kernels.json no longer holds, resolves to`
-      : drop ? `kernels.json's entry for port ${spec.port} was dropped (${drop.why}), so no profile names the port and it would run on`
-        : `no kernels.json profile names port ${spec.port}, so it would run on`;
+      : drop && drop.id === 'main'
+        ? `kernels.json's main entry for port ${spec.port} was dropped (${drop.why}), so the primary kernel is not moved there and it would run on`
+        : drop ? `kernels.json's entry for port ${spec.port} was dropped (${drop.why}), so no profile names the port and it would run on`
+          : `no kernels.json profile names port ${spec.port}, so it would run on`;
+  const keepsIt = 'and keeps that root until it stops';
   const whose = holder.how === 'primary'
     ? `the primary kernel's state root ${root}, which the primary kernel on port ${main.port} ${mainRec ? 'serves' : 'is configured to serve'}`
-    : `the state root ${root} of kernel '${holder.s.id}' (port ${holder.s.port}), ` +
-      (holder.how === 'earlier' ? 'whose profile comes before it in kernels.json' : 'which is running from a profile kernels.json no longer holds');
+    : `the state root ${root} of kernel '${holder.s.id}' (port ${holder.s.port}), ` + {
+      earlier: 'whose profile comes before it in kernels.json',
+      running: `which is running ${keepsIt}`,
+      moved: `which is running from the stateDir its kernels.json profile named when it started ${keepsIt}`,
+      unlisted: `which is running from a profile kernels.json no longer holds ${keepsIt}`,
+    }[holder.how];
   const remedy = at > 0 || spec.stateDir ? `Give the profile a stateDir no other kernel uses in ${KERNELS_FILE}.`
-    : drop ? `Repair that entry in ${KERNELS_FILE}, with a stateDir no other kernel uses.`
-      : `Add a profile for port ${spec.port} with a stateDir no other kernel uses to ${KERNELS_FILE}.`;
-  return { root, primaryPort: main.port, holder: holder.s.id,
+    : drop && drop.id === 'main' ? `Repair the main entry's port in ${KERNELS_FILE}.`
+      : drop ? `Repair that entry in ${KERNELS_FILE}, with a stateDir no other kernel uses.`
+        : `Add a profile for port ${spec.port} with a stateDir no other kernel uses to ${KERNELS_FILE}.`;
+  return { root, primaryPort: main.port, holder: holder.s.id, reason: why,
            error: `kernel '${spec.id}' (port ${spec.port}) is not started: ${why} ${whose}, and one state root serves one kernel. ` +
                   `${remedy} A kernel started by hand, which the manager does not see, needs its own ROMP_STATE_DIR.` };
 }
 
-// One line per distinct refusal per spec per manager life, plus the line when a refusal ends a running kernel;
+// One line per distinct conflict per spec per manager life, plus the line when a refusal ends a running kernel;
 // nothing per tick and nothing per retry. An /ensure retry (the VS Code extension asks again every few seconds while
-// its window waits) meets a refusal said before and logs nothing. Nothing ticks for a refused kernel: a refused
+// its window waits) meets a conflict said before and logs nothing. Nothing ticks for a refused kernel: a refused
 // start leaves no registry record, and a refused respawn deletes the record it had, so no respawn timer runs for it.
-// The key is the kernel and the refusal's text, so a new conflict on the same spec (its profile edited onto another
-// kernel's root, say) is said again. A refused RESPAWN is said even when said before: it ends a kernel that was
-// running, and the exit line just above it promised a respawn.
+// The key is the conflict itself: the kernel, the kernel holding the root, the resolved root and why the kernel's root
+// is that root (rootConflict's `reason`). Not the refusal's whole text, which also says the primary's port and
+// whether the primary runs: keyed on the text, one conflict was said again each time the primary stopped, came back
+// or moved port. A new conflict on the same spec (its profile edited onto another kernel's root, say) is said again.
+// A refused RESPAWN is said even when said before: it ends a kernel that was running, and the exit line just above
+// it promised a respawn.
 const rootRefusalsSaid = new Set();
 
 const kernels = new Map();
@@ -461,12 +491,12 @@ function spawnKernel(spec) {
   logSpecErrors(fresh.errors);
   spec = fresh.specs.find((s) => s.id === spec.id) || spec;
   const prev = kernels.get(spec.id);
-  // One kernel per state root (rootConflict): a kernel whose root resolves to the root of a kernel the manager starts
-  // before it is never started, on any road. Returns the refusal so /ensure can answer it; null below once a kernel
-  // is spawned.
+  // One kernel per state root (rootConflict): a kernel whose root resolves to the root another kernel holds (main, a
+  // running kernel, or a profile not running that comes before it in kernels.json) is never started, on any road.
+  // Returns the refusal so /ensure can answer it; null below once a kernel is spawned.
   const refused = rootConflict(spec, fresh.specs, fresh.dropped);
   if (refused) {
-    const key = spec.id + '\n' + refused.error;
+    const key = [spec.id, refused.holder, refused.root, refused.reason].join('\n');
     if (prev || !rootRefusalsSaid.has(key)) log(refused.error);
     rootRefusalsSaid.add(key);
     if (prev) kernels.delete(spec.id);   // a refused respawn: the kernel that exited stays gone, and /status says so
@@ -1235,10 +1265,11 @@ function startManager() {
       // A front end configured for `port` asks us to guarantee a kernel there, then attaches. We own
       // it; the front end never spawns. Idempotent: spawned:false means one was already running.
       // A port whose kernel would run on another kernel's state root (no profile names it, or its profile's
-      // root is the primary's or an earlier profile's: rootConflict) is answered 409 with the refusal, and
-      // nothing starts. 409, not a 2xx (the extension reads any status below 400 as taken) and not 401 or
-      // 503 (each is a token toast there); its body's error, which names the kernel, the kernel whose root
-      // it is and the remedy, is what the extension's toast shows.
+      // root is the primary's, a running kernel's or that of a profile before it that is not running:
+      // rootConflict) is answered 409 with the refusal, and nothing starts. 409, not a 2xx (the extension
+      // reads any status below 400 as taken) and not 401 or 503 (each is a token toast there); its body's
+      // error, which names the kernel, the kernel whose root it is and the remedy, is what the extension's
+      // toast shows.
       const port = Number(url.searchParams.get('port')) || KERNEL_PORT;
       const r = ensureKernel(port);
       if (r.refused) return json(409, { ok: false, error: r.refused.error, id: r.id, port: r.port, primaryPort: r.refused.primaryPort });

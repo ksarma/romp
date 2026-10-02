@@ -5,8 +5,9 @@
 // detection (the user 2026-07-24: a long-lived manager respawned kernels on start-time defaults the
 // disk had moved past, with everything reporting success). The second half pins one kernel per state
 // root at the source (2026-10-02): the manager never starts two kernels on one resolved state root (main
-// first, then kernels.json's order), on any road (the boot pass, the crash respawn, /ensure), and says
-// each refusal once.
+// first; a running kernel keeps the root it was started on until it stops, wherever its entry sits in
+// kernels.json; among the profiles not running, the file's order), on any road (the boot pass, the crash
+// respawn, a restart, /ensure), and says each conflict once.
 // Those cases run a real manager with HOME and XDG_STATE_HOME floored under a private world (the harness
 // comment below says how, and how the stand-in kernel refuses a root outside it).
 // Run: node --test tests/manager-registry.test.js
@@ -129,8 +130,8 @@ test('fileStamp changes when the file changes — the staleness detector', () =>
 // (kernel/kernel.py _kernel_lock_acquire). The kernel cannot tell the primary from a second kernel the
 // manager started on the primary's root, so a kernels.json profile with no stateDir, or an /ensure for a
 // port no profile names, could take the primary's root and lock the primary out, and of two profiles on
-// one root the one that lost the lock crash-looped on it. The manager refuses the later kernel before it
-// starts (bin/romp-manager rootConflict), keyed on the root each would resolve.
+// one root the one that lost the lock crash-looped on it. The manager refuses a kernel whose root another
+// kernel holds before it starts (bin/romp-manager rootConflict), keyed on the root each would resolve.
 //
 // The harness: a real manager in a private world (tests/manager-token.test.js's shape), its own state root
 // holding a serve token, ports from this file's block (tests/manager-ports.js), and a stand-in kernel that
@@ -142,7 +143,13 @@ test('fileStamp changes when the file changes — the staleness detector', () =>
 // to <world>/home, XDG_STATE_HOME to <world>/home/xdg-state), so a manager that handed a kernel no state
 // root of its own resolves one inside the world, never the runner's own. Behind that floor the stand-in
 // checks the root it resolved: one that is not under the world (FAKE_WORLD) makes it say so on stderr and
-// exit 2 before it opens anything, so no lock file, log row or directory is made there.
+// exit 2 before it opens anything, so the stand-in makes no lock file, log row or directory there. The
+// manager itself still writes under a profile's stateDir as written: its notes in restart-audit.jsonl
+// (auditSigterm before each stop or restart it signals, auditNote for a folded or trailing restart) create
+// that directory when it is missing, so a profile naming a root outside the world gets that file there
+// when its kernel is stopped or restarted (the harness case below removes its outside directory itself).
+// A pid is signalled only once it is checked to be this world's stand-in (h.standIn: its command line
+// names the world, read from /proc where there is one and from ps where there is not, as on macOS).
 
 const REGISTRY_TOKEN = 'zq9-registry-token-zq9';   // synthetic
 // every refusal names the other road's remedy too: a kernel started by hand is outside the manager's view
@@ -228,6 +235,21 @@ async function world() {
     r.on('error', reject); r.on('timeout', () => { r.destroy(); reject(new Error('timeout')); }); r.end();
   });
   h.kernels = async () => (JSON.parse((await h.req('/status', 'GET')).body).kernels || []);
+  // Whether `pid` is a process of this world, still running: its command line names the world's directory (a stand-in
+  // runs <world>/fake_kernel.py). Read from /proc/<pid>/cmdline where there is a /proc, else from `ps -o command=`, which
+  // a host without /proc has (the manager leg's macOS cells); a pid neither can read is not this world's. h.procRoot is
+  // /proc; a test points it at a path that does not exist to take the road a host without /proc takes.
+  h.procRoot = '/proc';
+  h.standIn = (pid) => {
+    let cmd = null;
+    if (fs.existsSync(path.join(h.procRoot, 'self'))) {
+      try { cmd = fs.readFileSync(path.join(h.procRoot, String(pid), 'cmdline'), 'utf8'); } catch (e) { cmd = null; }
+    } else {
+      const r = spawnSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' });
+      cmd = r.status === 0 ? r.stdout : null;
+    }
+    return cmd !== null && cmd.includes(dir);
+  };
   // the lines saying kernel `id` was not started (as their subject: a refusal of another kernel names `id` as the holder)
   h.refusals = (id) => h.log.split('\n').filter((l) => new RegExp(`^\\[romp-manager\\] kernel '${id}' \\(port \\d+\\) is not started: `).test(l));
   h.start = async (extra) => {
@@ -253,9 +275,7 @@ async function world() {
       try { h.mgr.kill('SIGKILL'); } catch (e) { /* gone */ }
     }
     for (const pid of new Set(h.rows().map((r) => r.pid))) {    // only a stand-in this world started, still running
-      let mine = true;
-      try { mine = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes(dir); } catch (e) { mine = !fs.existsSync('/proc/self'); }
-      if (mine) { try { process.kill(pid, 'SIGKILL'); } catch (e) { /* gone */ } }
+      if (h.standIn(pid)) { try { process.kill(pid, 'SIGKILL'); } catch (e) { /* gone */ } }
     }
     fs.rmSync(dir, { recursive: true, force: true });
   };
@@ -416,7 +436,10 @@ test('a running profile whose entry loses its stateDir and then exits unasked (a
     await h.start();
     await h.until(() => h.at(aux, 'serving').length === 1, 10000, 'the profile serves on its own root');
     const pid = h.at(aux, 'serving')[0].pid;
-    assert.ok(fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes(h.dir), 'the serving row\'s pid is this world\'s stand-in');
+    // the pid is the one the manager spawned for the profile, by the manager's own spawn line (fake-serve execs the
+    // stand-in, so the child's pid is the stand-in's), and a process of this world still running: killed only then
+    assert.ok(h.log.includes(`kernel 'aux' → :${aux} (pid ${pid})`), `the serving row's pid is not the profile's spawn:\n${h.log}`);
+    assert.ok(h.standIn(pid), 'the serving row\'s pid is this world\'s stand-in, still running');
     h.writeKernels([{ id: 'aux', port: aux }]);            // the edit lands on the kernel's next start (the spawn-time re-read)
     process.kill(pid, 'SIGKILL');                          // the crash road: nothing asked for this exit
     await h.until(() => h.log.includes(`kernel 'aux' (pid ${pid}) exited without a restart request`), 10000, 'the manager did not log the exit');
@@ -432,7 +455,7 @@ test('a running profile whose entry loses its stateDir and then exits unasked (a
   } finally { await h.cleanup(); }
 });
 
-test('two profiles on one state root, written literally, through a symlink or with a trailing slash: the first runs, and each later one is refused once, named in its line and in /ensure\'s 409, and never started', async () => {
+test('two profiles on one state root, written literally, through a symlink or with a trailing slash: the first runs, and each later one is refused once, named in its line and in /ensure\'s 409, and never started, nor once the first stops', async () => {
   const h = await world();
   try {
     const [first, literal, viaLink, slashed] = [await freePort(__filename), await freePort(__filename),
@@ -452,9 +475,10 @@ test('two profiles on one state root, written literally, through a symlink or wi
         assert.equal(r.code, 409, `/ensure for ${id}: ${r.body}`);
         const body = JSON.parse(r.body);
         assert.equal(body.id, id);
+        // the boot pass started 'first' before any later profile, and it runs: the refusal names it as running
         assert.ok(body.error.includes(`kernel '${id}' (port ${port}) is not started: its kernels.json profile's stateDir ` +
                                       `${JSON.stringify(asWritten)} resolves to the state root ${fs.realpathSync(shared)} of kernel 'first' ` +
-                                      `(port ${first}), whose profile comes before it in kernels.json`), body.error);
+                                      `(port ${first}), which is running and keeps that root until it stops`), body.error);
         assert.ok(body.error.includes('Give the profile a stateDir no other kernel uses'), body.error);
         assert.ok(body.error.includes(BY_HAND_REMEDY), body.error);
         const lines = h.refusals(id);
@@ -467,6 +491,16 @@ test('two profiles on one state root, written literally, through a symlink or wi
     assert.equal(h.at(first, 'start').length, 1, 'the first profile was started once');
     assert.equal(h.at(h.mainPort, 'start').length, 1, 'main untouched');
     assert.deepEqual((await h.kernels()).map((k) => k.id).sort(), ['first', 'main']);
+    // 'first' stopped: no kernel holds the root now, and among the profiles not running the file's order decides, so
+    // a later one is still refused, the refusal now naming 'first' as the profile before it; the same conflict (the
+    // kernel, the holder, the root, the reason), so no new line
+    assert.equal((await h.req('/stop?kernel=first', 'POST')).code, 200);
+    await h.until(() => h.log.includes(`kernel 'first' stopped`), 10000, 'the first profile did not stop');
+    const r = await h.req(`/ensure?port=${literal}`, 'POST');
+    assert.equal(r.code, 409, r.body);
+    assert.ok(JSON.parse(r.body).error.includes(`of kernel 'first' (port ${first}), whose profile comes before it in kernels.json`), r.body);
+    assert.equal(h.refusals('literal').length, 1, h.log);
+    assert.deepEqual(h.at(literal), [], 'the later profile was started once the first stopped');
   } finally { await h.cleanup(); }
 });
 
@@ -495,6 +529,146 @@ test('a running kernel whose entry left kernels.json still holds its root: a pro
     assert.equal(h.refusals('added').length, 1, h.log);
     assert.deepEqual(h.at(added), []);
     assert.deepEqual((await h.kernels()).map((k) => k.id).sort(), ['main', 'old']);
+  } finally { await h.cleanup(); }
+});
+
+// A running kernel keeps the root it was started on until it stops, wherever its entry sits in kernels.json. The
+// roads below start a profile listed BEFORE a running profile on that running profile's root: an /ensure for a profile
+// added ahead of it, and a restart and an unasked exit of an earlier profile edited onto it; and a profile on the old
+// root of a running kernel whose entry now names another stateDir. Each is refused once, by a line naming the running
+// holder, is never started (so never crash-loops on the kernel lock), and the running holder keeps serving, through
+// its own restart and crash respawn too: a running kernel keeps its root ahead of a profile that is not running.
+const RUNNING_HOLDER = 'which is running and keeps that root until it stops';
+
+test('a profile added ahead of a running profile, on its root, is refused when /ensure asks for it: 409 naming the running profile, one line, never started, and the running profile keeps serving', async () => {
+  const h = await world();
+  try {
+    const [early, late] = [await freePort(__filename), await freePort(__filename)];
+    const shared = path.join(h.dir, 'shared-state');
+    h.writeKernels([{ id: 'late', port: late, stateDir: shared }]);
+    await h.start();
+    await h.until(() => h.at(late, 'serving').length === 1, 10000, 'the running profile serves');
+    h.writeKernels([{ id: 'early', port: early, stateDir: shared }, { id: 'late', port: late, stateDir: shared }]);
+    for (let i = 0; i < 2; i++) {                           // the extension's retry
+      const r = await h.req(`/ensure?port=${early}`, 'POST');
+      assert.equal(r.code, 409, `/ensure for the profile added ahead of the running one: ${r.body}`);
+      const body = JSON.parse(r.body);
+      assert.equal(body.id, 'early');
+      assert.ok(body.error.includes(`kernel 'early' (port ${early}) is not started: its kernels.json profile's stateDir ` +
+                                    `${JSON.stringify(shared)} resolves to the state root ${fs.realpathSync(shared)} of kernel 'late' ` +
+                                    `(port ${late}), ${RUNNING_HOLDER}`), body.error);
+      assert.ok(body.error.includes('Give the profile a stateDir no other kernel uses'), body.error);
+    }
+    await h.sleep(2500);                                    // a profile started on the held root would crash-loop on the lock by here
+    assert.deepEqual(h.at(early), [], `the profile added ahead was started on the running profile's root: ${JSON.stringify(h.rows())}`);
+    assert.doesNotMatch(h.log, new RegExp(`kernel 'early' → :${early}`), 'the manager spawned the profile added ahead');
+    assert.equal(h.refusals('early').length, 1, h.log);
+    assert.deepEqual(h.at(late).map((r) => r.event), ['start', 'serving'], 'the running profile was disturbed');
+    assert.equal(h.refusals('late').length, 0, h.log);
+    assert.deepEqual((await h.kernels()).map((k) => k.id).sort(), ['late', 'main']);
+  } finally { await h.cleanup(); }
+});
+
+test('an earlier running profile edited onto a later running profile\'s root is refused at its restart, once and after its exit line, naming the running profile, and never started there; the running profile keeps its root through restart-all, and the refused one stays down', async () => {
+  const h = await world();
+  try {
+    const [pa, pb] = [await freePort(__filename), await freePort(__filename)];
+    const ra = path.join(h.dir, 'a-state'), rb = path.join(h.dir, 'b-state');
+    h.writeKernels([{ id: 'a', port: pa, stateDir: ra }, { id: 'b', port: pb, stateDir: rb }]);
+    await h.start();
+    await h.until(() => h.at(pa, 'serving').length === 1 && h.at(pb, 'serving').length === 1, 10000, 'both profiles serve');
+    h.writeKernels([{ id: 'a', port: pa, stateDir: rb }, { id: 'b', port: pb, stateDir: rb }]);   // lands at a's next start
+    assert.equal((await h.req('/restart?kernel=a', 'POST')).code, 200);
+    await h.until(() => h.refusals('a').length === 1, 10000, 'the restart of the edited profile was not refused, or not said');
+    const exited = h.log.indexOf(`kernel 'a' exited`);
+    assert.ok(exited >= 0 && h.log.indexOf(h.refusals('a')[0]) > exited, 'the refusal follows the exit line');
+    assert.ok(h.refusals('a')[0].includes(`resolves to the state root ${fs.realpathSync(rb)} of kernel 'b' (port ${pb}), ${RUNNING_HOLDER}`),
+              h.refusals('a')[0]);
+    await h.sleep(2500);                                    // past the crash backoff: a respawn onto b's root would be here
+    const rowsOf = (port) => h.at(port).map((r) => `${r.event}@${path.basename(r.root)}`);
+    assert.deepEqual(rowsOf(pa), ['start@a-state', 'serving@a-state'], 'the edited profile was started again');
+    assert.deepEqual((await h.kernels()).map((k) => k.id).sort(), ['b', 'main'], '/status still lists the refused profile');
+    // restart-all restarts every kernel the manager runs: b comes back on the root it holds, ahead of a (listed before
+    // it, but not running), so the root does not change hands, and a, which has no record, is not started
+    const all = await h.req('/restart-all', 'POST');
+    assert.equal(all.code, 200, all.body);
+    await h.until(() => h.at(pb, 'serving').length === 2 || h.refusals('b').length > 0, 10000, 'b was not restarted by restart-all');
+    await h.sleep(1500);
+    assert.equal(h.refusals('b').length, 0, `the running profile's restart was refused:\n${h.log}`);
+    assert.deepEqual(rowsOf(pb), ['start@b-state', 'serving@b-state', 'start@b-state', 'serving@b-state']);
+    assert.deepEqual(rowsOf(pa), ['start@a-state', 'serving@a-state'], 'restart-all started the refused profile');
+    assert.equal(h.refusals('a').length, 1, h.log);
+    assert.deepEqual((await h.kernels()).map((k) => k.id).sort(), ['b', 'main']);
+  } finally { await h.cleanup(); }
+});
+
+test('an earlier running profile edited onto a later running profile\'s root and then killed (an unasked exit) is not respawned there, the one line after the exit line naming the running profile; the running profile\'s own crash respawn keeps its root', async () => {
+  const h = await world();
+  try {
+    const [pa, pb] = [await freePort(__filename), await freePort(__filename)];
+    const ra = path.join(h.dir, 'a-state'), rb = path.join(h.dir, 'b-state');
+    h.writeKernels([{ id: 'a', port: pa, stateDir: ra }, { id: 'b', port: pb, stateDir: rb }]);
+    await h.start();
+    await h.until(() => h.at(pa, 'serving').length === 1 && h.at(pb, 'serving').length === 1, 10000, 'both profiles serve');
+    h.writeKernels([{ id: 'a', port: pa, stateDir: rb }, { id: 'b', port: pb, stateDir: rb }]);   // lands at a's next start
+    const pid = h.at(pa, 'serving')[0].pid;
+    assert.ok(h.log.includes(`kernel 'a' → :${pa} (pid ${pid})`) && h.standIn(pid), 'the pid is the edited profile\'s stand-in');
+    process.kill(pid, 'SIGKILL');                          // the crash road: nothing asked for this exit
+    await h.until(() => h.log.includes(`kernel 'a' (pid ${pid}) exited without a restart request`), 10000, 'the manager did not log the exit');
+    await h.until(() => h.refusals('a').length === 1, 5000, 'the crash respawn was not refused, or not said');
+    assert.ok(h.log.indexOf(h.refusals('a')[0]) > h.log.indexOf(`kernel 'a' (pid ${pid}) exited`), 'the refusal follows the exit line');
+    assert.ok(h.refusals('a')[0].includes(`resolves to the state root ${fs.realpathSync(rb)} of kernel 'b' (port ${pb}), ${RUNNING_HOLDER}`),
+              h.refusals('a')[0]);
+    await h.sleep(2500);                                    // past the crash backoff: a respawn onto b's root would be here
+    const rowsOf = (port) => h.at(port).map((r) => `${r.event}@${path.basename(r.root)}`);
+    assert.deepEqual(rowsOf(pa), ['start@a-state', 'serving@a-state'], 'the edited profile was started again');
+    // b's crash: its respawn is of the kernel holding the root, so a (listed before it, not running) does not take it
+    const pidB = h.at(pb, 'serving')[0].pid;
+    assert.ok(h.log.includes(`kernel 'b' → :${pb} (pid ${pidB})`) && h.standIn(pidB), 'the pid is the running profile\'s stand-in');
+    process.kill(pidB, 'SIGKILL');
+    await h.until(() => h.at(pb, 'serving').length === 2 || h.refusals('b').length > 0, 10000, 'the running profile was not respawned');
+    await h.sleep(500);
+    assert.equal(h.refusals('b').length, 0, `the running profile's crash respawn was refused:\n${h.log}`);
+    assert.deepEqual(rowsOf(pb), ['start@b-state', 'serving@b-state', 'start@b-state', 'serving@b-state']);
+    assert.deepEqual(rowsOf(pa), ['start@a-state', 'serving@a-state']);
+    assert.equal(h.refusals('a').length, 1, h.log);
+    assert.deepEqual((await h.kernels()).map((k) => k.id).sort(), ['b', 'main']);
+  } finally { await h.cleanup(); }
+});
+
+test('a running kernel whose entry now names another stateDir keeps the root it was started on: a profile on that root is refused naming it, and starts there once the kernel\'s restart has moved it', async () => {
+  const h = await world();
+  try {
+    const [po, pp] = [await freePort(__filename), await freePort(__filename)];
+    const r1 = path.join(h.dir, 'r1-state'), r3 = path.join(h.dir, 'r3-state');
+    h.writeKernels([{ id: 'o', port: po, stateDir: r1 }]);
+    await h.start();
+    await h.until(() => h.at(po, 'serving').length === 1, 10000, 'the profile serves on its first root');
+    // o's entry moves to r3, which lands at o's next start; p, listed first, names r1, the root o still runs on
+    h.writeKernels([{ id: 'p', port: pp, stateDir: r1 }, { id: 'o', port: po, stateDir: r3 }]);
+    for (let i = 0; i < 2; i++) {
+      const r = await h.req(`/ensure?port=${pp}`, 'POST');
+      assert.equal(r.code, 409, r.body);
+      assert.ok(JSON.parse(r.body).error.includes(`resolves to the state root ${fs.realpathSync(r1)} of kernel 'o' (port ${po}), which is ` +
+                                                  'running from the stateDir its kernels.json profile named when it started and keeps that ' +
+                                                  'root until it stops'), r.body);
+    }
+    await h.sleep(1500);                                    // a profile started on the held root would crash-loop on the lock by here
+    assert.deepEqual(h.at(pp), [], `the profile was started on the root the running kernel holds: ${JSON.stringify(h.rows())}`);
+    assert.equal(h.refusals('p').length, 1, h.log);
+    // o's restart takes the root its entry names now; r1 is free, and /ensure starts p there
+    assert.equal((await h.req('/restart?kernel=o', 'POST')).code, 200);
+    await h.until(() => h.at(po, 'serving').length === 2 || h.refusals('o').length > 0, 10000, 'the moved profile was not restarted');
+    assert.equal(h.refusals('o').length, 0, h.log);
+    assert.equal(h.at(po, 'serving')[1].root, fs.realpathSync(r3), 'the restart did not move the kernel to the root its entry names');
+    const e = await h.req(`/ensure?port=${pp}`, 'POST');
+    assert.equal(e.code, 200, e.body);
+    assert.equal(JSON.parse(e.body).spawned, true, e.body);
+    await h.until(() => h.at(pp, 'serving').length === 1, 10000, 'the profile does not serve on the freed root');
+    assert.equal(h.at(pp, 'serving')[0].root, fs.realpathSync(r1));
+    assert.deepEqual(h.rows().filter((r) => r.event === 'refused'), [], 'a kernel met another on its root');
+    assert.equal(h.refusals('p').length, 1, h.log);
+    assert.deepEqual((await h.kernels()).map((k) => k.id).sort(), ['main', 'o', 'p']);
   } finally { await h.cleanup(); }
 });
 
@@ -529,6 +703,26 @@ test('kernels.json\'s errors are said once per text per manager life, across the
   } finally { await h.cleanup(); }
 });
 
+test('/ensure for the port of a dropped main entry says the main entry was dropped and why, and that its port needs repair, not a stateDir it has no field for', async () => {
+  const h = await world();
+  try {
+    h.writeKernels([{ id: 'main', port: 80 }]);            // below 1024: the main override is dropped, the primary stays on its port
+    await h.start();
+    const r = await h.req('/ensure?port=80', 'POST');
+    assert.equal(r.code, 409, r.body);
+    const body = JSON.parse(r.body);
+    assert.equal(body.id, 'k80');
+    assert.equal(body.primaryPort, h.mainPort);
+    assert.ok(body.error.includes("kernel 'k80' (port 80) is not started: kernels.json's main entry for port 80 was dropped " +
+                                  '(main override needs a free port in [1024,65535]), so the primary kernel is not moved there and it ' +
+                                  'would run on the primary kernel\'s state root'), body.error);
+    assert.ok(body.error.includes(`Repair the main entry's port in ${path.join(h.state, 'kernels.json')}.`), body.error);
+    assert.ok(!body.error.includes('stateDir'), `a main entry carries a port only, so a stateDir is no part of its repair: ${body.error}`);
+    assert.ok(body.error.includes(BY_HAND_REMEDY), body.error);
+    assert.deepEqual(h.rows().filter((row) => row.port !== h.mainPort), [], 'a kernel was started for the refused port');
+  } finally { await h.cleanup(); }
+});
+
 test('the refusal and the 409\'s primaryPort give the running primary\'s port, not a main port edited into kernels.json since it started, and the configured port once main is stopped', async () => {
   const h = await world();
   try {
@@ -554,6 +748,57 @@ test('the refusal and the 409\'s primaryPort give the running primary\'s port, n
   } finally { await h.cleanup(); }
 });
 
+test('one conflict is said once across the primary stopping, coming back and moving port: the line is keyed on the conflict, not on the text, which names the primary\'s port and whether it runs', async () => {
+  const h = await world();
+  try {
+    const [nodir, newMain] = [await freePort(__filename), await freePort(__filename)];
+    h.writeKernels([{ id: 'nodir', port: nodir }]);
+    await h.start();
+    const ensure = async (says) => {
+      const r = await h.req(`/ensure?port=${nodir}`, 'POST');
+      assert.equal(r.code, 409, r.body);
+      assert.ok(JSON.parse(r.body).error.includes(says), `the 409 does not say "${says}": ${r.body}`);
+    };
+    await ensure(`which the primary kernel on port ${h.mainPort} serves,`);
+    assert.equal((await h.req('/stop?kernel=main', 'POST')).code, 200);
+    await h.until(() => h.log.includes(`kernel 'main' stopped`), 10000, 'main did not stop');
+    await ensure(`which the primary kernel on port ${h.mainPort} is configured to serve,`);
+    assert.equal((await h.req(`/ensure?port=${h.mainPort}`, 'POST')).code, 200);   // main back
+    await h.until(() => h.at(h.mainPort, 'serving').length === 2, 10000, 'main did not come back');
+    await ensure(`which the primary kernel on port ${h.mainPort} serves,`);
+    h.writeKernels([{ id: 'main', port: newMain }, { id: 'nodir', port: nodir }]);
+    assert.equal((await h.req('/restart?kernel=main', 'POST')).code, 200);
+    await h.until(() => h.at(newMain, 'serving').length === 1, 10000, 'main did not move to its new port');
+    await ensure(`which the primary kernel on port ${newMain} serves,`);
+    await h.sleep(300);
+    const lines = h.refusals('nodir');
+    assert.equal(lines.length, 1, `one conflict (nodir on the primary's root) said ${lines.length} times:\n${lines.join('\n')}`);
+    assert.deepEqual(h.at(nodir), [], 'the profile with no stateDir was started');
+  } finally { await h.cleanup(); }
+});
+
+test('a profile refused at boot for one conflict and edited into another, onto an earlier profile\'s root, has the new conflict said: two lines, the second naming the earlier profile', async () => {
+  const h = await world();
+  try {
+    const [first, aux] = [await freePort(__filename), await freePort(__filename)];
+    const shared = path.join(h.dir, 'shared-state');
+    h.writeKernels([{ id: 'aux', port: aux }]);
+    await h.start();
+    assert.equal(h.refusals('aux').length, 1, `refused at boot:\n${h.log}`);
+    assert.match(h.refusals('aux')[0], /its kernels\.json profile has no stateDir, so it would run on the primary kernel's state root/);
+    h.writeKernels([{ id: 'first', port: first, stateDir: shared }, { id: 'aux', port: aux, stateDir: shared }]);
+    assert.equal((await h.req(`/ensure?port=${first}`, 'POST')).code, 200);
+    await h.until(() => h.at(first, 'serving').length === 1, 10000, 'the earlier profile does not serve');
+    for (let i = 0; i < 2; i++) assert.equal((await h.req(`/ensure?port=${aux}`, 'POST')).code, 409);
+    await h.sleep(300);
+    const lines = h.refusals('aux');
+    assert.equal(lines.length, 2, `the new conflict on the same profile was not said, or was said again:\n${h.log}`);
+    assert.ok(lines[1].includes(`its kernels.json profile's stateDir ${JSON.stringify(shared)} resolves to the state root ` +
+                                `${fs.realpathSync(shared)} of kernel 'first' (port ${first})`), lines[1]);
+    assert.deepEqual(h.at(aux), [], 'the refused profile was started');
+  } finally { await h.cleanup(); }
+});
+
 test('the harness: the stand-in kernel says so and exits 2, opening nothing, when the root it resolves is outside the test\'s world', async () => {
   const h = await world();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-registry-outside-'));
@@ -569,6 +814,31 @@ test('the harness: the stand-in kernel says so and exits 2, opening nothing, whe
     assert.equal(h.at(h.mainPort, 'serving').length, 1, 'main, inside the world, serves');
     assert.equal(h.at(h.mainPort, 'serving')[0].root, fs.realpathSync(h.state));
   } finally { await h.cleanup(); fs.rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('the harness: h.cleanup signals a pid from the stand-in log only once it is checked to be this world\'s, on the /proc road and on the ps road a host without /proc takes', async () => {
+  for (const road of ['proc', 'ps']) {
+    const h = await world();
+    if (road === 'ps') h.procRoot = path.join(h.dir, 'no-proc-here');   // as on a host without /proc
+    // a process of this world (its command line names the world, as a stand-in's does) and one that is not, each
+    // with a row in the stand-in log, as a pid that exited and was reused by another process would have
+    const ours = spawn(PY3, ['-c', 'import time; time.sleep(60)', h.dir], { stdio: 'ignore' });
+    const foreign = spawn(PY3, ['-c', 'import time; time.sleep(60)'], { stdio: 'ignore' });
+    const exits = [ours, foreign].map((c) => new Promise((resolve) => c.on('exit', (code, sig) => resolve(sig || `code ${code}`))));
+    try {
+      await h.until(() => h.standIn(ours.pid), 5000, `${road}: the world's process was not seen as the world's`);
+      assert.ok(!h.standIn(foreign.pid), `${road}: a process that does not name the world was taken for the world's`);
+      fs.writeFileSync(h.starts, [ours, foreign].map((c) => JSON.stringify({ event: 'serving', port: 1, pid: c.pid, root: h.dir }) + '\n').join(''));
+      await h.cleanup();
+      assert.equal(await Promise.race([exits[0], h.sleep(3000).then(() => 'still running')]), 'SIGKILL', `${road}: the world's process was not killed`);
+      assert.equal(await Promise.race([exits[1].then((s) => `exited (${s})`), h.sleep(1000).then(() => 'still running')]), 'still running',
+                   `${road}: h.cleanup signalled a pid it could not check to be this world's`);
+    } finally {
+      for (const c of [ours, foreign]) { try { c.kill('SIGKILL'); } catch (e) { /* gone */ } }   // this test's own children
+      await Promise.all(exits);
+      fs.rmSync(h.dir, { recursive: true, force: true });
+    }
+  }
 });
 
 test('resolveStateRoot: a symlink, a trailing slash, a tail that does not exist yet and a dangling link resolve to the real path the kernel will use', () => {
