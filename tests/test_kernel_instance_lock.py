@@ -17,8 +17,8 @@ The pins, each red on the kernel before the lock for the reason it names:
      has written nothing and has not taken the lock; once the holder releases, the kernel takes it ("<its pid> serving")
      before the deadline, and then serves, its repo-root record written after the bind, and still runs 2 s after the old
      owner's deadline (a wait that left its timer armed is ended by SIGALRM at that deadline);
-  3. a draining holder that keeps the lock past its deadline: exit 75 no earlier than the deadline, naming the pid,
-     after waiting for it, nothing touched;
+  3. a draining holder that keeps the lock past its deadline: exit 75 no earlier than the deadline and less than 5 s
+     after it (EXPIRY_SLACK_S), naming the pid, after waiting for it, nothing touched;
   4. a deadline already past when the kernel reads it: refused without waiting;
   5. a pid that is not running in the line (a serving line, a draining line) and an empty file: refused, worded as a
      new owner that has not yet written its line;
@@ -87,6 +87,8 @@ PAST_DEADLINE_S = 2.0         # how long after the old owner's deadline pin 2 ch
 #                               timer left armed delivers its SIGALRM at the deadline itself
 EXPIRY_DEADLINE_S = 5.0       # pin 3's drain deadline: the kernel reaches its lock point (about a second here) well
 #                               inside it, so it waits and its timer, not its arrival, decides the refusal
+EXPIRY_SLACK_S = 5.0          # pin 3's upper bound: the refusal comes before the deadline plus this (the timer fires at the
+#                               deadline, and the refusal is one line and an exit after it)
 WAITING_TEXT = "this kernel waits for its drain until"
 HANDOVER_TEXT = "this kernel holds it now"
 SERVING_TEXT = "romp-kernel: serving the ported UI at"
@@ -363,7 +365,7 @@ class DrainingHolderIsWaitedFor(_Lab):
 class DrainPastItsDeadline(_Lab):
     """Pins 3 and 4: a drain that outlives its deadline, or a deadline already gone, is refused."""
 
-    def test_a_holder_that_keeps_the_lock_past_its_deadline_is_refused_no_earlier_than_the_deadline(self):
+    def test_a_holder_that_keeps_the_lock_past_its_deadline_is_refused_from_the_deadline_to_5_s_after_it(self):
         deadline = time.time() + EXPIRY_DEADLINE_S
         self.hold("%d draining %.3f\n" % (os.getpid(), deadline))
         before = self.snapshot()
@@ -375,6 +377,8 @@ class DrainPastItsDeadline(_Lab):
         self.assertIn(WAITING_TEXT, err, "the kernel did not wait for the drain (one that reached its lock point after "
                                          "the %.0f s deadline refuses at once; its stderr:\n%s)" % (EXPIRY_DEADLINE_S, err))
         self.assertGreaterEqual(exited, deadline, "the kernel gave up before the drain's deadline")
+        self.assertLess(exited, deadline + EXPIRY_SLACK_S, "the kernel was refused %.1f s after the drain's deadline, "
+                        "past the %.0f s slack" % (exited - deadline, EXPIRY_SLACK_S))
         self.assertIn("pid %d" % os.getpid(), err)
         self.assertIn(PAST_TEXT, err, "the refusal says the drain is past its deadline")
         self.assertIn(REMEDY_TEXT, err)
