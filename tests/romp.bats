@@ -2515,7 +2515,8 @@ FAKE
 
     # A port no kernels.json profile names: its kernel would run on the primary's state root, so the
     # manager answers 409 (not -f: the body is the point) naming the kernel, the primary's port and the
-    # remedy, and spawns nothing.
+    # remedy for each road (a profile with a stateDir no other kernel uses; a kernel started by hand needs
+    # its own ROMP_STATE_DIR), and spawns nothing.
     run curl -sS -o "$TEST_DIR/ensure-body" -w '%{http_code}' -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport"
     [ "$status" -eq 0 ]
     [ "$output" = 409 ]
@@ -2523,7 +2524,8 @@ FAKE
     [[ "$output" == *'"ok":false'* ]]
     [[ "$output" == *"kernel 'k$kport' (port $kport) is not started"* ]]
     [[ "$output" == *"the primary kernel on port $mport"* ]]
-    [[ "$output" == *"with its own stateDir"* ]]
+    [[ "$output" == *"with a stateDir no other kernel uses"* ]]
+    [[ "$output" == *"A kernel started by hand, which the manager does not see, needs its own ROMP_STATE_DIR."* ]]
     run curl -fsS "http://127.0.0.1:$cport/status"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"id":"main"'* ]]
