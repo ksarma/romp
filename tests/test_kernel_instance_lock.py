@@ -56,7 +56,13 @@ The pins, each red on the kernel before the lock for the reason it names:
      error (the open, the flock, the read; not the empty or unparseable line, the deadlines or the timer, which are
      refusals naming a holder) holds its line to _kernel_lock_fault's shape (_assert_fault_line): it starts by naming the
      lock that could not be taken and carries neither the holder text nor "this kernel wrote nothing", so a fault worded
-     through _kernel_lock_refusal is red.
+     through _kernel_lock_refusal is red;
+ 10. the lock step's stderr lines are best-effort: a kernel whose stderr is a pipe with no reader meets a draining holder
+     that keeps the lock past its deadline, still waits for it, and exits 75 at the deadline, never 120 out of the
+     waiting line's BrokenPipeError (a sitecustomize hook in the child writes what it raised to a file the message
+     quotes); in process, under a stderr that raises, each road with a line of its own (the waiting line with the wait
+     reaching its deadline, the waiting and handover lines with the wait taking the lock, and the line saying a held
+     lock's serving line was not written) returns the lock step's answer, never a raise, its line attempted.
 
 Subprocess pins run bin/romp-kernel under sys.executable in a private lab. The environment comes from kernel_env
 (tests/test_ship_reship_served.py, the safe lab-kernel recipe: named variables only, the lab's roots, session hosts
@@ -211,6 +217,18 @@ if _path and _code:
     fcntl.flock = _flock
 """
 SHIM_TEXT = "kernel-lock-shim: flock on"
+# Pin 10's hook: a sitecustomize on the child's PYTHONPATH that appends an uncaught exception's traceback to the file
+# KERNEL_LOCK_HOOK_OUT names, since the child's stderr, a pipe with no reader, cannot carry it; the pin's message quotes it
+EXCEPTHOOK_SHIM_SRC = r"""
+import os, sys, traceback
+_out = os.environ.get("KERNEL_LOCK_HOOK_OUT")
+if _out:
+    def _hook(kind, value, tb):
+        with open(_out, "a") as fh:
+            fh.write("".join(traceback.format_exception(kind, value, tb)))
+
+    sys.excepthook = _hook
+"""
 
 
 def _snapshot(root):
@@ -322,9 +340,9 @@ class _Lab(unittest.TestCase):
             return fh.read().split(b"\n", 1)[0].decode("ascii", "replace")
 
     # the kernel child
-    def spawn(self):
-        """bin/romp-kernel under sys.executable, leading its own session, stderr on a pipe; its group kill plus wait is
-        registered before the spawn."""
+    def spawn(self, stderr=subprocess.PIPE):
+        """bin/romp-kernel under sys.executable, leading its own session, stderr on a pipe this test reads (or on
+        `stderr`, a descriptor the caller passes); its group kill plus wait is registered before the spawn."""
         slot = {}
 
         def end():
@@ -344,7 +362,7 @@ class _Lab(unittest.TestCase):
 
         self.addCleanup(end)
         slot["p"] = p = subprocess.Popen([sys.executable, KERNEL], env=self.env, cwd=self.lab, stdin=subprocess.DEVNULL,
-                                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+                                         stdout=subprocess.DEVNULL, stderr=stderr, start_new_session=True)
         self.err[p.pid] = bytearray()
         return p
 
@@ -993,6 +1011,118 @@ class LockStepFailuresInProcess(unittest.TestCase):
         self.assertIn(FILE_REMEDY_TEXT, refusal)
         self.assertNotIn(FS_REMEDY_TEXT, refusal)
         _assert_fault_line(self, refusal, self.path)
+
+
+class StderrWithNoReader(_Lab):
+    """Pin 10: the lock step's stderr lines are best-effort. A kernel whose stderr is a pipe with no reader meets a
+    draining holder that keeps the lock past its deadline: its waiting line cannot be written, and it still waits and
+    is refused with exit 75 at the deadline, never 120 out of a BrokenPipeError raised by the waiting line."""
+
+    def test_a_kernel_whose_stderr_has_no_reader_waits_for_the_drain_and_exits_75_at_its_deadline(self):
+        shim = tempfile.mkdtemp(prefix="kernel-lock-shim-")      # outside the lab, as _flock_fails_with's shim
+        self.addCleanup(shutil.rmtree, shim, True)
+        Path(shim, "sitecustomize.py").write_text(EXCEPTHOOK_SHIM_SRC)
+        uncaught_path = os.path.join(shim, "uncaught.txt")
+        self.env = dict(self.env, PYTHONPATH=shim, KERNEL_LOCK_HOOK_OUT=uncaught_path)
+        self.seed()
+        deadline = time.time() + EXPIRY_DEADLINE_S
+        self.hold("%d draining %.3f\n" % (os.getpid(), deadline))
+        before = self.snapshot()
+        r, w = os.pipe()
+        os.close(r)                                  # no reader, ever: every write the kernel makes to stderr meets EPIPE
+        try:
+            p = self.spawn(stderr=w)
+        finally:
+            os.close(w)
+        code, _, _, killed = self.verdict(p, bound=EXPIRY_DEADLINE_S + BOUND_S)
+        exited = time.time()
+        uncaught = Path(uncaught_path).read_text() if os.path.exists(uncaught_path) else ""
+        self.assertEqual(code, EXIT_REFUSED, "the kernel did not exit 75 (exit %r, killed at the bound: %s); what it "
+                                             "raised:\n%s" % (code, killed, uncaught[-3000:]))
+        self.assertEqual(uncaught, "", "the lock step raised past its refusal")
+        self.assertGreaterEqual(exited, deadline, "the kernel was refused before the drain's deadline, so it did not "
+                                                  "wait for the drain")
+        self.assertLess(exited, deadline + EXPIRY_SLACK_S, "the kernel was refused %.1f s after the drain's deadline"
+                        % (exited - deadline))
+        self.assertNothingWritten(before, "the refused kernel changed the roots")
+        self.assertEqual(self.connections(), 0, "the refused kernel dialled the postal port")
+
+
+class _BrokenStderr:
+    """A stderr whose every write and flush raises BrokenPipeError, as a pipe whose reader has closed does; it keeps
+    each text it was asked to write, so a pin can tell the line was attempted."""
+
+    def __init__(self):
+        self.attempted = []
+
+    def write(self, text):
+        self.attempted.append(text)
+        raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE))
+
+    def flush(self):
+        raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE))
+
+
+class StderrWithNoReaderInProcess(unittest.TestCase):
+    """Pin 10 in process, one road per stderr line of the lock step: the waiting line (the wait then reaches its
+    deadline), the waiting line and the handover line (the wait then takes the lock), and the line saying a held lock's
+    serving line was not written. Under a stderr that raises, each road still returns the lock step's answer, never a
+    raise, and each pin checks its line was attempted, so a road that wrote nothing cannot pass it."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="kernel-lock-stderr-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.path = os.path.join(self.dir, "kernel.lock")
+
+    def hold_draining(self):
+        """Hold the lock through a second descriptor of this process, its line a drain 3 s ahead (flock locks belong to
+        the open file, so the helper's own open meets EWOULDBLOCK)."""
+        held = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, held)
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        line = "%d draining %.3f\n" % (os.getpid(), time.time() + 3)
+        os.pwrite(held, line.encode("ascii"), 0)
+        os.ftruncate(held, len(line))
+
+    def acquire(self, **patches):
+        """_kernel_lock_acquire under a stderr that raises, one thread counted, with `patches` on the kernel module:
+        (fd, refusal, the texts it attempted)."""
+        broken = _BrokenStderr()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(km.threading, "active_count", return_value=1))
+            for name, value in patches.items():
+                stack.enter_context(mock.patch.object(km, name, value))
+            stack.enter_context(contextlib.redirect_stderr(broken))
+            try:
+                fd, refusal = km._kernel_lock_acquire(Path(self.path))
+            except Exception as e:      # the defect this class pins: a stderr line that raises out of the lock step
+                self.fail("_kernel_lock_acquire raised %s: %s" % (type(e).__name__, e))
+        if fd is not None:
+            self.addCleanup(os.close, fd)
+        return fd, refusal, "".join(broken.attempted)
+
+    def test_the_waiting_line_failing_leaves_the_refusal_at_the_deadline(self):
+        self.hold_draining()
+        fd, refusal, attempted = self.acquire(_kernel_lock_wait=mock.Mock(return_value=False))
+        self.assertIn(WAITING_TEXT, attempted, "the waiting line was not attempted, so the road did not run")
+        self.assertIsNone(fd)
+        self.assertIn(PAST_TEXT, refusal, "the wait reached the deadline with the drainer's line still there")
+
+    def test_the_waiting_and_handover_lines_failing_leave_the_lock_taken(self):
+        self.hold_draining()
+        fd, refusal, attempted = self.acquire(_kernel_lock_wait=mock.Mock(return_value=True))
+        self.assertIn(WAITING_TEXT, attempted, "the waiting line was not attempted, so the road did not run")
+        self.assertIn(HANDOVER_TEXT, attempted, "the handover line was not attempted, so the road did not run")
+        self.assertIsNotNone(fd, "the wait took the lock: %r" % refusal)
+        self.assertIsNone(refusal)
+
+    def test_the_line_saying_the_serving_line_was_not_written_failing_leaves_the_lock_taken(self):
+        fd, refusal, attempted = self.acquire(
+            _kernel_lock_write=mock.Mock(side_effect=OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))))
+        self.assertIn("but its serving line was not written", attempted, "the line was not attempted, so the road did "
+                                                                         "not run")
+        self.assertIsNotNone(fd, "a lock taken whose serving line cannot be written still serves: %r" % refusal)
+        self.assertIsNone(refusal)
 
 
 class InProcess(unittest.TestCase):

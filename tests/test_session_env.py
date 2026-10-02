@@ -321,7 +321,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3331,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3332,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -369,7 +369,10 @@ COUNTS = {
     #                                _kernel_lock_announce_drain to kernel/kernel.py, the census's own derivation; no lambda and no
     #                                other entry moved; then at fork PR 947's round-1 fix as 3331: every failure of the lock step
     #                                a named refusal adds _kernel_lock_parse, _kernel_lock_fault and _kernel_lock_label to
-    #                                kernel/kernel.py, the census's own derivation; no lambda and no other entry moved
+    #                                kernel/kernel.py, the census's own derivation; no lambda and no other entry moved; then at
+    #                                fork PR 947's round-1 closing fix as 3332: making the lock step's stderr lines best-effort
+    #                                adds _kernel_lock_say to kernel/kernel.py, the census's own derivation; no lambda and no
+    #                                other entry moved
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and

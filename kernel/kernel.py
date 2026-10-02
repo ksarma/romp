@@ -357,9 +357,8 @@ def _kernel_lock_acquire(path, now=time.time):
         return None, _kernel_lock_refusal((
             "pid %d holds %s and is draining until %s, but this process already runs %d threads, so a wait for it "
             "could not be bounded" % (pid, path, _kernel_lock_when(deadline), threading.active_count())))
-    sys.stderr.write("romp-kernel: pid %d holds %s and is draining; this kernel waits for its drain until %s "
+    _kernel_lock_say("romp-kernel: pid %d holds %s and is draining; this kernel waits for its drain until %s "
                      "(%.1f s)\n" % (pid, path, _kernel_lock_when(deadline), remaining))
-    sys.stderr.flush()
     try:
         took = _kernel_lock_wait(fd, remaining)
     except (OverflowError, ValueError, signal.ItimerError) as e:   # setitimer could not arm the bound
@@ -398,21 +397,30 @@ def _kernel_lock_label(fd, path, waited):
     except OSError as e:
         # the lock is the mechanism and the line its label: a kernel that holds the lock serves without the label, and
         # a kernel refused meanwhile names the stale line's pid as not running, a new owner not yet written
-        sys.stderr.write("romp-kernel: holding %s, but its serving line was not written: %s: %s\n"
+        _kernel_lock_say("romp-kernel: holding %s, but its serving line was not written: %s: %s\n"
                          % (path, type(e).__name__, str(e)[:120]))
     if waited is not None:      # the wait's outcome, beside the line that announced it
-        sys.stderr.write("romp-kernel: pid %d released %s; this kernel holds it now\n" % (waited, path))
-        sys.stderr.flush()
+        _kernel_lock_say("romp-kernel: pid %d released %s; this kernel holds it now\n" % (waited, path))
     return fd, None
 
 
-def _kernel_lock_refuse(refusal):
-    """Print the refusal and leave at once: os._exit, not sys.exit, so no atexit handler runs and writes."""
+def _kernel_lock_say(text):
+    """Write one of the lock step's stderr lines (the waiting line, the handover line, a serving line not written, the
+    refusal) and flush it, best-effort: a stderr that raises (a pipe whose reader has closed, a closed tty, a full log
+    disk) leaves the lock step's answer as it was. A waiting line written straight to a stderr whose reader had closed
+    raised BrokenPipeError out of the lock step, so the kernel exited 120 with a traceback nobody could read, instead
+    of waiting and, at the deadline, refusing with KERNEL_LOCK_EXIT."""
     try:
-        sys.stderr.write(refusal)
+        sys.stderr.write(text)
         sys.stderr.flush()
     except Exception:
         pass
+
+
+def _kernel_lock_refuse(refusal):
+    """Print the refusal (_kernel_lock_say, so a stderr that raises still leaves through the exit below) and leave at
+    once: os._exit, not sys.exit, so no atexit handler runs and writes."""
+    _kernel_lock_say(refusal)
     os._exit(KERNEL_LOCK_EXIT)
 
 
