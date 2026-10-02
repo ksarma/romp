@@ -1301,8 +1301,8 @@ def _module_env_restored(request):
     _shared_state_restored watches per test (_SEAM_ENV_NAMES: the sessions file, the serve token and the bus name) and
     the postal trio (peers, client-only and the port). Not watched: PYTEST_CURRENT_TEST, which pytest writes for every
     phase, and every name this file re-asserts before every test (the dead ports, the service-env, claude-config,
-    catalog, scope and CLI-binary floors, ROMP_SUPERVISED and the credential names), whose write here would read as a
-    change on the module in whose first test to be set up it ran. The two trio legs this file re-asserts,
+    catalog, price-feed, scope and CLI-binary floors, ROMP_SUPERVISED and the credential names), whose write here would
+    read as a change on the module in whose first test to be set up it ran. The two trio legs this file re-asserts,
     ROMP_POSTAL_PORT (popped before every test) and ROMP_POSTAL_CLIENT_ONLY (set to "1" before every test since the
     merge of main that brought fork PR #875), are watched against the value that re-assert gives each, unset and "1"
     (MODULE_ENV_FLOORS), rather than against the snapshot: a value a module leaves after its teardown reaches the next
