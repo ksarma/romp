@@ -1281,17 +1281,17 @@ header:
   kernel's port and the remedy. If `kernels.json` dropped a malformed entry for
   that port, the body says so and why; for a dropped `main` entry, which carries
   a port only, the remedy is to repair that port. Two exceptions predate these
-  rules. For a port a running kernel serves, `/ensure` answers for that kernel
-  with 200 and `spawned: false`, even when no profile names the port (a kernel
-  whose entry has left the file, say). And if a profile is named `k<port>` (the
-  name `/ensure` gives a port no profile names), `/ensure` for that port answers
-  for that profile, on the profile's own port. The manager never starts a
-  refused profile at boot, on a restart or on a respawn either. It logs one line
-  per distinct conflict per manager life (the refused kernel, the kernel whose
-  root it is, that root and why), plus one when a refusal ends a running kernel,
-  and nothing per retry or per tick: a conflict that differs only in the primary
-  kernel's port, or in whether the primary runs, is not a new one. It logs each
-  `kernels.json` error once per manager life.
+  rules. For any port a running kernel serves, `/ensure` answers for that kernel
+  with 200 and `spawned: false`, even when its entry has left the file or has
+  named another kernel's root since it started. And for a port no profile names,
+  if a profile is named `k<port>` (the name `/ensure` gives such a port),
+  `/ensure` answers for that profile, on the profile's own port. The manager
+  never starts a refused profile at boot, on a restart or on a respawn either.
+  It logs one line per distinct conflict per manager life (the refused kernel,
+  the kernel whose root it is, that root and why), plus one when a refusal ends
+  a running kernel, and nothing per retry or per tick: a conflict that differs
+  only in the primary kernel's port, or in whether the primary runs, is not a
+  new one. It logs each `kernels.json` error once per manager life.
 
 The token is the same 0600 file the kernel gates its own writes with
 (`~/.local/state/romp/serve-token`, or `ROMP_SERVE_TOKEN`). The manager accepts
@@ -1887,8 +1887,13 @@ another kernel's root through a symlink or with a trailing slash is that root).
 A running kernel keeps the root it was started on until it stops, wherever its
 entry sits in the file, so a profile added or edited onto that root is refused
 even when it is listed first; among profiles that are not running, the one
-listed first gets the root. It answers `/ensure` for a refused profile, and for
-a port no profile names, with
+listed first gets the root. That holds for one manager's life, through the
+kernel's own restarts and crash respawns. A manager restart starts the profiles
+in the file's order again, so the root can go to a profile listed before the
+kernel that held it. Such a restart includes the self-restart that
+`romp refresh`, a `/restart` or a crash respawn triggers under a supervisor once
+`bin/romp-manager` has changed since the manager started. The manager answers
+`/ensure` for a refused profile, and for a port no profile names, with
 409 (see [The manager's control port](#the-managers-control-port)). The lock
 keeps kernels apart in the cases the manager does not decide: a kernel's
 successor and the kernel draining before it, and the kernels started outside

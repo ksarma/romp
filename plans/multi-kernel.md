@@ -30,7 +30,10 @@ kernel is on, and let co-located kernels message each other through the postal f
    resolves to a root another kernel holds (no `stateDir`, which is the primary's root, or one
    naming another kernel's root). A running kernel keeps the root it was started on until it
    stops, wherever its entry sits in the file; among profiles not running, the file's order
-   decides. `/ensure` for a refused profile, or for a port no profile names, answers 409
+   decides. That holds for one manager life: a manager restart (a stale manager's self-restart
+   under a supervisor included) starts the profiles in the file's order again, so the root can
+   go to a profile listed before the kernel that held it.
+   `/ensure` for a refused profile, or for a port no profile names, answers 409
    (bin/romp-manager `rootConflict`). The kernel's own lock, `kernel.lock`,
    keeps kernels apart in the cases the manager does not decide: a kernel's successor and the
    kernel draining before it, and the kernels started outside the manager (a kernel started by
