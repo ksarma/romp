@@ -5,9 +5,9 @@
 // ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value counts), and under the switch, inBrowser fails a
 // launch it cannot make, naming the switch and the reason, instead of skipping.
 // WHAT THIS MODULE DOES NOT HOLD. The roster rule (under the switch, a rostered leg passes only when inBrowser has launched
-// Chromium; its homes, read by the homes pin below, state the rest) is the reviewer's to check: nothing in the tree reads a
-// leg's source for it, so the step can read green a rostered leg that breaks it, as the examples its homes name show. Nor
-// does anything here check that every browser leg in the tree is rostered. A green here is:
+// Chromium; its homes, read by the homes pin below, state the rest) is the reviewer's to check: nothing checks the whole
+// rule for every rostered leg, so the step can read green a rostered leg that breaks it, as the examples its homes name
+// show. Nor does anything here check that every browser leg in the tree is rostered. A green here is:
 //   - the step exists once in that job, directly after the Chromium install step (by step NAMES, over the steps and
 //     fields jobs() and steps() read by their lines' shapes, in a ci.yml that holds no carriage return or Unicode line
 //     break and a job with one steps key and no line jobKeys refuses, as extensionJob asserts, their docstrings), with
@@ -26,9 +26,9 @@
 //   - the roster is well formed: each line parseRoster keeps (its docstring) is a bundle path as wellFormed reads it (its
 //     docstring), no such line is duplicated, and each names a source that exists in the tree;
 //   - each home of the roster rule, read in its named section (RULE_HOMES' docstring), states it in the same words: the
-//     rule, who checks it, that nothing reads a leg's source for it, its examples as examples (the list after
-//     "examples, not the whole set:" holds exactly the phrases of EXAMPLES, the witness table), that a leg built to
-//     pass without a browser is outside what the step can detect, the witness, and that nothing checks that every
+//     rule, who checks it, that nothing checks the whole rule for every rostered leg, its examples as examples (the
+//     list after "examples, not the whole set:" holds exactly the phrases of EXAMPLES, the witness table), that a leg
+//     built to pass without a browser is outside what the step can detect, the witness, and that nothing checks that every
 //     browser leg in the tree is rostered (a text pin: it holds what the homes say); the witness is executed: the
 //     script with the real node and the real reporter reads green one synthetic rostered leg of each example in
 //     EXAMPLES, each failure marked as it happens, and a control that awaits the catch example's stand-in for inBrowser
@@ -986,7 +986,7 @@ test('parseRoster\'s table: each row\'s lines kept or dropped as parseRoster\'s 
 /** A line's place, for the reds below that name a line with its bundle: "<file> line <n> (<bundle>)". */
 const where = (file, e) => file + ' line ' + e.n + ' (' + e.bundle + ')';
 
-test('the roster is well formed: each line parseRoster keeps (its docstring) is a bundle path naming a source in the tree, once (the roster rule, under the switch, a rostered leg passes only when inBrowser has launched Chromium, with the rest in its homes, is the reviewer\'s to check: nothing in the tree reads a leg\'s source for it)', () => {
+test('the roster is well formed: each line parseRoster keeps (its docstring) is a bundle path naming a source in the tree, once (the roster rule, under the switch, a rostered leg passes only when inBrowser has launched Chromium, with the rest in its homes, is the reviewer\'s to check: nothing checks the whole rule for every rostered leg)', () => {
   const roster = parseRoster(read(path.join(EXT, ROSTER)));
   assert.ok(roster.length > 0, ROSTER + ' holds at least one line (the switch test is rostered, below): an empty roster would pass the loop below over nothing');
   const seen = new Map();
@@ -1045,15 +1045,16 @@ const EXAMPLES = [
     marked: 'the stand-in for inBrowser rejected under the switch and the catch took the rejection', markBegins: true,
     leg: (phrase) => standIn(phrase) + 'test("opens a page through the shared launch", async (t) => { try { await inBrowser(t, async () => {}); } catch (e) { fs.writeFileSync(__filename + ".mark", String(e.message)); } });\n' },
 ];
-/** The words every home of the roster rule carries, each sentence whole: the rule, who checks it, that nothing reads a leg's
- *  source for it, the examples' lead-in and each example's phrase (from EXAMPLES), the sentence on a leg built to pass without
- *  a browser, the witness and that nothing checks that every browser leg in the tree is rostered. */
+/** The words every home of the roster rule carries, each sentence whole: the rule, who checks it, that nothing checks
+ *  the whole rule for every rostered leg, the examples' lead-in and each example's phrase (from EXAMPLES), the sentence
+ *  on a leg built to pass without a browser, the witness and that nothing checks that every browser leg in the tree is
+ *  rostered. */
 const RULE_LEAD = 'Examples, not the whole set:';
 const RULE_BUILT = 'A leg built to pass without a browser is outside what the step can detect.';
 const RULE_WORDS = [
   'The roster rule: under the switch, a rostered leg passes only when inBrowser has launched Chromium, and the leg does nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing catches or settles inBrowser\'s rejection, so the rejection fails its test; it does not change ROMP_BROWSER_LEGS_REQUIRE, and hands inBrowser no test context but the one node gave it; it does not end its own process, from a test, a hook or a timer; no condition the runner can leave unmet stands between a browser test and its inBrowser call; it skips and marks todo nothing).',
   'The reviewer of any PR that adds a roster line or changes a rostered leg\'s source or inBrowser checks the rule; the step does not.',
-  'Nothing in the tree reads a leg\'s source for the rule, so the step can read green a rostered leg that breaks it.',
+  'Nothing checks the whole rule for every rostered leg, so the step can read green a rostered leg that breaks it.',
   RULE_LEAD,
   ...EXAMPLES.map((e) => e.phrase),
   RULE_BUILT,
@@ -1061,7 +1062,7 @@ const RULE_WORDS = [
   'Nothing checks that every browser leg in the tree is rostered, and main has no such check.',
 ];
 
-test('each home of the roster rule, read in its named section (RULE_HOMES\' docstring), states it in the same words: the rule, who checks it, that nothing reads a leg\'s source for it, its examples as examples (the list after "examples, not the whole set:" is exactly the phrases of EXAMPLES, the witness table), the sentence on a leg built to pass without a browser, the witness, and that nothing checks that every browser leg in the tree is rostered', () => {
+test('each home of the roster rule, read in its named section (RULE_HOMES\' docstring), states it in the same words: the rule, who checks it, that nothing checks the whole rule for every rostered leg, its examples as examples (the list after "examples, not the whole set:" is exactly the phrases of EXAMPLES, the witness table), the sentence on a leg built to pass without a browser, the witness, and that nothing checks that every browser leg in the tree is rostered', () => {
   const flat = (text) => text.split('\n').map((l) => l.replace(/^\s*(?:#|\/\/)\s?/, '').trim()).join(' ').replace(/`/g, '').replace(/\s+/g, ' ').toLowerCase();
   const lead = flat(RULE_LEAD), built = flat(RULE_BUILT), phrases = EXAMPLES.map((e) => flat(e.phrase));
   for (const home of RULE_HOMES) {
@@ -1644,9 +1645,10 @@ test('the phrase the script reads a lost browser by is a literal in inBrowser\'s
  *  leg runs, and these files are a superset of it: a file named only in an import esbuild erases (a type-only import
  *  among them), or only in a comment or in a string no build reads, is listed though the bundle never loads it. At this
  *  head ui/webview/pick-held.ts is one such file, which ui/webview/comments.ts names in an import type alone. The
- *  switch test, one of the roster's legs, opens a page through inBrowser and never calls openViewer, so for it they are a
- *  superset by that whole graph, and for each rostered leg that opens the viewer they are the superset stated above. It
- *  resolves to the first file of the tree among the specifier, the specifier with .ts, .tsx, .mts, .js, .mjs or
+ *  switch test and the gear description leg, two of the roster's legs, open pages through inBrowser and never call
+ *  openViewer, so for them they are a superset by that whole graph, and for each rostered leg that opens the viewer they
+ *  are the superset stated above. It resolves to the first file of the tree among the specifier, the specifier with .ts,
+ *  .tsx, .mts, .js, .mjs or
  *  .cjs appended, a .js specifier with .ts in place of .js, and its /index.ts or /index.js, and a specifier that
  *  resolves to none is red, naming it. Not followed: a specifier that is not relative (node:fs, playwright), a computed
  *  one (a template literal, a concatenation), and a file a module reads at run time by a path it builds (the launcher's

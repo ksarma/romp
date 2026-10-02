@@ -3215,8 +3215,60 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the bound holds at the median for a cycle that carries at most one such
   end, and a cycle that carries two is at or over it; a first cycle after a
   restart with several such ends pays the first walk and a later walk for
-  each further one. No end is queued
-  for an agent none of
+  each further one. An end whose resolution could not be made (below) adds
+  no walk while its fault lasts, only one read of each place the walk
+  could not read per cycle, one read for all the ends of a session
+  waiting on that place (and, for a place whose read fails, the
+  session's transcript, resolved once per cycle, then, for a place in a
+  subagents tree in that transcript's project directory, an lstat of each
+  directory from the subagents directory down to the place's parent,
+  stopping at the first that does not read as a real directory, with,
+  first, a stat of a sibling session directory when the place's read
+  failed with ELOOP or EBADF), and is resolved once, after one of those
+  places reads again or the walk no longer reaches it: at the first cycle
+  after, or, when more such ends are due, at a later one, since a cycle
+  resolves at most one of them, oldest first
+  (`_AGENT_FAULTED_LOOKUPS_MAX`), so each is one such end; the two faults
+  that read cannot see, a listing that fails past its first entry and a
+  resolution of the place's real path that fails while its lstat answers,
+  each have their end resolved at each cycle while they last, in turn with
+  the other ends due. For a session with no transcript the end keeps
+  waiting, since the kernel cannot tell a transcript that is gone from one
+  that a fault on its project directory hides (below): keeping the end fails
+  safe, so it waits until one of its places reads and is then resolved, or
+  until the table's bound gives it up, counted in `releaseLost`, and the
+  wait never drops it uncounted while none of its places reads (a start of
+  the agent drops it, the file live again, and a later end of the agent is
+  resolved as a new end is, which with no transcript drops it uncounted, as
+  below); when resolving the transcript raises, the end keeps waiting too,
+  and is given up, counted, if resolving still raises once a place reads.
+  The wait watches only for one of those places reading again or leaving the
+  walk's way: a file of the agent's that appears under a place the walk
+  already read (a tree it searched, or the project directory it listed),
+  copied or restored there by hand or written after its end was drained,
+  is not resolved while every place the walk could not read still fails,
+  until one of them reads or the bound gives its end up (a residual).
+  Measured on 2026-09-30 with 4096 such ends of one session, the most the
+  kernel keeps, waiting on one place in a project directory of two entries:
+  a cycle while they wait took 1.1 to 3.4 ms, where a read of each end's own
+  places took 53 to 67 ms with one place an end and 232 to 259 ms with two;
+  ends of several sessions cost one read for each session, so a table whose
+  ends are each of their own session costs what those reads of each end's
+  own places cost (4096 ends of 4096 sessions waiting on one place took 40
+  to 52 ms a cycle over two runs at a load of 8 to 9, medians 41.4 and 41.6
+  ms, one cycle of fourteen past the bound, where a read of each end's own
+  places took 41 to 43 ms at that load and the ends of one session 1.1 to
+  1.9 ms; a lower bound, since the fixture stubbed the transcript's
+  resolution), and, by the same reading, more than the bound with two places
+  an end; the cycle in which the place reads again took 1.1 to 1.9 ms for
+  its one resolution, where resolving all 4096 took 631 to 728 ms; and the
+  table emptied in 4096 cycles, one resolution each, about 68 minutes at the
+  default one cycle a second (`PUSH_MIN_INTERVAL_S`), longer when a cycle
+  runs past half a second and no event wakes the pusher after it, and sooner
+  when a watched tab's live-tail wake runs a cycle inside that second or a
+  cycle raises, since its first retry starts half a second later
+  (`PUSHER_FAIL_BACKOFF_S`). No end is
+  queued for an agent none of
   those names: a Workflow run's agents when the object holds no roster for
   the run (one the report retires before any progress frame, or one that
   ends or loses its CLI before any), and a subagent the old kernel knew only
@@ -3237,6 +3289,65 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the file, or one dropped past the queue's bound, does not forget the
   end, and a release taken then pops the running agent's entry; only the
   first of those counts in `falseEnds`, at the next cycle);
+  an end whose file resolution could not be made (a place the walk needed
+  could not be read, for a reason other than absence, as under a session
+  directory that cannot be searched) releases nothing and is remembered,
+  and the resolution is made again at the first cycle at which one of the
+  places the walk could not read reads again or the walk no longer reaches
+  it (a place outside the project directory the session's transcript now
+  lies in, or, in a subagents tree, a link, a file or nothing at or below
+  the subagents directory on its way there, or a sibling session directory
+  the walk does not take for a directory), or at a later one when more
+  such ends are due (one a cycle, above), each read once per cycle until
+  then with no walk (`_release_ended_agents` in `kernel/kernel.py`), so
+  its records are released once the fault clears, with their checkpoint
+  document, unless a cycle drains the agent's start first or more such
+  ends wait than the kernel keeps (`_AGENT_RELEASED_MAX`, 4096): the
+  oldest is then given up, counted in `releaseLost`, its records left to
+  the cache's own bounds; a fault on the project directory of the session's
+  transcript can be taken for a session with no transcript (a refused
+  listing of that directory, or a refused stat of the transcript in it,
+  reads as a directory with no transcript in it when the kernel's session
+  discovery walks the project directories again while the fault lasts,
+  which it does whenever its change check moves: among others after a
+  session is added or renamed, a new transcript lands in a session's
+  project directory, or the kernel starts, and at once when the fault
+  refuses the stat of the project directory itself, as a parent directory
+  that cannot be searched or an I/O error does, since discovery's change
+  check reads that stat; an SDK session's refused stat of its transcript
+  falls to that walk), and the end then releases nothing and is neither
+  remembered nor counted, its records left to the cache's own bounds, a
+  residual that predates this change and is not reached by it; the two roads
+  that release a remembered file with no resolution, an end remembered
+  while nothing was held, for an agent with no end
+  waiting on a fault (an end that waits on a fault forgets the remembered
+  one and carries the agent's release), and an owed release's pay, still
+  read a fault on the file's path as the file gone and drop its records
+  with no document, a residual this change does not close, and the pay
+  reaches an agent with an end waiting on a fault too: an owed release that
+  finds nothing held is remembered as above while that end waits (with at
+  most one such end resolved a cycle, that can last cycles after the fault
+  clears, one for each end due ahead of it), so a read that holds the file
+  while a fault covers its path is dropped with no document, and a release
+  either road takes for that agent while its file is there ends the waiting
+  end too, since it covered the agent's file, while a release that is itself
+  that drop with no document keeps the waiting end, so its resolution after
+  the fault remembers the agent as above and the next whole read of the file
+  is released with its document (both roads, and the deferral, are cases of
+  `AgentEnd` in `tests/test_record_cache_agent_end.py`); whether the file is
+  there is a second check made after the release returns, not the check the
+  release itself made, and a fault that begins or clears between the two, a
+  window that holds the release's own work after its read (its document
+  write when it saw the file, and the drop) and, at the pay, the owed
+  releases paid after it, is a residual of this change: one that clears
+  there follows a drop with no document and ends the waiting end, so the
+  next whole read of the file is held until the cache's own bounds reach
+  it, and one that begins there keeps the waiting end after a release that
+  covered the file, so its resolution after the fault remembers the agent
+  as above; a follow-up fix after this change closes that window:
+  `release_entry` in `kernel/event_model.py` would report whether its own
+  read found the file, and both roads would decide from that answer whether
+  the waiting end ends, in place of the second check;
   a whole re-read of a file after its release was taken is held whole
   until the count cap, the byte budget or a quiescent drop reaches it,
   unless a later end of the agent comes after that release: one that finds
@@ -3262,14 +3373,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `releaseLost` (releases given up, the entry left to the cache's own
   eviction, the count cap or the byte budget, or a later quiescent drop,
   counted once per path per cycle where the release names a path (an end
-  given up past the bound of the ends the backend keeps, or one whose file
-  never resolved before its resolution raised, counts one each): no
+  given up past the bound of the ends the backend keeps or of the ends
+  waiting on a fault, or one whose file never resolved before its
+  resolution raised, counts one each): no
   document could be written, as with
   `ROMP_CKPT_CONVERGE_MS=0` or `ROMP_CKPT_CONVERGE_MB=0` or when the check
   whether a write was due raised; an owed release was dropped past its
   bound; an agent's end was dropped past the queue's bound and then past the
   bound of the ends the backend keeps (an end kept is released at the drain
-  like any other); or resolving or paying one raised. With the drop writes
+  like any other); an end whose file resolution could not be made was
+  given up past the bound of the ends waiting on a fault, the oldest
+  first; or resolving or paying one raised. With the drop writes
   off, an agent whose two ends, its stop and its task's end, reach two cycles
   counts two. Each cause is said once on stderr in a summary line, and a
   release that raises also writes its own line with the traceback at every
@@ -3945,20 +4059,71 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   it was listed, served while every identity stands because a directory
   entry's creation, removal or renaming moves its parent's stamps and every
   parent is in the list, with `hit` and `miss` (trees vouched for by one stat
-  per known directory against trees walked), `scoped` (reads served from the
+  per known directory against trees walked; what each counts, a failed
+  validation before a walk included: the comment at `_SUBAGENT_TREE_STATS`
+  in `kernel/kernel.py`), `scoped` (reads served from the
   cycle's one sample with no stat at all: one sample per subagents root per
   pusher cycle, jobs pass or connect push since 2026-09-18, the first reader
   validating or walking and every later reader of the cycle served it, so
   scoped over hit plus miss plus scoped is the share of reads that re-sampled
-  a root another reader took in the same cycle), `evict` (roots dropped because
+  a root another reader took in the same cycle; a sample that reported a
+  fault below its root, a listing, an entry's type or a child's lstat
+  failing for a reason other than absence, is not held, and the next reader
+  in the cycle walks again: `_subagent_tree`'s docstring, THE CYCLE SCOPE, in
+  `kernel/kernel.py`, and `Guards`
+  `test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is` in
+  `tests/test_subagent_tree_stamps_per_cycle.py`), `evict` (roots dropped because
   no alive session's transcript names them, on every jobs pass and, as a
   belt, after each feed build and from the tracking-off frame), `dirStats`
-  (the stats validations paid), `walkMs` and `validateMs` (the time in each,
+  (what it counts: the comment at `_SUBAGENT_TREE_STATS` in
+  `kernel/kernel.py`; the agent-file lookup's directory stats joined it with
+  this change, so a figure from a kernel without this change and one from a
+  kernel with it are not one series; the cost the memo's reads pay, road by
+  road with the case that
+  pins each term: `_subagent_tree_memo_report`'s docstring in
+  `kernel/kernel.py`), `walkMs` and `validateMs` (the time in each,
   every thread), and the gauges `roots` (entries) and `dirs` (directories
   held); a directory stamped within the last two seconds, or one whose
   listing failed, is stored unvouched and walked again until it is quiet and
   lists cleanly, the racy-stamp rule, since a filesystem stamps with a
-  coarser clock than the wall clock and a failure moves no stamp;
+  coarser clock than the wall clock and a failure moves no stamp; the key a
+  chat build records for a subagents tree the agent-file miss walk looked
+  through (recorded by every build that looks the agent up: the walk's own,
+  and a lookup the agent-file memo or a held launch fold answers replays the
+  walk's noted keys; the project directory the walk lists is no build's
+  dependency: the scope of that record and that residual are stated once in
+  `_subagent_file`'s docstring in `kernel/kernel.py`) is the stamp per
+  directory of the read that answered the walk, never a stat taken after it,
+  so a file landing after the cycle's sample under a directory the sampled
+  listing lacked leaves the recorded key behind the next signature's re-stat
+  and the tab is rebuilt; a root whose lstat fails for a reason other than
+  absence (EACCES from a parent, EIO) is not read as absent: its readers
+  answer their standing entries unheld or an unreadable marker (the feed
+  key's component; the chat build is told to read again), except that with
+  no entry standing the sidecar map answers `{}` and the agent-file lookup
+  answers a caller that passes no faults list `None`, so while the fault
+  lasts the viewer says the agent's transcript is missing, the Agent card
+  shows no steps and a sidecar read made with no resolved path
+  (`_subagent_meta`) answers `{}` (`ViewerUnderAnUnreadableTree` in
+  `tests/test_subagent_tree_memo.py`; having the viewer state the fault
+  is a follow-up fix after this change), while the release at an agent's end
+  passes one and releases nothing until the lookup can be made (the
+  `recordCache` paragraph); the agent-file walk excludes that tree
+  from its search and nothing else, answering a file found under any
+  other tree (`FaultExcludesItsOwnTree` in the same module), the shape
+  stated once in `_subagent_tree`'s docstring in `kernel/kernel.py`, and
+  a fault on the walk's read of any other place it searches (a place
+  below a tree's root, a candidate file, a project-directory entry, the
+  listing, or the real-path resolution of a tree's root or of a candidate,
+  strict on every interpreter) excludes that place alone (the places:
+  `_subagent_file_walk`'s docstring; `FaultOnTheWalksOwnRead`,
+  `RealpathFailureIsAFault`); a launch
+  fold that did not read the file (the reader's fail path, or a raise) or
+  whose resolution could not be made (the shapes: the comment in
+  `_awaiting_nest` in `kernel/kernel.py`) is held for the one
+  `_awaiting_nest` call that observed it, so that call folds it once, not
+  once per agent whose owner it was consulted for, and the next call folds
+  it again;
   `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
   both stand, and on this fork while `cleared.jsonl` stands too, its stat a
@@ -5141,13 +5306,17 @@ frames it received is measured in the panes themselves, by
   per surface and key on stderr, at most eight of one row's by name plus one
   line counting the rest, and the whole latch holds 512 pairs, then says so
   once), cuts every string value at 64 characters at any depth, reads nesting
-  past 8 levels as `null`, stores a `data` that is not an object as `null`,
+  past 8 levels as `null` (a row a value of which was cut or nulled so carries
+  `cut`, the admitted keys it happened under, written by the kernel and admitted
+  from no poster, and the kernel says so once per surface and key on stderr, so a
+  stored value can be told from a whole one), stores a `data` that is not an object as `null`,
   keeps no key for a surface the table does not name, refuses a page's row
   under the kernel's own surface `kernel`, and appends the row to
   `client-diag.jsonl` under the state directory with the dashboard id (`wid`)
   and its own clock. An admitted key whose value lies outside the closed set
-  `CLIENT_DIAG_VALUES` states for it (today chat's `view`, one fixed word;
-  compared as posted, before the 64-character cut) is refused the way an
+  `CLIENT_DIAG_VALUES` states for it (today chat's `view`, one fixed word,
+  and federation's `road`, `wire` or `local`; compared as posted, before the
+  64-character cut) is refused the way an
   unknown key is: the row is stored without it, and one stderr line per
   surface and key names the key and the reason, never the value.
   A frame whose whole synchronous handling ran 100 ms or
@@ -5181,16 +5350,28 @@ frames it received is measured in the panes themselves, by
   open dashboard writes a few MB a day; with the share switch on, the first
   shared row adds about 2 KB of `res`, `env`, `nav` and `marks`. Every row is
   bounded at 24 KiB of JSON, a bound derived from the collector's own caps so
-  that no row it can build is touched (its worst case, every cap reached at
-  once, is about 17.9 KB with share off and 21.3 KB with share on): a `perf`
-  minute row over the bound sheds `frames`, `loaf`, `free` and `slow` in that
-  order until it fits, keeps its other keys, and carries
-  `capped: {bytes, dropped}` (the line's bytes before the shed and the keys
-  shed); any other row over the bound, and a minute row that does not fit
+  that no row it can build is shed or capped while its `wsBytesByHost` map, the
+  one key without a cap, is under the crossing (a long-frame key past 64
+  characters is still stored cut and the row marked `cut`; its worst case, every
+  cap reached at once and eight attached hosts, stored with that marker, is about
+  18.0 KB with share off and 21.5 KB with share on): a `perf`
+  minute row over the bound sheds `wsBytesByHost` whole, then `frames`,
+  `loaf`, `free` and `slow`, in that order until it fits, keeps its other
+  keys, and carries `capped: {bytes, dropped}` (the line's bytes before the
+  shed and the keys shed). The map goes first because it alone can take a row
+  the collector builds over the bound (each position adds 17 to 19 bytes, so
+  on that worst-case row the crossing is 176 positions, and on a smaller row
+  later), and shedding it whole returns such a row to its derived size,
+  under the bound, so the frames and the once-per-page fields stay; it is
+  never cut to the positions that fit, so a stored map is never a partial
+  host count. Any other row over the bound, and a minute row that does not fit
   even bare, is stored as `data: {capped: true, bytes: N, app}` (`app` where
   the row had one) with `t`, `wid`, `surface`, `what` and `reconnect` kept.
-  `romp perf client` skips the whole-row markers and counts both shapes in
-  its header line and its `--json`.
+  `romp perf client` skips the whole-row markers and counts all three loss
+  shapes in its header line and its `--json`: the minute rows that shed keys
+  (by the key shed, every key named), the rows capped whole, and, when any row
+  carried it, the rows carrying `cut` (by the key the cut fell under), so a
+  stored value can be told from a whole one at the reader as at the writer.
 
 Rows carry numbers and code identifiers only, never card text, session names,
 file paths or transcript content: an element id inside an invoker name is
@@ -5205,8 +5386,8 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   span_ms, frames: {<type>: {n, ms_sum, ms_max, n16, n100, hist}}, free: {n,
   p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
   inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
-  visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?, rafGap?,
-  capped?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
+  visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?,
+  wsBytesByHost?, rafGap?, capped?, cut?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
   `waiting`, `timeline`, `files`), or `shell` for the top-level window; `since`
   is the minute's start on the browser's clock (epoch ms) and `span_ms` its
   length (shorter than a minute when the page was hidden or closed); `hist` is
@@ -5220,7 +5401,7 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   the pane shim's test for a pane the shell has set to `display:none`: its
   zero-viewport probe, or the word the pane published as
   `window.__rompPaneHidden` from its own visibility events; `ua` is
-  `chrome-desktop`, `safari-ios` or `other`. The seven optional fields after
+  `chrome-desktop`, `safari-ios` or `other`. The eight optional fields after
   it are the shared fields, present only while the browser's share switch
   (below) is on, numbers, booleans and fixed-vocabulary identifiers only, a
   Performance API the browser lacks reading as `null`, never a guess. Once per
@@ -5250,11 +5431,107 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   `{hiddenN, visibleN, hiddenMs}`, the visibility transitions and the ms
   hidden since this pane's previous row (an idle or muted minute hands its
   counts on to the row that follows); `wsBytes` is the text-frame characters
-  the shim received on this pane's sockets since the previous row (`null`
-  without a shim: the shell, VS Code); `rafGap` is `{n, worst}`, the
-  animation-frame gaps over 50 ms while the document was visible, from a loop
-  that runs only while share is on and the document visible. `capped` is
-  present only on a row the kernel shed or replaced (the bound above).
+  the shim received on this pane's local socket since the previous row
+  (`null` without a shim: the shell, VS Code); `wsBytesByHost` is the same
+  unit for the pane's remote sockets, one number per attached remote host
+  keyed by the host's position in the pane document (`h1` the first remote
+  host this document attached, `h2` the next, in the order hosts first
+  appeared to the document, the kernel's `/tunnels` row order when one answer
+  lists several; one key per host, however many the document attaches; a row
+  the map takes over the kernel's 24 KiB bound is stored without it, above),
+  since the previous row (an idle or muted minute carries on the same way).
+  The two are disjoint: a remote socket's characters are counted under its
+  position and never in `wsBytes`. Positions are assigned per pane document
+  (each pane runs its own federation manager; the row's `app` names the pane),
+  so a page with several panes mints several positions for one machine, one
+  per document (two panes of the same `app` are two documents), and the file
+  holds more rows per host than a per-page grain would give; nothing on the
+  row names the document, so rows from different panes of one `wid` are never
+  folded or compared as one position space. A position is never reused: it is
+  on a row when its host is attached at the
+  flush or received characters in the minute, so the row closing the minute
+  of a host's detach carries the characters it received in it and the rows
+  after carry no key for it, an attached host that received nothing reads
+  0, a host that re-attaches counts on under its old position, and a reload
+  starts over, so `h1` can name a different host after a reload, and names
+  the same one again when the hub's dialable rows (a row with a token and a
+  local port) and their order have not changed: the assignment is re-derived
+  from the kernel's `/tunnels` row order at first sight, so it repeats across
+  page lives for a reader of that order until the roster or its order
+  changes, a row was not dialable at the pane's first poll, or the pane's
+  own attach and detach history differs from a fresh pane's first answer.
+  `GET /tunnels`, an authenticated route, is that order and so a
+  position-to-name map in its own right, as is the state directory the file
+  sits in, whose host registries sit beside the file: `remotes.json` holds
+  the attached set, written in the `/tunnels` row order, so a holder of it
+  maps any position to a name with no client-diag row and no page-life
+  correlation, the order being the kernel's own attached-host order persisted
+  in the same state directory as this file;
+  `remotes-known.json` holds every host ever attached or trusted, attached
+  ones included, each with a `lastAttachedAt` stamp refreshed by every
+  writer (attach, detach, trust and share), written with the newest stamp
+  first, so it names the hosts and not their order. After the file's rotation (8 MB, two
+  files) a pane's host-naming rows can be gone while its later perf rows
+  remain. Reading a registry is itself a join, and what any of these roads yields is
+  exact for a pane life that attached one host; for several it is an order
+  inference, holding while `remotes.json` still carries the row order the
+  pane's `/tunnels` answer had. The
+  map's keys carry positions and no host name, a property the collector
+  holds: the federation manager mints each key as `h` plus the attach
+  ordinal and the collector keeps a key only in the `h<n>` form (`bytesByHost`,
+  a regular-expression test in the page bundle, the one enforcement of the
+  property; the kernel has none); the kernel admits the top-level key and
+  does not inspect the map's keys, as it
+  inspects no nested key of any admitted object (`marks`, `env`, `nav`,
+  `res`, `frames`, `loaf` and federation's `counts` alike): a nested string
+  value is cut at 64 characters, a nested key is stored as posted, and a row a
+  value of which was cut carries `cut` naming the key. Host names reach the
+  file wherever an admitted value can hold one, in four forms: a bare name
+  under a `host` key (the shell's push-test row; every federation row that
+  carries its conn's host, the `hostconn`, `feedDelta-nobase`,
+  `feedDelta-stale`, `feedDelta-apply`, `sendqueue` and `senddrop` rows, with
+  the poll rows carrying an empty host and the local nobase and apply rows the
+  word local; and the kernel's own `wsopen` row for a spliced
+  relay, `kind` `hub`, above); a host-prefixed session id, `<host>:<uuid>`,
+  when the row concerns a remote session (the chat surface's `sid`, `id`,
+  `ids` and `active`: every remote session id a federated page holds carries
+  its host, and the 64-character cut keeps the head, prefix included; and the
+  shell's `tap-pending-land` and `tap-vanish-land` rows' `sid8`, the first 8
+  characters of the push ledger row's sid, which the test push files as the
+  active tab's whole data-id and the relay prefixes with its origin, so a host
+  name's first 8 characters or a short host whole, on every row of both kinds
+  that concerns a remote session); a host-keyed map (federation's `feedmerge`
+  `counts`); and a host name at the tail of a postal message id,
+  `<epoch>.<pid>_<hex>.<host>` (the postal service bakes the delivering
+  kernel's postal host in): the feed surface's `id`, `appeared` and `gone`
+  carry item ids, and a parked hand-off's card id is `parked:` plus that
+  message id (the card's own kernel's postal host, on a single-kernel page the
+  page's own machine's, of which 5 to 11 characters survive the cut) and a
+  quarantined relay's is `quarantine:` plus the held mail's id (its origin
+  kernel's postal host, 0 to 4 characters surviving), on every row of the kind
+  that names such a card, filed on routine use and not gated by the share
+  switch; and the chat surface's `anchor` on one road, a landing miss for a
+  deep link the timeline's message connector filled with a postal message id,
+  the last 12 characters of it, a host of up to 11 characters whole. The chat
+  road is older than this field, is not gated by the share switch, and is
+  filed on routine use (a send, a scroll, a tab set: up to 40 scroll rows a
+  minute per kind), so on a federated page it is the most frequent
+  host-carrying row type; the position-to-name map itself follows from the
+  rows that record a host at attach (federation's `hostconn` open rows of the
+  same pane), not from chat or feed rows alone, which name a host without its
+  position. `tests/test_client_diag_allowlist.py` classifies every admitted
+  key of every surface by the content its value can carry, following each
+  value to its producers (a field is a carrier if any producer chain can put a
+  host name in it, classified by that chain's range, never by the field's
+  typical content), so a new key fails there until classified. The key is absent, not `null`, when no remote host is attached
+  at the flush and none received characters in the minute: a page that never
+  attached one, the shell, and the rows after every host has detached. `rafGap` is
+  `{n, worst}`, the animation-frame gaps over 50 ms while the document was
+  visible, from a loop that runs only while share is on and the document
+  visible. `capped` is present only on a row the kernel shed or replaced
+  (the bound above); `cut`, on any surface's row, only when a value under one
+  of its admitted keys was cut at 64 characters or nulled past depth 8, and it
+  lists those keys.
 - `{"t", "wid", "surface": "perf", "what": "slowframe", "data": {app, type, ms,
   dom, loaf?: {ms, blocking_ms, top: [{k, ms, inv}]}}}`. `type` is the frame
   as received on the wire and `ms` its whole synchronous handling, the
@@ -5276,7 +5553,13 @@ arrival at the kernel, frame counts and long frames); heap and DOM at the last
 sample; and the five slowest slow frames in the window with their attribution,
 plus how many more there were. The shell's row shows as one more pane of its
 dashboard: no frame types, the long frames it observed and the pane scripts
-they name. An absent file or one without perf rows is
+they name. The header's closing clause, present only when the file lost
+something, counts the rows the kernel stored short in each of its three shapes:
+minute rows that shed keys (by key, every key shed named), rows capped whole,
+and, when any row carried it, rows carrying `cut` (by the key the cut fell
+under); `--json` carries the same as
+`shed_minute_rows`, `shed_keys`, `capped_rows`, `cut_rows` and `cut_keys`. An
+absent file or one without perf rows is
 reported as no browser telemetry yet (the bundles predate it or no dashboard
 has loaded them: rebuild the bundles and reload the dashboard); perf rows all
 older than the window are reported with their age. `--json` prints the folded

@@ -62,7 +62,7 @@ catches or settles `inBrowser`'s rejection, so the rejection fails its test; it 
 end its own process, from a test, a hook or a timer; no condition the runner can leave unmet stands
 between a browser test and its `inBrowser` call; it skips and marks todo nothing). The reviewer of any PR
 that adds a roster line or changes a rostered leg's source or `inBrowser` checks the rule; the step does
-not. Nothing in the tree reads a leg's source for the rule, so the step can read green a rostered leg that
+not. Nothing checks the whole rule for every rostered leg, so the step can read green a rostered leg that
 breaks it. Examples, not the whole set: a rostered leg that launches its own browser and swallows a failed
 launch without skipping; a rostered module that launches nothing; a leg that drives a browser from a child
 process and tolerates the child's failure; a todo test that passes beside a real pass; a leg that catches

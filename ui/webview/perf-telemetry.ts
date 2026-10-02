@@ -55,12 +55,19 @@
 // paint entries); `env` once and again when the pane's own width/height aspect flips (standalone, iOS major version,
 // touch, viewport, pixel ratio, the entry types the browser supports from a fixed list, requestIdleCallback, the dist
 // token); every row `vis` (visibility transitions and hidden time inside the minute), `wsBytes` (text-frame characters
-// the shim received in the minute, from its counter) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible,
-// from a loop that runs only while the switch is on and the document visible). A Performance API the browser lacks
-// reads as null, never a guess. The pending minute also flushes on visibilitychange to hidden: iOS fires that on an
-// app switch and then freezes the page, and pagehide, a navigation event, never comes. That flush leaves a held
-// slowframe row for its long-frame report (the timer tick and pagehide stay its backstops) and does not re-arm the
-// slowframe budget.
+// the shim received on the pane's LOCAL socket in the minute, from its counter), `wsBytesByHost` (the same unit, per
+// REMOTE host by its position in the pane document (one federation manager each), h1 the first remote host this document
+// attached, one key per host the document attached, however many, from federation's totals for the manager's life through
+// window.__rompFed.wsBytesByHost and the hosts attached at the flush through window.__rompFed.attachedHostOrdinals: a
+// position is on the row when its host is attached at the flush or received characters in the minute, so the row closing
+// a detach's minute carries the host and the rows after it do not, an attached idle host reads 0, and the key is absent,
+// not null, when no host is attached and none received characters, a page that never attached one and the shell included;
+// disjoint from wsBytes: a remote socket's characters are counted here and never there; 2026-09-19, the user approved the
+// field as one number per host and no content) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible, from a
+// loop that runs only while the switch is on and the document visible). A Performance API the browser lacks reads as
+// null, never a guess. The pending minute also flushes on visibilitychange to hidden: iOS fires that on an app switch and
+// then freezes the page, and pagehide, a navigation event, never comes. That flush leaves a held slowframe row for its
+// long-frame report (the timer tick and pagehide stay its backstops) and does not re-arm the slowframe budget.
 
 export const SLOW_FRAME_MS = 100;      // a frame whose whole handling is at or over this sends a slowframe row
 export const LONG_FRAME_MS = 50;       // the browser's own long-frame threshold; entries under it are ignored
@@ -116,6 +123,8 @@ export interface PerfDeps {
   switches(): BeaconSwitches;        // the gear's two per-browser switches, read from the store (readSwitches)
   entries(type: string): any[] | null;   // performance.getEntriesByType(type); null where the API is absent
   marks(): Record<string, unknown> | null;   // window.__rompPerfMarks: the shim's stamps (wsOpen, bundleReady, firstFrame), its wsBytes counter and the dist token dv; null without a shim
+  fedBytes(): Record<string, unknown> | null;   // window.__rompFed.wsBytesByHost(): federation's characters per remote host position (h<ordinal>) for the manager's life; null without federation, or with a federation bundle before the getter
+  fedAttached(): readonly string[] | null;   // window.__rompFed.attachedHostOrdinals(): the positions attached right now; null without federation, or with a bundle before the read (then a position is on the row only for the minute's characters)
   env(): EnvInfo | null;             // the page's environment, read live (envInfo over the window); null where nothing can be read
 }
 
@@ -345,6 +354,41 @@ export function pageMarks(marks: Record<string, unknown> | null, paints: readonl
   return out;
 }
 
+/** The minute's characters per remote host position (the row's wsBytesByHost) from federation's totals for the manager's life
+ *  (`now`, keyed h<ordinal>, the getter's shape; a key off that pattern or a non-numeric value is ignored) against the
+ *  minute's baselines (`base`, the same shape, {} where a position had no total when the minute began: a host attached
+ *  mid-minute counts from 0), for the positions `attached` at the flush (federation's attachedHostOrdinals; null when
+ *  federation cannot say, a bundle before the read). A position is on the row when its host is attached at the flush or
+ *  received characters in the minute: the row closing a detach's minute carries the host's characters and the rows after
+ *  it carry no key for it, an attached idle host (a down one; an up one hears a keepalive every 10 s) reads 0, and a
+ *  position both detached and silent is left off. Every qualifying position keeps its own key, h1, h2 and so on; no cap,
+ *  one number per attached host (the owner's decision of 2026-09-19). A key is carried as matched and never rebuilt from its
+ *  parsed ordinal, so an ordinal past 2**53 (which no manager mints; the window slot is read unvalidated) keeps its own key
+ *  and its own number rather than a NaN that JSON writes as null; a difference that overflows to Infinity (two finite totals of
+ *  opposite sign near the double's limit, which no manager mints either) leaves the position off the row, as a non-finite total
+ *  does, never as a null. Null when no position qualifies (no remote host attached at
+ *  the flush and none received characters in the minute, a page that never attached one included), and the caller leaves
+ *  the key off the row. Pure. */
+export function bytesByHost(now: Record<string, unknown> | null, base: Record<string, number>, attached: readonly string[] | null): Record<string, number> | null {
+  if (!now || typeof now !== "object") return null;
+  const up = new Set(attached || []);
+  const ords: [number, string][] = [];   // the ordinal for the order and the key AS MATCHED for the reads: a key rebuilt from
+  for (const k of Object.keys(now)) {    // the parsed ordinal missed its own entry past 2**53 and landed as null (the maintainer's round 1, regression-6, 2026-09-20)
+    const m = /^h([1-9][0-9]*)$/.exec(k);
+    const v = now[k];
+    if (m && typeof v === "number" && isFinite(v)) ords.push([Number(m[1]), k]);
+  }
+  ords.sort((a, b) => a[0] - b[0]);
+  const out: Record<string, number> = {};
+  for (const [, k] of ords) {
+    const d = Math.max(0, Math.round((now[k] as number) - (base[k] || 0)));
+    if (!isFinite(d)) continue;           // two finite totals whose difference overflows: off the row like a non-finite total, never null (the author's pass-1 verify)
+    if (d <= 0 && !up.has(k)) continue;   // detached at the flush and silent in the minute: no key
+    out[k] = d;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /** The iOS major version an iPhone, iPad or iPod user agent states (`OS 17_4`); 0 elsewhere, an iPad with the
  *  desktop Macintosh user agent included (its `touch` tells it apart). */
 export function iosMajor(ua: string): number {
@@ -398,6 +442,7 @@ interface Bucket {
   vis: { hiddenN: number; visibleN: number; hiddenMs: number };   // visibility transitions in the minute, and the time hidden inside it
   rafGap: { n: number; worst: number };   // animation-frame gaps over RAF_GAP_MS while visible
   bytes0: number;                      // the shim's wsBytes counter when the minute began
+  fedBytes0: Record<string, number>;   // federation's per-position totals (wsBytesByHost) when the minute began; a position absent here counts from 0
 }
 interface PendingSlow { type: string; ms: number; dom: number | null; t0: number; t1: number }
 interface Open { t0: number; child: number }   // a bracket in progress: its start, and the time its inner brackets took
@@ -621,6 +666,11 @@ export class PerfTelemetry implements RompPerf {
     data.vis = { hiddenN: b.vis.hiddenN, visibleN: b.vis.visibleN, hiddenMs: Math.round(b.vis.hiddenMs) };
     const bytes = marks ? marks.wsBytes : undefined;
     data.wsBytes = typeof bytes === "number" && isFinite(bytes) ? Math.max(0, Math.round(bytes - b.bytes0)) : null;
+    // per remote host position, the same unit, from federation's totals for the manager's life against this minute's baselines, for
+    // the positions attached at the flush or delivered to in the minute; the key is left off when none qualifies
+    // (bytesByHost returns null), never written as null
+    const byHost = bytesByHost(this.safe(() => this.d.fedBytes(), null), b.fedBytes0, this.safe(() => this.d.fedAttached(), null));
+    if (byHost) data.wsBytesByHost = byHost;
     data.rafGap = { n: b.rafGap.n, worst: Math.round(b.rafGap.worst) };
   }
 
@@ -629,6 +679,14 @@ export class PerfTelemetry implements RompPerf {
     const m = this.safe(() => this.d.marks(), null);
     const v = m ? m.wsBytes : undefined;
     return typeof v === "number" && isFinite(v) ? v : 0;
+  }
+
+  /** Federation's per-position totals now (the minute's wsBytesByHost baselines), numeric h<ordinal> entries only; {} without federation. */
+  private fedBytesNow(): Record<string, number> {
+    const m = this.safe(() => this.d.fedBytes(), null);
+    const out: Record<string, number> = {};
+    if (m && typeof m === "object") for (const k of Object.keys(m)) { const v = m[k]; if (/^h[1-9][0-9]*$/.test(k) && typeof v === "number" && isFinite(v)) out[k] = v; }
+    return out;
   }
 
   // ── recording ──
@@ -781,14 +839,15 @@ export class PerfTelemetry implements RompPerf {
   // ── rows ──
 
   /** A fresh minute. `carry` is the bucket a flush did not send (idle, or muted): its visibility counts and its byte
-   *  baseline pass on, so `vis` and `wsBytes` read "since this pane's previous row" (a hide that found nothing to send
-   *  still counts in the row that follows); the per-minute figures (`since`, `span_ms`, the frames) start over. */
+   *  baselines (the local socket's and each remote host position's) pass on, so `vis`, `wsBytes` and `wsBytesByHost` read
+   *  "since this pane's previous row" (a hide that found nothing to send still counts in the row that follows); the
+   *  per-minute figures (`since`, `span_ms`, the frames) start over. */
   private newBucket(carry: Bucket | null = null): Bucket {
     return { since: this.d.wallNow(), active: false, frames: new Map(), free: new Ring(FREE_RING),
              loaf: { n: 0, blocking_ms: 0, worst_ms: 0, top: new Map() },
              slowSent: 0, slowSuppressed: 0, slowSuppressedWorst: 0, wireTypes: 0, fedTypes: 0,
              vis: carry ? carry.vis : { hiddenN: 0, visibleN: 0, hiddenMs: 0 }, rafGap: { n: 0, worst: 0 },
-             bytes0: carry ? carry.bytes0 : this.bytesNow() };
+             bytes0: carry ? carry.bytes0 : this.bytesNow(), fedBytes0: carry ? carry.fedBytes0 : this.fedBytesNow() };
   }
 
   private minuteData(b: Bucket): Record<string, unknown> {
@@ -868,6 +927,12 @@ function browserDeps(post: PerfPost | null): PerfDeps | null {
     switches: () => { let st: any = null; try { st = w.localStorage || null; } catch (e) { st = null; } return readSwitches(st); },
     entries: (type) => typeof perf.getEntriesByType === "function" ? perf.getEntriesByType(type) : null,
     marks: () => { const m = w.__rompPerfMarks; return m && typeof m === "object" ? m : null; },
+    // federation's per-host totals (federation.ts wsBytesByHost, published on window.__rompFed): null on a page without
+    // federation (the shell, VS Code) or with a federation bundle that predates the getter, and the row carries no key
+    fedBytes: () => { const f = w.__rompFed; if (!f || typeof f.wsBytesByHost !== "function") return null; const m = f.wsBytesByHost(); return m && typeof m === "object" ? m : null; },
+    // the positions attached at the flush (federation.ts attachedHostOrdinals): null on a page without federation or with a
+    // bundle before the read, and a position is then on the row only for the minute's characters
+    fedAttached: () => { const f = w.__rompFed; if (!f || typeof f.attachedHostOrdinals !== "function") return null; const a = f.attachedHostOrdinals(); return Array.isArray(a) ? a : null; },
     env: () => envInfo({ standalone: nav.standalone, ua: String(nav.userAgent || ""), maxTouchPoints: Number(nav.maxTouchPoints) || 0,
                          vw: Number(w.innerWidth) || 0, vh: Number(w.innerHeight) || 0, dpr: Number(w.devicePixelRatio) || 0,
                          entryTypes: (PO && Array.isArray(PO.supportedEntryTypes)) ? PO.supportedEntryTypes : [],

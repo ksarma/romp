@@ -14,6 +14,7 @@ import inspect
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from romp_load import load_source
@@ -29,6 +30,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_apih", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  a served text with its comments blanked (loads no romp code)
 sb = load_source("romp_sdk_backend_apih", os.path.join(BIN, "..", "kernel", "sdk_backend.py"))
 
 # A PRIVATE synthetic sid family for this module (never the shared 11111111-2222 placeholder, never real).
@@ -533,7 +536,7 @@ class Detail(unittest.TestCase):
                   "Auto-retry and the judges are paused: you have reached the monthly spend limit. Raise it at claude.ai/settings/usage.",
                   "Auto-retry and the judges are paused: you stopped them.",
                   "API health", "Sessions waiting", "since "):
-            self.assertIn(s, self.JS)
+            self.assertIn(s, served_css.js_code(self.JS), s)   # the code, comments blanked: a served comment spells the token too (tests/test_served_pins_read_elements.py)
         # T301: the head reads what happened across every connected kernel; the old one-machine label and the ok
         # sentence are gone, and the state machine's word never reaches the user
         self.assertNotIn("API %s this machine" % MDOT, self.JS)
@@ -721,7 +724,13 @@ class Detail(unittest.TestCase):
         for s in shown:
             self.assertNotIn("fleet", s.lower())
         self.assertNotIn("'blocked'", self.JS)
-        self.assertNotIn("blocked", self.JS.split("data-act=reveal")[0].split("var PAUSE")[1] if "var PAUSE" in self.JS else "", "the amber state is never called blocked")
+        # the code, comments blanked: the region's two markers and the word are read as code, never as a comment (the condition's
+        # membership had read the raw text, a pin no census judged: tests/test_served_pins_read_elements.py, round 6). The region's
+        # opening marker is asserted in the code first, so a region that lost it fails here (round 6's focused re-check: the check
+        # had read an empty string then, and passed with the word in the region's code)
+        code = served_css.js_code(self.JS)
+        self.assertIn("var PAUSE", code, "the amber state's region opens at its declaration, read as code")
+        self.assertNotIn("blocked", code.split("data-act=reveal")[0].split("var PAUSE")[1], "the amber state is never called blocked")
         self.assertNotIn("\u2014", self.JS)
         # the words a reader SEES: the code lines without their `//` comments (upstream's own comment on the
         # 429 cell spells "colour"; it renders nothing, and upstream's text stands as landed)

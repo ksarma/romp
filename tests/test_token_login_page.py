@@ -14,12 +14,16 @@ not found, sit behind <details> folds that open with no script (DefaultViewAndFo
 page renders on a phone-sized screen is checked in a browser by
 tests/test_page_key_dashboard_browser.py.
 
+The page is read through tests/served_css.py: its text split by fold (fold_text), its elements and its attribute names come
+from the parser road that module holds, never from a parser of this module's own (the served-pins census,
+tests/test_served_pins_read_elements.py, refuses one); a pin on the page's markup is a literal membership the same census judges.
+
 Synthetic only: asserts on the static HTML constant, starts no server.
 """
 import os
 import re
+import sys
 import unittest
-from html.parser import HTMLParser
 from romp_load import load_source
 import tempfile
 
@@ -31,14 +35,22 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_loginpage", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the page's text by fold, its elements and its attribute names (loads no romp code)
 
 HTML = km._TOKEN_LOGIN_HTML
+
+
+def _page_text():
+    """The page's text, both parts of it (served_css.fold_text), its whitespace runs collapsed to one space."""
+    text = served_css.fold_text(HTML)
+    return " ".join((text.shown + " " + text.folded).split())
 
 
 class TokenLoginPage(unittest.TestCase):
     def test_explains_that_a_reinstall_signs_you_out(self):
         """The misreading to prevent is "it's broken". Name the cause and say it isn't."""
-        low = HTML.lower()
+        low = _page_text().lower()
         self.assertIn("reinstall", low)
         self.assertIn("signed out", low)
         self.assertIn("not broken", low)
@@ -49,15 +61,15 @@ class TokenLoginPage(unittest.TestCase):
         while). The page-key script then sends the reader here, and only the token, a `romp url` link or a window a
         bare `romp` opens signs them in again. The page must name that case, since it is not a reinstall, and name the
         two ways back that need no pasting."""
-        flat = " ".join(HTML.split())
-        low = flat.lower()
+        low = _page_text().lower()
         self.assertIn("lost its saved sign-in", low)
         for case in ("cleared site data", "a private window", "clears a site's storage", "added to the home screen"):
             self.assertIn(case, low)
         self.assertIn("in an app on the home screen, paste the token here", low,
                       "an installed app keeps storage of its own, and pasting the token is the way it signs in")
-        self.assertIn("run <code>romp url</code>", flat, "the link that signs a browser in")
-        self.assertIn("run <code>romp</code> there to open a signed-in window", flat, "the window a bare romp opens")
+        self.assertIn("run <code>romp url</code>", HTML, "the link that signs a browser in")
+        self.assertIn("run <code>romp</code> there", HTML, "the window a bare romp opens")
+        self.assertIn("run romp there to open a signed-in window", low, "the window a bare romp opens, in the page's text")
 
     def test_names_the_exact_command_not_just_the_binary(self):
         """`romp` opens the dashboard; `romp url` PRINTS the link. A signed-out reader needs
@@ -82,7 +94,8 @@ class TokenLoginPage(unittest.TestCase):
 
     def test_posts_nothing_and_keeps_the_token_out_of_history(self):
         """The form redirects client-side to /?token=…; it must not POST anywhere."""
-        self.assertNotIn("method=", HTML.lower())
+        self.assertEqual([(tag, name) for tag, name, _ in served_css.fold_text(HTML).attrs if name.endswith("method")], [],
+                         "no element carries a method attribute (nor formmethod)")
         self.assertIn("location.replace", HTML)   # replace(), so the token is not left in
         #                                           the back-stack of the signed-out page
 
@@ -91,7 +104,7 @@ class TokenLoginPage(unittest.TestCase):
         self.assertIn("encodeURIComponent", HTML)
 
     def test_renders_as_one_html_document(self):
-        self.assertTrue(HTML.lstrip().lower().startswith("<!doctype html>"))
+        self.assertEqual((served_css.fold_text(HTML).doctype or "").lower(), "doctype html", "the page's first construct is <!doctype html>")
         # Balanced enough to render: the form the reader types into is actually closed.
         self.assertEqual(HTML.count("<form"), 1)
         self.assertEqual(HTML.count("</form>"), 1)
@@ -104,53 +117,21 @@ class TokenLoginPage(unittest.TestCase):
         self.assertIn("#0c1a2e", HTML)
 
 
-class _Folds(HTMLParser):
-    """The page's text in two parts: what the default view shows (outside every <details>, each fold's
-    <summary> included, since that line shows while the fold is closed) and what a closed fold hides
-    (inside a <details>, its summary excluded); with the attribute names of every element inside a
-    fold, and the number of script elements, folds and summaries."""
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.depth = self.in_summary = self.scripts = self.details = self.summaries = 0
-        self.shown, self.folded, self.fold_attrs = [], [], []
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "script":
-            self.scripts += 1
-        if tag == "details":
-            self.depth += 1
-            self.details += 1
-        if self.depth:
-            self.fold_attrs.extend(name for name, _ in attrs)
-        if tag == "summary" and self.depth:
-            self.in_summary += 1
-            self.summaries += 1
-
-    def handle_endtag(self, tag):
-        if tag == "summary" and self.in_summary:
-            self.in_summary -= 1
-        if tag == "details" and self.depth:
-            self.depth -= 1
-
-    def handle_data(self, data):
-        (self.folded if self.depth and not self.in_summary else self.shown).append(data)
-
-
 class DefaultViewAndFolds(unittest.TestCase):
     """The default view is the one sentence, the form and the pointer to `romp url` and a bare
     `romp`. The list of reasons a browser is signed out sits behind a <details> fold, and so do the
     stale-PATH note and the token file, so the page a signed-out reader lands on stays short
     (ui/CLAUDE.md: glanceable by default, the rest one click away). A fold is the browser's own
-    <details>, so it opens with no script."""
+    <details>, so it opens with no script. The page's text in two parts, what the default view shows
+    (outside every <details>, each fold's <summary> included, since that line shows while the fold is
+    closed) and what a closed fold hides, is served_css.fold_text's, which refuses what it cannot
+    place (an open fold, a summary that is not its fold's first, a hidden element)."""
 
     @classmethod
     def setUpClass(cls):
-        cls.p = _Folds()
-        cls.p.feed(HTML)
-        cls.p.close()
-        cls.shown = " ".join(" ".join(cls.p.shown).split()).lower()
-        cls.folded = " ".join(" ".join(cls.p.folded).split()).lower()
+        cls.text = served_css.fold_text(HTML)
+        cls.shown = " ".join(cls.text.shown.split()).lower()
+        cls.folded = " ".join(cls.text.folded.split()).lower()
 
     def test_the_reasons_for_a_sign_out_sit_inside_a_details_fold(self):
         for reason in ("lost its saved sign-in", "cleared site data", "a private window",
@@ -170,10 +151,10 @@ class DefaultViewAndFolds(unittest.TestCase):
             self.assertIn(text, self.shown, "the default view says it: %r" % text)
 
     def test_every_fold_opens_with_no_script(self):
-        self.assertGreaterEqual(self.p.details, 1, "the page has a fold")
-        self.assertEqual(self.p.summaries, self.p.details, "each fold has the summary line that opens it")
-        self.assertEqual(self.p.scripts, 0, "the page has no script element")
-        self.assertEqual([a for a in self.p.fold_attrs if a.lower().startswith("on")], [],
+        self.assertGreaterEqual(len(self.text.folds), 1, "the page has a fold")
+        self.assertEqual([f for f in self.text.folds if f.summary is None], [], "each fold has the summary line that opens it")
+        self.assertEqual([e.start for e in served_css.elements(HTML) if e.kind == "script"], [], "the page has no script element")
+        self.assertEqual([name for _, name, in_fold in self.text.attrs if in_fold and name.startswith("on")], [],
                          "no event handler inside a fold: the browser opens a <details> by itself")
 
 

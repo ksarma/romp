@@ -180,7 +180,7 @@ SH
 # A fake `timeout` first on PATH that records its argv (TIMEOUT_LOG, one call per line) and then hands
 # over to the real one, so the bound is real and its argv is visible. Skips the test without a real one.
 _fake_timeout() {
-    REAL_TIMEOUT="$(PATH="${PATH#"$BIN:"}" command -v timeout || true)"
+    REAL_TIMEOUT="$(PATH=${PATH#"$BIN:"}; command -v timeout || true)"   # a plain assignment, not a PATH= prefix: bash 3.2 answers a prefixed command -v from its command hash, which may hold the fake
     [ -n "$REAL_TIMEOUT" ] || skip "no timeout(1) on this box"
     export TIMEOUT_LOG="$TEST_DIR/timeout.calls"
     cat > "$BIN/timeout" <<SH

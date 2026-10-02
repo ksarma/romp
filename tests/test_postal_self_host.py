@@ -44,8 +44,12 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # Hermetic state dir BEFORE the loads: both daemons resolve their state root at import, and the
 # minted-id file must land here — shared by the two module instances, never in real state.
 # (ROMP_POSTAL_HOST / ROMP_HOST_NAME are deliberately NOT popped here: they are read at CALL time,
-# other test modules set them at IMPORT time, and pytest imports every module before running any
-# test — a module-level pop would erase theirs for the whole run. _HostnameSeams clears per test.)
+# and pytest imports every module before running any test, so a pop here would run once, at
+# collection, change the name for every module collected after this one, and not hold by the time
+# a test calls, since any earlier test may set it again. No test module sets either at import (the
+# census in tests/test_hermetic_kernel_postal.py reds on a module-level write of either), and
+# conftest pops ROMP_POSTAL_HOST at import; _HostnameSeams pops both per test and puts back what
+# it found.)
 STATE_HOME = os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
@@ -324,7 +328,9 @@ class MessageIdsNeverCollide(unittest.TestCase):
     SND = "11111111-2222-3333-4444-555555555555"
 
     def setUp(self):
-        # set, never popped: other modules set ROMP_POSTAL_HOST at import time (see the module head)
+        # set, never popped: the id ends in the bus name, which with ROMP_POSTAL_HOST unset comes from
+        # this machine's hostname, so the test names one; tearDown puts back what setUp found (see the
+        # module head)
         self._prev = os.environ.get("ROMP_POSTAL_HOST")
         os.environ["ROMP_POSTAL_HOST"] = "TESTHOST"
 

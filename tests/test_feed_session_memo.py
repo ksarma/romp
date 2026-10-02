@@ -32,7 +32,10 @@ was attributed to, beside the card the moved input changes:
     the other sessions' cards ship, the failure is counted (`failed`, cumulative; `failing`, the sessions whose build is
     failing now) and said once per (session, cause) episode on stderr and as a bell row, the session's previous cards
     are served when the memo holds a decodable entry (never memoized; an entry that no longer decodes is dropped), and
-    a build that serves or derives the session ends the episode, so a later fault is said anew.
+    a build that serves or derives the session ends the episode, so a later fault is said anew;
+  * a subagents root whose own lstat fails for a reason other than absence (a real EACCES) moves the subagents
+    component into the unreadable marker and out of it: the session derives once at each edge of the fault, and the
+    awaiting rows derived under the fault are never served once the root reads again (FeedEntryDerivedUnderARootFault).
 
 Harness: tests/test_payload_dedup_invariant.py's world (a hermetic state root the kernel's judge is rebound to,
 names/ entries and projects/<launch dir>/<sid>.jsonl transcripts discover finds, a fixed live map, a warm first
@@ -66,6 +69,8 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_feed_session_memo", os.path.join(BIN, "romp-kernel"))
 jd = km.jd                              # the kernel's judge: the one object build_feed reads stores through
+# A private copy of the SDK backend module: a backend over one board's own root (HostRegistryProgress._board_backend)
+sb = load_source("romp_sdk_backend_feed_session_memo", os.path.join(BIN, "romp_sdk_backend.py"))
 
 # This module's PRIVATE synthetic sids (never the shared 11111111-2222-... placeholder: see the docstring).
 # (a tuple, unpacked below: a session named after the demo's api service assigned a high-entropy string on its
@@ -321,6 +326,17 @@ class HostRegistryProgress(_Board):
         os.replace(pending, path)
         return path
 
+    def _board_backend(self):
+        """An SdkBackend over THIS board's root, as the kernel builds its own over jd.STATE (_sdk_locked): the records
+        _publish_registry writes are that backend's sessions, as every record under STATE/sdk is the kernel backend's
+        in a running kernel. The kernel's own singleton (km._sdk_backend) cannot serve: it is built once per process,
+        at the first km._sdk() call, over the root jd.STATE names then, which is this board's only when this test is
+        the first in its process to reach km._sdk() (run alone, first on an xdist worker, or after only tests that
+        build no feed, such as TheClearedIndexMatchesTheFilter) and an earlier board test's removed root otherwise.
+        Hosts off in the root first: this hands SdkBackend a root the runner's conftest did not floor."""
+        (Path(jd.STATE) / "session-hosts").write_text("off")
+        return sb.SdkBackend(jd.STATE, "/bin/true", lambda *a, **k: None)
+
     def test_host_progress_replacements_keep_all_sessions_cached_and_match_a_fresh_build(self):
         record = {"sid": WEB, "name": "web", "spawnedAt": T0}
         self._publish_registry(WEB, record)
@@ -356,36 +372,52 @@ class HostRegistryProgress(_Board):
 
     def test_bookkeeping_the_feed_never_reads_keeps_every_session_cached_and_matches_a_fresh_build(self):
         """The registry fields no feed derivation reads move no key: a result's cost watermark, the Stop hook's
-        settle stamp and opener, the echo and queue mirrors, the bgTasks mirror, the cron records, a pending ask, a
-        field nobody reads. The `reg` component takes the record's state and its allow-listed fields alone
-        (_feed_reg_sig, 2026-09-18); before, it folded every field but the host journal's, and each of these writes
-        re-derived the session's cards though no card reads them. The two payload equalities are a regression belt,
-        not the proof that the body reads none of these: this board has no SDK backend and no live snapshot, so
-        _bg_live_norm answers [] before it reaches the ledger and the parse is cache-only, which makes the
-        equalities hold whatever the body reads. The proof is the census in tests/test_feed_memo_inputs.py
-        (RegAllowList): every registry field read anywhere in the kernel or the judge is classified, and the fields
-        the feed's readers name ARE the allow-list."""
+        settle stamp and opener, the echo mirror, the bgTasks mirror, the cron records, a pending ask, a field nobody
+        reads. The `reg` component takes the record's state and its allow-listed fields alone (_feed_reg_sig,
+        2026-09-18); before, it folded every field but the host journal's, and each of these writes re-derived the
+        session's cards though no card reads them. The queue mirror is the one field here this fork's key reads: its
+        `queued` component (keyed for the user-todo floor's gate, _user_todo_idle) asks the session's backend whether
+        a send is waiting, and for a session its backend is not running the answer is this mirror
+        (SdkBackend.pending_queued), so that write re-derives web once, under `queued` alone and never under `reg`.
+        The body cannot read the queue on this board: the user-todos switch is off, so _open_user_todos answers [] for
+        web and the body never asks the floor's gate (which also refuses a cold parse before its queue read), and the
+        payload equalities show the payload unchanged. The queue row therefore pins the key's unconditional `queued`
+        read: were the key narrowed to the switch or to open todos, its expectation would become {}. The board builds
+        with a backend over its own root (_board_backend) owning web, so that answer does not depend on which test ran
+        first in the process. Over the kernel's singleton this case was red whenever it was the first test in its
+        process to reach km._sdk() (run alone, first on an xdist worker, or after only tests that build no feed, such
+        as TheClearedIndexMatchesTheFilter) and green after any earlier board case (2026-09-30).
+        The two payload equalities are a regression belt, not the proof that the body reads none of these: this
+        board's backend runs no session and there is no live snapshot, so _bg_live_norm answers [] before it reaches
+        the ledger and the parse is cache-only, which makes the equalities hold whatever the body reads. The proof is
+        the census in tests/test_feed_memo_inputs.py (RegAllowList): every registry field read anywhere in the kernel
+        or the judge is classified, and the fields the feed's readers name ARE the allow-list."""
+        be = self._board_backend()
         record = {"sid": WEB, "name": "web", "spawnedAt": T0}
         self._publish_registry(WEB, record)
-        before = self._build()
-        for fields in ({"costState": {"total": 1.25, "tokens": {"in": 10}, "t": T0 + 5}},
-                       {"lastStopAt": T0 + 6, "lastTurnOpener": "human"},
-                       {"echoes": [{"text": "hello", "t": T0 + 7}]},
-                       {"queue": ["next"], "queueMeta": [{"text": "next"}]},
-                       {"bgTasks": [{"toolUseId": "toolu_1", "desc": "a shell", "since": T0 + 8}]},
-                       {"sessionCrons": [], "sessionCronsAt": T0 + 9},
-                       {"pendingAsk": True},
-                       {"futureDisplayField": "changed"}):
-            with self.subTest(fields=fields):
-                record.update(fields)
-                self._publish_registry(WEB, record)
-                delta, cached = self._delta(self._build)
-                self.assertEqual((delta["derived"], delta["hit"]), (0, 3), delta)
-                self.assertEqual(delta["miss_by"], {})
-                self.assertEqual(_dump(cached), _dump(before))
-                _reset_memo()
-                self.assertEqual(_dump(cached), _dump(self._build()),
-                                 "skipping bookkeeping the feed never reads must preserve the real payload")
+        with mock.patch.object(km, "_sdk", lambda: be):
+            self.assertIs(km.Sessions.backend_for(WEB), be, "web's record is under that backend's root: it owns web")
+            self.assertFalse(km._backend_queued(WEB), "no send waiting before the queue mirror is written")
+            before = self._build()
+            for fields, moved in (({"costState": {"total": 1.25, "tokens": {"in": 10}, "t": T0 + 5}}, {}),
+                                  ({"lastStopAt": T0 + 6, "lastTurnOpener": "human"}, {}),
+                                  ({"echoes": [{"text": "hello", "t": T0 + 7}]}, {}),
+                                  ({"queue": ["next"], "queueMeta": [{"text": "next"}]}, {"queued": 1}),
+                                  ({"bgTasks": [{"toolUseId": "toolu_1", "desc": "a shell", "since": T0 + 8}]}, {}),
+                                  ({"sessionCrons": [], "sessionCronsAt": T0 + 9}, {}),
+                                  ({"pendingAsk": True}, {}),
+                                  ({"futureDisplayField": "changed"}, {})):
+                with self.subTest(fields=fields):
+                    record.update(fields)
+                    self._publish_registry(WEB, record)
+                    delta, cached = self._delta(self._build)
+                    n = sum(moved.values())
+                    self.assertEqual((delta["derived"], delta["hit"]), (n, 3 - n), delta)
+                    self.assertEqual(delta["miss_by"], moved)
+                    self.assertEqual(_dump(cached), _dump(before))
+                    _reset_memo()
+                    self.assertEqual(_dump(cached), _dump(self._build()),
+                                     "skipping bookkeeping the feed never reads must preserve the real payload")
 
     def test_a_transcript_less_live_rows_registry_path_move_re_derives_it_once_under_transcript(self):
         """A live SDK session discover cannot see yet (no names entry, no transcript on disk) takes its row from the
@@ -1501,6 +1533,151 @@ class AWarmEntryIsNeverDerivedCold(_Board):
         c1 = km._feed_memo_report()
         self.assertEqual((c1["coldLive"] - c0["coldLive"], c1["coldFlip"] - c0["coldFlip"]), (3, 0),
                          "three living sessions read cold, none flipped")
+
+
+class FeedEntryDerivedUnderARootFault(_Board):
+    """The subagents component under a subagents root whose own lstat fails for a reason other than absence: a REAL
+    EACCES, web's session directory at mode 000 (skipped as root, whom permission bits do not bind). web is idle with
+    one live subagent whose own transcript launched a background command. Read, the awaiting fold attributes the
+    command to the agent (one awaiting row, the command nested under the agent); under the fault the fold reads nothing
+    and the command stands at the top level beside the agent. _subagent_dirs_ident answers the unreadable marker for the
+    fault (_TREE_UNREADABLE, whatever memo entry stands for the root), a value no readable tree's identities and no
+    absent root's (None,) equal, so the component moves when the fault begins and again when it clears, and an entry
+    derived under the fault is never served once the root reads again. The first two cases are keyed on what the user
+    sees: the awaiting rows served after the fault equal a from-scratch derivation, with another component (the live
+    row) moved during the fault so the entry is derived under it whatever the subagents component does. The third pins
+    the rule's cost by equality. All three are green at the code before this change, whose tree sample took the fault
+    for absence (the missing root's (None,), which moves the component at both edges too), and red under a mutant that
+    answers the memo's standing entry under the fault: the component then keeps its healthy value, the rows derived
+    under the fault are served after it clears, and neither edge derives. The racy window is closed (the memo module's
+    fixture idiom), so the tree the first build reads is stored with its identities and a standing entry exists to
+    answer. The rule covers a fault present when the key is taken; the road it leaves open is stated in
+    _subagent_dirs_ident's docstring."""
+
+    AID = "a2222222222222222"
+    TU_AGENT = "toolu_web_agent_0001"
+    TU_CMD = "toolu_web_cmd_0001"
+    SLOTS = ("subagent_trees", "subagent_stamps", "subagent_launches")   # the tree scope a pusher cycle opens
+
+    def setUp(self):
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        super().setUp()
+        tp = self.tpath[WEB]
+        self.sess_dir = tp.with_suffix("")
+        sub = self.sess_dir / "subagents"
+        sub.mkdir(parents=True)
+        (sub / ("agent-%s.meta.json" % self.AID)).write_text(json.dumps(
+            {"agentType": "general-purpose", "description": "trace the list endpoint", "spawnDepth": 1,
+             "toolUseId": self.TU_AGENT}))
+        launch = {"type": "assistant", "timestamp": iso(NOW - 70), "message": {"content": [
+            {"type": "tool_use", "id": self.TU_CMD, "name": "Bash",
+             "input": {"command": "sleep 1", "run_in_background": True, "description": "run the list endpoint tests"}}]}}
+        (sub / ("agent-%s.jsonl" % self.AID)).write_text(json.dumps(launch) + "\n")
+        self.root = str(sub)
+        self.resolution = (str(tp), self.AID)
+        self.addCleanup(km._SUBAGENT_TREES.pop, self.root, None)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, self.resolution, None)
+        rows = [{"tid": self.TU_AGENT, "desc": "trace the list endpoint", "t": NOW - 95, "type": "local_agent",
+                 "agentId": self.AID},
+                {"tid": self.TU_CMD, "desc": "run the list endpoint tests", "t": NOW - 60, "type": "local_bash"}]
+        for name, value in (("_bg_live_norm", lambda sid, path, live=None: list(rows) if sid == WEB else []),
+                            ("_bg_pending", lambda sid, path, tasks: tasks),
+                            ("_live_map", lambda: self.live),
+                            ("_SUBAGENT_DIR_RACY_NS", 0)):
+            p = mock.patch.object(km, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.live[WEB] = dict(self._row(), subagents=[{"type": "general-purpose", "since": NOW - 95, "agentId": self.AID}])
+        km._parse(str(tp), WEB, NOW)          # the chat's parse: the feed's cache-only read hits, so awaiting is derived
+
+    @staticmethod
+    def _awaiting(feed):
+        """web's cards as the user sees their awaiting rows: (column, count, [(kind, id, [nested ids])])."""
+        out = []
+        for c in feed["asks"]:
+            if c.get("sid") != WEB and not str(c.get("itemId", "")).startswith(WEB):
+                continue
+            aw = c.get("awaiting") or {}
+            out.append((c.get("column"), aw.get("count"),
+                        [(it.get("kind"), it.get("id"), [w.get("id") for w in it.get("waits", [])])
+                         for it in aw.get("items") or []]))
+        return out
+
+    def _cycle(self):
+        """One build inside the tree scope's three slots, opened empty and closed after, as a pusher cycle holds them."""
+        for s in self.SLOTS:
+            setattr(km._live_scope, s, {})
+        try:
+            return self._build()
+        finally:
+            for s in self.SLOTS:
+                setattr(km._live_scope, s, None)
+
+    @contextlib.contextmanager
+    def _fault(self):
+        """The session directory at mode 000 for the block, restored inside the case (never left to a cleanup that runs
+        after tearDown removed the tree)."""
+        os.chmod(str(self.sess_dir), 0o000)
+        try:
+            with self.assertRaises(PermissionError, msg="premise: the real fault on the root's own lstat"):
+                os.lstat(self.root)
+            yield
+        finally:
+            os.chmod(str(self.sess_dir), 0o755)
+
+    def _served_after_the_fault_equals_from_scratch(self, build, resolution_standing):
+        build()
+        healthy = self._awaiting(build())
+        self.assertEqual(healthy, [("working", 1, [("agents", self.TU_AGENT, [self.TU_CMD])])],
+                         "premise: read, the command is nested under the agent that launched it")
+        if not resolution_standing:
+            self.assertIsNotNone(km._SUBAGENT_FILE_CACHE.pop(self.resolution, None),
+                                 "premise: the agent file's resolution stood, and is popped (the memo cleared past its bound)")
+        with self._fault():
+            self.live[WEB] = dict(self.live[WEB], since=NOW - 50)          # another component moves during the fault
+            under, f_under = self._delta(build)
+        after, f_after = self._delta(build)
+        _reset_memo()
+        scratch = self._awaiting(build())
+        self.assertEqual(under["derived"], 1, "premise: the entry was derived under the fault: %r" % (under,))
+        self.assertNotEqual(self._awaiting(f_under), healthy,
+                            "premise: the rows derived under the fault differ (the command unattributed): %r"
+                            % (self._awaiting(f_under),))
+        self.assertEqual(self._awaiting(f_after), scratch,
+                         "the rows served once the fault clears equal a from-scratch derivation, never the entry derived "
+                         "under the fault: served %r, from scratch %r (the build after the clear: %r)"
+                         % (self._awaiting(f_after), scratch, after))
+
+    def test_an_entry_derived_under_a_root_fault_is_never_served_after_the_fault_clears(self):
+        """No resolution of the agent's file standing when the fault begins, and no tree scope: the lookup under the
+        fault answers None with the fault, so the fold reads nothing."""
+        self._served_after_the_fault_equals_from_scratch(self._build, resolution_standing=False)
+
+    def test_the_same_inside_the_tree_scope_as_a_pusher_cycle_holds_it_with_the_resolution_standing(self):
+        """Each build inside the tree scope's three slots, the agent file's resolution standing through the fault: the
+        lookup answers the standing path, which lies under the tree that faults, and the fold's read of it fails on the
+        same EACCES, so the fold reads nothing here too."""
+        self._served_after_the_fault_equals_from_scratch(self._cycle, resolution_standing=True)
+
+    def test_the_fault_beginning_and_clearing_each_re_derive_the_session_once_under_the_subagents_label(self):
+        """The cost, with nothing else moving: the first build under the fault derives web once, its miss attributed to
+        the subagents component alone; a second build under the fault serves that entry (the marker stands, and a tree
+        fault is not one of the body-read faults that keep a derivation out of the memo); the first build after the
+        clear derives web once more under the same label; the next serves. Red under the standing-entry mutant, where
+        neither edge derives."""
+        self._build()
+        self._build()
+        with self._fault():
+            begins, _ = self._delta(self._build)
+            during, _ = self._delta(self._build)
+        clears, _ = self._delta(self._build)
+        after, _ = self._delta(self._build)
+        self.assertEqual([(d["derived"], d["miss_by"]) for d in (begins, during, clears, after)],
+                         [(1, {"subagents": 1}), (0, {}), (1, {"subagents": 1}), (0, {})],
+                         "(derived, miss_by) at the fault's first build, a second build under it, the first build after "
+                         "the clear and the next: one derivation of web at each edge, under the subagents component, and "
+                         "none between")
 
 
 if __name__ == "__main__":
