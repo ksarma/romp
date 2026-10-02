@@ -4826,8 +4826,8 @@ leak_in_middle_commit_after_base() {   # a base on the remote (BASE), then a com
 @test "judged_read opens its capture file ONCE before the command runs and refuses a failed open whatever the expected set, in the -o branch and in the -a branch (the helper read out of the hook): a set holding 1 does not admit a command that never ran, a good open writes or appends, and a status outside the set is still the set's refusal" {
     probe="$TEST_DIR/probe.sh"
     {
-        printf 'set -uo pipefail\nfailed_scan=0; unscanned_n=0; read_rc=0; read_out=""\n'          # the hook's globals the two helpers read (unscanned_n since round 9d)
-        sed -n '/^unscanned() {/,/^}/p; /^judged_read() {/,/^}/p' "$HOOK"
+        printf 'set -uo pipefail\nfailed_scan=0; unscanned_n=0; open_n=0; read_rc=0; read_out=""\n'          # the hook's globals the three helpers read (unscanned_n since round 9d, open_n since OP9-6)
+        sed -n '/^unscanned() {/,/^}/p; /^unscanned_open() {/,/^}/p; /^judged_read() {/,/^}/p' "$HOOK"
         cat <<'PROBE'
 mkdir -p "$1/dir"
 echo "--- -o onto a directory, the set 0,1"
@@ -6577,8 +6577,11 @@ descriptor_loops() {   # <bash file>: the count of while-read loops that read th
     # index read into arrays, the two passes over the path-scoped index, the report's findings), and since round 11a
     # a fifth, gitleaks_config's read of a config file's lines on descriptor 7; from 2026-09-30 a sixth, the denylist's
     # read of its lines on descriptor 7, retired by the focused re-check at d2091c2c1 (2026-10-01), which reads the
-    # denylist whole through judged_read and parses the capture with no read: twelve
-    [ "$(descriptor_loops "$HOOK")" -eq 12 ]
+    # denylist whole through judged_read and parses the capture with no read: twelve; and since build 9 of item 40 four
+    # more that run no tool, each reading on descriptor 4 the input it opened there, the open judged (is_chosen's,
+    # here_lines', message_hit_lines' and canary_check's; numstat_rows' and diff_settings', whose -d '' comes ahead of
+    # their -u, the count does not read): sixteen
+    [ "$(descriptor_loops "$HOOK")" -eq 16 ]
     { sed -n '1p' "$HOOK"; printf '%s\n' 'while read -r x; do' '    git cat-file -t "$x"' 'done <<< "$refs"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/loop-a.sh"
     run stdin_loops_running_tools "$TEST_DIR/loop-a.sh"
     [ "$output" = "2-4: git" ]
@@ -13260,12 +13263,12 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     sed 's/^judged_read() {/judged_read_renamed() {/' "$HOOK" > "$TEST_DIR/plant-r10c-jr.sh"
     run census_unread_shapes "$TEST_DIR/plant-r10c-jr.sh"
     [ "${lines[0]}" = "0:the extent of judged_read, which an exception of the bound is keyed on, is missing" ]
-    [[ "$output" == *$'\n'*':            quiet) "$@" >&9 2>/dev/null || read_rc=$? ;;'* ]]
+    [[ "$output" == *$'\n'*':            quiet) "$@" <&"$ifd" >&9 2>&8 || read_rc=$? ;;'* ]]
     [[ "$output" == *$'\n'*':    [ -z "$detail" ] || clause=${clause//\{detail\}/"$("$detail" || :)"}'* ]]
     sed 's/^scanner_run() {/scanner_run_renamed() {/' "$HOOK" > "$TEST_DIR/plant-r10c-sr.sh"
     run census_unread_shapes "$TEST_DIR/plant-r10c-sr.sh"
     [ "${lines[0]}" = "0:the extent of scanner_run, which an exception of the bound is keyed on, is missing" ]
-    [[ "$output" == *$'\n'*':    ( cd "$dir" && umask 077 && { [ "$trace" -eq 0 ] || export NO_COLOR=1; } && "$gl" ${GL_ARGS[@]+"${GL_ARGS[@]}"} < /dev/null 1>&2 2> "$logf" ) || rc=$?'* ]]
+    [[ "$output" == *$'\n'*':    ( cd "$dir" && umask 077 && { [ "$trace" -eq 0 ] || export NO_COLOR=1; } && "$gl" ${GL_ARGS[@]+"${GL_ARGS[@]}"} <&8 1>&2 2>&9 ) || rc=$?'* ]]
     sed 's/^bash_gate() {/bash_gate_renamed() {/' "$HOOK" > "$TEST_DIR/plant-gate-r.sh"
     run census_unread_shapes "$TEST_DIR/plant-gate-r.sh"
     [ "${lines[0]}" = "0:the extent of bash_gate, which an exception of the bound is keyed on, is missing" ]
@@ -16475,7 +16478,7 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
     done
     sed -e "$((at[probe_check] + 1))"'s/^    LC_ALL=C awk /    git rev-parse HEAD > \/dev\/null \& LC_ALL=C awk /' \
         -e "$((at[tip_unlisted_read_file] + 1))"'s/^    LC_ALL=C awk /    ! LC_ALL=C awk /' \
-        -e "$((at[config_bytes] + 1))"'s/^    wc -c /    coproc wc -c /' \
+        -e "$((at[config_bytes] + 1))"'s/^    wc -c$/    coproc wc -c/' \
         -e "$((at[tip_blobs] + 1))"'s/ "$1"$/ "$1" \&/' \
         -e "$((at[merge_rename_candidates] + 1))"'s/^    \(.*\)$/    if :; then \1; fi/' \
         -e "$((at[path_skips] + 1))"'s/^    LC_ALL=C awk /    :; LC_ALL=C awk /' \
@@ -16496,7 +16499,7 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
     local -A planted=(
         [probe_check]="    git rev-parse HEAD > /dev/null & LC_ALL=C awk -F '\\t' '"
         [tip_unlisted_read_file]='    ! LC_ALL=C awk -v sha="$1" '"'"
-        [config_bytes]='    coproc wc -c < "$1"'
+        [config_bytes]='    coproc wc -c'
         [tip_blobs]="$(sed -n "$((at[tip_blobs] + 1))p" "$HOOK") &"
         [merge_rename_candidates]="    if :; then $(sed -n "$((at[merge_rename_candidates] + 1))p" "$HOOK" | sed 's/^    //'); fi"
         [name_listing]='    set +o pipefail'
@@ -16785,7 +16788,7 @@ r12t_summary_lines() {   # <commit> [<log option>...]: the summary lines git log
     [ "$output" = "$(printf '%s\n' "${want[@]}")" ]
     for k in 0 1 2; do
         ln=${want[k]}
-        sed "${ln}s/ --encoding=UTF-8 < / < /" "$HOOK" > "$TEST_DIR/sub-$k.sh"
+        sed "${ln}s/ --encoding=UTF-8 \\\\\$/ \\\\/" "$HOOK" > "$TEST_DIR/sub-$k.sh"
         [ "$(diff "$HOOK" "$TEST_DIR/sub-$k.sh" | grep -c '^>')" -eq 1 ]               # the change landed, on one line
         run r11c_pins_check "$TEST_DIR/sub-$k.sh"
         [ "$status" -ne 0 ]
@@ -19725,10 +19728,12 @@ PY
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  pair.txt"* ]] || false
 }
 
-# The C locale's cost (the audit of build 5, LOC-1): three ways the whole-body C locale answers a pusher in a UTF-8 locale
+# The C locale's cost (the audit of build 5, LOC-1): the ways the whole-body C locale answers a pusher in a UTF-8 locale
 # otherwise than d2091c2c1 did, each the export paragraph's stated cost, pinned here to its verdict by design, so a change
-# that widens or closes one turns its case red. The first two publish what d2091c2c1 refused under a UTF-8 locale; the
-# third refuses what it published (the strict side).
+# that widens or closes one turns its case red. The first publishes what d2091c2c1 refused under a UTF-8 locale; the last
+# refuses what it published (the strict side). Build 5's second cost, the trim taking ASCII whitespace alone, was not
+# accepted (the coordinator's ruling of 16:36Z 2026-10-01): build 6 flipped its case, between these two, to the verdict
+# d2091c2c1 gave, and the cases after the third pin the set of Unicode spaces the trim takes off an entry's edges.
 @test "build 5's repair (the audit of build 5, LOC-1, the C locale's cost, the case-insensitive match folds ASCII alone): a denylist entry zzjos with an e-acute (C3 A9), through a real push under a UTF-8 locale (LC_ALL) of a commit adding a line that names it in capitals, E-acute (C3 89) among them, removed at the tip, PUBLISHES with no romp line, since in the C locale grep -i folds ASCII letters alone and the two letters outside ASCII differ as bytes; the same entry and a line holding its exact bytes refuse naming the commit (at d2091c2c1 the UTF-8 locale folded the two letters and the first push was refused)" {
     local loc strings="$TEST_DIR/private-strings-fold.txt" sha
     loc=$(utf8_locale)
@@ -19769,8 +19774,8 @@ PY
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  exact.txt"* ]] || false
 }
 
-@test "build 5's repair (the audit of build 5, LOC-1, the C locale's cost, the trim takes ASCII whitespace alone): a denylist whose entries are edged by Unicode spaces (an ideographic space, E3 80 80, before zzedge; an em space, E2 80 83, after zzother), through a real push under a UTF-8 locale (LC_ALL) of a commit adding a line that holds both bare strings, removed at the tip, PUBLISHES with no romp line, since in the C locale the trim keeps those spaces' bytes and the scan greps for the entries with them; a line holding the entries' bytes, the spaces included, refuses naming the commit (at d2091c2c1 the trim in the UTF-8 locale took the two spaces off and the first push was refused)" {
-    local loc strings="$TEST_DIR/private-strings-edge.txt" sha
+@test "build 6 (item 40, the trim's set; build 5's repair's witness of the trim's cost, flipped; each entry pinned on its own since the build's audit, T2): a denylist whose entries are edged by Unicode spaces (an ideographic space, E3 80 80, before zzedge; an em space, E2 80 83, after zzother), through a real push under a UTF-8 locale (LC_ALL) and then under the C locale of two commits, one adding a line that holds the bare zzedge and one a line that holds the bare zzother, each in a file of its own, removed at the tip, is refused naming each of the two commits and its file, the remote at its base, since the trim takes those spaces off the entries' edges in bytes (at build 5's text, c4dbf4d96, the trim in the C locale kept the spaces, the scan grepped for the entries with them, and the push PUBLISHED; at d2091c2c1 the trim in the UTF-8 locale took them off and the push was refused)" {
+    local loc strings="$TEST_DIR/private-strings-edge.txt" sedge sother l
     loc=$(utf8_locale)
     if [ -z "$loc" ]; then
         if [ "${CI:-}" = true ]; then
@@ -19780,30 +19785,27 @@ PY
         skip "no UTF-8 locale on this system"
     fi
     printf '# synthetic\n\343\200\200zzedge\nzzother\342\200\203\n' > "$strings"
+    [ "$(od -An -tx1 "$strings" | tr -d ' \n')" = 232073796e7468657469630ae380807a7a656467650a7a7a6f74686572e280830a ]   # the plant landed, byte for byte
     export ROMP_PRIVATE_STRINGS="$strings"
     add_remote
     commit_file base.txt "notes-api" "base"
     git -C "$REPO" push -q origin main
     BASE="$(git -C "$REPO" rev-parse HEAD)"
-    commit_file bare.txt "seen zzedge and zzother here" "the bare strings"
-    git -C "$REPO" rm -q bare.txt
-    git -C "$REPO" commit -qm "remove it"
-    export LC_ALL="$loc"
-    push_main_through_hook_with_shim
-    [ "$status" -eq 0 ]
-    [[ "$output" != *"romp pre-push"* ]] || false
-    at_remote_main
-    BASE="$(git -C "$REPO" rev-parse HEAD)"
-    printf 'seen \343\200\200zzedge here\n' > "$REPO/edged.txt"
-    git -C "$REPO" add edged.txt
-    git -C "$REPO" commit -qm "the entry with its space"
-    sha="$(git -C "$REPO" rev-parse HEAD)"
-    git -C "$REPO" rm -q edged.txt
-    git -C "$REPO" commit -qm "remove it"
-    push_main_through_hook_with_shim
-    [ "$status" -ne 0 ]
-    at_base
-    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  edged.txt"* ]] || false
+    commit_file edge.txt "seen zzedge here" "the bare string of the entry led by an ideographic space"
+    sedge="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file other.txt "seen zzother here" "the bare string of the entry ended by an em space"
+    sother="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q edge.txt other.txt
+    git -C "$REPO" commit -qm "remove them"
+    for l in "$loc" C; do
+        echo "locale: $l"                                                    # names the locale when a line below fails
+        export LC_ALL="$l"
+        push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: commit ${sedge:0:10} ADDS a personal identifier in:"$'\n'"  edge.txt"* ]] || false
+        [[ "$output" == *"romp pre-push: commit ${sother:0:10} ADDS a personal identifier in:"$'\n'"  other.txt"* ]] || false
+    done
 }
 
 @test "build 5's repair (the audit of build 5, LOC-1, the C locale's cost, the chosen addresses compare ASCII case alone): with the clone configured to use JOS, E-acute (C3 89), at testhost.example, through a real push under a UTF-8 locale (LC_ALL), a commit stamped with that address exactly passes, and a commit stamped with jos, e-acute (C3 A9), at the same domain is refused naming the address as one this clone is not configured to use whose domain carries a personal identifier, the remote at its base, since in the C locale nocasematch folds ASCII letters alone (the strict side; at d2091c2c1 the UTF-8 locale folded the two letters, chose the address and the second push published)" {
@@ -19838,6 +19840,330 @@ PY
     [[ "$output" == *"romp pre-push: commit ${c:0:10} is authored as <$stamped>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]] || false
 }
 
+# The trim's set (build 6 of item 40, on the coordinator's ruling of 16:36Z 2026-10-01; derived since build 7, on the
+# ruling of 20:21Z, its 1; two more since build 8, on the ruling of 00:23Z 2026-10-02, its 1): the denylist's trim takes
+# off, in bytes, at an entry's two edges, every character outside ASCII that glibc's UTF-8 [[:space:]] class matches,
+# U+1680 (E1 9A 80), U+2000 to U+2006 and U+2008 to U+200A (E2 80 80 to E2 80 86, E2 80 88 to E2 80 8A), U+2028 and
+# U+2029 (E2 80 A8, E2 80 A9), U+205F (E2 81 9F) and U+3000 (E3 80 80), and six the class leaves out: U+0085 (C2 85),
+# U+00A0 (C2 A0), U+2007 (E2 80 87), U+200B (E2 80 8B) and U+202F (E2 80 AF), and U+FEFF (EF BB BF), a byte-order mark,
+# at the leading edge alone, any number of them mixed with ASCII whitespace. The five cases below that push (build 6's
+# table, byte-order mark, entry of spaces alone and space inside an entry, and build 7's entries of spaces alone) push
+# under a UTF-8 locale and under the C locale (the body's locale is C either way since build 5, so the two answers must
+# agree), and each is red at build 5's text, c4dbf4d96 (d5740856c's hook is the same blob), whose trim in the C locale
+# took ASCII whitespace alone; the rows and the entries of spaces alone that hold U+1680, U+2028 or U+2029 are red at
+# build 6's text too, and those that hold U+0085 or U+200B at build 7's. The two that cut the trim from the hook push
+# nothing: the case of build 7 that derives the C library's class at run time (glibc's, or since build 8 any other's,
+# macOS's in its cell of CI) holds the set to that class and is red at d5740856c; the case after it (the repair after
+# the build's audit, TRIM-3) holds that the trim takes nothing beyond the set, on characters beside its members,
+# whatever the C library, and is green at d5740856c by design, since it pins what the hook already did there.
+trim_locale() {   # sets loc, the caller's, to the UTF-8 locale the trim's cases push under; skips without one, failing instead in a CI cell
+    loc=$(utf8_locale)
+    if [ -z "$loc" ]; then
+        if [ "${CI:-}" = true ]; then
+            echo "no UTF-8 locale in a CI cell, where the case must run" >&2
+            return 1
+        fi
+        skip "no UTF-8 locale on this system"
+    fi
+}
+
+@test "build 6 (item 40, the trim's set, one row per member of the set at each edge; the three glibc's class adds since build 7, U+0085 and U+200B since build 8): a denylist of 44 entries, each a bare string edged by one member of the set (each of U+0085, U+00A0, U+1680, U+2000 to U+200B, U+2028, U+2029, U+202F, U+205F and U+3000 at the leading edge and at the trailing edge, U+FEFF at the leading edge), or by runs of them mixed with ASCII whitespace at the leading edge, the trailing edge and both, through one real push under a UTF-8 locale (LC_ALL) and one under the C locale of 44 commits, each adding a line that holds one bare string, removed at the tip, is refused naming every one of the 44 commits and its file, the remote at its base (at c4dbf4d96 the trim kept every one of those spaces and the push PUBLISHED; at build 6's text the six rows of U+1680, U+2028 and U+2029 went unnamed, and at build 7's text the four rows of U+0085 and U+200B)" {
+    local loc strings="$TEST_DIR/private-strings-set.txt" c k n l bare
+    local -a label=() fmt=() shas=()
+    trim_locale
+    for c in 'U+00A0:\302\240' 'U+2000:\342\200\200' 'U+2001:\342\200\201' 'U+2002:\342\200\202' 'U+2003:\342\200\203' \
+        'U+2004:\342\200\204' 'U+2005:\342\200\205' 'U+2006:\342\200\206' 'U+2007:\342\200\207' 'U+2008:\342\200\210' \
+        'U+2009:\342\200\211' 'U+200A:\342\200\212' 'U+202F:\342\200\257' 'U+205F:\342\201\237' 'U+3000:\343\200\200' \
+        'U+1680:\341\232\200' 'U+2028:\342\200\250' 'U+2029:\342\200\251' 'U+0085:\302\205' 'U+200B:\342\200\213'; do
+        label+=("${c%%:*} at the leading edge"); fmt+=("${c#*:}%s")
+        label+=("${c%%:*} at the trailing edge"); fmt+=("%s${c#*:}")
+    done
+    label+=("U+FEFF, a byte-order mark, at the leading edge"); fmt+=('\357\273\277%s')
+    label+=("a leading run of them mixed with ASCII whitespace"); fmt+=(' \t\343\200\200\302\240 \357\273\277\t\342\200\203%s')
+    label+=("a trailing run of them mixed with ASCII whitespace"); fmt+=('%s\t\342\201\237 \342\200\257\t\343\200\200 ')
+    label+=("runs at both edges"); fmt+=('\302\240 \342\200\212%s\342\200\200\t\302\240')
+    n=${#fmt[@]}
+    [ "$n" -eq 44 ]
+    { printf '# synthetic\n'; for ((k = 0; k < n; k++)); do printf "${fmt[k]}\n" "$(printf 'zzsp%02d' $((k + 1)))"; done; } > "$strings"
+    [ "$(LC_ALL=C grep -c 'zzsp[0-9][0-9]' "$strings")" -eq 44 ]                       # the plant landed: one line per entry
+    [ "$(LC_ALL=C grep -c '^zzsp[0-9][0-9]$' "$strings" || true)" -eq 0 ]              # and none is a bare string already
+    export ROMP_PRIVATE_STRINGS="$strings"
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    for ((k = 0; k < n; k++)); do
+        bare=$(printf 'zzsp%02d' $((k + 1)))
+        commit_file "e$bare.txt" "seen $bare here" "row $((k + 1))"
+        shas+=("$(git -C "$REPO" rev-parse HEAD)")
+    done
+    (cd "$REPO" && git rm -q -- ezzsp*.txt)
+    git -C "$REPO" commit -qm "remove them"
+    for l in "$loc" C; do
+        export LC_ALL="$l"
+        push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        at_base
+        for ((k = 0; k < n; k++)); do
+            bare=$(printf 'zzsp%02d' $((k + 1)))
+            [[ "$output" == *"romp pre-push: commit ${shas[k]:0:10} ADDS a personal identifier in:"$'\n'"  e$bare.txt"* ]] || { echo "locale $l: row $((k + 1)), ${label[k]}, not named" >&2; false; }
+        done
+    done
+}
+
+@test "build 6 (item 40, the trim's set, a byte-order mark): a denylist whose FIRST entry is led by a byte-order mark (EF BB BF, the bytes an editor writes ahead of a UTF-8 file), through a real push under a UTF-8 locale (LC_ALL) and under the C locale of a commit adding a line that holds the bare string, removed at the tip, is refused naming the commit, the remote at its base (at c4dbf4d96 the first entry kept the mark's bytes and the push PUBLISHED)" {
+    local loc strings="$TEST_DIR/private-strings-bom.txt" sha l
+    trim_locale
+    printf '\357\273\277zzbom\n# synthetic\n' > "$strings"
+    [ "$(od -An -tx1 -N 8 "$strings" | tr -d ' \n')" = efbbbf7a7a626f6d ]              # the plant landed: the mark, then the entry
+    export ROMP_PRIVATE_STRINGS="$strings"
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file bom.txt "seen zzbom here" "the bare string"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q bom.txt
+    git -C "$REPO" commit -qm "remove it"
+    for l in "$loc" C; do
+        echo "locale: $l"
+        export LC_ALL="$l"
+        push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  bom.txt"* ]] || false
+    done
+}
+
+@test "build 6 (item 40, the trim's set, an entry of spaces alone; the mark's line since the build's audit, T3): a denylist holding an entry of an ideographic space, a tab, a no-break space, a space and a figure space (E3 80 80, 09, C2 A0, 20, E2 80 87), and one of a byte-order mark alone, beside zzreal, reads both as blank and skips them, as a blank line is skipped: through a real push under a UTF-8 locale (LC_ALL) and under the C locale, a commit adding a line holding the first entry's bytes exactly and then a byte-order mark (EF BB BF) publishes with no romp line, so neither entry is grepped for, and a commit adding a line holding zzreal is refused naming the commit, the remote at its base (at c4dbf4d96 both entries were grepped for as their bytes and the first push was refused naming the commit)" {
+    local loc strings="$TEST_DIR/private-strings-blank.txt" sha l
+    trim_locale
+    printf '# synthetic\n\343\200\200\t\302\240 \342\200\207\n\357\273\277\nzzreal\n' > "$strings"
+    [ "$(sed -n 2p "$strings" | od -An -tx1 | tr -d ' \n')" = e3808009c2a020e280870a ]  # the plant landed
+    export ROMP_PRIVATE_STRINGS="$strings"
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'seen \343\200\200\t\302\240 \342\200\207 and \357\273\277 here\n' > "$REPO/spaces.txt"
+    [ "$(od -An -tx1 "$REPO/spaces.txt" | tr -d ' \n')" = 7365656e20e3808009c2a020e2808720616e6420efbbbf20686572650a ]   # the line holds both entries' bytes
+    git -C "$REPO" add spaces.txt
+    git -C "$REPO" commit -qm "a line holding the spaces"
+    git -C "$REPO" rm -q spaces.txt
+    git -C "$REPO" commit -qm "remove it"
+    for l in "$loc" C; do
+        echo "locale: $l (the spaces)"
+        export LC_ALL="$l"
+        push_main_through_hook_with_shim
+        [ "$status" -eq 0 ]
+        [[ "$output" != *"romp pre-push"* ]] || false
+        at_remote_main
+        rewind_remote main "$BASE"
+    done
+    commit_file real.txt "seen zzreal here" "the real entry"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q real.txt
+    git -C "$REPO" commit -qm "remove it"
+    for l in "$loc" C; do
+        echo "locale: $l (zzreal)"
+        export LC_ALL="$l"
+        push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  real.txt"* ]] || false
+    done
+}
+
+@test "build 6 (item 40, the trim's set, a space inside an entry): a denylist entry zzin, an ideographic space (E3 80 80), side, edged by a no-break space before it and an em space after it, through a real push under a UTF-8 locale (LC_ALL) and under the C locale, publishes a commit adding a line that holds zzinside and zzin side (the inside space dropped, and an ASCII space in its place) with no romp line, and refuses a commit adding a line that holds zzin, the ideographic space, side, naming the commit, the remote at its base: only the edges are trimmed (at c4dbf4d96 the entry kept its edges' spaces and the second push PUBLISHED)" {
+    local loc strings="$TEST_DIR/private-strings-inside.txt" sha l
+    trim_locale
+    printf '# synthetic\n\302\240zzin\343\200\200side\342\200\203\n' > "$strings"
+    [ "$(sed -n 2p "$strings" | od -An -tx1 | tr -d ' \n')" = c2a07a7a696ee3808073696465e280830a ]   # the plant landed
+    export ROMP_PRIVATE_STRINGS="$strings"
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file near.txt "seen zzinside and zzin side here" "the string without its inside space"
+    git -C "$REPO" rm -q near.txt
+    git -C "$REPO" commit -qm "remove it"
+    for l in "$loc" C; do
+        echo "locale: $l (the near misses)"
+        export LC_ALL="$l"
+        push_main_through_hook_with_shim
+        [ "$status" -eq 0 ]
+        [[ "$output" != *"romp pre-push"* ]] || false
+        at_remote_main
+        rewind_remote main "$BASE"
+    done
+    printf 'seen zzin\343\200\200side here\n' > "$REPO/inner.txt"
+    git -C "$REPO" add inner.txt
+    git -C "$REPO" commit -qm "the entry without its edges"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q inner.txt
+    git -C "$REPO" commit -qm "remove it"
+    for l in "$loc" C; do
+        echo "locale: $l (the entry)"
+        export LC_ALL="$l"
+        push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  inner.txt"* ]] || false
+    done
+}
+
+# The trim's set held to the C library's class, derived at run time (build 7 of item 40, on the coordinator's ruling of
+# 20:21Z 2026-10-01, its 1; on any C library since build 8, on the ruling of 00:23Z 2026-10-02, its 1). bash's own
+# pattern match under a UTF-8 locale asks the C library which characters [[:space:]] matches (its glob matcher calls
+# iswctype with the class named space), so a loop of it over every code point, perl writing each from U+0001 to
+# U+10FFFF as UTF-8 (the surrogates left out), one per line, and U+000A, a line's end, asked on its own, derives the
+# class the system's C library answers, glibc's on Linux and macOS's in CI's macOS cell: the class d2091c2c1's trim
+# took off an entry's edges for a pusher in a UTF-8 locale on that system. utf8_cp_name names a member the trim leaves,
+# so a red names what to add. trim_cut cuts the trim from a hook, the body of its denylist loop (the lines between
+# the loop's for line and the line that adds the entry to grep_args), and runs it on each argument in turn.
+utf8_cp_name() {   # <a character's UTF-8 bytes in hex, lowercase, 2 to 8 digits>: prints U+XXXX (XX XX ...), its code point and its bytes (multiplied, not shifted: tests/shell-portability.bats' file-scope reader takes a << for a heredoc)
+    local h=$1 b0 cp bytes="" k
+    b0=$((16#${h:0:2}))
+    case ${#h} in
+        2) cp=$b0 ;;
+        4) cp=$(( (b0 & 0x1F) * 64 + (16#${h:2:2} & 0x3F) )) ;;
+        6) cp=$(( (b0 & 0x0F) * 4096 + (16#${h:2:2} & 0x3F) * 64 + (16#${h:4:2} & 0x3F) )) ;;
+        *) cp=$(( (b0 & 0x07) * 262144 + (16#${h:2:2} & 0x3F) * 4096 + (16#${h:4:2} & 0x3F) * 64 + (16#${h:6:2} & 0x3F) )) ;;
+    esac
+    for ((k = 0; k < ${#h}; k += 2)); do bytes="$bytes ${h:k:2}"; done
+    printf 'U+%04X (%s)' "$cp" "$(printf %s "${bytes# }" | tr a-f A-F)"
+}
+trim_cut() {   # <hook> <script>: writes a script that runs the hook's denylist trim on each of its arguments and prints each result with a NUL after it
+    local a b
+    a=$(grep -n -F -x '    for line in ${deny_lines[@]+"${deny_lines[@]}"}; do' "$1" | cut -d: -f1)
+    b=$(grep -n -F -x '        [ -n "$line" ] && grep_args+=(-e "$line")' "$1" | cut -d: -f1)
+    case "$a:$b" in
+        *[!0-9:]*|:*|*:) echo "trim_cut: the denylist loop's for line or its grep_args line is not in $1 exactly once" >&2; return 1 ;;
+    esac
+    [ "$b" -gt $((a + 1)) ]
+    { echo 'for line in "$@"; do'; sed -n "$((a + 1)),$((b - 1))p" "$1"; echo "    printf '%s\\0' \"\$line\""; echo done; } > "$2"
+}
+
+@test "build 7 (item 40, the trim's set derived from the C library; the coordinator's rulings of 20:21Z 2026-10-01, its 1 and its 2, and, for a C library other than glibc, of 00:23Z 2026-10-02, its 1): the C library's UTF-8 [[:space:]] class (glibc's on Linux, macOS's in its cell of CI), derived at run time by bash's own pattern match under a UTF-8 locale over every code point from U+0001 to U+10FFFF (1,112,063 of them, the surrogates left out), holding at least the ASCII space and U+3000, is taken off an entry by the hook's trim, cut from the hook and run under the bash and the C locale the hook's body runs under: each member at the leading edge and at the trailing edge of a bare string leaves the bare string, and each member alone leaves nothing (an entry of spaces alone reads as blank), so a C library whose class holds a character the trim leaves on an edge turns this case red, the failure naming each such member by its code point and its bytes; skipped, naming why, where no UTF-8 locale or no perl is there, failing instead in a Linux cell on CI (at d5740856c the trim left every member outside ASCII on both edges, at build 6's text U+1680, U+2028 and U+2029, and, on a class holding U+0085 and U+200B, as FreeBSD's does, at build 7's text those two; until build 8 the case skipped where the C library was not glibc, failing there instead in a Linux cell on CI)" {
+    local lib cls loc why="" nb out h oct m k bad="" miss
+    local -a hexes=() entries=() got=()
+    lib=$(getconf GNU_LIBC_VERSION 2> /dev/null || true)
+    case "$lib" in
+        "glibc "*) cls="glibc's UTF-8 [[:space:]] class ($lib)" ;;
+        *) cls="the UTF-8 [[:space:]] class of $(uname -s)'s C library (not glibc: getconf GNU_LIBC_VERSION answers \"$lib\")" ;;
+    esac
+    loc=$(utf8_locale)
+    [ -n "$loc" ] || why="no UTF-8 locale (C.UTF-8, C.utf8, en_US.UTF-8 or en_US.utf8) on this system"
+    [ -n "$why" ] || command -v perl > /dev/null 2>&1 || why="no perl on PATH writes the code points"
+    if [ -n "$why" ]; then
+        if [ "${CI:-}" = true ] && [ "$(uname -s)" = Linux ]; then echo "$why, in a Linux cell on CI, where the case must run" >&2; return 1; fi
+        skip "$why"
+    fi
+    perl -e 'no warnings; binmode STDOUT, ":utf8"; for my $c (1 .. 0x10FFFF) { next if $c == 10 || ($c >= 0xD800 && $c <= 0xDFFF); print chr($c), "\n" }' > "$TEST_DIR/cps"
+    nb=$(wc -c < "$TEST_DIR/cps")
+    [ "${nb//[[:space:]]/}" -eq 5494652 ]        # every code point but U+000A as UTF-8, one per line: 126 of one byte, 1920 of two, 61440 of three, 1048576 of four, and 1112062 newlines
+    # each member's bytes in hex, one per line, then the count asked: the derivation runs under the bash the hook's body
+    # runs under, in the UTF-8 locale; the words are the lines (IFS a newline, no globbing)
+    cat > "$TEST_DIR/derive.bash" <<'DERIVE'
+set -f
+IFS=$'\n'
+n=0
+for c in $(cat "$1"); do
+    n=$((n + 1))
+    if [[ $c == [[:space:]] ]]; then printf %s "$c" | od -An -tx1 | tr -d ' \n'; echo; fi
+done
+if [[ $'\n' == [[:space:]] ]]; then echo 0a; fi
+echo "asked $n"
+DERIVE
+    out=$(LC_ALL=$loc "$NEWER_BASH" "$TEST_DIR/derive.bash" "$TEST_DIR/cps")
+    [[ "$out" == *$'\n'"asked 1112062" ]] || false                                # every code point but U+000A asked in the loop, and U+000A on its own
+    while IFS= read -r h; do
+        case "$h" in asked*) ;; *) hexes+=("$h") ;; esac
+    done <<< "$out"
+    echo "$cls under $loc, in UTF-8 bytes: ${hexes[*]}"
+    case " ${hexes[*]} " in *" 20 "*" e38080 "*) ;; *) echo "the derived class lacks the ASCII space or U+3000, so the derivation did not run in a UTF-8 locale" >&2; false ;; esac
+    for h in "${hexes[@]}"; do
+        oct=""
+        for ((k = 0; k < ${#h}; k += 2)); do oct="$oct\\$(printf '%03o' $((16#${h:k:2})))"; done
+        m=$(printf "$oct"; printf x)
+        m=${m%x}                                                                 # a newline, U+000A, kept through the substitution
+        entries+=("${m}zzdq" "zzdq${m}" "$m")
+    done
+    trim_cut "$HOOK" "$TEST_DIR/trim.bash"
+    LC_ALL=C "$NEWER_BASH" "$TEST_DIR/trim.bash" "${entries[@]}" > "$TEST_DIR/trimmed"
+    while IFS= read -r -d '' out; do got+=("$out"); done < "$TEST_DIR/trimmed"
+    [ "${#got[@]}" -eq "${#entries[@]}" ]
+    for ((k = 0; k < ${#hexes[@]}; k++)); do
+        miss=""
+        [ "${got[3 * k]}" = zzdq ] || miss="at the leading edge"
+        [ "${got[3 * k + 1]}" = zzdq ] || miss="${miss:+$miss, }at the trailing edge"
+        [ -z "${got[3 * k + 2]}" ] || miss="${miss:+$miss, }as an entry alone"
+        [ -z "$miss" ] || bad="$bad"$'\n'"  $(utf8_cp_name "${hexes[k]}"): left $miss"
+    done
+    [ -z "$bad" ] || { echo "the trim leaves members of $cls on an entry (add each to both edge sets of scan_identifiers' trim, and a row for each edge to the table of the trim's set):$bad" >&2; false; }
+}
+
+@test "build 7's repair (item 40, the audit of build 7, TRIM-3: the trim takes nothing beyond its set; U+0085 and U+200B moved into the set by build 8, their neighbours U+0084 and U+0086 added): characters beside the set's members, each at the leading edge and at the trailing edge of a bare string and alone, keep every byte through the hook's trim, cut from the hook and run under the bash and the C locale the hook's body runs under: U+001C to U+001F, U+0084, U+0086, U+00A1, U+00AD, U+1681, U+180E, U+200C, U+200D, U+2027, U+202A, U+202E, U+2030, U+205E, U+2060, U+3001 and U+FEFE, the lone bytes C2, A0, 85 and 80 and the cut sequences E2 80, E3 80, E1 9A and EF BB, and U+FEFF at the trailing edge (the set takes it at the leading edge alone), so a trim widened past the ruled set turns this case red (an entry would then be grepped without a character its line holds, and an entry of such characters alone would read as blank)" {
+    local h oct m k bad="" out LC_ALL=C                                       # bytes throughout: bash 5.2's read -d '' in a UTF-8 locale takes the NUL after a lone lead byte (C2, E2 80) into the field
+    local -a hexes=(1c 1d 1e 1f c284 c286 c2a1 c2ad e19a81 e1a08e e2808c e2808d e280a7 e280aa e280ae e280b0 e2819e e281a0 e38081 efbbbe c2 a0 85 80 e280 e380 e19a efbb) entries=() got=()
+    for h in "${hexes[@]}"; do
+        oct=""
+        for ((k = 0; k < ${#h}; k += 2)); do oct="$oct\\$(printf '%03o' $((16#${h:k:2})))"; done
+        m=$(printf "$oct")
+        entries+=("${m}zzdq" "zzdq${m}" "$m")
+    done
+    entries+=("zzdq$(printf '\357\273\277')")                                  # U+FEFF at the trailing edge
+    trim_cut "$HOOK" "$TEST_DIR/trim.bash"
+    LC_ALL=C "$NEWER_BASH" "$TEST_DIR/trim.bash" "${entries[@]}" > "$TEST_DIR/trimmed"
+    while IFS= read -r -d '' out; do got+=("$out"); done < "$TEST_DIR/trimmed"
+    [ "${#got[@]}" -eq "${#entries[@]}" ]
+    for ((k = 0; k < ${#entries[@]}; k++)); do
+        [ "${got[k]}" = "${entries[k]}" ] || bad="$bad $(printf %s "${entries[k]}" | od -An -tx1 | tr -d ' \n');"
+    done
+    [ -z "$bad" ] || { echo "the trim took bytes off an entry whose edge holds no member of its set:$bad" >&2; false; }
+}
+
+@test "build 7 (item 40, entries of spaces alone read as blank, accepted; the coordinator's ruling of 20:21Z 2026-10-01, its 2): a denylist holding an entry of a no-break space alone (C2 A0), one of U+1680, a space, U+2028, a tab and U+2029 (E1 9A 80, 20, E2 80 A8, 09, E2 80 A9), and one of every member of the set run together (U+0085 and U+200B among them since build 8), a byte-order mark first, beside zzreal, reads the three as blank and skips them, as a blank line is skipped: through a real push under a UTF-8 locale (LC_ALL) and under the C locale, a commit adding a line that holds each entry's bytes exactly publishes with no romp line, so none of the three is grepped for, and a commit adding a line holding zzreal is refused naming the commit, the remote at its base (at d5740856c the three were grepped for as their bytes and the first push was refused naming the commit; at build 6's text the second and the third, which hold U+1680, U+2028 and U+2029, were; at build 7's text the third, which holds U+0085 and U+200B, was)" {
+    local loc strings="$TEST_DIR/private-strings-blank7.txt" all sha l
+    trim_locale
+    all='\357\273\277\302\240\302\205\341\232\200\342\200\200\342\200\201\342\200\202\342\200\203\342\200\204\342\200\205\342\200\206\342\200\207\342\200\210\342\200\211\342\200\212\342\200\213\342\200\250\342\200\251\342\200\257\342\201\237\343\200\200'
+    printf "# synthetic\\n\\302\\240\\n\\341\\232\\200 \\342\\200\\250\\t\\342\\200\\251\\n$all\\nzzreal\\n" > "$strings"
+    [ "$(sed -n 2p "$strings" | od -An -tx1 | tr -d ' \n')" = c2a00a ]                                          # the plant landed: a no-break space alone
+    [ "$(sed -n 3p "$strings" | od -An -tx1 | tr -d ' \n')" = e19a8020e280a809e280a90a ]                      # the three glibc's class adds, mixed with ASCII whitespace
+    [ "$(sed -n 4p "$strings" | od -An -tx1 | tr -d ' \n')" = efbbbfc2a0c285e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae2808be280a8e280a9e280afe2819fe380800a ]   # the set, run together
+    export ROMP_PRIVATE_STRINGS="$strings"
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf "seen \\302\\240 and \\341\\232\\200 \\342\\200\\250\\t\\342\\200\\251 and $all here\\n" > "$REPO/spaces.txt"
+    git -C "$REPO" add spaces.txt
+    git -C "$REPO" commit -qm "a line holding the three entries"
+    git -C "$REPO" rm -q spaces.txt
+    git -C "$REPO" commit -qm "remove it"
+    for l in "$loc" C; do
+        echo "locale: $l (the spaces)"                                       # names the locale when a line below fails
+        export LC_ALL="$l"
+        push_main_through_hook_with_shim
+        [ "$status" -eq 0 ]
+        [[ "$output" != *"romp pre-push"* ]] || false
+        at_remote_main
+        rewind_remote main "$BASE"
+    done
+    commit_file real.txt "seen zzreal here" "the real entry"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q real.txt
+    git -C "$REPO" commit -qm "remove it"
+    for l in "$loc" C; do
+        echo "locale: $l (zzreal)"
+        export LC_ALL="$l"
+        push_main_through_hook_with_shim
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a personal identifier in:"$'\n'"  real.txt"* ]] || false
+    done
+}
+
 # The census of the read loops (the read-error-as-end-of-file class; rebuilt by the repair after the audit of build 5,
 # whose LOOPS-5, LOOPS-9, T1 and T7 found the build's census reading a tag line alone, and only above a while or until
 # line that held a read). It finds every LINE LOOP from every read-builtin token in the masked text (the loop census's
@@ -19867,18 +20193,130 @@ PY
 # the body unsets its variables first and reads each as ${X+set} within two lines. It prints one line per line loop,
 # "ok <line> (ii) <form>: <names>" or "FAIL <line>: <why>: <the keyword's line>", then a FAIL line for each read
 # outside every loop that it fails, naming the read's line.
+# Build 6 (item 40, on the coordinator's ruling of 16:36Z 2026-10-01, its 3) adds the status of every read outside every
+# loop, a ONE-SHOT read: it runs where its failure ends the hook, or its status is judged, and the census lists each,
+# "one-shot <line> <form>: <the read's line>", or fails it, its reason ahead of the input rule's when both fail. A read
+# ends the hook (aborts) where errexit applies to it: no ! before it, no || beside it, no && after it, no pipe or & beside
+# it, not in a coproc, not in an if, elif, while or until condition, and each compound around it inside its function (or
+# the file) the same way and none a ( ), a $( ), a backquote or a coproc's; in a function, every reference to the
+# function is a call in such a place in a function of the same kind (the census follows each call up), none a name
+# handed to another command or written inside quotes, and the function runs no set +e (nor set +o errexit, nor shopt -u
+# -o errexit); outside every function, after the file's first set -e and with no set +e in the file. The census reads ||
+# and && apart from ; for this, a backquoted command and the command it sits in apart, and a case pattern's close as the
+# start of a branch. A read's status is judged when it is the condition of an if ! or elif ! whose then opens with
+# unscanned, when an || unscanned follows it, or when its first variable is unset before it (on its line, or on one of
+# the two code lines above) and tested as ${name+set} after it (on its line, or within the four lines below), unscanned
+# on the unset side; a line that holds more than one read is judged by none of the three. Spelled any other way, a check
+# of a read's status is no form here, and the census fails the read. The repair after the build's audit holds each
+# judged form to the hook's own shell (OS-1): the read and its unscanned each run with no pipe or & beside it, in no
+# ( ), $( ), backquote or coproc, in no compound piped or put in the background, and, in a function, every reference to
+# the function is a call so placed, followed up (a condition, an ||, an && or a ! around a call is fine here, since the
+# refusal is made whatever the call's status), but for a function named only as judged_read's -d (or called from one),
+# which runs in judged_read's command substitution and is excepted while the code line after judged_read's splice of
+# its answer is unscanned "$clause", the refusal judged_read makes itself. And it holds the unset form to its place
+# (OS-3): nothing assigns the name from the unset to the test (an assignment, a declaration's, printf -v, ${name=} or
+# ${name:=}, mapfile or readarray, an arithmetic assignment, another read of it, and since the repair after the audit
+# of build 7, R7-4, a for or select loop over the name or a coproc so named), and no command runs there but the read
+# and : (R7-4: a builtin such as getopts, wait -p, eval, printf -v or a declaration, or a function, may assign the name
+# by a road the census cannot read); the unset runs with no && or || ahead of it; the test runs in the unset's compound
+# and branch, or in the first condition of an if opened there, with no !, && or || ahead of it; the read, between the
+# two, runs in the unset's function and in no loop opened after the unset (R7-1: a pass after the first would read
+# with the name an earlier pass set, so a read error there leaves it set and the test refuses nothing); its own
+# compound is otherwise free (a read the path skips, its own redirection's open failing among the roads, leaves the
+# name unset, which refuses; a compound around the test is held below, build 8's rule); and no return, exit, break or
+# continue comes between the read and the test.
+# Build 7 (item 40, on the coordinator's ruling of 20:21Z 2026-10-01, its 3) holds a read with an input of its own inside
+# a loop's body (its own redirection or pipe, or a compound's inside the body), which makes no line loop, to the same
+# rule: the census lists each, "in-loop <line> <form>: <the read's line>", or fails it as a read with an input of its
+# own in a loop's body that is neither. A loop around such a read is one more compound for the rule (a loop fed by a
+# pipe, in a condition or in an || list keeps errexit from ending the hook), and a judged form holds as above.
+# Build 8 (item 40, on the coordinator's ruling of 00:23Z 2026-10-02, its RC7-2) holds each judged form against a failed
+# open: bash runs no part of a compound whose redirection fails, so a compound with a redirection around the test of
+# the unset form, or around the read and its refusal in the if ! and || unscanned forms, skips them whole when its open
+# fails; unless errexit then ends the hook (bash 5.1.16, 5.2.21 and 5.3 end it on the failed redirection of a braced
+# group, a loop, an if or a case where errexit applies to the compound, read as the one-shot rule reads a place), the
+# hook goes on, nothing refuses, and a name the compound reads keeps the value an earlier pass set (the re-check of
+# build 7's repair, RC7-2: the hook's attribute answer, three reads with their unsets and tests in one braced group fed
+# by the file, an || after it). The census fails such a read, naming the compound's line and its place, "the compound
+# opened on line N, around the test of ${name+set}, takes a redirection whose failed open skips the compound while the
+# hook goes on (in an || list), ...", whatever the redirection (input or output, on any descriptor). It reads the
+# compounds inside the innermost line loop around the read (a loop whose condition reads, or in whose body a read takes
+# the loop's own input), where a read in that loop's body takes its input, and, with no line loop around the read,
+# inside the read's function: a line loop whose own redirection fails runs no pass, which the census of the line loops
+# holds by the loop's form after the done, while any other loop is one more compound, a failed redirection on its done
+# or on a compound around it skipping the loop whole, the read and its test with it (until the repair after the audit
+# of build 8, ATTR8-2, the bound was the innermost loop of any kind, and a judged read in a for loop over words whose
+# done took a redirection, an || after it, was listed as judged). A compound around the read alone, between the unset
+# and the read, stays free: its failed open leaves the name unset, and the test refuses. The tokenizer reads a
+# duplicating redirection (<&7, 2>&1, 7<&-) as one word, its & no separator, so a read that takes its input from a
+# descriptor opened before it, as the attribute answer's three now do, is a read with an input of its own (it reads
+# where the descriptor stands, not from the start: the three take the answer's fields in turn, each judged; a loop
+# that reads a descriptor by such a redirection pass after pass is held by the one-shot rule read by read, not as a
+# line loop). A process substitution right after a redirection's operator ({ ...; } < <(...) || :, or > >(...)) is
+# that redirection's target, and the || or && after its ) is the compound's (until that repair, ATTR8-1, the tokenizer
+# took it for the substitution's own, and such a group was listed as judged; with no descriptor free bash makes no
+# pipe, prints its line, skips the group and goes on). A here-document's operator (<< or <<-, its delimiter spaced
+# from it, quoted or not, on any descriptor) passes over its delimiter as the other operators pass over their targets,
+# in a command's prefix, after a compound's close and among a read's words (build 9 of item 40, the re-check of build
+# 8's RC8-1: until then the tokenizer took the delimiter for the next command, so the || after a braced group fed by a
+# here-document went to the delimiter, and such a group was listed as judged, where bash, when it cannot make the
+# document, prints its line, skips the group and goes on; a delimiter ahead of a read's variable was read as the
+# read's first name; and a here-document in a command's prefix hid the read from the census, the delimiter taken for
+# the command, so such a read was neither listed nor failed). A compound with a redirection around a CALL of the read's
+# function, whose failed open skips the call whole (no read runs, so none fails), is outside this rule and outside
+# the census; the hook holds none whose failure lets it go on around a call of a function holding a read (by a probe
+# of build 8's over the hook, which lists every call of a function the hook defines with each compound with a
+# redirection around it). Of the same family, disclosed (that repair, ATTR8-2): a compound with a redirection around
+# a line loop and the check after its done, whose failed open skips both while the hook goes on, is outside the census
+# of the line loops, which reads the check's form after the done and not the place of a compound around both; the hook
+# holds none inside a function (by a probe of that repair's over the hook, which lists, for each of the 39 line loops,
+# every compound around it inside its function that takes a redirection: 13 have one, the line loop each nests in,
+# and each sits where its failure ends the hook), and the call-site probe above covers their functions' calls.
+# Its limits, disclosed (the re-check of build 6's repair, RC-1; the coordinator's ruling of 20:21Z, which names no such
+# read in the hook): it reads errexit from the text, as the function a set +e sits in or the file, so it does not see
+# errexit turned off by a set +e inside a function that runs no local - (the option outlives the call, so a read the
+# script runs after that call, in another function or at the top level, no longer ends the hook), by +e or +o errexit
+# after another option in one set (set -u +e, set +u +e, set -o pipefail +o errexit), by a set run through eval, by a
+# set or its option word spelled otherwise (quoted, as set "+e" or set +o err"exit", escaped, as \set +e, or named
+# through a variable's value), or by a set in a trap's string (trap 'set +e' DEBUG); it takes an unset put in the
+# background or in a pipeline, which runs in a subshell and leaves the name set in the hook's shell, for the unset
+# ahead of a judged read; and, between the unset and the test, it does not see an assignment through a nameref
+# declared before the unset, one by a DEBUG trap's string, or one bash makes evaluating quoted text as arithmetic (an
+# indexed array's quoted subscript). Each would have it list a read as ending the hook, or as judged, that is neither
+# (by execution under bash 5.1.16, 5.2.21 and 5.3, the re-check's plants a01 to a04, a07 to a09 and a21; under 5.2.21
+# and 3.2.57, the plants of the audit of build 7 and of its repair, the nameref under 5.2.21 alone, bash 3.2 having
+# none). The hook holds none of those shapes: its only set +e, in judged_read, runs inside the command substitutions
+# that capture a read (one per capture's spelling, three), subshells whose options end with them; its only trap is the
+# EXIT trap; it runs no eval and declares no nameref, and every unset ahead of a judged read runs in the read's own
+# shell.
 read_loop_census() {   # <bash file>: the census above, one line per line loop, then one per read outside every loop that it fails
     if [ ! -f "$TEST_DIR/readcensus.awk" ]; then
         cat > "$TEST_DIR/readcensus.awk" <<'AWK'
 function endbread() {
     if (brd) {
-        nb++; bown[nb] = bredir; bpath[nb] = cpath(); bline[nb] = rline; bloop[nb] = rloop; bcond[nb] = rcond; bnames[nb] = rnames
+        nb++; bown[nb] = bredir; bpath[nb] = cpath(); bline[nb] = rline; bloop[nb] = rloop; bcond[nb] = rcond; bnames[nb] = rnames; bcw[nb] = rcw
         brd = 0
     }
 }
 function cpath(   i, s) { s = " "; for (i = 1; i <= csp; i++) s = s cs[i] " "; return s }
-function cpush(kind, piped) { nc++; ck[nc] = kind; cpiped[nc] = piped; credir[nc] = 0; cs[++csp] = nc; return nc }
+function cpush(kind, piped,   par) {
+    par = (csp > 0 ? cs[csp] : 0)
+    nc++; ck[nc] = kind; cpiped[nc] = piped; credir[nc] = 0; credany[nc] = 0; cline[nc] = NR; cincond[nc] = (par && condr[par]); cpre[nc] = lastk; cbang[nc] = bang; bang = 0
+    cco[nc] = copend; copend = 0; cpseg[nc] = (par ? cseg[par] : 0); cseg[nc] = 0
+    if (pendingfn != "" && (kind == "brace" || (kind == "p" && tok[k + 1] != ")"))) { fname[nc] = pendingfn; fdef[pendingfn] = 1; pendingfn = "" }
+    cs[++csp] = nc; return nc
+}
 function cpop(kind,   id) { if (csp > 0 && (kind == "" || ck[cs[csp]] == kind)) { id = cs[csp--]; after = id; return id } return 0 }
+# the one-shot census: a command's record (its word, line, compounds, the separator before it, a ! before it, whether it
+# starts in a condition, a coproc's, the segment of its compound it runs in), ended at the separator after it; a read's
+# record is linked to the read (bcw)
+function cmdstart(w) {
+    if (resuming) return
+    ncw++; cw[ncw] = w; cwl[ncw] = NR; cwpath[ncw] = cpath(); cwpre[ncw] = lastk; cwbang[ncw] = bang; cwcond[ncw] = (csp > 0 && condr[cs[csp]]); cwend[ncw] = "nl"
+    cwco[ncw] = copend; copend = 0; cwseg[ncw] = (csp > 0 ? cseg[cs[csp]] : 0)
+    curcw = ncw; bang = 0
+}
+function cmdend(how) { if (curcw) { cwend[curcw] = how; curcw = 0 }; resuming = 0 }
 function isin(t) { return t ~ /^0?</ }
 function isredir(t) { return t ~ /^[0-9]*(<|>)/ }
 function code(i,   m, k) { m = masked[i]; k = length(m); while (k > 0 && substr(m, k, 1) ~ /[ \t]/) k--; return substr(raw[i], 1, k) }
@@ -19886,30 +20324,345 @@ function word(s, w) { return s ~ ("(^|[^A-Za-z0-9_])" w "([^A-Za-z0-9_]|$)") }
 function fend(from,   i) { for (i = from; i <= nr && i < from + 400; i++) if (raw[i] == "}") return i; return (i > nr ? nr : i) }
 function span(a, b,   i, s) { s = ""; for (i = a; i <= b; i++) s = s code(i) "\n"; return s }
 function quote(s) { gsub(/[][\\^$.*+?(){}|]/, "\\\\&", s); return s }
+# The one-shot census (build 6 of item 40): a read outside every loop runs where its failure ends the hook, or its status
+# is judged. ctxwhy: why a command (a read, or a call of the function a read is in) is a place where errexit does not end
+# the hook, or "": a ! before it, an || beside it, an && after it, a pipe or a & beside it, a coproc, a condition it
+# starts in, and each compound around it inside its function (or the file) the same way, a ( ), a $( ), a backquote or a
+# coproc's among them
+function ctxwhy(c,   m, pp, j, x) {
+    if (cwbang[c]) return "under !"
+    if (cwpre[c] == "or" || cwend[c] == "or") return "in an || list"
+    if (cwend[c] == "and") return "before an &&"
+    if (cwpre[c] == "|" || cwend[c] == "|" || cwend[c] == "&") return "in a pipeline or in the background"
+    if (cwco[c]) return "in a coproc"
+    if (cwcond[c]) return "in a condition"
+    m = split(cwpath[c], pp, " ")
+    for (j = m; j >= 1; j--) {
+        x = pp[j]
+        if (x in fname) break
+        if (ck[x] == "p" || ck[x] == "bq") return "in a subshell or a command substitution"
+        if (cco[x]) return "in a coproc"
+        if (cbang[x]) return "in a compound under !"
+        if (cpre[x] == "or" || cfollow[x] == "or") return "in a compound in an || list"
+        if (cfollow[x] == "and") return "in a compound before an &&"
+        if (cpiped[x] || cpre[x] == "|" || cfollow[x] == "|" || cfollow[x] == "&") return "in a compound in a pipeline or in the background"
+        if (cincond[x]) return "in a compound in a condition"
+    }
+    return ""
+}
+function fnof(c,   m, pp, j) { m = split(cwpath[c], pp, " "); for (j = m; j >= 1; j--) if (pp[j] in fname) return fname[pp[j]]; return "" }
+# why a command's place does not end the hook: its own place, then, in a function, each call of that function
+function placewhy(c,   w, f) {
+    w = ctxwhy(c); if (w != "") return w
+    f = fnof(c)
+    if (f == "") { if (topplus) return "after a set +e in the file"; if (!errline || cwl[c] < errline) return "before the file's set -e"; return "" }
+    return fsafe(f)
+}
+# why a call of function f may not end the hook, or "": a set +e in it, a reference to it that is not a call where
+# errexit applies (a name handed to another command, a quoted name, a call in a place ctxwhy names), recursively
+function fsafe(f,   c, i, n, s, w, refs, calls) {
+    if (f in fwhy) return fwhy[f]
+    if (fvisit[f]) return "a recursive call of " f
+    fvisit[f] = 1; w = ""
+    if (fplus[f]) w = "a set +e in " f
+    refs = 0; calls = 0
+    if (w == "") {
+        for (i = 1; i <= nr; i++) { s = code(i); while (match(s, "(^|[^A-Za-z0-9_:.-])" quote(f) "([^A-Za-z0-9_:.-]|$)")) { refs++; s = substr(s, RSTART + RLENGTH - 1) } }
+        for (c = 1; c <= ncw; c++) {
+            if (cw[c] != f) continue
+            if (cwdef[c]) { calls++; continue }
+            calls++
+            n = placewhy(c)
+            if (n != "") { w = f " is called on line " cwl[c] ((substr(n, 1, 2) == "in" || substr(n, 1, 5) == "under" || substr(n, 1, 6) == "before" || substr(n, 1, 5) == "after") ? " " : ", and ") n; break }
+        }
+        if (w == "" && (f in fdefl)) calls++
+        if (w == "" && refs > calls) w = f " is named outside a call of it " (refs - calls) " time" (refs - calls > 1 ? "s" : "") " (an argument to another command, or inside quotes)"
+    }
+    fvisit[f] = 0; fwhy[f] = w
+    return w
+}
+# The repair after the audit of build 6 (OS-1): a judged read's refusal is held to the hook's own shell, since failed_scan
+# set in a subshell is lost. ownwhy: why a command runs where a refusal is lost, or "": a pipe or a & beside it, a
+# coproc, and each compound around it a ( ), a $( ), a backquote or a coproc's, or piped or put in the background, up
+# through its function; then each call of the function the same way (fown; a condition, an ||, an && or a ! around a call
+# is fine here). A function named outside a call is no such place, but for one named only as judged_read's -d (a rider,
+# frid), after which judged_read refuses the push itself: excepted while the line after the -d function's splice in
+# judged_read is unscanned "$clause" (riderok).
+function ownwhy(c,   m, pp, j, x, f) {
+    if (cwpre[c] == "|" || cwend[c] == "|" || cwend[c] == "&") return "in a pipeline or in the background"
+    if (cwco[c]) return "in a coproc"
+    m = split(cwpath[c], pp, " ")
+    for (j = m; j >= 1; j--) {
+        x = pp[j]
+        if (ck[x] == "p" || ck[x] == "bq") return "in a subshell or a command substitution"
+        if (cco[x]) return "in a coproc"
+        if (cpiped[x] || cpre[x] == "|" || cfollow[x] == "|" || cfollow[x] == "&") return "in a compound in a pipeline or in the background"
+        if (x in fname) break
+    }
+    f = fnof(c)
+    return (f == "" ? "" : fown(f))
+}
+function riderrefs(i, f,   s, n, t, j, cnt) {
+    s = masked[i]; cnt = 0
+    while (match(s, /(^|[^A-Za-z0-9_])judged_read[ \t]/)) {
+        s = substr(s, RSTART + RLENGTH); n = split(s, t, /[ \t]+/)
+        for (j = 1; j <= n; j++) { if (t[j] == "--" || t[j] ~ /[;&|]/) break; if (t[j] == "-d" && j < n && t[j + 1] == f) cnt++ }
+    }
+    return cnt
+}
+function fown(f,   c, i, s, w, n, g, refs, calls, riders) {
+    if (f in fownw) return fownw[f]
+    if (fovisit[f]) return ""
+    fovisit[f] = 1; w = ""; refs = 0; calls = 0; riders = 0; frid[f] = ""
+    for (i = 1; i <= nr; i++) {
+        s = code(i); while (match(s, "(^|[^A-Za-z0-9_:.-])" quote(f) "([^A-Za-z0-9_:.-]|$)")) { refs++; s = substr(s, RSTART + RLENGTH - 1) }
+        if (riderok) riders += riderrefs(i, f)
+    }
+    for (c = 1; c <= ncw; c++) {
+        if (cw[c] != f) continue
+        calls++
+        if (cwdef[c]) continue
+        n = ownwhy(c)
+        if (n != "") { w = f " is called on line " cwl[c] ((substr(n, 1, 2) == "in") ? " " : ", and ") n; break }
+        g = fnof(c); if (g != "" && frid[g] != "") frid[f] = frid[g]
+    }
+    if (w == "" && (f in fdefl)) calls++
+    if (w == "" && refs > calls + riders) w = f " is named outside a call of it " (refs - calls - riders) " time" (refs - calls - riders > 1 ? "s" : "") " (an argument to another command, or inside quotes)"
+    if (w == "" && riders > 0) frid[f] = f
+    fovisit[f] = 0; fownw[f] = w
+    return w
+}
+function nextcmd(c, w,   x) { for (x = c + 1; x <= ncw; x++) if (cw[x] == w) return x; return 0 }
+function cmdat(l, after, w,   x) { for (x = after + 1; x <= ncw; x++) { if (cwl[x] > l) break; if (cwl[x] == l && cw[x] == w) return x } return 0 }
+function lastcmd(l, before, w,   x) { for (x = before - 1; x >= 1; x--) { if (cwl[x] < l) break; if (cwl[x] == l && cw[x] == w) return x } return 0 }
+# why a judged read's refusal is lost, or "": the read, then the refusal, held to the hook's own shell
+function judgedown(rc, s,   w) {
+    w = ownwhy(rc); if (w != "") return "its refusal runs where failed_scan is lost (" w ")"
+    if (!s) return "no refusal follows it"
+    w = ownwhy(s); if (w != "") return "its refusal runs where failed_scan is lost (" w ")"
+    return ""
+}
+# Build 8 (item 40, on the coordinator's ruling of 00:23Z 2026-10-02, its RC7-2): a judged read's refusal, or the test of
+# its end form, sits in no compound whose redirection, failing to open, skips it while the hook goes on. A compound
+# whose redirection fails is not run (in bash 5.1 and later, the bash the body runs under, the failure is the compound's
+# status, so errexit ends the hook where it applies to the compound, and nothing else does). compwhy: why compound x,
+# around command c, is a place where errexit does not end the hook, or "": x and each compound around it inside its
+# function (or the file) placed as ctxwhy reads a command's compounds, then each call of the function (fsafe)
+function compwhy(c, x,   m, pp, j, y, on, f) {
+    m = split(cwpath[c], pp, " "); on = 0
+    for (j = m; j >= 1; j--) {
+        y = pp[j]
+        if (y == x) on = 1
+        if (!on) continue
+        if (y in fname) break
+        if (ck[y] == "p" || ck[y] == "bq") return "in a subshell or a command substitution"
+        if (cco[y]) return "in a coproc"
+        if (cbang[y]) return "under !"
+        if (cpre[y] == "or" || cfollow[y] == "or") return "in an || list"
+        if (cfollow[y] == "and") return "before an &&"
+        if (cpiped[y] || cpre[y] == "|" || cfollow[y] == "|" || cfollow[y] == "&") return "in a pipeline or in the background"
+        if (cincond[y]) return "in a condition"
+    }
+    f = fnof(c)
+    if (f == "") { if (topplus) return "after a set +e in the file"; if (!errline || cwl[c] < errline) return "before the file's set -e"; return "" }
+    return fsafe(f)
+}
+# openskip: why command c (a judged read's test, or its refusal) may be skipped by a failed open while the hook goes on,
+# or "": each compound around it that takes a redirection (any, on any descriptor: a compound whose redirection fails is
+# skipped whole), inside the innermost line loop around it (isline: a read in that loop's body takes its input there,
+# and a line loop whose own redirection fails runs no pass, which the line loop census holds by the loop's form after
+# its done) or, with no line loop around it, inside its function, must be one whose failure ends the hook. Any other
+# loop (one no read takes the loop's own input in: a for loop over words whose reads have inputs of their own, say) is
+# one more compound here: a failed redirection on its done, or on a compound around it, skips it whole, the read and its
+# test with it, and no form after its done holds that (until the repair after the audit of build 8, ATTR8-2, the bound
+# was the innermost loop of any kind, and such a read was listed as judged)
+function openskip(c, what,   m, pp, j, x, w) {
+    m = split(cwpath[c], pp, " ")
+    for (j = m; j >= 1; j--) {
+        x = pp[j]
+        if (ck[x] == "loop" && isline[x]) break
+        if (credany[x]) { w = compwhy(c, x); if (w != "") return "the compound opened on line " cline[x] ", around " what ", takes a redirection whose failed open skips the compound while the hook goes on (" w "), so nothing refuses the failed open and a name the compound reads keeps any value it held" }
+        if (x in fname) break
+    }
+    return ""
+}
+function ridernote(rc,   f) { f = fnof(rc); if (f == "" || frid[f] == "") return ""; return "; in " (frid[f] == f ? f ", a -d function of judged_read," : f ", called from " frid[f] ", a -d function of judged_read,") " which refuses the push itself after it" }
+# an assignment to v in a stretch of a line (its masked bytes mq, its raw bytes qc): v=, v+=, v[...]=, a declaration's
+# v=, printf -v v, ${v=} or ${v:=}, mapfile or readarray v, v assigned, incremented or decremented in (( )), and, since
+# the repair after the audit of build 7 (R7-4), v as a for or select loop's variable or a coproc's name
+function assigns(mq, qc, v,   V) {
+    V = quote(v)
+    if (mq ~ ("(^|[^A-Za-z0-9_])(for|select)[ \t]+" V "([ \t;]|$)")) return 1
+    if (mq ~ ("(^|[^A-Za-z0-9_])coproc[ \t]+" V "([ \t{(]|$)")) return 1
+    if (mq ~ ("(^|[^A-Za-z0-9_])" V "(\\[[^]]*\\])?\\+?=")) return 1
+    if (mq ~ ("(^|[^A-Za-z0-9_])printf[ \t]([^;&|]*[ \t])?-v[ \t]*" V "([^A-Za-z0-9_]|$)")) return 1
+    if (qc ~ ("\\$\\{" V ":?=")) return 1
+    if (mq ~ ("(^|[^A-Za-z0-9_])(mapfile|readarray)[ \t]([^;&|]*[ \t])?" V "([ \t;]|$)")) return 1
+    if (mq ~ /\(\(/ && (mq ~ ("(^|[^A-Za-z0-9_$])" V "[ \t]*(\\+\\+|--|([-+*/%&|^]|<<|>>)?=([^=]|$))") || mq ~ ("(\\+\\+|--)[ \t]*" V "([^A-Za-z0-9_]|$)"))) return 1
+    return 0
+}
+# The repair after the audit of build 6 (OS-3): the end form holds its place. Nothing assigns the name from the unset
+# to the test; the unset runs (no && or || ahead of it); the test runs in the unset's compound and segment (an if's
+# condition or branch, a case's branch), or in the first condition of an if opened there, with no !, && or || ahead of
+# it; the read, which lies between them, runs in the unset's function (no function defined around it in between) and,
+# since the repair after the audit of build 7 (R7-1), in no loop opened after the unset, since a pass after the first
+# would read with the name an earlier pass set (its own compound is otherwise free: a read the path skips leaves the
+# name unset, which refuses; a compound around the test that takes a redirection is openskip's, build 8); no return, exit, break or continue comes between the read and the test; and, since that
+# repair (R7-4), no command runs between the unset and the test but the read and :, since a builtin (getopts, wait -p,
+# eval, printf -v, a declaration) or a function may assign the name by a road assigns() cannot read. Returns why not,
+# or "".
+function endplace(r, rc, v, uL, ucol, tL, tcol,   u, t, j, a, b, n, pp, Pu, Pr, Pt, r2) {
+    for (j = uL; j <= tL; j++) {
+        a = (j == uL ? ucol : 1); b = (j == tL ? tcol - 1 : length(masked[j]))
+        if (b >= a && assigns(substr(masked[j], a, b - a + 1), substr(code(j), a, b - a + 1), v)) return "the unset of " v " is undone before its test (" v " is assigned on line " j ")"
+    }
+    for (r2 = 1; r2 <= nb; r2++) if (r2 != r && bline[r2] >= uL && bline[r2] <= tL && word(bnames[r2], v)) return "the unset of " v " is undone before its test (another read of " v " on line " bline[r2] ")"
+    u = lastcmd(uL, (uL == bline[r] ? rc : ncw + 1), "unset"); t = cmdat(tL, (tL == bline[r] ? rc : 0), "[")
+    if (!u || !t) return "the census finds no command for the unset of " v " or for its test"
+    if (cwpre[u] == "and" || cwpre[u] == "or") return "the unset of " v " may not run (an && or || ahead of it)"
+    Pu = cwpath[u]; Pr = cwpath[rc]; Pt = cwpath[t]
+    if (index(Pt, Pu) != 1) return "the test of ${" v "+set} runs outside the compound its unset runs in"
+    n = split(substr(Pt, length(Pu) + 1), pp, " ")
+    if (n == 0 && cwseg[t] != cwseg[u]) return "the test of ${" v "+set} runs in another branch than its unset"
+    if (n > 1 || (n == 1 && ck[pp[1]] != "if")) return "the test of ${" v "+set} may not run (it sits in a compound inside its unset's other than an if it opens)"
+    if (n == 1 && cwseg[t] != 0) return "the test of ${" v "+set} may not run (in an if's branch or an elif condition)"
+    if (n == 1 && cpseg[pp[1]] != cwseg[u]) return "the test of ${" v "+set} may not run (in an if opened in another branch than its unset)"
+    # the read lies between the two in the text, so inside the unset's compound; it must run in the unset's function
+    n = split(substr(Pr, length(Pu) + 1), pp, " ")
+    for (j = 1; j <= n; j++) if (pp[j] in fname) return "the read of " v " runs in a function defined between its unset and its test, off their path"
+    for (j = 1; j <= n; j++) if (ck[pp[j]] == "loop") return "the read of " v " runs in a loop opened after its unset, so a pass after the first reads with " v " set by an earlier one"
+    if (cwbang[t] || cwpre[t] == "and" || cwpre[t] == "or" || cwpre[t] == "|") return "the test of ${" v "+set} may not run, or is inverted (a !, an && or an || ahead of it)"
+    for (j = rc + 1; j < t; j++) if (cw[j] ~ /^(return|exit|break|continue)$/) return "a " cw[j] " on line " cwl[j] " comes between the read of " v " and its test"
+    for (j = u + 1; j < t; j++) if (j != rc && cw[j] != ":") return "a command other than the read and : runs between the unset of " v " and its test (" cw[j] " on line " cwl[j] "), and may assign " v
+    return ""
+}
+# a read's form: judged (if ! or elif ! whose then opens with unscanned; an || unscanned after it; or its first variable
+# unset before it and read as ${name+set} after it, the unset side refusing with unscanned; each held to the hook's own
+# shell, and the last to its place), or aborts; else why neither
+function nextcode(i,   j) { for (j = i + 1; j <= nr && j <= i + 6; j++) if (code(j) !~ /^[ \t]*$/) return j; return 0 }
+function oneshot(r,   L, M, v, j, p, pre, a, w, c, q, off, tn, tz, tp, ok, lim, rc, s, t, why, UNS, uL, ucol, tL, tcol) {
+    L = bline[r]; M = masked[L]; oform = ""; jwhy = ""; rc = bcw[r]
+    if (nonl[L] == 1) {
+        if (M ~ /^[ \t]*(if|elif)[ \t]+![ \t]+([A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*read[ \t]/ && M ~ /;[ \t]*then[ \t]*$/ && M !~ /\|\||&&/) {
+            j = nextcode(L)
+            if (j && code(j) ~ /^[ \t]*unscanned[ \t]/) {
+                why = judgedown(rc, nextcmd(rc, "unscanned"))
+                if (why == "") why = openskip(rc, "the read and its refusal")
+                if (why == "") { oform = "judged (if !, unscanned" ridernote(rc) ")"; return "" }
+                jwhy = why
+            }
+        }
+        if (M ~ /(^|[;{]|then|do|else)[ \t]*([A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*read[ \t][^;&|]*\|\|[ \t]*(\{[ \t]*)?unscanned[ \t]/) {
+            why = judgedown(rc, nextcmd(rc, "unscanned"))
+            if (why == "") why = openskip(rc, "the read and its refusal")
+            if (why == "") { oform = "judged (|| unscanned" ridernote(rc) ")"; return "" }
+            if (jwhy == "") jwhy = why
+        }
+        v = bnames[r]; sub(/^ +/, "", v); sub(/ .*/, "", v)
+        if (v != "" && match(M, /(^|[^A-Za-z0-9_])read[ \t]/)) {
+            p = RSTART; pre = substr(M, 1, p)
+            UNS = "(^|[^A-Za-z0-9_])unset( +[A-Za-z_][A-Za-z0-9_]*)* +" quote(v) "([ ;]|$)"
+            uL = 0
+            if (match(pre, UNS)) { uL = L; ucol = RSTART + RLENGTH }
+            a = 0
+            for (j = L - 1; !uL && j >= 1 && a < 2; j--) { if (code(j) ~ /^[ \t]*$/) continue; a++; if (match(masked[j], UNS)) { uL = j; ucol = RSTART + RLENGTH } }
+            if (uL) {
+                # the first test of ${name+set} within the read's line (after it) and the four lines below, unscanned on
+                # its unset side
+                tL = 0; lim = L + 4
+                for (j = L; j <= lim && j <= nr; j++) {
+                    off = (j == L ? p : 1); q = substr(code(j), off)
+                    tn = (match(q, "\\[ -n \"\\$\\{" quote(v) "\\+set\\}\" \\] \\|\\|[ \t]*(\\{[ \t]*)?unscanned[ \t]") ? RSTART : 0)
+                    tz = (match(q, "\\[ -z \"\\$\\{" quote(v) "\\+set\\}\" \\];[ \t]*then") ? RSTART : 0)
+                    tp = (tn && (!tz || tn < tz)) ? tn : tz
+                    if (!tp) continue
+                    ok = (tp == tn)
+                    if (!ok && substr(q, tz) ~ /then[ \t]+unscanned[ \t]/) ok = 1
+                    if (!ok) { c = nextcode(j); if (c && code(c) ~ /^[ \t]*unscanned[ \t]/) ok = 1 }
+                    if (ok) { tL = j; tcol = off + tp - 1 }
+                    break
+                }
+                if (tL) {
+                    why = endplace(r, rc, v, uL, ucol, tL, tcol)
+                    if (why == "") { t = cmdat(tL, (tL == L ? rc : 0), "["); why = judgedown(rc, nextcmd(t, "unscanned")) }
+                    if (why == "") why = openskip(t, "the test of ${" v "+set}")
+                    if (why == "") { oform = "judged (unset " v ", ${" v "+set}, unscanned" ridernote(rc) ")"; return "" }
+                    if (jwhy == "") jwhy = why
+                }
+            }
+        }
+    }
+    w = placewhy(rc)
+    if (w == "") { oform = "aborts"; return "" }
+    return osnoun " neither ends the hook on its failure (" w ") nor has its status judged (" (jwhy != "" ? jwhy : "no if ! or elif ! condition of it whose then opens with unscanned, no || unscanned after it, and no unset of its first variable before it read as ${name+set} after it with unscanned on the unset side") ")"
+}
+# a read with an input of its own in a loop's body (build 7 of item 40): it makes no line loop, and the one-shot rule
+# holds it; listed as "in-loop <line> <form>: <the read's line>", or failed
+function ownread(r,   w) {
+    osnoun = "a read with an input of its own in a loop's body"
+    w = oneshot(r)
+    if (w == "") il[++nil] = "in-loop " bline[r] " " oform ": " raw[bline[r]]
+    else one[++no1] = "FAIL " bline[r] ": " w ": " raw[bline[r]]
+}
 BEGIN {
     nl = 0; sp = 0; cur = 0; start = 1; csp = 0; nc = 0; nb = 0; pfn = 0; lastsep = "nl"; after = 0; skipnext = 0; skipop = 0; preredir = 0; cmdpfx = 0; timep = 0; no1 = 0
     nr = 0; while ((getline l < rawf) > 0) raw[++nr] = l; close(rawf)
 }
 {
     masked[NR] = $0
-    line = $0; gsub(/\001/, ";", line)
+    line = $0; gsub(/\001/, " \005 ", line)
     # a backquote opens or closes a command substitution, so the word after it starts a command (an escaped one is a
     # byte of a word)
-    gsub(/\\`/, "..", line); gsub(/`/, " ; ", line)
+    gsub(/\\`/, "..", line); gsub(/`/, " \004 ", line)
     cont = (line ~ /\\$/); if (cont) line = substr(line, 1, length(line) - 1)
-    gsub(/\|\|/, " ; ", line); gsub(/&&/, " ; ", line); gsub(/\|&/, " | ", line)
+    gsub(/\|\|/, " \002 ", line); gsub(/&&/, " \003 ", line); gsub(/\|&/, " | ", line)
+    # a duplicating redirection (<&7, 2>&1, 7<&-): its & is a byte of the redirection, no separator (build 8)
+    gsub(/<&/, "<\006", line); gsub(/>&/, ">\006", line)
     gsub(/[;&|()]/, " & ", line)
     n = split(line, tok, /[ \t]+/)
     for (k = 1; k <= n; k++) {
         t = tok[k]; if (t == "") continue
+        op = t; if (t == "\002") op = "or"; else if (t == "\003") op = "and"; else if (t == "\004") op = "bq"; else if (t == "\005") op = "pat"
+        if (op != t) t = ";"
+        # a case pattern's close opens a branch of the case: a segment of its own
+        if (op == "pat" && csp > 0 && ck[cs[csp]] == "case") cseg[cs[csp]]++
+        if (op == "bq") {
+            # a backquote: the command it sits in is suspended to its close, as at a $( ... )
+            if (bqid) { cmdend("bq"); cpop("bq"); if (bqsusp) { curcw = bqsusp; resuming = 1 }; bqid = 0 }
+            else { bqsusp = curcw; curcw = 0; resuming = 0; bqid = cpush("bq", 0) }
+        }
         if (after && t !~ /^[;&|()]$/ && isin(t)) credir[after] = 1
+        if (after && t !~ /^[;&|()]$/ && isredir(t)) credany[after] = 1
         if (t ~ /^[;&|()]$/) { skipop = 0; preredir = 0; cmdpfx = 0; timep = 0 }
-        if (t == ")") { endbread(); cpop("p"); start = 1; lastsep = t; continue }
-        if (t == "(") { endbread(); after = 0; cpush("p", start && lastsep == "|"); start = 1; lastsep = t; continue }
-        if (t ~ /^[;&|]$/) { endbread(); after = 0; start = 1; lastsep = t; continue }
+        if (t == ")") {
+            cmdend(")"); endbread(); pid = cpop("p"); start = 1; lastsep = t
+            if (pid && (pid in psaft)) after = psaft[pid]
+            if (pid && (pid in psusp)) {
+                curcw = psusp[pid]; resuming = 1
+                # NAME ( ): a function's definition, its body the compound that follows
+                if (popk[pid] == k - 1 && popl[pid] == NR && cw[curcw] ~ /^[A-Za-z_][A-Za-z0-9_:.-]*$/ && cwl[curcw] == NR) { cwdef[curcw] = 1; pendingfn = cw[curcw]; curcw = 0; resuming = 0 }
+            }
+            continue
+        }
+        if (t == "(") {
+            susp = curcw; if (susp) { curcw = 0; resuming = 0 }
+            # a process substitution right after a redirection's operator (} < <(...), done > >(...)) is that
+            # redirection's target: its ) gives back the compound the redirection is on (or none), so an || or && after
+            # it is that compound's, not the substitution's (the repair after the audit of build 8, ATTR8-1)
+            psa = (k > 1 && tok[k - 1] ~ /^[0-9]*(<|>)$/) ? after : -1
+            endbread(); after = 0; pid = cpush("p", start && lastsep == "|"); start = 1; lastsep = t
+            if (psa >= 0) psaft[pid] = psa
+            popk[pid] = k; popl[pid] = NR; if (susp) psusp[pid] = susp
+            continue
+        }
+        if (t ~ /^[;&|]$/) {
+            if (after) cfollow[after] = op
+            if (op != "bq") { cmdend(op); lastk = op; bang = 0; copend = 0 }
+            endbread(); after = 0; start = 1; lastsep = t; continue
+        }
         if (brd) {
             if (skipnext) { skipnext = 0; continue }
-            if (isredir(t)) { if (isin(t)) bredir = 1; if (t ~ /^[0-9]*(<<<|<|>>|>|<&|>&)$/) skipnext = 1; continue }
+            if (isredir(t)) { if (isin(t)) bredir = 1; if (t ~ /^[0-9]*(<<<|<<-?|<|>>|>|<\006|>\006)$/) skipnext = 1; continue }
             if (want != "") { if (want == "a") rnames = rnames " " t; want = ""; continue }
             if (ropt && t == "--") { ropt = 0; continue }
             if (ropt && t ~ /^-./) {
@@ -19928,64 +20681,111 @@ BEGIN {
         # a command's prefix: its redirections (an input one is the read's own input), and builtin or command before the
         # word (command's -p and --); a redirection right after a compound's close stays the compound's
         if (skipop) { skipop = 0; after = wasafter; continue }
-        if (isredir(t)) { if (!wasafter && isin(t)) preredir = 1; if (t ~ /^[0-9]*(<<<|<|>>|>|<&|>&|<>)$/) skipop = 1; after = wasafter; continue }
+        if (isredir(t)) { if (!wasafter && isin(t)) preredir = 1; if (t ~ /^[0-9]*(<<<|<<-?|<|>>|>|<\006|>\006|<>)$/) skipop = 1; after = wasafter; continue }
         if (t == "builtin" || t == "command") { cmdpfx = 1; continue }
         if (cmdpfx && (t == "-p" || t == "--")) continue
         # reserved words before a command: time (with -p or --), coproc, and a function keyword's name or a coproc's
         # name before its compound, passed over so the body's first word on the header's line starts a command
-        if (t == "function" || t == "coproc") { if (k < n && tok[k + 1] ~ /^[A-Za-z_][A-Za-z0-9_:.-]*$/ && (t == "function" || tok[k + 2] == "{" || tok[k + 2] == "(")) k++; continue }
+        if (t == "coproc") copend = 1
+        if (t == "function" || t == "coproc") { if (k < n && tok[k + 1] ~ /^[A-Za-z_][A-Za-z0-9_:.-]*$/ && (t == "function" || tok[k + 2] == "{" || tok[k + 2] == "(")) { if (t == "function") { pendingfn = tok[k + 1]; fdefl[pendingfn] = NR } k++ } continue }
         if (t == "time") { timep = 1; continue }
         if (timep && (t == "-p" || t == "--")) continue
         pr = preredir; preredir = 0; cmdpfx = 0; timep = 0
-        if (t == "while" || t == "until") { nl++; kl[nl] = NR; kind[nl] = t; up[nl] = cur; cur = nl; lc[nl] = cpush("loop", lastsep == "|"); linv[lc[nl]] = nl; continue }
+        if (t == "while" || t == "until") { nl++; kl[nl] = NR; kind[nl] = t; up[nl] = cur; cur = nl; lc[nl] = cpush("loop", lastsep == "|"); linv[lc[nl]] = nl; condr[lc[nl]] = 1; continue }
         if (t == "for" || t == "select") { nl++; kl[nl] = NR; kind[nl] = t; lc[nl] = cpush("loop", lastsep == "|"); linv[lc[nl]] = nl; pf[++pfn] = nl; start = 0; continue }
         if (t == "do") {
+            if (csp > 0) condr[cs[csp]] = 0
+            if (csp > 0) cseg[cs[csp]]++
             if (cur) { dl[cur] = NR; stk[++sp] = cur; cur = up[cur] }
             else if (pfn > 0) { dl[pf[pfn]] = NR; stk[++sp] = pf[pfn--] }
             else stk[++sp] = 0
             continue
         }
         if (t == "done") { if (sp > 0) { if (stk[sp]) el[stk[sp]] = NR; sp-- }; cpop("loop"); start = 0; continue }
-        if (t == "if") { cpush("if", lastsep == "|"); continue }
+        if (t == "if") { condr[cpush("if", lastsep == "|")] = 1; continue }
         if (t == "fi") { cpop("if"); start = 0; continue }
         if (t == "case") { cpush("case", lastsep == "|"); start = 0; continue }
         if (t == "esac") { cpop("case"); start = 0; continue }
         if (t == "{") { cpush("brace", lastsep == "|"); continue }
         if (t == "}") { cpop("brace"); start = 1; continue }
+        if (t == "then" || t == "else") { if (csp > 0) { condr[cs[csp]] = 0; cseg[cs[csp]]++ } }
+        if (t == "elif") { if (csp > 0) { condr[cs[csp]] = 1; cseg[cs[csp]]++ } }
+        if (t == "!") bang = 1
         if (t ~ /^(then|else|elif|!)$/) continue
         if (t ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=/) continue
+        cmdstart(t)
+        if (t == "set") {
+            # errexit's line (the file's first set -e outside every compound), and a set +e, which turns it off in the
+            # function it runs in, or in the file
+            if (!errline && csp == 0 && tok[k + 1] ~ /^-[A-Za-z]*e/) errline = NR
+            if (tok[k + 1] ~ /^\+[A-Za-z]*e/ || (tok[k + 1] == "+o" && tok[k + 2] == "errexit")) { pe = 0; for (q = 1; q <= csp; q++) if (cs[q] in fname) { fplus[fname[cs[q]]] = 1; pe = 1 } if (!pe) topplus = 1 }
+        }
+        if (t == "shopt") {
+            # shopt -u -o errexit (or -uo, -ou, -o -u): set +e by another name (the repair after the audit of build 6, OS-3)
+            hu = 0; ho = 0; he = 0
+            for (q = k + 1; q <= n && tok[q] !~ /^[;&|()\002\003\004\005]$/; q++) { if (tok[q] ~ /^-[A-Za-z]*u/) hu = 1; if (tok[q] ~ /^-[A-Za-z]*o/) ho = 1; if (tok[q] == "errexit") he = 1 }
+            if (hu && ho && he) { pe = 0; for (q = 1; q <= csp; q++) if (cs[q] in fname) { fplus[fname[cs[q]]] = 1; pe = 1 } if (!pe) topplus = 1 }
+        }
         if (t == "read") {
-            rloop = 0; for (q = csp; q >= 1; q--) if (ck[cs[q]] == "loop") { rloop = linv[cs[q]]; break }
+            rcw = curcw; rloop = 0; for (q = csp; q >= 1; q--) if (ck[cs[q]] == "loop") { rloop = linv[cs[q]]; break }
             rcond = (rloop && rloop == cur); rline = NR; rnames = ""
             brd = 1; bredir = (lastsep == "|" || pr); ropt = 1; want = ""; skipnext = 0; start = 0; continue
         }
         start = 0
     }
-    if (!cont) { endbread(); after = 0; start = 1; lastsep = "nl"; skipop = 0; preredir = 0; cmdpfx = 0; timep = 0 }
+    if (!cont) { cmdend("nl"); lastk = "nl"; bang = 0; endbread(); after = 0; start = 1; lastsep = "nl"; skipop = 0; preredir = 0; cmdpfx = 0; timep = 0 }
 }
 END {
+    for (j = 1; j <= nb; j++) nonl[bline[j]]++
+    # judged_read refuses the push right after the -d function's answer is spliced (the line after the splice, in
+    # judged_read, is unscanned "$clause"): the premise of the -d function's exception (ownwhy)
+    for (i = 1; i <= nr; i++) {
+        if (!index(code(i), "\"$(\"$detail\"")) continue
+        j = nextcode(i); f = ""
+        for (c = 1; c <= ncw; c++) if (cwl[c] == i) { f = fnof(c); break }
+        if (j && f == "judged_read" && code(j) ~ /^[ \t]*unscanned "\$clause"[ \t]*$/) riderok = 1
+    }
+    # each read's place (rkind), before any read is judged: outside every loop; its loop's condition's; in a loop's
+    # body with an input of its own (its own redirection or pipe, or a compound's inside the loop); or a stream read
+    # taking the loop's input in its body. A loop with a condition read or a stream read is a line loop, and its
+    # compound is marked (isline) for openskip's bound, which the judging below reads (the repair after the audit of
+    # build 8, ATTR8-2: one pass decides both, so the bound and the line loops cannot part)
     for (r = 1; r <= nb; r++) {
         L = bloop[r]
-        if (!L) {
-            # a read outside every loop: its input an input redirection's (its own, or a compound's around it) or a pipe's,
-            # else the tag says why its input is no loop's; untagged, it reads its caller's input, a loop's if a loop calls it
-            if (bown[r]) continue
-            m = split(bpath[r], pp, " "); shield = 0
-            for (j = 1; j <= m; j++) if (credir[pp[j]] || cpiped[pp[j]]) shield = 1
-            if (shield) continue
-            tagged = 0
-            for (j = bline[r] - 1; j >= 1 && j >= bline[r] - 4; j--) {
-                if (raw[j] ~ /^[ \t]*# read \(ii\) \[one-shot\]: [^ ]/) { tagged = 1; break }
-                if (code(j) !~ /^[ \t]*$/) break
-            }
-            if (!tagged) one[++no1] = "FAIL " bline[r] ": a read outside every loop with no input redirection of its own or around it and no pipe, untagged (# read (ii) [one-shot]: <why its input is no loop's>), so it reads its caller's input, a loop's when a loop calls it: " raw[bline[r]]
-            continue
-        }
-        if (bcond[r]) { line_loop[L] = 1; if (!(L in cvars)) cvars[L] = bnames[r]; else if (!(L in cvars2)) cvars2[L] = bnames[r]; else cvars3[L] = 1; continue }
-        if (bown[r]) continue
+        if (!L) { rkind[r] = "out"; continue }
+        if (bcond[r]) { rkind[r] = "cond"; isline[lc[L]] = 1; continue }
+        if (bown[r]) { rkind[r] = "own"; continue }
         m = split(bpath[r], pp, " "); seen = 0; shield = 0
         for (j = 1; j <= m; j++) { if (pp[j] == lc[L]) { seen = 1; continue } if (seen && (credir[pp[j]] || cpiped[pp[j]])) shield = 1 }
-        if (shield) continue
+        if (shield) { rkind[r] = "own"; continue }
+        rkind[r] = "stream"; isline[lc[L]] = 1
+    }
+    for (r = 1; r <= nb; r++) {
+        L = bloop[r]
+        if (rkind[r] == "out") {
+            # a read outside every loop: its input an input redirection's (its own, or a compound's around it) or a pipe's,
+            # else the tag says why its input is no loop's; untagged, it reads its caller's input, a loop's if a loop calls it
+            inwhy = ""
+            if (!bown[r]) {
+                m = split(bpath[r], pp, " "); shield = 0
+                for (j = 1; j <= m; j++) if (credir[pp[j]] || cpiped[pp[j]]) shield = 1
+                if (!shield) {
+                    tagged = 0
+                    for (j = bline[r] - 1; j >= 1 && j >= bline[r] - 4; j--) {
+                        if (raw[j] ~ /^[ \t]*# read \(ii\) \[one-shot\]: [^ ]/) { tagged = 1; break }
+                        if (code(j) !~ /^[ \t]*$/) break
+                    }
+                    if (!tagged) inwhy = "a read outside every loop with no input redirection of its own or around it and no pipe, untagged (# read (ii) [one-shot]: <why its input is no loop's>), so it reads its caller's input, a loop's when a loop calls it"
+                }
+            }
+            # and its status: the one-shot census (build 6)
+            osnoun = "a one-shot read"; oswhy = oneshot(r)
+            if (oswhy == "") os[++nos] = "one-shot " bline[r] " " oform ": " raw[bline[r]]
+            if (oswhy != "" || inwhy != "") one[++no1] = "FAIL " bline[r] ": " oswhy ((oswhy != "" && inwhy != "") ? "; " : "") inwhy ": " raw[bline[r]]
+            continue
+        }
+        if (rkind[r] == "cond") { line_loop[L] = 1; if (!(L in cvars)) cvars[L] = bnames[r]; else if (!(L in cvars2)) cvars2[L] = bnames[r]; else cvars3[L] = 1; continue }
+        if (rkind[r] == "own") { ownread(r); continue }
         line_loop[L] = 1; ns = ++nstream[L]; sline[L, ns] = bline[r]; snames[L, ns] = bnames[r]
     }
     for (i = 1; i <= nl; i++) {
@@ -20057,6 +20857,8 @@ END {
         else print "ok " K " (ii) " form ": " args
     }
     for (r = 1; r <= no1; r++) print one[r]
+    for (r = 1; r <= nos; r++) print os[r]
+    for (r = 1; r <= nil; r++) print il[r]
 }
 AWK
     fi
@@ -20151,7 +20953,7 @@ census_plant() {   # <hook copy> <lines to insert after the EXIT trap's line, on
     sed 's/\[ "\$nout" -ne "\$rout" \]/[ "$nout" -ne "$nout" ]/' "$HOOK" > "$TEST_DIR/c-count.sh"
     sed 's/^        while unset line; IFS= read -r line || \[ -n "\${line-}" \]; do$/        while IFS= read -r line || [ -n "$line" ]; do/' "$HOOK" > "$TEST_DIR/c-hang.sh"
     sed 's/^        while unset line; IFS= read -r line || \[ -n "\${line-}" \]; do$/        while IFS= read -r line || [ -n "${line-}" ]; do/' "$HOOK" > "$TEST_DIR/c-hang2.sh"
-    sed 's/^            unset src name; IFS= read -r -d .. src || :; IFS= read -r -d .. name || :$/            IFS= read -r -d '"''"' src || true; IFS= read -r -d '"''"' name || name=""/' "$HOOK" > "$TEST_DIR/c-body.sh"
+    sed 's/^            unset src name; IFS= read -r -d .. -u 4 src || :; IFS= read -r -d .. -u 4 name || :$/            IFS= read -r -d '"''"' -u 4 src || true; IFS= read -r -d '"''"' -u 4 name || name=""/' "$HOOK" > "$TEST_DIR/c-body.sh"
     local -a w2=('the condition never unsets path' 'no comparison after the done holds nout and rout' 'a test that is not ${name-}' 'while not unsetting line before the read' 'the stream read on line')
     local -a f2=(pair count hang hang2 body)
     for i in 0 1 2 3 4; do
@@ -20162,6 +20964,465 @@ census_plant() {   # <hook copy> <lines to insert after the EXIT trap's line, on
         [ "$(grep -c '^FAIL ' <<< "$output")" -ge 1 ]
         [[ "$output" == *"${w2[i]}"* ]] || false
     done
+}
+
+@test "build 6 (item 40, the one-shot reads, a population under the read census' rule; the coordinator's ruling of 16:36Z 2026-10-01, its 3; repaired after the build's audit, OS-1 to OS-3): every read outside every loop of the hook, 14, has its status judged in the hook's own shell, and the census lists each with its form (13 by the first variable unset before the read and tested as \${name+set} after it, unscanned on the unset side, one of them, join_short_detail's, in judged_read's -d function, and the denylist's split by an if ! whose then opens with unscanned); copies planting a one-shot read in an if condition, after an ||, under !, in a function called from a condition, with an || : swallowing its status, before an &&, in a pipeline, in the background, in a command substitution, in a subshell, in backquotes, in a coproc, in a braced group an || follows, under !, before an &&, in a pipeline, in the background or in a condition, after an || ahead of its braced group, before the file's set -e, after a set +e or a shopt -u -o errexit in the file (which, since build 7, names the hook's five reads in loop bodies that end it as well), in a function that runs set +e, set +o errexit or shopt -uo errexit, in a function named as another command's argument or inside quotes, in a function called by one called from a condition, two reads on one line, a decoy of each judged form (an unset with no test, an if ! whose then does not refuse, an || that assigns, a test after an assignment, a test of the wrong sense, an if ! condition holding an ||, the unset of another name), each judged form whose refusal is lost (in a function called in a command substitution, piped, put in the background or named as judged_read's command, in a braced group put in the background, the refusal piped, a function named after a -d that is no judged_read's or after judged_read's --), and the end form out of place (an assignment, printf -v, \${name:=}, mapfile, an arithmetic assignment or another read between the unset and the test, the test in an if's branch, in an elif condition, in a case, in another branch of a case, in an if opened in another branch, or after an &&, the unset in a branch or in a function, or after an &&, the read in a function defined between, a return between) are each named on their line with the reason; copies planting a read at the top level after set -e, in a function called plainly or defined by the function keyword, called as the last part of an && list or through a chain of plain calls, in a braced group with a redirection, in each judged form, a judged form in a function called from a condition or before an ||, in judged_read's -d function or one it calls, in a case branch, in an elif condition, and after an assignment ahead of its unset pass, listed with their forms; a copy calling attr_reads in a command substitution names its two judged reads, and a copy whose judged_read no longer refuses after the -d function's splice names join_short_detail's" {
+    local i
+    run read_loop_census "$HOOK"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *FAIL* ]] || false
+    [ "$(grep -c '^one-shot [0-9]* ' <<< "$output")" -eq 14 ]
+    [ "$(grep -c '^one-shot [0-9]* judged (unset [a-z]*, ' <<< "$output")" -eq 13 ]
+    [ "$(grep -c '^one-shot [0-9]* judged (unset path, ${path+set}, unscanned; in join_short_detail, a -d function of judged_read, which refuses the push itself after it): ' <<< "$output")" -eq 1 ]
+    [ "$(grep -c '^one-shot [0-9]* judged ([^)]*; in ' <<< "$output")" -eq 1 ]     # and no other read leans on the -d exception
+    [ "$(grep -c '^one-shot [0-9]* judged (if !, unscanned): ' <<< "$output")" -eq 1 ]
+    # planted reads that are neither, each named with its reason on its line: the reason the read does not end the hook
+    # (neg), or the reason its judged form does not hold (lost)
+    local -a neg=() negline=() negwhy=() lost=() lostline=() lostpre=() lostpost=()
+    oneshot_plant() {   # <name> <the reason> <the read's line> <lines to plant after the EXIT trap's line...>
+        neg+=("$1"); negwhy+=("$2"); negline+=("$3")
+        local name=$1
+        shift 3
+        census_plant "$TEST_DIR/o-$name.sh" "$@"
+    }
+    oneshot_lost() {   # <name> <the judged form's reason, its start> <its end, or empty> <the read's line> <lines to plant...>
+        lost+=("$1"); lostpre+=("$2"); lostpost+=("$3"); lostline+=("$4")
+        local name=$1
+        shift 4
+        census_plant "$TEST_DIR/l-$name.sh" "$@"
+    }
+    oneshot_plant if 'in a condition' 'if read -r zz <<< x; then :; fi' 'if read -r zz <<< x; then :; fi'
+    oneshot_plant after-or 'in an || list' ': || read -r zz <<< x' ': || read -r zz <<< x'
+    oneshot_plant bang 'under !' '! read -r zz <<< x' '! read -r zz <<< x'
+    oneshot_plant fn-cond 'zzrc is called on line ' 'zzrc() { read -r zz <<< x; }' 'zzrc() { read -r zz <<< x; }' 'if zzrc; then :; fi'
+    oneshot_plant swallow 'in an || list' 'read -r zz <<< x || :' 'read -r zz <<< x || :'
+    oneshot_plant and 'before an &&' 'read -r zz <<< x && :' 'read -r zz <<< x && :'
+    oneshot_plant pipe 'in a pipeline or in the background' "printf 'a\\n' | read -r zz" "printf 'a\\n' | read -r zz"
+    oneshot_plant bg 'in a pipeline or in the background' 'read -r zz <<< x &' 'read -r zz <<< x &'
+    oneshot_plant cmdsub 'in a subshell or a command substitution' 'zq=$(read -r zz <<< x; printf %s "$zz")' 'zq=$(read -r zz <<< x; printf %s "$zz")'
+    oneshot_plant subshell 'in a subshell or a command substitution' '( read -r zz <<< x )' '( read -r zz <<< x )'
+    oneshot_plant backquote 'in a subshell or a command substitution' ': `read -r zz <<< x`' ': `read -r zz <<< x`'
+    oneshot_plant coproc 'in a coproc' 'coproc { read -r zz <<< x; }' 'coproc { read -r zz <<< x; }'
+    oneshot_plant brace-or 'in a compound in an || list' '{ read -r zz <<< x; } || :' '{ read -r zz <<< x; } || :'
+    oneshot_plant brace-bang 'in a compound under !' '! { read -r zz <<< x; }' '! { read -r zz <<< x; }'
+    oneshot_plant brace-and 'in a compound before an &&' '{ read -r zz <<< x; } && :' '{ read -r zz <<< x; } && :'
+    oneshot_plant brace-pipe 'in a compound in a pipeline or in the background' '{ read -r zz <<< x; } | cat' '{ read -r zz <<< x; } | cat'
+    oneshot_plant brace-bg 'in a compound in a pipeline or in the background' '{ read -r zz <<< x; } &' '{ read -r zz <<< x; } &'
+    oneshot_plant case-in-if 'in a compound in a condition' 'if case x in x) read -r zz <<< x ;; esac; then :; fi' 'if case x in x) read -r zz <<< x ;; esac; then :; fi'
+    oneshot_plant or-brace-lines 'in a compound in an || list' '    read -r zz <<< x' ': || {' '    :' '    read -r zz <<< x' '}'
+    oneshot_plant top-set-plus 'after a set +e in the file' 'read -r zz <<< x' 'set +e' 'read -r zz <<< x'
+    oneshot_plant top-shopt 'after a set +e in the file' 'read -r zz <<< x' 'shopt -u -o errexit' 'read -r zz <<< x'
+    oneshot_plant set-plus 'a set +e in zzab' 'zzab() { set +e; read -r zz <<< x; }' 'zzab() { set +e; read -r zz <<< x; }' 'zzab'
+    oneshot_plant set-plus-o 'a set +e in zzab' 'zzab() { set +o errexit; read -r zz <<< x; }' 'zzab() { set +o errexit; read -r zz <<< x; }' 'zzab'
+    oneshot_plant shopt-uo 'a set +e in zzab' 'zzab() { shopt -uo errexit; read -r zz <<< x; }' 'zzab() { shopt -uo errexit; read -r zz <<< x; }' 'zzab'
+    oneshot_plant fn-arg 'zzrc is named outside a call of it 1 time' 'zzrc() { read -r zz <<< x; }' 'zzrc() { read -r zz <<< x; }' 'judged_read gate="z" 0 "z" -- zzrc'
+    oneshot_plant fn-quoted 'zzrc is named outside a call of it 1 time' 'zzrc() { read -r zz <<< x; }' 'zzrc() { read -r zz <<< x; }' 'zzrc' 'trap "zzrc" HUP'
+    oneshot_plant fn-nested 'zzab is called on line ' 'zzab() { read -r zz <<< x; }' 'zzab() { read -r zz <<< x; }' 'zzac() { zzab; }' 'if zzac; then :; fi'
+    oneshot_plant unset-no-test 'in an || list' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :'
+    oneshot_plant ifbang-no-refusal 'under !' 'if ! read -r zz <<< x; then' 'if ! read -r zz <<< x; then' '    :' 'fi'
+    oneshot_plant or-assigns 'in an || list' 'read -r zz <<< x || zz=""' 'read -r zz <<< x || zz=""'
+    oneshot_plant assigned-first 'in an || list' 'unset zz; read -r zz <<< x || :; zz=""; [ -n "${zz+set}" ] || unscanned "z"' 'unset zz; read -r zz <<< x || :; zz=""; [ -n "${zz+set}" ] || unscanned "z"'
+    oneshot_plant wrong-sense 'in an || list' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' '[ -n "${zz+set}" ] && unscanned "z"'
+    oneshot_plant ifbang-or 'under !' 'if ! read -r zz <<< x || true; then' 'if ! read -r zz <<< x || true; then' '    unscanned "z"' 'fi'
+    oneshot_plant other-unset 'in an || list' 'unset zy; read -r zz <<< x || :' 'unset zy; read -r zz <<< x || :' '[ -n "${zz+set}" ] || unscanned "z"'
+    awk '/^set -euo pipefail$/ && !done { print "read -r zz <<< x"; done = 1 } { print }' "$HOOK" > "$TEST_DIR/o-before-set-e.sh"
+    neg+=(before-set-e); negwhy+=("before the file's set -e"); negline+=('read -r zz <<< x')
+    # judged forms whose refusal runs where failed_scan is lost (OS-1)
+    local lz='its refusal runs where failed_scan is lost ('
+    oneshot_lost fn-cmdsub "${lz}zzab is called on line " ' in a subshell or a command substitution' '    unset zz; read -r zz <<< x || :' 'zzab() {' '    unset zz; read -r zz <<< x || :' '    [ -n "${zz+set}" ] || unscanned "the zz could not be read"' '}' 'zq=$(zzab)'
+    oneshot_lost fn-pipe "${lz}zzab is called on line " ' in a pipeline or in the background' '    if ! read -r zz <<< x; then' 'zzab() {' '    if ! read -r zz <<< x; then' '        unscanned "the zz could not be read"' '    fi' '}' 'zzab | cat'
+    oneshot_lost fn-bg "${lz}zzab is called on line " ' in a pipeline or in the background' 'zzab() { read -r zz <<< x || unscanned "the zz could not be read"; }' 'zzab() { read -r zz <<< x || unscanned "the zz could not be read"; }' 'zzab &'
+    oneshot_lost fn-judged-cmd "${lz}zzab is named outside a call of it 1 time" '' '    unset zz; read -r zz <<< x || :' 'zzab() {' '    unset zz; read -r zz <<< x || :' '    [ -n "${zz+set}" ] || unscanned "the zz could not be read"' '}' 'judged_read gate="z" 0 "z" -- zzab'
+    oneshot_lost brace-bg "${lz}in a compound in a pipeline or in the background" '' '{ unset zz; read -r zz <<< x || :; [ -n "${zz+set}" ] || unscanned "the zz could not be read"; } &' '{ unset zz; read -r zz <<< x || :; [ -n "${zz+set}" ] || unscanned "the zz could not be read"; } &'
+    oneshot_lost refusal-piped "${lz}in a pipeline or in the background" '' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' '[ -n "${zz+set}" ] || unscanned "the zz could not be read" | cat'
+    oneshot_lost or-refusal-piped "${lz}in a pipeline or in the background" '' 'read -r zz <<< x || unscanned "the zz could not be read" | cat' 'read -r zz <<< x || unscanned "the zz could not be read" | cat'
+    oneshot_lost not-a-rider "${lz}zzab is named outside a call of it 1 time" '' '    unset zz; read -r zz <<< x || :' 'zzab() {' '    unset zz; read -r zz <<< x || :' '    [ -n "${zz+set}" ] || unscanned "the zz could not be read"' '}' 'printf %s -d zzab'
+    oneshot_lost rider-after-dashes "${lz}zzab is named outside a call of it 1 time" '' '    unset zz; read -r zz <<< x || :' 'zzab() {' '    unset zz; read -r zz <<< x || :' '    [ -n "${zz+set}" ] || unscanned "the zz could not be read"' '}' 'judged_read gate="z" 0 "z" -- printf %s -d zzab'
+    # the end form out of place (OS-3)
+    oneshot_lost assign-on-line 'the unset of zz is undone before its test (zz is assigned on line ' '' 'unset zz; zz=stale; read -r zz <<< x || :; [ -n "${zz+set}" ] || unscanned "the zz could not be read"' 'unset zz; zz=stale; read -r zz <<< x || :; [ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost assign-line-between 'the unset of zz is undone before its test (zz is assigned on line ' '' 'read -r zz <<< x || :' 'unset zz' 'zz=stale' 'read -r zz <<< x || :' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost printf-v 'the unset of zz is undone before its test (zz is assigned on line ' '' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' 'printf -v zz %s "${zz-}"' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost default-assign 'the unset of zz is undone before its test (zz is assigned on line ' '' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' ': "${zz:=}"' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost mapfile 'the unset of zz is undone before its test (zz is assigned on line ' '' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' 'mapfile -t zz < /dev/null' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost arith 'the unset of zz is undone before its test (zz is assigned on line ' '' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' '(( zz += 1 ))' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost test-unreached 'the test of ${zz+set} may not run (in an if'"'"'s branch or an elif condition)' '' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' 'if false; then [ -n "${zz+set}" ] || unscanned "the zz could not be read"; fi'
+    oneshot_lost test-elif 'the test of ${zz+set} may not run (in an if'"'"'s branch or an elif condition)' '' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' 'if :; then :; elif [ -z "${zz+set}" ]; then' '    unscanned "the zz could not be read"' 'fi'
+    oneshot_lost test-in-case 'the test of ${zz+set} may not run (it sits in a compound inside its unset'"'"'s other than an if it opens)' '' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' 'case y in x) [ -n "${zz+set}" ] || unscanned "the zz could not be read" ;; esac'
+    oneshot_lost test-if-other-branch 'the test of ${zz+set} may not run (in an if opened in another branch than its unset)' '' '    unset zz; read -r zz <<< x || :' 'if :; then' '    unset zz; read -r zz <<< x || :' 'else' '    if [ -z "${zz+set}" ]; then unscanned "the zz could not be read"; fi' 'fi'
+    oneshot_lost test-other-branch 'the test of ${zz+set} runs in another branch than its unset' '' '    x) unset zz; read -r zz <<< x || : ;;' 'case x in' '    x) unset zz; read -r zz <<< x || : ;;' '    *) [ -n "${zz+set}" ] || unscanned "the zz could not be read" ;;' 'esac'
+    oneshot_lost test-after-and 'the test of ${zz+set} may not run, or is inverted' '' 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' ': && [ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost unset-in-branch 'the test of ${zz+set} runs outside the compound its unset runs in' '' 'read -r zz <<< x || :' 'zz=stale' 'if false; then unset zz; fi' 'read -r zz <<< x || :' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost unset-in-fn 'the test of ${zz+set} runs outside the compound its unset runs in' '' 'read -r zz <<< x || :' 'zz=stale' 'zzf() { unset zz; }' 'read -r zz <<< x || :' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost read-in-fn 'the read of zz runs in a function defined between its unset and its test, off their path' '' 'zzf() { read -r zz <<< x || :; }' 'unset zz' 'zzf() { read -r zz <<< x || :; }' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"' 'zzf'
+    oneshot_lost unset-after-and 'the unset of zz may not run (an && or || ahead of it)' '' ': && unset zz; read -r zz <<< x || :' 'zz=stale' ': && unset zz; read -r zz <<< x || :' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_lost return-between 'a return on line ' ' comes between the read of zz and its test' '    unset zz; read -r zz <<< x || :' 'zzab() {' '    unset zz; read -r zz <<< x || :' '    return 0' '    [ -n "${zz+set}" ] || unscanned "the zz could not be read"' '}' 'zzab'
+    for i in "${!neg[@]}"; do
+        echo "plant: ${neg[i]}"                                              # names the plant when a line below fails
+        run cmp -s "$HOOK" "$TEST_DIR/o-${neg[i]}.sh"
+        [ "$status" -ne 0 ]                                                  # the plant landed
+        run read_loop_census "$TEST_DIR/o-${neg[i]}.sh"
+        case "${neg[i]}" in
+            top-set-plus|top-shopt) [ "$(grep -c '^FAIL ' <<< "$output")" -eq 6 ] ;;    # the plant, and the five reads in loop bodies that end the hook, whose functions the top level calls after that set +e (build 7's case)
+            *) [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ] ;;
+        esac
+        [[ "$output" == *"FAIL "*": a one-shot read neither ends the hook on its failure (${negwhy[i]}"*") nor has its status judged ("*"): ${negline[i]}"* ]] || false
+        [ "$(grep -c '^one-shot [0-9]* ' <<< "$output")" -eq 14 ]            # the hook's own still listed, judged
+    done
+    for i in "${!lost[@]}"; do
+        echo "plant (a judged form that does not hold): ${lost[i]}"
+        run cmp -s "$HOOK" "$TEST_DIR/l-${lost[i]}.sh"
+        [ "$status" -ne 0 ]
+        run read_loop_census "$TEST_DIR/l-${lost[i]}.sh"
+        [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ]
+        [[ "$output" == *"FAIL "*": a one-shot read neither ends the hook on its failure ("*") nor has its status judged (${lostpre[i]}"*"${lostpost[i]}"*"): ${lostline[i]}"* ]] || false
+        [ "$(grep -c '^one-shot [0-9]* ' <<< "$output")" -eq 14 ]
+    done
+    census_plant "$TEST_DIR/o-two.sh" 'read -r zy <<< y || :; read -r zz <<< x || unscanned "z"'
+    run read_loop_census "$TEST_DIR/o-two.sh"
+    [ "$(grep -c '^FAIL [0-9]*: a one-shot read neither ends the hook on its failure (in an || list) nor has its status judged ' <<< "$output")" -eq 2 ]
+    census_plant "$TEST_DIR/o-reread.sh" 'unset zz; read -r zz <<< x || :' '{ read -r zz || :; } < /dev/null; [ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    run read_loop_census "$TEST_DIR/o-reread.sh"
+    [ "$(grep -c '^FAIL [0-9]*: a one-shot read neither ends the hook on its failure (in an || list) nor has its status judged (the unset of zz is undone before its test (another read of zz on line [0-9]*)): ' <<< "$output")" -eq 2 ]
+    [ "$(grep -c '^FAIL ' <<< "$output")" -eq 2 ]
+    # planted reads that end the hook or are judged, each listed with its form
+    local -a pos=() posline=() posform=()
+    oneshot_pass() {   # <name> <the form> <the read's line> <lines to plant after the EXIT trap's line...>
+        pos+=("$1"); posform+=("$2"); posline+=("$3")
+        local name=$1
+        shift 3
+        census_plant "$TEST_DIR/p-$name.sh" "$@"
+    }
+    local ju='judged (unset zz, ${zz+set}, unscanned'
+    oneshot_pass top aborts 'read -r zz <<< x' 'read -r zz <<< x'
+    oneshot_pass fn aborts 'zzab() { read -r zz <<< x; }' 'zzab() { read -r zz <<< x; }' 'zzab'
+    oneshot_pass fn-keyword aborts 'function zzab { read -r zz <<< x; }' 'function zzab { read -r zz <<< x; }' 'zzab'
+    oneshot_pass and-last aborts 'zzab() { read -r zz <<< x; }' 'zzab() { read -r zz <<< x; }' ': && zzab'
+    oneshot_pass chain aborts 'zzab() { read -r zz <<< x; }' 'zzab() { read -r zz <<< x; }' 'zzac() { zzab; }' 'zzac'
+    oneshot_pass brace aborts '{ read -r zz <<< x; } < /dev/null' '{ read -r zz <<< x; } < /dev/null'
+    oneshot_pass ifbang 'judged (if !, unscanned)' 'if ! read -r zz <<< x; then' 'if ! read -r zz <<< x; then' '    unscanned "the zz could not be read"' 'fi'
+    oneshot_pass or 'judged (|| unscanned)' 'read -r zz <<< x || unscanned "the zz could not be read"' 'read -r zz <<< x || unscanned "the zz could not be read"'
+    oneshot_pass or-brace 'judged (|| unscanned)' 'read -r zz <<< x || { unscanned "the zz could not be read"; return 0; }' 'read -r zz <<< x || { unscanned "the zz could not be read"; return 0; }'
+    oneshot_pass unset-n "$ju)" '{ IFS= read -r zz || :; } < /dev/null' 'unset zz' '{ IFS= read -r zz || :; } < /dev/null' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    oneshot_pass unset-z "$ju)" 'unset zz; read -r zz <<< x || :' 'unset zz; read -r zz <<< x || :' 'if [ -z "${zz+set}" ]; then' '    unscanned "the zz could not be read"' 'fi'
+    oneshot_pass fn-cond-judged "$ju)" '    unset zz; read -r zz <<< x || :' 'zzab() {' '    unset zz; read -r zz <<< x || :' '    [ -n "${zz+set}" ] || unscanned "the zz could not be read"' '}' 'if zzab; then :; fi'
+    oneshot_pass fn-or-judged "$ju)" '    unset zz; read -r zz <<< x || :' 'zzab() {' '    unset zz; read -r zz <<< x || :' '    [ -n "${zz+set}" ] || unscanned "the zz could not be read"' '}' 'zzab || :'
+    oneshot_pass fn-cond-ifbang 'judged (if !, unscanned)' '    if ! read -r zz <<< x; then' 'zzab() {' '    if ! read -r zz <<< x; then' '        unscanned "the zz could not be read"' '    fi' '}' 'if zzab; then :; fi'
+    oneshot_pass rider "$ju; in zzab, a -d function of judged_read, which refuses the push itself after it)" '    unset zz; read -r zz <<< x || :' 'zzab() {' '    unset zz; read -r zz <<< x || :' '    [ -n "${zz+set}" ] || unscanned "the zz could not be read"' '}' 'judged_read gate="z" 0 "z{detail}" -d zzab -- true || :'
+    oneshot_pass rider-chain "$ju; in zzab, called from zzac, a -d function of judged_read, which refuses the push itself after it)" '    unset zz; read -r zz <<< x || :' 'zzab() {' '    unset zz; read -r zz <<< x || :' '    [ -n "${zz+set}" ] || unscanned "the zz could not be read"' '}' 'zzac() { zzab; }' 'judged_read gate="z" 0 "z{detail}" -d zzac -- true || :'
+    oneshot_pass case-branch "$ju)" '    x) unset zz; read -r zz <<< x || :; [ -n "${zz+set}" ] || unscanned "the zz could not be read" ;;' 'case x in' '    x) unset zz; read -r zz <<< x || :; [ -n "${zz+set}" ] || unscanned "the zz could not be read" ;;' 'esac'
+    oneshot_pass elif-cond "$ju)" 'elif unset zz; { read -r zz || :; } < /dev/null; [ -z "${zz+set}" ]; then' 'if false; then' '    :' 'elif unset zz; { read -r zz || :; } < /dev/null; [ -z "${zz+set}" ]; then' '    unscanned "the zz could not be read"' 'fi'
+    oneshot_pass assign-before-unset "$ju)" 'zz=stale; unset zz; read -r zz <<< x || :' 'zz=stale; unset zz; read -r zz <<< x || :' '[ -n "${zz+set}" ] || unscanned "the zz could not be read"'
+    for i in "${!pos[@]}"; do
+        echo "plant: ${pos[i]}"
+        run cmp -s "$HOOK" "$TEST_DIR/p-${pos[i]}.sh"
+        [ "$status" -ne 0 ]
+        run read_loop_census "$TEST_DIR/p-${pos[i]}.sh"
+        [[ "$output" != *FAIL* ]] || false
+        [ "$(grep -c '^one-shot [0-9]* ' <<< "$output")" -eq 15 ]
+        [[ "$output" == *"one-shot "*" ${posform[i]}: ${posline[i]}"* ]] || false
+    done
+    # copies of the hook: attr_reads called in a command substitution, where its two judged reads' refusals are lost; and
+    # judged_read with the unscanned after the -d function's splice cut, the premise of join_short_detail's exception
+    sed 's/^            attr_reads "\$rlisted"$/            : "$(attr_reads "$rlisted")"/' "$HOOK" > "$TEST_DIR/k-attr.sh"
+    run cmp -s "$HOOK" "$TEST_DIR/k-attr.sh"
+    [ "$status" -ne 0 ]
+    run read_loop_census "$TEST_DIR/k-attr.sh"
+    [ "$(grep -c '^FAIL [0-9]*: a one-shot read neither ends the hook on its failure (in an || list) nor has its status judged (its refusal runs where failed_scan is lost (attr_reads is called on line [0-9]* in a subshell or a command substitution)): ' <<< "$output")" -eq 2 ]
+    [ "$(grep -c '^FAIL ' <<< "$output")" -eq 2 ]
+    awk 'cut { cut = 0; if ($0 ~ /^    unscanned "\$clause"$/) next } { print } /"\$\("\$detail" \|\| :\)"/ { cut = 1 }' "$HOOK" > "$TEST_DIR/k-premise.sh"
+    [ "$(wc -l < "$TEST_DIR/k-premise.sh")" -eq "$(($(wc -l < "$HOOK") - 1))" ]   # one line cut
+    run read_loop_census "$TEST_DIR/k-premise.sh"
+    [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ]
+    [[ "$output" == *"FAIL "*": a one-shot read neither ends the hook on its failure (in an || list) nor has its status judged (its refusal runs where failed_scan is lost (join_short_detail is named outside a call of it 1 time "*'): '*'IFS= read -r path <&4 || :'* ]] || false
+}
+
+@test "build 7 (item 40, the reads with an input of their own in a loop's body, a population under the read census' rule; the coordinator's ruling of 20:21Z 2026-10-01, its 3): every read with an input of its own inside a loop's body of the hook, 14 (8 in refuse_hidden_paths, 2 in scan_identifiers, 3 in merge_binary_reads, 1 in the probe copies), ends the hook on its failure or has its status judged in the hook's own shell, and the census lists each with its form (5 ending the hook; 9 by the first variable unset before the read and tested as \${name+set} after it, unscanned on the unset side: the join's count and short file, the attribute answer's three fields, the diff's count file, a merge blob's record and its counts, and a piece's bytes); copies planting such a read in a for loop's body with an || : swallowing its status, after an ||, under !, before an &&, in an if condition, in a braced group with a redirection an || follows, after an unset with no test, in a while loop's body in a function that runs set +e, and in the body of a loop fed by a pipe, and a copy putting the attribute answer's three reads back in one && chain, are each named on their line with the reason, the hook's own still listed; a copy planting, each on lines of its own, a read judged by the unset form in a loop opened after its unset, and reads so judged whose name is assigned between the unset and the test by a for or a select loop's variable, a coproc's name, getopts, eval, wait -p, printf -v through a variable, a nameref, or a function (since the repair after the build's audit, R7-1 and R7-4), names each on its line with the reason; a copy with a set +e at the top level names the hook's five reads that end it (the top level calls their functions after it), the nine judged standing; copies planting such a read at the top level and in a function's while loop, ending the hook, in each judged form, and in a braced group with its own redirection, judged, are listed with their forms (at d5740856c the census fails the 9 that are judged here, each having swallowed its status)" {
+    local i
+    run read_loop_census "$HOOK"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *FAIL* ]] || false
+    [ "$(grep -c '^in-loop [0-9]* ' <<< "$output")" -eq 14 ]
+    [ "$(grep -c '^in-loop [0-9]* aborts: ' <<< "$output")" -eq 5 ]
+    [ "$(grep -c '^in-loop [0-9]* aborts: [ \t]*\(if \[ "\$rc" -eq 0 \]; then \)\{0,1\}read -r bytes nuls <<< "\$counts"' <<< "$output")" -eq 3 ]
+    [ "$(grep -c '^in-loop [0-9]* aborts: [ \t]*read -r -a words <<< ' <<< "$output")" -eq 2 ]
+    [ "$(grep -c '^in-loop [0-9]* judged (unset [a-z]*, ${[a-z]*+set}, unscanned): ' <<< "$output")" -eq 9 ]
+    [ "$(grep -c '^in-loop [0-9]* judged (unset count, ${count+set}, unscanned): ' <<< "$output")" -eq 2 ]
+    for i in path apath attr value brec bgot data; do
+        [ "$(grep -c "^in-loop [0-9]* judged (unset $i, \${$i+set}, unscanned): " <<< "$output")" -eq 1 ] || { echo "the read of $i not listed as judged once" >&2; false; }
+    done
+    [ "$(grep -c '^one-shot [0-9]* ' <<< "$output")" -eq 14 ]                 # the one-shot reads, a population of their own, still listed apart
+    # planted reads that are neither, each named with its reason on its line
+    local -a neg=() negline=() negwhy=()
+    inloop_plant() {   # <name> <the reason> <the read's line> <lines to plant after the EXIT trap's line...>
+        neg+=("$1"); negwhy+=("$2"); negline+=("$3")
+        local name=$1
+        shift 3
+        census_plant "$TEST_DIR/i-$name.sh" "$@"
+    }
+    inloop_plant swallow 'in an || list' '    read -r zw <<< "$zz" || :' 'for zz in a; do' '    read -r zw <<< "$zz" || :' 'done'
+    inloop_plant after-or 'in an || list' '    : || read -r zw <<< "$zz"' 'for zz in a; do' '    : || read -r zw <<< "$zz"' 'done'
+    inloop_plant bang 'under !' '    ! read -r zw <<< "$zz"' 'for zz in a; do' '    ! read -r zw <<< "$zz"' 'done'
+    inloop_plant and 'before an &&' '    read -r zw <<< "$zz" && :' 'for zz in a; do' '    read -r zw <<< "$zz" && :' 'done'
+    inloop_plant if 'in a condition' '    if read -r zw <<< "$zz"; then :; fi' 'for zz in a; do' '    if read -r zw <<< "$zz"; then :; fi' 'done'
+    inloop_plant brace-or 'in a compound in an || list' '    { IFS= read -r zw; } < /dev/null || :' 'for zz in a; do' '    { IFS= read -r zw; } < /dev/null || :' 'done'
+    inloop_plant unset-no-test 'in an || list' '    unset zw; read -r zw <<< "$zz" || :' 'for zz in a; do' '    unset zw; read -r zw <<< "$zz" || :' 'done'
+    inloop_plant set-plus 'a set +e in zzab' '    while :; do read -r zw <<< x; break; done' 'zzab() {' '    set +e' '    while :; do read -r zw <<< x; break; done' '}' 'zzab'
+    inloop_plant piped-loop 'in a compound in a pipeline or in the background' '    read -r zw <<< "$zz"' "printf 'a\\n' | for zz in a; do" '    read -r zw <<< "$zz"' 'done'
+    for i in "${!neg[@]}"; do
+        echo "plant: ${neg[i]}"                                              # names the plant when a line below fails
+        run cmp -s "$HOOK" "$TEST_DIR/i-${neg[i]}.sh"
+        [ "$status" -ne 0 ]                                                  # the plant landed
+        run read_loop_census "$TEST_DIR/i-${neg[i]}.sh"
+        [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ]
+        [[ "$output" == *"FAIL "*": a read with an input of its own in a loop's body neither ends the hook on its failure (${negwhy[i]}"*") nor has its status judged ("*"): ${negline[i]}"* ]] || false
+        [ "$(grep -c '^in-loop [0-9]* ' <<< "$output")" -eq 14 ]            # the hook's own still listed
+    done
+    # the end form out of place (the repair after the audit of build 7), in one copy, each plant on lines of its own: the
+    # read in a loop opened after its unset (R7-1), and the name assigned between the unset and the test by a loop's
+    # variable or a coproc's name, or by a command other than the read and : (R7-4); each named on its line with its
+    # reason, the hook's own still listed
+    local -a lost=() lostline=() lostwhy=()
+    inloop_lost() {   # <the judged form's reason, its start> <the read's line> <lines to plant after the EXIT trap's line...>
+        lostwhy+=("$1"); lostline+=("$2")
+        shift 2
+        lost+=("$@")
+    }
+    local la='the unset of zw is undone before its test (zw is assigned on line ' lc='a command other than the read and : runs between the unset of zw and its test ('
+    inloop_lost 'the read of zw runs in a loop opened after its unset, so a pass after the first reads with zw set by an earlier one' '    read -r zw <<< "$zz" || :' 'unset zw' 'for zz in a b; do' '    read -r zw <<< "$zz" || :' 'done' '[ -n "${zw+set}" ] || unscanned "the zw could not be read"'
+    inloop_lost "$la" 'for zz in a; do unset zw; for zw in 1; do :; done; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done' 'for zz in a; do unset zw; for zw in 1; do :; done; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done'
+    inloop_lost "$la" 'for zz in a; do unset zw; select zw in 1; do break; done < /dev/null; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done' 'for zz in a; do unset zw; select zw in 1; do break; done < /dev/null; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done'
+    inloop_lost "$la" 'for zz in a; do unset zw; coproc zw { :; }; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done' 'for zz in a; do unset zw; coproc zw { :; }; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done'
+    inloop_lost "${lc}getopts on line " 'for zz in a; do unset zw; getopts o zw; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done' 'for zz in a; do unset zw; getopts o zw; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done'
+    inloop_lost "${lc}eval on line " "for zz in a; do unset zw; eval 'zw=1'; read -r zw <<< \"\$zz\" || :; [ -n \"\${zw+set}\" ] || unscanned \"the zw could not be read\"; done" "for zz in a; do unset zw; eval 'zw=1'; read -r zw <<< \"\$zz\" || :; [ -n \"\${zw+set}\" ] || unscanned \"the zw could not be read\"; done"
+    inloop_lost "${lc}wait on line " 'for zz in a; do unset zw; wait -n -p zw; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done' 'for zz in a; do unset zw; wait -n -p zw; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done'
+    inloop_lost "${lc}printf on line " 'for zz in a; do unset zw; zn=zw; printf -v "$zn" 1; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done' 'for zz in a; do unset zw; zn=zw; printf -v "$zn" 1; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done'
+    inloop_lost "${lc}declare on line " 'for zz in a; do unset zw; declare -n zr=zw; zr=1; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done' 'for zz in a; do unset zw; declare -n zr=zw; zr=1; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done'
+    inloop_lost "${lc}zzset on line " 'for zz in a; do unset zw; zzset; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done' 'zzset() { zw=1; }' 'for zz in a; do unset zw; zzset; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; done'
+    census_plant "$TEST_DIR/i-lost.sh" "${lost[@]}"
+    run read_loop_census "$TEST_DIR/i-lost.sh"
+    for i in "${!lostwhy[@]}"; do
+        echo "plant (a judged form out of place): ${lostline[i]}"               # names the plant when a line below fails
+        [ "$(grep -F -e "a read with an input of its own in a loop's body neither ends the hook on its failure (in an || list) nor has its status judged (${lostwhy[i]}" <<< "$output" | grep -c -F -e "): ${lostline[i]}")" -eq 1 ]
+    done
+    [ "$(grep -c '^FAIL ' <<< "$output")" -eq "${#lostwhy[@]}" ]
+    [ "$(grep -c '^in-loop [0-9]* ' <<< "$output")" -eq 14 ]
+    # a set +e at the top level: the five reads of the hook that end it no longer do, since the top level calls the
+    # functions they run in after it, each named on its line with the call the census followed up
+    census_plant "$TEST_DIR/i-top-set-plus.sh" 'set +e'
+    run read_loop_census "$TEST_DIR/i-top-set-plus.sh"
+    [ "$(grep -c '^FAIL ' <<< "$output")" -eq 5 ]
+    [ "$(grep -c "^FAIL [0-9]*: a read with an input of its own in a loop's body neither ends the hook on its failure ([a-z_]* is called on line [0-9]*.* after a set +e in the file) nor has its status judged " <<< "$output")" -eq 5 ]
+    [ "$(grep -c '^in-loop [0-9]* judged ' <<< "$output")" -eq 9 ]                # the nine judged stand: their refusal needs no errexit
+    # the attribute answer's three reads put back in one && chain, as they stood until build 7: each named
+    awk '
+        /^                ashort=0; aerr=0; aopen=1$/ { print "                { IFS= read -r -d '"''"' apath && IFS= read -r -d '"''"' attr && IFS= read -r -d '"''"' value; } < \"$scratch/attr\" || { apath=\"\"; attr=\"\"; value=\"\"; }"; skip = 1; next }
+        skip && /^                \[ "\$ashort" -eq 0 \] \|\| / { skip = 0; next }
+        skip { next }
+        { print }
+    ' "$HOOK" > "$TEST_DIR/i-attr-chain.sh"
+    [ "$(grep -c 'IFS= read -r -d .. apath && IFS= read -r -d .. attr && IFS= read -r -d .. value; } < "$scratch/attr"' "$TEST_DIR/i-attr-chain.sh")" -eq 1 ]   # the chain landed
+    run read_loop_census "$TEST_DIR/i-attr-chain.sh"
+    [ "$(grep -c "^FAIL [0-9]*: a read with an input of its own in a loop's body neither ends the hook on its failure " <<< "$output")" -eq 3 ]
+    [ "$(grep -c '^FAIL ' <<< "$output")" -eq 3 ]
+    [ "$(grep -c '^in-loop [0-9]* ' <<< "$output")" -eq 11 ]
+    # planted reads that end the hook or are judged, each listed with its form
+    local -a pos=() posline=() posform=()
+    inloop_pass() {   # <name> <the form> <the read's line> <lines to plant after the EXIT trap's line...>
+        pos+=("$1"); posform+=("$2"); posline+=("$3")
+        local name=$1
+        shift 3
+        census_plant "$TEST_DIR/j-$name.sh" "$@"
+    }
+    local ju='judged (unset zw, ${zw+set}, unscanned'
+    inloop_pass top aborts '    read -r zw <<< "$zz"' 'for zz in a; do' '    read -r zw <<< "$zz"' 'done'
+    inloop_pass fn-while aborts '    while :; do read -r zw <<< x; break; done' 'zzab() {' '    while :; do read -r zw <<< x; break; done' '}' 'zzab'
+    inloop_pass or 'judged (|| unscanned)' '    read -r zw <<< "$zz" || unscanned "the zw could not be read"' 'for zz in a; do' '    read -r zw <<< "$zz" || unscanned "the zw could not be read"' 'done'
+    inloop_pass ifbang 'judged (if !, unscanned)' '    if ! read -r zw <<< "$zz"; then' 'for zz in a; do' '    if ! read -r zw <<< "$zz"; then' '        unscanned "the zw could not be read"' '    fi' 'done'
+    inloop_pass unset-n "$ju)" '    unset zw; read -r zw <<< "$zz" || :' 'for zz in a; do' '    unset zw; read -r zw <<< "$zz" || :' '    [ -n "${zw+set}" ] || unscanned "the zw could not be read"' 'done'
+    inloop_pass brace-redir "$ju)" '    unset zw; { IFS= read -r zw || :; } < /dev/null' 'for zz in a; do' '    unset zw; { IFS= read -r zw || :; } < /dev/null' '    if [ -z "${zw+set}" ]; then' '        unscanned "the zw could not be read"' '    fi' 'done'
+    for i in "${!pos[@]}"; do
+        echo "plant: ${pos[i]}"
+        run cmp -s "$HOOK" "$TEST_DIR/j-${pos[i]}.sh"
+        [ "$status" -ne 0 ]
+        run read_loop_census "$TEST_DIR/j-${pos[i]}.sh"
+        [[ "$output" != *FAIL* ]] || false
+        [ "$(grep -c '^in-loop [0-9]* ' <<< "$output")" -eq 15 ]
+        [[ "$output" == *"in-loop "*" ${posform[i]}: ${posline[i]}"* ]] || false
+    done
+}
+
+@test "build 8 (item 40, a judged read against a failed open; the coordinator's ruling of 00:23Z 2026-10-02, its RC7-2): the hook's three reads of the diff attribute's answer, each taking its field from descriptor 7 with a redirection of its own (the answer opened once, the open judged on its own), are listed as judged, the census failing no read of the hook; a copy putting back the answer's block as it stood at build 7's text (the three reads, their unsets and their tests in one braced group fed by the file, an || after it) names each of the three with the compound and its place; copies planting a judged read whose test, or whose refusal, sits in a compound with a redirection whose failure lets the hook go on (a braced group with an || after it holding the unset, the read and the test; an if holding the test with a redirection and an || after its fi; a braced group with an || after it holding a read and its || unscanned, or an if ! and its unscanned; a braced group with an output redirection; one fed on descriptor 7, the read taking its input with <&7; and a function whose body takes a redirection, called in an || list), and, since build 9 (RC8-1), five fed by a here-document with an || after it (the delimiter spaced, after <<-, quoted, on descriptor 7, and at the top level), are each named on their line with the reason; copies planting such a read in a braced group whose failure ends the hook, in the hook's own shape, in a function whose body takes a redirection called plainly, and, since build 9, in a braced group fed by a here-document with no || after it and a read taking its own here-document ahead of its variable (since the repair after build 9's audit, its C9-1, after << and after <<-), are listed as judged; since that repair, a read taking a here-document in its command's prefix, in a for loop's body, its status swallowed, is named on its line; since the repair after the build's audit (ATTR8-1 and ATTR8-2), a copy planting three such reads whose braced group is fed by a process substitution with an || after it (an input one and an output one in a for loop's body, and an input one at the top level) and two in a for loop's body that a failed open skips with the loop whole (a redirection on the loop's done, and one on a braced group around the loop, an || after each) names each on its line with the compound's line, beside a judged read in a for loop's body inside a subshell fed by its own redirection, named for its refusal lost in the subshell, and a copy planting a read so fed, a read in a for loop with a redirection on its done, neither with an || after it, and a judged read inside a line loop with no condition read whose done takes a redirection with an || after it lists the three as judged (build 7's census listed the old block's three reads and six of the seven planted reads as judged, and failed the seventh, on descriptor 7, and the hook's own shape as reads put in the background, reading the & of <&7 as one; the build's census before that repair listed the five as judged, and gave the subshell's read and the read in the line loop with no condition read the verdicts they have now; the census before build 9 listed the five here-document plants as judged, took the read's own here-document's delimiter for its first variable, after << and after <<-, and did not see the read taking a here-document in its prefix at all)" {
+    local i
+    run read_loop_census "$HOOK"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *FAIL* ]] || false
+    [ "$(grep -c '^in-loop [0-9]* ' <<< "$output")" -eq 14 ]
+    for i in apath attr value; do
+        [ "$(grep -c "^in-loop [0-9]* judged (unset $i, \${$i+set}, unscanned): .*unset $i; IFS= read -r -d '' $i <&7 || ashort=1\$" <<< "$output")" -eq 1 ] || { echo "the read of $i from descriptor 7 not listed as judged once" >&2; false; }
+    done
+    # the answer's block as build 7 left it, planted in place of the build's (from its first line to the line that empties
+    # the three after a short answer)
+    cat > "$TEST_DIR/attr-block-7" <<'BLOCK'
+                ashort=0; aerr=0
+                {
+                    unset apath; IFS= read -r -d '' apath || ashort=1
+                    [ -n "${apath+set}" ] || { unscanned "the DIFF ATTRIBUTE of $path $at could not be read for the refused line below (the shell could not read git check-attr's answer, its file attr, at the path it names: a read error)"; aerr=1; }
+                    if [ "$ashort" -eq 0 ]; then
+                        unset attr; IFS= read -r -d '' attr || ashort=1
+                        [ -n "${attr+set}" ] || { unscanned "the DIFF ATTRIBUTE of $path $at could not be read for the refused line below (the shell could not read git check-attr's answer, its file attr, at the attribute it names: a read error)"; aerr=1; }
+                    fi
+                    if [ "$ashort" -eq 0 ]; then
+                        unset value; IFS= read -r -d '' value || ashort=1
+                        [ -n "${value+set}" ] || { unscanned "the DIFF ATTRIBUTE of $path $at could not be read for the refused line below (the shell could not read git check-attr's answer, its file attr, at the attribute's value: a read error)"; aerr=1; }
+                    fi
+                } < "$scratch/attr" || ashort=1
+BLOCK
+    awk -v bf="$TEST_DIR/attr-block-7" '
+        /^                ashort=0; aerr=0; aopen=1$/ { while ((getline l < bf) > 0) print l; skip = 1; next }
+        skip && /^                \[ "\$ashort" -eq 0 \] \|\| / { skip = 0 }
+        skip { next }
+        { print }
+    ' "$HOOK" > "$TEST_DIR/s-attr-7.sh"
+    [ "$(grep -c '^                } < "$scratch/attr" || ashort=1$' "$TEST_DIR/s-attr-7.sh")" -eq 1 ]      # the block landed
+    [ "$(grep -c 'aopen' "$TEST_DIR/s-attr-7.sh")" -eq 2 ]                                                   # and the build's is gone but for the says branch and the local
+    run read_loop_census "$TEST_DIR/s-attr-7.sh"
+    [ "$(grep -c '^FAIL ' <<< "$output")" -eq 3 ]
+    for i in apath attr value; do
+        [ "$(grep -c "^FAIL [0-9]*: a read with an input of its own in a loop's body neither ends the hook on its failure (in an || list) nor has its status judged (the compound opened on line [0-9]*, around the test of \${$i+set}, takes a redirection whose failed open skips the compound while the hook goes on (in an || list), so nothing refuses the failed open and a name the compound reads keeps any value it held): .*unset $i; IFS= read -r -d '' $i || ashort=1\$" <<< "$output")" -eq 1 ] || { echo "the read of $i in build 7's block not named" >&2; false; }
+    done
+    [ "$(grep -c '^in-loop [0-9]* ' <<< "$output")" -eq 11 ]
+    # planted reads whose test, or whose refusal, a failed open skips while the hook goes on: each named on its line
+    local -a neg=() negline=() negwhat=() negwhy=() negnoun=()
+    openskip_plant() {   # <name> <the read's noun> <what the compound is around> <its place> <the read's line> <lines to plant after the EXIT trap's line...>
+        neg+=("$1"); negnoun+=("$2"); negwhat+=("$3"); negwhy+=("$4"); negline+=("$5")
+        local name=$1
+        shift 5
+        census_plant "$TEST_DIR/s-$name.sh" "$@"
+    }
+    local il="a read with an input of its own in a loop's body" os="a one-shot read" tz='the test of ${zw+set}' rr='the read and its refusal'
+    openskip_plant group-or "$il" "$tz" 'in an || list' '    { unset zw; read -r zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } < /nonexistent || :' 'for zz in a; do' '    { unset zw; read -r zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } < /nonexistent || :' 'done'
+    openskip_plant if-redir "$il" "$tz" 'in an || list' '    unset zw; read -r zw <<< "$zz" || :' 'for zz in a; do' '    unset zw; read -r zw <<< "$zz" || :' '    if [ -z "${zw+set}" ]; then unscanned "the zw could not be read"; fi < /dev/null || :' 'done'
+    openskip_plant or-group "$il" "$rr" 'in an || list' '    { read -r zw || unscanned "the zw could not be read"; } < /nonexistent || :' 'for zz in a; do' '    { read -r zw || unscanned "the zw could not be read"; } < /nonexistent || :' 'done'
+    openskip_plant ifbang-group "$il" "$rr" 'in an || list' '        if ! read -r zw; then' 'for zz in a; do' '    {' '        if ! read -r zw; then' '            unscanned "the zw could not be read"' '        fi' '    } < /nonexistent || :' 'done'
+    openskip_plant out-group "$il" "$tz" 'in an || list' '    { unset zw; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } > /nonexistent/zz || :' 'for zz in a; do' '    { unset zw; read -r zw <<< "$zz" || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } > /nonexistent/zz || :' 'done'
+    openskip_plant fd-group "$il" "$tz" 'in an || list' '    { unset zw; read -r zw <&7 || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } 7< /nonexistent || :' 'for zz in a; do' '    { unset zw; read -r zw <&7 || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } 7< /nonexistent || :' 'done'
+    openskip_plant fn-body "$os" "$tz" 'zzfr is called on line ' '    unset zw; read -r zw || :' 'zzfr() {' '    unset zw; read -r zw || :' '    [ -n "${zw+set}" ] || unscanned "the zw could not be read"' '} < /nonexistent' 'zzfr || :'
+    # Since build 9 (the re-check of build 8, RC8-1): a braced group fed by a here-document, an || after it (bash makes
+    # the document's pipe or temporary file before the group runs, and a failure skips the group while the hook goes
+    # on): the delimiter spaced from <<, after <<-, quoted, on descriptor 7 read with <&7, and the group at the top
+    # level. Until build 9 the tokenizer passed over no here-document's delimiter, read the delimiter as the next
+    # command, and gave the || to it, so each was listed as judged.
+    local hd='{ unset zw; read -r zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; }'
+    openskip_plant heredoc-group "$il" "$tz" 'in an || list' "    $hd << ZEOF || :" 'for zz in a; do' "    $hd << ZEOF || :" 'x' 'ZEOF' 'done'
+    openskip_plant heredoc-dash "$il" "$tz" 'in an || list' "    $hd <<- ZEOF || :" 'for zz in a; do' "    $hd <<- ZEOF || :" 'x' 'ZEOF' 'done'
+    openskip_plant heredoc-quoted "$il" "$tz" 'in an || list' "    $hd << 'ZEOF' || :" 'for zz in a; do' "    $hd << 'ZEOF' || :" 'x' 'ZEOF' 'done'
+    openskip_plant heredoc-fd "$il" "$tz" 'in an || list' '    { unset zw; read -r zw <&7 || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } 7<< ZEOF || :' 'for zz in a; do' '    { unset zw; read -r zw <&7 || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } 7<< ZEOF || :' 'x' 'ZEOF' 'done'
+    openskip_plant heredoc-top "$os" "$tz" 'in an || list' "$hd << ZEOF || :" "$hd << ZEOF || :" 'x' 'ZEOF'
+    for i in "${!neg[@]}"; do
+        echo "plant: ${neg[i]}"                                              # names the plant when a line below fails
+        run cmp -s "$HOOK" "$TEST_DIR/s-${neg[i]}.sh"
+        [ "$status" -ne 0 ]                                                  # the plant landed
+        run read_loop_census "$TEST_DIR/s-${neg[i]}.sh"
+        [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ]
+        [[ "$output" == *"FAIL "*": ${negnoun[i]} neither ends the hook on its failure ("*") nor has its status judged (the compound opened on line "*", around ${negwhat[i]}, takes a redirection whose failed open skips the compound while the hook goes on (${negwhy[i]}"*"), so nothing refuses the failed open and a name the compound reads keeps any value it held): ${negline[i]}"* ]] || false
+        [ "$(grep -c '^in-loop [0-9]* ' <<< "$output")" -eq 14 ]            # the hook's own still listed
+    done
+    # planted reads whose compound's failure ends the hook, or that take their input from a descriptor whose open is
+    # judged apart (the hook's shape), or in a function whose body takes a redirection called plainly: each listed
+    local -a pos=() posline=() poskind=()
+    openskip_pass() {   # <name> <in-loop or one-shot> <the read's line> <lines to plant after the EXIT trap's line...>
+        pos+=("$1"); poskind+=("$2"); posline+=("$3")
+        local name=$1
+        shift 3
+        census_plant "$TEST_DIR/t-$name.sh" "$@"
+    }
+    openskip_pass group-errexit in-loop '    { unset zw; read -r zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } < /dev/null' 'for zz in a; do' '    { unset zw; read -r zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } < /dev/null' 'done'
+    openskip_pass fd-judged in-loop "        unset zw; IFS= read -r -d '' zw <&7 || :" 'for zz in a; do' '    zo=1; { exec 7< /dev/null; } || zo=0' '    if [ "$zo" -eq 0 ]; then' '        unscanned "the zw could not be opened"' '    else' "        unset zw; IFS= read -r -d '' zw <&7 || :" '        [ -n "${zw+set}" ] || unscanned "the zw could not be read"' '        exec 7<&-' '    fi' 'done'
+    openskip_pass fn-body-plain one-shot '    unset zw; read -r zw || :' 'zzfp() {' '    unset zw; read -r zw || :' '    [ -n "${zw+set}" ] || unscanned "the zw could not be read"' '} < /dev/null' 'zzfp'
+    openskip_pass heredoc-plain in-loop '    { unset zw; read -r zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } << ZEOF' 'for zz in a; do' '    { unset zw; read -r zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"; } << ZEOF' 'x' 'ZEOF' 'done'
+    openskip_pass heredoc-read in-loop '    unset zw; read -r << ZEOF zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"' 'for zz in a; do' '    unset zw; read -r << ZEOF zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"' 'x' 'ZEOF' 'done'
+    openskip_pass heredoc-read-dash in-loop '    unset zw; read -r <<- ZEOF zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"' 'for zz in a; do' '    unset zw; read -r <<- ZEOF zw || :; [ -n "${zw+set}" ] || unscanned "the zw could not be read"' 'x' 'ZEOF' 'done'
+    for i in "${!pos[@]}"; do
+        echo "plant: ${pos[i]}"
+        run cmp -s "$HOOK" "$TEST_DIR/t-${pos[i]}.sh"
+        [ "$status" -ne 0 ]
+        run read_loop_census "$TEST_DIR/t-${pos[i]}.sh"
+        [[ "$output" != *FAIL* ]] || false
+        [[ "$output" == *"${poskind[i]} "*' judged (unset zw, ${zw+set}, unscanned): '"${posline[i]}"* ]] || false
+    done
+    # Since the repair after build 9's audit (its C9-1): a read taking a here-document in its command's prefix, its
+    # status swallowed, in a for loop's body, is named on its line (build 8's census listed nothing for it, the
+    # delimiter read as the command; the pass plant above, <<- among a read's words, was failed there as a read whose
+    # first name was the delimiter).
+    echo "plant: heredoc-prefix"
+    census_plant "$TEST_DIR/s-heredoc-prefix.sh" 'for zz in a; do' '    << ZEOF read -r zw || :' 'x' 'ZEOF' 'done'
+    run cmp -s "$HOOK" "$TEST_DIR/s-heredoc-prefix.sh"
+    [ "$status" -ne 0 ]
+    run read_loop_census "$TEST_DIR/s-heredoc-prefix.sh"
+    [ "$(grep -c '^FAIL ' <<< "$output")" -eq 1 ]
+    [[ "$output" == *"FAIL "*": a read with an input of its own in a loop's body neither ends the hook on its failure (in an || list) nor has its status judged ("*"):     << ZEOF read -r zw || :"* ]] || false
+    # Since the repair after the build's audit (ATTR8-1 and ATTR8-2), in one copy: three judged reads whose braced group
+    # is fed by a process substitution with an || after it (an input one in a for loop's body, an output one in a for
+    # loop's body, and an input one at the top level), and two in a for loop's body that a failed open skips with the
+    # loop whole, an || after it (a redirection on the loop's done, and one on a braced group around the loop): each is
+    # named on its line with the compound's line and its place; and z8, in a for loop's body inside a ( ) fed by its own
+    # redirection, named for its refusal lost in the subshell (a ( that follows no redirection's operator keeps its own
+    # redirection). In a second copy, a read so fed and a read in a for loop with a redirection on its done, neither
+    # with an || after it, are listed as judged, and so is z9, a judged read inside a line loop that has no condition
+    # read (its body reads the done's input), the loop's done taking a redirection with an || after it: openskip stops
+    # at such a line loop as at one whose condition reads.
+    local tl
+    tl=$(grep -n '^trap .exit_trap' "$HOOK" | head -n 1 | cut -d: -f1)
+    census_plant "$TEST_DIR/s-repair8.sh" \
+        'for zz in a; do' \
+        '    { unset z1; read -r z1 || :; [ -n "${z1+set}" ] || unscanned "the z1 could not be read"; } < <(echo x) || :' \
+        'done' \
+        'for zz in a; do' \
+        '    { unset z2; read -r z2 <<< "$zz" || :; [ -n "${z2+set}" ] || unscanned "the z2 could not be read"; } > >(cat) || :' \
+        'done' \
+        '{ unset z3; read -r z3 || :; [ -n "${z3+set}" ] || unscanned "the z3 could not be read"; } < <(echo x) || :' \
+        'for zz in a; do unset z4; read -r z4 <<< "$zz" || :; [ -n "${z4+set}" ] || unscanned "the z4 could not be read"; done < /nonexistent || :' \
+        '{' \
+        '    for zz in a; do' \
+        '        unset z5; read -r z5 <<< "$zz" || :' \
+        '        [ -n "${z5+set}" ] || unscanned "the z5 could not be read"' \
+        '    done' \
+        '} 2> /dev/null || :' \
+        'for zz in a; do' \
+        '    ( unset z8; read -r z8 || :; [ -n "${z8+set}" ] || unscanned "the z8 could not be read" ) < /dev/null' \
+        'done'
+    [ "$(sed -n "$((tl + 11))p" "$TEST_DIR/s-repair8.sh")" = '        unset z5; read -r z5 <<< "$zz" || :' ]      # the plant landed where the lines below count
+    run read_loop_census "$TEST_DIR/s-repair8.sh"
+    [ "$(grep -c '^FAIL ' <<< "$output")" -eq 6 ]
+    [ "$(grep -c '^in-loop [0-9]* ' <<< "$output")" -eq 14 ]                # the hook's own still listed
+    local -a rn=(z1 z2 z3 z4 z5) rnoun=("$il" "$il" "$os" "$il" "$il") rread=($((tl + 2)) $((tl + 5)) $((tl + 7)) $((tl + 8)) $((tl + 11))) rcomp=($((tl + 2)) $((tl + 5)) $((tl + 7)) $((tl + 8)) $((tl + 9)))
+    for i in "${!rn[@]}"; do
+        echo "plant: ${rn[i]}"
+        [ "$(grep -c "^FAIL ${rread[i]}: ${rnoun[i]} neither ends the hook on its failure (.*) nor has its status judged (the compound opened on line ${rcomp[i]}, around the test of \${${rn[i]}+set}, takes a redirection whose failed open skips the compound while the hook goes on (in an || list), so nothing refuses the failed open and a name the compound reads keeps any value it held): .*unset ${rn[i]}; read -r ${rn[i]} " <<< "$output")" -eq 1 ]
+    done
+    echo "plant: z8"
+    [ "$(grep -c "^FAIL $((tl + 16)): $il neither ends the hook on its failure (in an || list) nor has its status judged (its refusal runs where failed_scan is lost (in a subshell or a command substitution)): .*( unset z8; read -r z8 " <<< "$output")" -eq 1 ]
+    census_plant "$TEST_DIR/t-repair8.sh" \
+        'for zz in a; do' \
+        '    { unset z6; read -r z6 || :; [ -n "${z6+set}" ] || unscanned "the z6 could not be read"; } < <(echo x)' \
+        'done' \
+        'for zz in a; do unset z7; read -r z7 <<< "$zz" || :; [ -n "${z7+set}" ] || unscanned "the z7 could not be read"; done < /dev/null' \
+        'zmk=0' \
+        '# read loop (ii) [marker: zmk]' \
+        'for zz in a; do' \
+        '    unset zl; IFS= read -r zl || :' \
+        '    [ -n "${zl+set}" ] || unscanned "the zl could not be read"' \
+        '    zmk=1' \
+        '    unset z9; read -r z9 <<< "$zz" || :' \
+        '    [ -n "${z9+set}" ] || unscanned "the z9 could not be read"' \
+        'done < /dev/null || :' \
+        '[ "$zmk" -eq 1 ] || unscanned "the loop over zz ran no pass"'
+    run read_loop_census "$TEST_DIR/t-repair8.sh"
+    [[ "$output" != *FAIL* ]] || false
+    [ "$(grep -c "^in-loop $((tl + 2)) judged (unset z6, \${z6+set}, unscanned): .*unset z6; read -r z6 " <<< "$output")" -eq 1 ]
+    [ "$(grep -c "^in-loop $((tl + 4)) judged (unset z7, \${z7+set}, unscanned): .*unset z7; read -r z7 " <<< "$output")" -eq 1 ]
+    [ "$(grep -c "^ok $((tl + 7)) (ii) marker: zmk\$" <<< "$output")" -eq 1 ]                           # z9's loop, a line loop with no condition read
+    [ "$(grep -c "^in-loop $((tl + 11)) judged (unset z9, \${z9+set}, unscanned): .*unset z9; read -r z9 " <<< "$output")" -eq 1 ]
 }
 
 lc_all_first_body() {   # <bash file>: the first non-comment, non-blank line after 'bash_gate "$@"'; empty when there is no bash_gate call
@@ -20367,6 +21628,167 @@ beio_push() {   # <ref>... -- <NAME=value>...: push_refs_through_hook under the 
 rewind_remote() {   # <ref> <sha>: the remote's ref, and this clone's tracking ref of it, back at the sha, for the next push
     git -C "$TEST_DIR/remote.git" update-ref "refs/heads/$1" "$2"
     git -C "$REPO" update-ref "refs/remotes/origin/$1" "$2"
+}
+
+# A failed OPEN, by fault injection (build 9 of item 40, on the coordinator's ruling of 04:26Z 2026-10-02: a refusal
+# names its actual cause, so a refusal a failed redirection can reach names the open): an LD_PRELOAD library, built
+# like build 5's (bash_eio_shim) and in bash processes alone (the program /proc/self/exe names starts with bash), so
+# the fault lands in the shell's own open and in no tool's. An open, open64, openat or openat64 of a path holding
+# BOF_PATH (ending in BOF_SUFFIX, when set; BOF_DIR r for an open for reading alone, w for one for writing) fails with
+# EACCES; a process substitution is opened by its /dev/fd name, so a BOF_PATH of /dev/fd/ fails its open. The shell's
+# making of a here-document or a here-string, its write of the document to a pipe whose read end it holds on another
+# descriptor or to its temporary file in TMPDIR, fails with ENOSPC when the document holds BOF_HERE (is it whole, with
+# BOF_EXACT=1); bash then reports that it cannot create the document and runs no command the redirection is on.
+# BOF_SKIP and BOF_HSKIP pass that many matching opens, or documents, first; BOF_AFTER passes every open until one of a
+# path holding it (that open's own path is then matched as any other); BOF_ONCE=1 fails one match per process;
+# BOF_OPENLOG=1 logs every matching open, failed or not (to count a case's BOF_SKIP);
+# BOF_HERELOG=1 logs every document the shell makes (to choose a case's BOF_HERE). Each fault appends a line to BOF_LOG.
+bash_open_shim() {   # builds $TEST_DIR/bof.so (the note above); skips where it cannot be built, failing instead in a Linux cell on CI
+    local cc why=""
+    if [ "$(uname -s)" != Linux ]; then
+        why="the failed open is planted through LD_PRELOAD and /proc/self, which $(uname -s) does not offer"
+    else
+        cc=$(command -v cc || command -v gcc || true)
+        [ -n "$cc" ] || why="no C compiler (cc or gcc) on PATH builds the LD_PRELOAD library"
+        [ -n "$why" ] || command -v timeout > /dev/null 2>&1 || why="no timeout on PATH bounds the push"
+    fi
+    if [ -n "$why" ]; then
+        if [ "${CI:-}" = true ] && [ "$(uname -s)" = Linux ]; then echo "$why, in a Linux cell on CI, where the case must run" >&2; return 1; fi
+        skip "$why"
+    fi
+    cat > "$TEST_DIR/bof.c" <<'BOF'
+#define _GNU_SOURCE
+#include <dirent.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+static int isbash = -1, faulted = 0, armed = 0;
+static long nopen = 0, nhere = 0;
+static int is_bash(void) {
+    if (isbash < 0) {
+        char exe[4096];
+        const char *b;
+        ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+        isbash = 0;
+        if (n > 0) { exe[n] = 0; b = strrchr(exe, '/'); b = b ? b + 1 : exe; if (strncmp(b, "bash", 4) == 0) isbash = 1; }
+    }
+    return isbash;
+}
+static int on(const char *v) { const char *s = getenv(v); return s != NULL && s[0] == '1'; }
+static void note(const char *kind, const char *s, size_t n) {
+    const char *log = getenv("BOF_LOG");
+    int l;
+    size_t i;
+    char c;
+    if (log == NULL || log[0] == 0) return;
+    l = open(log, O_WRONLY | O_APPEND | O_CREAT, 0600);
+    if (l < 0) return;
+    if (write(l, kind, strlen(kind)) < 0) { }
+    for (i = 0; i < n && i < 200; i++) { c = s[i]; if (c == '\n') { if (write(l, "\\n", 2) < 0) { } } else if (c == 0) { if (write(l, "\\0", 2) < 0) { } } else if (write(l, &c, 1) < 0) { } }
+    if (write(l, "\n", 1) < 0) { }
+    close(l);
+}
+/* a match fires once BOF_SKIP (or BOF_HSKIP) matches have passed, and only once per process under BOF_ONCE=1 */
+static int fire(const char *skipvar, long *seen) {
+    const char *s = getenv(skipvar);
+    (*seen)++;
+    if (*seen <= (s ? atol(s) : 0)) return 0;
+    if (on("BOF_ONCE") && faulted) return 0;
+    faulted++;
+    return 1;
+}
+static int want_open(const char *path, int flags) {
+    const char *m = getenv("BOF_PATH"), *sfx = getenv("BOF_SUFFIX"), *dir = getenv("BOF_DIR");
+    size_t lp, ls;
+    int acc = flags & O_ACCMODE;
+    const char *after = getenv("BOF_AFTER");
+    if (path != NULL && after != NULL && after[0] != 0 && is_bash() && strstr(path, after) != NULL) armed = 1;
+    if (after != NULL && after[0] != 0 && !armed) return 0;
+    if (path == NULL || m == NULL || m[0] == 0 || !is_bash() || strstr(path, m) == NULL) return 0;
+    if (sfx != NULL && sfx[0] != 0) { lp = strlen(path); ls = strlen(sfx); if (lp < ls || strcmp(path + lp - ls, sfx) != 0) return 0; }
+    if (dir != NULL && dir[0] == 'r' && acc != O_RDONLY) return 0;
+    if (dir != NULL && dir[0] == 'w' && acc == O_RDONLY) return 0;
+    if (on("BOF_OPENLOG")) note(acc == O_RDONLY ? "seen r " : "seen w ", path, strlen(path));
+    if (!fire("BOF_SKIP", &nopen)) return 0;
+    note("open ", path, strlen(path));
+    return 1;
+}
+#define OPEN_BODY(realname, call) \
+    va_list a; mode_t m = 0; \
+    va_start(a, flags); if (flags & (O_CREAT | O_TMPFILE)) m = va_arg(a, mode_t); va_end(a); \
+    if (want_open(path, flags)) { errno = EACCES; return -1; } \
+    return call;
+typedef int (*open_t)(const char *, int, ...);
+typedef int (*openat_t)(int, const char *, int, ...);
+int open(const char *path, int flags, ...) { static open_t r; if (!r) r = (open_t)dlsym(RTLD_NEXT, "open"); OPEN_BODY(r, r(path, flags, m)) }
+int open64(const char *path, int flags, ...) { static open_t r; if (!r) r = (open_t)dlsym(RTLD_NEXT, "open64"); OPEN_BODY(r, r(path, flags, m)) }
+int openat(int d, const char *path, int flags, ...) { static openat_t r; if (!r) r = (openat_t)dlsym(RTLD_NEXT, "openat"); OPEN_BODY(r, r(d, path, flags, m)) }
+int openat64(int d, const char *path, int flags, ...) { static openat_t r; if (!r) r = (openat_t)dlsym(RTLD_NEXT, "openat64"); OPEN_BODY(r, r(d, path, flags, m)) }
+/* the shell writing a here-document or a here-string: to a pipe whose read end it holds on another descriptor, or to
+   its temporary file (sh-thd) */
+static int heredoc_fd(int fd) {
+    char link[64], got[256], other[256];
+    struct stat st;
+    ssize_t n, k;
+    DIR *dp;
+    struct dirent *e;
+    int found = 0, o;
+    if (fstat(fd, &st) != 0) return 0;
+    snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+    n = readlink(link, got, sizeof got - 1);
+    if (n <= 0) return 0;
+    got[n] = 0;
+    if (S_ISREG(st.st_mode)) return strstr(got, "/sh-thd") != NULL;
+    if (!S_ISFIFO(st.st_mode)) return 0;
+    dp = opendir("/proc/self/fd");
+    if (dp == NULL) return 0;
+    while (!found && (e = readdir(dp)) != NULL) {
+        o = atoi(e->d_name);
+        if (e->d_name[0] < '0' || e->d_name[0] > '9' || o == fd || o == dirfd(dp)) continue;
+        snprintf(link, sizeof link, "/proc/self/fd/%d", o);
+        k = readlink(link, other, sizeof other - 1);
+        if (k <= 0) continue;
+        other[k] = 0;
+        if (strcmp(other, got) == 0 && (fcntl(o, F_GETFL) & O_ACCMODE) == O_RDONLY) found = 1;
+    }
+    closedir(dp);
+    return found;
+}
+static int has(const char *buf, size_t n, const char *m) {
+    size_t lm = strlen(m), i;
+    if (on("BOF_EXACT")) return n == lm && memcmp(buf, m, n) == 0;
+    if (lm == 0 || lm > n) return lm == 0;
+    for (i = 0; i + lm <= n; i++) if (memcmp(buf + i, m, lm) == 0) return 1;
+    return 0;
+}
+ssize_t write(int fd, const void *buf, size_t n) {
+    static ssize_t (*r)(int, const void *, size_t);
+    const char *hs = getenv("BOF_HERE");
+    if (!r) r = (ssize_t (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "write");
+    if (hs != NULL && is_bash() && heredoc_fd(fd)) {
+        if (on("BOF_HERELOG")) note("here ", buf, n);
+        if (hs[0] != 0 && has(buf, n, hs) && fire("BOF_HSKIP", &nhere)) { note("fault ", buf, n); errno = ENOSPC; return -1; }
+    }
+    return r(fd, buf, n);
+}
+BOF
+    "$cc" -shared -fPIC -o "$TEST_DIR/bof.so" "$TEST_DIR/bof.c" -ldl
+}
+bof_push() {   # <ref>... -- <NAME=value>...: push_refs_through_hook under the open library (BOF_LOG in the test's directory) and a 60 s bound; BOF_FAULTS holds the faults it logged
+    local -a refs=()
+    while [ "$#" -gt 0 ] && [ "$1" != -- ]; do refs+=("$1"); shift; done
+    [ "$#" -eq 0 ] || shift
+    rm -f "$TEST_DIR/calls.bof"
+    push_refs_through_hook ${refs[@]+"${refs[@]}"} -- LD_PRELOAD="$TEST_DIR/bof.so" BOF_LOG="$TEST_DIR/calls.bof" "$@" -- timeout 60
+    BOF_FAULTS=0
+    [ ! -f "$TEST_DIR/calls.bof" ] || BOF_FAULTS=$(grep -c -E '^(open|fault) ' "$TEST_DIR/calls.bof" || true)
+    BOF_FAULTS=${BOF_FAULTS//[[:space:]]/}
 }
 
 @test "build 5 (item 40, the read-error-as-end-of-file class, C; the fault moved by the repair after the audit of build 5, its LOOPS-7 and T2): a read error in the tag MESSAGE loop of scan_identifiers, planted by the library on the shell's reads of the hook's capture of the tag object from the start of a message line ahead of the banned one (a persistent error), through a real push of an annotated tag whose message names a banned string on a late line, is refused naming the tag object as read short by the shell, and not for the banned line, which the read never reached, nor for an absent object field (the audit's LOOPS-8), the remote without the tag, under a 60 s bound: the tally is the one refusal, and with its read_owed switched off the push publishes; at d2091c2c1 the loop handled the line before the error again, without end, until the bound cut it" {
@@ -20602,4 +22024,1225 @@ rewind_remote() {   # <ref> <sha>: the remote's ref, and this clone's tracking r
     [ "$status" -ne 0 ]
     at_base
     [[ "$output" == *"romp pre-push: the PATH-SCOPED INDEX of the credential feed could not be read to its end for the path-scoped copies' directories (a read error ended the read), so a piece would go unprobed"* ]] || false
+}
+
+# The one-shot reads by fault injection (build 6 of item 40): each record an awk writes for a read the hook judges is
+# read once by the shell, and until build 6 that read swallowed its status (|| :), so a read error left the record
+# empty and the push was refused as a record of no counts, its awk blamed and the read unnamed (or, for the join's
+# rider, the line said the join had recorded no path). Each read now unsets its variable first and refuses naming the
+# record when it is still unset after the read (the hook's paragraph on one-shot reads, above read_owed).
+@test "build 6 (item 40, the one-shot reads by fault injection, the six records): with a read error planted by the library on the shell's read of each record an awk writes for a read the hook judges (the encoding labels' ids.labels, the parent counts' creds.parents, the credential feed's creds.record, the first-parent diff's creds.frecord, the name listing's creds.nrecord and the diff attributes' creds.arecord, from its first byte), a real push of a merge and a clean commit, the clone giving a textconv driver no attribute names, is refused naming that record as one the shell could not read, the remote at its base, each push within the 60 s bound; without a fault the push publishes (at c4dbf4d96 each read swallowed its status and the push was refused as a record of no counts, the awk blamed and the read unnamed)" {
+    local k
+    local -a files=(ids.labels creds.parents creds.record creds.frecord creds.nrecord creds.arecord)
+    local -a whats=("the ENCODING LABELS of the pushed commits could not be read for the identifier scan (the record their awk wrote, ids.labels, could not be read by the shell: a read error)"
+        "the PARENT COUNTS of the pushed commits could not be read for the credential scan (the record their awk wrote, creds.parents, could not be read by the shell: a read error)"
+        "the CREDENTIAL FEED of the push could not be read (the record its awk wrote, creds.record, could not be read by the shell: a read error)"
+        "the FIRST-PARENT DIFF of the pushed merges could not be read for the credential scan (the record its awk wrote, creds.frecord, could not be read by the shell: a read error)"
+        "the NAME LISTING of the pushed commits could not be read for the credential scan (the record its awk wrote, creds.nrecord, could not be read by the shell: a read error)"
+        "the DIFF ATTRIBUTES of the pushed paths could not be read for the credential scan (the record their awk wrote, creds.arecord, could not be read by the shell: a read error)")
+    bash_eio_shim
+    real_gitleaks
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" config diff.zz.textconv cat                               # a driver with a textconv: the name listing and the diff attributes are read
+    git -C "$REPO" checkout -q -b side
+    commit_file side.txt "a side note" "a side commit"
+    git -C "$REPO" checkout -q main
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    git -C "$REPO" merge -q --no-ff -m "merge side" side                     # a merge: the first-parent diff is read
+    push_refs_through_hook main
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push: "*"could not be read"* ]] || false
+    at_remote_main
+    rewind_remote main "$BASE"
+    for k in "${!files[@]}"; do
+        echo "record: ${files[k]}"                                           # names the record when a line below fails
+        beio_push main -- BEIO_MATCH=/romp-pre-push. BEIO_SUFFIX="/${files[k]}" BEIO_OFF=0
+        [ "$BEIO_FAULTS" -gt 0 ]
+        [ "$status" -ne 124 ]
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: ${whats[k]}; the scan is incomplete, so the push is refused"* ]] || false
+        [[ "$output" != *"recorded \"\", not "* ]] || false
+    done
+}
+
+@test "build 6 (item 40, the one-shot reads by fault injection, the join's rider): the join's tr failing for a reason of its own after its awk met a post-image with no verdict (exit 1, the shape of the case on the join's tr), with a read error planted by the library on the shell's read of the join's record of that path (the scratch file short, from its first byte), is refused naming that record as one the shell could not read, and the JOIN's line says that whether the join recorded a path is unknown, naming no path and claiming none was recorded (at c4dbf4d96 the read swallowed its status and the JOIN's line said the join had recorded no post-image as met no verdict for)" {
+    local sha faults=0
+    bash_eio_shim
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file file.txt "remove it"                             # gone at the tip: the blob is the commit's to judge
+    empty_diff_tree_numstat                                      # the join meets file.txt with no verdict and writes the short file before its tr runs
+    tr_refusing join 2
+    rm -f "$TEST_DIR/calls.beio"
+    LD_PRELOAD="$TEST_DIR/beio.so" BEIO_MATCH=/romp-pre-push. BEIO_SUFFIX=/short BEIO_OFF=0 BEIO_LOG="$TEST_DIR/calls.beio" run_hook
+    [ ! -f "$TEST_DIR/calls.beio" ] || faults=$(wc -l < "$TEST_DIR/calls.beio")
+    [ "${faults//[[:space:]]/}" -gt 0 ]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: the JOIN's record of the first post-image it met no verdict for could not be read by the shell (a read error on its file, short); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"shim: tr refused (join 2)"*"romp pre-push: the JOIN of commit ${sha:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited 1; the tool's own error line, where it printed one, is above; whether the join had recorded a post-image as met no verdict for is unknown (its record could not be read, the line above)); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"the join had recorded no post-image"* ]] || false
+    [[ "$output" != *"the join had recorded file.txt"* ]] || false
+}
+
+# The reads with an input of their own in loop bodies, by fault injection (build 7 of item 40, on the coordinator's
+# ruling of 20:21Z 2026-10-01, its 3), with build 5's library: a read error planted on the shell's read of each record
+# the library can reach, a file in the scratch directory, from its first byte or, for the diff attribute's answer, from
+# each field's. The ninth judged read, of a merge blob's counts back from its record, reads a here-string, a pipe the
+# shell writes itself on descriptor 0, which the library cannot single out from the here-strings read before it, so the
+# census alone pins it; so are the five reads that end the hook, each of a here-string.
+@test "build 7 (item 40, the reads in loop bodies by fault injection, the join's count and the diff's count): with a read error planted by the library on the shell's read of the JOIN's record of the candidate rows it printed (count) and, apart, of the ADDED LINES diff's record of the lines it printed (added.count), from the first byte, a real push of a clean commit is refused naming that record as one the shell could not read, the remote at its base, each push within the 60 s bound, and no line blames the awk for an empty record; without a fault the push publishes (at d5740856c each read swallowed its status and the push was refused as an awk that recorded no count, the read unnamed)" {
+    local sha
+    bash_eio_shim
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_refs_through_hook main
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push: "* ]] || false
+    at_remote_main
+    rewind_remote main "$BASE"
+    beio_push main -- BEIO_MATCH=/romp-pre-push. BEIO_SUFFIX=/count BEIO_OFF=0
+    [ "$BEIO_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the JOIN of commit ${sha:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited 0 and the record its awk wrote of the count of candidate rows it printed, count, could not be read by the shell: a read error, so whether every candidate was appended is unknown); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"recorded \"\" as the count"* ]] || false
+    beio_push main -- BEIO_MATCH=/romp-pre-push. BEIO_SUFFIX=/added.count BEIO_OFF=0
+    [ "$BEIO_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${sha:0:10} could not be read (the record the diff's awk wrote, added.count, could not be read by the shell: a read error); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"recorded \"\" as the count"* ]] || false
+}
+
+@test "build 7 (item 40, the reads in loop bodies by fault injection, the join's short file): a numstat that answers nothing (exit 0), so the join meets file.txt with no verdict and records it in the short file, with a read error planted by the library on the shell's read of that file from its first byte, is refused naming that record as one the shell could not read, and the BINARY VERDICTS line names a path whose record could not be read, claiming no path unrecorded (at d5740856c the read swallowed its status and the line said the join did not record the path)" {
+    local sha faults=0
+    bash_eio_shim
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file file.txt "remove it"                             # gone at the tip: the blob is the commit's to judge
+    empty_diff_tree_numstat                                      # every numstat answers nothing: the join meets file.txt with no verdict (status 3) and writes the short file
+    rm -f "$TEST_DIR/calls.beio"
+    LD_PRELOAD="$TEST_DIR/beio.so" BEIO_MATCH=/romp-pre-push. BEIO_SUFFIX=/short BEIO_OFF=0 BEIO_LOG="$TEST_DIR/calls.beio" run_hook
+    [ ! -f "$TEST_DIR/calls.beio" ] || faults=$(wc -l < "$TEST_DIR/calls.beio")
+    [ "${faults//[[:space:]]/}" -gt 0 ]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${sha:0:10} could not be read, and the JOIN's record of the first post-image it met no verdict for could not be read by the shell (a read error on its file, short); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes and printed no verdict for a path whose record could not be read (the line above))"* ]] || false
+    [[ "$output" != *"a path the join did not record"* ]] || false
+}
+
+@test "build 7 (item 40, the reads in loop bodies by fault injection, the diff attribute's answer): a commit adding a -diff text file that carries a banned string, removed at the tip, through a real push with a read error planted by the library on the shell's reads of git check-attr's answer from the first byte of its path field, of its attribute field and of its value field in turn, is refused naming that field of the answer as one the shell could not read, the hidden file's line saying its diff attribute could not be read, the remote at its base, each push within the 60 s bound; the reads after the failed one are not made, so one line names the read (at d5740856c the && chain swallowed the error and the line said git check-attr answered nothing for the path asked)" {
+    local off k
+    local -a offs=(0 10 15) fields=("the path it names" "the attribute it names" "the attribute's value")
+    bash_eio_shim
+    export ROMP_NO_GITLEAKS=1
+    hidden_file_in_middle_commit_after_base
+    (cd "$REPO" && git check-attr -z diff -- notes.txt) > "$TEST_DIR/attr.answer"
+    [ "$(od -An -tx1 "$TEST_DIR/attr.answer" | tr -d ' \n')" = 6e6f7465732e747874006469666600756e73657400 ]   # notes.txt, diff and unset, each ended by a NUL: the fields start at bytes 0, 10 and 15
+    for k in 0 1 2; do
+        echo "field: ${fields[k]}"                                           # names the field when a line below fails
+        beio_push main -- BEIO_MATCH=/romp-pre-push. BEIO_SUFFIX=/attr BEIO_OFF="${offs[k]}"
+        [ "$BEIO_FAULTS" -gt 0 ]
+        [ "$status" -ne 124 ]
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: the DIFF ATTRIBUTE of notes.txt in commit ${leak:0:10} could not be read for the refused line below (the shell could not read git check-attr's answer, its file attr, at ${fields[k]}: a read error); the scan is incomplete, so the push is refused"* ]] || false
+        [ "$(grep -c 'romp pre-push: the DIFF ATTRIBUTE of ' <<< "$output")" -eq 1 ]
+        [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute could not be read (the shell could not read git check-attr's answer, the line above), so whether an attribute of its path accounts for the verdict is unknown"* ]] || false
+        [[ "$output" != *"answered nothing for the path asked"* ]] || false
+    done
+}
+
+# The diff attribute's answer that cannot be opened (build 8 of item 40, on the coordinator's ruling of 00:23Z
+# 2026-10-02, its RC7-2): until build 8 the answer's three reads, their unsets and their tests sat in one braced group
+# fed by the file with an || after it, so an open that failed skipped them all and was read as an empty answer. The
+# open fails here through a git whose check-attr, asked about one path, takes the read bit off the file the shell sent
+# its output to, after writing its answer (the round 9a case's shape); root reads any file, so the case cannot run as
+# root, and its first line after the push says whether the plant landed.
+@test "build 8 (item 40, the diff attribute's answer that cannot be OPENED; the coordinator's ruling of 00:23Z 2026-10-02, its RC7-2): a commit adding two -diff text files, a.txt and notes.txt, notes.txt carrying a banned string, removed at the tip, through a real push with a git whose check-attr, asked about notes.txt, takes the read bit off its answer's file after writing it, is refused naming the answer as one the shell could not open (for reading, the direction named since build 9), notes.txt's line saying its diff attribute could not be read because the shell could not open the answer and naming no attribute, a.txt's line, made first, naming its attribute from its own answer, the remote at its base, and no line saying git check-attr answered nothing (at d5740856c and at build 7's text the failed open read as an empty answer: notes.txt's line said git check-attr answered nothing for the path asked, and no line named the open)" {
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'a.txt -diff\nnotes.txt -diff\n' > "$REPO/.git/info/attributes"
+    printf 'nothing to see\n' > "$REPO/a.txt"
+    printf 'seen on TESTHOST\n' > "$REPO/notes.txt"
+    git -C "$REPO" add a.txt notes.txt
+    git -C "$REPO" commit -qm "two -diff files, one carrying a banned string"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q a.txt notes.txt
+    git -C "$REPO" commit -qm "remove them"
+    git_shim "if [ \"\${1:-}\" = check-attr ] && [ \"\${2:-}\" = -z ] && [ \"\${5:-}\" = notes.txt ]; then \"\$real_git\" \"\$@\"; s=\$?; chmod 000 /dev/stdout; [ -r /dev/stdout ] || : > $(printf %q "$TEST_DIR/attr.unreadable"); exit \"\$s\"; fi"
+    push_main_through_hook_with_shim
+    [ -f "$TEST_DIR/attr.unreadable" ]                                   # the plant landed: the answer's file was unreadable to this user
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: a.txt in commit ${leak:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"*"romp pre-push: the DIFF ATTRIBUTE of notes.txt in commit ${leak:0:10} could not be read for the refused line below (the shell could not open git check-attr's answer, its file attr, for reading); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute could not be read (the shell could not open git check-attr's answer for reading, the line above), so whether an attribute of its path accounts for the verdict is unknown"* ]] || false
+    [ "$(grep -c 'romp pre-push: the DIFF ATTRIBUTE of ' <<< "$output")" -eq 1 ]
+    [[ "$output" != *"answered nothing for the path asked"* ]] || false
+    [[ "$output" != *"notes.txt in commit ${leak:0:10} is text that its diff attribute"* ]] || false        # notes.txt's line names no attribute, a.txt's or another
+}
+
+# The diff attribute's answer that cannot be opened for WRITING (build 9 of item 40, on the coordinator's ruling of
+# 04:26Z 2026-10-02, its ATTR8-3): until build 9 the answer's file was opened on git check-attr's own line, so a failed
+# open skipped git and read as git check-attr exiting 1, which notes.txt's line then said. The open fails here through
+# a git whose check-attr, asked about a.txt, takes the write bit off the file the shell sent its output to, after
+# writing its answer, so a.txt's answer still reads and notes.txt's open for writing fails; root writes any file, so the
+# case cannot run as root, and its first line after the push says whether the plant landed.
+@test "build 9 (item 40, the diff attribute's answer that cannot be opened for WRITING; the coordinator's ruling of 04:26Z 2026-10-02, its ATTR8-3): a commit adding two -diff text files, a.txt and notes.txt, notes.txt carrying a banned string, removed at the tip, through a real push with a git whose check-attr, asked about a.txt, takes the write bit off its answer's file after writing it, is refused naming the answer's file as one the shell could not open for writing, git check-attr not run for notes.txt, notes.txt's line saying its diff attribute could not be read because the shell could not open the answer for writing, a.txt's line, made first, naming its attribute from its own answer, the remote at its base, and no line naming an exit of git check-attr (at d5740856c and at build 8's text notes.txt's line said git check-attr exited 1, and no line named the open)" {
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'a.txt -diff\nnotes.txt -diff\n' > "$REPO/.git/info/attributes"
+    printf 'nothing to see\n' > "$REPO/a.txt"
+    printf 'seen on TESTHOST\n' > "$REPO/notes.txt"
+    git -C "$REPO" add a.txt notes.txt
+    git -C "$REPO" commit -qm "two -diff files, one carrying a banned string"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q a.txt notes.txt
+    git -C "$REPO" commit -qm "remove them"
+    git_shim "if [ \"\${1:-}\" = check-attr ] && [ \"\${2:-}\" = -z ] && [ \"\${5:-}\" = a.txt ]; then \"\$real_git\" \"\$@\"; s=\$?; chmod 444 /dev/stdout; [ -w /dev/stdout ] || : > $(printf %q "$TEST_DIR/attr.unwritable"); exit \"\$s\"; fi"
+    push_main_through_hook_with_shim
+    [ -f "$TEST_DIR/attr.unwritable" ]                                   # the plant landed: the answer's file was unwritable to this user
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: a.txt in commit ${leak:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"*"romp pre-push: the DIFF ATTRIBUTE of notes.txt in commit ${leak:0:10} could not be read for the refused line below (the shell could not open git check-attr's answer, its file attr, for writing, so git check-attr was not run); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute could not be read (the shell could not open git check-attr's answer for writing, the line above), so whether an attribute of its path accounts for the verdict is unknown"* ]] || false
+    [ "$(grep -c 'romp pre-push: the DIFF ATTRIBUTE of ' <<< "$output")" -eq 1 ]
+    [[ "$output" != *"git check-attr exited"* ]] || false
+}
+
+@test "build 9 (item 40, /dev/null that cannot be opened for the diff attribute's read; the coordinator's ruling of 04:26Z 2026-10-02, its ATTR8-3 and the class): a commit adding a -diff text file that carries a banned string, removed at the tip, through a real push with the library failing the shell's first open of /dev/null after its open of check-attr's answer (where git's error line goes), is refused naming /dev/null as a file the shell could not open for writing, git check-attr not run, the hidden file's line saying its diff attribute could not be read for that reason, the remote at its base, within the 60 s bound, and no line naming an exit of git check-attr (at d5740856c and at build 8's text /dev/null sat on git's own line, a failed open skipped git, and the line said git check-attr exited 1)" {
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    hidden_file_in_middle_commit_after_base
+    bof_push main -- BOF_AFTER=/attr BOF_PATH=/dev/null BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the DIFF ATTRIBUTE of notes.txt in commit ${leak:0:10} could not be read for the refused line below (the shell could not open /dev/null, where git check-attr's error line goes, for writing, so git check-attr was not run); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute could not be read (the shell could not open /dev/null for writing, the line above), so whether an attribute of its path accounts for the verdict is unknown"* ]] || false
+    [[ "$output" != *"git check-attr exited"* ]] || false
+}
+
+# The line loops whose own input a failed open leaves unread (build 9 of item 40, on the coordinator's ruling of 04:26Z
+# 2026-10-02, its ATTR8-5 and the class), by fault injection with the open library (bash_open_shim): each opens its
+# input once, on descriptor 4, judged on its own, where until build 9 the input sat on the loop's done, and a failed
+# open ran no pass, read by the check after the done as a read cut short (a read error, for a read never made) or as
+# the tool's answer lacking its closing line.
+@test "build 9 (item 40, the CHOSEN ADDRESSES' here-strings that cannot be made; the coordinator's ruling of 04:26Z 2026-10-02, its ATTR8-5): with the library failing the shell's making of the here-string of this clone's chosen addresses (they hold its configured t@example.invalid), first the one is_chosen reads, then, for a commit stamped with an address the clone did not choose, the one here_lines counts the capture's lines from, a real push is refused naming the here-string as one the shell could not make (since the repair after the build's audit, its OP9-7, saying whether the address is one the clone chose is unknown, where the build said the address was taken as one it did not choose), the remote at its base, each push within the 60 s bound, and no line says the capture was read or counted short (at d5740856c and at build 8's text the first push said the capture was read short, the shell having read 0 of its lines, and the second that it could not be counted, the shell having read 0 bytes of its here-string, each naming a read error for a read never made)" {
+    local sha
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    bof_push main -- BOF_HERE=t@example.invalid BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the capture of the CHOSEN ADDRESSES of this clone, compared with <tests@example.invalid>, could not be opened for reading (the shell could not make a here-string of it: a pipe it writes, or a temporary file in TMPDIR), so whether the address is one it chose is unknown; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"read short"* ]] || false
+    git -C "$REPO" reset -q --hard "$BASE"
+    printf 'nothing at all\n' > "$REPO/other.txt"
+    git -C "$REPO" add other.txt
+    GIT_AUTHOR_EMAIL=zz@other.example git -C "$REPO" commit -qm "a commit by an address the clone did not choose"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    bof_push main -- BOF_HERE=t@example.invalid BOF_HSKIP=1 BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the capture of the CHOSEN ADDRESSES of this clone, compared with <zz@other.example>, could not be counted (the shell could not make a here-string of it to read: a pipe it writes, or a temporary file in TMPDIR); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"(the shell read "* ]] || false
+}
+
+@test "build 9 (item 40, the MESSAGE grep's input and its hit lines' here-string that cannot be made; the coordinator's ruling of 04:26Z 2026-10-02, its ATTR8-5 and the class): a real push of a clean commit whose message names a banned string, with the library failing the shell's making of the here-string of the message the grep reads, is refused naming that input as one the shell could not open, the remote at its base; and with the library failing the next here-string holding it, the grep's hit lines, is refused naming that one, and no line says the capture was read short; each push within the 60 s bound (at d5740856c and at build 8's text the first push PUBLISHED the banned message with no romp line: the here-string sat on the judged_read call, which a failed open skipped whole, and the message read as one with no hit; the second said the capture of the hit lines was read short, the shell having read 0 of its 1 line)" {
+    local sha
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see here" "seen on TESTHOST, the subject"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    bof_push main -- "BOF_HERE=seen on TESTHOST" BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the MESSAGE of commit ${sha:0:10} could not be grepped (grep was not run: its input, a here-string the shell writes to a pipe or to a temporary file in TMPDIR, could not be opened for reading); the scan is incomplete, so the push is refused"* ]] || false
+    bof_push main -- "BOF_HERE=seen on TESTHOST" BOF_HSKIP=1 BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the capture of the MESSAGE of commit ${sha:0:10}'s hit lines could not be opened for reading (the shell could not make a here-string of it: a pipe it writes, or a temporary file in TMPDIR); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"read short"* ]] || false
+}
+
+@test "build 9 (item 40, the message hit lines' numbers, read from descriptor 4 since build 9; a guard, green at d5740856c and at build 8's text by design): a real push of a clean commit whose message holds a banned string on a line that holds colons is refused naming the line by its number alone (an intermediate text of build 9 cut the hit line at its last colon, and named the line as \"1:fix: seen\")" {
+    local sha
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see here" "fix: seen: on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the MESSAGE of commit ${sha:0:10} carries a personal identifier on line 1 (line 1 is the subject)"* ]] || false
+}
+
+@test "build 9 (item 40, numstat_rows' answer and rows' file that cannot be opened; the coordinator's ruling of 04:26Z 2026-10-02, its ATTR8-5): a commit adding a -diff text file that carries a banned string, through a real push with the library failing the shell's open of git diff-tree --numstat's answer (the scratch file rows.raw) for reading, and apart its open of the rows' file it writes from that answer (the scratch file rows, past the truncation at the commit's start) for writing, is refused naming that open, the remote at its base, each push within the 60 s bound (at d5740856c and at build 8's text the first push said the shell's read of the answer ended on a read error, for a read never made, and the second wrote no row and named nothing for it, the push refused by the tip's line alone)" {
+    local sha
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'notes.txt -diff\n' > "$REPO/.git/info/attributes"
+    commit_file notes.txt "seen on TESTHOST" "a -diff file carrying a banned string"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/rows.raw BOF_DIR=r
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${sha:0:10} could not be read (the shell could not open git diff-tree --numstat's answer, the scratch file rows.raw, for reading); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"ended on a read error"* ]] || false
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/rows BOF_DIR=w BOF_SKIP=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${sha:0:10} could not be read (the shell could not open the rows' file it writes from git diff-tree --numstat's answer, the scratch file rows, for writing); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"printed no verdict for notes.txt"* ]] || false
+}
+
+@test "build 9 (item 40, the DIFF SETTINGS' answer that cannot be opened; the coordinator's ruling of 04:26Z 2026-10-02, its ATTR8-5): a real push of a clean commit under the real scanner, with the library failing the shell's open of git config's answer for the diff settings (the scratch file creds.diffcfg) for reading, is refused naming that open, the remote at its base, within the 60 s bound, and no line says the answer was read short or names git config's answer (at d5740856c and at build 8's text the push was refused as an answer read short, git config exited 0 and its answer lacking its tail marker, the tool's answer named for the shell's failed open)" {
+    bash_open_shim
+    r9d_base
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/creds.diffcfg BOF_DIR=r
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the DIFF SETTINGS of this clone could not be read for the credential scan (the shell could not open git config's answer, the scratch file creds.diffcfg, for reading); the credential feed was not read, and the scan follows once the setting is fixed; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"were read short"* ]] || false
+}
+
+# The credential scan's closing lines by cause (the coordinator's ruling of 09:48Z 2026-10-02 on the repair after the
+# audit of build 9 of item 40, its OP9-6): after a refusal for the shell's own failed open, the shell's lines (the scan
+# could not be run whole, the cause named above); after any other cause, the scanner's (gitleaks could not scan); both
+# when both were there. Each push of the case fails one open of its own kind, so every road to unscanned_open is held:
+# open_in, judged_read's input, open_str, the gitleaks config's here-string, the read of a file of its chain that
+# exists and its copy, the skip canary's files and the scanner's log. The cases that pin the scanner's lines keep them:
+# none of their refusals is such an open (round 11a's absent extend file is the config's: a file that does not exist).
+OP96_SHELL="romp pre-push: BLOCKED. The credential scan could not be run whole; the cause is named above."$'\n'"  The push is refused rather than published unscanned. Repair what is named above and push again, or set ROMP_NO_GITLEAKS=1 for one push."
+OP96_SCANNER="romp pre-push: BLOCKED. gitleaks could not scan; its error is above."
+op96_refused() {   # <shell|both>: the push just made landed its fault and was refused within the 60 s bound, the remote at its base, closing with the shell's lines, and with the scanner's too (both) or without them (shell)
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"$OP96_SHELL"* ]] || false
+    if [ "$1" = both ]; then
+        [[ "$output" == *"$OP96_SCANNER"* ]] || false
+    else
+        [[ "$output" != *"$OP96_SCANNER"* ]] || false
+        [[ "$output" != *"Fix the scanner"* ]] || false
+    fi
+}
+@test "OP9-6 (item 40, the credential scan's closing lines by cause; the coordinator's ruling of 09:48Z 2026-10-02 on the repair after the audit of build 9): under the real scanner and the open library, real pushes of a clean commit, each refused naming the open the library failed, within the 60 s bound, the remote at its base: with the diff settings' answer unopened (creds.diffcfg, open_in), the one refusal, the push closes with the shell's lines, the credential scan could not be run whole and its cause named above, and not the scanner's, gitleaks could not scan; with the feed's input unopened (creds.list, judged_read's -i) beside a scan of record exiting 3, and with the parent counts' here-string unmade (open_str) beside a scan of record logging an error, it closes with both; with GITLEAKS_CONFIG_TOML's here-string unmade, with the config's copy unopened (creds.cfg.0.toml) under a work tree .gitleaks.toml, with that .gitleaks.toml, a file that exists, unopened at its read and apart as its byte count's input, and with the skip canary's config unopened (creds.canary.toml) under an honest per-rule path allowlist, with the shell's alone; and with a feed git printing a foreign line beside the scan of record's log unopened (creds.log), with the feed's advice and the shell's lines, not the scanner's (at the build's text before OP9-6 each push closed with the scanner's lines and none with the shell's; at OP9-6's first text, push 7 closed with the scanner's lines alone)" {
+    local sha
+    bash_open_shim
+    r9d_base
+    commit_file k.py "k = 1" "a clean commit"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    echo "push 1: the diff settings' answer (open_in), the one refusal"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/creds.diffcfg BOF_DIR=r
+    op96_refused shell
+    [[ "$output" == *"romp pre-push: the DIFF SETTINGS of this clone could not be read for the credential scan (the shell could not open git config's answer, the scratch file creds.diffcfg, for reading); "* ]] || false
+    echo "push 2: the feed's input (judged_read -i), beside a scan of record exiting 3"
+    scanner_wrapper '' 's=3'
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/creds.list BOF_DIR=r
+    op96_refused both
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk was not run: its input file "*"/creds.list could not be opened for reading); "* ]] || false
+    echo "push 3: the parent counts' here-string (open_str), beside a scan of record logging an error"
+    scanner_wrapper 'echo "1:00AM ERR a planted error" >&2'
+    bof_push main -- BOF_HERE=$'1 1 0 0\n' BOF_EXACT=1 BOF_ONCE=1
+    op96_refused both
+    [[ "$output" == *"romp pre-push: the PARENT COUNTS of the pushed commits could not be read for the credential scan (the shell could not make a here-string of their awk's record, \"1 1 0 0\", to read the four counts back from: "* ]] || false
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan did not complete: gitleaks logged an error (a planted error); "* ]] || false
+    export ROMP_GITLEAKS="$GL"
+    echo "push 4: GITLEAKS_CONFIG_TOML's here-string (gitleaks_config)"
+    bof_push main -- 'GITLEAKS_CONFIG_TOML=title = "zz op96"' 'BOF_HERE=zz op96' BOF_ONCE=1
+    op96_refused shell
+    [[ "$output" == *"romp pre-push: the gitleaks config GITLEAKS_CONFIG_TOML's text could not be opened for reading, "* ]] || false
+    echo "push 5: a feed git printing a foreign line, beside the scan of record's log (scanner_run), which the shell cannot open"
+    r10a_feed_git_rewriting '/^\+k = / { print "~" substr($0, 2); next } { print }'
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/creds.log BOF_DIR=w
+    [ -s "$TEST_DIR/calls.rewrite" ]
+    op96_refused shell
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read whole (git diff-tree exited 0 and printed a line inside commit 1 of the 1 it was given, ${sha:0:10}, "* ]] || false
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan was not run: its log, the scratch file creds.log, could not be opened for writing by the shell; "* ]] || false
+    [[ "$output" == *"romp pre-push: BLOCKED. A git read of the credential scan (git diff-tree) printed a line the hook cannot read; the read and its commit are named above."* ]] || false
+    rm -f "$TEST_DIR/shim/git"; hash -r                                     # the real git again, for the case's own commands too
+    echo "push 6: the gitleaks config's copy (gitleaks_config), under a work tree .gitleaks.toml"
+    r11a_config "$(printf '[extend]\nuseDefault = true')"
+    commit_file c6.txt "nothing to see here" "a clean commit"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/creds.cfg.0.toml BOF_DIR=w
+    op96_refused shell
+    [[ "$output" == *"romp pre-push: the copy of the gitleaks config .gitleaks.toml (the work tree's), the config the scanner is handed, could not be made: its file, the scratch file creds.cfg.0.toml, could not be opened for writing by the shell; "* ]] || false
+    echo "push 7: the work tree's .gitleaks.toml, a file that exists, at its read (gitleaks_config's open of a file of the chain)"
+    bof_push main -- BOF_PATH=/.gitleaks.toml BOF_DIR=r BOF_ONCE=1
+    op96_refused shell
+    [[ "$output" == *"romp pre-push: the gitleaks config .gitleaks.toml (the work tree's) could not be opened for reading, "* ]] || false
+    echo "push 8: the same file as the input of its byte count (judged_read's -i), so both opens of one file close alike"
+    bof_push main -- BOF_PATH=/.gitleaks.toml BOF_DIR=r BOF_SKIP=1 BOF_ONCE=1
+    op96_refused shell
+    [[ "$output" == *"romp pre-push: the gitleaks config .gitleaks.toml (the work tree's) was read by the shell while its BYTE COUNT could not be read (wc was not run: its input file "*"/.gitleaks.toml could not be opened for reading)"* ]] || false
+    echo "push 9: the skip canary's config (skip_canary), under an honest per-rule path allowlist"
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    commit_file c7.txt "nothing to see here" "a clean commit"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/creds.canary.toml BOF_DIR=w
+    op96_refused shell
+    [[ "$output" == *"romp pre-push: the skip CANARY's config and pieces could not be written to the scratch directory, "* ]] || false
+}
+
+@test "build 9 (item 40, the skip canary's path skips here-string that cannot be made; the coordinator's ruling of 04:26Z 2026-10-02, its ATTR8-5): under the honest per-rule allowlist and the real scanner, a real push of a clean commit, with the library failing the shell's making of the here-string of the path skips' answer over the canary's log (it holds the canary's rule, romp-skip-canary), is refused naming it as one the shell could not make, the remote at its base, within the 60 s bound, and no line says the answer had no closing line (at d5740856c and at build 8's text the failed open ended the hook under errexit, canary_check being the last command of an || list: bash's line and no romp line, where the audit's probe, which ran the function under || :, saw the answer named as one with no closing line of counts)" {
+    bash_open_shim
+    r11a_base
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    r12b3_clean
+    bof_push main -- BOF_HERE=romp-skip-canary BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the PATH SKIPS in the trace log of the skip CANARY run of gitleaks "*" could not be read by the shell (it could not make a here-string of path_skips' answer to read: a pipe it writes, or a temporary file in TMPDIR), so whether it logs the skip line the scan of record reads is unknown; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"answered no closing line of counts"* ]] || false
+}
+
+# The records the awks write, and the counts read back from them, opened by the shell (build 9 of item 40, the class
+# across the hook): a record read whose failed open let the hook go on (the parent counts' and the feed's, in an elif
+# condition, and the name listing's, in a function called in a condition) opens its file once, on descriptor 4, and so
+# does each read of a record's counts, a here-string, each open judged on its own, where until build 9 the file sat on
+# the read's braced group and the here-string on the read, and a failed open read as a read error, for a read never
+# made. (The encoding labels', the first-parent diff's and the diff attributes' record reads end the hook on a failed
+# open, bash's line naming the file, and keep their shape.) The counts' here-strings are picked out by their whole
+# text (BOF_EXACT), the counts this push's records hold (the two records of three and nothing, the encoding labels'
+# and the diff attributes', in that order, the identifier scan's first).
+@test "build 9 (item 40, the records' files and their counts' here-strings that cannot be opened; the class across the hook): with the library failing the shell's open for reading of the record the parent counts', the credential feed's and the name listing's awks write (creds.parents, creds.record and creds.nrecord), and apart its making of the here-string the counts of each of six records are read back from (the encoding labels', the parent counts', the feed's, the first-parent diff's, the name listing's and the diff attributes'), a real push of a merge and a clean commit, the clone giving a textconv driver no attribute names, is refused naming that open, the remote at its base, each push within the 60 s bound, and no line names a read error (at build 8's text each push was refused naming a read error on the record, or on its counts, for a read never made; at d5740856c the parent counts' and the feed's record opens ended the hook with bash's line and no romp line, the name listing's read as its awk recording no counts, and each counts' here-string as its awk recording a record that was not counts)" {
+    local k
+    local -a files=(creds.parents creds.record creds.nrecord)
+    local -a whats=("the PARENT COUNTS of the pushed commits could not be read for the credential scan (the record their awk wrote, creds.parents, could not be opened for reading by the shell)"
+        "the CREDENTIAL FEED of the push could not be read (the record its awk wrote, creds.record, could not be opened for reading by the shell)"
+        "the NAME LISTING of the pushed commits could not be read for the credential scan (the record its awk wrote, creds.nrecord, could not be opened for reading by the shell)")
+    local -a records=(ids.labels creds.parents creds.record creds.frecord creds.nrecord creds.arecord)
+    local -a counts=($'3 0\n' $'3 3 0 1\n' $'3 2 32 0 0\n' $'1 1 1 12 0\n' $'3 2\n' $'3 0\n') skips=(0 0 0 0 0 1)
+    local -a cwhats=("the ENCODING LABELS of the pushed commits could not be read for the identifier scan (the shell could not make a here-string of their awk's record, \"3 0\", to read the two counts back from: a pipe it writes, or a temporary file in TMPDIR)"
+        "the PARENT COUNTS of the pushed commits could not be read for the credential scan (the shell could not make a here-string of their awk's record, \"3 3 0 1\", to read the four counts back from: a pipe it writes, or a temporary file in TMPDIR)"
+        "the CREDENTIAL FEED of the push could not be read (the shell could not make a here-string of its awk's record, \"3 2 32 0 0\", to read the five counts back from: a pipe it writes, or a temporary file in TMPDIR)"
+        "the FIRST-PARENT DIFF of the pushed merges could not be read for the credential scan (the shell could not make a here-string of its awk's record, \"1 1 1 12 0\", to read the five counts back from: a pipe it writes, or a temporary file in TMPDIR)"
+        "the NAME LISTING of the pushed commits could not be read for the credential scan (the shell could not make a here-string of its awk's record, \"3 2\", to read the two counts back from: a pipe it writes, or a temporary file in TMPDIR)"
+        "the DIFF ATTRIBUTES of the pushed paths could not be read for the credential scan (the shell could not make a here-string of their awk's record, \"3 0\", to read the two counts back from: a pipe it writes, or a temporary file in TMPDIR)")
+    bash_open_shim
+    real_gitleaks
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" config diff.zz.textconv cat                               # a driver with a textconv: the name listing and the diff attributes are read
+    git -C "$REPO" checkout -q -b side
+    commit_file side.txt "a side note" "a side commit"
+    git -C "$REPO" checkout -q main
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    git -C "$REPO" merge -q --no-ff -m "merge side" side                     # a merge: the first-parent diff is read
+    for k in "${!files[@]}"; do
+        echo "record: ${files[k]}"                                           # names the record when a line below fails
+        bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX="/${files[k]}" BOF_DIR=r
+        [ "$BOF_FAULTS" -gt 0 ]
+        [ "$status" -ne 124 ]
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: ${whats[k]}; the scan is incomplete, so the push is refused"* ]] || false
+        [[ "$output" != *"a read error"* ]] || false
+    done
+    for k in "${!records[@]}"; do
+        echo "counts: ${records[k]}"
+        bof_push main -- "BOF_HERE=${counts[k]}" BOF_EXACT=1 BOF_HSKIP="${skips[k]}" BOF_ONCE=1
+        [ "$BOF_FAULTS" -gt 0 ]
+        [ "$status" -ne 124 ]
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: ${cwhats[k]}; the scan is incomplete, so the push is refused"* ]] || false
+        [[ "$output" != *"a read error"* ]] || false
+    done
+}
+
+@test "build 9 (item 40, the JOIN's rider's record that cannot be opened; the class across the hook): the join's tr failing for a reason of its own after its awk met a post-image with no verdict, with the library failing the shell's open of the join's record of that path (the scratch file short) for reading, is refused naming that open, and the JOIN's line says that whether the join recorded a path is unknown because its record could not be opened, naming no path and claiming none was recorded (at build 8's text the line named a read error on the record, for a read never made; at d5740856c no line named the record, the JOIN's line standing alone)" {
+    local sha
+    bash_open_shim
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file file.txt "remove it"
+    empty_diff_tree_numstat
+    tr_refusing join 2
+    rm -f "$TEST_DIR/calls.bof"
+    LD_PRELOAD="$TEST_DIR/bof.so" BOF_PATH=/romp-pre-push. BOF_SUFFIX=/short BOF_DIR=r BOF_LOG="$TEST_DIR/calls.bof" run_hook
+    [ -f "$TEST_DIR/calls.bof" ]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: the JOIN's record of the first post-image it met no verdict for could not be opened for reading by the shell (its file, short); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: the JOIN of commit ${sha:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited 1; the tool's own error line, where it printed one, is above; whether the join had recorded a post-image as met no verdict for is unknown (its record could not be opened, the line above)); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"a read error"* ]] || false
+    [[ "$output" != *"the join had recorded no post-image"* ]] || false
+}
+
+@test "build 9 (item 40, the credential scan's reads in loop bodies that cannot be opened; the class across the hook): with the library failing the shell's making of the here-string a merge's binary blob's counts are read back from (its awk's record), through a real push of a merge whose binary path holds a credential, and then its open of a piece's bytes for the path-scoped copies (a file under creds.d), through a real push of an added cert.p12, each push is refused naming that open, the remote at its base, within the 60 s bound, and no line names a read error, nor, since the repair after the build's audit (its OP9-2), a path-scoped run as reading fewer bytes than it was fed (at build 8's text each was refused naming a read error, for a read never made; at d5740856c the counts read as the awk recording a record that was not four counts, and the piece left its copies empty with no line naming it; at both and at the build's text the path-scoped runs were refused by their byte figures, gitleaks' read named short for the shell's failed open)" {
+    local brec
+    bash_open_shim
+    r9d_base
+    r10a_merge_open
+    r10a_evil nul
+    r10a_merge_commit evil.txt
+    bof_push main -- BOF_HERE=zznothing BOF_HERELOG=1                    # the documents the shell makes, logged and none failed
+    [ "$status" -ne 0 ]
+    [ "$(grep -c -E '^here [0-9]+ [0-9]+ [0-9]+ [0-9]+\\n$' "$TEST_DIR/calls.bof")" -eq 2 ]      # four counts: the parent counts' record, then the blob's
+    brec=$(grep -E '^here [0-9]+ [0-9]+ [0-9]+ [0-9]+\\n$' "$TEST_DIR/calls.bof" | tail -n 1 | sed 's/^here //; s/\\n$//')
+    [ -n "$brec" ]
+    [ "$brec" != "$(grep -E '^here [0-9]+ [0-9]+ [0-9]+ [0-9]+\\n$' "$TEST_DIR/calls.bof" | head -n 1 | sed 's/^here //; s/\\n$//')" ]   # the blob's counts, apart from the parent counts'
+    bof_push main -- "BOF_HERE=$brec"$'\n' BOF_EXACT=1 BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} could not be read whole for the credential scan (the shell could not make a here-string of its awk's record, \"$brec\", to read the four counts back from: a pipe it writes, or a temporary file in TMPDIR); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"a read error"* ]] || false
+    git -C "$REPO" reset -q --hard "$BASE"
+    r9d_witness pkcs12-file
+    git -C "$REPO" add -- "$wfile"
+    git -C "$REPO" commit -qm "a file the path-scoped rule names"
+    bof_push main -- BOF_PATH=/creds.d/ BOF_DIR=r
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CONTENT of piece "*" of the credential feed (its file creds.d/"*") could not be opened for reading by the shell for the path-scoped copies, so its copies hold none of it; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"a read error"* ]] || false
+    [[ "$output" != *"the CREDENTIAL scan under the path-scoped rules read "* ]] || false
+    [[ "$output" != *"the PROBE run of the path-scoped copies read "* ]] || false
+}
+
+# The inputs of judged_read's commands (build 9 of item 40, the class across the hook): each opened by judged_read
+# once, on descriptor 4 (-i a file, -s a here-string), judged on its own. Until build 9 the input sat on the
+# judged_read call, which a failed open skipped whole, status 1 and no refusal: the newline test's three counts
+# returned as refused when none had refused, and the commit's check was passed over; the message, address, tagger and
+# symlink greps and the hit paths' sort returned as reads that found nothing; the tag's byte count left the tag
+# unread; and the added lines' count skipped its check.
+@test "build 9 (item 40, the newline test's inputs that cannot be opened, a fail-open; the class across the hook): a commit adding a -diff text file that carries a banned string, removed at the tip, through a real push with the library failing the shell's open for reading of the post-image listing's rewrite (post.nl) for its byte count, of the listing itself (post) for its rewrite, and of the listing for its byte count, each apart, is refused naming that open as the input of the command that was not run, the remote at its base, each push within the 60 s bound (at d5740856c and at build 8's text each push PUBLISHED the banned file with no romp line: the open sat on the judged_read call, a failed open skipped it, and the newline test returned as refused, so the commit's check was passed over)" {
+    local k
+    local -a sfx=(/post.nl /post /post) skip=(1 4 5) cmd=("the byte count's wc for the rewrite of post was not run: its input file " "tr was not run: its input file " "the byte count's wc for post was not run: its input file ")
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    hidden_file_in_middle_commit_after_base
+    # the commits are judged newest first, and the removal's opens come first: one of post.nl, then three of post (its
+    # newline test, its rewrite and its count), so the leak's are the second of post.nl and the fifth and sixth of post
+    for k in 0 1 2; do
+        echo "open: ${sfx[k]} past ${skip[k]}"                                  # names the open when a line below fails
+        bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX="${sfx[k]}" BOF_DIR=r BOF_SKIP="${skip[k]}" BOF_ONCE=1
+        [ "$BOF_FAULTS" -gt 0 ]
+        [ "$status" -ne 124 ]
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: the LISTINGS of commit ${leak:0:10} could not be rewritten for the BINARY VERDICT check (${cmd[k]}"*"${sfx[k]} could not be opened for reading); the scan is incomplete, so the push is refused"* ]] || false
+    done
+}
+
+@test "build 9 (item 40, the greps' and the sort's here-strings and the tag's capture that cannot be opened, fail-opens; the class across the hook): through real pushes, with the library failing the shell's making of the here-string of a commit's author domain (TESTHOST.example), of an annotated tag's tagger domain, and of the paths a commit's added lines grep named (the sort's input), and its open of the tag's capture (the scratch file tag) for its byte count, each apart, each push is refused naming that input as one the shell could not open, the remote at its base, each within the 60 s bound (at d5740856c and at build 8's text each push PUBLISHED with no romp line: the author's and the tagger's banned domains read as greps that found nothing, the hit paths' sort as one that ran and listed none, and the tag as one whose capture could not be counted, left unread)" {
+    local sha
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'nothing at all\n' > "$REPO/other.txt"
+    git -C "$REPO" add other.txt
+    GIT_AUTHOR_EMAIL=dev@TESTHOST.example git -C "$REPO" commit -qm "a commit by a banned domain"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    bof_push main -- BOF_HERE=TESTHOST.example BOF_HSKIP=1 BOF_ONCE=1    # past the commit's addresses' loop, whose here-string holds the domain first
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the ADDRESS <dev@TESTHOST.example> of commit ${sha:0:10} could not be grepped (grep was not run: its input, a here-string the shell writes to a pipe or to a temporary file in TMPDIR, could not be opened for reading); the scan is incomplete, so the push is refused"* ]] || false
+    git -C "$REPO" reset -q --hard "$BASE"
+    commit_file hit.txt "seen on TESTHOST here" "a banned added line"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file hit.txt "remove it"                                         # gone at the tip: the commit's added lines alone carry it
+    bof_push main -- BOF_HERE=$'hit.txt\n' BOF_EXACT=1 BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${sha:0:10} could not be reported (sort was not run: its input, a here-string the shell writes to a pipe or to a temporary file in TMPDIR, could not be opened for reading); the scan is incomplete, so the push is refused"* ]] || false
+    git -C "$REPO" reset -q --hard "$BASE"
+    GIT_COMMITTER_EMAIL=dev@TESTHOST.example git -C "$REPO" tag -a v1 -m "a release" "$BASE"
+    sha="$(git -C "$REPO" rev-parse v1)"
+    bof_push refs/tags/v1 -- BOF_HERE=TESTHOST.example BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    [ -z "$(git -C "$TEST_DIR/remote.git" tag -l v1)" ]
+    [[ "$output" == *"romp pre-push: the TAGGER ADDRESS <dev@TESTHOST.example> of tag refs/tags/v1 (${sha:0:10}) could not be grepped (grep was not run: its input, a here-string the shell writes to a pipe or to a temporary file in TMPDIR, could not be opened for reading); the scan is incomplete, so the push is refused"* ]] || false
+    bof_push refs/tags/v1 -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/tag BOF_DIR=r BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    [ -z "$(git -C "$TEST_DIR/remote.git" tag -l v1)" ]
+    [[ "$output" == *"romp pre-push: the OBJECT of tag refs/tags/v1 (${sha:0:10}) was captured while the capture's BYTE COUNT could not be read (wc was not run: its input file "*"/tag could not be opened for reading), so whether the read is whole is unknown, which ends the peel here; the scan is incomplete, so the push is refused"* ]] || false
+}
+
+@test "build 9 (item 40, the added lines' capture and a symlink target's here-string that cannot be opened; the class across the hook): a real push of a clean commit with the library failing the shell's open of the added lines' capture (the scratch file added) for its line count, and the hook run on a branch whose tip inherits main's symlink to a banned target with the library failing the shell's making of the target's here-string for its grep, are each refused naming that input as one the shell could not open (at d5740856c and at build 8's text the first PUBLISHED with no romp line, its count's check skipped, and the second passed with no romp line, the target read as a grep that found nothing)" {
+    local sha
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/added BOF_DIR=r
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${sha:0:10} could not be counted (wc was not run: its input file "*"/added could not be opened for reading); the scan is incomplete, so the push is refused"* ]] || false
+    rm -rf "$TEST_DIR/remote.git" "$REPO"
+    mkdir -p "$REPO"
+    git -C "$REPO" init -q
+    git -C "$REPO" symbolic-ref HEAD refs/heads/main
+    git -C "$REPO" config user.email t@example.invalid
+    git -C "$REPO" config user.name Tester
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+    branch_inheriting_mains_symlink_leak
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    rm -f "$TEST_DIR/calls.bof"
+    LD_PRELOAD="$TEST_DIR/bof.so" BOF_HERE=zzsynthuser/code/romp/vscode-extension/node_modules BOF_ONCE=1 BOF_LOG="$TEST_DIR/calls.bof" run_hook "$(git -C "$REPO" rev-parse main)"
+    [ -f "$TEST_DIR/calls.bof" ]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: the SYMLINK TARGET of node_modules at the tip of refs/heads/main (${sha:0:10}) could not be grepped (grep was not run: its input, a here-string the shell writes to a pipe or to a temporary file in TMPDIR, could not be opened for reading); the scan is incomplete, so the push is refused"* ]] || false
+}
+
+@test "build 9 (item 40, the inputs of the commands judged_read runs whole that cannot be opened; the class across the hook): with the library failing the shell's open for reading of the pushed commits' list for the encoding labels (ids.revs) and for the parent counts (creds.revs), of the commits' list for the credential feed and then for the name listing (creds.list, its first open, and its first after the first-parent diff's record is emptied), of the merges' list for the first-parent diff (creds.merges), of the listed paths for the diff attributes (creds.paths), of the work tree's gitleaks config for its byte count (.gitleaks.toml, past the config's own read), and its making of the added lines diff's here-string, each apart, a real push of a merge and a clean commit, the clone giving a textconv driver no attribute names, is refused naming that input as one the shell could not open, the remote at its base, each push within the 60 s bound, and no line says a stage exited 1 (at d5740856c and at build 8's text the input sat on the function's first stage, and each push was refused as a stage that exited 1, a command never run)" {
+    local k side
+    local -a match=(/ids.revs /creds.revs /creds.list /creds.list /creds.merges /creds.paths) after=(- - - /creds.frecord - -)
+    local -a whats=("the ENCODING LABELS of the pushed commits could not be read for the identifier scan (a stage of git cat-file --batch, tr and awk was not run: its input file "
+        "the PARENT COUNTS of the pushed commits could not be read for the credential scan (a stage of git rev-list and awk was not run: its input file "
+        "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk was not run: its input file "
+        "the NAME LISTING of the pushed commits could not be read for the credential scan (a stage of git diff-tree and awk was not run: its input file "
+        "the FIRST-PARENT DIFF of the pushed merges could not be read for the credential scan (a stage of git diff-tree, tr and awk was not run: its input file "
+        "the DIFF ATTRIBUTES of the pushed paths could not be read for the credential scan (a stage of git check-attr and awk was not run: its input file ")
+    bash_open_shim
+    real_gitleaks
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" config diff.zz.textconv cat
+    git -C "$REPO" checkout -q -b side
+    commit_file side.txt "a side note" "a side commit"
+    git -C "$REPO" checkout -q main
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    git -C "$REPO" merge -q --no-ff -m "merge side" side
+    for k in "${!match[@]}"; do
+        echo "input: ${match[k]} after ${after[k]}"                              # names the input when a line below fails
+        bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX="${match[k]}" BOF_DIR=r BOF_AFTER="${after[k]#-}" BOF_ONCE=1      # the name listing's open: the first after the first-parent diff's record is emptied, past the feed's
+        [ "$BOF_FAULTS" -gt 0 ]
+        [ "$status" -ne 124 ]
+        [ "$status" -ne 0 ]
+        at_base
+        [[ "$output" == *"romp pre-push: ${whats[k]}"*"${match[k]} could not be opened for reading)"* ]] || false
+        [[ "$output" != *"exited 1"* ]] || false
+    done
+    echo "input: the added lines diff's here-string"
+    side="$(git -C "$REPO" rev-parse HEAD^2)"
+    bof_push main -- "BOF_HERE=$side"$'\n'"$side $side"$'\n' BOF_EXACT=1 BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${side:0:10} could not be read (git diff-tree was not run: its input, a here-string the shell writes to a pipe or to a temporary file in TMPDIR, could not be opened for reading); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"exited 1"* ]] || false
+    echo "input: the gitleaks config, past its own read"
+    git -C "$REPO" reset -q --hard "$BASE"
+    printf '[extend]\nuseDefault = true\n' > "$REPO/.gitleaks.toml"
+    git -C "$REPO" add .gitleaks.toml
+    git -C "$REPO" commit -qm "a gitleaks config"
+    bof_push main -- BOF_PATH=/.gitleaks.toml BOF_DIR=r BOF_SKIP=1 BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the gitleaks config "*" was read by the shell while its BYTE COUNT could not be read (wc was not run: its input file "*"/.gitleaks.toml could not be opened for reading), so whether the read is whole is unknown"* ]] || false
+}
+
+@test "build 9 (item 40, the denylist's process substitution that cannot be opened; the class across the hook): a real push of a clean commit with the library failing the shell's open of the process substitution the denylist's capture is split from (a /dev/fd name) is refused naming the pipe as one the shell could not open, the remote at its base, within the 60 s bound, and no line says the read found no end (at d5740856c and at build 8's text the push was refused as a read of the capture that found no end, for a read never made)" {
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    bof_push main -- BOF_PATH=/dev/fd/ BOF_DIR=r
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the DENYLIST $STRINGS was read ("*" bytes) while its lines could not be split from the capture (the shell could not open the pipe it feeds the capture through, a process substitution, for reading), so which strings the identifier scan greps for is unknown; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"found no end"* ]] || false
+}
+
+@test "build 9 (item 40, /dev/null that cannot be opened; the class across the hook): a real push of a clean commit under the real scanner, with the library failing every open of /dev/null the hook's shell makes once it has opened a file in its scratch directory (past the gate, whose probe of a candidate bash, under an older bash first on PATH, takes /dev/null too), is refused, the remote at its base, within the 60 s bound, a line naming /dev/null as a file the shell could not open, and no line saying a command exited 1, or exited 0 with an empty answer; and, with the library failing the first open of /dev/null after the denylist's split, the chosen addresses' read, a push of a commit by a banned domain is refused naming that open, the address's line saying the chosen addresses' read was not run, and (since the repair after the build's audit, its OP9-7) the advice asking for that open to be repaired, not for git's own error to be read, git having run no read (at d5740856c and at build 8's text the quiet reads sent their error line to /dev/null by a redirection on the command itself, so the failed open read as git exiting 1, and the scanner's run, its input /dev/null, as gitleaks unable to scan; in the second push each quiet read, in a subshell of its own, failed its own open, the chosen addresses' read, its expected set holding git config's exit 1, refused nothing, and the commits' listings were refused as git rev-list exiting 1)" {
+    local sha
+    bash_open_shim
+    r9d_base
+    export ROMP_PRIVATE_STRINGS="$STRINGS"
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    bof_push main -- BOF_AFTER=/romp-pre-push. BOF_PATH=/dev/null           # armed at the shell's first open of a file in its scratch directory: past the gate, whose probe of a candidate bash takes /dev/null too
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"/dev/null, where it sends what it discards, could not be opened for writing"* ]] || false
+    [[ "$output" != *"exited 1"* ]] || false
+    [[ "$output" != *"exited 0"* ]] || false                                # no caller reads a read not run as an exit 0 with an empty answer
+    git -C "$REPO" reset -q --hard "$BASE"
+    printf 'nothing at all\n' > "$REPO/other.txt"
+    git -C "$REPO" add other.txt
+    GIT_AUTHOR_EMAIL=dev@TESTHOST.example git -C "$REPO" commit -qm "a commit by a banned domain"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    bof_push main -- BOF_AFTER=/dev/fd/ BOF_PATH=/dev/null BOF_ONCE=1       # the first open of /dev/null after the denylist's split: the chosen addresses' read
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email was not run: /dev/null, where it sends what it discards, could not be opened for writing), so whether a stamped address is one it chose is unknown; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} is authored as <dev@TESTHOST.example>: whether this clone is configured to use that address could not be read (git config --get-all user.email was not run, refused above), and its domain carries a personal identifier"* ]] || false
+    [[ "$output" != *"an address this clone is not configured to use"* ]] || false
+    [[ "$output" == *"  The addresses this clone is configured to use could not be read (git config --get-all user.email was not run, refused above), so whether it chose each address named is unknown: repair what the line above names and push again; configuring an address changes nothing until then."* ]] || false
+    [[ "$output" != *"see git's own error"* ]] || false
+}
+
+@test "build 9 (item 40, the scanner's log that cannot be opened; the class across the hook): a real push of a clean commit under the real scanner, with the library failing the shell's open of the scan of record's log (the scratch file creds.log) for writing, is refused naming the log as one the shell could not open, gitleaks not run, the remote at its base, within the 60 s bound, and, apart, with the library failing the shell's first open of /dev/null after the scanner's report is emptied (the scanner's input), is refused naming /dev/null so (at d5740856c and at build 8's text both opens sat on the scanner's line in its subshell, a failed open skipped gitleaks, and the push was refused as gitleaks unable to scan, its error above, with no romp line naming the open)" {
+    bash_open_shim
+    r9d_base
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/creds.log BOF_DIR=w
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan was not run: its log, the scratch file creds.log, could not be opened for writing by the shell; the scan is incomplete, so the push is refused"* ]] || false
+    bof_push main -- BOF_AFTER=/creds.report BOF_PATH=/dev/null BOF_ONCE=1   # the first open of /dev/null after the report's truncation: the scanner's input
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan was not run: /dev/null, its input and where it sends what it discards, could not be opened by the shell; the scan is incomplete, so the push is refused"* ]] || false
+}
+
+# The class's pins (build 9 of item 40, on the coordinator's ruling of 04:26Z 2026-10-02: a refusal names its actual
+# cause). judged_inputs reads the masked text: a judged_read call (its line joined with its continuations) whose
+# command, after the --, carries an input redirection of its own (< or <<< on the call, which a failed open skips
+# whole), and a line of a function the hook hands to judged_read whole (the first word after a call's --, when the
+# file defines it) that opens an input by a redirection of its own (<, <<< or a process substitution), each printed
+# as "<line>: <text>"; a duplicating redirection (<&4) opens nothing and is passed. null_redirections reads the body
+# (after the gate's call): a line that redirects to or from /dev/null other than a judged open of it on a descriptor
+# ({ exec 8>/dev/null; } || or { exec 8<>/dev/null; } ||), a judged_read call's -i /dev/null, or a read for a refused
+# push's report alone, marked so ("outside judged_read: for the report"), whose failed open leaves the line a fact
+# fewer and names no command.
+judged_inputs() {   # <bash file>: the census above, one line per call or line it names
+    masked_text "$1" | LC_ALL=C awk -v rawf="$1" '
+        BEGIN { while ((getline l < rawf) > 0) raw[++nr] = l; close(rawf) }
+        { m[NR] = $0 }
+        END {
+            for (i = 1; i <= NR; i++) {
+                if (m[i] !~ /(^|[^A-Za-z0-9_])judged_read[ \t]/ || m[i] ~ /^[ \t]*judged_read\(\)/) continue
+                s = m[i]; j = i
+                while (s ~ /\\$/ && j < NR) { j++; s = substr(s, 1, length(s) - 1) m[j] }
+                p = index(s, " -- "); if (!p) continue
+                c = substr(s, p + 4)
+                if (c ~ /(^|[ \t])[0-9]*<([^&]|$)/) print i ": " raw[i]
+                split(c, w, /[ \t]+/)
+                if (w[1] ~ /^[A-Za-z_][A-Za-z0-9_]*$/) handed[w[1]] = 1
+            }
+            for (i = 1; i <= NR; i++) {
+                if (m[i] ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/) { f = substr(m[i], 1, index(m[i], "(") - 1); infn = (f in handed); continue }
+                if (m[i] ~ /^\}/) { infn = 0; continue }
+                if (infn && m[i] ~ /(^|[ \t])[0-9]*<([^&]|$)/) print i ": " raw[i]
+            }
+        }'
+}
+null_redirections() {   # <bash file>: the census above, one line per line it names
+    local g
+    g=$(grep -n '^bash_gate "\$@"$' "$1" | head -n 1 | cut -d: -f1)
+    [ -n "$g" ] || { echo "no gate call"; return 0; }
+    masked_text "$1" | LC_ALL=C awk -v g="$g" -v rawf="$1" '
+        BEGIN { while ((getline l < rawf) > 0) raw[++nr] = l; close(rawf) }
+        NR <= g || $0 !~ /\/dev\/null/ { next }
+        $0 ~ /\{ exec 8<?>\/dev\/null; \} \|\|/ { next }
+        $0 ~ /(^|[^A-Za-z0-9_])judged_read[ \t]/ && $0 ~ / -i \/dev\/null -- / { next }
+        raw[NR] ~ /# outside judged_read: for the report/ { next }
+        { print NR ": " raw[NR] }'
+}
+
+@test "build 9 (item 40, the class's pins: judged_read's inputs and /dev/null; the coordinator's ruling of 04:26Z 2026-10-02): no judged_read call carries an input redirection after its --, no function the hook hands to judged_read whole opens an input by a redirection of its own, and no line of the body redirects to or from /dev/null but a judged open of it, a judged_read call's -i /dev/null or a report read marked for the report alone; copies planting a call with < on its command, one with <<< on its command, a function handed whole whose first stage takes < \"\$1\", and a quiet read written with 2>/dev/null on its own line are each named on their line, and a judged open of /dev/null and a judged_read -s call are passed (at d5740856c and at build 8's text the first census named eleven calls and eight functions' first stages, and the second eight lines: the quiet reads' three in judged_read, the empty tree's < /dev/null, the byte counts' drain, the scanner's two and the comparison's)" {
+    local tl n
+    run judged_inputs "$HOOK"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run null_redirections "$HOOK"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(grep -c ' -i "\$[a-z]*\| -s "\$' "$HOOK")" -ge 15 ]                  # the calls with an input judged_read opens are there to pass
+    tl=$(grep -n '^trap .exit_trap' "$HOOK" | head -n 1 | cut -d: -f1)
+    awk -v t="$tl" '{ print } NR == t {
+        print "judged_read gate=\"the ZZ count\" 0 \"zz (wc exited {rc})\" -- wc -c < \"$zzf\" || :"
+        print "judged_read gate=\"the ZZ grep\" 0,1 \"zz (grep exited {rc})\" -- grep -c zz <<< \"$zzt\" || :"
+        print "zzwhole() {"
+        print "    git rev-list --stdin < \"$1\" | awk \"{ print }\""
+        print "}"
+        print "judged_read gate=\"the ZZ whole\" 0 \"zz (a stage exited {rc})\" -- zzwhole \"$zzf\" || :"
+        print "judged_read gate=\"the ZZ text\" 0 \"zz (grep exited {rc})\" -s \"$zzt\" -- grep -c zz || :"
+        print "zzq=$(git config zz.zz 2>/dev/null || :)"
+        print "{ exec 8>/dev/null; } || zzo=0"
+    }' "$HOOK" > "$TEST_DIR/pin-inputs.sh"
+    [ "$(sed -n "$((tl + 1))p" "$TEST_DIR/pin-inputs.sh")" = 'judged_read gate="the ZZ count" 0 "zz (wc exited {rc})" -- wc -c < "$zzf" || :' ]   # the plant landed
+    run judged_inputs "$TEST_DIR/pin-inputs.sh"
+    [ "$(grep -c . <<< "$output")" -eq 3 ]
+    [[ "$output" == *"$((tl + 1)): judged_read gate=\"the ZZ count\""* ]] || false
+    [[ "$output" == *"$((tl + 2)): judged_read gate=\"the ZZ grep\""* ]] || false
+    [[ "$output" == *"$((tl + 4)):     git rev-list --stdin < \"\$1\""* ]] || false
+    run null_redirections "$TEST_DIR/pin-inputs.sh"
+    [ "$output" = "$((tl + 8)): zzq=\$(git config zz.zz 2>/dev/null || :)" ]
+}
+
+@test "build 7 (item 40, the reads in loop bodies by fault injection, the credential scan's two): with a read error planted by the library on the shell's read of the record a merge's binary blob's awk wrote (creds.brecord), through a real push of a merge whose binary path holds a credential, and on the shell's read of a piece's bytes for the path-scoped copies (a file under creds.d), through a real push of an added cert.p12, each from its first byte, each push is refused naming that read, the remote at its base, within the 60 s bound, and since the repair after the audit of build 9 (its OP9-2) neither path-scoped run is refused as reading fewer bytes than it was fed, the piece's copies being empty by the shell's failed read (at d5740856c the first read swallowed its status and the push was refused as an awk that recorded no counts, the read unnamed, and the second left the copies empty, the read unnamed; until that repair the path-scoped runs were refused by their byte figures)" {
+    bash_eio_shim
+    r9d_base
+    r10a_merge_open
+    r10a_evil nul
+    r10a_merge_commit evil.txt
+    beio_push main -- BEIO_MATCH=/romp-pre-push. BEIO_SUFFIX=/creds.brecord BEIO_OFF=0
+    [ "$BEIO_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} could not be read whole for the credential scan (the record its awk wrote, creds.brecord, could not be read by the shell: a read error); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"recorded \"\", not four counts"* ]] || false
+    git -C "$REPO" reset -q --hard "$BASE"
+    r9d_witness pkcs12-file
+    git -C "$REPO" add -- "$wfile"
+    git -C "$REPO" commit -qm "a file the path-scoped rule names"
+    beio_push main -- BEIO_MATCH=/creds.d/ BEIO_OFF=0
+    [ "$BEIO_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CONTENT of piece "*" of the credential feed (its file creds.d/"*") could not be read by the shell for the path-scoped copies (a read error), so its copies hold none of it; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"the CREDENTIAL scan under the path-scoped rules read "* ]] || false
+    [[ "$output" != *"the PROBE run of the path-scoped copies read "* ]] || false
+}
+
+# The repair after the audit of build 9 (item 40, on the coordinator's ruling of 04:26Z 2026-10-02, the class: a refusal
+# names its actual cause), by fault injection with the open library (bash_open_shim). OP9-1: bash does not apply ! to a
+# compound command whose own redirection fails (the status stays 1), so the gitleaks config's copy, written by a braced
+# group in an if ! with the redirection on the group, read a failed open as a copy written; the copy's file is now
+# opened once on descriptor 7, judged on its own, and negated_redirections pins the shape absent. OP9-2: a read
+# judged_read did not run (an open of its own failed, read_rc 256) leaves its output file as an earlier read wrote it;
+# the reads after it now pass that file over where they read it as this read's capture. The commits are judged newest
+# first, so each case fails the open on the second commit the check reads, after a newer one has written the file.
+@test "the repair after the audit of build 9 (item 40, the gitleaks config's COPY that cannot be opened; its OP9-1): a real push of a clean commit under the real scanner and a work tree .gitleaks.toml, with the library failing the shell's open of the config's copy (the scratch file creds.cfg.0.toml) for writing, is refused naming that open, the remote at its base, within the 60 s bound, and no scanner run is made (at build 9's text and at d5740856c the copy was written by a braced group in an if ! carrying the redirection, which bash does not invert when the redirection fails, so the copy read as written, every run was handed a config naming no file, and the push was refused as the probe run exiting 1, gitleaks named for the shell's failed open)" {
+    bash_open_shim
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true')"
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/creds.cfg.0.toml BOF_DIR=w
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the copy of the gitleaks config .gitleaks.toml (the work tree's), the config the scanner is handed, could not be made: its file, the scratch file creds.cfg.0.toml, could not be opened for writing by the shell; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"unable to load gitleaks config"* ]] || false
+    [[ "$output" != *"exited 1, neither 0 (clean) nor 2"* ]] || false
+}
+
+# negated_redirections reads the masked text: a ! at a command's start whose command is a compound (a braced group, a
+# subshell, [[ ]], an if, a loop or a case) carrying a redirection of its own after the compound's close, a copy of a
+# descriptor included, printed as "<line of the !>: <its text>"; a redirection inside the compound, on a command of its
+# own, is that command's, which ! inverts as a command's status, and is passed.
+negated_redirections() {   # <bash file>: the census above, one line per ! it names
+    masked_text "$1" | LC_ALL=C awk -v rawf="$1" '
+        BEGIN { while ((getline l < rawf) > 0) raw[++nr] = l; close(rawf) }
+        { m[NR] = $0 }
+        END {
+            nt = 0
+            for (i = 1; i <= NR; i++) {
+                s = m[i]; cont = 0
+                if (s ~ /\\$/) { cont = 1; s = substr(s, 1, length(s) - 1) }
+                while (s != "") {
+                    if (match(s, /^[ \t]+/)) { s = substr(s, RLENGTH + 1); continue }
+                    if (!match(s, /^([0-9]*(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)|&>>|&>|;;|\|\||&&|\|&|[;&|()])/)) if (!match(s, /^[^ \t;&|()<>]+/)) match(s, /^./)
+                    t[++nt] = substr(s, 1, RLENGTH); tl[nt] = i; s = substr(s, RLENGTH + 1)
+                }
+                if (!cont) { t[++nt] = "\n"; tl[nt] = i }
+            }
+            for (b = 1; b <= nt; b++) {
+                if (t[b] != "!") continue
+                p = t[b - 1]
+                if (b > 1 && p !~ /^(\n|;|&&|\|\||\||\|&|&|\(|\{|then|do|else|elif|if|while|until|!)$/) continue
+                o = t[b + 1]; c = 0
+                if (o == "{") { op = "{"; cl = "}" } else if (o == "(") { op = "("; cl = ")" } else if (o == "[[") { op = "[["; cl = "]]" }
+                else if (o == "if") { op = "if"; cl = "fi" } else if (o ~ /^(while|until|for|select)$/) { op = "^(while|until|for|select)$"; cl = "done" }
+                else if (o == "case") { op = "case"; cl = "esac" } else continue
+                d = 0
+                for (j = b + 1; j <= nt; j++) {
+                    if ((op ~ /^\^/ && t[j] ~ op) || t[j] == op) d++
+                    else if (t[j] == cl) { d--; if (d == 0) { c = j; break } }
+                }
+                if (!c) continue
+                for (j = c + 1; j <= nt && t[j] !~ /^(\n|;|;;|&&|\|\||\||\|&|&|\)|\}|then|do|fi|done|esac)$/; j++)
+                    if (t[j] ~ /^([0-9]*(<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)|&>>|&>)$/) { print tl[b] ": " raw[tl[b]]; break }
+            }
+        }'
+}
+
+@test "the repair after the audit of build 9 (item 40, the census of negated compounds carrying a redirection; its OP9-1): negated_redirections names no line of the hook, and over build 9's copy of the config chain names the copy's line; copies planting a negated braced group with an output redirection, a negated subshell with a redirection of descriptor 2, a negated braced group over three lines with an appending redirection after its close, a negated loop fed by its done, and a negated braced group copying descriptor 2, are each named on the line of the !, and copies planting a negated group whose redirection sits on an exec inside it, a negated simple command with a redirection, a group with a redirection and no !, and a negated group whose redirection sits on a command inside it, the hook's skip canary's shape, are passed (a census new in this repair: build 9's text held the one shape the hook's audit found, line 6632, the copy of the config chain)" {
+    local tl
+    run negated_redirections "$HOOK"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    tl=$(grep -n '^trap .exit_trap' "$HOOK" | head -n 1 | cut -d: -f1)
+    awk -v t="$tl" '{ print } NR == t {
+        print "if ! { printf zz; } > \"$zzf\"; then unscanned \"zz\"; fi"
+        print "if ! ( printf zz ) 2> \"$zzf\"; then unscanned \"zz\"; fi"
+        print "if ! {"
+        print "    printf zz"
+        print "} >> \"$zzf\"; then"
+        print "    unscanned \"zz\""
+        print "fi"
+        print "! while false; do :; done < \"$zzf\" || :"
+        print "if ! { printf zz; } >&2; then :; fi"
+        print "if ! { exec 7> \"$zzf\"; }; then unscanned \"zz\"; fi"
+        print "if ! printf zz > \"$zzf\"; then unscanned \"zz\"; fi"
+        print "if { printf zz; } > \"$zzf\"; then :; else unscanned \"zz\"; fi"
+        print "if ! { mkdir \"$zzf\" && printf zz > \"$zzf/x\"; }; then unscanned \"zz\"; fi"
+    }' "$HOOK" > "$TEST_DIR/pin-negated.sh"
+    [ "$(sed -n "$((tl + 1))p" "$TEST_DIR/pin-negated.sh")" = 'if ! { printf zz; } > "$zzf"; then unscanned "zz"; fi' ]   # the plant landed
+    run negated_redirections "$TEST_DIR/pin-negated.sh"
+    [ "$output" = "$((tl + 1)): if ! { printf zz; } > \"\$zzf\"; then unscanned \"zz\"; fi"$'\n'"$((tl + 2)): if ! ( printf zz ) 2> \"\$zzf\"; then unscanned \"zz\"; fi"$'\n'"$((tl + 3)): if ! {"$'\n'"$((tl + 8)): ! while false; do :; done < \"\$zzf\" || :"$'\n'"$((tl + 9)): if ! { printf zz; } >&2; then :; fi" ]
+    # build 9's copy of the config chain, put back in place of the repair's open (its line as build 9 wrote it)
+    cat > "$TEST_DIR/copy-b9" <<'COPY'
+        if ! { { [ "$n" -le 1 ] || printf '%s\n' "${copy[@]:0:n-1}"; } && { [ "$n" -eq 0 ] || if [ "${chain_nonl[d]}" -eq 0 ]; then printf '%s\n' "$l"; else printf '%s' "$l"; fi; }; } > "$scratch/creds.cfg.$d.toml"; then
+            unscanned "the copy of the gitleaks config ${chain_shown[d]}, the config the scanner is handed, could not be written to the scratch directory"
+            failed_creds=1; return 1
+        fi
+COPY
+    awk -v cf="$TEST_DIR/copy-b9" '$0 == "        opened=1; { exec 7> \"$scratch/creds.cfg.$d.toml\"; } || opened=0" { while ((getline l < cf) > 0) print l; n++ } { print } END { exit n == 1 ? 0 : 1 }' "$HOOK" > "$TEST_DIR/pin-negated-b9.sh"
+    run negated_redirections "$TEST_DIR/pin-negated-b9.sh"
+    [ "$(grep -c . <<< "$output")" -eq 1 ]
+    [[ "$output" == *": "*'        if ! { { [ "$n" -le 1 ] || printf '*'} > "$scratch/creds.cfg.$d.toml"; then' ]] || false
+}
+
+@test "the repair after the audit of build 9 (item 40, the ADDED LINES' capture whose open fails after a newer commit's; its OP9-2): a clean commit and, on top of it, a commit adding a banned line, through a real push with the library failing the shell's open of the added lines' capture (the scratch file added) for writing for the clean commit, which the scan reads second, is refused naming that open, the newer commit named as adding the banned line, the clean commit named as adding nothing, the remote at its base, within the 60 s bound (at build 9's text and at d5740856c the grep read the capture the newer commit left, and the clean commit was named as adding the banned line)" {
+    local clean hit
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    clean="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file hit.txt "seen on TESTHOST here" "a banned added line"
+    hit="$(git -C "$REPO" rev-parse HEAD)"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/added BOF_DIR=w BOF_SKIP=1 BOF_ONCE=1     # the newer commit's open passes, the clean one's fails
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${clean:0:10} could not be read (git diff-tree was not run: its output file "*"/added could not be opened for writing); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: commit ${hit:0:10} ADDS a personal identifier in:"* ]] || false
+    [[ "$output" != *"commit ${clean:0:10} ADDS"* ]] || false
+}
+
+@test "the repair after the audit of build 9 (item 40, a commit's CHANGED PATHS listing whose open fails after a newer commit's; its OP9-2): a clean commit, a commit adding a -diff text file carrying a banned string, and its removal, through a real push with the library failing the shell's open of the changed paths' listing (the scratch file listing) for writing for the clean commit, which the binary verdict check reads last (after the tip's listing, the removal's and the leak's), is refused naming that open, the hidden file named in the leak, the remote at its base, within the 60 s bound, and no line says git diff-tree --numstat answered short (at build 9's text and at d5740856c the check read the listing the leak left as the clean commit's, and refused the clean commit as one whose numstat printed no verdict for notes.txt, a path it does not change; d5740856c also named the clean commit's listing as short, lacking other.txt)" {
+    local clean leaked
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file other.txt "nothing to see" "an older clean commit"
+    clean="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'notes.txt -diff\n' > "$REPO/.git/info/attributes"
+    commit_file notes.txt "seen on TESTHOST" "a -diff file carrying a banned string"
+    leaked="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file notes.txt "remove it"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/listing BOF_DIR=w BOF_SKIP=3 BOF_ONCE=1   # the tip's, the removal's and the leak's opens pass
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the CHANGED PATHS of commit ${clean:0:10} could not be listed for the BINARY VERDICT check (git diff-tree was not run: its output file "*"/listing could not be opened for writing); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${leaked:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]] || false
+    [[ "$output" != *"answered for fewer paths"* ]] || false
+}
+
+@test "the repair after the audit of build 9 (item 40, a tip's -z listing whose open fails after another ref's; its OP9-2): two new branches pushed together, a-old at the base and b-new replacing the base's file with a clean one, through a real push with the library failing the shell's open of b-new's tip listing (the scratch file listing) for writing, after a-old's, is refused naming that open, the remote holding neither branch, within the 60 s bound, and no line names a file at b-new's tip as text git calls binary; and with the library failing a-old's tip listing, the first ref's, no line names the newline test unable to open a listing (at build 9's text and at d5740856c the first push read a-old's listing as b-new's and named base.txt, a file b-new does not hold, as text git calls binary at b-new's tip, d5740856c also naming b-new's listing as short, lacking new.txt; the second named the newline test's open of the listing, which the failed open never wrote)" {
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" branch a-old "$BASE"
+    git -C "$REPO" checkout -q -b b-new
+    git -C "$REPO" rm -q base.txt
+    commit_file new.txt "nothing to see" "the base's file replaced"
+    git -C "$REPO" checkout -q main
+    bof_push a-old b-new -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/listing BOF_DIR=w BOF_SKIP=1 BOF_ONCE=1    # a-old's tip listing passes (git hands the hook a-old first), b-new's fails
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    ! remote_holds_ref refs/heads/a-old || false
+    ! remote_holds_ref refs/heads/b-new || false
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/b-new ("*") could not be listed for the BINARY VERDICT check (git ls-tree was not run: its output file "*"/listing could not be opened for writing); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"at the tip of refs/heads/b-new"*"is text that git calls binary"* ]] || false
+    bof_push a-old b-new -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/listing BOF_DIR=w BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    ! remote_holds_ref refs/heads/a-old || false
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/a-old ("*") could not be listed for the BINARY VERDICT check (git ls-tree was not run: its output file "*"/listing could not be opened for writing); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"the newline test could not open"* ]] || false
+}
+
+@test "the repair after the audit of build 9 (item 40, a commit's NUMSTAT answer whose open fails after a newer commit's; its OP9-2): a commit adding p.txt as text and one making it binary, through a real push with the library failing the shell's open of the numstat's answer (the scratch file rows.raw) for writing for the text commit, which the check reads second, is refused naming that open, the remote at its base, within the 60 s bound, and no line names p.txt in the text commit as text git calls binary (at build 9's text and at d5740856c the text commit's rows were read from the answer the binary commit left, and p.txt was named so, git's verdict on another commit)" {
+    local textc
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file p.txt "hello, a text line" "p as text"
+    textc="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'x\0y\n' > "$REPO/p.txt"
+    git -C "$REPO" add p.txt
+    git -C "$REPO" commit -qm "p made binary"
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/rows.raw BOF_DIR=w BOF_SKIP=1 BOF_ONCE=1     # the binary commit's open passes, the text commit's fails
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${textc:0:10} could not be read (git diff-tree --numstat -M was not run: its output file "*"/rows.raw could not be opened for writing); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"p.txt in commit ${textc:0:10} is text that git calls binary"* ]] || false
+}
+
+@test "the repair after the audit of build 9 (item 40, a merge's COMBINED PATCH whose open fails after a newer merge's; its OP9-2): a merge adding p.txt as text and a later merge making it binary, through a real push with the library failing the shell's open of the combined patch (the scratch file patch) for writing for the first merge, which the check reads second, is refused naming that open, the remote at its base, within the 60 s bound, and no line names p.txt in the first merge as text git calls binary; and with the library failing the first merge's per-parent listing (the scratch file parents) instead, a guard, is refused naming that open (at build 9's text and at d5740856c the first merge's rows were parsed from the patch the later merge left, and p.txt was named so; the per-parent listing's stale read changed no line in these pushes)" {
+    local m1
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side1
+    commit_file s1.txt "the web session's line" "side 1"
+    git -C "$REPO" checkout -q main
+    commit_file m1.txt "the api session's line" "main 1"
+    git -C "$REPO" merge -q --no-ff --no-commit side1 > /dev/null 2>&1 || :
+    printf 'hello, a text line\n' > "$REPO/p.txt"
+    git -C "$REPO" add p.txt
+    git -C "$REPO" commit -qm "merge 1, adding p as text"
+    m1="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$m1"
+    git -C "$REPO" checkout -q -b side2
+    commit_file s2.txt "the tests session's line" "side 2"
+    git -C "$REPO" checkout -q main
+    commit_file m2.txt "more of the api session's work" "main 2"
+    git -C "$REPO" merge -q --no-ff --no-commit side2 > /dev/null 2>&1 || :
+    printf 'x\0y\n' > "$REPO/p.txt"
+    git -C "$REPO" add p.txt
+    git -C "$REPO" commit -qm "merge 2, p made binary"
+    is_merge "$(git -C "$REPO" rev-parse HEAD)"
+    [ "$(git -C "$REPO" diff-tree -p -c HEAD | grep -c '^Binary files differ$')" -eq 1 ]     # the later merge's patch prints Binary for p.txt
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/patch BOF_DIR=w BOF_SKIP=1 BOF_ONCE=1        # the later merge's open passes, the first's fails
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${m1:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, was not run: its output file "*"/patch could not be opened for writing); the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" != *"p.txt in commit ${m1:0:10} is text that git calls binary"* ]] || false
+    bof_push main -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/parents BOF_DIR=w BOF_SKIP=1 BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${m1:0:10} could not be read (git diff-tree --raw -m, the merge's changes against each parent, was not run: its output file "*"/parents could not be opened for writing); the scan is incomplete, so the push is refused"* ]] || false
+}
+
+@test "the repair after the audit of build 9 (item 40, the quiet reads whose clause holds no status, their /dev/null that cannot be opened; its OP9-3): through real pushes with the library failing the shell's open of /dev/null for the tip's SYMLINK listing and for a SYMLINK TARGET's read (the third and fourth after the denylist's split: the chosen addresses' read and the tip's content grep come first), and for the TYPE read of the commit an annotated tag peels to (the fifth after the tag's capture is opened), each apart, each push is refused on the read's own line naming /dev/null as a file the shell could not open for writing, the remote at its base, within the 60 s bound (at build 9's text each line said only that the read could not be made, its clause holding no status for judged_read to rewrite)" {
+    local sha
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    symlink_commit link.txt base.txt "a clean link"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see here" "a clean commit"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    local nul="(the read was not run: /dev/null, where it sends what it discards, could not be opened for writing); the scan is incomplete, so the push is refused"
+    bof_push main -- BOF_AFTER=/dev/fd/ BOF_PATH=/dev/null BOF_SKIP=2 BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the SYMLINKS of the tip of refs/heads/main (${sha:0:10}) could not be listed $nul"* ]] || false
+    bof_push main -- BOF_AFTER=/dev/fd/ BOF_PATH=/dev/null BOF_SKIP=3 BOF_ONCE=1
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the SYMLINK TARGET of link.txt at the tip of refs/heads/main (${sha:0:10}) could not be read $nul"* ]] || false
+    git -C "$REPO" tag -a -m "a release" v1 "$BASE"
+    bof_push refs/tags/v1 -- BOF_AFTER=/tag BOF_PATH=/dev/null BOF_SKIP=4 BOF_ONCE=1       # the tag's capture, its size, its byte count and its message grep pass
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    ! remote_holds_ref refs/tags/v1 || false
+    [[ "$output" == *"romp pre-push: the TYPE of the object refs/tags/v1 pushes (${BASE:0:10}) could not be read, so whether it is an annotated tag is unknown $nul"* ]] || false
+}
+
+@test "the repair after the audit of build 9 (item 40, the hidden file report's /dev/null that cannot be opened; its OP9-4): a commit adding a text file under a diff driver whose binary key is true, removed at the tip, through a real push with the library failing the shell's open of /dev/null for the driver's key (the second after check-attr's answer is opened), is refused with the hidden file's line saying whether the key is set could not be read, naming /dev/null as a file the shell could not open for writing, and that whether an attribute accounts for the verdict is unknown, both remedies printed; and a big text file over core.bigFileThreshold, removed at the tip, with the library failing every open of /dev/null after check-attr's, is refused with the line saying whether core.bigFileThreshold is set could not be read, naming the open, and never that the key is not set (at build 9's text a failed open skipped git config, read as the key not set: the first line said no attribute accounted for the verdict, where the driver's key did, and the second that core.bigFileThreshold is not set, where it is 100; d5740856c's text holds the same two reads, but there the answer's file was opened in the process git's command forked, so the library, armed by that open, never armed the hook's shell, and these pushes land no fault on the two reads)" {
+    local leaked
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" config diff.hide.binary true
+    printf 'notes.txt diff=hide\n' > "$REPO/.gitattributes"
+    git -C "$REPO" add .gitattributes
+    git -C "$REPO" commit -qm "attributes"
+    commit_file notes.txt "seen on TESTHOST" "a hidden note"
+    leaked="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file notes.txt "remove the note"
+    bof_push main -- BOF_AFTER=/attr BOF_PATH=/dev/null BOF_SKIP=1 BOF_ONCE=1      # check-attr's /dev/null passes, the driver key's fails
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${leaked:0:10} is text that git calls binary although its diff attribute reads hide, and whether diff.hide.binary is set could not be read (the shell could not open /dev/null, where git config's error line goes, for writing, so git config was not run), so whether an attribute of its path accounts for the verdict is unknown (the blob is 17 bytes; core.bigFileThreshold is not set in this clone's configuration)"* ]] || false
+    [[ "$output" == *"  Remove the diff attribute for each path named"* ]] || false
+    [[ "$output" == *"  Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]] || false
+    [[ "$output" != *"no attribute of its path accounts for the verdict"* ]] || false
+    rm -rf "$TEST_DIR/remote.git" "$REPO"
+    mkdir -p "$REPO"
+    git -C "$REPO" init -q
+    git -C "$REPO" symbolic-ref HEAD refs/heads/main
+    git -C "$REPO" config user.email t@example.invalid
+    git -C "$REPO" config user.name Tester
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" config core.bigFileThreshold 100
+    big_text_file big.txt "seen on TESTHOST"
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "a big text file"
+    leaked="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file big.txt "remove it"
+    bof_push main -- BOF_AFTER=/attr BOF_PATH=/dev/null BOF_SKIP=1                  # every open of /dev/null after check-attr's: the driver key's, and the size's and the threshold's
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: big.txt in commit ${leaked:0:10} is text that git calls binary although "*"; whether core.bigFileThreshold is set in this clone's configuration could not be read (the shell could not open /dev/null, where git's error lines go, for writing, so git config and git cat-file -s were not run)); the identifier scan did not read it, so the push is refused rather than scanned"* ]] || false
+    [[ "$output" != *"core.bigFileThreshold is not set"* ]] || false
+}
+
+@test "the repair after the audit of build 9 (item 40, the gate's /dev/null that cannot be opened for the version question; its OP9-5): bash_gate cut from the hook and run as a bash older than 5.1 would run it (its first if passing 3 and 2), a scan armed, with a bash 5.1 or later the one candidate (the running bash under bash 5.1 or later), re-runs the copy (which then refuses as a re-run under an older bash, the control); with the library failing the shell's open of /dev/null for reading, the question's input, it refuses with its BLOCKED block naming the candidate as one it could not ask its version because the shell could not open /dev/null for reading, never that no bash 5.1 or later was found, and the body is not reached (at build 9's text and at d5740856c /dev/null sat on the question's own line, a failed open skipped the candidate, and the block said no bash 5.1 or later was found at the paths ROMP_HOOK_BASHES names)" {
+    local copy="$TEST_DIR/gate-null"
+    bash_open_shim
+    sed -n '1,/^bash_gate "\$@"$/p' "$HOOK" | sed '$d' | sed 's/^    if bash_admitted "\${BASH_VERSINFO\[0\]}" "\${BASH_VERSINFO\[1\]}"; then$/    if bash_admitted 3 2; then/' > "$copy"
+    [ "$(grep -c '^    if bash_admitted 3 2; then$' "$copy")" -eq 1 ]               # the plant landed
+    printf '%s\n' 'bash_gate origin url' 'echo BODY-REACHED' >> "$copy"
+    run env -u ROMP_HOOK_REEXEC ROMP_HOOK_BASHES="$NEWER_BASH" "$HOOK_BASH" "$copy" < /dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: BLOCKED. The hook re-ran itself under $NEWER_BASH, which reported bash 5.1 or later"* ]] || false
+    rm -f "$TEST_DIR/calls.bof"
+    run env -u ROMP_HOOK_REEXEC ROMP_HOOK_BASHES="$NEWER_BASH" LD_PRELOAD="$TEST_DIR/bof.so" BOF_PATH=/dev/null BOF_DIR=r BOF_LOG="$TEST_DIR/calls.bof" "$HOOK_BASH" "$copy" < /dev/null
+    [ -f "$TEST_DIR/calls.bof" ]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *$'\n'"romp pre-push: BLOCKED. The hook needs bash 5.1 or later; bash "*" is running it, and $NEWER_BASH could not be asked its version: the shell could not open /dev/null, the question's input, for reading."$'\n'"  The push is refused rather than scanned under a bash older than 5.1, which can end a scan early, or skip one of its reads, and report success. Make /dev/null readable, or put a bash 5.1 or later first on PATH, and push again."$'\n'"  To bypass for one push (you are sure it is fine): git push --no-verify"* ]] || false
+    [[ "$output" != *"no bash 5.1 or later was found"* ]] || false
+    [[ "$output" != *BODY-REACHED* ]] || false
+}
+
+@test "the repair after the audit of build 9 (item 40, a stamped address whose comparison with the chosen addresses cannot be made; its OP9-7): a real push of a commit authored under a banned domain, with the library failing the shell's making of the here-string of this clone's chosen addresses for the comparison with that address, is refused naming the here-string, the address's line saying whether the clone is configured to use the address could not be read, the advice saying the comparison could not be made and printing neither remedy of an address the clone did not choose, the remote at its base, within the 60 s bound (at build 9's text the address was taken as one the clone did not choose: the line said it is an address this clone is not configured to use, and the advice said to configure it if it is yours)" {
+    local sha
+    bash_open_shim
+    export ROMP_NO_GITLEAKS=1
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'nothing at all\n' > "$REPO/other.txt"
+    git -C "$REPO" add other.txt
+    GIT_AUTHOR_EMAIL=dev@TESTHOST.example git -C "$REPO" commit -qm "a commit by a banned domain"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    bof_push main -- BOF_HERE=t@example.invalid BOF_ONCE=1        # the first here-string holding the chosen addresses: the comparison with the author's address
+    [ "$BOF_FAULTS" -gt 0 ]
+    [ "$status" -ne 124 ]
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: the capture of the CHOSEN ADDRESSES of this clone, compared with <dev@TESTHOST.example>, could not be opened for reading (the shell could not make a here-string of it: a pipe it writes, or a temporary file in TMPDIR), so whether the address is one it chose is unknown; the scan is incomplete, so the push is refused"* ]] || false
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} is authored as <dev@TESTHOST.example>: whether this clone is configured to use that address could not be read (the shell could not make a here-string of the addresses it is configured to use to compare it with, refused above), and its domain carries a personal identifier"* ]] || false
+    [[ "$output" == *"  The addresses this clone is configured to use could not be compared with an address named (the shell could not make a here-string of them, refused above), so whether it chose that address is unknown: repair what the line above names and push again; configuring an address changes nothing until then."* ]] || false
+    [[ "$output" != *"an address this clone is not configured to use, whose domain"* ]] || false
+    [[ "$output" != *"if it is yours, say so"* ]] || false
 }
