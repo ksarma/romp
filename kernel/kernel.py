@@ -81,7 +81,8 @@ jd = load_source("romp_judge", HERE / "judge.py")
 # than that bound, a draining owner met by a process already running more than one thread, a wait
 # that reached the deadline or whose timer could not be armed) refuses this
 # kernel: one stderr line naming the holder it read (at a wait's deadline, the line read then),
-# then os._exit(KERNEL_LOCK_EXIT) with nothing written, so the manager's crash backoff retries it.
+# then os._exit(KERNEL_LOCK_EXIT) with nothing written; under the manager its crash backoff retries it
+# (a kernel started by hand is not retried).
 # A lock step that fails for any other reason refuses the kernel the same way, never with a
 # traceback: the open (a directory at the path, no permission), a flock with any errno but
 # EWOULDBLOCK, the non-blocking one or the blocking one in the wait (a filesystem that cannot take
@@ -82866,8 +82867,8 @@ def _kernel_lock_announce_drain():
     """Rewrite the instance lock's line to "<pid> draining <deadline>", the deadline being now plus EXIT_GRACE_S, the
     grace every exit budget below is a share of: a successor that finds the lock held waits for this kernel's exit up
     to that deadline instead of refusing (_kernel_lock_acquire). A no-op with no lock held (every in-process load of
-    this module). Never raises: a failed write is one _exit_log line and the drain goes on, its successor then refused
-    and retried by the manager's backoff as before the lock existed."""
+    this module). Never raises: a failed write is one _exit_log line and the drain goes on, its successor then refused,
+    and under the manager retried by its backoff as before the lock existed."""
     fd = _KERNEL_LOCK_FD
     if fd is None:
         return
