@@ -9,8 +9,9 @@ that deadline; any other holder refuses it with one stderr line and exit 75, hav
 record moved from import time into main(), after the bind. An in-process load of the kernel never locks.
 
 The pins, each red on the kernel before the lock for the reason it names:
-  1. a serving holder: exit 75 within the bound; stderr names the holder's pid, the lock path and the remedy (a second
-     kernel started by hand needs its own state root, ROMP_STATE_DIR);
+  1. a serving holder: exit 75 within the bound; stderr names the holder's pid, the lock path and the remedy on each
+     road (a second kernel started by hand needs its own state root, ROMP_STATE_DIR; a kernels.json profile whose root
+     such a kernel holds needs a stateDir no other kernel uses);
      both roots keep every path's bytes, mode and mtime and the same set of paths (seeded with files the boot passes
      write, sweep or prune, and serve-token left absent so an import-time mint would show as a new path); no connection
      reached the postal listener; no postal/server.pid;
@@ -139,9 +140,11 @@ sys.stdin.read()
 WAITING_TEXT = "this kernel waits for its drain until"
 HANDOVER_TEXT = "this kernel holds it now"
 SERVING_TEXT = "romp-kernel: serving the ported UI at"
-# the refusal's remedy: the manager starts no second kernel on one root (bin/romp-manager rootConflict), so the lock keeps
-# primaries apart, and the second kernel it can still meet is one started by hand
+# the refusal's remedies, one per road: the manager never starts two kernels on one root (bin/romp-manager rootConflict),
+# so a second kernel the lock can meet was started by hand, which needs its own state root, or holds the root a
+# kernels.json profile names, which then needs a stateDir no other kernel uses
 REMEDY_TEXT = "a second kernel started by hand on this root needs its own state root (set ROMP_STATE_DIR)"
+PROFILE_REMEDY_TEXT = "a kernels.json profile whose root such a kernel holds needs a stateDir no other kernel uses"
 NEW_OWNER_TEXT = "is held by a new owner that has not yet written its line"
 PAST_TEXT = "so its drain is past its deadline"
 
@@ -358,10 +361,10 @@ class SecondKernelIsRefused(_Lab):
         self.assertIn("pid %d" % os.getpid(), err, "the refusal names the holder's pid")
         self.assertIn(self.lock_path, err, "the refusal names the lock's path")
         self.assertIn(REMEDY_TEXT, err, "the refusal names the remedy for a second kernel started by hand")
+        self.assertIn(PROFILE_REMEDY_TEXT, err, "the refusal names the remedy on the other road, a kernels.json profile")
         self.assertIn("The manager never starts two kernels on one state root", err,
                       "the refusal says the manager is not the road a second kernel took")
-        self.assertNotIn("kernels.json", err, "a profile on the primary's root is the manager's to refuse, not this "
-                                              "kernel's to explain")
+        self.assertNotIn("primaries", err, "a profile kernel's successor meets the lock as the primary's does")
         self.assertIn("this kernel wrote nothing", err)
         self.assertEqual(len([ln for ln in err.splitlines() if ln.startswith("romp-kernel:")]), 1,
                          "one stderr line from the kernel: %r" % err)
