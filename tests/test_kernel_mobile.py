@@ -3207,6 +3207,43 @@ out({walk:walk,shellDials:SHSOCKS.length-1,backstop:queued("link-backstop").leng
         self.assertEqual([w["awaiting"] for w in r["walk"]], [True] * 9, "it keeps awaiting the link")
         self.assertEqual(r["backstop"], 0, "and files no link-backstop row")
 
+    # ---- review round 1 of iOS item 1a (2026-10-02): an older socket's late event and the newer dial's cut. The watchdog's CLOSED
+    # arm dials as soon as it finds the socket CLOSED past SH_REDIAL_MS, which can be before that socket's close event (and an
+    # open event ahead of it) has been delivered. The open and the close clear their OWN dial's cut (shCutMe) and reset shCutT
+    # only while it is still theirs, so the late events leave the newer dial's cut in force. At the PR's first head (51b92cff9)
+    # both cleared the global shCutT, the newer dial's handle, and both cases are red there; each also reddens under its own
+    # mutant (the close clearing the global: both cases; the open clearing the global: the second).
+    def test_1a_an_older_sockets_close_delivered_after_a_newer_dial_leaves_that_dials_cut_in_force(self):
+        r = _run_probe(r"""
+var A=SHSOCKS[0],t0=SHNOW;                               // the boot dial hangs, outside any return window
+shRunDue(t0+15000);var cutA=A.readyState;               // A's own timer cuts it; its close event is still queued
+SHNOW+=100;shTick();var B=shSock(),tB=SHNOW;            // a tick finds A CLOSED past SH_REDIAL_MS and dials B
+A.onclose({code:1006});                                 // A's close event, delivered after B's dial
+var cutsB=shCutTimers().map(function(t){return t.at-tB;});
+shRunDue(tB+14999);var at14999=B.readyState;
+shRunDue(tB+15000);var at15000=B.readyState;
+shOut({cutA:cutA,socks:SHSOCKS.length,cutsB:cutsB,at14999:at14999,at15000:at15000});""")
+        self.assertEqual(r["cutA"], 3, "A's own timer cut it")
+        self.assertEqual(r["socks"], 2, "the boot dial A and the tick's dial B")
+        self.assertEqual(r["cutsB"], [15000], "A's late close leaves B's cut armed, due SH_CONNECT_MS after B's dial")
+        self.assertEqual(r["at14999"], 0, "B is not cut one ms early")
+        self.assertEqual(r["at15000"], 3, "B's own timer cuts it at SH_CONNECT_MS, A's late close notwithstanding")
+
+    def test_1a_an_older_sockets_open_and_close_delivered_after_a_newer_dial_leave_that_dials_cut_in_force(self):
+        r = _run_probe(r"""
+var A=SHSOCKS[0],t0=SHNOW;                               // the boot dial
+SHNOW+=3000;A.readyState=3;                             // A opened and closed again, neither event delivered yet (a paused event queue)
+SHNOW=t0+8100;shTick();var B=shSock(),tB=SHNOW;         // a tick finds A CLOSED past SH_REDIAL_MS and dials B
+A.onopen();A.onclose({code:1006});                      // A's open and close events, delivered in order after B's dial
+var cutsB=shCutTimers().map(function(t){return t.at-tB;});
+shRunDue(tB+14999);var at14999=B.readyState;
+shRunDue(tB+15000);var at15000=B.readyState;
+shOut({socks:SHSOCKS.length,cutsB:cutsB,at14999:at14999,at15000:at15000});""")
+        self.assertEqual(r["socks"], 2, "the boot dial A and the tick's dial B")
+        self.assertEqual(r["cutsB"], [15000], "A's late open and close leave B's cut armed, due SH_CONNECT_MS after B's dial")
+        self.assertEqual(r["at14999"], 0, "B is not cut one ms early")
+        self.assertEqual(r["at15000"], 3, "B's own timer cuts it at SH_CONNECT_MS")
+
 
 # ── the lazy panes and the phone's skeleton first dial, shell + shim (stage 0, 2026-09-18) ────────────────────────
 # The fit harness's element fakes carry no attributes, so the lazy-pane cases hand the shell richer ones (`pre`): six pane
