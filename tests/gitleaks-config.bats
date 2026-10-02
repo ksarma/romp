@@ -267,13 +267,12 @@ synth_probe() {   # <repo> <file> <message>: the probe in the file, committed
     git -C "$1" commit -qm "$3"
 }
 
-# The history case as CI runs it, over a synthetic repository: this suite (the file bats is
-# running, so a scratch copy under test copies itself), its git-hermetic helper and the config
-# copied into the repository's tree, untracked and so in none of its commits, which makes the
-# copy's ROMP_DIR that repository, so the case's own body, range and flags are what run. A child
-# bats, as tests/gitleaks-require.bats runs this suite. The filter matches the history case's title
-# alone (no case in this section begins with it), and each caller checks the plan line says one
-# case ran.
+# The history case run over a synthetic repository, by a child bats as tests/gitleaks-require.bats
+# runs this suite. This suite (the file bats is running, so a scratch copy under test copies
+# itself), its git-hermetic helper and the config are copied into the repository's tree, untracked
+# and so in none of its commits. That makes the copy's ROMP_DIR the synthetic repository, so the
+# case's own body, range and flags are what run. The filter matches the history case's title alone
+# (no case in this section begins with it), and each caller checks the plan line says one case ran.
 history_case_over() {   # <repo>
     mkdir -p "$1/tests"
     cp "$BATS_TEST_FILENAME" "$1/tests/gitleaks-config.bats"
