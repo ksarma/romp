@@ -3091,8 +3091,13 @@ _Module = collections.namedtuple("_Module", "where tree names defs classes impor
 #   list of every def or class the module's import-time blocks bind to it (_import_time_defs), IMPORTS {local name,
 #   dotted for `import tests.helper`: (path of a module under ROOT, attribute or None for the module itself)}, STARS, the
 #   paths of the modules under ROOT it star-imports, the ROOT the imports resolve against (tests/, or a synthetic tree's
-#   directory in the tests of the scan itself) and ROLES, {id(node): role} for each bare name or attribute Python calls
-#   where it stands (_call_roles), a side table keyed by id(node) since a parsed tree is read-only for every consumer
+#   directory in the tests of the scan itself), resolved (os.path.realpath) where the record is built (_module_record),
+#   and ROLES, {id(node): role} for each bare name or attribute Python calls where it stands (_call_roles), a side table
+#   keyed by id(node) since a parsed tree is read-only for every consumer. ROOT is resolved because the resolver reads
+#   each imported module under its realpath (_tests_module_path) and labels it by its path relative to ROOT (_module_at):
+#   a root handed in through a symlink (a synthetic tree under the macOS temp root, /var/folders under /private/var)
+#   labelled the module "../../private/var/.../helper.py" where its name relative to the root was meant (fork PR 894's
+#   macOS runs; the pin: the scan test's helper root, a symlink on every platform)
 
 class _Census(dict):
     """Everything the census holds between its reads in one run of this module, as ONE object that takes a weak reference
@@ -3380,6 +3385,7 @@ def _call_roles(tree):
 
 
 def _module_record(tree, where, root):
+    root = os.path.realpath(root)           # resolved, so _module_at labels a module relative to it however it was spelled
     imports, stars = _imports_of(tree, root)
     defs, classes = _import_time_defs(tree.body)
     return _Module(where, tree, _EnvNames(tree), defs, classes, imports, stars, root, _call_roles(tree))
@@ -4066,7 +4072,9 @@ def _module_at(path, root):
     """The _Module for the file `path`, built once per (path, root) in this module's run over the census's own tree of the
     file (_own_tree: the tree the census loop reads for the same file, parsed once in the run) and held in the _Census
     ("modules") until tearDownModule's release. The tree is read-only here as everywhere: _module_record keeps its
-    per-node data in side tables keyed by id(node)."""
+    per-node data in side tables keyed by id(node). Its label is `path`, a realpath (_tests_module_path), relative to
+    `root`, the importing record's ROOT, which _module_record resolved: both sides resolved, so a module under the root
+    is labelled by its path under it however the caller spelled the root."""
     modules = _held()["modules"]
     hit = modules.get((path, root))
     if hit is None:
