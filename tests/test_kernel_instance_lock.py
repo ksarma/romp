@@ -880,7 +880,10 @@ class TheHolderAtTheDeadline(_Lab):
         self.assertGreaterEqual(refused, deadline, "the kernel was refused before the deadline: %s" % err[-2000:])
         self.assertLess(refused, deadline + EXPIRY_SLACK_S)
         refusal = self.refusal_of(err)
-        when = datetime.fromtimestamp(later, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # The kernel reads the deadline from the line, written to the millisecond ("%.3f"), and prints it truncated to the
+        # second, so the expectation reads the value as written: from the raw float, a fraction of .9995 or more rounds
+        # into the next second in the line and not here.
+        when = datetime.fromtimestamp(float("%.3f" % later), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.assertIn("another kernel (pid %d) is draining until %s and holds %s" % (drainer, when, self.lock_path),
                       refusal, "the refusal names the kernel that holds the lock as draining, with its deadline")
         self.assertNotIn("is serving", refusal)
