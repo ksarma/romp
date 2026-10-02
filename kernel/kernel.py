@@ -102,13 +102,15 @@ EXIT_GRACE_S = float(os.environ.get("ROMP_SHUTDOWN_GRACE_MS", "5000")) / 1000.0
 # How far beyond this kernel's EXIT_GRACE_S a draining holder's deadline may lie and still be waited
 # for. A drain announces now plus the drainer's own EXIT_GRACE_S (_kernel_lock_announce_drain), which
 # under one manager is this kernel's too (both read the grace the manager passes). The margin covers
-# a drainer whose grace was longer than this kernel's (a kernel the manager spawned under its 8 s
-# default, met by a kernel started by hand under the bare 5 s, or a kernel left from a manager since
-# restarted with a shorter ROMP_SHUTDOWN_GRACE_MS) and a wall clock stepped back after the
-# announcement. A deadline further ahead is no drain this release announces, and a wait for it would
-# hold this kernel off its root for nothing (one about 9.2e9 s ahead would also overflow setitimer),
-# so it is refused at once. A drain that a too-small margin refuses is retried by the manager's
-# crash backoff, which costs a delay; a margin too large only lengthens a wait that is still bounded.
+# a drainer whose grace was longer than this kernel's by up to the margin (a kernel the manager
+# spawned under its 8 s default, met by a kernel started by hand under the bare 5 s, or a kernel left
+# from a manager since restarted with a shorter ROMP_SHUTDOWN_GRACE_MS) and a wall clock stepped back
+# after the announcement. A deadline further ahead than this kernel waits for (its EXIT_GRACE_S plus
+# the margin) is refused at once, without a wait: a wait for a deadline far ahead would hold this
+# kernel off its root for nothing (one about 9.2e9 s ahead would also overflow setitimer). A drainer
+# whose grace is more than the margin longer than this kernel's announces such a deadline, so a
+# kernel that meets its drain early is refused this way too, and the manager's crash backoff retries
+# that kernel, which costs a delay; a margin too large only lengthens a wait that is still bounded.
 KERNEL_LOCK_DEADLINE_MARGIN_S = 30.0
 KERNEL_LOCK_EXIT = 75          # EX_TEMPFAIL: the lock step refused this kernel (another holder, or a lock it could not take)
 KERNEL_LOCK_LINE_MAX = 256     # the most of the file's first line a reader reads
@@ -349,8 +351,10 @@ def _kernel_lock_acquire(path, now=time.time):
     if not remaining <= bound:   # written so, a NaN is out of range too
         os.close(fd)
         return None, _kernel_lock_refusal((
-            "pid %d holds %s and its draining line announces a deadline of %s, %.6g s ahead, more than this kernel's "
-            "shutdown grace (%g s) plus a %g s margin, which no drain announces, so this kernel does not wait for it"
+            "pid %d holds %s and its draining line announces a deadline of %s, %.6g s ahead, further ahead than this "
+            "kernel waits for (its shutdown grace, %g s, plus a %g s margin), so this kernel is refused at once, without "
+            "waiting (a drainer whose shutdown grace is more than the margin longer than this kernel's announces such a "
+            "deadline, so a kernel meeting its drain can be refused this way too)"
             % (pid, path, _kernel_lock_when(deadline), remaining, float(EXIT_GRACE_S), KERNEL_LOCK_DEADLINE_MARGIN_S)))
     if threading.active_count() != 1:
         os.close(fd)

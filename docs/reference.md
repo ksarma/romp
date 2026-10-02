@@ -1874,9 +1874,12 @@ kernel started while the holder drains waits for the lock, up to that
 deadline, and serves once it takes the lock. If, at the deadline, the holder
 still holds the lock or another waiting kernel has taken it first (the refusal
 then names that kernel, or says that a new owner has not yet written its line),
-the new kernel is refused. A draining line whose deadline lies more than the
-kernel's shutdown grace plus 30 seconds ahead is no drain's announcement, and
-the kernel is refused at once, without waiting. A kernel whose lock step fails
+the new kernel is refused. A draining line whose deadline lies further ahead
+than the new kernel waits for (its own shutdown grace plus 30 seconds) refuses
+it at once, without waiting. A drainer whose shutdown grace is more than 30
+seconds longer than the new kernel's announces such a deadline, so a kernel
+started early in that drain is refused this way too, and under the manager the
+crash backoff starts it again. A kernel whose lock step fails
 with an error is refused the same way, with status 75 and one stderr line naming
 the lock file, the step that failed and the error, never a traceback: a
 `kernel.lock` this user cannot open, read and write as a regular file, or a

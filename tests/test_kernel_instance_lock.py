@@ -918,8 +918,14 @@ class LockStepFailures(_Lab):
         grace = float(GRACE_MS) / 1000.0
         line, err = self.refused_once(before, (
             "pid %d holds %s and its draining line announces a deadline of" % (os.getpid(), self.lock_path),
-            "more than this kernel's shutdown grace (%g s) plus a %g s margin, which no drain announces, so this kernel "
-            "does not wait for it" % (grace, DEADLINE_MARGIN_S), REMEDY_TEXT))
+            "further ahead than this kernel waits for (its shutdown grace, %g s, plus a %g s margin), so this kernel is "
+            "refused at once, without waiting" % (grace, DEADLINE_MARGIN_S),
+            # the bound is this kernel's, not every drain's: a drainer whose grace is more than the margin longer than
+            # this kernel's announces a deadline beyond it, and the line says so rather than calling it no drain at all
+            "a drainer whose shutdown grace is more than the margin longer than this kernel's announces such a "
+            "deadline, so a kernel meeting its drain can be refused this way too", REMEDY_TEXT))
+        self.assertNotIn("no drain announces", line, "the bound is relative to this kernel's grace, and a drainer with a "
+                                                     "longer grace announces a deadline beyond it")
         self.assertNotIn(WAITING_TEXT, err, "a deadline beyond the bound is refused before any waiting line")
         self.assertEqual(self.lock_line(), "%d draining %s" % (os.getpid(), deadline_text), "the holder's line is untouched")
 
