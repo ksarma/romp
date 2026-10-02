@@ -70017,16 +70017,20 @@ def _pane_spin(cid, ignore_id=""):
             "function rpaint(){rh=0;if(!rpend||!rb)return;rpend=false;rb.classList.add('on');rfail();}"
             "function rhold(){clearTimeout(rh);rh=0;rpend=true;if(rb)rb.classList.remove('on');clearTimeout(bfail);bfail=0;if(document.visibilityState!=='hidden'&&!rpk)rh=setTimeout(rpaint,RHOLD);}"
             "window.addEventListener('romp:wsdown',function(){rpo=false;ron=!!(rb&&rb.classList.contains('on'));});"
-            # [fork] iOS item 4 (finding of 2026-10-02): in the chat page the badge sits at the top of the transcript, below the
-            # page's chrome (the tab strip or the phone's session header, the strip's resize handle, the pinned notes), so it covers
-            # none of their controls. Upstream's rule puts it at top:8px over the header's right end, where it hid the phone's tag
-            # filter and + button and the desktop strip's tag filter and gear for the whole wait, which since the failsafe latch can
-            # outlast 30 s. Keyed on the chat's header (#tabbar): the other panes keep upstream's corner. The transcript's top moves
-            # only with a size change (the chrome above it grows or shrinks, the pane is shown), so a ResizeObserver on the header and
-            # the transcript places it again; no timer. Upstream's CSS rule stays byte for byte (the inline top outranks it).
-            "var rtb=document.getElementById('tabbar');"
+            # [fork] iOS item 4 (finding of 2026-10-02): the badge sits 8 px below the top of the pane's content container `c`, when
+            # that container is the pane's own scroll area (overflow-y auto or scroll), so it covers none of the controls in the
+            # chrome above it. Every pane page lays out that way, a header over a scrolling list: the chat (#content under the tab
+            # strip or the phone's session header, the strip's resize handle and the pinned notes), the Outline (its list under
+            # its search and tag filter), the Feed and the Waiting pane. Upstream's rule puts the badge at top:8px over the header's
+            # right end, where it hid the phone chat's tag filter and + button, the desktop strip's tag filter and gear, and the
+            # phone Outline's tag filter and search, for the whole wait, which since the failsafe latch can outlast 30 s. A scroll
+            # area's box does not move when it scrolls; its top moves only with a size change (the chrome above it grows or
+            # shrinks, the pane is shown or the window resized), so a ResizeObserver on it and on the page places the badge again;
+            # no timer. A container that is not a scroll area keeps upstream's corner. Upstream's CSS rule stays byte for byte (the
+            # inline top outranks it).
             "function rplace(){if(!rb||!c)return;var t=Math.round(c.getBoundingClientRect().top);rb.style.top=((t>0?t:0)+8)+'px';}"
-            "if(rb&&c&&rtb&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(rplace);rro.observe(rtb);rro.observe(c);}catch(e){}rplace();}"
+            "var rsc=false;try{rsc=!!c&&/^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){}"
+            "if(rb&&rsc&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(rplace);rro.observe(c);rro.observe(document.documentElement);}catch(e){}rplace();}"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
             # the opaque sheet; the sheet stays for a genuinely empty pane (cold load / never
             # painted), per the loading-states rule.

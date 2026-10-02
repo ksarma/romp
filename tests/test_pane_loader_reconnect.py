@@ -504,39 +504,45 @@ out({ before, atPark, justBefore, atHold, waiting, afterFresh: painted(), runs: 
         self.assertEqual([r["on"] for r in o["runs"]], [True, False, True, False], "painted on screen, pulled back at the park, painted a hold after the tap, cleared at the fresh frame")
         self.assertEqual(o["runs"][2]["t"], 2 * self.HOLD + 20000, "the second paint is a hold after the tap, not after the park")
 
-    # The badge's place in the chat page (finding of 2026-10-02): at the top of the transcript, below the chrome, so it covers none
-    # of the header's controls (upstream's top:8px hid the phone's tag filter and + button, and the desktop strip's tag filter and
-    # gear). The served legs measure the real geometry (_badge_clear_of_chrome); this case runs the placement's logic in node.
+    # The badge's place (finding of 2026-10-02): 8 px below the top of the pane's content container when that container is the
+    # pane's scroll area (every pane page: a header over a scrolling list), so it covers none of the header's controls (upstream's
+    # top:8px hid the phone chat's tag filter and + button, the desktop strip's tag filter and gear, and the phone Outline's tag
+    # filter and search). The served legs measure the real geometry (_badge_clear_of_chrome); these cases run the logic in node.
     _PLACE_PRE = r"""
 const ROS = [], OBSERVED = [];
 global.ResizeObserver = class { constructor(cb) { ROS.push(cb); } observe(el) { OBSERVED.push(el === CONTENT ? 'content' : el && el.id); } };
-let CTOP = 44;                                                        // the transcript's top: the phone header's height
+let CTOP = 44, COVER = 'scroll';                                      // the transcript's top (the phone header's height) and its overflow-y
 CONTENT.getBoundingClientRect = () => ({ top: CTOP, left: 0, right: 390, bottom: 700 });
-const TABBAR = { id: 'tabbar' };
-const getEl0 = document.getElementById;
-document.getElementById = (id) => (id === 'tabbar' ? TABBAR : getEl0(id));
+global.getComputedStyle = (el) => ({ overflowY: el === CONTENT ? COVER : 'visible' });
+document.documentElement = { id: 'html' };
 const resize = (top) => task(() => { CTOP = top; ROS.forEach((cb) => cb([])); });
 """
 
-    def test_in_the_chat_page_the_badge_sits_below_the_header_and_moves_with_it_on_resize_events(self):
+    def test_the_badge_sits_below_the_panes_header_and_moves_with_it_on_resize_events(self):
         o = self._run(r"""
 const atLoad = BADGE.style.top;
 resize(90); const pinnedNotes = BADGE.style.top;                      // the pinned notes strip appears above the transcript
 resize(0); const offScreen = BADGE.style.top;                         // a pane not rendered (display:none) measures 0
 fire('romp:wsdown'); after(RHOLD_T); const painted1 = { painted: painted(), top: BADGE.style.top };
 out({ atLoad, pinnedNotes, offScreen, painted1, observed: OBSERVED, observers: ROS.length, timers: live() - (painted() ? 1 : 0) });""", pre=self._PLACE_PRE)
-        self.assertEqual(o["observed"], ["tabbar", "content"], "one observer on the header and the transcript")
+        self.assertEqual(o["observed"], ["content", "html"], "one observer on the scroll area and the page")
         self.assertEqual(o["atLoad"], "52px", "at load: 8 px below the transcript's top, clear of the header")
         self.assertEqual(o["pinnedNotes"], "98px", "a resize event places it again under the new top")
         self.assertEqual(o["offScreen"], "8px", "a pane measuring nothing keeps upstream's 8 px until it is shown (its resize event places it)")
         self.assertEqual(o["painted1"], {"painted": True, "top": "8px"}, "the hold and the paint leave the place alone")
         self.assertEqual(o["timers"], 0, "no timer places it: only the paint's failsafe stands")
 
-    def test_a_page_without_the_chat_header_keeps_upstreams_corner(self):
+    def test_a_content_container_that_is_not_a_scroll_area_keeps_upstreams_corner(self):
         o = self._run(r"""
-out({ top: BADGE.style.top === undefined ? null : BADGE.style.top, observers: ROS.length });""", pre=self._PLACE_PRE.replace("id === 'tabbar' ? TABBAR : ", ""))
-        self.assertEqual(o["observers"], 0, "no header, no observer")
+out({ top: BADGE.style.top === undefined ? null : BADGE.style.top, observers: ROS.length });""", pre=self._PLACE_PRE.replace("COVER = 'scroll'", "COVER = 'visible'"))
+        self.assertEqual(o["observers"], 0, "no scroll area, no observer")
         self.assertIsNone(o["top"], "the inline top is never written: upstream's rule places it (top:8px)")
+
+    def test_an_auto_overflow_list_counts_as_a_scroll_area(self):
+        # the Outline's, the Feed's and the Waiting pane's lists are overflow-y:auto; the chat's transcript is scroll
+        o = self._run(r"""
+out({ top: BADGE.style.top, observers: ROS.length });""", pre=self._PLACE_PRE.replace("COVER = 'scroll'", "COVER = 'auto'"))
+        self.assertEqual(o, {"top": "52px", "observers": 1, "textWrites": []})
 
     def test_the_fork_lines_sit_around_upstreams_badge_lines_which_stay_byte_for_byte(self):
         js = km._pane_spin("content", "live-ask")

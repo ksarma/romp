@@ -255,10 +255,10 @@ const flip = (hidden) => page.evaluate((h) => {
 // frame, whether the corner badge (#pane-reconn) is painted on and its text (textContent, so a count written through innerHTML or a
 // child node reads too), and records each change of either, so a class set and cleared inside one task never reads as painted; a
 // listener stamps each romp:wsfresh (the event that clears the badge). `armed` keeps the badge's class at arming time (a pane off
-// screen paints no frame, so its loop may not run before it is shown). In the chat page (the one with the #tabbar header) each
-// record of a painted badge also carries its box and the box of every visible control in the chrome above the transcript (the tab
-// strip or the phone's session header, the strip's resize handle, the ledger and pinned-notes strips), so the test can say the
-// painted badge covers none of them (finding of 2026-10-02: at top:8px it hid the header's tag filter and + button).
+// screen paints no frame, so its loop may not run before it is shown). Each record of a painted badge also carries its box and the
+// box of every visible control in the pane's chrome, the document outside the pane's content container (the chat's transcript, the
+// Outline's, the Feed's and the Waiting pane's lists), so the test can say the painted badge covers none of them (finding of
+// 2026-10-02: at top:8px it hid the chat header's tag filter and + button, and the Outline's tag filter and search).
 const cueRec = () => {
   const w = window; if (w.__labCue) return "again";
   const b0 = document.getElementById("pane-reconn");
@@ -266,22 +266,21 @@ const cueRec = () => {
   let last = null;
   const read = () => { const b = document.getElementById("pane-reconn"); return { on: !!(b && b.classList.contains("on") && getComputedStyle(b).display !== "none"), text: b ? b.textContent : null }; };
   const box = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
+  // the pane's content container, the id each pane page hands _pane_spin: the chat's transcript, else the pane's list (<pane>-list)
+  const content = document.getElementById(location.pathname === "/chat" ? "content" : location.pathname.slice(1) + "-list");
   const chrome = () => {
-    const out = [];
-    for (const id of ["tabbar", "tabbar-resize", "ledger", "pinned-notes"]) {
-      const root = document.getElementById(id); if (!root) continue;
-      const els = [root].concat(Array.from(root.querySelectorAll("button, a[href], [role=button], [data-act], input, textarea, select, [tabindex]")));
-      for (const el of els) {
-        if (el === root && id !== "tabbar-resize") continue;   // the strips themselves are not controls; the resize handle is one (a drag)
-        const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
-        if (!r.width || !r.height || cs.visibility === "hidden" || cs.display === "none") continue;
-        out.push({ in: id, el: el.tagName.toLowerCase() + (el.id ? "#" + el.id : ""), label: (el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "").trim().slice(0, 30), box: box(el) });
-      }
+    const out = [], b = document.getElementById("pane-reconn");
+    const els = Array.from(document.querySelectorAll("button, a[href], [role=button], [data-act], input, textarea, select, [tabindex], #tabbar-resize"));
+    for (const el of els) {
+      if (el === b || (b && b.contains(el)) || (content && content.contains(el))) continue;   // the content scrolls under the badge; the chrome does not
+      const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+      if (!r.width || !r.height || cs.visibility === "hidden" || cs.display === "none") continue;
+      out.push({ el: el.tagName.toLowerCase() + (el.id ? "#" + el.id : ""), label: (el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "").trim().slice(0, 30), box: box(el) });
     }
     return out;
   };
   const loop = () => { c.frames++; c.lastT = Date.now(); const v = read(), k = v.on + "|" + v.text; if (k !== last) { const e = { t: c.lastT, on: v.on, text: v.text };
-    if (v.on && document.getElementById("tabbar")) { e.box = box(document.getElementById("pane-reconn")); e.chrome = chrome(); }
+    if (v.on) { e.box = box(document.getElementById("pane-reconn")); e.chrome = chrome(); e.content = !!content; }
     c.badge.push(e); last = k; } requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
   w.addEventListener("romp:wsfresh", () => { c.fresh.push(Date.now()); });
@@ -678,6 +677,29 @@ try {
   state.phase = "returned";
   out.t.return = now();
   out.visibleDispatch = await flip(false);
+  // THE TAP AFTER THE RETURN (iOS item 4, findings of 2026-10-02): cfg.postTap names a pane the return parked (the pre-suspend tap
+  // loaded it and went back to the chat, so it was off screen at the return). Started at the return's flip, so the tap can land
+  // during an outage: at cfg.postTapMs after the return the driver arms the cue's frame recorder in that pane's document and taps
+  // its tab, then waits for the pane's first fresh frame after the tap (the outage's length plus 15 s at most) and a hold past it
+  // (cfg.cueHoldMs), so a badge the hold paints late is in the record too; then back to the chat. Awaited after the fresh wait.
+  const postTapDone = !cfg.postTap ? null : (async () => {
+    await sleep(Math.max(0, out.t.return + (cfg.postTapMs || 2000) - now()));
+    const pf = page.frames().find((f) => { try { return new URL(f.url()).pathname === "/" + cfg.postTap; } catch (e) { return false; } });
+    out.postTap = { pane: cfg.postTap, arm: pf ? await pf.evaluate(cueRec).catch((e) => "ERR:" + String(e).slice(0, 80)) : "no-frame" };
+    out.t.postTap = now();
+    await page.click("#mtabs button[data-pane=" + cfg.postTap + "]");
+    const tapDeadline = now() + (cfg.outageMs || 0) + 15000;
+    let rec = null;
+    while (pf && now() < tapDeadline) {
+      rec = await pf.evaluate(() => window.__labCue || null).catch(() => null);
+      if (rec && rec.fresh.some((x) => x >= out.t.postTap)) break;
+      await sleep(50);
+    }
+    await sleep((cfg.cueHoldMs || 1000) + 300);
+    out.postTap.rec = pf ? await pf.evaluate(() => window.__labCue || null).catch((e) => ({ err: String(e).slice(0, 80) })) : null;
+    out.t.postTapDone = now();
+    await page.click("#mtabs button[data-pane=chat]");
+  })().catch((e) => { out.postTapError = String(e).slice(0, 200); });
   if (cfg.shots) page.screenshot({ path: cfg.shots + "-returned.png" }).catch(() => {});
   await sleep(Math.max(0, out.t.return + cfg.outageMs - now()));
   state.phase = "after";
@@ -703,28 +725,7 @@ try {
   }
   out.freshSeenMsAfterOutage = freshSeen;   // wall clock at which the driver first saw each pane's row, from the outage's end
   out.t.fresh = now();
-  // THE TAP AFTER THE RETURN (iOS item 4, finding of 2026-10-02): cfg.postTap names a pane the return parked (the pre-suspend tap
-  // loaded it and went back to the chat, so it was off screen at the return). At cfg.postTapMs after the return the driver arms the
-  // cue's frame recorder in that pane's document and taps its tab, then waits for the pane's first fresh frame after the tap and a
-  // hold past it (cfg.cueHoldMs), so a badge the hold paints late is in the record too; then back to the chat.
-  if (cfg.postTap) {
-    await sleep(Math.max(0, out.t.return + (cfg.postTapMs || 2000) - now()));
-    const pf = page.frames().find((f) => { try { return new URL(f.url()).pathname === "/" + cfg.postTap; } catch (e) { return false; } });
-    out.postTap = { pane: cfg.postTap, arm: pf ? await pf.evaluate(cueRec).catch((e) => "ERR:" + String(e).slice(0, 80)) : "no-frame" };
-    out.t.postTap = now();
-    await page.click("#mtabs button[data-pane=" + cfg.postTap + "]");
-    const tapDeadline = now() + 15000;
-    let rec = null;
-    while (pf && now() < tapDeadline) {
-      rec = await pf.evaluate(() => window.__labCue || null).catch(() => null);
-      if (rec && rec.fresh.some((x) => x >= out.t.postTap)) break;
-      await sleep(50);
-    }
-    await sleep((cfg.cueHoldMs || 1000) + 300);
-    out.postTap.rec = pf ? await pf.evaluate(() => window.__labCue || null).catch((e) => ({ err: String(e).slice(0, 80) })) : null;
-    out.t.postTapDone = now();
-    await page.click("#mtabs button[data-pane=chat]");
-  }
+  if (postTapDone) await postTapDone;   // the tap after the return (below the return's flip) finishes before the settle
   await sleep(cfg.settleMs || 1500);       // wsconnfail rides the next open; the perf minute rows flush on their own clock
   // the chain after the return (the owner's answer, 2026-09-19): the chat's background asks (needFull why=prefetch) on the dials
   // made from the return on. On the phone the redial reloads the visible tab alone; the desktop's chain runs as before.

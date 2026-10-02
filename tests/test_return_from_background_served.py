@@ -517,15 +517,19 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertTrue(badge and all("text" in b for b in badge), where + "the recorder read the badge's text with each change: %r" % (badge,))
         self.assertEqual([b for b in badge if b["on"] and b["text"] != BADGE_TEXT], [], where + "the painted badge reads %r and nothing else: %r" % (BADGE_TEXT, badge))
 
-    def _badge_clear_of_chrome(self, where, badge):
-        """The chat's painted badge covers none of the controls in the chrome above the transcript (finding of 2026-10-02): at upstream's
-        top:8px it covered 78 percent of the phone header's tag filter and of its + button, and the desktop strip's tag filter and gear,
-        for the whole wait. Each painted record carries the badge's box and every visible control's box (the recorder's chrome());
-        the overlap must be zero for each, and the control list must not be empty (a header read as empty would pass by default)."""
+    def _badge_clear_of_chrome(self, where, badge, need_controls=True):
+        """A painted badge covers none of the controls in the pane's chrome, the document outside its content container (finding of
+        2026-10-02): at upstream's top:8px the chat's covered 78 percent of the phone header's tag filter and of its + button and the
+        desktop strip's tag filter and gear, and the phone Outline's covered its tag filter and search, for the whole wait. Each
+        painted record carries the badge's box and every visible chrome control's box (the recorder's chrome()); the overlap must be
+        zero for each. need_controls: the pane's chrome holds controls (the chat's and the Outline's do), so a list read as empty
+        fails instead of passing by default."""
         painted = [b for b in badge if b["on"]]
         for b in painted:
-            self.assertIn("box", b, where + "the painted chat badge's box was read: %r" % (b,))
-            self.assertTrue(b.get("chrome"), where + "the chrome above the transcript holds controls, read: %r" % (b,))
+            self.assertIn("box", b, where + "the painted badge's box was read: %r" % (b,))
+            self.assertTrue(b.get("content"), where + "the recorder found the pane's content container: %r" % (b,))
+            if need_controls:
+                self.assertTrue(b.get("chrome"), where + "the pane's chrome holds controls, read: %r" % (b,))
             bx, by, bw, bh = b["box"]
             hits = []
             for c in b["chrome"]:
@@ -535,7 +539,7 @@ class ReturnFromBackground(unittest.TestCase):
                     hits.append((c["el"], c["label"], round(ix * iy / float(w * h), 2)))
             self.assertEqual(hits, [], where + "the painted badge at %r covers none of the header's controls: %r" % (b["box"], hits))
 
-    def _tapcue(self, name, r):
+    def _tapcue(self, name, r, need_controls=False):
         """The pane the return parked, tapped after the return (iOS item 4, finding of 2026-10-02): its corner badge read once per frame
         from the tap through its first fresh frame and a hold past it. The tap is that pane's return for the badge: no frame paints it
         when the fresh frame came inside the hold after the tap, and otherwise none paints it sooner than the hold. Before the fix the
@@ -551,8 +555,10 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertTrue(fresh, where + "the tapped pane stamped a fresh frame after the tap: %r" % ({k: rec.get(k) for k in ("fresh", "frames", "err")},))
         self.assertGreater(rec.get("frames", 0), 0, where + "the tapped pane's frame loop ran")
         self.assertGreaterEqual(rec.get("lastT", 0), fresh[0], where + "...through its fresh frame, so 'never painted' was read, not assumed")
+        self.assertNotIn("postTapError", r, where + "the tap after the return ran: %r" % (r.get("postTapError"),))
         badge = rec.get("badge") or []
         self._badge_text(where, badge)
+        self._badge_clear_of_chrome(where, badge, need_controls)
         ons = [b["t"] - tap for b in badge if b["on"] and b["t"] >= tap]
         rel_fresh = fresh[0] - tap
         type(self).measurements.setdefault(name, {})["postTapCue"] = {"pane": pt.get("pane"), "holdMs": hold, "armedOn": (rec.get("armed") or {}).get("on"),
@@ -562,6 +568,8 @@ class ReturnFromBackground(unittest.TestCase):
         else:
             self.assertEqual(len(ons), 1, where + "its first frame came %d ms after the tap, past the hold: one paint: %r" % (rel_fresh, badge))
             self.assertGreaterEqual(ons[0], hold - 20, where + "...no sooner than the hold after the tap: %r" % (ons,))
+            offs = [b["t"] - tap for b in badge if not b["on"] and b["t"] - tap > ons[0]]
+            self.assertTrue(offs and offs[0] >= rel_fresh, where + "...cleared once, at or after its first fresh frame (%d ms): %r" % (rel_fresh, badge))
 
     # ---- the return's chain (the owner's decision, 2026-09-19): on the phone the redial reloads the visible tab alone ----
     def _return_chain(self, name, r, rows):
@@ -1019,6 +1027,16 @@ class ReturnFromBackground(unittest.TestCase):
 
     def test_phone_healthy_return_then_a_parked_tab_tapped_paints_no_badge(self):
         self._healthy_post_tap("chromium")
+
+    # iOS item 4 (findings of 2026-10-02): the Outline, loaded before the suspend and parked at the return, tapped 2 s into a hung
+    # 12 s outage. Its badge paints a hold after the tap (not at the tap, not while parked), clear of the Outline's search and tag
+    # filter, and clears at its first frame after the outage. The pane's key is read from the kernel's pane order by its label.
+    def test_phone_hung_12s_a_parked_tab_tapped_during_the_outage_paints_a_hold_after_the_tap(self):
+        outline = next(k for k, label in km_pane_order() if label == "Outline")
+        name, r = self._drive("phone", "hung", 12, "chromium", tap=outline, post_tap=outline)
+        self._cue(name, r, "hung", 12)
+        self._tapcue(name, r, need_controls=True)
+        Path(os.path.join(self.lab, "return-harness-%s.json" % name)).write_text(json.dumps(type(self).measurements.get(name, {}), indent=1, sort_keys=True))
 
     def test_webkit_phone_healthy_return_then_a_parked_tab_tapped_paints_no_badge(self):
         self._healthy_post_tap("webkit")
