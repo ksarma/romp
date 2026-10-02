@@ -23044,17 +23044,20 @@ COPY
     [ "$BOF_FAULTS" -gt 0 ]
     [ "$status" -ne 124 ]
     [ "$status" -ne 0 ]
-    ! remote_holds_ref refs/heads/a-old || false
-    ! remote_holds_ref refs/heads/b-new || false
     [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/b-new ("*") could not be listed for the BINARY VERDICT check (git ls-tree was not run: its output file "*"/listing could not be opened for writing); the scan is incomplete, so the push is refused"* ]] || false
     [[ "$output" != *"at the tip of refs/heads/b-new"*"is text that git calls binary"* ]] || false
+    run remote_holds_ref refs/heads/a-old
+    [ "$status" -ne 0 ]
+    run remote_holds_ref refs/heads/b-new
+    [ "$status" -ne 0 ]
     bof_push a-old b-new -- BOF_PATH=/romp-pre-push. BOF_SUFFIX=/listing BOF_DIR=w BOF_ONCE=1
     [ "$BOF_FAULTS" -gt 0 ]
     [ "$status" -ne 124 ]
     [ "$status" -ne 0 ]
-    ! remote_holds_ref refs/heads/a-old || false
     [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/a-old ("*") could not be listed for the BINARY VERDICT check (git ls-tree was not run: its output file "*"/listing could not be opened for writing); the scan is incomplete, so the push is refused"* ]] || false
     [[ "$output" != *"the newline test could not open"* ]] || false
+    run remote_holds_ref refs/heads/a-old
+    [ "$status" -ne 0 ]
 }
 
 @test "the repair after the audit of build 9 (item 40, a commit's NUMSTAT answer whose open fails after a newer commit's; its OP9-2): a commit adding p.txt as text and one making it binary, through a real push with the library failing the shell's open of the numstat's answer (the scratch file rows.raw) for writing for the text commit, which the check reads second, is refused naming that open, the remote at its base, within the 60 s bound, and no line names p.txt in the text commit as text git calls binary (at build 9's text and at d5740856c the text commit's rows were read from the answer the binary commit left, and p.txt was named so, git's verdict on another commit)" {
@@ -23151,8 +23154,9 @@ COPY
     [ "$BOF_FAULTS" -gt 0 ]
     [ "$status" -ne 124 ]
     [ "$status" -ne 0 ]
-    ! remote_holds_ref refs/tags/v1 || false
     [[ "$output" == *"romp pre-push: the TYPE of the object refs/tags/v1 pushes (${BASE:0:10}) could not be read, so whether it is an annotated tag is unknown $nul"* ]] || false
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
 }
 
 @test "the repair after the audit of build 9 (item 40, the hidden file report's /dev/null that cannot be opened; its OP9-4): a commit adding a text file under a diff driver whose binary key is true, removed at the tip, through a real push with the library failing the shell's open of /dev/null for the driver's key (the second after check-attr's answer is opened), is refused with the hidden file's line saying whether the key is set could not be read, naming /dev/null as a file the shell could not open for writing, and that whether an attribute accounts for the verdict is unknown, both remedies printed; and a big text file over core.bigFileThreshold, removed at the tip, with the library failing every open of /dev/null after check-attr's, is refused with the line saying whether core.bigFileThreshold is set could not be read, naming the open, and never that the key is not set (at build 9's text a failed open skipped git config, read as the key not set: the first line said no attribute accounted for the verdict, where the driver's key did, and the second that core.bigFileThreshold is not set, where it is 100; d5740856c's text holds the same two reads, but there the answer's file was opened in the process git's command forked, so the library, armed by that open, never armed the hook's shell, and these pushes land no fault on the two reads)" {
