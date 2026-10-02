@@ -24,8 +24,9 @@ The pins, each red on the kernel before the lock for the reason it names:
      new owner that has not yet written its line;
   6. in process: the helper's success path over a longer previous line, a non-inheritable descriptor; the drain's
      announcement as the first act of _drain_and_exit, which never raises; nothing written with no lock held; an
-     in-process load holds no lock; and every way out of the wait (the lock taken, the deadline reached, a flock that
-     raises) leaves no timer armed and the SIGALRM handler it found in place;
+     in-process load holds no lock; every way out of the wait (the lock taken, the deadline reached, a flock that
+     raises) leaves no timer armed and the SIGALRM handler it found in place; and each writer of the line (the
+     acquisition over a longer line, the drain's announcement) writes at offset 0 first and never truncates to 0;
   7. repo-root: an in-process load writes none (read right after this module's load), the one call is main()'s after
      the bind (a source pin; pin 2 executes it).
 
@@ -539,6 +540,65 @@ class WaitTimer(unittest.TestCase):
         self.assertIsInstance(out, OSError, "the flock's error propagates: %r" % (out,))
         self.assertEqual(out.errno, errno.EIO)
         self.assertLeftNothing(left, handler, ours)
+
+
+class LineWriteOrder(unittest.TestCase):
+    """Pin 6, the line's rewrites: each writer of the lock's line (the acquisition's serving line, the drain's
+    announcement) writes the new line at offset 0 before it truncates, and never truncates the file to 0, so a reader of
+    the first line never finds the file empty mid-rewrite (an empty file reads as a new owner, which refuses a kernel
+    rather than letting it wait). os.pwrite and os.ftruncate are recorded through mock on km.os, each still doing its
+    work."""
+
+    def setUp(self):
+        self.assertTrue(hasattr(km, "_kernel_lock_write"), "the kernel has no instance lock")
+        self.dir = tempfile.mkdtemp(prefix="kernel-lock-order-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.path = os.path.join(self.dir, "kernel.lock")
+
+    def _record(self, fn):
+        """fn's return and the pwrite and ftruncate calls it made, in order: ("pwrite", fd, offset, data) and
+        ("ftruncate", fd, length)."""
+        calls = []
+        real_pwrite, real_ftruncate = os.pwrite, os.ftruncate
+
+        def pwrite(fd, data, offset):
+            calls.append(("pwrite", fd, offset, bytes(data)))
+            return real_pwrite(fd, data, offset)
+
+        def ftruncate(fd, length):
+            calls.append(("ftruncate", fd, length))
+            return real_ftruncate(fd, length)
+        with mock.patch.object(km.os, "pwrite", side_effect=pwrite), \
+             mock.patch.object(km.os, "ftruncate", side_effect=ftruncate):
+            out = fn()
+        return out, calls
+
+    def assertWritesBeforeItTruncates(self, calls, fd, line):
+        self.assertTrue(calls, "the line was not rewritten")
+        self.assertEqual(calls[0][:3], ("pwrite", fd, 0), "the first call writes the new line at offset 0: %r" % calls)
+        self.assertEqual(calls[0][3], line.encode("ascii"), "the first write is the whole new line: %r" % calls)
+        self.assertNotIn(("ftruncate", fd, 0), calls, "the file was truncated to 0 mid-rewrite: %r" % calls)
+        self.assertEqual(Path(self.path).read_text(), line, "the whole file is the new line")
+
+    def test_the_acquisition_writes_its_serving_line_before_it_truncates_a_longer_one(self):
+        Path(self.path).write_text("4242 draining 1759350000.125\nleftover tail of an older writer\n")
+        (fd, refusal), calls = self._record(lambda: km._kernel_lock_acquire(Path(self.path)))
+        self.assertIsNone(refusal)
+        self.addCleanup(os.close, fd)
+        self.assertWritesBeforeItTruncates(calls, fd, "%d serving\n" % os.getpid())
+
+    def test_the_drain_announcement_writes_its_draining_line_before_it_truncates(self):
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)        # a lock this process holds, as a kernel holds its own
+        os.pwrite(fd, ("%d serving\n" % os.getpid()).encode("ascii"), 0)
+        with mock.patch.object(km, "_KERNEL_LOCK_FD", fd):
+            _, calls = self._record(km._kernel_lock_announce_drain)
+        writes = [c for c in calls if c[0] == "pwrite"]
+        self.assertTrue(writes, "the drain was not announced: %r" % calls)
+        line = writes[0][3].decode("ascii", "replace")
+        self.assertRegex(line, r"\A%d draining \d+\.\d{3}\n\Z" % os.getpid())
+        self.assertWritesBeforeItTruncates(calls, fd, line)
 
 
 class RepoRootRecord(unittest.TestCase):
