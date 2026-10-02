@@ -30,8 +30,11 @@ THE RULES, each read per module by AST (scan()):
      binds to an expression naming it) calls lab_ports.wait_owned; a spawn outside any function is an offence too.
   R  a module that reserves a port, through lab_ports.reserve or through kernel_env (which reserves the kernel's postal
      port), calls lab_ports.release.
-  A  the door is imported as `import lab_ports` and used as lab_ports.<name>: an alias or a from-import would hide the
-     calls the rules above read.
+  A  the door is bound under its own name only and its members are read as lab_ports.<name>: no `import lab_ports as
+     x`, no `import tests.lab_ports` (it binds tests), no `from tests import lab_ports as x` or `from . import lab_ports
+     as x`, no from-import of its members (`from lab_ports import wait_owned`, `from .lab_ports import reserve`), and no
+     assignment of the bare name lab_ports (`lp = lab_ports`). Each would hide the calls the rules above read.
+     `import lab_ports`, `from tests import lab_ports` and `from . import lab_ports` all bind the name lab_ports.
 At run time wait_owned itself refuses a port that was not reserved in the process, which covers a port drawn by a road
 the AST does not read.
 
@@ -39,7 +42,9 @@ WHAT IT CANNOT SEE (stated, not closed): a draw split across functions, or reach
 picked without a bind; Python inside a subprocess -c string; a JavaScript wait on a kernel the node driver relaunches in
 place (tests/test_ship_reship_served.py and tests/test_dashboard_reload_served.py relaunch from the driver and wait
 there); a kernel started by a shell or by a name bound outside the module; a module imported by a computed name;
-readiness read by another road than an HTTP call naming /healthz. The planted modules below are each red under exactly
+readiness read by another road than an HTTP call naming /healthz; the door handed to a call as an argument
+(getattr(lab_ports, name); the mock.patch.object(lab_ports, ...) in tests/test_federated_linkdrop_served.py is such a
+hand-off and is green) or bound by a for, a with or a default argument. The planted modules below are each red under exactly
 the rule they break, and the clean shapes (a listener, a kept holder, the door's own use, a /healthz inside a JavaScript
 text) are green.
 
@@ -291,15 +296,34 @@ def scan(text, tree, name):
     reserves = any(_door_call(c, "reserve") or _callee(c) == "kernel_env" for c in calls)
     if reserves and not any(_door_call(c, "release") for c in calls):
         off["R"].append((name, 1, "reserves ports (lab_ports.reserve or kernel_env) and never calls lab_ports.release"))
+    for line, what in _door_aliases(tree):
+        off["A"].append((name, line, what))
+    off["spawns"] = [(name, line, _scope_name(fn) if fn else "<module>") for line, fn in spawns]
+    return off
+
+
+def _door_aliases(tree):
+    """(line, what) of every binding of the door under a name other than its own, and of every from-import of its
+    members (rule A)."""
+    out = []
     for n in ast.walk(tree):
         if isinstance(n, ast.Import):
             for a in n.names:
-                if a.name.split(".")[-1] == DOOR and a.asname not in (None, DOOR):
-                    off["A"].append((name, n.lineno, "imports %s as %s" % (a.name, a.asname)))
-        elif isinstance(n, ast.ImportFrom) and n.module and n.module.split(".")[-1] == DOOR:
-            off["A"].append((name, n.lineno, "from-imports %s from %s" % (", ".join(a.name for a in n.names), n.module)))
-    off["spawns"] = [(name, line, _scope_name(fn) if fn else "<module>") for line, fn in spawns]
-    return off
+                bound = a.asname or a.name.split(".")[0]
+                if a.name.split(".")[-1] == DOOR and bound != DOOR:
+                    out.append((n.lineno, "imports %s, bound as %s" % (a.name, bound)))
+        elif isinstance(n, ast.ImportFrom):
+            source = "." * n.level + (n.module or "")
+            if n.module and n.module.split(".")[-1] == DOOR:
+                out.append((n.lineno, "from-imports %s from %s" % (", ".join(a.name for a in n.names), source)))
+            for a in n.names:
+                if a.name == DOOR and a.asname not in (None, DOOR):
+                    out.append((n.lineno, "from-imports %s from %s as %s" % (DOOR, source, a.asname)))
+        elif isinstance(n, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and n.value is not None:
+            values = n.value.elts if isinstance(n.value, (ast.Tuple, ast.List)) else [n.value]
+            if any(isinstance(v, ast.Name) and v.id == DOOR for v in values):
+                out.append((n.lineno, "assigns the bare name %s to another name" % DOOR))
+    return out
 
 
 def census(root=ROOT, globs=None, files=None):
@@ -352,6 +376,15 @@ PLANTS = {
                               '    return _lab.kernel_env(lab, lab, lab, 1, "t")\n', "R"),
     "door-aliased": ('import lab_ports as lp\nx = 1\n', "A"),
     "door-from-imported": ('from lab_ports import wait_owned\nx = 1\n', "A"),
+    # the four alias forms below reserve under another spelling and never release, so R alone would pass each
+    "door-from-tests-aliased": ('from tests import lab_ports as lp\ndef boot(lab):\n    return lp.reserve(lab)\n', "A"),
+    "door-relative-aliased": ('from . import lab_ports as lp\ndef boot(lab):\n    return lp.reserve(lab)\n', "A"),
+    "door-assigned": ('import lab_ports\nlp = lab_ports\ndef boot(lab):\n    return lp.reserve(lab)\n', "A"),
+    "door-dotted": ('import tests.lab_ports\ndef boot(lab):\n    return tests.lab_ports.reserve(lab)\n', "A"),
+    "clean-door-from-tests": ('from tests import lab_ports\ndef boot(lab):\n    p = lab_ports.reserve(lab)\n'
+                              '    lab_ports.release(lab)\n    return p\n', None),
+    "clean-door-patched": ('import lab_ports\nfrom unittest import mock\ndef t():\n'
+                           '    with mock.patch.object(lab_ports, "reserve"):\n        pass\n', None),
     "clean-listener": ('import socket, http.server\ndef srv():\n    s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(8)\n'
                        '    p = s.getsockname()[1]\n    h = http.server.ThreadingHTTPServer(("127.0.0.1", 0), None)\n'
                        '    return s, h, p\n', None),
