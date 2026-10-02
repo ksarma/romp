@@ -1267,23 +1267,31 @@ header:
 - `POST /stop`: `romp down`.
 - `POST /ensure`: a front end asking for a kernel on a port (the VS Code
   extension). The manager starts a kernel only for the primary kernel's port or
-  for a `kernels.json` profile whose state root no earlier kernel uses: it
-  starts the primary first, then the profiles in the file's order, and refuses a
-  profile whose state root resolves to the root of a kernel started before it.
+  for a `kernels.json` profile whose state root no other kernel holds. It starts
+  the primary first and never refuses it. A running kernel keeps the root it was
+  started on until it stops, wherever its entry sits in the file, even after its
+  entry has left the file or names another `stateDir`. Among the profiles that
+  are not running, the file's order decides: the manager refuses a profile
+  whose state root resolves to the root of a profile listed before it.
   A profile with no `stateDir` resolves to the primary kernel's root, and a
   `stateDir` that names another kernel's root through a symlink or with a
-  trailing slash is that root. A running kernel whose entry has left the file
-  keeps its root until it stops. For a refused profile, and for a port no
-  profile names, `/ensure` answers 409 and starts nothing. The body names the
-  kernel, the kernel whose root it would share, the primary kernel's port and
-  the remedy; if `kernels.json` dropped a malformed entry for that port, the
-  body says so and why. One exception predates these rules: if a profile is
-  named `k<port>` (the name `/ensure` gives a port no profile names), `/ensure`
-  for that port answers for that profile, on the profile's own port. The
-  manager never starts a refused profile at boot or on a respawn either. It
-  logs one line per distinct refusal per kernel per manager life, plus one when
-  a refusal ends a running kernel, and nothing per retry or per tick; it logs
-  each `kernels.json` error once per manager life.
+  trailing slash is that root. For a refused profile, and for a port no profile
+  names, `/ensure` answers 409 and starts nothing. The body names the kernel,
+  the kernel whose root it would share (as running, when it is), the primary
+  kernel's port and the remedy. If `kernels.json` dropped a malformed entry for
+  that port, the body says so and why; for a dropped `main` entry, which carries
+  a port only, the remedy is to repair that port. Two exceptions predate these
+  rules. For a port a running kernel serves, `/ensure` answers for that kernel
+  with 200 and `spawned: false`, even when no profile names the port (a kernel
+  whose entry has left the file, say). And if a profile is named `k<port>` (the
+  name `/ensure` gives a port no profile names), `/ensure` for that port answers
+  for that profile, on the profile's own port. The manager never starts a
+  refused profile at boot, on a restart or on a respawn either. It logs one line
+  per distinct conflict per manager life (the refused kernel, the kernel whose
+  root it is, that root and why), plus one when a refusal ends a running kernel,
+  and nothing per retry or per tick: a conflict that differs only in the primary
+  kernel's port, or in whether the primary runs, is not a new one. It logs each
+  `kernels.json` error once per manager life.
 
 The token is the same 0600 file the kernel gates its own writes with
 (`~/.local/state/romp/serve-token`, or `ROMP_SERVE_TOKEN`). The manager accepts
@@ -1873,10 +1881,14 @@ The lock cannot tell one kernel from another on its root: the root goes to
 whichever kernel takes the lock first. So the manager keeps a second kernel off
 a root before it starts it. It starts the primary kernel first and the
 `kernels.json` profiles in the file's order, and never starts a profile whose
-state root resolves to the root of a kernel started before it (a profile with
-no `stateDir` resolves to the primary kernel's root, and a `stateDir` naming
+state root resolves to a root another kernel holds (a profile with no
+`stateDir` resolves to the primary kernel's root, and a `stateDir` naming
 another kernel's root through a symlink or with a trailing slash is that root).
-It answers `/ensure` for such a profile, and for a port no profile names, with
+A running kernel keeps the root it was started on until it stops, wherever its
+entry sits in the file, so a profile added or edited onto that root is refused
+even when it is listed first; among profiles that are not running, the one
+listed first gets the root. It answers `/ensure` for a refused profile, and for
+a port no profile names, with
 409 (see [The manager's control port](#the-managers-control-port)). The lock
 keeps kernels apart in the cases the manager does not decide: a kernel's
 successor and the kernel draining before it, and the kernels started outside

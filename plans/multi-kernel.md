@@ -27,9 +27,11 @@ kernel is on, and let co-located kernels message each other through the postal f
    (2026-10-01: one kernel serves a state root, so every kernel needs a root no other kernel
    uses. The manager never starts two kernels on one root: it starts the primary first, then the
    kernels.json profiles in the file's order, and does not start a profile whose state root
-   resolves to the root of a kernel started before it (no `stateDir`, which is the primary's root,
-   or one naming another kernel's root); `/ensure` for such a profile, or for a port no profile
-   names, answers 409 (bin/romp-manager `rootConflict`). The kernel's own lock, `kernel.lock`,
+   resolves to a root another kernel holds (no `stateDir`, which is the primary's root, or one
+   naming another kernel's root). A running kernel keeps the root it was started on until it
+   stops, wherever its entry sits in the file; among profiles not running, the file's order
+   decides. `/ensure` for a refused profile, or for a port no profile names, answers 409
+   (bin/romp-manager `rootConflict`). The kernel's own lock, `kernel.lock`,
    keeps kernels apart in the cases the manager does not decide: a kernel's successor and the
    kernel draining before it, and the kernels started outside the manager (a kernel started by
    hand, the far-host fallback, an orphaned kernel, the test labs); a kernel started on a root

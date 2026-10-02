@@ -207,8 +207,10 @@ function copyInstallCommand(): void {
 // The kernel port must be the primary kernel's or that of a kernels.json profile whose stateDir no
 // other kernel uses. For a port no profile names, or a profile on another kernel's state root, the
 // manager starts nothing and answers /ensure with 409, whose error the attach toast shows
-// (bin/romp-manager rootConflict). The exception: a port no profile names, when a profile is named
-// k<port>, which /ensure then answers for that profile, on the profile's own port.
+// (bin/romp-manager rootConflict). Two exceptions answer for a port no profile names: a port a running
+// kernel serves (a kernel whose entry has left kernels.json, say), which /ensure answers for that kernel
+// with 200 and spawned false; and a port when a profile is named k<port>, which /ensure answers for that
+// profile, on the profile's own port.
 function cfgPort(key: "kernelPort" | "managerPort", env: string | undefined, dflt: number): number {
   const v = vscode.workspace.getConfiguration("romp").get<number>(key);
   if (typeof v === "number" && v > 0) return v;
