@@ -38,21 +38,23 @@ THE RULES, each read per module by AST (scan()):
      to: from subprocess import Popen as P, or P = subprocess.Popen) calls lab_ports.wait_owned; a spawn outside any
      function is an offence too.
   R  a module that reserves a port, through lab_ports.reserve or through kernel_env (which reserves the kernel's postal
-     port), reads lab_ports.release (a call, or the function handed to addCleanup); and so does every class that
-     reserves in its own body, by a reserve written there or by a bare-name call of a function the module defines at
-     its top level that reserves (directly or through another such function), reading the release there or in a base
-     class the module defines, so a class of stand-in tests that builds environments in a module whose served lab
-     releases its own is still held to releasing them. A release inherited from a class another module defines is not
-     read: such a class releases in its own body.
-  A  the door is bound under its own name only and its members are read as lab_ports.<name>: no `import lab_ports as
-     x`, no `import tests.lab_ports` (it binds tests), no `from tests import lab_ports as x` or `from . import lab_ports
-     as x`, no from-import of its members (`from lab_ports import wait_owned`, `from .lab_ports import reserve`), no
+     port), reads lab_ports.release (a call of it, or a call it is handed to as an argument, as addCleanup is; a read
+     that is neither, rel = lab_ports.release, is no release); and so does every class that reserves in its own body, by
+     a reserve written there or by a bare-name call of a function the module defines at its top level that reserves
+     (directly or through another such function), reading the release there or in a base class the module defines, so a
+     class of stand-in tests that builds environments in a module whose served lab releases its own is still held to
+     releasing them. A release inherited from a class another module defines is not read: such a class releases in its
+     own body.
+  A  the door is bound under its own name only and its members are read as lab_ports.<name>: no `import lab_ports as x`,
+     no `import tests.lab_ports` (it binds tests), no `from tests import lab_ports as x` or `from . import lab_ports as
+     x`, no from-import of its members (`from lab_ports import wait_owned`, `from .lab_ports import reserve`), no
      from-import from the package (`from tests import`, `from . import`) of a name tests/__init__.py binds the door to
      (_lab_ports today, read from that file), no read of the door or of such a name as an attribute (`tests.lab_ports`,
-     `tests._lab_ports`), no assignment of the bare name lab_ports (`lp = lab_ports`), and no assignment of a member
-     the rules read, lab_ports.reserve or lab_ports.wait_owned, alone or as an element of a tuple or list value (`r =
+     `tests._lab_ports`), no assignment of the bare name lab_ports (`lp = lab_ports`), and no assignment of a member the
+     rules read, lab_ports.reserve or lab_ports.wait_owned, alone or as an element of a tuple or list value (`r =
      lab_ports.reserve`). Each would hide the calls the rules above read. `import lab_ports`, `from tests import
-     lab_ports` and `from . import lab_ports` all bind the name lab_ports.
+     lab_ports` and `from . import lab_ports` all bind the name lab_ports. lab_ports.release bound to another name is
+     not refused: it hides a release, not a reserve, and R reads the module as never releasing.
 D, K and W read a name as bound by any assignment to it (plain, annotated, augmented or walrus). A tuple or list target
 is read element by element against a tuple or list value of its length with nothing starred on either side, so that
 ADDR, N = ("127.0.0.1", 0), 1 binds ADDR to the address; any other tuple or list target binds each of its elements to
@@ -432,10 +434,20 @@ def _reserves(node):
     return [c for c in ast.walk(node) if isinstance(c, ast.Call) and (_door_call(c, "reserve") or _callee(c) == "kernel_env")]
 
 
+def _is_release(node):
+    """Is `node` the spelling lab_ports.release?"""
+    return (isinstance(node, ast.Attribute) and node.attr == "release" and isinstance(node.value, ast.Name)
+            and node.value.id == DOOR)
+
+
 def _reads_release(node):
-    """Does `node` read lab_ports.release, by calling it or by handing it on (self.addCleanup(lab_ports.release, lab))?"""
-    return any(isinstance(a, ast.Attribute) and a.attr == "release" and isinstance(a.value, ast.Name) and a.value.id == DOOR
-               for a in ast.walk(node))
+    """Does `node` release through lab_ports.release: a call of it (lab_ports.release(lab)), or a call it is handed to as
+    an argument (self.addCleanup(lab_ports.release, lab), addClassCleanup, atexit.register)? A read that is neither, rel
+    = lab_ports.release with no call, releases nothing, and so does a call of the name it was bound to (the safe side:
+    R reads that module as never releasing)."""
+    return any(isinstance(c, ast.Call) and (_is_release(c.func) or any(_is_release(a) for a in c.args)
+                                            or any(_is_release(k.value) for k in c.keywords))
+               for c in ast.walk(node))
 
 
 def _reserving_functions(tree):
@@ -696,6 +708,9 @@ PLANTS = {
                                '    return _lab.kernel_env(lab, lab, lab, 1, "t")\nclass T(unittest.TestCase):\n'
                                '    def test_env(self):\n        self.addCleanup(lab_ports.release, "/lab")\n'
                                '        _env("/lab")\n', None),
+    # a release read but never called nor handed to a call releases nothing: the module and its class are both unreleased
+    "reserve-release-only-read": ('import lab_ports\nclass B:\n    def up(self, lab):\n        rel = lab_ports.release\n'
+                                  '        self.p = lab_ports.reserve(lab)\n', "R"),
 }
 
 
