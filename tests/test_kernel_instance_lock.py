@@ -52,7 +52,11 @@ The pins, each red on the kernel before the lock for the reason it names:
      EINVAL with the filesystem's remedy, EIO with the file's; through a sitecustomize shim in the child), an empty line
      and one that names no owner, a draining deadline beyond the grace plus the margin and one that would overflow
      setitimer (both refused before any waiting line); in process, the blocking flock failing in the wait, a wait whose
-     timer cannot be armed, and the line's read failing at the drain's deadline.
+     timer cannot be armed, and the line's read failing at the drain's deadline. Every one of these that failed with an
+     error (the open, the flock, the read; not the empty or unparseable line, the deadlines or the timer, which are
+     refusals naming a holder) holds its line to _kernel_lock_fault's shape (_assert_fault_line): it starts by naming the
+     lock that could not be taken and carries neither the holder text nor "this kernel wrote nothing", so a fault worded
+     through _kernel_lock_refusal is red.
 
 Subprocess pins run bin/romp-kernel under sys.executable in a private lab. The environment comes from kernel_env
 (tests/test_ship_reship_served.py, the safe lab-kernel recipe: named variables only, the lab's roots, session hosts
@@ -169,6 +173,11 @@ FS_REMEDY_TEXT = ("The filesystem under this state root cannot take an flock, wh
                   "off its root: put the state root on a filesystem that supports flock, or set ROMP_STATE_DIR to a "
                   "directory on one.")
 FILE_REMEDY_TEXT = "The lock file must be a regular file this user can read, write and lock"
+# how a fault's line starts (kernel.py's _kernel_lock_fault), and two texts of the holder's refusal (_kernel_lock_refusal)
+# that a fault's line never carries: _assert_fault_line
+FAULT_PREFIX_TEXT = "romp-kernel: the instance lock %s could not be taken: "
+HOLDER_IS_TEXT = "the holder is"
+WROTE_NOTHING_TEXT = "this kernel wrote nothing"
 # Pin 9's deadline cases run the kernel under a grace of GRACE_MS. DEADLINE_MARGIN_S is kernel.py's
 # KERNEL_LOCK_DEADLINE_MARGIN_S, written out here so a kernel without the bound is red on what it does, not on a missing name
 GRACE_MS = "5000"
@@ -244,6 +253,20 @@ def _dead_pid():
     gone = subprocess.Popen(["true"])
     gone.wait()
     return gone.pid
+
+
+def _assert_fault_line(tc, line, path):
+    """Hold a lock step's fault line to _kernel_lock_fault's shape, never _kernel_lock_refusal's: it starts by naming the
+    lock at `path` that could not be taken, and carries neither the refusal's account of who the holder is nor its "this
+    kernel wrote nothing" (a fault knows no holder, and its open may have created the lock file). The step, errno and
+    remedy needles each fault pin checks are all still there in a fault worded through _kernel_lock_refusal, so those
+    needles alone pass on that wording; this helper is what fails on it. Every fault pin calls it, the subprocess ones
+    and the in-process ones."""
+    prefix = FAULT_PREFIX_TEXT % path
+    tc.assertEqual(line[:len(prefix)], prefix, "a fault line starts by naming the lock that could not be taken: %r" % line)
+    tc.assertNotIn(HOLDER_IS_TEXT, line, "a fault line carries the holder's refusal text, but a fault knows no holder")
+    tc.assertNotIn(WROTE_NOTHING_TEXT, line, "a fault line says this kernel wrote nothing, but its open may have created "
+                                             "the lock file")
 
 
 class _Lab(unittest.TestCase):
@@ -796,6 +819,7 @@ class LockStepFailures(_Lab):
         line, _ = self.refused_once(before, (self.lock_path, "opening it failed with EACCES (Permission denied)",
                                              FILE_REMEDY_TEXT))
         self.assertNotIn("another kernel", line, "a file this user cannot open is no other kernel's doing")
+        _assert_fault_line(self, line, self.lock_path)
 
     def test_a_directory_at_the_lock_path_is_refused_naming_eisdir(self):
         self.seed()
@@ -804,6 +828,7 @@ class LockStepFailures(_Lab):
         line, _ = self.refused_once(before, (self.lock_path, "opening it failed with EISDIR (Is a directory)",
                                              FILE_REMEDY_TEXT))
         self.assertNotIn("another kernel", line)
+        _assert_fault_line(self, line, self.lock_path)
 
     def test_a_held_fifo_at_the_lock_path_is_refused_naming_espipe_from_the_read(self):
         self.seed()
@@ -818,6 +843,7 @@ class LockStepFailures(_Lab):
         line, _ = self.refused_once(before, (self.lock_path, "reading its line (another process holds it) failed with "
                                                              "ESPIPE (Illegal seek)", FILE_REMEDY_TEXT))
         self.assertNotIn("another kernel", line)
+        _assert_fault_line(self, line, self.lock_path)
 
     def _flock_fails_with(self, name, remedy, not_remedy):
         """The kernel's own flock on its lock file raises errno `name` (FLOCK_SHIM_SRC, a sitecustomize on the child's
@@ -835,6 +861,7 @@ class LockStepFailures(_Lab):
         self.assertIn("%s %s raises %s" % (SHIM_TEXT, self.lock_path, name), err, "the shim did not run, so the pin did not")
         self.assertNotIn(not_remedy, line)
         self.assertNotIn("another kernel", line, "a filesystem fault is no other kernel's doing")
+        _assert_fault_line(self, line, self.lock_path)
 
     def test_enolck_from_the_flock_is_refused_with_the_filesystem_remedy(self):
         self._flock_fails_with("ENOLCK", FS_REMEDY_TEXT, FILE_REMEDY_TEXT)
@@ -932,6 +959,7 @@ class LockStepFailuresInProcess(unittest.TestCase):
         self.assertIn(FS_REMEDY_TEXT, refusal)
         self.assertNotIn("another kernel", refusal)
         self.assertIn("exits %d" % EXIT_REFUSED, refusal)
+        _assert_fault_line(self, refusal, self.path)
 
     def test_a_wait_whose_timer_cannot_be_armed_is_refused_and_leaves_no_timer_or_handler_behind(self):
         # a grace so large that a deadline about 1e10 s ahead passes the bound, which setitimer then cannot arm
@@ -964,6 +992,7 @@ class LockStepFailuresInProcess(unittest.TestCase):
                       "(another process holds it) failed with EIO (Input/output error)" % self.path, refusal)
         self.assertIn(FILE_REMEDY_TEXT, refusal)
         self.assertNotIn(FS_REMEDY_TEXT, refusal)
+        _assert_fault_line(self, refusal, self.path)
 
 
 class InProcess(unittest.TestCase):
