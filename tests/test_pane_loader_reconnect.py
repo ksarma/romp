@@ -575,6 +575,32 @@ out({ atLoad, justBefore, atPaint, timers: live() - (painted() ? 1 : 0) });""", 
         self.assertEqual(o["atPaint"], {"painted": True, "top": "53px"}, "the paint places it 8 px below the shown transcript's top, clear of the header")
         self.assertEqual(o["timers"], 0, "no timer places it: only the paint's failsafe stands")
 
+    # The paint's own turn (adversarial check of 2026-10-02): a placement moved off the paint to a 0 ms timer still reads 53 px once
+    # the clock's walk returns, because the walk runs that timer too, so the case above passed it. This case reads the inline top in
+    # the paint's own task, the moment the timer callback that turned the badge on returns: before the walk runs another timer, before
+    # any microtask, before any frame. The settled read, after that queued work has run, is asserted first: a deferred placement
+    # passes it, so a red on the in-turn read is that read alone.
+    _IN_TURN = r"""
+const ONS = [], FRAMES = [];
+global.requestAnimationFrame = (fn) => { FRAMES.push(fn); return FRAMES.length; };   // a frame callback is queued and runs only at frame()
+global.cancelAnimationFrame = () => {};
+const frame = () => FRAMES.splice(0).forEach((fn) => fn(NOW));
+// every timer callback the script arms is wrapped: one whose run turns the badge on records the inline top the badge has as it returns
+{ const st = global.setTimeout; global.setTimeout = (fn, ms) => st(() => { const was = painted(); fn(); if (!was && painted()) ONS.push(topOf()); }, ms); }
+"""
+
+    def test_the_paint_writes_the_badges_place_in_its_own_turn(self):
+        o = self._run(r"""
+(async () => {
+render(45, false);                                                    // shown with no resize event before the drop: only the paint can place it
+fire('romp:wsdown'); after(RHOLD_T);                                  // the paint, the hold's timer task (the walk also runs any 0 ms timer it queued)
+await new Promise((r) => setImmediate(r)); frame();                   // then every microtask, and a frame
+out({ inTurn: ONS, settled: { painted: painted(), top: topOf() } });
+})();""", pre=self._unrendered_pre() + self._IN_TURN)
+        self.assertEqual(o["settled"], {"painted": True, "top": "53px"}, "once the queued work has run, the badge is painted 8 px below the shown transcript's top")
+        self.assertEqual(o["inTurn"], ["53px"], "the paint writes the badge's place in its own turn: one timer task turns the badge on, and as it returns the inline "
+                         "top is already 53px (a placement deferred to a timer, a frame or a microtask has written nothing yet)")
+
     def test_a_pane_rendered_after_load_is_placed_by_its_resize_events(self):
         # the same load (style unresolved, no box): the observer is made anyway, so the show's resize event places the badge, and a
         # later one (the pinned notes strip appearing) places it again
