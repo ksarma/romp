@@ -983,6 +983,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
     "appendActive: anchor-restore via restoreScrollAnchor",                                                          // the scrolled-up reader's anchor
     "keepPlaceAcrossWindow: anchor-restore via restoreScrollAnchor", "keepPlaceAcrossWindow: anchor-restore via restoreScrollAnchor",   // the kept row; the row under the viewport top on the miss
     "landActive: anchor-restore via restoreScrollAnchor", "landActive: anchor-restore via restoreScrollAnchor",     // the reload restore's anchor; the saved place's captured row
+    "landActive: anchor-restore via restoreReadingLine",                                                             // the reload restore's anchor by the reader's line inside it, ahead of the turn (land-active-keep.test.ts executes it)
     "toggleToolGroup: anchor-restore via restoreScrollAnchor",                                                       // the toggle's captured row
     // one hop through a reader: scrollToAnchor's own write under the readers that land through it, and landOn's landing under the two that land on a turn
     "keepPlaceAcrossWindow: keep-offset via scrollToAnchor",                                                         // the kept row re-landed by uuid

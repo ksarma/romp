@@ -124,6 +124,7 @@ import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks,
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { onMathSettled, mathPendingIn } from "./math";   // the math renderer's arrival: the reader's place kept around the swap (onMathSettled below rerenderAll)
+import { captureReadingPoint, readingPointShift, type ReadingPoint } from "./reading-point";   // the reader's line inside their anchor turn, for the math swap and the reload record (captureReadingAnchor)
 import { setTip, pruneTip } from "./tip";
 import { MetaKind, MetaHooks, metaButton as buildMetaButton, syncMetaControls as syncMetaControlsWith, ctxBar as buildCtxBar, setCtxBar as setCtxBarWith,
   metaColor, modeIconSvg, riskyMode, prettyMode, prettyFast, fastAvailable, metaCurrent, metaDots, rampOn } from "./status-controls";   // the status line's controls, one renderer for the chat's line, the popovers and the settings card's preview (T415 part two)
@@ -14628,25 +14629,30 @@ function rerenderAll(): void {
 
 // The math renderer's arrival (math.ts: KaTeX is an on-demand chunk, and until it is in a formula shows its TeX in the pending
 // dress). math.ts's fill over the document then swaps every waiting formula for KaTeX's layout IN PLACE, so a formula above the
-// reader changes the transcript's height under them. Chromium's scroll anchoring would absorb that and the phone's WebKit has
-// none, so the place is kept the way rerenderAll keeps it: the reader's anchor turn read before the fill and put back at its
-// offset after it (captureScrollAnchor, restoreScrollAnchor), and a reader at the bottom written to the new bottom. A failed
-// load takes the same road, each formula becoming its source. Then the comment marks go back on every view that held a waiting
-// formula (a mark on math pairs with the rendered .katex root, applyCommentMarks), and a queued group whose cached node held one
-// is marked changed, so its next render rebuilds the node's children with the renderer in (renderPendingGroup).
+// reader changes the transcript's height under them. Chromium's scroll anchoring cannot absorb it (its anchor node is often the
+// placeholder the fill replaces, and the turn restore below writes over it) and the phone's WebKit has none, so the place is
+// kept by hand: the reader's LINE read before the fill and put back at its offset after it (captureReadingAnchor,
+// restoreReadingLine: the first line of text at the viewport top that no formula owns, inside the anchor turn), and a reader
+// at the bottom written to the new bottom. The line and not the turn, because a reply's formulas usually sit in the same turn
+// the reader is partway down: keeping that turn's top let its formulas push the text being read down by their growth (the
+// review of iOS item 6, 2026-10-02: about 133 px on a phone for eight short display formulas). A turn whose visible part holds
+// no such line keeps its top, as before. A failed load takes the same road, each formula becoming its source. Then the comment
+// marks go back on every view that held a waiting formula (a mark on math pairs with the rendered .katex root,
+// applyCommentMarks), and a queued group whose cached node held one is marked changed, so its next render rebuilds the node's
+// children with the renderer in (renderPendingGroup).
 onMathSettled(() => {
   const content = document.getElementById("content");
   const av = activeId ? views.get(activeId) : null;
   const live = !!(content && av && av.shown && content.clientHeight > 0);
   const from = content ? content.scrollTop : 0;
   const bottom = live && atBottom(content!);
-  const keep = live && !bottom ? captureScrollAnchor(content!, av!) : null;
+  const keep = live && !bottom ? captureReadingAnchor(content!, av!) : null;
   const held = Array.from(views.entries()).filter(([, v]) => mathPendingIn(v.el)).map(([sid]) => sid);
   for (const g of pendingGroupNode.values()) if (mathPendingIn(g.node)) g.sig = "";
   return () => {
     if (live && content && av) {
       if (bottom) writeScroll(content, content.scrollHeight, "math-fill", true, from);
-      else if (keep) restoreScrollAnchor(content, av, keep, from);
+      else if (keep && !restoreReadingLine(content, av, keep, from)) restoreScrollAnchor(content, av, keep, from);
       av.scrollTop = content.scrollTop;   // the per-view saved position follows
     }
     for (const sid of held) applyCommentMarks(sid);
@@ -15745,7 +15751,7 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
       pendingReloadScroll = null;
       v.stick = rs.stick;
       if (rs.stick) writeScroll(content, content.scrollHeight, "reload-restore", true);
-      else if (!(rs.anchor && restoreScrollAnchor(content, v, rs.anchor))) {
+      else if (!(rs.anchor && (restoreReadingLine(content, v, rs.anchor) || restoreScrollAnchor(content, v, rs.anchor)))) {   // the reader's line when the fresh turn holds it (a record taken over laid-out formulas lands right over waiting ones), else the turn
         // the anchor turn is not in the fresh page's window (the reader was above the tail window): the raw
         // scrollTop was measured in a differently windowed DOM, so land it now as the first guess and arm the
         // deep-link land, whose window-around-unit and fetch-older paths bring the anchor turn back to its exact
@@ -15811,7 +15817,7 @@ function persistScrollForReload(): void {
   const v = activeId ? views.get(activeId) : null;
   if (!content || !v || !v.shown || content.clientHeight <= 0) return;
   const stick = content.scrollHeight - content.scrollTop - content.clientHeight <= 2;   // the true bottom
-  const rec = reloadScrollRecord(activeId, content.scrollTop, stick, stick ? null : captureScrollAnchor(content, v));
+  const rec = reloadScrollRecord(activeId, content.scrollTop, stick, stick ? null : captureReadingAnchor(content, v));   // the anchor turn and the reader's line in it
   try { if (rec) sessionStorage.setItem(RELOAD_SCROLL_KEY, JSON.stringify(rec)); } catch { /* ignore */ }
 }
 // The warning toasts on screen when the CORE reloads the page. A toast is DOM only and lives 12 s, and the core's restart
@@ -15858,6 +15864,29 @@ function restoreScrollAnchor(content: HTMLElement, v: View, a: { uuid: string; y
   // was clamped by the browser at the forced layout, and the restore computes the very value the clamp left, so without the
   // origin the write moved nothing, filed no row and set no marker, and the clamp's event filed as a gesture (see writeScroll)
   writeScroll(content, yNow - a.y, "anchor-restore", false, from);   // the anchor turn keeps its exact on-screen offset
+  return true;
+}
+
+// The anchor turn with the reader's LINE inside it (reading-point.ts), for a change that can reshape the text above the reader
+// within that turn: the math renderer's arrival (onMathSettled) and a page reload, whose record is taken over laid-out formulas
+// and landed over formulas still waiting for the renderer (persistScrollForReload, landActive's reload restore). `at` is absent
+// when the turn's visible part holds no line of text outside a formula; the turn's top is then the anchor, as everywhere else.
+type ReadingAnchor = { uuid: string; y: number; at?: ReadingPoint };
+function captureReadingAnchor(content: HTMLElement, v: View): ReadingAnchor | null {
+  const a = captureScrollAnchor(content, v);
+  if (!a) return null;
+  const turn = v.el.querySelector(`[data-uuid="${cssEscape(a.uuid)}"]`) as HTMLElement | null;   // the element the restores find (restoreScrollAnchor's lookup)
+  const at = turn ? captureReadingPoint(content, turn) : null;
+  return at ? { uuid: a.uuid, y: a.y, at } : a;
+}
+/** The reader's line back at its offset, one write by its displacement; false, writing nothing, when no line was recorded or the
+ *  turn no longer holds it, and the caller then restores the turn (restoreScrollAnchor). `from` as restoreScrollAnchor's. */
+function restoreReadingLine(content: HTMLElement, v: View, a: ReadingAnchor | null, from?: number): boolean {
+  if (!a || !a.at) return false;
+  const turn = v.el.querySelector(`[data-uuid="${cssEscape(a.uuid)}"]`) as HTMLElement | null;
+  const dy = turn ? readingPointShift(content, turn, a.at) : null;
+  if (dy === null) return false;
+  writeScroll(content, content.scrollTop + dy, "anchor-restore", false, from);   // the line keeps its exact on-screen offset
   return true;
 }
 

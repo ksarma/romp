@@ -161,7 +161,7 @@ class Host {
   querySelector(sel: string): Node | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
 
-type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void; preJump?: number; fetch?: boolean };
+type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void; preJump?: number; fetch?: boolean; readingShift?: (turn: Node, p: unknown) => number | null };
 type Opts = { spacerH?: number; n?: number; rowH?: number; clientHeight?: number; saved: number; scrollTop?: number; shown?: boolean; stick?: boolean; parked?: boolean; bottomSpacerH?: number; gap?: boolean };
 type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; geometryAt: Record<string, string[]>; land: (content: Content | null, v: any, scrollerHolds?: boolean) => void; parked: () => boolean };
 const D = 300;   // the take's delta: the head spacer re-sized by the re-measured figure over the head gap's turns
@@ -268,6 +268,9 @@ function world(o: Opts, arm: Arm = {}): World {
     const settleSample = () => {}; const landToast = (m) => { H.toasts.push(m); }; const notifyShell = () => {};
     const writeScroll = H.writeScroll;
     const scheduleRailSticky = () => {}; const updateJumpBtn = () => {}; const cssEscape = (s) => s;
+    // reading-point.ts over the model: a world that records the reader's line says how far it has moved (readingShift), else the line is gone
+    const readingPointShift = (sc, turn, p) => { H.trace.push("line"); return H.arm.readingShift ? H.arm.readingShift(turn, p) : null; };
+    const captureReadingPoint = () => null;
   `;
   const land = new Function("HOOKS", prelude + js + "\nreturn landActive;")(H) as (content: Content | null, v: any, scrollerHolds?: boolean) => void;
   return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, trace: H.trace, geometryAt: H.geometryAt, land, parked: () => H.parked };
@@ -570,6 +573,23 @@ test("the anchoring roads each take once, before the attempt, and landActive wri
   r2.land(r2.content, r2.v);
   assert.equal(takes(r2), 1);
   assert.deepEqual(r2.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "the reload's anchor row at its offset over the re-sized spacer");
+  // the same record with the reader's LINE inside that row (reading-point.ts; the review of iOS item 6): the line goes back at its offset, one
+  // write by its displacement after the take, and the row's own restore does not run. The model's line sits LINE px inside r3 and was
+  // recorded at 20 px under the viewport top, where the row stood at -50 before the reload (its formulas laid out then, taller, so the line
+  // sat 70 px inside it): the line lands at 20, the row at -10, where the row restore leaves the line 40 px above its place. A record whose
+  // line the fresh row no longer holds (readingPointShift answers null) restores the row, as a record with no line does.
+  const LINE = 30;
+  const at = { block: 2, char: 9, y: 20 };
+  const r3 = world({ saved: 2350, scrollTop: 0 }, { reload: { id: "A", top: 2350, stick: false, anchor: { uuid: "r3", y: -50, at } },
+    readingShift: (turn, p) => { assert.deepEqual(p, at, "the record's own line"); assert.equal((turn as any).dataset.uuid, "r3", "inside the record's row"); return turn.getBoundingClientRect().top + LINE - at.y; } });
+  r3.land(r3.content, r3.v);
+  assert.equal(takes(r3), 1);
+  assert.deepEqual(r3.writes, [{ writer: "anchor-restore", top: 2350 + D - 40, stick: false, from: undefined }], "the line at its offset over the re-sized spacer: one write, the row's restore not run");
+  assert.equal(r3.rows[3].getBoundingClientRect().top + LINE, 20, "the reader's line where it was before the reload");
+  assert.ok(r3.trace.indexOf("take") < r3.trace.indexOf("line"), "the line is read after the take, in the re-sized layout");
+  const r4 = world({ saved: 2350, scrollTop: 0 }, { reload: { id: "A", top: 2350, stick: false, anchor: { uuid: "r3", y: -50, at } }, readingShift: () => null });
+  r4.land(r4.content, r4.v);
+  assert.deepEqual(r4.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "a line the fresh row lacks: the row at its offset, as before");
   // the bottom land: a view not yet shown, and a follow-mode view
   for (const o of [{ saved: 2350, shown: false }, { saved: 2350, stick: true }] as Opts[]) {
     const b = world(o);

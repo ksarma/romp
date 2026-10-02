@@ -14,7 +14,14 @@ Against a hermetic kernel serving the checkout's own build (tests/lab_dist.py), 
     chunk is held; then, with the reader scrolled up so the formulas sit above the viewport and the scroller's own scroll
     anchoring off (overflow-anchor: none, as on the phone's WebKit, which has none), the swap to KaTeX's taller layout
     leaves the reader's top turn within 1 px of where it was, while the formulas' turn grew; and in a second page life a
-    reader at the bottom when formulas arrive at the tail is still at the bottom after the swap grows the tail.
+    reader at the bottom when formulas arrive at the tail is still at the bottom after the swap grows the tail;
+  - in the chat on a phone (Playwright's iPhone 15 context, Chromium and WebKit), with the reader partway down the reply that
+    HOLDS the formulas, every formula above the viewport top in that same turn: the swap leaves the paragraph being read
+    within 1 px, with the scroller's scroll anchoring off and on (render.ts keeps the reader's line inside the anchor turn,
+    reading-point.ts; keeping the turn's top let the formulas push the text down by their growth, the review of iOS item 6);
+    and a reload in that place, whose record is taken over KaTeX's layout, lands the paragraph within 2 px of where it was
+    while the fresh page's formulas still wait (whole-pixel scroll offsets, written more than once as the fresh page settles),
+    and keeps it there through the swap.
 SYNTHETIC fixtures only; skips LOUDLY without the extension deps or a Playwright browser (CI's served job installs both)."""
 import gzip
 import json
@@ -49,6 +56,22 @@ FORMULAS = [r"\sum_{i=0}^{n} i^2 = \frac{n(n+1)(2n+1)}{6}",
 FILLERS = 24
 FILLER = ("Filler reply %d: the web session reran the notes-api tests and the api session read the logs; nothing here is a "
           "formula, only prose long enough to wrap across a few lines of a narrow phone column so the transcript scrolls.")
+# the reply the reader is partway down: steps with inline formulas, a short display formula after each, then plain paragraphs
+STEP_FORMULAS = [r"\frac{a}{b}", r"\sum_{i=1}^{n} x_i", r"\int_0^1 f(x)\,dx", r"\binom{n}{k}", r"\sqrt{\frac{a}{b}}",
+                 r"\prod_{k=1}^{m} p_k", r"\frac{\partial f}{\partial x}", r"\lim_{x\to 0} g(x)"]
+READS = 10
+
+
+def ranking_reply():
+    parts = ["Here is the notes-api ranking derivation, step by step."]
+    for i, f in enumerate(STEP_FORMULAS, 1):
+        parts.append("STEP-%02d: the ranking term $w_%d = \\frac{a_%d}{b_%d}$ weighs the api session's hits against the web "
+                     "session's, and $\\sqrt{n_%d}$ damps the long tail of rarely read notes." % (i, i, i, i, i))
+        parts.append("$$%s$$" % f)
+    for j in range(1, READS + 1):
+        parts.append("READ-%02d: this paragraph has no formula; it is the text a reader would be looking at further down the "
+                     "same reply, after every identity above has been laid out, long enough to wrap on a phone." % j)
+    return "\n\n".join(parts) + "\n"
 
 
 def _free_port():
@@ -178,6 +201,109 @@ await browser.close();
 process.exit(0);
 """
 
+# The reader inside the reply that holds the formulas, on a phone: Playwright's iPhone 15 context in either engine. Each variant
+# is a new page life, so the formulas wait for the chunk (held here) and the swap happens with the reader in place.
+DRIVER_IN_TURN = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const out = { variants: {} };
+const PENDING = "#content .md-math-inline, #content .md-math-display";
+try {
+  const device = Object.assign({}, pw.devices["iPhone 15"]);
+  delete device.defaultBrowserType;
+  const ctx = await browser.newContext(device);
+  const errors = [];
+  const settle = (page) => page.evaluate(() => fetch("/healthz", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+  const shown = (page, t) => page.waitForFunction((t) => (document.body.innerText || "").includes(t), t, { timeout: 30000 });
+  const swapped = (page) => page.waitForFunction((sel) => !document.querySelector(sel) && document.querySelectorAll("#content .katex").length > 0, PENDING, { timeout: 30000 });
+  // the paragraph being read, its turn and that turn's last display formula, against #content's top
+  const measure = (page) => page.evaluate((marker) => {
+    const c = document.getElementById("content");
+    const ct = c.getBoundingClientRect().top;
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    const turn = p ? p.closest("[data-uuid]") : null;
+    const shown = turn ? Array.from(turn.querySelectorAll(".md-math-display, .katex-display")) : [];
+    const last = shown[shown.length - 1];
+    return { markerTop: p ? p.getBoundingClientRect().top - ct : null, turnTop: turn ? turn.getBoundingClientRect().top - ct : null,
+      turnHeight: turn ? turn.getBoundingClientRect().height : null, lastFormulaBottom: last ? last.getBoundingClientRect().bottom - ct : null,
+      pending: document.querySelectorAll("#content .md-math-inline, #content .md-math-display").length,
+      katex: document.querySelectorAll("#content .katex").length, scrollTop: c.scrollTop, anchoring: getComputedStyle(c).overflowAnchor };
+  }, cfg.marker);
+  // the paragraph put `offset` px under #content's top, the scroller's scroll anchoring set to `mode` ("" leaves the browser's own)
+  const place = (page, mode) => page.evaluate(({ marker, off, mode }) => {
+    const c = document.getElementById("content");
+    if (mode) c.style.overflowAnchor = mode;
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    if (!p) return "no paragraph starting " + marker;
+    c.scrollTop += p.getBoundingClientRect().top - c.getBoundingClientRect().top - off;
+    return "";
+  }, { marker: cfg.marker, off: cfg.offset, mode });
+  for (const mode of ["none", ""]) {
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => errors.push(e.message));
+    const reqs = [];
+    let release; const held = new Promise((r) => { release = r; });
+    await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => { reqs.push(route.request().url()); await held; await route.continue(); });
+    await page.goto(cfg.chat);
+    await shown(page, cfg.lastFiller);
+    await settle(page);
+    const placed = await place(page, mode);
+    if (placed) throw new Error(placed);
+    await settle(page);
+    const v = { before: await measure(page) };
+    release();
+    await swapped(page);
+    await settle(page);
+    v.after = await measure(page);
+    v.requests = reqs.length;
+    out.variants["in-turn-" + (mode || "auto")] = v;
+    await page.close();
+  }
+  // a reload in the same place: the record is taken over KaTeX's layout and landed over formulas waiting for the chunk, held
+  {
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => errors.push(e.message));
+    const reqs = [];
+    let gate = null;
+    await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => { reqs.push(route.request().url()); if (gate) await gate.p; await route.continue(); });
+    await page.goto(cfg.chat);
+    await shown(page, cfg.lastFiller);
+    await swapped(page);
+    await settle(page);
+    const placed = await place(page, "none");
+    if (placed) throw new Error(placed);
+    await settle(page);
+    const v = { preReload: await measure(page) };
+    gate = {}; gate.p = new Promise((r) => { gate.r = r; });
+    await page.reload();
+    await shown(page, cfg.marker);
+    await page.waitForFunction(() => document.querySelectorAll('script[src*="math-chunk.js"]').length > 0, null, { timeout: 30000 });
+    await page.evaluate(() => { document.getElementById("content").style.overflowAnchor = "none"; });
+    await settle(page);
+    v.pending = await measure(page);
+    gate.r();
+    await swapped(page);
+    await settle(page);
+    v.after = await measure(page);
+    v.requests = reqs.length;
+    out.variants.reload = v;
+    await page.close();
+  }
+  out.errors = errors;
+} catch (e) {
+  out.died = String(e && e.message || e);
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
 
 class ServedMathChunk(unittest.TestCase):
     """One hermetic kernel per test, so each engine's chat opens on a transcript that has never held a formula (the chat
@@ -293,8 +419,13 @@ class ServedMathChunk(unittest.TestCase):
             "firstReply": FIRST_REPLY, "transcript": self.transcript, "mathLines": math_lines, "formulas": FORMULAS,
             "fillerLines": jsonl(fillers), "lastFiller": "Filler reply %d:" % (FILLERS - 1),
             "tailMathLines": jsonl([reply("t-" + tag, "f%d-%s" % (FILLERS - 1, tag), self.t0 + 200, math_text)])}))
-        driver = os.path.join(self.lab, "driver.mjs")
-        Path(driver).write_text(DRIVER)
+        return self._run(engine, DRIVER, cfg)
+
+    def _run(self, engine, driver_text, cfg, name=None):
+        """One node driver run against this test's kernel: the driver's RESULT line, parsed (and kept as `name`.json under
+        MATH_CHUNK_SERVED_OUT, the engine's name by default); a missing browser skips."""
+        driver = os.path.join(self.lab, "driver-%s.mjs" % engine)
+        Path(driver).write_text(driver_text)
         try:
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=240,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
@@ -312,7 +443,7 @@ class ServedMathChunk(unittest.TestCase):
         out = os.environ.get("MATH_CHUNK_SERVED_OUT", "")   # a directory to keep each engine's measured figures in, for a report
         if out:
             os.makedirs(out, exist_ok=True)
-            Path(out, engine + ".json").write_text(json.dumps(r, indent=1))
+            Path(out, (name or engine) + ".json").write_text(json.dumps(r, indent=1))
         return r
 
     def _leg(self, engine):
@@ -351,6 +482,63 @@ class ServedMathChunk(unittest.TestCase):
 
     def test_chat_webkit(self):
         self._leg("webkit")
+
+    def _in_turn(self, engine):
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        # the transcript before any page opens: a question, the reply with the formulas and the paragraphs below them, fillers
+        recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
+                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                reply("r1", "u2", self.t0 + 40, ranking_reply())]
+        for i in range(FILLERS):
+            recs.append(reply("g%d" % i, "r1" if i == 0 else "g%d" % (i - 1), self.t0 + 60 + i, FILLER % i))
+        with open(self.transcript, "a") as f:
+            f.write(jsonl(recs))
+        cfg = os.path.join(self.lab, "cfg-in-turn-%s.json" % engine)
+        Path(cfg).write_text(json.dumps({
+            "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+            "lastFiller": "Filler reply %d:" % (FILLERS - 1), "marker": "READ-03", "offset": 80}))
+        r = self._run(engine, DRIVER_IN_TURN, cfg, "in-turn-" + engine)
+        w = engine + ": "
+        self.assertNotIn("died", r, w + "the driver stopped early: %r\nkernel:\n%s" % (r.get("died"), Path(self.klog).read_text()[-1500:]))
+        n = len(STEP_FORMULAS)
+        for name in ("in-turn-none", "in-turn-auto"):
+            v = r["variants"][name]
+            b, a = v["before"], v["after"]
+            x = w + name + ": "
+            self.assertEqual(b["pending"], 3 * n, x + "every formula of the reply waits for the chunk: %r" % b)
+            self.assertLess(b["turnTop"], 0, x + "the reply begins above the viewport: %r" % b)
+            self.assertLess(b["lastFormulaBottom"], 0, x + "its last formula is above the viewport top, in the reader's own turn: %r" % b)
+            self.assertGreater(b["markerTop"], 0, x + "the paragraph being read is on screen: %r" % b)
+            self.assertEqual((a["pending"], v["requests"]), (0, 1), x + "one chunk, every formula laid out: %r" % v)
+            self.assertGreaterEqual(a["katex"], 3 * n, x + "%r" % a)
+            self.assertGreater(a["turnHeight"] - b["turnHeight"], 20,
+                               x + "the swap grew the reader's own turn above them, so their place had something to survive: %r %r" % (b, a))
+            self.assertLessEqual(abs(a["markerTop"] - b["markerTop"]), 1,
+                                 x + "the paragraph being read stays within 1 px across the swap: %r %r" % (b, a))
+        self.assertEqual(r["variants"]["in-turn-none"]["before"]["anchoring"], "none")
+        v = r["variants"]["reload"]
+        pre, pend, a = v["preReload"], v["pending"], v["after"]
+        x = w + "reload: "
+        self.assertEqual(pre["pending"], 0, x + "the place is taken over KaTeX's layout: %r" % pre)
+        self.assertLess(pre["lastFormulaBottom"], 0, x + "with the reply's formulas above the viewport top: %r" % pre)
+        self.assertEqual(pend["pending"], 3 * n, x + "the fresh page's formulas wait for the chunk: %r" % pend)
+        # within 2 px, not 1: both engines hold the scroller's offset in whole pixels (every scrollTop read here is one), the fresh
+        # page writes it more than once while it settles, and its line sits on another fraction of a pixel than the old page's
+        # (measured: Chromium lands the turn's own top 1 px off this way, so the base's turn restore ended 1 px off too)
+        self.assertLessEqual(abs(pend["markerTop"] - pre["markerTop"]), 2,
+                             x + "the fresh page lands the paragraph being read where it was, over the waiting formulas: %r %r" % (pre, pend))
+        self.assertGreater(a["turnHeight"] - pend["turnHeight"], 20, x + "the swap grew the turn: %r %r" % (pend, a))
+        self.assertLessEqual(abs(a["markerTop"] - pre["markerTop"]), 2, x + "and keeps it there through the swap: %r %r" % (pre, a))
+        self.assertEqual((a["pending"], v["requests"]), (0, 2), x + "one chunk per page life: %r" % v)
+        self.assertEqual(r["errors"], [], w + "no page error")
+
+    def test_reader_inside_the_math_reply_on_a_phone_chromium(self):
+        self._in_turn("chromium")
+
+    def test_reader_inside_the_math_reply_on_a_phone_webkit(self):
+        self._in_turn("webkit")
 
 
 if __name__ == "__main__":

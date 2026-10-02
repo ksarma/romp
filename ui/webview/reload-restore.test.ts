@@ -14,6 +14,7 @@ const SID = "11111111-2222-4333-8444-000000000201";
 
 test("the record names the tab, the position, the follow mode and the anchor; no tab → nothing to keep", () => {
   assert.deepEqual(reloadScrollRecord(SID, 1234, false, { uuid: "u1", y: 40 }), { id: SID, top: 1234, stick: false, anchor: { uuid: "u1", y: 40 } });
+  assert.deepEqual(reloadScrollRecord(SID, 1234, false, { uuid: "u1", y: 40, at: { block: 3, char: 17, y: -6 } }), { id: SID, top: 1234, stick: false, anchor: { uuid: "u1", y: 40, at: { block: 3, char: 17, y: -6 } } }, "the reader's line in the anchor turn rides with it");
   assert.deepEqual(reloadScrollRecord(SID, 5000, true, null), { id: SID, top: 5000, stick: true, anchor: null });
   assert.equal(reloadScrollRecord(null, 10, false, null), null);
   assert.equal(reloadScrollRecord("", 10, false, null), null);
@@ -47,7 +48,7 @@ test("render.ts persists SYNCHRONOUSLY for the reload core and on pagehide, into
   assert.ok(m, "persistScrollForReload");
   const body = m![1];
   assert.match(body, /const stick = content\.scrollHeight - content\.scrollTop - content\.clientHeight <= 2;/, "follow mode is the true bottom");
-  assert.match(body, /reloadScrollRecord\(activeId, content\.scrollTop, stick, stick \? null : captureScrollAnchor\(content, v\)\)/);
+  assert.match(body, /reloadScrollRecord\(activeId, content\.scrollTop, stick, stick \? null : captureReadingAnchor\(content, v\)\)/, "the anchor turn and the reader's line in it (reading-point.ts): a turn with formulas lays out shorter on the fresh page while they wait for the math renderer, so its top alone lands the line off; tests/test_math_chunk_served.py executes the landing");
   assert.match(body, /sessionStorage\.setItem\(RELOAD_SCROLL_KEY, JSON\.stringify\(rec\)\)/, "per tab: the persisted webview state is localStorage on the served page, shared by every dashboard tab");
   assert.match(RENDER, /const RELOAD_SCROLL_KEY = "romp:reloadScroll";/);
   // nothing to keep for a hidden pane or a tab never shown
@@ -62,7 +63,7 @@ test("landActive's landing consumes the record for the active tab first, then fa
   const m = RENDER.match(/^function landActive\(content: HTMLElement \| null, v: View, scrollerHolds: boolean = false\): void \{([\s\S]*?)\n\}/m);
   assert.ok(m, "landActive");
   const body = m![1];
-  assert.match(body, /const rs = takeReloadScroll\(pendingReloadScroll, activeId\);\s*\n\s*if \(rs\) \{\s*\n\s*pendingReloadScroll = null;\s*\n\s*v\.stick = rs\.stick;\s*\n\s*if \(rs\.stick\) writeScroll\(content, content\.scrollHeight, "reload-restore", true\);\s*\n\s*else if \(!\(rs\.anchor && restoreScrollAnchor\(content, v, rs\.anchor\)\)\) \{/);
+  assert.match(body, /const rs = takeReloadScroll\(pendingReloadScroll, activeId\);\s*\n\s*if \(rs\) \{\s*\n\s*pendingReloadScroll = null;\s*\n\s*v\.stick = rs\.stick;\s*\n\s*if \(rs\.stick\) writeScroll\(content, content\.scrollHeight, "reload-restore", true\);\s*\n\s*else if \(!\(rs\.anchor && \(restoreReadingLine\(content, v, rs\.anchor\) \|\| restoreScrollAnchor\(content, v, rs\.anchor\)\)\)\) \{/, "the reader's line first, the turn when the fresh turn lacks the line (land-active-keep.test.ts executes both roads; tests/test_math_chunk_served.py the landing over waiting formulas)");
   // the anchor turn outside the fresh window: the raw top is the first guess and the deep-link land finishes it
   assert.match(body, /writeScroll\(content, rs\.top, "reload-restore"\);\s*\n\s*if \(rs\.anchor\) \{\s*\n\s*pendingAnchor = rs\.anchor\.uuid; pendingAnchorKeepY = rs\.anchor\.y;/, "the raw top first, then the deep-link land is armed");
   // …and RUN in the same pass (T374): the pass already made its own attempt before the restore armed anything, and an idle
