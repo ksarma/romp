@@ -109,8 +109,9 @@ EXIT_GRACE_S = float(os.environ.get("ROMP_SHUTDOWN_GRACE_MS", "5000")) / 1000.0
 # the margin) is refused at once, without a wait: a wait for a deadline far ahead would hold this
 # kernel off its root for nothing (one about 9.2e9 s ahead would also overflow setitimer). A drainer
 # whose grace is more than the margin longer than this kernel's announces such a deadline, so a
-# kernel that meets its drain early is refused this way too, and the manager's crash backoff retries
-# that kernel, which costs a delay; a margin too large only lengthens a wait that is still bounded.
+# kernel that meets its drain early is refused this way too; under the manager its crash backoff
+# retries that kernel, which costs a delay (a kernel started by hand is not retried). A margin too
+# large only lengthens a wait that is still bounded.
 KERNEL_LOCK_DEADLINE_MARGIN_S = 30.0
 KERNEL_LOCK_EXIT = 75          # EX_TEMPFAIL: the lock step refused this kernel (another holder, or a lock it could not take)
 KERNEL_LOCK_LINE_MAX = 256     # the most of the file's first line a reader reads
