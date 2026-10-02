@@ -29,11 +29,13 @@ The pins, each red on the kernel before the lock for the reason it names:
   5. a pid that is not running in the line (a serving line, a draining line) and an empty file: refused, worded as a
      new owner that has not yet written its line;
   6. in process: the helper's success path over a longer previous line, a non-inheritable descriptor; the drain's
-     announcement as the first act of _drain_and_exit, which never raises (a failed one is exactly one line before the
+     announcement as the first act of _drain_and_exit, its deadline now plus EXIT_GRACE_S (patched to a grace other
+     than the bare 5 s default, so a fixed 5 s is red), which never raises (a failed one is exactly one line before the
      drain's own); nothing written with no lock held; an in-process load holds no lock; every way out of the wait (the
      lock taken, the deadline reached, a flock that raises) leaves no timer armed and the SIGALRM handler it found in
-     place; and each writer of the line (the acquisition over a longer line, the drain's announcement) writes at offset
-     0 first and never truncates to 0;
+     place; each writer of the line (the acquisition over a longer line, the drain's announcement) writes at offset
+     0 first and never truncates to 0; and a holder's pid that kill(pid, 0) answers with EPERM (another user's process)
+     counts as running: a draining one is waited for, and a refusal names it as the holder;
   7. repo-root: an in-process load writes none (read right after this module's load), the one call is main()'s after
      the bind (a source pin on where the call lives), and a kernel that dies at its bind, its port held by this test,
      leaves no repo-root and no serve-port record (the executed pin, RepoRootAfterTheBind: red when the call runs before
@@ -1013,6 +1015,55 @@ class InProcess(unittest.TestCase):
         self.assertFalse((MODULE_STATE_ROOT / "kernel.lock").exists(), "the in-process load created no lock file")
 
 
+class AnotherUsersPid(unittest.TestCase):
+    """Pin 6, a holder's pid that kill(pid, 0) answers with EPERM: a live process of another user, which counts as
+    running (_kernel_lock_pid_alive), at both of its call sites. kill is mocked to raise PermissionError, so the pin
+    does not depend on which pids the runner can signal (pid 1 can be the runner's own inside a container)."""
+    PID = 4242
+
+    def setUp(self):
+        self.assertTrue(hasattr(km, "_kernel_lock_pid_alive"), "the kernel has no instance lock")
+        self.dir = tempfile.mkdtemp(prefix="kernel-lock-eperm-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.path = os.path.join(self.dir, "kernel.lock")
+
+    def eperm(self):
+        return mock.patch.object(km.os, "kill", side_effect=PermissionError(errno.EPERM, os.strerror(errno.EPERM)))
+
+    def test_a_draining_holder_of_another_user_is_waited_for(self):
+        held = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, held)
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.pwrite(held, ("%d draining %.3f\n" % (self.PID, time.time() + 3)).encode("ascii"), 0)
+        waits = []
+
+        def wait(fd, remaining):
+            waits.append((fd, remaining))
+            return True                                   # the holder let go: the helper takes the lock
+        err = io.StringIO()
+        with self.eperm() as kill, \
+             mock.patch.object(km.threading, "active_count", return_value=1), \
+             mock.patch.object(km, "_kernel_lock_wait", side_effect=wait), \
+             contextlib.redirect_stderr(err):
+            fd, refusal = km._kernel_lock_acquire(Path(self.path))
+        if fd is not None:
+            self.addCleanup(os.close, fd)
+        self.assertIsNone(refusal, "a draining holder whose pid answers EPERM was refused, not waited for")
+        self.assertEqual(len(waits), 1, "the helper waited once for the draining holder")
+        self.assertIn("romp-kernel: pid %d holds %s and is draining; this kernel waits for its drain until"
+                      % (self.PID, self.path), err.getvalue())
+        kill.assert_any_call(self.PID, 0)
+
+    def test_the_refusal_names_a_holder_of_another_user_as_running(self):
+        with self.eperm():
+            serving = km._kernel_lock_holder_why(self.path, "%d serving" % self.PID)
+            draining = km._kernel_lock_holder_why(self.path, "%d draining 1759350000.125" % self.PID)
+        self.assertEqual(serving, "another kernel (pid %d) is serving from this state root and holds %s"
+                         % (self.PID, self.path))
+        self.assertTrue(draining.startswith("another kernel (pid %d) is draining until " % self.PID), draining)
+        self.assertNotIn("not running", serving + draining)
+
+
 class WaitTimer(unittest.TestCase):
     """Pin 6, the wait's timer: every way out of _kernel_lock_wait (the lock taken, the deadline reached, a flock that
     raises) leaves ITIMER_REAL cancelled and the SIGALRM handler it found back in place. A timer left armed delivers
@@ -1233,15 +1284,20 @@ class DrainAnnouncement(unittest.TestCase):
         self.addCleanup(os.close, fd)
         os.pwrite(fd, ("%d serving\n" % os.getpid()).encode(), 0)
         seen = {}
+        # A grace other than the bare 5 s default, which is what EXIT_GRACE_S reads in any environment without
+        # ROMP_SHUTDOWN_GRACE_MS (CI's): a kernel announcing now plus a fixed 5 s is red here. The announcement reads the
+        # global at call time, and the patch ends with the block, so no other test sees it.
+        grace = 7.25
         t0 = time.time()
-        ex = self._drain(fd, first_act=lambda: seen.setdefault("line", Path(self.path).read_text()))
+        with mock.patch.object(km, "EXIT_GRACE_S", grace):
+            ex = self._drain(fd, first_act=lambda: seen.setdefault("line", Path(self.path).read_text()))
         t1 = time.time()
         ex.assert_called_once_with(0)
         m = re.fullmatch(r"(\d+) draining (\d+\.\d+)\n", seen.get("line", ""))
         self.assertIsNotNone(m, "before the drain's next step the line reads draining: %r" % seen.get("line"))
         self.assertEqual(int(m.group(1)), os.getpid())
-        self.assertGreaterEqual(float(m.group(2)), t0 + km.EXIT_GRACE_S - 0.01)
-        self.assertLessEqual(float(m.group(2)), t1 + km.EXIT_GRACE_S + 0.01)
+        self.assertGreaterEqual(float(m.group(2)), t0 + grace - 0.01, "the deadline is now plus the grace, %g s" % grace)
+        self.assertLessEqual(float(m.group(2)), t1 + grace + 0.01, "the deadline is now plus the grace, %g s" % grace)
         self.assertEqual(Path(self.path).read_text(), seen["line"], "the whole file is the one line")
 
     def test_a_failed_announcement_is_one_line_and_the_drain_goes_on(self):
