@@ -238,7 +238,8 @@ class ShellLivenessMatchesTheShim(unittest.TestCase):
         # connect(): from its head to the next line that opens a function declaration, and the span must END with connect()'s
         # last handler and closing brace (ws.onerror, then '}'), so a nested declaration on its own line inside connect()
         # cannot end the read early. It finds one setTimeout( there: the onclose redial, setTimeout(connect,d). A per-dial cut
-        # written anywhere in connect() (window.setTimeout( included) makes it two and reddens this, and a nested declaration
+        # spelled setTimeout( anywhere in connect() (window.setTimeout( included) makes it two and reddens this (a cut spelled
+        # setInterval( or with a space before the parenthesis is not counted), and a nested declaration
         # that would hide one reddens the end check; a cut armed through a helper defined outside connect() is outside what
         # it reads. A fold that brings a per-dial cut into the shim then reconciles the two copies' agreement on purpose
         # rather than by accident.

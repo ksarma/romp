@@ -2318,6 +2318,15 @@ global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0; global.sc
 global.matchMedia = () => ({ matches: true });
 global.requestAnimationFrame = () => 1;
 global.setInterval = () => 0;   // D3 (2026-09-18): the shell socket's watchdog tick, a no-op here so node exits
+// iOS item 1a (2026-10-02): the shell's boot dial arms its connect cut, a real 15 s timer, on a socket that never opens here. The
+// cut is unref'd, so it does not keep node alive past the case: node exits once the case's own work is done, and a timer or a
+// rejection raised after the driver's last write still runs and fails the run (review round 2, 2026-10-02: the driver used to
+// force the exit in its write's callback, which also dropped any failure raised after the write). A throw inside the cut itself
+// is outside what this class sees, since the cut never fires within a run (ShellLinkProbe executes it). UNREFD_CUTS counts the
+// cuts unref'd, so a renamed cut fails a case here instead of holding every run 15 s.
+let UNREFD_CUTS = 0;
+{ const st = global.setTimeout;
+  global.setTimeout = function (fn, ms, ...a) { const h = st(fn, ms, ...a); if (fn && fn.name === 'shCut') { h.unref(); UNREFD_CUTS++; } return h; }; }
 global.addEventListener = on(WIN);
 global.visualViewport = { height: 844, scale: 1, addEventListener() {} };
 global.document = { visibilityState: 'visible', addEventListener() {}, body,
@@ -2342,6 +2351,10 @@ global.fetch = (path, init) => { const post = !!(init && init.method === 'POST')
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(b), text: () => Promise.resolve(JSON.stringify(b)) }); };
 """
 _BELL_DRIVER = r"""
+// a failure raised at any point, after the last write included, exits non-zero, so setUpClass's exit-status check turns the class
+// red (review round 2, 2026-10-02); node's own default does the same for both today, and these make it the driver's rule
+process.on('uncaughtException', (e) => { console.error(e && e.stack || e); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.error(e && e.stack || e); process.exit(1); });
 const settle = async () => { for (let i = 0; i < 40; i++) await new Promise((r) => setImmediate(r)); };
 const sw = (k) => rows[k].querySelector('.rbp-sw').classList.contains('on');
 const state = () => ({ mbell: mbell.classList.contains('on'), rail: railBell.classList.contains('on'),
@@ -2369,9 +2382,10 @@ const post = (m) => (WIN.message || []).forEach((f) => f({ data: m }));
   rows.all.fire('click'); await settle(); out.masterOnRow = state();
   bar.querySelector('button[data-pane=feed]').fire('click'); out.finalTabTap = state();
   out.posts = POSTS.map((p) => p[0]);
-  // the case ends here, and so do the shell's timers: since iOS item 1a (2026-10-02) the shell's boot dial arms a real 15 s
-  // connect cut, and this socket never opens, so without the exit node waited out that timer (15 s on every run of this class)
-  process.stdout.write(JSON.stringify(out) + '\n', () => process.exit(0));
+  out.unrefdCuts = UNREFD_CUTS;
+  // the case ends here; node exits when nothing it waits on remains (the harness unrefs the shell's connect cut), so a failure
+  // raised after this write still reaches the handlers above
+  process.stdout.write(JSON.stringify(out) + '\n');
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
 """
 
@@ -2453,6 +2467,12 @@ class MobileBellExecutes(unittest.TestCase):
         self._lit(self.out["finalTabTap"], "finalTabTap")
         self.assertEqual(self.out["finalTabTap"]["tabs"], ["feed"])
         self.assertEqual(self.out["posts"], ["/push/unsubscribe", "/push/subscribe", "/notify-all", "/notify-all"])
+
+    def test_the_run_ends_with_the_case_because_the_shells_one_connect_cut_is_unrefd(self):
+        # the harness's premise (review round 2, 2026-10-02): the boot dial's cut is the one timer left pending when the case ends,
+        # and the harness unrefs it by its name, so node exits with the case rather than 15 s later. A cut renamed past the
+        # harness's match is counted 0 here.
+        self.assertEqual(self.out["unrefdCuts"], 1, "the boot dial's connect cut, unref'd")
 
     def test_the_switcher_selects_only_the_pane_tabs(self):
         js = km._LANDING_MOBILE_JS
@@ -2671,7 +2691,9 @@ class ShellLinkProbe(unittest.TestCase):
     two tick-cut cases into the cases of a cut timer the browser lost. Its review round 1 (2026-10-02) added five more at the
     tail: an older socket's late close, and its late open and close, leave the newer dial's cut in force (the fix of that
     round); the cut flag is per dial; a late call into shellWS leaves a CONNECTING dial's cut as armed; the timer reads
-    SH_CONNECT_MS, executed with the constant rewritten."""
+    SH_CONNECT_MS, executed with the constant rewritten. Its review round 2 (2026-10-02) added two more at the tail: an older
+    socket's close delivered after a newer dial arms no redial and counts no attempt (the fix of that round), and that late
+    close reads its own dial's cut flag, executed with the fix rewritten out."""
 
     def test_the_shell_dials_one_socket_with_the_dashboards_wid_and_publishes_the_link(self):
         r = _run_probe(r"""
@@ -3323,6 +3345,68 @@ shOut({cuts:cuts,at6999:at6999,at7000:at7000});""", source=src.replace(decl, "SH
         self.assertEqual(r["cuts"], [7000], "the dial armed one cut of the rewritten constant's value")
         self.assertEqual(r["at6999"], 0, "no cut 1 ms before the rewritten SH_CONNECT_MS")
         self.assertEqual(r["at7000"], 3, "the cut lands at the rewritten SH_CONNECT_MS: the timer reads the constant")
+
+    # ---- review round 2 of iOS item 1a (2026-10-02): the close of a socket that is no longer shWs. An older socket's close can be
+    # delivered after a newer dial (the watchdog's CLOSED arm dials as soon as it finds the socket CLOSED past SH_REDIAL_MS). Before
+    # this round that late close still ran the failure count and the redial: it armed a redial beside the newer dial's chain (two
+    # pending, the extra one early) and counted itself into the return probe's attempts and firstFailMs, though its socket was put
+    # down before the return. The close now clears its own handle and returns when its socket is no longer shWs. The road predates
+    # 1a; the per-dial cut widened it, since a tick can now land right after a cut, where the next tick used to be up to 5 s away.
+    def test_1a_an_older_sockets_late_close_after_the_returns_dial_arms_no_redial_and_counts_no_attempt(self):
+        # A is cut before the return with its close event still queued; a tick dials B over it; the return puts B down and dials C;
+        # A's close arrives 400 ms after C's dial. C is refused 300 ms later and the redial's D opens. One redial is pending after C's
+        # refusal, C's own on the ladder's first rung, and the return's row counts C alone: attempts 1, firstFailMs from C's close
+        # (1,200 ms before D's open). Before this round A's late close armed a 250 ms redial beside C's chain and the row read
+        # attempts 2, firstFailMs 1,500 (from A's close). Mutants: the return removed (all three assertions on it red); the return
+        # moved below the failure count, or below the redial cadence (the row red).
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});                            // the boot socket opens: the page has opened
+var S=SHSOCKS[0];S.readyState=3;S.onclose({code:1006});  // and drops outside any return window: the blind redial arms
+SHNOW+=2000;shFireDials();var A=shSock(),tA=SHNOW;       // that redial dials A; the path hangs
+shRunDue(tA+15000);var cutA=A.readyState;               // A's own timer cuts it; its close event is still queued
+SHNOW+=100;shTick();                                    // a tick finds A CLOSED past SH_REDIAL_MS and dials B
+shHide();SHNOW+=100;shShow();var tF=SHNOW;              // a return with B CONNECTING: B put down, dial C, the return's probe set up
+SHNOW+=400;A.onclose({code:1006});                      // A's close event, delivered 400 ms after C's dial
+var afterLate=shDialTimers().map(function(t){return t.ms;});
+SHNOW+=300;shRefuseNow();                               // C refused 700 ms after its dial
+var afterC=shDialTimers().map(function(t){return t.ms;});
+SHNOW+=1000;shFireDials();SHNOW+=200;shOpen();          // the redial dials D, which opens 1,900 ms after the return: the row is filed
+var rows=shProbeRows().map(function(x){return {decision:x.decision,attempts:x.attempts,firstFailMs:x.firstFailMs,ms:x.ms};});
+shOut({cutA:cutA,socks:SHSOCKS.length,afterLate:afterLate,afterC:afterC,rows:rows});""")
+        self.assertEqual(r["cutA"], 3, "A's own timer cut it")
+        self.assertEqual(r["socks"], 5, "the boot socket, A, the tick's B, the return's C and the redial's D")
+        self.assertEqual(r["afterLate"], [], "A's late close arms no redial: C is CONNECTING and its chain is the only one")
+        self.assertEqual(r["afterC"], [1000], "one redial pending after C's refusal, C's own on the ladder's first rung")
+        self.assertEqual(r["rows"], [{"decision": "redial-closed", "attempts": 1, "firstFailMs": 1200, "ms": 1900}],
+                         "one row for the return, counting C alone: A was put down before the return and its late close counts nothing")
+
+    def test_1a_a_late_close_reads_its_own_dials_cut_flag_so_the_newer_dials_refusal_takes_the_first_rung(self):
+        # shCutHere is declared per dial (tests-1, review round 2, 2026-10-02). Since that round a late close returns before it reads
+        # the flag (the case above), so on the served script a flag kept globally and reset at each dial changes nothing here; the
+        # second run executes the same interleaving with that return rewritten out, which is how the late close ran before the
+        # round, so the flag stays pinned should the return ever go. The boot dial A is cut with its close event queued; a tick
+        # dials B over it; A's close arrives; B is refused 300 ms in. Served: A's close arms nothing and B's refusal takes the
+        # ladder's first rung (1 s). Without the return: A's close reads A's own flag, a hung close outside any window (the blind
+        # 2 s), and climbs nothing, so B's refusal still takes 1 s. Mutant M8b (the flag global, reset at each dial) reddens the
+        # second run: A's close reads the flag B's dial reset, files A's cut as a refusal (1 s, the rung advanced), and B's
+        # refusal redials at 2 s.
+        scenario = r"""
+var A=SHSOCKS[0],t0=SHNOW;                               // the boot dial hangs, outside any return window
+shRunDue(t0+15000);                                     // A's own timer cuts it; its close event is still queued
+SHNOW+=100;shTick();                                    // a tick finds A CLOSED past SH_REDIAL_MS and dials B
+A.onclose({code:1006});var lateClose=shDialTimers().map(function(t){return t.ms;});   // A's close, delivered after B's dial
+SHNOW+=300;shRefuseNow();var all=shDialTimers().map(function(t){return t.ms;});      // B refused 300 ms after its dial
+shOut({socks:SHSOCKS.length,lateClose:lateClose,all:all,newest:all.length?all[all.length-1]:null});"""
+        src = _mobile_js()
+        guard = "if(ws!==shWs)return;"
+        self.assertEqual(src.count(guard), 1, "the late close's return is spelled once in the shell (if it is re-spelled, rewrite this case)")
+        served = _run_probe(scenario)
+        self.assertEqual(served, {"socks": 2, "lateClose": [], "all": [1000], "newest": 1000},
+                         "served: A's late close arms nothing, and B's refusal takes the ladder's first rung")
+        unguarded = _run_probe(scenario, source=src.replace(guard, ""))
+        self.assertEqual(unguarded["socks"], 2)
+        self.assertEqual(unguarded["lateClose"], [2000], "without the return, A's late close reads A's own flag: a hung close outside any window, the blind redial")
+        self.assertEqual(unguarded["newest"], 1000, "...and climbs nothing, so B's refusal still takes the ladder's first rung")
 
 
 # ── the lazy panes and the phone's skeleton first dial, shell + shim (stage 0, 2026-09-18) ────────────────────────
