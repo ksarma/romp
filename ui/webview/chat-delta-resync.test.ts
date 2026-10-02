@@ -31,8 +31,11 @@ test("a delta gap asks the kernel for a full session instead of freezing", () =>
 });
 
 test("the resync is asked ONCE per desync, and re-arms when the full session lands", () => {
-  // the pusher runs every 0.5-3s; without the guard every rejected delta would re-ask
-  assert.match(RENDER, /awaitingFull\.has\(id\)\) return;/, "one ask per desync");
+  // the pusher runs every 0.5-3s; without the guard every rejected delta would re-ask. Between the latched branch's close
+  // and the add stands only this fork's provisional/closing-tab gate (its comment lines and its one-line return, 2026-08-18;
+  // "the re-ask stands down" below pins the gate, skeleton-tabs-wiring.test.ts the same order), so the latch is read first
+  assert.match(RENDER, /if \(awaitingFull\.has\(id\)\) \{[\s\S]*?\n\s*return;\n\s*\}\n(?:\s*\/\/[^\n]*\n)*\s*if \(isProvisionalId\(id\) \|\| closingTabs\.has\(id\)\) return;\n\s*awaitingFull\.add\(id\);/,
+    "one ask per desync: the latched branch returns before a second ask, and only this fork's provisional/closing-tab gate stands between it and the add (the branch's row is pinned in needfull-latch-hygiene.test.ts, 2026-09-19)");
   assert.match(RENDER, /awaitingFull\.add\(id\);/);
   assert.match(RENDER, /awaitingFull\.delete\(msg\.id\)/,
     "upsert() must clear the flag so a LATER gap can ask again");
@@ -95,7 +98,7 @@ test("awaitingFull cannot wedge across a reconnect — the socket edge clears it
 test("the kernel handles needFull by forgetting what that client holds", () => {
   assert.ok(KERNEL.includes('msg.get("type") == "needFull"'), "the kernel must handle the frame");
   const i = KERNEL.indexOf('msg.get("type") == "needFull"');
-  const body = KERNEL.slice(i, i + 1200);
+  const body = KERNEL.slice(i, i + 2000);
   // the two pops live in _client_reset_chat_sid since 2026-09-04 (they run under the client's slot lock, so
   // the pusher's _send_chat lands whole before or after them) — pin the handler's call AND the helper's body
   assert.ok(body.includes("_client_reset_chat_sid(client, sid)"), "the handler forgets through the locked helper");

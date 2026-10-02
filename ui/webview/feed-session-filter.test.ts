@@ -50,8 +50,9 @@ test("the filter defaults to NOTHING selected and only ever narrows the RENDER, 
   // retired); the session filter / satellite split is the board's own first stage
   assert.ok(FEED.includes("let shown = feedOnlySid ? list.filter((a) => a.sid === feedOnlySid) : list.filter((a) => !a.satellite);"));
   // render reads the shared view through paintPlan since review round 2 of the lazy panes (2026-09-19): its first line is the shared
-  // view, and renderBody's `shown` is the plan's (feed-hidden-paint.test.ts pins renderBody's consumption)
-  assert.ok(FEED.includes("  const shown = viewFiltered(list);\n  const byTurn = turnGroups(shown);"), "the paint plan reads the shared view");
+  // view, then keeps the active board's cards (boards phase four, PR 1886: the board filter lives in paintPlan, so the paint and
+  // the reveal agree), and renderBody's `shown` is the plan's (feed-hidden-paint.test.ts pins renderBody's consumption)
+  assert.ok(FEED.includes("  const shown = onActiveBoard(viewFiltered(list));\n  const byTurn = turnGroups(shown);"), "the paint plan reads the shared view (then keeps the active board's cards, phase four)");
   assert.ok(FEED.includes("const shown = plan.shown, byTurn = plan.byTurn, grouped = plan.grouped;"), "render reads the plan's view");
   // (the SEARCH filter composes onto the same render-side view — see feed-search.test.ts)
   assert.ok(FEED.includes("for (const a of shown) {"), "the group-fold loop reads the filtered view");

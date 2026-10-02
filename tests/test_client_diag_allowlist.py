@@ -110,6 +110,10 @@ CENSUS = {
         "resent": (NONE, _BOOL), "ms": (NONE, _INT), "bytesSince": (NONE, _INT), "redialed": (NONE, _BOOL), "code": (NONE, "the close code"),
         "reason": (NONE, "the close frame's reason text: this kernel sends no close frame (a drop reads 1006), so empty, or an intermediary's text, cut"),
         "wasClean": (NONE, _BOOL), "sinceOpenMs": (NONE, _INT), "everConnected": (NONE, _BOOL), "bundleReady": (NONE, _BOOL),
+        # wsclose's readyAcked and readyQueued (the project's PR 1862, the fork's breadcrumb offer): the shim's own page-local
+        # flags at the close, each declared false and assigned only the literals true and false (the caps frame's arrival, the
+        # ready queued for an open, the open's flush)
+        "readyAcked": (NONE, _BOOL), "readyQueued": (NONE, _BOOL),
         "attempts": (NONE, _INT), "firstFailMs": (NONE, _INT), "wasDiscarded": (NONE, _BOOL), "nav": (NONE, "the navigation type word"),
         "awaitLink": (NONE, _BOOL), "linkUpMs": (NONE, _INT), "parked": (NONE, _BOOL),
     },
@@ -860,7 +864,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         todays = [
             ("perf", "minute", MINUTE),
             ("perf", "slowframe", {"app": "chat", "type": "session", "ms": 150.2, "dom": 53306, "loaf": {"ms": 160, "blocking_ms": 110, "top": []}}),
-            ("pane-shim", "wsclose", {"app": "feed", "code": 1006, "reason": "", "wasClean": False, "sinceOpenMs": 5000, "quietMs": 31000, "everConnected": True, "bundleReady": True}),
+            ("pane-shim", "wsclose", {"app": "feed", "code": 1006, "reason": "", "wasClean": False, "sinceOpenMs": 5000, "quietMs": 31000, "everConnected": True, "bundleReady": True,
+                                      "readyAcked": True, "readyQueued": False}),   # the row as the shim posts it since the project's PR 1862
             ("pane-shim", "return", {"decision": "redial-closed", "resumed": False, "hiddenMs": 29000, "frozenMs": 0, "quietMs": 29500, "quietAtResumeMs": -1, "ready": 3, "app": "chat", "resent": True}),
             ("pane-shim", "return-fresh", {"ms": 5600, "bytesSince": 40000, "redialed": True, "app": "chat"}),
             ("pane-shim", "wsconnfail", {"app": "chat", "attempts": 3, "firstFailMs": 30000}),
