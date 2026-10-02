@@ -1370,8 +1370,8 @@ def _end_group(p, grace=5.0):
     KILL within milliseconds, while a test process of the group may still be in its exit trap. bats does not promise that a
     test's teardown runs under this TERM: it writes the teardown's output to a file under BATS_RUN_TMPDIR, which the leader's
     EXIT trap removes under the same TERM, so the order the two processes are scheduled in decides it (bats 1.10.0 and 1.11.1;
-    BatsRoad's timeout test carries the measurements and asserts the signals sent, not the teardown). Returns at once when the
-    group is already gone at either signal."""
+    BatsRoad's timeout test carries the measurements and asserts the signals sent and the one group they go to, not the
+    teardown). Returns at once when the group is already gone at either signal."""
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(p.pid, sig)
@@ -4803,25 +4803,29 @@ class BatsRoad(unittest.TestCase):
     # teardown is certain only when the leader keeps its run directory AND nothing kills the group first; this road does neither,
     # so no condition on it turns the marker into an assertion about romp. The marker assertion's red rate at e015c014e: 49 of 50
     # runs pinned to one CPU (two series), 9 of 10 with a busy process pinned to the same CPU, 8 of 150 unpinned local runs, and 1
-    # of 320 CI shell jobs. The part of the old claim that romp controls, TERM to the group before KILL, is now read off the
-    # signals this test's thread sends: with a KILL-only _end_group at e015c014e this test was the one red test of the class, so
-    # dropping the marker without a replacement would have left TERM-first pinned nowhere
+    # of 320 CI shell jobs. The part of the old claim that romp controls, TERM to the run's group before KILL, is now read off
+    # the signals this test's thread sends and the group each one names: with a KILL-only _end_group at e015c014e this test was
+    # the one red test of the class, so dropping the marker without a replacement would have left TERM-first pinned nowhere
     def test_a_run_past_the_bound_is_timed_out_its_group_sent_term_then_kill_and_no_process_of_it_left(self):
         # F2 of fork PR #871's commit-3 review: run_test_alone had no bound, so a rewrite that never terminates hung the oracle,
         # locally forever and in CI to the wrapper's per-test bound, nameless. Bounded at 2 s the poll test comes back `timed out`
-        # a few seconds later; its process group is sent TERM and then KILL (_end_group), the two signals read off this thread's
-        # os.killpg calls; nothing of the run is left when it returns; and decide makes an undecided verdict of it. The poll's
-        # teardown is NOT asserted, since bats does not promise it under the group TERM (the note above). Named
+        # a few seconds later; nothing of the run is left when it returns; its process group was sent TERM and then KILL
+        # (_end_group), read off this thread's os.killpg calls with the group each names: the signals are TERM then KILL, both
+        # name one group, and that group is the run's, since the poll loops until its group is signalled and nothing of the run is
+        # left; and decide makes an undecided verdict of it. The poll's teardown is NOT asserted, since bats does not promise it
+        # under the group TERM (the note above). Named
         # test_a_run_past_the_bound_is_timed_out_with_its_teardown_run_and_no_process_of_it_left until 2026-10-02
         skip_unless_bats_serves(self)
         sent, real, me = [], os.killpg, threading.get_ident()
 
         def killpg(pgid, sig):
+            # each call's group with its signal, so a TERM sent to a group other than the KILL's is red (round 1 of fork PR #946: a
+            # spy recording the signal alone passed an _end_group that sent the TERM to a fresh group and the KILL to the run's);
             # recorded BEFORE the call: _end_group's KILL often finds the group gone and raises ProcessLookupError, and a record
             # taken after the call would flip with the scheduling; a call from another thread (one an earlier test in the same
             # process left running) is passed through unrecorded
             if threading.get_ident() == me:
-                sent.append(sig)
+                sent.append((pgid, sig))
             return real(pgid, sig)
 
         with tempfile.TemporaryDirectory() as d:
@@ -4834,8 +4838,12 @@ class BatsRoad(unittest.TestCase):
             self.assertGreaterEqual(run.secs, 2)
             self.assertLess(took, 20, "the run was not ended near its bound")
             self.assertEqual(_processes_of(d), [], "processes of the ended run remain")
-            self.assertEqual(sent, [signal.SIGTERM, signal.SIGKILL], "the run's group was not sent TERM and then KILL: _end_group sends TERM to the "
-                             "group, then KILL to whatever is left, the KILL attempted even when nothing is; a change to that contract changes this list")
+            self.assertEqual([sig for _, sig in sent], [signal.SIGTERM, signal.SIGKILL], "the signals sent were not TERM and then KILL: "
+                             "_end_group sends TERM to the group, then KILL to whatever is left, the KILL attempted even when nothing is; a change "
+                             "to that contract changes this list")
+            self.assertEqual(len({pgid for pgid, _ in sent}), 1, "TERM and KILL did not go to one process group %r: _end_group sends both "
+                             "to the group the run's leader leads, and with no process of the run left (asserted above) one group for both can only "
+                             "be the run's" % sent)
         verdict, message = decide("tests/hang.bats", Candidate(0, 1, 10, False), (0, 2), [BatsRun("ok", None, None, "", 0.1), run])
         self.assertEqual(verdict, "undecided")
         self.assertIn("the run was ended after %.0f s with no verdict" % run.secs, message)
