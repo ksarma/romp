@@ -221,20 +221,37 @@ class ShellLivenessMatchesTheShim(unittest.TestCase):
     def test_the_shell_cuts_each_dial_on_its_own_timer_from_the_shared_constant(self):
         # iOS item 1a (2026-10-02): shellWS arms the dial's cut with SH_CONNECT_MS, the constant the agreement above compares
         # with the shim's 15 s tick arm, so the timer cannot drift from the shim's value either. A pin on WHERE the code lives:
-        # it guards that the timer reads the shared constant; tests/test_kernel_mobile.py ShellLinkProbe's test_1a_* cases
-        # prove what the timer does (the cut at exactly SH_CONNECT_MS, the clears at the open and the close, one socket).
+        # it locates the timer's read of the shared constant by text. The executed proof of that binding is
+        # tests/test_kernel_mobile.py ShellLinkProbe.test_1a_the_cut_timer_reads_sh_connect_ms_executed_with_the_constant_rewritten
+        # (the script run with the constant rewritten, which also fails a second SH_CONNECT_MS declared nearer the timer, a shape
+        # this text pin passes); the other test_1a_* cases prove what the timer does (the cut at exactly SH_CONNECT_MS, the clears
+        # at the open and the close, one socket).
         mob = km._LANDING_MOBILE_JS
         body = mob[mob.index("function shellWS(){"):mob.index("ws.onopen=function(){")]
         self.assertRegex(body, r"setTimeout\(function shCut\(\)\{[^\n]*\},SH_CONNECT_MS\);",
-                         "each dial arms its own connect cut with SH_CONNECT_MS (the executed cases: test_kernel_mobile.py test_1a_*)")
+                         "each dial arms its own connect cut with SH_CONNECT_MS (the executed binding: test_kernel_mobile.py "
+                         "test_1a_the_cut_timer_reads_sh_connect_ms_executed_with_the_constant_rewritten)")
 
     def test_the_shim_keeps_its_connect_cut_on_its_tick(self):
         # the other half of 1a's re-scope: the shim's connect() arms no timer of its own for the cut (its 15 s cut is the tick
-        # arm the agreement above reads), so the shell's per-dial timer is the shell's alone. A fold that brings a per-dial cut
-        # into the shim reddens this, and the two copies' agreement is then reconciled on purpose rather than by accident.
+        # arm the agreement above reads), so the shell's per-dial timer is the shell's alone. The pin reads the WHOLE of
+        # connect(): from its head to the next line that opens a function declaration, a span that holds its last handler
+        # (ws.onerror). It finds one setTimeout( there: the onclose redial, setTimeout(connect,d). A per-dial cut written
+        # anywhere in connect() (window.setTimeout( included) makes it two and reddens this; a cut armed through a helper
+        # defined outside connect() is outside what it reads. A fold that brings a per-dial cut into the shim then reconciles
+        # the two copies' agreement on purpose rather than by accident.
+        import re
         js = km._shim_core_js("chat")
-        dial = js[js.index("function connect(){"):js.index("ws.onopen=function(){", js.index("function connect(){"))]
-        self.assertNotIn("setTimeout(", dial, "the shim's dial arms no timer: its connect cut is its watchdog tick's CONNECTING arm")
+        head = "function connect(){"
+        self.assertEqual(js.count(head), 1, "the shim defines connect() once")
+        start = js.index(head)
+        nxt = re.search(r"\nfunction \w+\(", js[start:])
+        self.assertIsNotNone(nxt, "a function declaration follows connect()")
+        dial = js[start:start + nxt.start()]
+        self.assertIn("ws.onerror=function(){try{ws.close();}catch(e){}};", dial, "the span reaches connect()'s last handler")
+        self.assertEqual(re.findall(r"setTimeout\(", dial), ["setTimeout("],
+                         "the whole of the shim's connect() arms one timer, its onclose redial: its connect cut is its watchdog tick's CONNECTING arm")
+        self.assertIn("setTimeout(connect,d);", dial, "...and that one timer is the redial")
         self.assertIn("if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}", js)
 
     def test_the_two_copies_agree_on_the_tick_semantics(self):

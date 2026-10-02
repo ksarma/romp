@@ -2600,14 +2600,17 @@ function shOut(o){process.stdout.write(JSON.stringify(o));}
 """
 
 
-def _run_probe(scenario):
+def _run_probe(scenario, source=None):
+    """`source` is the shell script the case runs: _mobile_js() unless the case hands in a rewrite of that same text (review round
+    1 of iOS item 1a, 2026-10-02: the cut timer's SH_CONNECT_MS binding, executed with the constant rewritten), so every run
+    still reads the script through _mobile_js."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + _mobile_js() + "\n" + scenario)
+        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + (_mobile_js() if source is None else source) + "\n" + scenario)
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
@@ -2665,7 +2668,10 @@ class ShellLinkProbe(unittest.TestCase):
     by the pane's own response.
 
     iOS item 1a (2026-10-02) added the test_1a_* cases at the tail (the connect cut on each dial's own timer) and turned the
-    two tick-cut cases into the cases of a cut timer the browser lost."""
+    two tick-cut cases into the cases of a cut timer the browser lost. Its review round 1 (2026-10-02) added five more at the
+    tail: an older socket's late close, and its late open and close, leave the newer dial's cut in force (the fix of that
+    round); the cut flag is per dial; a late call into shellWS leaves a CONNECTING dial's cut as armed; the timer reads
+    SH_CONNECT_MS, executed with the constant rewritten."""
 
     def test_the_shell_dials_one_socket_with_the_dashboards_wid_and_publishes_the_link(self):
         r = _run_probe(r"""
@@ -3212,7 +3218,8 @@ out({walk:walk,shellDials:SHSOCKS.length-1,backstop:queued("link-backstop").leng
     # open event ahead of it) has been delivered. The open and the close clear their OWN dial's cut (shCutMe) and reset shCutT
     # only while it is still theirs, so the late events leave the newer dial's cut in force. At the PR's first head (51b92cff9)
     # both cleared the global shCutT, the newer dial's handle, and both cases are red there; each also reddens under its own
-    # mutant (the close clearing the global: both cases; the open clearing the global: the second).
+    # mutant (the close clearing the global: both cases; the open clearing the global, or the close clearing its own handle but
+    # resetting the global unconditionally: the second).
     def test_1a_an_older_sockets_close_delivered_after_a_newer_dial_leaves_that_dials_cut_in_force(self):
         r = _run_probe(r"""
 var A=SHSOCKS[0],t0=SHNOW;                               // the boot dial hangs, outside any return window
@@ -3230,19 +3237,86 @@ shOut({cutA:cutA,socks:SHSOCKS.length,cutsB:cutsB,at14999:at14999,at15000:at1500
         self.assertEqual(r["at15000"], 3, "B's own timer cuts it at SH_CONNECT_MS, A's late close notwithstanding")
 
     def test_1a_an_older_sockets_open_and_close_delivered_after_a_newer_dial_leave_that_dials_cut_in_force(self):
+        # then a return puts B down and dials C: C's dial clears B's cut through shCutT, which A's late events left as B's, so one
+        # cut is pending, C's (a late close that reset shCutT unconditionally would leave B's cut pending beside C's)
         r = _run_probe(r"""
 var A=SHSOCKS[0],t0=SHNOW;                               // the boot dial
 SHNOW+=3000;A.readyState=3;                             // A opened and closed again, neither event delivered yet (a paused event queue)
 SHNOW=t0+8100;shTick();var B=shSock(),tB=SHNOW;         // a tick finds A CLOSED past SH_REDIAL_MS and dials B
 A.onopen();A.onclose({code:1006});                      // A's open and close events, delivered in order after B's dial
 var cutsB=shCutTimers().map(function(t){return t.at-tB;});
-shRunDue(tB+14999);var at14999=B.readyState;
-shRunDue(tB+15000);var at15000=B.readyState;
-shOut({socks:SHSOCKS.length,cutsB:cutsB,at14999:at14999,at15000:at15000});""")
-        self.assertEqual(r["socks"], 2, "the boot dial A and the tick's dial B")
+SHNOW+=1000;shHide();SHNOW+=100;shShow();               // a return with B still CONNECTING: B put down, dial C
+var C=shSock(),tC=SHNOW,cutsC=shCutTimers().map(function(t){return t.at-tC;});
+shRunDue(tC+14999);var at14999=C.readyState;
+shRunDue(tC+15000);var at15000=C.readyState;
+shOut({socks:SHSOCKS.length,cutsB:cutsB,cutsC:cutsC,at14999:at14999,at15000:at15000});""")
+        self.assertEqual(r["socks"], 3, "the boot dial A, the tick's dial B and the return's dial C")
         self.assertEqual(r["cutsB"], [15000], "A's late open and close leave B's cut armed, due SH_CONNECT_MS after B's dial")
-        self.assertEqual(r["at14999"], 0, "B is not cut one ms early")
-        self.assertEqual(r["at15000"], 3, "B's own timer cuts it at SH_CONNECT_MS")
+        self.assertEqual(r["cutsC"], [15000], "one cut pending after the return, C's: C's dial cleared B's")
+        self.assertEqual(r["at14999"], 0, "C is not cut one ms early")
+        self.assertEqual(r["at15000"], 3, "C's own timer cuts it at SH_CONNECT_MS")
+
+    # ---- review round 1 of iOS item 1a (2026-10-02): three properties the cases above held without a case that could fail on
+    # them. Each holds at 51b92cff9 and reddens under the mutant its comment names.
+    def test_1a_the_cut_flag_is_per_dial_so_a_later_dials_refusal_still_climbs_the_ladder(self):
+        # shCutHere is declared in shellWS, one per dial: it marks the close THIS dial's timer made, so a cut never makes a
+        # later dial's refusal read as hung. Outside any window the boot dial's cut redials blind at 2 s; inside a return window
+        # the return dial's cut redials at 250 ms; either way the next two dials, each refused 300 ms in, climb the ladder (1 s,
+        # then 2 s). A flag kept across dials (set by the first cut, never reset) reads both refusals as hung closes: the blind
+        # 2 s outside the window and 250 ms inside it, never climbing.
+        r = _run_probe(r"""
+function redial(){return shDialTimers().map(function(x){return x.ms;});}
+function cutThenTwoRefusals(){var out=[],t0=SHNOW;
+shRunDue(t0+15000);shSock().onclose({code:1006});out.push(redial());   // the dial's own timer cuts it, then its close event
+shFireDials();SHNOW+=300;shRefuseNow();out.push(redial());             // the next dial, refused 300 ms in
+shFireDials();SHNOW+=300;shRefuseNow();out.push(redial());             // and the one after it
+shFireDials();return out;}
+var outside=cutThenTwoRefusals();                        // the boot dial and its successors, outside any return window
+shOpen();shRecv({type:'ka'});shHide();shSock().readyState=3;SHNOW+=100;shShow();   // that dial opens; a return finds it dead and dials
+var inside=cutThenTwoRefusals();                         // the return's dial and its successors, inside the window
+shOut({outside:outside,inside:inside});""")
+        self.assertEqual(r, {"outside": [[2000], [1000], [2000]], "inside": [[250], [1000], [2000]]},
+                         "after the cut's own redial (the blind 2 s outside a window, 250 ms inside the return window) each refusal climbs the ladder")
+
+    def test_1a_a_late_call_into_shellws_while_a_dial_is_connecting_leaves_that_dials_cut_as_it_was(self):
+        # PR 768's one-attempt guard returns before the dial arms anything, so a late timer calling shellWS while a dial is
+        # CONNECTING leaves that dial's one cut as armed, due SH_CONNECT_MS after the dial. The late call comes 3 s into the
+        # dial. The cut list catches a clear of shCutT ahead of the guard (no cut left: the dial waits for the tick's backstop)
+        # and a re-arm ahead of the guard (one cut, but due 3 s late); the two readyState reads catch both by behaviour.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the fast path dials socket 2
+shRefuseNow();                                          // refused: the ladder timer arms (1 s)
+var late=shDialTimers()[0];                             // the callback a browser could still deliver late
+shHide();SHNOW+=100;shShow();                           // a second return: socket 3 dialed (CONNECTING), the ladder timer cleared
+var d=shSock(),t0=SHNOW;
+SHNOW+=3000;late.fn();                                  // the late call, 3 s into socket 3's dial: the guard returns
+var cuts=shCutTimers().map(function(t){return t.at-t0;});
+shRunDue(t0+14999);var at14999=d.readyState;
+shRunDue(t0+15000);var at15000=d.readyState;
+shOut({socks:SHSOCKS.length,cuts:cuts,at14999:at14999,at15000:at15000});""")
+        self.assertEqual(r["socks"], 3, "the late call dialed nothing")
+        self.assertEqual(r["cuts"], [15000], "...and left socket 3's one cut as armed, due SH_CONNECT_MS after its dial")
+        self.assertEqual(r["at14999"], 0, "socket 3 is not cut one ms early")
+        self.assertEqual(r["at15000"], 3, "socket 3 is cut at exactly SH_CONNECT_MS after its dial, the late call notwithstanding")
+
+    def test_1a_the_cut_timer_reads_sh_connect_ms_executed_with_the_constant_rewritten(self):
+        # the timer's delay is the shared constant, executed: the script runs with SH_CONNECT_MS declared as 7000 instead of
+        # 15000, and the boot dial arms one cut of 7000, is CONNECTING 1 ms before it and is cut at it, with no tick. A literal
+        # 15000 in the timer, or a second SH_CONNECT_MS declared nearer the timer, passes every case on the real constant and
+        # fails this one. tests/test_kernel_ws_heartbeat.py's source pin locates the same binding by text.
+        src = _mobile_js()
+        decl = "SH_CONNECT_MS=15000,"
+        self.assertEqual(src.count(decl), 1, "the shell declares SH_CONNECT_MS once, as 15000 (if it is re-spelled, rewrite this case)")
+        r = _run_probe(r"""
+var d=SHSOCKS[0],t0=SHNOW;                               // the boot dial, never opened
+var cuts=SHTIMERS.filter(function(t){return t.fn.name==='shCut';}).map(function(t){return t.ms;});
+shRunDue(t0+6999);var at6999=d.readyState;
+shRunDue(t0+7000);var at7000=d.readyState;
+shOut({cuts:cuts,at6999:at6999,at7000:at7000});""", source=src.replace(decl, "SH_CONNECT_MS=7000,"))
+        self.assertEqual(r["cuts"], [7000], "the dial armed one cut of the rewritten constant's value")
+        self.assertEqual(r["at6999"], 0, "no cut 1 ms before the rewritten SH_CONNECT_MS")
+        self.assertEqual(r["at7000"], 3, "the cut lands at the rewritten SH_CONNECT_MS: the timer reads the constant")
 
 
 # ── the lazy panes and the phone's skeleton first dial, shell + shim (stage 0, 2026-09-18) ────────────────────────
