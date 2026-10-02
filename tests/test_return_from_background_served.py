@@ -247,6 +247,14 @@ def measure(rows, r):
             page_load[key] = page_load.get(key, 0) + 1
     shell = [{"what": x.get("what"), **{k: (x.get("data") or {}).get(k) for k in ("attempts", "firstFailMs", "ms")}}
              for x in mine if x.get("surface") == "shell" and x.get("what") == "return-probe" and x.get("t", 0) >= s_return]
+    # iOS item 1a (2026-10-02): the shell's first cut after the return, read twice. The page's: its return-probe row times the
+    # first failed attempt from the foreground, where the fast path dials, so ms minus firstFailMs is the return dial's life
+    # (only when that row counts an attempt and both figures are real). The route's: the first shell dial after the return,
+    # the page's close of it minus its arrival, both on the driver's clock (null when the page never cut it).
+    first_cut_page = next((p["ms"] - p["firstFailMs"] for p in shell if (p.get("attempts") or 0) >= 1
+                           and isinstance(p.get("ms"), int) and isinstance(p.get("firstFailMs"), int) and p["ms"] >= 0 and p["firstFailMs"] >= 0), None)
+    first_shell = next((d for d in (r.get("dials") or []) if d.get("app") == "shell" and d.get("t", 0) >= t.get("return", 0)), None)
+    first_cut_route = int(first_shell["cutT"] - first_shell["t"]) if first_shell and first_shell.get("cutByPage") and first_shell.get("cutT") else None
     wsopen = [x for x in mine if x.get("surface") == "kernel" and x.get("what") == "wsopen"]
     boot_open, return_open = {}, {}
     for x in wsopen:
@@ -290,6 +298,7 @@ def measure(rows, r):
         "t": t, "pageErrors": len(r.get("errors") or []), "overrideErrors": r.get("overrideErrors") or [],
         "return": ret, "returnFresh": fresh, "wsconnfail": connfail, "wsclose": wsclose, "watchdogClose": wd,
         "hostconn": hostconn, "dialDeferred": deferred, "shellReturnProbe": shell,
+        "shellFirstCutMs": {"page": first_cut_page, "route": first_cut_route},
         "wsopenBoot": boot_open, "wsopenReturn": {a: len(v) for a, v in return_open.items()}, "wsopenReturnRows": return_open,
         "dialsAfterReturn": {"total": len(dials), "byVerdict": by_verdict, "perApp": per_app,
                              "cutByPage": sum(1 for d in dials if d.get("cutByPage")), "firstPerApp": timeline},
@@ -424,6 +433,7 @@ class ReturnFromBackground(unittest.TestCase):
         if unmarked:
             self._unmarked(name, r, rows, tap)   # first on the unmarked leg: a detector that calls the served document a failure re-parks it, and every later read is of a re-parked pane
         self._shapes(name, r, m, regime)
+        self._shell_cut(name, m, regime, outage_s)
         self._parked(name, r, m)
         self._lazy(name, r, m, None if unmarked else tap)   # the unmarked document has no shim: the lazy counts are a no-tap boot's
         self._dial(name, r, boot_tab, tap)
@@ -753,6 +763,27 @@ class ReturnFromBackground(unittest.TestCase):
                 self.assertEqual(ls.get("loaderDisplay"), "flex", where + "…with the romp loader inside it: %r" % (ls,))
                 self.assertGreater(ls.get("height", 0), 0, where + "…with a box: %r" % (ls,))
                 self.assertLessEqual(ls.get("bottom", 1e9), ls.get("barTop", 0) + 1, where + "…that stops at the tab bar (the bar stays tappable): %r" % (ls,))
+
+    # ---- iOS item 1a (2026-10-02): the shell's first hung dial is cut on its own timer, at SH_CONNECT_MS ----
+    def _shell_cut(self, name, m, regime, outage_s):
+        """Since iOS item 1a the shell cuts each dial on the dial's own timer (SH_CONNECT_MS, 15 s); before it the 5 s watchdog
+        tick made the cut, 15 to 20 s after the dial (16.9 s in this harness's timeline, one Chromium run at 919fde73b). Read on
+        a hung leg whose outage outlasts the cut (the 30 s legs): the page's figure (measure: the return-probe row's ms minus
+        firstFailMs, the return dial's life as the page saw it) lands within 1 s of 15,000 ms, slack for a loaded box's timer
+        and close-event latency that stays well under the tick's 5 s. The route's figure for the same cut is recorded beside
+        it in the artifact. This is the mechanism only: the harness hangs a dial by never answering its route, and cannot
+        produce the phone's accepted-but-unanswered handshake."""
+        if regime != "hung" or outage_s * 1000 <= 15000 + 1000:
+            return
+        where = name + ": "
+        probes = m["shellReturnProbe"]
+        self.assertEqual(len(probes), 1, where + "one shell return-probe row for the one return: %r" % (probes,))
+        self.assertGreaterEqual(probes[0].get("attempts") or 0, 1, where + "the hung outage outlasted the shell's first attempt: %r" % (probes,))
+        cut = m["shellFirstCutMs"]["page"]
+        self.assertIsInstance(cut, int, where + "the row times the first cut: %r" % (probes,))
+        self.assertGreaterEqual(cut, 15000 - 50, where + "the first cut came no earlier than SH_CONNECT_MS after the dial: %r ms (row %r)" % (cut, probes[0]))
+        self.assertLessEqual(cut, 15000 + 1000, where + "the first cut came at SH_CONNECT_MS on the dial's own timer, not up to a 5 s tick later: %r ms (row %r; route %r ms)"
+                             % (cut, probes[0], m["shellFirstCutMs"]["route"]))
 
     # ---- D2's count pin (2026-09-18): which panes parked, through the wsState words the driver recorded ----
     def _parked(self, name, r, m):
