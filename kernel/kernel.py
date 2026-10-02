@@ -3660,6 +3660,7 @@ CLIENT_DIAG_KEYS = {
                             "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
                             "ms", "bytesSince", "redialed",                                                     # return-fresh
                             "code", "reason", "wasClean", "sinceOpenMs", "everConnected", "bundleReady",        # wsclose
+                            "readyAcked", "readyQueued",                                                        # wsclose: the shim's ready state at the close, two booleans (upstream PR 1862); the owner approved admitting both as upstream shipped them, 2026-10-02
                             "attempts", "firstFailMs",                                                          # wsconnfail
                             "wasDiscarded", "nav",                                                              # page-load
                             "awaitLink", "linkUpMs",                                                            # D3 (2026-09-18): return awaits the shell's link; return-fresh's linkUpMs is the path's own recovery
@@ -3677,6 +3678,8 @@ CLIENT_DIAG_KEYS = {
                        "anchor", "proto", "events", "regions", "headKnown", "headFrom", "older", "noframe", "trail",
                        "dh", "last", "cls", "fromTail", "atBottom", "where", "removed", "added", "reAdded", "shBefore", "shAfter", "st",
                        "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland",
+                       "tailLo", "count", "cleared", "heldLo", "heldLast", "dropped", "afterLast", "frameLast", "rewindPending",   # render.ts's dropped-history rows: full-frame-desync and its loop row (upstream PR 1860), frame-behind and
+                       "heldRuns", "heldEvents", "frameEvents",                                                                   # regions-dropped (upstream PR 1877); the owner approved admitting all twelve as upstream shipped them, 2026-10-02
                        "view")),                                    # a spacer row of a view that was not the element the scroller measured in its frame (switched away before it, or hidden by the section-at-a-glance view): one fixed word, no host name; the table admits the key and CLIENT_DIAG_VALUES below bounds its value to that word, the page's builder's (ui/webview/scroll-write.ts spacerRow), so any other value is refused, not stored (PR E; the owner 2026-09-21, who approved the field; the maintainer's round 5 ruling, tests-1)
     "strip": frozenset(("ok", "tunnels", "err", "open", "base")),
     "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total")),
@@ -82771,9 +82774,8 @@ class Handler(BaseHTTPRequestHandler):
                            # a declared redial from the ones the dial term gated off (2026-09-10: everConnected alone, true on
                            # every such row, could not). The wsopen row the accept files carries the same value, but it names
                            # the socket by cid and this row does not, so the two cannot be joined without the stamp.
-                           # On this fork the admit drops readyAcked and readyQueued (CLIENT_DIAG_KEYS["pane-shim"] does not
-                           # admit them until the owner rules on the two fields), so the stored row tells the declared redial
-                           # and the gated-before-ready shape apart, but not the two shapes with bundleReady true.
+                           # On this fork CLIENT_DIAG_KEYS["pane-shim"] admits readyAcked and readyQueued (the owner approved
+                           # admitting both as upstream shipped them, 2026-10-02), so the stored row carries all three.
                            "reconnect": bool(client.get("redial")),
                            # the surface's admitted keys alone, strings cut, the row bounded (CLIENT_DIAG_KEYS; 2026-09-18): the
                            # file used to take whatever a page posted, of any shape and size

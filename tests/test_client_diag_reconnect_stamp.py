@@ -31,11 +31,6 @@ URL the shim built, the shim's own row dispatched on that client, the stamp and 
 and the wsopen row the accept filed agreeing with the stamp; a chat socket after the real strip's consumption and
 a feed socket, which has no strip, read alike). Synthetic only: placeholder UUIDs, TESTHOST. Never run raw: a
 raw run skips conftest's floor and can reach the live kernel.
-
-On this fork the joined leg reads back less than the shim posts: the fork's client-diag allowlist (CLIENT_DIAG_KEYS in
-kernel/kernel.py) does not admit readyAcked and readyQueued until the owner rules on the two fields (HELD below), so the
-stored row carries bundleReady alone of the three inputs, and the queued-ready and unanswered-ready shapes read alike in
-the file. The node leg holds all three on the row the shim posts, as the project shipped it.
 """
 import contextlib
 import io
@@ -100,13 +95,6 @@ UNACKED = "open();ready();drop();"                                    # the read
 # (tests/test_kernel_disconnect_banner.py) green, so every test that holds the executed row asserts the whole list
 ROW_KEYS = ["app", "bundleReady", "code", "everConnected", "quietMs", "readyAcked", "readyQueued", "reason",
             "sinceOpenMs", "wasClean"]
-
-
-# the two wsclose keys the fork's allowlist holds out (CLIENT_DIAG_KEYS["pane-shim"]; the absence pin is
-# tests/test_client_diag_allowlist.py test_the_shims_wsclose_ready_keys_are_held_out_pending_the_owners_word): the project's
-# PR 1862, the fork's own offer, added them to the shim's row, and admitting a field a page posts to this fork's client-diag
-# file waits on the owner's word, field by field. On his approval ThePairInTheLog reads them back again, (reconnect, bits).
-HELD = ("readyAcked", "readyQueued")
 
 
 def _bits(data):
@@ -256,8 +244,7 @@ class TheShimRowCarriesItsReadyState(unittest.TestCase):
 
 class ThePairInTheLog(_State):
     """The two halves joined: the real handshake dialed with the URL the shim built, the shim's own wsclose row
-    dispatched on the client it registered, and the stamp and the row's bundleReady read back from client-diag.jsonl
-    (on this fork the admit drops readyAcked and readyQueued, HELD, so the file carries bundleReady alone of the three)."""
+    dispatched on the client it registered, and the stamp and the bits read back from client-diag.jsonl."""
     def setUp(self):
         super().setUp()
         self._clients = list(km._clients)
@@ -287,44 +274,37 @@ class ThePairInTheLog(_State):
         return got[0]
 
     def _triple(self, scenario):
-        """The stamp and the stored row's bundleReady for one shape: (reconnect, bundleReady). The shim posts all ten keys;
-        the fork's admit drops readyAcked and readyQueued (HELD) until the owner rules on them, so the stored row is the
-        other eight, and the two held keys are asserted absent from it."""
+        """The stamp and the row's bits for one shape: (reconnect, (bundleReady, readyAcked, readyQueued))."""
         q, kinds, closes = _shim_close(scenario)
         c = self._dial(q)
         self.assertIn("wsclose", kinds, "the row rides the redial")
-        self.assertEqual(sorted(closes[0]["data"]), ROW_KEYS, "the shim posts all ten keys")
         km.Handler._dispatch_ws(None, closes[0], c)
         opens = self.rows("wsopen")                          # the accept files its own row per socket (_note_ws_open)
         self.assertEqual(len(opens), 1)
         rows = self.rows("wsclose")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["wid"], WID)
-        self.assertEqual(sorted(rows[0]["data"]), [k for k in ROW_KEYS if k not in HELD],
-                         "the stored row is the shim's ten keys less the two the fork's allowlist holds out")
-        for k in HELD:
-            self.assertNotIn(k, rows[0]["data"], "%s: held out of the stored row; its admission to CLIENT_DIAG_KEYS['pane-shim'] "
-                                                 "waits on the owner's word" % k)
+        self.assertEqual(sorted(rows[0]["data"]), ROW_KEYS,
+                         "the stored row is the shim's ten keys: this fork's CLIENT_DIAG_KEYS['pane-shim'] admits readyAcked and "
+                         "readyQueued (the owner approved admitting both as upstream shipped them, 2026-10-02)")
         self.assertIs(opens[0]["data"]["reconnect"], rows[0]["reconnect"],
                       "the stamp is the value the accept filed on this socket's wsopen row: the two agree by construction")
-        return rows[0]["reconnect"], rows[0]["data"]["bundleReady"]
+        return rows[0]["reconnect"], _bits(rows[0]["data"])
 
-    # (reconnect, bundleReady) per shape. The ready-during-the-close and the unacked shapes read alike here, (False, True),
-    # until the fork admits readyAcked and readyQueued; the node leg above tells them apart on the row the shim posts.
     def test_declared(self):
-        self.assertEqual(self._triple(DECLARED), (True, True))
+        self.assertEqual(self._triple(DECLARED), (True, (True, True, False)))
 
     def test_gated_off(self):
-        self.assertEqual(self._triple(GATED), (False, False))
+        self.assertEqual(self._triple(GATED), (False, (False, False, False)))
 
     def test_ready_during_the_close(self):
-        self.assertEqual(self._triple(CLOSING), (False, True))
+        self.assertEqual(self._triple(CLOSING), (False, (True, False, True)))
 
     def test_a_ready_after_the_close_reads_as_the_gated_shape(self):
-        self.assertEqual(self._triple(READY_AFTER_CLOSE), (False, False))
+        self.assertEqual(self._triple(READY_AFTER_CLOSE), (False, (False, False, False)))
 
     def test_unacked(self):
-        self.assertEqual(self._triple(UNACKED), (False, True))
+        self.assertEqual(self._triple(UNACKED), (False, (True, False, False)))
 
     def test_the_stamp_is_the_dial_record_unchanged_by_the_strip(self):
         # on a declared chat redial the first strip sender's _resolve_reconnect consumes `reconnect` and fixes the

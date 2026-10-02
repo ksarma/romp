@@ -242,11 +242,7 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   reached the shim while the socket was going down and rode the redial as the
   bundle's own; false with `bundleReady` true, `readyAcked` false and
   `readyQueued` false, the ready left on the socket and no caps frame answered
-  it, so the redial dialed fresh and re-posted the ready. On this fork the
-  kernel's client-diag allowlist (`CLIENT_DIAG_KEYS`) does not yet admit
-  `readyAcked` and `readyQueued`, so the stored `wsclose` row carries
-  `bundleReady` alone and the queued-ready and unanswered-ready shapes (the
-  last two readings) read alike in `client-diag.jsonl`. Every client-diag row
+  it, so the redial dialed fresh and re-posted the ready. Every client-diag row
   from a browser stops while that browser's gear switch "Stop all timing rows
   from this browser" (`perfMute` under `romp:settings`) is on, the rows the
   shim queued for a redial included, so a browser that leaves no breadcrumbs

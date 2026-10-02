@@ -25,6 +25,10 @@ A fifth road (the review of 2026-09-19, round two; a fresh page, before the sock
 the click's row must name the landing it canceled (the anchor and the click's time, which the page's wait state holds only in the fetch's
 mark), and the released chunk must arrive as a pure prepend re-anchored on the reader's own row, the canceled target never landing and
 the notice staying down.
+The hold (2026-10-02): the roads park the kernel's own session and tail frames at the page while they read their own synthetic frames.
+That listener is now installed at each document's start: added after boot it ran AFTER the page's frame listener, so a kernel tail that
+arrived inside road 2 (a push cycle that started up to an interval late) was read by the page, which asked a full that reverted the tail
+run. Road 2 pins it: one kernel-shaped status tail, dispatched as a kernel frame is, must be parked and draw no full ask.
 
 Synthetic fixtures only (placeholder uuids, invented prose); hostname TESTHOST.
 """
@@ -59,9 +63,14 @@ const reboot = async () => {
   await page.evaluate(() => { const c = document.getElementById("content"); c.scrollTop = c.scrollHeight; });
   await painted();
 };
-// the kernel's own session and tail frames parked at the page (a capturing listener runs before the page's; a lab frame is let through by
-// its mark), so what the road reads is the road's own frame, never a fresh one from the kernel
-const holdIn = () => page.evaluate(() => { window.__holdIn = new Set(["session", "chatTail"]); window.__heldIn = []; if (!window.__inHook) { window.__inHook = true; window.addEventListener("message", (e) => { const m = e.data; if (m && m.type && window.__holdIn && window.__holdIn.has(m.type) && !m.__lab) { window.__heldIn.push(m.type + ":" + (m.tailLo === undefined ? "?" : String(m.tailLo))); e.stopImmediatePropagation(); } }, true); } });
+// the kernel's own session and tail frames parked at the page (a lab frame is let through by its mark), so what the road reads is the
+// road's own frame, never a fresh one from the kernel. The listener is installed at each document's start, before the page's scripts: at
+// the target, Chromium runs window listeners in registration order whatever their capture flag (measured on the Playwright Chromium,
+// HeadlessChrome 151: a bubble listener added first and a capturing one added second ran bubble first, and the reverse order ran capturing
+// first), so the capturing listener this lab used to add after boot ran AFTER the page's own frame listener and parked nothing the page
+// had not already handled. holdIn and releaseIn only set the parked types; until a road holds, nothing matches
+await page.addInitScript(() => { window.addEventListener("message", (e) => { const m = e.data; if (m && m.type && window.__holdIn && window.__holdIn.has(m.type) && !m.__lab) { window.__heldIn.push(m.type + ":" + (m.tailLo === undefined ? "?" : String(m.tailLo))); e.stopImmediatePropagation(); } }, true); });
+const holdIn = () => page.evaluate(() => { window.__holdIn = new Set(["session", "chatTail"]); window.__heldIn = []; });
 const releaseIn = () => page.evaluate(() => { const h = (window.__heldIn || []).slice(); window.__holdIn = new Set(); return h; });
 const diagRows = (what) => page.evaluate((w) => window.__sent.filter((m) => m.type === "clientDiag" && m.what === w).map((m) => m.data), what);
 const regions = () => page.evaluate(() => (typeof window.__rompRegions === "function" ? window.__rompRegions() : null));
@@ -136,6 +145,15 @@ await page.evaluate((f) => window.postMessage(f, "*"), frame2);
 await painted();
 const tailAfter2 = await tailRun();
 const behindRows2 = await diagRows("frame-behind");
+// the hold's own pin: one kernel-shaped status tail (no lab mark, an empty suffix after the boot list's last key, the shape the kernel's
+// next push sends a caught-up page), handed to the page the way federation.ts hands it a kernel frame, by window.dispatchEvent. The page's
+// tail now ends at the frame's reply, so a tail the page READ could not anchor: it would ask a full (or, latched, file a delta-refused row)
+// and the kernel's full would revert the tail run to the boot's. Parked, it is in this road's releaseIn() list and the page asks nothing.
+// The dispatch is synchronous, so the hold's count read in the same evaluation brackets this frame alone
+const kernel2 = await page.evaluate(([sid, last]) => { const after = last ? (last.key || last.uuid) : null; const sentAt = window.__sent.length, at = (window.__heldIn || []).length;
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "chatTail", id: sid, afterUuid: after, events: [], status: { state: "ready" } } }));
+  return { after: after === undefined ? null : after, sentAt, at, dispatched: (window.__heldIn || []).slice(at) }; }, [cfg.sid, boot2.events[boot2.events.length - 1]]);
+await painted();
 const r3b = await bottomCheck(reply2, transcriptOrder().concat([rec2, reply2]));
 // the seam: a landing on the frame's first row renders the rows around it; a phantom echo bubble would sit right above it
 await page.evaluate((frame) => window.postMessage(frame, "*"), { type: "focus", id: cfg.sid, anchor: events2[0].uuid, anchorT: cfg.base + 2 * (tail2.lo + 1) });
@@ -143,7 +161,9 @@ await visible(events2[0].uuid, 10000);
 await painted();
 const echoBubbles2 = await page.evaluate(() => document.querySelectorAll('#content .turn[data-uuid^="echo:"]').length);
 const seam2 = await renderedOrder(transcriptOrder().concat([rec2, reply2]));
-await releaseIn();
+// what the page asked after the pin's dispatch, read at the road's end so an ask made late is counted too: a full, or the row a latched page files instead
+const asks2 = await page.evaluate((n) => window.__sent.slice(n).filter((m) => m.type === "needFull" || (m.type === "clientDiag" && m.what === "delta-refused")).map((m) => m.type === "needFull" ? "needFull:" + m.why : "delta-refused:" + (m.data && m.data.why)), kernel2.sentAt);
+const heldIn2 = await releaseIn();
 
 // ROAD 3 (a frame BEHIND the page): a fresh page at the bottom, the kernel's frames parked; a synthetic full frame = the held tail run's rows
 // from its ninth user row on (eight turns below its start), minus the two newest, plus the overlay cards riding the frame's suffix, with
@@ -244,7 +264,8 @@ process.stdout.write("RESULT:" + JSON.stringify({
   r1: { boot: boot1, hadFrame: !!frame1, regions: regions1, dropped: dropped1, landedOnOlder: landedOnOlder1, trail: trail1, notice: notice1, releasedOlder: releasedOlder1, asks: asks1, released: released1, landed: landed1, settled: settled1, target: target1, exactRow: exactRow1, anchorTExpected: cfg.base + 2 * 100, noticeAfter: noticeAfter1, regionsLanded: regionsLanded1, heldIn: heldIn1, r3: r3a },
   wsdown: { hadFrame: !!frame4, regions: regions4, wait: wait4, down: down4 },
   cancel: { hadFrame: !!frame5, regions: regions5, anchor: deep5, anchorTExpected: cfg.base + 2 * 90, wait: wait5, cancelled: cancelled5, releasedOlder: releasedOlder5, landedKeep: landedKeep5, after: after5, target: target5, heldIn: heldIn5, r3: r3d },
-  echo: { boot: { proto: boot2.proto, n: boot2.events.length, tailLo: boot2.tailLo }, tail: tail2, records: records2.length, echoHeld: echoHeld2, idx: idx2, frameEvents: events2.length, tailAfter: tailAfter2, behindRows: behindRows2, r3: r3b, echoBubbles: echoBubbles2, seam: seam2 },
+  echo: { boot: { proto: boot2.proto, n: boot2.events.length, tailLo: boot2.tailLo }, tail: tail2, records: records2.length, echoHeld: echoHeld2, idx: idx2, frameEvents: events2.length, tailAfter: tailAfter2, behindRows: behindRows2, r3: r3b, echoBubbles: echoBubbles2, seam: seam2,
+          kernelTail: { after: kernel2.after, at: kernel2.at, dispatched: kernel2.dispatched, heldIn: heldIn2, asks: asks2 } },
   behind: { boot: { proto: boot3.proto, n: boot3.events.length, tailLo: boot3.tailLo }, tail: tail3, idx: idx3, frameEvents: events3.length, kept: kept3.length, overlay: overlay3.length, newest: newest3, frameLast: frame3.lastUuid, tailAfter: tailAfter3, behindRows: behindRows3, after: after3, newestInDom: newestInDom3, seam: seam3, heldIn: heldIn3, liveArrived: liveArrived3, r3: r3c, asks: asks3 } }) + "\n");
 """
 
@@ -332,6 +353,16 @@ class ServedClientMergeGuard(WindowLab):
         self.assertTrue(r["seam"]["ordered"], "the seam reads in transcript order (misordered at %r): %r" % (r["seam"]["misordered"], r["seam"]))
         self.assertEqual(r["behindRows"], [], "the frame carries rows past the last shared key: newer than the page, no frame-behind row")
         self._assert_bottom(r["r3"], "after the echo landing")
+
+    def test_a_kernel_tail_dispatched_while_the_echo_road_holds_is_parked_before_the_page_reads_it_and_the_page_asks_no_full(self):
+        # the hold's contract, made deterministic: every road's reads assume the kernel's own frames never reach the page while it holds.
+        # A hold that ran after the page's frame listener still recorded the frame (so the hold's two checks pass either way); the ask is
+        # what shows the page read it first
+        k = self._result()["echo"]["kernelTail"]
+        self.assertTrue(isinstance(k["after"], str) and k["after"], "the status tail is anchored on the boot list's last key, so a page that read it took the anchored road: %r" % k)
+        self.assertEqual(k["dispatched"], ["chatTail:?"], "the hold took the dispatched kernel tail during its dispatch: %r" % k)
+        self.assertEqual(k["heldIn"][k["at"]:k["at"] + 1], ["chatTail:?"], "...and it is in the road's releaseIn() list where it was taken: %r" % k)
+        self.assertEqual(k["asks"], [], "the page asked no full after the dispatch (a page that read the tail cannot anchor it after the frame's reply, asks needFull, and the kernel's full reverts the tail): %r" % k)
 
     def test_a_full_frame_behind_the_page_is_authoritative_for_its_span_files_one_behind_row_and_the_next_live_turn_lands_as_the_newest_row(self):
         r = self._result()["behind"]
