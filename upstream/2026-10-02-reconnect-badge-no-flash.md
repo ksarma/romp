@@ -3,7 +3,7 @@ title: The corner reconnecting badge waits one second before it paints, so a rec
 status: candidate
 where: kernel/kernel.py (_RECONN_BADGE_HOLD_MS, new; _pane_spin's badge listeners); tests/test_pane_loader_reconnect.py (ReconnectBadgeHold, new; the spin harness's document); upstream/2026-10-02-reconnect-badge-no-flash.md (this entry)
 added: 2026-10-02
-pr:
+pr: 950
 tier: feature
 offered:
 closed:

@@ -3,7 +3,7 @@ title: The reconnecting badge sits below each pane's header, so it covers none o
 status: candidate
 where: kernel/kernel.py (_pane_spin's badge placement, rplace); tests/test_pane_loader_reconnect.py (ReconnectBadgeHold placement cases); tests/test_return_from_background_served.py and tests/return_from_background_browser.mjs (the painted badge's box against the pane's chrome controls); docs/guide.md (the phone section); upstream/2026-10-02-reconnect-badge-below-pane-header.md (this entry)
 added: 2026-10-02
-pr:
+pr: 950
 tier: feature
 offered:
 closed:
