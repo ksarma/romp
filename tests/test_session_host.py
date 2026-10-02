@@ -4716,8 +4716,10 @@ class HostProcess(unittest.TestCase):
         k2.send({"t": "in", "data": self._user("after sleep=0")})
         res = k2.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result", timeout=15)
         self.assertEqual(res["offset"], n0 + 1, "the journal numbering continues across the exec (assistant, then result)")
-        # the fork reads the journal through the read descent (orphan_journal); sh.read_journal_dir is retired there
-        journal = orphan_journal(os.path.join(self.state, "hosts", SID))
+        # wait for the 'after' turn's two records on disk, never the frame: the host forwards a record before its writer
+        # journals it (_journal_landed's docstring). The wait reads through the fork's read descent (orphan_journal);
+        # sh.read_journal_dir is retired there
+        journal = self._journal_landed(n0 + 2)
         self.assertEqual([r["type"] for _, r in journal][-4:], ["assistant", "result", "assistant", "result"], "one journal, both turns")
         log = self._hostlog()
         self.assertEqual([r["kind"] for r in log if r["kind"] in ("reexec", "reexeced")], ["reexec", "reexeced"], "the exec and the adoption, once each")

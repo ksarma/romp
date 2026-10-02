@@ -4701,9 +4701,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `pendingDead`) and `other`. Every field whose value can carry a string
   (`ledgers`, `selfHost`, `working`, `awaiting`, `stateUnknown`, `order`,
   `sessions`, `userTodos`, `userTodoRows`, `views`, `viewsFault`,
-  `judgeLimit`, `bgServices`, `clearedForeign`, `clearNotices`, `sdkNotices`
-  and `syncNotices`: the checked-in list `FEED_BY_FOLDED` beside it) is
-  folded into `other` when the block is reported, and a key outside
+  `judgeLimit`, `bgServices`, `clearedForeign`, `clearNotices`, `sdkNotices`,
+  `syncNotices` and `boards`: the checked-in list `FEED_BY_FOLDED` beside
+  it) is folded into `other` when the block is reported, and a key outside
   `FEED_FRAME_FIELDS` and the off frame's lists is counted under `other` when
   the table is built. A row of its own for one of the folded fields would
   have been the length of one string (the machine's hostname under
@@ -4768,7 +4768,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   Two residuals remain, stated here in the words of the kernel's
   `FEED_COMPOSITION_RESIDUALS` and of the ledger entry (a test holds the
   three equal). First: On a board with no session, no open todo, no tag, no
-  notice, no cleared id, no judge-limit latch, an empty stored session order
+  notice, no cleared id, no judge-limit latch, no data-defined board, an
+  empty stored session order
   and a clean tags read, `other` is a constant plus the hostname's length
   and the digit width of `views.seq`, which the frame's whole length on
   `push.send` and the served body has always carried; with a session it is

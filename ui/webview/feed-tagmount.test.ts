@@ -86,6 +86,7 @@ test("what the lens hides stays one glance away: whisper, promoted banner, click
   assert.match(FEED, /const lensOutN = outsideLensCount\(asks\);/);
   assert.match(FEED, /lmore\.classList\.toggle\("prominent", lensOutN > lensShownN\);/,
     "the exact promotion rule: the lens hides more than the board shows");
+  assert.match(FEED, /const lensShownN = plan\.allBoards\.length;/, "the lens line compares every board's view with lensOutN's every-board count (upstream's viewFiltered(asks).length, read from the plan)");
   assert.match(FEED, /"Showing \\u201c" \+ lensLabel\(feedLens\) \+ "\\u201d \\u2014 " \+ lensOutN/,
     "the promoted line NAMES the lens");
   assert.match(FEED, /lmore\.onclick = \(\) => \{ setFeedLens\(\{ all: true \}\); render\(\); \};/,

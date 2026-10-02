@@ -35,8 +35,8 @@ test("the warn branch keys on the session first: a sid-bearing warn toasts (and 
   assert.match(arm, /refusedRestoreText\(dropped, ta\.value\)/);
   assert.match(arm, /ta\.dispatchEvent\(new Event\("input", \{ bubbles: true \}\)\)/, "the cancelResult restore's idiom: the draft listener re-persists it");
   assert.match(arm, /warnToast\(back !== null \? m\.text \+ " It's back in the box\." : m\.text\);/);
-  assert.match(arm, /\}\s*\n(?:\s*\/\/[^\n]*\n)*\s*else if \(provisionalId\) failProvisional\(m\.text\); else warnToast\(m\.text\);/,
-    "a create's verdict is read only from a warn that names no session");
+  assert.match(arm, /\}\s*\n(?:\s*\/\/[^\n]*\n)*\s*else if \(emojiPrompt\?\.pending\) emojiRefusedLocal\(m\.text\);\s*\n\s*else if \(provisionalId\) failProvisional\(m\.text\);\s*\n\s*else warnToast\(m\.text\);/,
+    "a create's verdict is read only from a warn that names no session (this fork's emoji dialog refusal, also a sid-less warn, is read before the create's arm)");
   const sidAt = arm.indexOf('if (typeof m.sid === "string" && m.sid) {');
   const provAt = arm.indexOf("failProvisional(m.text)");
   assert.ok(sidAt > 0 && provAt > sidAt, "the session branch is tested before the create arm");

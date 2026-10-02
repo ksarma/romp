@@ -5726,12 +5726,13 @@ function viewFiltered(list: AskItem[]): AskItem[] {
 // typed-turn groups it forms (turnGroups, the rule the jump-unfold reads too) and the itemIds those groups fold, so a
 // group member paints as g:<turnId> and every other shown ask as a:<itemId>. One derivation: renderBody consumes this object
 // and paintedKeyOf answers from it, so what the board paints and what a reveal expects painted can never disagree.
-function paintPlan(list: AskItem[]): { shown: AskItem[]; byTurn: Map<string, AskItem[]>; grouped: Set<string> } {
-  const shown = onActiveBoard(viewFiltered(list));
+function paintPlan(list: AskItem[]): { allBoards: AskItem[]; shown: AskItem[]; byTurn: Map<string, AskItem[]>; grouped: Set<string> } {
+  const allBoards = viewFiltered(list);   // every board's display view, derived once: the tag-lens line counts it (outsideLensCount reads every board)
+  const shown = onActiveBoard(allBoards);
   const byTurn = turnGroups(shown);
   const grouped = new Set<string>();   // itemIds folded into a group -> excluded from single ask cards
   for (const members of byTurn.values()) members.forEach((m) => grouped.add(m.itemId));
-  return { shown, byTurn, grouped };
+  return { allBoards, shown, byTurn, grouped };
 }
 // The key render() stamps for one card of the CURRENT model, or null when it paints none: a:<itemId> for a shown ask outside
 // every group, g:<turnId> for a member of a typed-turn group, null for a card the view hides (a delegation satellite off its
@@ -6101,7 +6102,7 @@ function renderBody(list: HTMLElement) {
     lmore.onclick = () => { setFeedLens({ all: true }); render(); };
     list.appendChild(lmore);
   }
-  const lensShownN = shown.length;   // the plan's view (paintPlan), not a second viewFiltered pass (review round 2)
+  const lensShownN = plan.allBoards.length;   // the plan's every-board view (paintPlan), the population lensOutN counts; plan.shown is the active board's alone (review round 2)
   lmore.classList.toggle("prominent", lensOutN > lensShownN);
   lmore.style.display = lensOutN ? "" : "none";
   if (lensOutN) {

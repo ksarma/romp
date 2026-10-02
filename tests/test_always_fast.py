@@ -305,7 +305,10 @@ class TheAskWaitsForAQuietSession(unittest.TestCase):
         s._host = types.SimpleNamespace(end_grace=120.0)
         # the CLI started work between the arm and the teardown: vetoed, the ask stands, the client stays
         s._reconnect = True; s._reconnect_switch_why = "always fast"; s._cli_working = True
+        s._launching = {"probe": 1}; s._connecting = False; gen = s._hold_gen
         self.assertTrue(s._switch_teardown_check())
+        self.assertIsNone(s._launching, "the veto closes the spawn window the switch's arm opened")
+        self.assertGreater(s._hold_gen, gen, "the veto writes the hold state under _hold_write")
         self.assertEqual((s._reconnect, s._reconnect_switch_why, s._switch_wanted), (False, "", "always fast"))
         self.assertEqual(s._host.end_grace, 120.0, "no teardown: the grace is untouched")
         self.assertTrue(any("stands down" in m and "a turn the CLI opened itself" in m for m in be._logs), be._logs)

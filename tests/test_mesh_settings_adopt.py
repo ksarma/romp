@@ -901,7 +901,9 @@ class VersionCarriesPinsAndProposals(unittest.TestCase):
             self.assertEqual(km._settings_pinned_map(), {"auto-nudge": True})
             self.assertEqual(km._settings_proposals_map(), {"task-tracking": [{"host": "TESTHOST", "value": False, "gt": 2_000, "current": True}]})
         self.assertIn('"settingsPinned": _settings_pinned_map(),', KERNEL_SRC, "/version carries the pins")
-        self.assertIn('**({"settingsProposals": _settings_proposals_map(), "host": _self_host()} if authed else {}),', KERNEL_SRC,
+        # no trailing comma in the needle: this fork closes the /version dict after the proposals spread, since it keeps defaultDir and
+        # nativeDialogs off the auth-exempt route (tests/test_kernel_auth_hardening.py and tests/test_kernel.py pin that)
+        self.assertIn('**({"settingsProposals": _settings_proposals_map(), "host": _self_host()} if authed else {})', KERNEL_SRC,
                       "…and, to a caller with the token, the pending proposals (the gear's surface) and this machine's name")
         self.assertIn('_version_info(authed=self._authorize(q)[0])', KERNEL_SRC, "the handler says whether the caller presented the token")
         self.assertIn('"settingsPinned": j.get("settingsPinned") if isinstance(j.get("settingsPinned"), dict) else None', KERNEL_SRC,

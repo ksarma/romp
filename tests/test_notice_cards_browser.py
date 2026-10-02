@@ -118,6 +118,11 @@ const toasts = await page.evaluate(() => window.__toasts || []);
 const stillThere = !!(await page.$(sel(id2)));
 // (3) Clear dismisses the card, Undo restores it
 await page.click(sel(id1) + " button.fdismiss:visible", { timeout: 5000 }).catch(() => {});
+// Release the pointer at once: the cleared card leaves 180 ms after the click and the card below it (the empty one, PR 1905)
+// slides under a resting pointer, whose hover-freeze holds every payload until it leaves, so the frame confirming the clear
+// (canUndoClear) would wait behind it; this fork paces its pusher (PUSH_MIN_INTERVAL_S), so that frame lands after the slide.
+// The same release as the owner-less road's below, for the same gate.
+await page.mouse.move(2, 2);
 await page.waitForSelector(sel(id1), { state: "detached", timeout: 15000 }).catch(() => {});
 const afterClear = !!(await page.$(sel(id1)));
 // The Undo affordance shows once the kernel's next frame confirms the clear (canUndoClear, read from cleared.jsonl).
@@ -139,6 +144,7 @@ if (await undo.count()) {
 }
 // (4) a new revision under the same key re-shows after a dismissal, under a new id
 await page.click(sel(id1) + " button.fdismiss:visible", { timeout: 5000 }).catch(() => {});
+await page.mouse.move(2, 2);   // released again, as after the first Clear: the frame carrying the new revision must not wait behind a hover
 await page.waitForSelector(sel(id1), { state: "detached", timeout: 15000 }).catch(() => {});
 const r3 = await post({ id: cfg.sid, key: "figure", title: "A newer version of the accuracy figure is ready", producer: "figure" });
 const id3 = "notice:" + cfg.sid + ":figure:" + (r3.notice || {}).rev;
@@ -360,8 +366,10 @@ class NoticeCardsServed(unittest.TestCase):
             self.assertFalse(c["distillShown"], "%s: no distiller line" % name)
         self.assertEqual(r["bare"]["card"]["bodyText"], "", "an empty body shows nothing")
         # the kernel's judge counters (/perf's judge field): the WORK counters are unchanged; the loop's own pass count and its timing
-        # sums (passes, passesLost, ms_sum, ms_last, cpu_ms_sum) tick with the clock whether or not any card exists, so they are not the evidence
-        work = lambda d: {k: val for k, val in (d or {}).items() if not any(x in k for x in ("passes", "ms_", "cpu_"))}
+        # sums (passes, passesLost, ms_sum, ms_last, cpu_ms_sum) tick with the clock whether or not any card exists, so they are not the evidence;
+        # nor is this fork's wakes_backstop (kernel.py judge_wake_kind: the producer loop's 3 s wait timing out, a clock tick), while its
+        # wakes and wakes_event, which a poke of the judges moves, stay compared
+        work = lambda d: {k: val for k, val in (d or {}).items() if not any(x in k for x in ("passes", "ms_", "cpu_", "wakes_backstop"))}
         self.assertEqual(work(r["judgeBefore"]), work(r["judgeAfter"]), "no judge work counter moved across every post of the lab: %r -> %r" % (r["judgeBefore"], r["judgeAfter"]))
         self.assertEqual((r["judgeAfter"] or {}).get("tierStarts"), 0, "no judge tier ever started on the lab kernel")
         self.assertFalse(os.path.exists(os.path.join(self.state, "judge-usage.jsonl")), "no judge usage row was written")

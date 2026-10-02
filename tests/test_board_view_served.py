@@ -48,7 +48,12 @@ const page = await ctx.newPage();
 const errors = []; page.on("pageerror", (e) => errors.push(String(e).slice(0, 300)));
 await page.addInitScript(() => {
   window.__boards = [];
-  const record = (m) => { if (m && m.type === "feed") window.__boards.push(m.boards ? Object.keys(m.boards) : null); };
+  // this fork streams a caught-up page {type:"feedDelta"} frames after its first full one (the shim's ?caps=feedDelta), and a
+  // delta carries the frame's top-level fields whole under `top` when any of them changed (kernel.py _feed_delta): a push that
+  // carries the boards is a feed frame's `boards` or a delta's `top.boards`; a delta with no `top` says nothing about them
+  const record = (m) => { if (!m) return;
+    if (m.type === "feed") window.__boards.push(m.boards ? Object.keys(m.boards) : null);
+    else if (m.type === "feedDelta" && m.top) window.__boards.push(m.top.boards ? Object.keys(m.top.boards) : null); };
   let fed = null;
   Object.defineProperty(window, "__rompFed", { configurable: true, get() { return fed; },
     set(v) { fed = v; if (v && typeof v.inbound === "function" && !v.__labWrapped) { const inb = v.inbound; v.__labWrapped = true; v.inbound = (h, m) => { record(m); return inb(h, m); }; } } });

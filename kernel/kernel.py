@@ -3660,7 +3660,6 @@ CLIENT_DIAG_KEYS = {
                             "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
                             "ms", "bytesSince", "redialed",                                                     # return-fresh
                             "code", "reason", "wasClean", "sinceOpenMs", "everConnected", "bundleReady",        # wsclose
-                            "readyAcked", "readyQueued",                                                        # wsclose: the shim's ready state at the close (upstream PR 1862, our offer; booleans)
                             "attempts", "firstFailMs",                                                          # wsconnfail
                             "wasDiscarded", "nav",                                                              # page-load
                             "awaitLink", "linkUpMs",                                                            # D3 (2026-09-18): return awaits the shell's link; return-fresh's linkUpMs is the path's own recovery
@@ -3685,7 +3684,8 @@ CLIENT_DIAG_KEYS = {
     "waiting": frozenset(("buildId",)),
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
                          "refused", "reason", "sent", "frames", "ageS",
-                         "frame", "withheld", "proto")),                                                   # implicitHandshake (_implicit_handshake)
+                         "frame", "withheld", "proto",                                                     # implicitHandshake (_implicit_handshake)
+                         "changeFrom", "total", "firstHeld", "lastHeld")),                                 # chatFull (_note_chat_full, upstream PR 1868); needFullStatus (_note_needfull_status, upstream PR 1871) writes sid, cid and kind, named above
 }
 # The VALUE an admitted key is bounded to where the key carries one FIXED WORD and not a figure: (surface, key) -> the closed set of values
 # the kernel stores under it. A posted value outside the set is refused at the admit step, the way an unknown key is: the row is stored
@@ -59712,7 +59712,7 @@ _feed_dupes_said = set()   # itemIds already reported as duplicated within one b
 FEED_APP_FIELDS = {
     "feed": ("asks", "judgeLimit", "working", "awaiting", "stateUnknown", "bgServices", "userTodos", "order", "views",
              "sessions", "clearNotices", "sdkNotices", "syncNotices", "dismissedCount", "showDismissed", "canUndoClear",
-             "clearedForeign", "selfHost", "off"),
+             "clearedForeign", "selfHost", "boards", "off"),
     "fleet": ("asks.itemId", "asks.provisional", "asks.sid", "asks.name", "asks.color", "asks.text", "asks.background",
               "asks.summary", "asks.blockSummary", "ledgers", "views", "sessions", "clearedForeign", "off"),
     "waiting": ("userTodoRows", "userTodosOn", "sessions"),
@@ -59726,7 +59726,7 @@ FEED_PHONE_FACE_ACTIVE = ("working", "needs_input")                 # the column
 FEED_FRAME_FIELDS = ("asks", "ledgers", "userTodos", "userTodoRows", "userTodosOn", "views", "viewsFault", "judgeLimit",
                      "working", "awaiting", "stateUnknown", "bgServices", "dismissedCount", "showDismissed",
                      "clearedForeign", "order", "sessions", "clearNotices", "sdkNotices", "syncNotices", "selfHost",
-                     "canUndoClear", "off")
+                     "canUndoClear", "boards", "off")
 # The `by` table's keys are drawn from this list and the off frame's lists (_FEED_BY_NAMES): a key outside both is
 # counted under `other`, the way _perf_http_key folds a path outside the route table, so a runtime key never stands
 # as a row of the stored table (the review of 2026-09-18: a name-shaped key rode into the export verbatim).
@@ -59765,11 +59765,12 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # todo's text); userTodos (a sid-keyed map, folded so that no published row holds a string); views (the user's tag
 # names); viewsFault (romp's wording plus the OS error text, which can name a path); judgeLimit (null normally; when
 # the latch is down, rows of name, host, sid and color); bgServices (session names to service descriptions);
-# clearedForeign (ids whose count and digit widths are recoverable); and the three notice rings (prose of up to a
-# few hundred characters each). The off frame's four federation lists (items, hosts, pendingHosts, pendingDead) are
-# outside FEED_FRAME_FIELDS, always empty here, and stay their own rows. A test holds the two sets to a partition of
-# the frame fields outside the cards, and every FEED_BY_ROWS value on a built frame, the off frame and the fixtures
-# to a bool, an int or None, so a field added to the frame is classified here or the test fails.
+# clearedForeign (ids whose count and digit widths are recoverable); the three notice rings (prose of up to a few
+# hundred characters each); and boards (the data-defined boards' definitions, upstream PR 1845: ids and the titles of a
+# board and its categories, which a producer or the user writes). The off frame's four federation lists (items, hosts,
+# pendingHosts, pendingDead) are outside FEED_FRAME_FIELDS, always empty here, and stay their own rows. A test holds the
+# two sets to a partition of the frame fields outside the cards, and every FEED_BY_ROWS value on a built frame, the off
+# frame and the fixtures to a bool, an int or None, so a field added to the frame is classified here or the test fails.
 # The counts and the ledgers (the review's third round, 2026-09-19). record() stores a card count and a ledger count
 # beside the sums; report() withholds both from the published tables, last and lifetime alike, because a count
 # published beside a sum discloses the single-object case: a sum over one object is that object's measurement, and
@@ -59807,7 +59808,7 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # they are is the user's call.
 FEED_BY_FOLDED = frozenset({"ledgers", "selfHost", "working", "awaiting", "stateUnknown", "order", "sessions",
                             "userTodoRows", "userTodos", "views", "viewsFault", "judgeLimit", "bgServices",
-                            "clearedForeign", "clearNotices", "sdkNotices", "syncNotices"})
+                            "clearedForeign", "clearNotices", "sdkNotices", "syncNotices", "boards"})
 FEED_BY_ROWS = frozenset({"userTodosOn", "dismissedCount", "showDismissed", "canUndoClear", "off"})
 # The block's residuals, for the user's ruling: what a reader of the published block can still learn about one
 # object. Each is one statement, repeated in these words in docs/reference.md's memos.feedComposition entry and in the
@@ -59826,7 +59827,8 @@ FEED_BY_ROWS = frozenset({"userTodosOn", "dismissedCount", "showDismissed", "can
 # 5603 minus 16494), and twice pusher.clients.byApp.fleet.bytes minus pusher.clients.byApp.feed.bytes (2 times 5607
 # minus 10899), the base's own counters, so `wire.bytes` restates a recovery the base allowed and adds none.
 FEED_COMPOSITION_RESIDUALS = (
-    "On a board with no session, no open todo, no tag, no notice, no cleared id, no judge-limit latch, an empty "
+    "On a board with no session, no open todo, no tag, no notice, no cleared id, no judge-limit latch, no "
+    "data-defined board, an empty "
     "stored session order and a clean tags read, `other` is a constant plus the hostname's length and the digit width "
     "of `views.seq`, which the frame's whole length on `push.send` and the served body has always carried; with a "
     "session it is the sum of that session's name and id, its ledger row when the ledgers are attached, the pips, the "
@@ -82769,6 +82771,9 @@ class Handler(BaseHTTPRequestHandler):
                            # a declared redial from the ones the dial term gated off (2026-09-10: everConnected alone, true on
                            # every such row, could not). The wsopen row the accept files carries the same value, but it names
                            # the socket by cid and this row does not, so the two cannot be joined without the stamp.
+                           # On this fork the admit drops readyAcked and readyQueued (CLIENT_DIAG_KEYS["pane-shim"] does not
+                           # admit them until the owner rules on the two fields), so the stored row tells the declared redial
+                           # and the gated-before-ready shape apart, but not the two shapes with bundleReady true.
                            "reconnect": bool(client.get("redial")),
                            # the surface's admitted keys alone, strings cut, the row bounded (CLIENT_DIAG_KEYS; 2026-09-18): the
                            # file used to take whatever a page posted, of any shape and size
@@ -84563,15 +84568,15 @@ WS_OPS = frozenset((
     "needFull", "needFullFeed", "needSlot", "nodeOverride", "noticeAction", "openByName", "openFile", "openFolder",
     "openSession", "openSubagent", "openTagsDialog", "orderAudit", "pickFile", "pickResult", "quarantineDecision",
     "ready", "redial", "redistill", "renameSession", "reorderTabs", "requestSessions", "reviveSession",
-    "rewindDelete", "rewindFiles", "rewindSend", "saveFile", "sendCommand", "sendMessage", "setAuth", "setAutoNudge",
-    "setColormap", "setCommentEffort", "setCommentFast", "setCommentModel", "setCompactSuggest", "setConserve",
-    "setDefaultDir", "setDistillEffort", "setDistillFast", "setDistillModel", "setEffort", "setFast",
+    "rewindDelete", "rewindFiles", "rewindSend", "saveFile", "sendCommand", "sendMessage", "setAlwaysFast", "setAuth",
+    "setAutoNudge", "setColormap", "setCommentEffort", "setCommentFast", "setCommentModel", "setCompactSuggest",
+    "setConserve", "setDefaultDir", "setDistillEffort", "setDistillFast", "setDistillModel", "setEffort", "setFast",
     "setFileEditing", "setGlobalRetryPaused", "setIndexEffort", "setIndexFast", "setIndexModel",
     "setJudgeConcurrency", "setJudgeEffort", "setJudgeFast", "setJudgeModel", "setMode", "setModel", "setPalette",
-    "setSessionColor", "setSessionEmoji", "setSessionFlag", "setTaskTracking", "setThinkingSummaries",
-    "setTimelineViews", "setUpdateMode", "setUserTodos", "setWholeChatFrames", "showAskPath", "showOnTimeline",
-    "stopTask", "submitAsk", "tagEdit", "timelineHover", "toggleAsk", "undoClear", "unpinNote", "userTodoAnswer",
-    "userTodoDismiss", "viewReadOnly", "writeOrder",
+    "setRetryUpgrade", "setSessionColor", "setSessionEmoji", "setSessionFlag", "setSettingPin", "setTaskTracking",
+    "setThinkingSummaries", "setTimelineViews", "setUpdateMode", "setUserTodos", "setWholeChatFrames", "showAskPath",
+    "showOnTimeline", "stopTask", "submitAsk", "tagEdit", "timelineHover", "toggleAsk", "undoClear", "unpinNote",
+    "userTodoAnswer", "userTodoDismiss", "viewReadOnly", "writeOrder",
 ))
 
 if __name__ == "__main__":

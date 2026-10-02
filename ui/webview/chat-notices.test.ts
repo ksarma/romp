@@ -23,7 +23,7 @@ test("the status carries the rows and the box renders on every status change bes
   assert.match(fn("awaitKey"), /\(st\.notices \|\| \[\]\)\.map\(\(n\) => n\.itemId \+ "\/" \+ \(n\.actions \|\| \[\]\)\.length\)\]\);/);
   assert.match(fn("awaitChanged"), /if \(sid === activeId\) renderBgTasks\(\);\s*\n\s*if \(sid === activeId\) renderNotices\(\);/);
   assert.match(RENDER, /renderBgTasks\(\); \/\/ swap in the active session's background-task box \(or hide if none\)\s*\n\s*renderNotices\(\); \/\/ swap in the active session's approval box/, "the tab switch");
-  assert.match(RENDER, /    renderBgTasks\(\);\s*\n\s*renderNotices\(\);\s*\n\s*\} else if \(!activeId\) \{/, "the session frame");
+  assert.match(RENDER, /    renderBgTasks\(\);\s*\n(?:\s*renderPinnedNotes\(\);[^\n]*\n)?\s*renderNotices\(\);\s*\n\s*\} else if \(!activeId\) \{/, "the session frame (this fork's pinned-notes strip repaints between the two boxes: pinned-notes.test.ts pins it right after renderBgTasks, as pane-focus.test.ts admits)");
 });
 
 test("the box: rows keyed by the notice id and reconciled in place, the shared notice face, the kernel's actions as buttons naming their act and index", () => {

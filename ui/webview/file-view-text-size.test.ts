@@ -568,7 +568,8 @@ test("the view group holding the Source button is shown after an SVG's first pai
   assert.equal(pic.wrap.querySelector(".fileview-group-view")!.hidden, true, "a picture: every view control hidden, the group with them");
   pic.fv.closeFileView();
   const pdf = await openFile(t, PAPER);
-  assert.equal(pdf.body.children[0].className, "fileview-frame", "a PDF: the browser's viewer in a frame");
+  assert.equal(pdf.body.children[0].className, "fileview-pdffall", "a PDF: the browser's viewer in a frame, which this fork's pdfBlock mounts in its column (plans/file-review.md, Slice 4)");
+  assert.equal(pdf.body.children[0].children[0].className, "fileview-frame", "the frame inside the column");
   assert.equal(pdf.btn("Source").hidden, true, "a PDF has no Source view");
   assert.equal(pdf.wrap.querySelector(".fileview-group-view")!.hidden, true, "a PDF: every view control hidden, the group with them");
 });
