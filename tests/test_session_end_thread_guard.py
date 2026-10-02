@@ -93,6 +93,10 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   fails with exactly one error naming concurrent.futures.thread._threads_queues, and stderr names it too; the same with
   concurrent.futures.process's _threads_wakeups (the module loaded by the scratch conftest). In this process
   (ExitJoinTables): each EXIT_JOIN_TABLES attribute exists on this Python and is a global its module's exit hook reads;
+  the guard's read of each table by its literal names (tests/conftest.py's _exit_join_table_reads, since round 2 of
+  fork PR #894 at its third landing merge, of the fork's main at 46a9382c9) is, by execution, the table its
+  EXIT_JOIN_TABLES pair names
+  (a stand-in table put under each pair is the one the read labelled with it returns, and the guard reads its entry);
   the two hooks are the only ones the standard library registers with threading._register_atexit, derived from its
   source (a premise pin, which reads no guard); and a live daemon thread in either table (the busy worker of a pool a
   daemon thread started, and a stand-in for a ProcessPoolExecutor's manager thread) is returned by the guard while a
@@ -1573,7 +1577,8 @@ class ExitJoinTables(unittest.TestCase):
     registers with threading._register_atexit; a live daemon thread in either table is returned by the guard while a
     plain daemon thread beside it is not; the tables are read again after every pass; and a read that meets a concurrent
     insert is read again, up to the guard's one deadline, where a table that changed during every read fails the guard
-    by name, naming too the non-daemon threads still alive."""
+    by name, naming too the non-daemon threads still alive. And the guard's read of each table by its literal names
+    (tests/conftest.py's _exit_join_table_reads) is the table its EXIT_JOIN_TABLES pair names."""
 
     TABLES = (("concurrent.futures.thread", "_threads_queues"), ("concurrent.futures.process", "_threads_wakeups"))
 
@@ -1588,6 +1593,32 @@ class ExitJoinTables(unittest.TestCase):
                 self.assertTrue(hasattr(mod, attr), "%s.%s exists on this Python" % (module, attr))
                 self.assertIn(attr, mod._python_exit.__code__.co_names, "%s's exit hook reads its table as the global "
                               "%s" % (module, attr))
+
+    def test_each_table_the_guard_reads_by_its_literal_names_is_the_one_its_exit_join_tables_pair_names(self):
+        """The tie between the guard's reads and EXIT_JOIN_TABLES, by execution. Since the reviewer's ruling of
+        2026-09-29 09:01Z on round 2 of fork PR #894 the guard reads each table by its literal module and attribute
+        names (_exit_join_table_reads: the conftest reader of tests/test_hermetic_kernel_postal.py admits getattr only
+        with a name it proves to be one fixed string), each read labelled with its pair, and an assertion there, run at
+        the conftest's import too, ties the labels to EXIT_JOIN_TABLES. Here each label is tied to its read: for each
+        EXIT_JOIN_TABLES pair, a stand-in table holding a stand-in entry is put under that module's attribute of that
+        name, and the read labelled with the pair returns that table, and the guard's table read
+        (_exit_joined_threads) returns the entry. A read whose literal names drift from its label fails here."""
+        import concurrent.futures.process   # noqa: F401  loaded, so both modules are in sys.modules below
+        import concurrent.futures.thread    # noqa: F401
+        cf = sys.modules["tests.conftest"]
+        self.assertEqual(tuple(names for names, _module, _table in cf._exit_join_table_reads()), cf.EXIT_JOIN_TABLES,
+                         "the reads are labelled with EXIT_JOIN_TABLES' pairs, in its order")
+        for module, attr in cf.EXIT_JOIN_TABLES:
+            with self.subTest(table="%s.%s" % (module, attr)):
+                entry = object()
+                stand_in = {entry: None}    # iterating it yields the entry, as a WeakKeyDictionary yields its threads
+                with mock.patch.object(sys.modules[module], attr, stand_in):
+                    got = {names: (mod, table) for names, mod, table in cf._exit_join_table_reads()}
+                    joined = cf._exit_joined_threads(time.monotonic() + 1.0)
+                self.assertIs(got[(module, attr)][0], sys.modules[module], "the read labelled %s.%s reads that module"
+                              % (module, attr))
+                self.assertIs(got[(module, attr)][1], stand_in, "the read labelled %s.%s reads that attribute" % (module, attr))
+                self.assertIn(entry, joined, "the guard's table read returns what %s.%s holds" % (module, attr))
 
     def test_they_are_the_only_exit_hooks_the_standard_library_registers(self):
         """Derived from the standard library's source on this Python: every module outside its test packages, idlelib and
