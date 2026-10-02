@@ -16,6 +16,8 @@ on the remote's answer and its check-in got the remote's 403). The module docstr
                    answer is waited past and named when the process exits; an earlier kernel's record proves nothing; a
                    record naming another port, a port not reserved here and an environment with no state root are
                    refused; a kernel from another checkout that writes no record is held to the pid proof alone.
+  BareName         the tests package registers lab_ports under its bare name, as it does lab_dist, so a served module
+                   that imports it before putting tests/ on sys.path imports it collected alone too.
   TwoRealKernels   (Linux) a real kernel on a reserved port proves it; a second real kernel handed the same port is
                    refused with the first kernel's pid named, exits nonzero and writes no record. The lab dist holds one
                    empty render.js stamped newer than every source, so neither kernel's boot build runs node or npm in
@@ -283,6 +285,25 @@ class OwnershipProof(_Owned):
         this = _Proc(self.PID, args=[os.path.join(BIN, "romp-kernel")])
         why = lab_ports.wait_owned(this, self._env(port, self._root()), tries=20, pause=0.05)
         self.assertRegex(why or "", r"records serve-port None", "this checkout's kernel always owes the record")
+
+
+class BareName(unittest.TestCase):
+    def test_the_tests_package_registers_the_bare_name(self):
+        """A served module imports lab_ports at its top, before it puts tests/ on sys.path; under pytest and under
+        `python -m unittest tests.test_x` the modules are members of the tests package, so the bare name resolves only
+        because tests/__init__.py registers it (the shape of lab_dist's registration there). Without it a served module
+        collected alone fails at its import, and a whole run passes only when an earlier module happened to put tests/ on
+        sys.path. A child interpreter with tests/ off its path imports the package and then the bare name."""
+        child = ("import os, sys\n"
+                 "here = os.path.realpath(sys.argv[1])\n"
+                 "sys.path[:] = [p for p in sys.path if os.path.realpath(p or '.') != here]\n"
+                 "import tests\n"
+                 "import lab_ports\n"
+                 "print(os.path.realpath(lab_ports.__file__))\n"
+                 "print(lab_ports is sys.modules['tests.lab_ports'])\n")
+        p = subprocess.run([sys.executable, "-c", child, HERE], cwd=ROOT, capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr[-1500:])
+        self.assertEqual(p.stdout.split(), [os.path.join(HERE, "lab_ports.py"), "True"])
 
 
 @unittest.skipUnless(LINUX, "the real-kernel composition runs where the served labs run")
