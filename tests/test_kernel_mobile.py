@@ -3051,6 +3051,15 @@ global.cueLine = () => { const el = CUEPANEL.children.find((c) => c.id === 'rerr
     glyph: el.children[0] && el.children[0].children[0] ? el.children[0].children[0].className : null }; };
 global.cueText = () => { const c = cueLine(); return c ? c.text : null; };   // null where no line was ever inserted (a head without the cue)
 """
+# Nothing in the Log line runs on a timer (iOS item 4): each read of the line also samples the shell's live timers other than its
+# redial (shellWS) and its interval count, and the shell's output carries the samples with the count at the case's start (CUEIV0, set
+# by ReconnectCueDetail._run), so a clearing timer of any length armed at a cue event is caught at the next read, not only one short
+# enough to fire inside a case. Runs after _CUE_PRE (it wraps cueLine; cueText reads through it).
+_CUE_TIMERS = r"""
+var CUETIMERS=[];
+var cueLine0=global.cueLine;global.cueLine=function(){CUETIMERS.push({others:SHTIMERS.filter(function(t){return t.live&&t.fn.name!=='shellWS';}).map(function(t){return t.ms;}),intervals:SHINTERVALS.length});return cueLine0();};
+var shOut0=shOut;shOut=function(o){o.cueTimers=CUETIMERS;o.cueIv0=CUEIV0;shOut0(o);};
+"""
 _CUE_WAIT = "Waiting for the kernel to respond. The dashboard updates on its own when it does."
 _CUE_HUNG1 = "Trying again: the first try got no response."
 _CUE_REFUSED1 = "Trying again: the first try could not connect to the kernel."
@@ -3063,18 +3072,28 @@ class ReconnectCueDetail(unittest.TestCase):
     (the wait line, no count) and, after the watchdog cuts it, the retry line that names the cause once. Refusals take the
     connect line, counted from the second. Run under node against the shell harness's fake socket and clock (ShellLinkProbe's)."""
 
+    def _run(self, scenario):
+        """Nothing in the line runs on a timer, at any length: every read of the line (cueLine, cueText) also samples the shell's
+        live timers other than its redial (shellWS) and its interval count (_CUE_TIMERS), and every sample, one after each cue event
+        a case reads, must show no such timer and the intervals the shell had when the case began (its watchdog tick)."""
+        r = _run_probe("var CUEIV0=SHINTERVALS.length;\n" + scenario, pre=_CUE_PRE + _CUE_TIMERS)
+        self.assertTrue(r["cueTimers"], "the line was read at least once, so the timers were sampled")
+        self.assertEqual([c for c in r["cueTimers"] if c["others"] or c["intervals"] != r["cueIv0"]], [],
+                         "no live timer but the shell's redial, and no new interval, after any cue event (a clearing timer of any length shows here)")
+        return r
+
     def test_no_line_before_the_first_open_and_none_for_a_boot_dial_that_never_opened(self):
-        r = _run_probe(r"""
+        r = self._run(r"""
 var boot=cueLine();
 shRefuseNow();var refused=cueLine();      // the boot dial refused: the page never had a link, the boot splash covers it
 shFireDials();shOpen();var opened=cueLine();
-shOut({boot:boot,refused:refused,opened:opened});""", pre=_CUE_PRE)
+shOut({boot:boot,refused:refused,opened:opened});""")
         self.assertIsNone(r["boot"], "nothing inserted before any socket event")
         self.assertEqual((r["refused"]["shown"], r["refused"]["text"]), (False, ""), "a boot dial that never opened is not a reconnect")
         self.assertEqual((r["opened"]["shown"], r["opened"]["text"]), (False, ""))
 
     def test_the_two_states_after_a_return_the_wait_then_the_cut_and_the_open_clears_it(self):
-        r = _run_probe(r"""
+        r = self._run(r"""
 shOpen();shRecv({type:'ka'});
 shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // a return to a dead socket: the fast path abandons it and dials
 var s1=cueLine();
@@ -3083,7 +3102,7 @@ SHNOW+=11000;shTick();var cutRs=SHSOCKS[1].readyState;       // past the 15 s cu
 SHSOCKS[1].onclose({code:1006});var s2=cueLine();            // its close: the retry line
 shFireDials();var s2redial=cueLine();                        // the next try dials: the line stands
 shOpen();var up=cueLine();                                   // the link is up: the line goes, with no success line
-shOut({s1:s1,s1later:s1later,cutRs:cutRs,s2:s2,s2redial:s2redial,up:up,socks:SHSOCKS.length});""", pre=_CUE_PRE)
+shOut({s1:s1,s1later:s1later,cutRs:cutRs,s2:s2,s2redial:s2redial,up:up,socks:SHSOCKS.length});""")
         self.assertEqual(r["s1"], {"shown": True, "text": _CUE_WAIT, "beforeList": True, "role": "status", "cls": "rerr-row", "glyph": "rnet-spin"},
                          "S1, the first state a user sees: the wait line, no count, at the top of the Log above its list, announced (role status), the romp swirl beside it")
         self.assertEqual(r["s1later"], r["s1"], "no change without an event: the shell's tick moves nothing")
@@ -3095,14 +3114,14 @@ shOut({s1:s1,s1later:s1later,cutRs:cutRs,s2:s2,s2redial:s2redial,up:up,socks:SHS
         self.assertEqual(r["socks"], 3)
 
     def test_refusals_take_the_connect_line_and_count_from_the_second(self):
-        r = _run_probe(r"""
+        r = self._run(r"""
 shOpen();shRecv({type:'ka'});
 shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
 var lines=[cueText()];
 for(var i=0;i<3;i++){shRefuseNow();lines.push(cueText());SHNOW+=1000;shFireDials();}
 SHNOW+=16000;shTick();shSock().onclose({code:1006});lines.push(cueText());   // a cut after refusals: still the connect line
 shFireDials();shOpen();
-shOut({lines:lines,up:cueLine()});""", pre=_CUE_PRE)
+shOut({lines:lines,up:cueLine()});""")
         self.assertEqual(r["lines"], [_CUE_WAIT, _CUE_REFUSED1,
                                       "Trying again: 2 tries could not connect to the kernel.",
                                       "Trying again: 3 tries could not connect to the kernel.",
@@ -3111,27 +3130,27 @@ shOut({lines:lines,up:cueLine()});""", pre=_CUE_PRE)
         self.assertEqual((r["up"]["shown"], r["up"]["text"]), (False, ""))
 
     def test_two_cuts_count_on_the_no_response_line(self):
-        r = _run_probe(r"""
+        r = self._run(r"""
 shOpen();shRecv({type:'ka'});
 shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
 var lines=[];
 for(var i=0;i<2;i++){SHNOW+=16000;shTick();shSock().onclose({code:1006});lines.push(cueText());shFireDials();}
-shOut({lines:lines});""", pre=_CUE_PRE)
+shOut({lines:lines});""")
         self.assertEqual(r["lines"], [_CUE_HUNG1, "Trying again: 2 tries got no response."])
 
     def test_a_new_return_counts_from_zero(self):
-        r = _run_probe(r"""
+        r = self._run(r"""
 shOpen();shRecv({type:'ka'});
 shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
 SHNOW+=16000;shTick();shSock().onclose({code:1006});var s2=cueText();
 shFireDials();
 shHide();SHNOW+=100;shShow();                                  // the page goes away and comes back while the next try hangs
-shOut({s2:s2,again:cueText()});""", pre=_CUE_PRE)
+shOut({s2:s2,again:cueText()});""")
         self.assertEqual(r["s2"], _CUE_HUNG1)
         self.assertEqual(r["again"], _CUE_WAIT, "the new return's fast path dials afresh: its first try, no count")
 
     def test_a_link_that_opens_drops_and_opens_again_moves_the_line_only_at_those_events(self):
-        r = _run_probe(r"""
+        r = self._run(r"""
 shOpen();shRecv({type:'ka'});
 shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
 var seq=[];function at(k){var c=cueLine();seq.push(c?[k,c.shown,c.text]:[k,null,null]);}
@@ -3141,7 +3160,7 @@ shSock().readyState=3;shSock().onclose({code:1006});at('drop');   // the opened 
 SHNOW+=1000;shTick();at('tick');
 shFireDials();shRefuseNow();at('refused');
 SHNOW+=1000;shFireDials();shOpen();at('open');SHNOW+=5000;shRecv({type:'ka'});shTick();at('tick');
-shOut({seq:seq});""", pre=_CUE_PRE)
+shOut({seq:seq});""")
         self.assertEqual(r["seq"], [["return", True, _CUE_WAIT], ["tick", True, _CUE_WAIT],
                                     ["open", False, ""], ["tick", False, ""],
                                     ["drop", True, _CUE_WAIT], ["tick", True, _CUE_WAIT],

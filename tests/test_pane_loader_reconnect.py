@@ -222,6 +222,9 @@ const TIMERS = [], WIN = {}, DOCL = {}, SHEETCLS = new Set(), BADGECLS = new Set
 let nextId = 1;
 global.setTimeout = (fn, ms) => { const id = nextId++; TIMERS.push({ id, fn, ms, at: NOW + ms, live: true }); return id; };
 global.clearTimeout = (id) => { for (const t of TIMERS) if (t.id === id) t.live = false; };
+// an interval is a timer too (live() counts it, and the clock re-arms it after each run), so a clear on any repeating clock shows
+global.setInterval = (fn, ms) => { const id = nextId++; TIMERS.push({ id, fn, ms, at: NOW + ms, live: true, every: ms }); return id; };
+global.clearInterval = global.clearTimeout;
 global.MutationObserver = class { constructor() {} observe() {} };
 const cls = (S) => ({ add: (c) => S.add(c), remove: (c) => S.delete(c), contains: (c) => S.has(c),
   toggle: (c, on) => { if (on) S.add(c); else S.delete(c); return !!on; } });
@@ -247,9 +250,9 @@ const fires = (...types) => task(() => types.forEach((type) => (WIN[type] || [])
 const msg = (data) => task(() => (WIN.message || []).forEach((f) => f({ data })));
 const vis = (s) => task(() => { document.visibilityState = s; (DOCL.visibilitychange || []).forEach((f) => f({ type: 'visibilitychange' })); });
 // the clock walks to `to`, firing each live timer due by then in due order, each as its own task
-const run = (to) => { for (;;) { const due = TIMERS.filter((t) => t.live && t.at <= to).sort((a, b) => a.at - b.at || a.id - b.id)[0]; if (!due) break; NOW = due.at; due.live = false; task(due.fn); } NOW = to; };
+const run = (to) => { for (;;) { const due = TIMERS.filter((t) => t.live && t.at <= to).sort((a, b) => a.at - b.at || a.id - b.id)[0]; if (!due) break; NOW = due.at; due.live = false; if (due.every) { due.at += due.every; due.live = true; } task(due.fn); } NOW = to; };
 const after = (ms) => run(NOW + ms);
-const live = (ms) => TIMERS.filter((t) => t.live && (ms === undefined || t.ms === ms)).length;
+const live = (ms) => TIMERS.filter((t) => t.live && (ms === undefined || t.ms === ms)).length;   // live(): every live timer, of any length
 // the painted state's changes across tasks, from not painted: each {t, on}; [] means the badge never painted
 const runs = () => { const r = []; let prev = false; for (const p of PAINTS) { if (p.on !== prev) { r.push({ t: p.t - 1000000, on: p.on }); prev = p.on; } } return r; };
 const out = (o) => console.log(JSON.stringify(Object.assign(o, { textWrites: TEXTW })));
@@ -310,11 +313,12 @@ out({ atDrop, atFresh, runs: runs(), liveEnd: live() });""")
         o = self._run(r"""
 fire('romp:wsdown');
 after(RHOLD_T - 1); const justBefore = painted();
-after(1); const atHold = painted();
+after(1); const atHold = painted(); const atHoldTimers = { all: live(), failsafe: live(30000) };
 after(5000); fire('romp:wsfresh');
-out({ justBefore, atHold, afterFresh: painted(), liveEnd: live(), runs: runs() });""")
+out({ justBefore, atHold, atHoldTimers, afterFresh: painted(), liveEnd: live(), runs: runs() });""")
         self.assertIs(o["justBefore"], False, "1 ms before the hold: nothing painted")
         self.assertIs(o["atHold"], True, "at the hold: painted (S1)")
+        self.assertEqual(o["atHoldTimers"], {"all": 1, "failsafe": 1}, "the one timer standing is upstream's 30 s failsafe (a page with no shell): nothing else of any length")
         self.assertIs(o["afterFresh"], False, "the fresh frame clears it (S3)")
         self.assertEqual(o["liveEnd"], 0, "no timer left: the clearing was the event, not a timer")
         self.assertEqual(o["runs"], [{"t": self.HOLD, "on": True}, {"t": self.HOLD + 5000, "on": False}], "one paint, one clear")
@@ -328,19 +332,19 @@ vis('hidden'); fire('romp:wsdown');                                   // the soc
 msg({ romp: 'panes', on: {}, link: 'down' });                         // the shell's abandon at the return says down
 vis('visible');                                                       // the return
 const atReturn = painted();
-after(RHOLD_T); const s1 = { painted: painted(), failsafe: live(30000) };
-after(45000); const past30 = painted();                               // 46 s after the return, the link still down
+after(RHOLD_T); const s1 = { painted: painted(), timers: live() };
+after(45000); const past30 = { painted: painted(), timers: live() };  // 46 s after the return, the link still down
 msg({ romp: 'link', link: 'up' });                                    // the shell's socket opens (the link word, the other form)
-const atLinkUp = { painted: painted(), failsafe: live(30000) };
+const atLinkUp = { painted: painted(), failsafe: live(30000), timers: live() };
 fire('romp:wsup');                                                    // the pane's own socket opens: no second failsafe
-const atOpen = live(30000);
+const atOpen = live();
 fire('romp:wsfresh');
 out({ atReturn, s1, past30, atLinkUp, atOpen, afterFresh: painted(), liveEnd: live(), runs: runs() });""")
         self.assertIs(o["atReturn"], False, "the return holds the badge")
-        self.assertEqual(o["s1"], {"painted": True, "failsafe": 0}, "painted at the hold, with no failsafe while the link is down")
-        self.assertIs(o["past30"], True, "still painted 46 s after the return: romp is still dialing (before the latch the failsafe hid it at 30 s)")
-        self.assertEqual(o["atLinkUp"], {"painted": True, "failsafe": 1}, "the link-up word restarts the 30 s failsafe from that moment; the badge waits for fresh data")
-        self.assertEqual(o["atOpen"], 1, "the pane's own reopen while the link is up arms no second failsafe")
+        self.assertEqual(o["s1"], {"painted": True, "timers": 0}, "painted at the hold, with no timer of any length while the link is down (nothing clears it but an event)")
+        self.assertEqual(o["past30"], {"painted": True, "timers": 0}, "still painted 46 s after the return, still with no timer: romp is still dialing (before the latch the failsafe hid it at 30 s)")
+        self.assertEqual(o["atLinkUp"], {"painted": True, "failsafe": 1, "timers": 1}, "the link-up word restarts the 30 s failsafe from that moment, the one timer; the badge waits for fresh data")
+        self.assertEqual(o["atOpen"], 1, "the pane's own reopen while the link is up arms no second timer")
         self.assertIs(o["afterFresh"], False)
         self.assertEqual(o["liveEnd"], 0)
         self.assertEqual([r["on"] for r in o["runs"]], [True, False], "one paint, one clear: no flap across the wait")
@@ -397,11 +401,12 @@ out({ atHide, whileHidden, atVisible, justBefore, atHold: painted() });""")
 msg({ romp: 'panes', on: {}, link: 'down' });
 fire('romp:wsdown'); after(RHOLD_T);
 fire('romp:wsup'); const opened = live(30000);                       // the pane's own socket opens: the failsafe runs
-fire('romp:wsdown'); const redropped = live(30000);                  // and drops again with the link still down
-after(45000);
-out({ opened, redropped, after45: painted() });""")
+fire('romp:wsdown'); const redropped = live();                       // and drops again with the link still down
+after(45000); const after45timers = live();
+out({ opened, redropped, after45: painted(), after45timers });""")
         self.assertEqual(o["opened"], 1)
-        self.assertEqual(o["redropped"], 0, "the repeat drop under a down link leaves no failsafe")
+        self.assertEqual(o["redropped"], 0, "the repeat drop under a down link leaves no timer of any length")
+        self.assertEqual(o["after45timers"], 0)
         self.assertIs(o["after45"], True)
 
     def test_repeat_drops_neither_flicker_a_painted_badge_nor_move_a_pending_hold(self):
@@ -422,10 +427,10 @@ out({ pending, atFirstDeadline, stays, runs: runs() });""")
         # standalone: no link word ever arrives, so the failsafe is armed per show (the paint) and hides the badge 30 s on
         o = self._run(r"""
 fire('romp:wsdown'); after(RHOLD_T);
-const s1 = { painted: painted(), failsafe: live(30000) };
+const s1 = { painted: painted(), failsafe: live(30000), timers: live() };
 after(30000);
 out({ s1, after30: painted(), runs: runs() });""")
-        self.assertEqual(o["s1"], {"painted": True, "failsafe": 1}, "painted at the hold with upstream's 30 s failsafe")
+        self.assertEqual(o["s1"], {"painted": True, "failsafe": 1, "timers": 1}, "painted at the hold with upstream's 30 s failsafe, and no other timer")
         self.assertIs(o["after30"], False, "30 s after the paint the failsafe hides it, as upstream's does")
 
     def test_the_panes_own_reopen_under_a_down_link_restarts_the_failsafe(self):
@@ -434,11 +439,11 @@ out({ s1, after30: painted(), runs: runs() });""")
         o = self._run(r"""
 msg({ romp: 'panes', on: {}, link: 'down' });
 fire('romp:wsdown'); after(RHOLD_T);
-after(40000); const waiting = { painted: painted(), failsafe: live(30000) };
+after(40000); const waiting = { painted: painted(), timers: live() };
 fire('romp:wsup'); const opened = live(30000);
 after(30000);
 out({ waiting, opened, after30: painted() });""")
-        self.assertEqual(o["waiting"], {"painted": True, "failsafe": 0})
+        self.assertEqual(o["waiting"], {"painted": True, "timers": 0}, "41 s into a down-link wait: painted, with no timer of any length")
         self.assertEqual(o["opened"], 1, "the pane's own open restarts the failsafe")
         self.assertIs(o["after30"], False)
 
@@ -447,9 +452,9 @@ out({ waiting, opened, after30: painted() });""")
 msg({ romp: 'other', link: 'down' }); msg({ romp: 'panes', on: {} }); msg(null);
 fire('romp:wsdown'); after(RHOLD_T);
 const noWord = live(30000);
-msg({ romp: 'panes', on: {}, link: 'down' }); const panesDown = live(30000);
+msg({ romp: 'panes', on: {}, link: 'down' }); const panesDown = live();
 msg({ romp: 'link', link: 'up' }); const linkUp = live(30000);
-msg({ romp: 'link', link: 'down' }); const linkDown = live(30000);
+msg({ romp: 'link', link: 'down' }); const linkDown = live();
 out({ noWord, panesDown, linkUp, linkDown });""")
         self.assertEqual(o, {"noWord": 1, "panesDown": 0, "linkUp": 1, "linkDown": 0, "textWrites": []},
                          "only a panes or link word's link field moves the latch")
