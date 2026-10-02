@@ -259,10 +259,25 @@ const flip = (hidden) => page.evaluate((h) => {
 // box of every visible control in the pane's chrome, the document outside the pane's content container (the chat's transcript, the
 // Outline's, the Feed's and the Waiting pane's lists), so the test can say the painted badge covers none of them (finding of
 // 2026-10-02: at top:8px it hid the chat header's tag filter and + button, and the Outline's tag filter and search).
+// THE HOLD'S TIMER, as events (`hold`, in the order they ran in this document): the badge paints only from its hold's timer
+// (_pane_spin's setTimeout(rpaint, RHOLD)), so the recorder wraps this window's setTimeout and logs each arm of a callback named
+// rpaint ("arm") and each run of one ("fire", with whether the badge was on after it), beside each romp:wsfresh ("fresh"); every
+// entry carries the frame count at that moment (`f`). The test decides from these events which outcome to expect: a hold that
+// fired before the fresh frame with a frame drawn between them painted the badge; a fresh frame that came first cleared the
+// hold, and nothing paints. Not from the time between the tap and the fresh frame against the nominal hold: under load the
+// timer fires late, so a fresh frame past the nominal second can still beat it (the full sweep of 2026-10-02: 1015 ms, no
+// paint, correctly). The wrapper changes no timer: it passes every call through, the hold's with its own delay.
 const cueRec = () => {
   const w = window; if (w.__labCue) return "again";
   const b0 = document.getElementById("pane-reconn");
-  const c = w.__labCue = { badge: [], fresh: [], frames: 0, lastT: 0, armed: { t: Date.now(), on: !!(b0 && b0.classList.contains("on")) } };
+  const c = w.__labCue = { badge: [], fresh: [], hold: [], frames: 0, lastT: 0, armed: { t: Date.now(), on: !!(b0 && b0.classList.contains("on")) } };
+  const st = w.setTimeout;
+  w.setTimeout = function (fn, ms) {
+    if (typeof fn !== "function" || fn.name !== "rpaint") return st.apply(w, arguments);
+    c.hold.push({ k: "arm", t: Date.now(), f: c.frames, ms });
+    const rest = Array.prototype.slice.call(arguments, 2);
+    return st.call(w, function () { const r = fn.apply(this, rest); const b = document.getElementById("pane-reconn"); c.hold.push({ k: "fire", t: Date.now(), f: c.frames, on: !!(b && b.classList.contains("on")) }); return r; }, ms);
+  };
   let last = null;
   const read = () => { const b = document.getElementById("pane-reconn"); return { on: !!(b && b.classList.contains("on") && getComputedStyle(b).display !== "none"), text: b ? b.textContent : null }; };
   const box = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
@@ -283,7 +298,7 @@ const cueRec = () => {
     if (v.on) { e.box = box(document.getElementById("pane-reconn")); e.chrome = chrome(); e.content = !!content; }
     c.badge.push(e); last = k; } requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
-  w.addEventListener("romp:wsfresh", () => { c.fresh.push(Date.now()); });
+  w.addEventListener("romp:wsfresh", () => { const t = Date.now(); c.fresh.push(t); c.hold.push({ k: "fresh", t, f: c.frames }); });
   return "armed";
 };
 
@@ -737,7 +752,7 @@ try {
   out.wsNow = await page.evaluate(() => window.__labWsNow || {});
   out.overrideErrors = await page.evaluate(() => window.__labErrors || []);
   out.cue = {   // the reconnect cue's record (iOS item 4): the chat's painted badge changes, its fresh stamps, its frame loop, the Log line's changes
-    ...(cueChat ? await cueChat.evaluate(() => { const c = window.__labCue || {}; return { badge: c.badge || [], fresh: c.fresh || [], frames: c.frames || 0, lastT: c.lastT || 0 }; }).catch((e) => ({ err: String(e).slice(0, 80) })) : {}),
+    ...(cueChat ? await cueChat.evaluate(() => { const c = window.__labCue || {}; return { badge: c.badge || [], fresh: c.fresh || [], hold: c.hold || [], frames: c.frames || 0, lastT: c.lastT || 0 }; }).catch((e) => ({ err: String(e).slice(0, 80) })) : {}),
     log: await page.evaluate(() => window.__labCueLog || []).catch(() => null),
   };
   out.liveAtEnd = live.size;

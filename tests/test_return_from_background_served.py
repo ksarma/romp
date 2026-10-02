@@ -457,7 +457,8 @@ class ReturnFromBackground(unittest.TestCase):
         read at each of its mutations. The badge: nothing painted between the suspend and the return (the drop while hidden is held);
         after the return it paints ONCE, no sooner than the hold after the return, and clears ONCE, at or after the chat's first
         fresh frame (the clearing event); with an outage that is during the outage and after its end (the link up). With no outage
-        (the healthy leg) it never paints when the fresh frame beat the hold, and paints no sooner than the hold when it did not.
+        (the healthy leg) the outcome is keyed on the hold's own events, never on elapsed time (_hold_outcome): one paint when the
+        hold's timer fired before the chat's first fresh frame, none when that frame came first.
         The Log line: shown with the wait line when the page returns, never hidden while the outage holds, hidden at the end, at or
         after the outage's end; in a hung outage past the connect cut it shows the cut's line; in a refused one the connect line."""
         where = name + ": "
@@ -479,6 +480,7 @@ class ReturnFromBackground(unittest.TestCase):
         offs = [b["t"] - ret for b in badge if not b["on"] and b["t"] >= ret]
         rel_fresh, rel_end = fresh[0] - ret, end - ret
         type(self).measurements.setdefault(name, {})["cue"] = {"holdMs": hold, "paintMs": ons, "clearMs": offs, "freshMs": rel_fresh, "outageEndMs": rel_end,
+                                                               "holdEvents": [{"k": e.get("k"), "ms": e["t"] - ret, "f": e.get("f")} for e in (cue.get("hold") or []) if e.get("t", 0) >= ret],
                                                                "log": [{"ms": e["t"] - ret, "shown": e.get("shown"), "text": e.get("text")} for e in (cue.get("log") or []) if e["t"] >= sus]}
         if outage_s:
             self.assertEqual(len(ons), 1, where + "painted once after the return, no flap: on %r off %r" % (ons, offs))
@@ -487,11 +489,8 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertLess(ons[0], rel_end, where + "painted during the outage (ends at %d ms): %r" % (rel_end, ons))
             self.assertGreaterEqual(offs[0], rel_end, where + "cleared only after the outage ended: %r (end %d ms)" % (offs, rel_end))
             self.assertGreaterEqual(offs[0], rel_fresh, where + "cleared at the chat's first fresh frame after the link came up, not before: %r (fresh %d ms)" % (offs, rel_fresh))
-        elif rel_fresh < hold - 50:
-            self.assertEqual(ons, [], where + "a healthy return whose fresh frame came at %d ms, inside the %d ms hold, paints no badge: %r" % (rel_fresh, hold, badge))
         else:
-            self.assertEqual(len(ons), 1, where + "the fresh frame came at %d ms, past the hold: one paint: %r" % (rel_fresh, badge))
-            self.assertGreaterEqual(ons[0], hold - 20, where + "...no sooner than the hold: %r" % (ons,))
+            self._hold_outcome(where + "a healthy return: ", badge, cue.get("hold"), ret, "the return", hold)
         log = [e for e in (cue.get("log") or []) if e["t"] >= sus]
         self.assertTrue(log, where + "the Log line was recorded from the suspend on: %r" % (cue.get("log"),))
         entering = [e for e in log if e["t"] <= ret]
@@ -542,7 +541,8 @@ class ReturnFromBackground(unittest.TestCase):
     def _tapcue(self, name, r, need_controls=False):
         """The pane the return parked, tapped after the return (iOS item 4, finding of 2026-10-02): its corner badge read once per frame
         from the tap through its first fresh frame and a hold past it. The tap is that pane's return for the badge: no frame paints it
-        when the fresh frame came inside the hold after the tap, and otherwise none paints it sooner than the hold. Before the fix the
+        sooner than the hold after the tap, and whether one paints it at all is keyed on the hold's own events (_hold_outcome): once
+        when the hold's timer fired before the pane's first fresh frame, never when that frame came first. Before the fix the
         hold ran off screen, where a parked pane gets no frame, so the badge was painted there at one second and the tap showed it from
         the first frame until the pane's fresh frame, on a healthy link."""
         where = name + ": "
@@ -562,14 +562,47 @@ class ReturnFromBackground(unittest.TestCase):
         ons = [b["t"] - tap for b in badge if b["on"] and b["t"] >= tap]
         rel_fresh = fresh[0] - tap
         type(self).measurements.setdefault(name, {})["postTapCue"] = {"pane": pt.get("pane"), "holdMs": hold, "armedOn": (rec.get("armed") or {}).get("on"),
-                                                                     "paintMs": ons, "clearMs": [b["t"] - tap for b in badge if not b["on"] and b["t"] >= tap], "freshMs": rel_fresh}
-        if rel_fresh < hold - 50:
-            self.assertEqual(ons, [], where + "a tap into a pane the return parked, whose first frame came %d ms after the tap, inside the %d ms hold, paints no badge: %r" % (rel_fresh, hold, badge))
+                                                                     "paintMs": ons, "clearMs": [b["t"] - tap for b in badge if not b["on"] and b["t"] >= tap], "freshMs": rel_fresh,
+                                                                     "holdEvents": [{"k": e.get("k"), "ms": e["t"] - tap, "f": e.get("f")} for e in (rec.get("hold") or []) if e.get("t", 0) >= tap]}
+        self._hold_outcome(where + "a tap into a pane the return parked: ", badge, rec.get("hold"), tap, "the tap", hold)
+
+    def _hold_outcome(self, where, badge, events, t0, label, hold):
+        """Whether the badge painted after `t0` (the return, or the tap into a parked pane), keyed on the page's own events and never
+        on elapsed time. `events` is the recorder's `hold` log (return_from_background_browser.mjs, cueRec): each arm and each run of
+        the hold's timer (setTimeout(rpaint, RHOLD) in _pane_spin) and each romp:wsfresh, in the order they ran, each with the frame
+        count at that moment. The expected outcome: the hold's timer fired before the first fresh frame after `t0`, and the page drew
+        a frame between the two (the frame count moved), so the badge was up in that frame: exactly one paint, at or after that timer
+        ran, cleared at or after the fresh frame. Otherwise none: the fresh frame came first and cleared the hold (a fresh frame never
+        paints the badge), or the timer ran and the fresh frame came before the next frame, so the badge was set and cleared between
+        two frames and was never on screen; then the timer's run must still have turned it on (the paint road ran). The time from
+        `t0` to the fresh frame against the nominal hold is not the key: a timer delayed under load fires after a fresh frame that came
+        past the nominal second (the full sweep of 2026-10-02: 1015 ms after the tap, no paint, correctly, and the old comparison
+        expected one). Whatever the branch: no paint sooner than the hold after `t0` (the defect of 2026-10-02: a hold run off screen
+        painted before the tap), and the badge is off at the end of the record (it never stays up after the fresh frame)."""
+        ons = [b["t"] - t0 for b in badge if b["on"] and b["t"] >= t0]
+        self.assertEqual([x for x in ons if x < hold - 20], [], where + "no paint sooner than the %d ms hold after %s: on %r: %r" % (hold, label, ons, badge))
+        events = events or []
+        i_fresh = next((i for i, e in enumerate(events) if e.get("k") == "fresh" and e.get("t", 0) >= t0), None)
+        self.assertIsNotNone(i_fresh, where + "the recorder heard the first fresh frame after %s: %r" % (label, events))
+        fresh = events[i_fresh]
+        rel_fresh = fresh["t"] - t0
+        before = events[:i_fresh]
+        # the precondition: the hold ran after t0 (a drop over content holds the badge; the return or the tap starts the timer).
+        # Without an arm, "no paint" would witness nothing, and a renamed timer callback would silently read as a fresh frame first
+        arms = [e for e in before if e.get("k") == "arm" and e.get("t", 0) >= t0]
+        self.assertTrue(arms, where + "the hold's timer was armed after %s and before the fresh frame (a setTimeout of a callback named rpaint, the recorder's key): %r" % (label, events))
+        fires = [e for e in before if e.get("k") == "fire" and e.get("t", 0) >= t0]
+        shown = [e for e in fires if fresh.get("f", 0) > e.get("f", 0)]
+        rel = lambda es: [e["t"] - t0 for e in es]
+        if shown:
+            self.assertEqual(len(ons), 1, where + "the hold's timer fired at %r ms after %s, before the fresh frame at %d ms, with a frame drawn between: one paint: %r" % (rel(shown), label, rel_fresh, badge))
+            self.assertGreaterEqual(ons[0] + t0, shown[0]["t"], where + "...painted at or after the hold's timer ran (%d ms), not on another road: on %r" % (shown[0]["t"] - t0, ons))
+            offs = [b["t"] - t0 for b in badge if not b["on"] and b["t"] - t0 > ons[0]]
+            self.assertTrue(offs and offs[0] >= rel_fresh, where + "...cleared once, at or after the fresh frame (%d ms): %r" % (rel_fresh, badge))
         else:
-            self.assertEqual(len(ons), 1, where + "its first frame came %d ms after the tap, past the hold: one paint: %r" % (rel_fresh, badge))
-            self.assertGreaterEqual(ons[0], hold - 20, where + "...no sooner than the hold after the tap: %r" % (ons,))
-            offs = [b["t"] - tap for b in badge if not b["on"] and b["t"] - tap > ons[0]]
-            self.assertTrue(offs and offs[0] >= rel_fresh, where + "...cleared once, at or after its first fresh frame (%d ms): %r" % (rel_fresh, badge))
+            self.assertEqual(ons, [], where + "the fresh frame at %d ms after %s came before the hold's timer painted a frame (timer runs before it: %r ms; arms: %r ms): no paint: %r" % (rel_fresh, label, rel(fires), rel(arms), badge))
+            self.assertEqual([e for e in fires if not e.get("on")], [], where + "...and a timer that ran before the fresh frame, with no frame drawn before the fresh frame cleared it, still turned the badge on: %r" % (events,))
+        self.assertFalse(badge[-1]["on"], where + "the badge is off at the end of the record: it never stays up after the fresh frame: %r" % (badge,))
 
     # ---- the return's chain (the owner's decision, 2026-09-19): on the phone the redial reloads the visible tab alone ----
     def _return_chain(self, name, r, rows):
