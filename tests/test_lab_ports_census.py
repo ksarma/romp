@@ -10,8 +10,11 @@ returns only once the kernel answering is the one the lab started, on the port i
 
 THE POPULATION is derived, never listed: the files CI's served step names (its globs and its by-file names, read from
 .github/workflows/ci.yml by tests/test_served_labs_under_ci.py's readers), every module under tests/ they import, followed
-to a fixed point, and tests/conftest.py, less the door itself. A glob matching nothing, a named file absent, an empty
-population or a population with no kernel spawn in it fails the run, so the census never passes on nothing.
+to a fixed point, and tests/conftest.py, less the door itself. An import is followed in each of the seven forms a module
+can name another under tests/ by (`import x`, `import tests.x`, `from x import`, `from tests.x import`, `from tests
+import x`, `from . import x`, `from .x import`), each pinned by a planted helper. A glob matching nothing, a named file
+absent, an empty population or a population with no kernel spawn in it fails the run, so the census never passes on
+nothing.
 
 THE RULES, each read per module by AST (scan()):
   D  no draw and release: in one scope (a function, a lambda, a class body or the module body), a socket bound to port 0
@@ -65,13 +68,19 @@ KERNEL_NAME = "romp-kernel"
 
 
 def _module_imports(tree, local):
-    """The tests/ modules `tree` imports (an absolute import or from-import, `tests.` stripped), as file names."""
+    """The tests/ modules `tree` imports, as file names: `import x` and `import tests.x`, `from x import ...` and
+    `from tests.x import ...`, `from tests import x, y` (each name that is a module under tests/), and the relative forms a
+    module inside tests/ can use, `from . import x, y` (each name) and `from .x import ...`."""
     out = set()
     for n in ast.walk(tree):
         if isinstance(n, ast.Import):
             mods = [a.name for a in n.names]
-        elif isinstance(n, ast.ImportFrom) and n.module and not n.level:
+        elif isinstance(n, ast.ImportFrom) and not n.level and n.module == "tests":
+            mods = ["tests." + a.name for a in n.names]
+        elif isinstance(n, ast.ImportFrom) and not n.level and n.module:
             mods = [n.module]
+        elif isinstance(n, ast.ImportFrom) and n.level == 1:
+            mods = [n.module] if n.module else [a.name for a in n.names]
         else:
             continue
         for m in mods:
@@ -423,6 +432,26 @@ class LabPortsCensus(unittest.TestCase):
         self.assertEqual([(o[0], o[1]) for o in total["K"]], [("test_planted_served.py", 3)])
         self.assertEqual([(o[0], o[1]) for o in total["D"]], [("test_planted_served.py", 6)])
         self.assertEqual(sorted(o[0] for o in total["spawns"]), ["test_clean_served.py", "test_planted_served.py"])
+
+    def test_a_helper_a_served_module_imports_is_read_whatever_the_import_form(self):
+        # a served module that reaches a port-drawing helper under tests/ by any import form brings the helper into the
+        # population, so the helper's draw is named under D. Until this test (2026-10-02) `from tests import`, `from .
+        # import` and `from .x import` were not followed, and a helper reached only that way was never read
+        forms = ["import boothelper\n", "import tests.boothelper\n", "from tests.boothelper import _free_port\n",
+                 "from tests import boothelper\n", "from . import boothelper\n", "from .boothelper import _free_port\n",
+                 "def f():\n    from tests import os_helper, boothelper\n    return boothelper\n"]
+        for form in forms:
+            with self.subTest(form=form):
+                root = tempfile.mkdtemp(prefix="labports-census-")
+                self.addCleanup(shutil.rmtree, root, True)
+                os.makedirs(os.path.join(root, "tests"))
+                with open(os.path.join(root, "tests", "test_planted_served.py"), "w") as f:
+                    f.write(form)
+                with open(os.path.join(root, "tests", "boothelper.py"), "w") as f:
+                    f.write(PLANTS["draw-def"][0])
+                names, total = census(root, ["tests/test_*_served.py"], [])
+                self.assertEqual(names, ["boothelper.py", "test_planted_served.py"], "the helper is read")
+                self.assertEqual([(o[0], o[1]) for o in total["D"]], [("boothelper.py", 3)], "its draw is named")
 
     def test_an_empty_population_fails_loudly(self):
         root = tempfile.mkdtemp(prefix="labports-census-")
