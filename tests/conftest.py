@@ -9,6 +9,8 @@ import atexit
 import collections
 import concurrent.futures.thread    # the session-end thread guard reads its exit-join table (EXIT_JOIN_TABLES)
 import importlib.util
+import json
+import math
 import os
 import re
 import shutil
@@ -73,6 +75,615 @@ def _remove_run_dirs(report=False):
 atexit.register(_remove_run_dirs)
 
 
+# Run-end process check (2026-09-22, the reviewer's ruling on fork PR #813's finding; its reads widened and its unread
+# classes named 2026-09-24, round 2 of fork PR #894's review): the check names a process whose environment, cwd, open
+# files or argv hold a path under the run's roots. A test that starts a process and does not stop it leaves one that
+# holds the run's temp root: a real postal bus started from the peer-notify guard test's revive road (a detached child,
+# its own session, so the test's end never reached it) kept writing into a shared state root every 30 s and turned
+# another module's snapshot test red in one CI cell, and orphan test kernels have outlived whole sweeps by days; the
+# kernel's dead-root sweep reaps roots, never processes. So the controller's session end reads /proc for every live
+# process and judges it by four reads: its environment (a value that is one of this run's roots or a path under one, a
+# ':'-joined value counted per component; the block the process was STARTED with, which is what a child inherits), its
+# cwd, the targets of its open file descriptors (/proc/<pid>/fd) and its argv (each argument, the part after an
+# argument's first '=', and each ':'-joined component of either). Each root is compared by its spelling, folded as a
+# value is (below), and by its realpath: /proc resolves a cwd and a descriptor's target, so under a symlinked TMPDIR a
+# cwd in the root reads as the realpath (a trailing " (deleted)" the kernel adds once the target is removed is dropped);
+# a TMPDIR spelled with a leading '//' leaves it in the root's spelling (tempfile folds every other doubled separator
+# and dot segment, and keeps exactly two leading separators), and the values the run's processes inherit are spelled the
+# same way. An environment value and an argument are read folded (_lexical): a doubled separator and a '.' or '..'
+# segment are folded as os.path.normpath folds them, so <system>//<root name>/x and <root>/./x are read as the paths
+# they name; the fold is lexical, so a '..' after a symlink is folded as if the symlink were a directory, and such a
+# value is named when its folded spelling is under a root though its real path is not (the safe side). A relative value
+# or argument (one not starting with '/') is read as the path it names from the process's cwd as /proc reads it (joined
+# to the cwd, then folded) when it carries the name of a root's directory, so <root name>/x from the root's parent is
+# read as <root>/x: from a cwd outside every root a relative path reaches under one only by naming that root's
+# directory, and a process whose cwd is under a root holds it through the cwd (a relative value without a root's name is
+# then not among the names it is reported through; its cwd is). If any remain the run is RED
+# and each is named: pid, parent, command line, what it holds the root through (the environment names, "cwd", "fd",
+# "argv"), and the test PHASE current when it was spawned (PYTEST_CURRENT_TEST, inherited from the test process's
+# environment at the spawn). That phase is a pointer, not the culprit's name: a thread's spawn inherits the phase
+# current when it spawns, so a child a background thread spawns may carry a later phase, another test's, or none (the
+# reproduction's bus carried the guard test on 3.10 and no PYTEST_CURRENT_TEST at all on 3.12, its spawn falling after
+# the call phase ended); the witness is the pid and the command line. A holder with no PYTEST_CURRENT_TEST is reported
+# as that: its phase is unknown, because it was spawned while no phase was set or was given an environment built
+# without the name. Keyed on that PROPERTY and never on a binary's name: a bus, a kernel, a session host, a mock ssh's
+# sleep are all the same leak.
+# One process is passed over, by identity and never by its name, and only while the check reads the premise of the
+# pass-over as holding (2026-09-27, round 2 of fork PR #894's review, and the reviewer's closing check of it): the
+# controller's own multiprocessing resource tracker, the pid the controller's multiprocessing.resource_tracker records
+# for its tracker, while that pid is the controller's child (_own_resource_tracker). The stdlib starts the tracker on
+# demand (a spawn-context ProcessPoolExecutor starts it, as tests/test_session_env.py's census pool class does in its
+# setUpClass); the tracker ignores SIGINT and SIGTERM and exits when the last write end of its pipe closes. In a serial
+# run it holds the run's temp root through the environment it inherited (a serial run of that class was red on it before
+# the pass-over); under pytest-xdist it is a worker's and exits with the worker. The premise is that it exits with the
+# controller, which the check reads as: no /proc/<pid>/fd table the check can read, other than the controller's and the
+# tracker's, holds its pipe (_tracker_kept). A process whose descriptors cannot be read, a thread's descriptor table
+# that /proc/<pid>/fd does not show, and a descriptor in flight are not read for it (below). A child forked through
+# multiprocessing's fork context keeps the controller's write end and a spawn-context worker is handed one, on every
+# version; a raw os.fork child keeps it on 3.12 and earlier, and on 3.13 and 3.14 before the gh-146313 releases, which
+# close a raw fork's copy in the child. Any of them keeps the tracker from exiting on its own while it holds the pipe.
+# On 3.12.9 and earlier, on 3.13.0 to 3.13.2, on 3.13.14 and later 3.13 releases, on 3.14.5 and later 3.14 releases and
+# on 3.15 from 3.15.0b1, a process that still holds the pipe when the controller exits keeps the tracker running after
+# the controller has gone. On 3.12.10 and later 3.12 releases, on 3.13.3 to 3.13.13 and on 3.14.0 to 3.14.4, the
+# controller's exit waits for the tracker instead: ResourceTracker.__del__, run as the controller's interpreter shuts
+# down, closes the controller's write end and waits for the tracker to exit with a blocking waitpid, so the controller
+# does not exit until no other process holds the pipe, and the tracker exits before the controller does. With the
+# pass-over by identity alone, a serial run whose test left a raw fork's child holding
+# the pipe ended green and silent, since such a child need hold no path under a root (its environment is the block the
+# controller started with, before the run minted its roots). The pipe is read from /proc: the one whose write end the
+# controller's record holds (its descriptor, read at /proc/<pid>/fd), when the tracker holds a descriptor on it too (the
+# end it reads from); then every other process's /proc/<pid>/fd table that can be read is read for it (_pipe_holders).
+# A process found holding it leaves the tracker judged like any process, so named when it holds a root, as it does in a
+# serial run, with that process's pid on its line; so does a pipe that cannot be read, or a tracker that holds no
+# descriptor on it, with the reason on its line. The premise is read before the wait, which then waits for the exit of
+# each process holding the pipe as it waits for a holder's, and read again after the wait, where it decides, so a child
+# that exits at session end does not get the tracker named. Where the premise cannot be read, the check's own scope
+# decides. Without procfs the check runs nothing (below), so nothing is passed over and nothing is named. With procfs
+# and the pipe unreadable, the tracker is judged like any process, so named when it holds a root: within its scope the
+# check names every readable process that holds a root, the pass-over is an exception to that, and an exception applies
+# only where its premise is shown (a red there is a visible false refusal; a pass-over on a premise nobody read would be
+# the silent miss the premise exists to prevent). A tracker whose own /proc entries refuse reads (a non-dumpable
+# process's environment, cwd and descriptors refuse them together, so its pipe is unread too) is listed by pid as not
+# judged, with the reason on its line, leaving the exit status alone, when it meets the condition under which any
+# unreadable process is listed: this user's, started after the controller, in its cgroup (below). Outside that
+# condition, as when it has moved into another cgroup, it is neither listed nor counted: the check keeps no count from
+# its scan of the tracker alone, and its main scan passes over the tracker.
+# A process whose descriptors cannot be read (another user's, or one of this user's that made itself non-dumpable) is
+# not read for the pipe, as it is not read for a root, and it never makes the run red: a non-dumpable child that keeps
+# the pipe leaves the tracker passed over, and is itself listed as not judged when it is this user's, started during the
+# run, in its cgroup (below). A process holding a write end is judged for a root in its own right, and so is a second
+# tracker a test starts itself. tests/test_run_end_leaked_processes.py pins the pass-over; the premise (a forked child
+# that keeps the pipe past the run's end, one that exits during the wait, a pipe the check cannot read, a tracker whose
+# environment, cwd and descriptors cannot be read, a record naming a child of the controller that holds no descriptor on
+# the pipe); the unread class's witness (a non-dumpable forked child that keeps the pipe); a run without procfs that
+# started the tracker; the second tracker; and a record naming a process that is not the controller's child.
+# The roots are the controller's and every root listed in its `romp-tests-children`: since 2026-09-24 a nested process
+# (an xdist worker, a nested pytest, any child of the run that imports the tests package handed a root as its TMPDIR
+# together with the run's ROMP_TESTS_SYSTEM_TMPDIR, as a child given a copy of its parent's environment is) lists itself
+# at mint time in the root of every process above it, the run's first included (tests/__init__.py, the lineage), so the
+# list the controller reads names every nested root of the run, at any depth, after the processes between have removed
+# their own roots; until then a nested root was listed only in its parent's root, which an xdist worker removes at its
+# unconfigure and a nested pytest before its caller's test returns, and a process two levels down held a root no
+# surviving list named (correctness-1). A child handed a root as its TMPDIR without that name (an environment built with
+# TMPDIR alone) does not nest: it mints its root inside the handed root and lists itself nowhere, and is read all the
+# same, since its root is a path under a run root. The workers themselves skip the check, and are gone when it runs
+# (xdist's DSession tears its nodes down in its own sessionfinish, which precedes this trylast one; a worker that
+# lingered would be reported by its command line, a visible red and not a silent miss). Events over heuristics: a child
+# a test signalled and did not wait for is legitimately EXITING at session end, so the check waits for the one event it
+# can observe, the pid's exit, and reports whatever still holds a root when the wait ends. A bound remains because a
+# process that never exits has no event to wait for; LEAK_EXIT_BOUND_S is longer than a signalled child takes to exit
+# on the box (the leaked bus of the reproduction was gone within a second of its SIGTERM). The wait starts when a holder
+# is seen, when a process is listed as not judged (below), or when a process other than the controller and the tracker
+# is found holding the tracker's pipe (above), so a run with none of the three pays nothing for it, and a run that
+# leaves only a listed process waits for that process's exit, up to the whole bound, and stays green. The tracker
+# (above) is never waited for, listed or not: it does not exit on its own while the controller holds its pipe (it
+# ignores SIGINT and SIGTERM). Before the scan
+# the controller joins its live non-daemon threads other than the main one within the same bound, so a process such a
+# thread starts after its test returned is seen. A thread that ends costs the run only the time until it ends (the
+# interpreter would join it at exit anyway); one that ends only through threading's exit hooks, which run at
+# interpreter exit after this check, is waited the whole bound: the worker of an idle concurrent.futures pool a test
+# never shut down (an unclosed event loop's default executor is one), whose witness is
+# tests/test_run_end_leaked_processes.py's idle-pool case. The join never waits on a daemon thread (a server thread
+# left running would make every run pay the bound), and a thread whose own join raises is waited on no more
+# (_join_live_threads). The check names no thread (since fork PR #894's third landing merge, of the fork's main at
+# 46a9382c9, which brought fork PR #922's session-end thread guard, below): the guard names, at the teardown of
+# each process's last test, each thread it guards still alive at its cap (every non-daemon thread and every
+# concurrent.futures thread, pytest-timeout's timer aside), so a leaked thread is reported once, by the guard, and a
+# leaked process once, by this check. The idle worker above is
+# one: in a serial run the guard waits its cap for it and fails the run naming it, and this join then waits the bound
+# for it again before the scan. A daemon thread outside concurrent.futures' tables is named by neither (the guard's
+# comment says why). The check never kills: the pid it names is the
+# developer's to stop (a bus by its server.pid), and a kill from here would be a destructive action on a report the
+# developer has not read.
+# What the check does not read, each named with its reason (tests/README.md has the same list):
+#   * a process whose environment, cwd, open files and argv carry no path under a root, as one handed a built
+#     environment with its cwd elsewhere and no file open in the root: the check keys on holding a root, and such a
+#     process holds none (a per-run cgroup, or a walk of the process tree from the controller, would see it);
+#     tests/test_run_end_leaked_processes.py's residual probe is the witness, unnamed at the run end;
+#   * a path spelled through a symlink outside the root, in an environment value or an argument, absolute or relative:
+#     the spelling is compared, folded lexically and never resolved (the kernel resolves a cwd and a descriptor, so
+#     those two are read under a symlink);
+#   * a relative value or argument as the process used it from an earlier cwd: it is read from the cwd the process has
+#     at the scan, so one that changed directory after it used the value is read from the later cwd;
+#   * a path inside a longer string, as code text in an argument (python -c "open('<root>/x')") or an option inside an
+#     environment value; a Unix socket bound under a root, whose descriptor reads socket:[inode]; a file mapped with no
+#     descriptor left open (/proc/<pid>/maps is not read); an environment the process changed after it started;
+#   * a process that is not nested and whose root lies outside every run root (one handed a TMPDIR that is no root
+#     mints inside that dir; tests/__init__.py, the lineage);
+#   * a process whose environment cannot be read: another user's, or one of this user's that made itself non-dumpable
+#     (ssh-agent, gpg-agent and op do; a setuid program is the same), whose cwd and descriptors are unreadable too. One
+#     of this user's that started after the controller and shares its cgroup is listed by pid and command line as not
+#     judged (waited for like a holder first), whether or not a holder was found, and does not change the exit status;
+#     that condition cannot tell this run's process from another run's in the same cgroup (a sibling test's child run
+#     under pytest-xdist, a second run started from the same shell), which is listed too; the rest (other users', and
+#     this user's started before the run or in another cgroup, as a peer session's agent is) are a count, printed with
+#     any report of a holder or a listed process. The controller's own resource tracker is the exception to the wait
+#     and the count: when its premise is unshown it is listed under the same condition but never waited for, and
+#     outside the condition it is neither listed nor counted (above);
+#   * a thread's descriptor table that /proc/<pid>/fd does not show: the check reads a process's descriptors, for the
+#     tracker's pipe and for a root, at /proc/<pid>/fd, the table of its leading thread, so a table a thread made its
+#     own (unshare(CLONE_FILES)) and the live threads' table of a process whose leading thread has exited, both
+#     readable at /proc/<pid>/task/<tid>/fd, are not read: a child that keeps the tracker's pipe in either leaves the
+#     tracker passed over, and a process whose leading thread has exited reads as a zombie and is skipped, neither
+#     judged nor listed nor counted;
+#   * a thread's cwd that /proc/<pid>/cwd does not show: the check reads a process's cwd at /proc/<pid>/cwd, its
+#     leading thread's, so when a thread other than the leading one calls unshare(CLONE_FS) and then changes
+#     directory to a path under a root, its cwd, readable at /proc/<pid>/task/<tid>/cwd, is not read: a process that
+#     holds a root through that cwd alone is not named;
+#   * a descriptor on the tracker's pipe in flight: the pipe is read from /proc/<pid>/fd tables only, so a write end
+#     queued in a unix socket and not yet received, which is in no process's table once its sender has closed its own
+#     copy, keeps the tracker from exiting on its own while it is queued, unseen, and the tracker is passed over;
+#   * a process started after the scan: by a non-daemon thread still running when the join's bound ran out, by a
+#     daemon thread, or by any process outside this one. The check names no thread (above): a thread of the first kind
+#     that was alive at the teardown of the process's last test is named by the session-end thread guard, which
+#     fails the run, and a daemon thread outside concurrent.futures' tables is named by neither.
+# The added reads' cost on a clean run, measured on the box (2026-09-24, the scan over one root, the median of 15 rounds
+# interleaved with 951479a14's scan): about 780 processes, 150 of them this user's and readable with 1,800 to 2,300
+# descriptors open; the scan took 67 ms on 3.12 and 71 ms on 3.10 against 39 ms, the descriptor and argv reads 20 to 23
+# ms of the difference. The fold of environment values and arguments (_lexical), measured later the same day on a busier
+# box (41 rounds, the median of each round's paired difference, about 910 processes at a load of 38 on 60 cores): the
+# scan took 104 ms on 3.12 and 109 ms on 3.10 against 951479a14's 51 and 50 ms, the fold 6 and 10 ms of that, for about
+# 330 values folded per scan, 311 of them a leading '//' that a ':' split leaves of a URL. The relative read, measured
+# later again (two runs of 41 rounds on each interpreter, the median of each round's paired difference against the scan
+# before it, which walked every relative component up its parents unjoined; 970 to 1,080 processes at a load of 27 to
+# 38): the scan took 5 to 11 ms less on 3.12 and on 3.10, at 143 to 251 ms, since a scan meets 19,000 to 23,000 relative
+# components, none of them carried a root's name, and one that carries none is now passed over without that walk. A
+# clean run scans once, and its join waits for nothing when no non-daemon thread is running.
+# A platform without procfs says so once, runs no check and leaves the exit status alone.
+# tests/test_run_end_leaked_processes.py pins the scan, the wait, the join, the roots and the red run end by execution.
+LEAK_EXIT_BOUND_S = 5.0
+LEAK_EXIT_BOUND_ENV = "ROMP_TESTS_LEAK_EXIT_BOUND_S"
+
+
+def _leak_exit_bound():
+    """LEAK_EXIT_BOUND_S, unless ROMP_TESTS_LEAK_EXIT_BOUND_S holds a finite number of seconds that is not negative. Only
+    tests/test_run_end_leaked_processes.py's child runs set it: their holders never exit, so each run would otherwise
+    wait the whole bound. Anything else there is the default."""
+    try:
+        v = float(os.environ.get(LEAK_EXIT_BOUND_ENV, ""))
+    except ValueError:
+        return LEAK_EXIT_BOUND_S
+    return v if math.isfinite(v) and v >= 0 else LEAK_EXIT_BOUND_S
+
+
+def _run_roots(root=None, depth=3):
+    """This run's temp roots: `root` (the controller's by default) and every root listed in `<root>/romp-tests-children`,
+    which since 2026-09-24 names every nested root of the run at any depth (tests/__init__.py, the lineage). A listed
+    root's own list is read too, recursively to `depth`, while it stands: that reaches a nested process whose parent's
+    marker carried no lineage. A line that is not a record is passed over."""
+    root = root or _TMP_ROOT
+    roots = [root]
+    try:
+        with open(os.path.join(root, _tests.TEST_ROOT_CHILDREN), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return roots
+    for line in lines:
+        try:
+            child = json.loads(line)["root"]
+        except (ValueError, KeyError, TypeError):
+            continue
+        if depth > 0 and isinstance(child, str) and child not in roots:
+            roots += [r for r in _run_roots(child, depth - 1) if r not in roots]
+    return roots
+
+
+_DELETED = " (deleted)"
+
+
+def _spellings(roots):
+    """Each root by its spelling folded (_lexical; a trailing separator dropped) and by its realpath, as one set. The
+    folded spelling stands in for the raw one, which is the same string unless it has a doubled separator or a '.' or
+    '..' segment, and then matches nothing: every path compared with the set is folded (an environment value, an
+    argument) or read from /proc, which spells a cwd and a descriptor's target without either."""
+    out = set()
+    for r in roots:
+        if r:
+            r = r.rstrip(os.sep) or os.sep
+            out.add(_lexical(r))
+            out.add(os.path.realpath(r))
+    return out
+
+
+def _lexical(path):
+    """`path` with a doubled separator, a '.' segment and a '..' segment folded as os.path.normpath folds them, and a
+    leading '//' read as '/' (normpath keeps two leading separators; Linux gives them no other meaning). Lexical: a '..'
+    after a symlink is folded as if the symlink were a directory. A path with no '//' and no '.' or '..' segment is
+    returned as is (a hidden directory's '/.' is no segment, and most values carry one)."""
+    if not ("//" in path or "/./" in path or "/../" in path or path.endswith(("/.", "/.."))):
+        return path
+    path = os.path.normpath(path)
+    return "/" + path.lstrip("/") if path.startswith("//") else path
+
+
+def _under(path, roots):
+    """Whether `path` is one of `roots` (a set of spellings) or a path under one: the path or an ancestor of it is a root,
+    so a sibling that shares a root's name as a prefix is not."""
+    while path:
+        if path in roots:
+            return True
+        parent = os.path.dirname(path)
+        if parent == path:
+            return False
+        path = parent
+    return False
+
+
+def _link(path):
+    """A /proc link's target without the " (deleted)" the kernel appends once the target is removed; "" when unreadable."""
+    try:
+        target = os.readlink(path)
+    except OSError:
+        return ""
+    return target[:-len(_DELETED)] if target.endswith(_DELETED) else target
+
+
+def _proc_stat(pid):
+    """(state, ppid, start time in clock ticks since boot) from /proc/<pid>/stat. The comm field is in parentheses and may
+    hold spaces or a ')', so the fields are counted from the LAST ')'. Raises OSError, ValueError or IndexError."""
+    with open("/proc/%d/stat" % pid, "rb") as fh:
+        stat = fh.read()
+    tail = stat[stat.rindex(b")") + 1:].split()
+    return tail[0].decode("ascii", "replace"), int(tail[1]), int(tail[19])
+
+
+def _proc_read(pid, name):
+    try:
+        with open("/proc/%d/%s" % (pid, name), "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _proc_argv(pid):
+    return [a.decode("utf-8", "replace") for a in (_proc_read(pid, "cmdline") or b"").split(b"\0") if a]
+
+
+def _names_path(part, cwd, roots, names):
+    """Whether `part`, an environment value's or an argument's ':'-joined component, names a path under a root. An
+    absolute one is read folded (_lexical). A relative one is read as the path it names from `cwd`, the process's cwd as
+    /proc reads it (joined to it, then folded), and only when it carries one of `names`, the last component of each
+    spelling of a root: from a cwd outside every root a relative path reaches under one only by naming that root's own
+    directory (a '..' step from outside a root stays outside it, and a named step enters one only as the root itself),
+    and a process whose cwd is under a root holds it through its cwd. An unreadable cwd ("") leaves the part relative,
+    and a relative path is under no root."""
+    if part.startswith(os.sep):
+        return _under(_lexical(part), roots)
+    if not any(n in part for n in names):
+        return False
+    return _under(_lexical(os.path.join(cwd, part)), roots)
+
+
+def _argv_holds(argv, roots, cwd, names):
+    """Whether an argument, the part after an argument's first '=', or a ':'-joined component of either names a path
+    under a root (_names_path: an absolute one read folded, a relative one from the process's cwd)."""
+    for arg in argv:
+        for part in (arg, arg.partition("=")[2]):
+            if part and any(_names_path(c, cwd, roots, names) for c in part.split(os.pathsep)):
+                return True
+    return False
+
+
+def _fds_hold(pid, roots):
+    """Whether one of the process's open file descriptors points under a root (/proc/<pid>/fd, the kernel's resolved
+    targets; a socket or a pipe reads socket:[inode] or pipe:[inode] and is under nothing)."""
+    try:
+        fds = os.listdir("/proc/%d/fd" % pid)
+    except OSError:
+        return False
+    return any(_under(_link("/proc/%d/fd/%s" % (pid, fd)), roots) for fd in fds)
+
+
+def _processes_holding(roots, skip_pids=(), pids=None):
+    """(holders, unjudged, procfs read): every live process (not this one, not a zombie, not in `skip_pids`) whose
+    environment carries a value that is one of `roots` or a path under one (a ':'-joined value counted per component),
+    whose cwd is under one, one of whose open file descriptors points under one, or one of whose arguments is under one
+    (_argv_holds); each root by its folded spelling and its realpath (_spellings), each environment value and argument
+    read folded (_lexical: a doubled separator and a '.' or '..' segment), a relative one from the process's cwd when it
+    carries a root's directory name (_names_path). Each holder is a dict: pid, ppid, cmd, via (the environment names,
+    then "cwd", "fd", "argv"), cwd, test (the PYTEST_CURRENT_TEST in its environment, the test phase current at its
+    spawn, or "" when it carries none). The environment read is the one the process was STARTED
+    with (/proc shows the initial block, not later putenv calls), which is what a child inherits.
+    `unjudged` holds the processes whose environment could not be read, which are judged by nothing: "listed", this
+    user's (the owner of /proc/<pid>, readable when the environment is not) that started after this process (the stat
+    start time) and share its cgroup, each a dict of pid, ppid and cmd; "other", the count of the rest, another user's
+    and this user's started before this process or in another cgroup. The third value is False where there is no
+    procfs to read. `pids` stands in for the listing of /proc (tests/test_run_end_leaked_processes.py scans its own
+    children alone, since the count of the rest moves with the box)."""
+    spell = _spellings(roots)
+    names = {os.path.basename(s) for s in spell}
+    me = os.getpid()
+    holders, listed, other = [], [], 0
+    try:
+        listing = [int(d) for d in os.listdir("/proc") if d.isdigit()]
+    except OSError:
+        return holders, {"listed": listed, "other": other}, False
+    try:
+        my_start = _proc_stat(me)[2]
+    except (OSError, ValueError, IndexError):
+        my_start = None
+    my_cgroup, my_uid = _proc_read(me, "cgroup"), os.getuid()
+    for pid in (listing if pids is None else pids):
+        if pid == me or pid in skip_pids:
+            continue
+        try:
+            state, ppid, start = _proc_stat(pid)
+        except (OSError, ValueError, IndexError):
+            continue                        # gone between the listing and the read
+        if state == "Z":
+            continue                        # exited, not yet reaped, or its leading thread exited: not read
+        try:
+            with open("/proc/%d/environ" % pid, "rb") as fh:
+                raw = fh.read()
+        except PermissionError:
+            try:
+                uid = os.stat("/proc/%d" % pid).st_uid
+            except OSError:
+                continue
+            if (uid == my_uid and my_start is not None and start > my_start and my_cgroup is not None
+                    and _proc_read(pid, "cgroup") == my_cgroup):
+                listed.append({"pid": pid, "ppid": ppid, "cmd": " ".join(_proc_argv(pid))})
+            else:
+                other += 1
+            continue
+        except OSError:
+            continue
+        env = {}
+        for item in raw.split(b"\0"):
+            k, sep, v = item.partition(b"=")
+            if sep:
+                env[k.decode("utf-8", "replace")] = v.decode("utf-8", "replace")
+        cwd = _link("/proc/%d/cwd" % pid)
+        via = sorted(k for k, v in env.items()
+                     if any(_names_path(part, cwd, spell, names) for part in v.split(os.pathsep)))
+        if _under(cwd, spell):
+            via.append("cwd")
+        if _fds_hold(pid, spell):
+            via.append("fd")
+        argv = _proc_argv(pid)
+        if _argv_holds(argv, spell, cwd, names):
+            via.append("argv")
+        if not via:
+            continue
+        holders.append({"pid": pid, "ppid": ppid, "cmd": " ".join(argv), "via": via, "cwd": cwd,
+                        "test": env.get("PYTEST_CURRENT_TEST", "")})
+    return holders, {"listed": listed, "other": other}, True
+
+
+def _pid_present(pid):
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            stat = fh.read()
+        return stat[stat.rindex(b")") + 1:].split()[0] != b"Z"
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def _own_resource_tracker():
+    """The controller's own multiprocessing resource tracker by identity (the comment above LEAK_EXIT_BOUND_S): (pid, fd),
+    the pid its multiprocessing.resource_tracker records for its tracker, when that pid is this process's child, and the
+    descriptor that record writes to, the write end of the pipe the tracker reads from. None when this process never
+    imported that module (it started no tracker), when the record holds no pid, or when the pid is not this process's
+    child (a process forked from another can inherit its parent's record). Identity alone passes nothing over: the run
+    end passes the tracker over only while it reads the premise of the pass-over as holding (_tracker_kept, which names
+    what it does not read for it, and _run_end_holders)."""
+    rt = sys.modules.get("multiprocessing.resource_tracker")
+    record = getattr(rt, "_resource_tracker", None)
+    pid = getattr(record, "_pid", None)
+    if not isinstance(pid, int):
+        return None
+    try:
+        ppid = _proc_stat(pid)[1]
+    except (OSError, ValueError, IndexError):
+        return None
+    return (pid, getattr(record, "_fd", None)) if ppid == os.getpid() else None
+
+
+def _pipe_holders(link, skip):
+    """The live processes, other than those in `skip`, one of whose open file descriptors reads `link` (a pipe as /proc
+    spells it, pipe:[<inode>]), read from /proc/<pid>/fd as _fds_hold reads a descriptor. Raises OSError where /proc
+    cannot be listed. A process whose descriptors cannot be read (another user's, one of this user's that made itself
+    non-dumpable, a zombie) is not among them: the pipe is read where the check reads (the comment above
+    LEAK_EXIT_BOUND_S names that class)."""
+    out = []
+    for pid in [int(d) for d in os.listdir("/proc") if d.isdigit()]:
+        if pid in skip:
+            continue
+        try:
+            fds = os.listdir("/proc/%d/fd" % pid)
+        except OSError:
+            continue
+        if any(_link("/proc/%d/fd/%s" % (pid, fd)) == link for fd in fds):
+            out.append(pid)
+    return out
+
+
+TRACKER_KEPT_LABEL = "the process the controller's resource tracker record names, not passed over: "
+TRACKER_PIPE_UNREAD = "the pipe it reads from could not be read"
+TRACKER_NOT_ON_PIPE = "it holds no descriptor on the pipe the controller's record writes to"
+
+
+def _tracker_kept(tracker):
+    """(why, others) for the controller's own resource tracker, `tracker` as _own_resource_tracker returns it. `why` is
+    "" when the check reads the premise of the pass-over as holding (the tracker exits with the controller): no
+    /proc/<pid>/fd table it can read, other than the controller's and the tracker's, holds the pipe the tracker reads
+    from. A process whose descriptors cannot be read, a thread's descriptor table that /proc/<pid>/fd does not show, and
+    a descriptor in flight in a unix socket are not read for it (the comment above LEAK_EXIT_BOUND_S names each).
+    Otherwise `why` is the reason it is not passed over, which its report line carries, and `others` lists the processes
+    found holding that pipe. The pipe is read from /proc: the one the controller's record writes to (its descriptor,
+    read at /proc/<pid>/fd), when the tracker holds a descriptor on it too, the end it reads from; then every other
+    process's /proc/<pid>/fd table that can be read is read for it (_pipe_holders). A pipe that cannot be read, or a
+    tracker holding no descriptor on it, leaves the premise unshown, and the tracker is judged like any process (the
+    comment above LEAK_EXIT_BOUND_S says why)."""
+    pid, fd = tracker
+    me = os.getpid()
+    try:
+        link = os.readlink("/proc/%d/fd/%d" % (me, fd))
+        theirs = {_link("/proc/%d/fd/%s" % (pid, n)) for n in os.listdir("/proc/%d/fd" % pid)}
+        others = _pipe_holders(link, (me, pid)) if link in theirs else None
+    except (OSError, TypeError):                 # TypeError: a record holding no descriptor
+        return TRACKER_PIPE_UNREAD, []
+    if others is None:
+        return TRACKER_NOT_ON_PIPE, []
+    if not others:
+        return "", []
+    who = ("pid %d also holds" % others[0]) if len(others) == 1 else (
+        "pids %s also hold" % ", ".join(str(p) for p in others))
+    return ("%s the pipe it reads from, so the tracker exits with the controller only if no other holder of that pipe "
+            "is left when the controller exits" % who), others
+
+
+def _run_end_holders(roots, bound_s):
+    """_leaked_run_processes over `roots` for the run end, the controller's own resource tracker (_own_resource_tracker)
+    passed over only while the premise of the pass-over reads as holding (_tracker_kept, which names what is not read
+    for it). The premise is read twice: before the wait, for the processes other than the controller and the tracker
+    that hold its pipe, whose exits the wait then waits for as it waits for a holder's; and after the wait, where it
+    decides. A tracker whose premise does not read as holding is scanned alone, and both halves of that scan are kept,
+    each with the reason on its line: it is named when it holds a root, and listed by pid as not judged when its
+    environment cannot be read (its own /proc entries refusing reads, as a non-dumpable process's environment, cwd and
+    descriptors do together, which leaves its pipe unread too) and it meets the condition under which
+    _processes_holding lists an unreadable process (this user's, started after the controller, in its cgroup). That
+    scan's count of the unreadable processes outside that condition is not kept, and the main scan passes over the
+    tracker, so a tracker outside that condition is neither listed nor counted. The tracker is never waited for: it
+    does not exit on its own while the controller holds its pipe (it ignores SIGINT and SIGTERM)."""
+    tracker = _own_resource_tracker()
+    if tracker is None:
+        return _leaked_run_processes(roots, bound_s)
+    _why, others = _tracker_kept(tracker)
+    leaked, unjudged, ok = _leaked_run_processes(roots, bound_s, skip_pids=(tracker[0],), wait_for=others)
+    why = _tracker_kept(tracker)[0] if ok else ""
+    if why:
+        held, alone, _ok = _processes_holding(roots, pids=[tracker[0]])
+        leaked = leaked + [dict(h, kept=why) for h in held]
+        unjudged = dict(unjudged, listed=unjudged["listed"] + [dict(u, kept=why) for u in alone["listed"]])
+    return leaked, unjudged, ok
+
+
+def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S, pids=None, skip_pids=(), wait_for=()):
+    """(holders still present, unjudged, procfs read): the processes holding `roots` after every holder seen first, and
+    every process first listed as not judged, has been given until `bound_s` to exit (the event waited for is the pid's
+    exit; the wait ends the moment the last one is gone). Nothing waits when nothing holds, nothing is listed and
+    `wait_for` is empty. `pids` is _processes_holding's stand-in listing, handed to both scans
+    (tests/test_run_end_leaked_processes.py times the wait over its own children alone: a process another test lists
+    would be waited for too); `skip_pids` is passed over by both scans; `wait_for` names more pids whose exit the wait
+    waits for, holders or not (the run end hands in the controller's resource tracker as `skip_pids` and the processes
+    holding its pipe as `wait_for`, _run_end_holders)."""
+    holders, unjudged, ok = _processes_holding(roots, skip_pids=skip_pids, pids=pids)
+    if not ok or not (holders or unjudged["listed"] or wait_for):
+        return holders, unjudged, ok
+    deadline = time.monotonic() + bound_s
+    pending = {h["pid"] for h in holders + unjudged["listed"]} | set(wait_for)
+    while pending and time.monotonic() < deadline:
+        pending = {pid for pid in pending if _pid_present(pid)}
+        if pending:
+            time.sleep(0.05)
+    return _processes_holding(roots, skip_pids=skip_pids, pids=pids)
+
+
+def _join_live_threads(bound_s, among=None):
+    """Join this process's live non-daemon threads, other than the main one and the caller, until `bound_s` has passed
+    (a thread one of them starts meanwhile is joined too), never waiting on a daemon thread. Returns every such thread
+    still alive afterwards, daemon or not: a process one of them starts after the scan that follows is not seen. A join
+    that raises (a Thread subclass's own join; a live thread has started, so the stdlib's join refuses none of them) is
+    not waited on again and leaves its thread among those returned: the run-end check then goes on, where the exception
+    would have ended pytest_sessionfinish, and the session with it, before the run's report printed (the session-end
+    thread guard, which calls the same join at the process's last test, has already failed that test's teardown on it,
+    and fork PR #922's tests plant such a join). `among` stands in for threading.enumerate()
+    (tests/test_run_end_leaked_processes.py hands in stand-in threads)."""
+    pool = threading.enumerate if among is None else (lambda: list(among))
+    skip = [threading.current_thread(), threading.main_thread()]
+    deadline = time.monotonic() + bound_s
+    while True:
+        pending = [t for t in pool() if t not in skip and not t.daemon and t.is_alive()]
+        left = deadline - time.monotonic()
+        if not pending or left <= 0:
+            break
+        try:
+            pending[0].join(left)
+        except KeyboardInterrupt:
+            raise
+        except BaseException:       # pytest.fail's exception is a BaseException: waited on no more, still returned
+            skip.append(pending[0])
+    return [t for t in pool() if t not in skip[:2] and t.is_alive()]
+
+
+def _say_at_run_end(session, text):
+    tr = session.config.pluginmanager.get_plugin("terminalreporter")
+    if tr is not None:
+        tr.ensure_newline()
+        for line in text.splitlines():
+            tr.write_line(line)
+    else:
+        print(text, file=sys.stderr)
+
+
+PHASE_UNKNOWN = ("the phase at its spawn is unknown, since PYTEST_CURRENT_TEST is not in its environment, because it was "
+                 "spawned while no phase was set (between phases or outside a test, as a background thread's late child "
+                 "can be) or was given an environment built without it (by the test or by an ancestor process)")
+
+
+def _report_leaked_run_processes(session):
+    """The controller's run-end check (the comment above LEAK_EXIT_BOUND_S): join the live non-daemon threads, then name
+    every process of the run that still holds one of its roots, the controller's own resource tracker passed over only
+    while its premise reads as holding and named with the reason when it does not (_run_end_holders), and make the
+    run red; list this user's unreadable processes of the run (started after the controller, in its cgroup) as not
+    judged, the tracker among them, with the reason, when its premise is unshown, its environment cannot be read and it
+    meets that condition; and count the other unreadable ones, the tracker never among them. It names no thread: the
+    session-end thread guard (below) names, at the teardown of each process's last test, each thread it guards still
+    alive at its cap (every non-daemon thread and every concurrent.futures thread, pytest-timeout's timer aside), so a
+    leaked thread is reported once, by the guard, and a leaked process once, here (the hundredth round-2 commit of fork
+    PR #894, at its third landing merge, of the fork's main at 46a9382c9, which brought fork PR #922's guard; the comment above LEAK_EXIT_BOUND_S)."""
+    bound = _leak_exit_bound()
+    _join_live_threads(bound)
+    leaked, unjudged, ok = _run_end_holders(_run_roots(), bound)
+    if not ok:
+        _say_at_run_end(session, "[tests] the run-end process check reads /proc and did not run on this platform")
+        return
+    lines = []
+    if leaked:
+        lines.append("[tests] %d process(es) of this run still hold its temp root at run end, %g s after the run finished "
+                     "waiting for them to exit: a test started them and did not stop them; the run is red." % (len(leaked), bound))
+        for h in leaked:
+            lines.append("[tests]   pid %d (parent %d): %s | holds the root through %s | %s%s" % (
+                h["pid"], h["ppid"], h["cmd"][:240] or "(no command line)", ", ".join(h["via"]),
+                "spawned during %s" % h["test"] if h["test"] else PHASE_UNKNOWN,
+                " | " + TRACKER_KEPT_LABEL + h["kept"] if h.get("kept") else ""))
+    if unjudged["listed"]:
+        lines.append("[tests] %d process(es) of this user started during this run, in its cgroup, could not be read and were "
+                     "not judged: their environment, cwd and open files are unreadable (a process that made itself "
+                     "non-dumpable, or one running a setuid program); they do not change the exit status." % len(unjudged["listed"]))
+        for u in unjudged["listed"]:
+            lines.append("[tests]   pid %d (parent %d): %s | not judged%s" % (
+                u["pid"], u["ppid"], u["cmd"][:240] or "(no command line)",
+                " | " + TRACKER_KEPT_LABEL + u["kept"] if u.get("kept") else ""))
+    if lines:
+        lines.append("[tests] %d other process(es) could not be read and were not judged: another user's, or this user's "
+                     "started before this run or in another cgroup." % unjudged["other"])
+        _say_at_run_end(session, "\n".join(lines))
+    if leaked:
+        session.exitstatus = max(int(session.exitstatus or 0), 1)
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
     """The in-process half (tests/__init__.py): remove every directory this process made through
@@ -81,12 +692,17 @@ def pytest_sessionfinish(session, exitstatus):
     pytest's own runner sessionfinish has performed the deferred teardown an interrupted run leaves
     behind, so nothing is swept from under a fixture still closing. The package's atexit hook does the
     same at interpreter exit; both are idempotent, and pytest_unconfigure below takes the root itself
-    afterwards."""
+    afterwards. Then, in the controller alone (a worker's roots are among the controller's), the run-end
+    process check above: a process of the run that still holds one of its roots, the controller's own resource
+    tracker aside while no /proc/<pid>/fd table the check can read, other than the controller's and the tracker's,
+    holds the tracker's pipe (the comment above names what is not read for it), makes the run red."""
     try:
         from tests import remove_made_dirs
     except Exception:
         return
     remove_made_dirs()
+    if not hasattr(session.config, "workerinput"):
+        _report_leaked_run_processes(session)
 
 
 def pytest_unconfigure(config):
@@ -139,6 +755,24 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # session's shell, and a test run from one would carry the machine's name into every lab and in-process kernel; the
 # bus refuses its fixed port under a test unless the port is the run's own, which the marker beside a port says
 os.environ.pop("ROMP_POSTAL_PORT", None)
+# the rest of the postal trio and the three call-time seams likewise (2026-09-23, the verifier's finding on round 2 of
+# fork PR #894): a session's shell can carry any of them, and _module_env_restored and _shared_state_restored (below)
+# compare each watched name with the value the module or the test found. The postal modules put peers and client-only
+# back with a pop in their tearDowns rather than a restore, so from a shell carrying ROMP_POSTAL_PEERS or
+# ROMP_POSTAL_CLIENT_ONLY a run ended those modules with the name unset and went red where a clean shell's run was
+# green.
+# Popped here with the seams, every run starts each watched name where CI's run starts it, whatever the shell carries:
+# unset, but for client-only, which upstream's floor right after the hermetic marker below sets to "1" for the run (their
+# PR 1848, in this file since the merge of main that brought fork PR #875). So both checks read the same run (every name
+# of MODULE_WATCHED_ENV_NAMES is popped by these lines or the port's above; the hermetic module holds each watched name
+# among this file's import-time pops and runs both checks from a shell carrying every one). The pops come before the
+# marker, so that floor still sets client-only for the run (the hermetic module's import probe under that floor reds
+# when a pop of client-only follows the floor line).
+os.environ.pop("ROMP_POSTAL_PEERS", None)
+os.environ.pop("ROMP_POSTAL_CLIENT_ONLY", None)
+os.environ.pop("ROMP_POSTAL_HOST", None)
+os.environ.pop("ROMP_SESSIONS_FILE", None)
+os.environ.pop("ROMP_SERVE_TOKEN", None)
 os.environ["ROMP_POSTAL_HERMETIC"] = "1"
 os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # no in-process kernel of the run owns a bus: its ensure and its revive start none (2026-09-18: a revive
 #                                                on a daemon thread outran a test's environment restore and left a real bus detached on the box, whose
@@ -313,12 +947,83 @@ def _dead_manager_port():
     entire run phase, erasing the floor for every test after it. Re-assert per test: no
     module-level write can outlive collection against this. The kernel's port, both spellings, is
     re-asserted the same way; a test that needs a port of its own sets it in setUp or passes it
-    to the process it starts."""
+    to the process it starts. The postal bus port is re-asserted UNSET the same way (2026-09-22): the
+    import-time pop above held only until a module wrote the port at collection, and with the run's
+    marker beside it that name licensed a stray revive's child to bind a real bus from inside another
+    module's test (fork PR #813's CI); a test that wants a bus port of its own sets it in setUp, after
+    this, beside the kernel's BUS_PORT if it loaded the kernel in-process (tests/test_kernel_tunnels.py)."""
     os.environ["ROMP_MANAGER_PORT"] = "1"
     os.environ["ROMP_KERNEL_PORT"] = "1"
     os.environ["ROMP_SERVE_PORT"] = "1"
-    os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # re-floored per test: tests/test_postal_peers.py pops it outright (1848's floor, 2026-09-18)
+    os.environ.pop("ROMP_POSTAL_PORT", None)
+    os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # re-floored per test: each test starts at "1" whatever ran before it (1848's floor, 2026-09-18)
     yield
+
+
+# No in-process kernel of the run dials the machine's fixed bus port (2026-09-23, the reviewer's ruling of round 1 on fork
+# PR #894). A kernel a test module loads IN-PROCESS (load_source of bin/romp-kernel under a name that starts romp_kernel)
+# reads its BUS_PORT from ROMP_POSTAL_PORT at import, and the fixture above pops that name before every test (this file
+# pops it at import too), so every such kernel of a whole run read 25302, the machine's fixed bus port: a spy over one full
+# serial run recorded the tests whose kernel's bus calls (a peer notify at a detach or a trust change, the GET /peers
+# behind the routes that list remotes) dialled it, which on a box whose own bus listens there reach that bus; where
+# nothing listens, as on CI, a refused notify kicked the revive into a real romp-postal-service ensure (before the merge
+# of main that brought fork PR #875: under the client-only floor above, an in-process kernel's revive returns before its
+# ensure unless that kernel ensured a bus of its own, _BUS_ENSURED). A dead port cannot
+# be EXPORTED instead: the bus's fixed-port refusal licenses a port equal to the child's import-time ROMP_POSTAL_PORT
+# beside ROMP_POSTAL_HERMETIC, which this file sets, so an exported port would license a revive's child to bind a real bus
+# on it. So every loaded kernel module's BUS_PORT is set to DEAD_BUS_PORT before each test and put back after it. A refused
+# call then kicks the revive on every box, not only where nothing listens; under the client-only floor the revive returns
+# before its ensure while the kernel has ensured no bus of its own, and the tests whose notify is refused stub the revive
+# themselves as well (_revive_postal_bus, put back by a cleanup), which holds whatever that flag reads; the peer-notify
+# guard test in tests/test_kernel.py and the tunnels module's _PostalTrio exercise the revive road and keep their own
+# handling (the guard holds _BUS_ENSURED False and waits the revive out under a scoped fake of subprocess.run, asserting
+# the fake answered no postal-service call; the trio patches BUS_PORT to a port of the test's own and stubs
+# _ensure_postal_bus).
+# The same spy found the postal service loaded in-process (load_source of bin/romp-postal-service under a name that starts
+# romp_postal) dialling the fixed port too, through its client's BASE, which it builds from the same popped name at
+# import: tests/test_postal_relay_honesty.py's three set_working tests, whose tool call beats the bus first. So every
+# loaded postal module's BASE points at DEAD_BUS_PORT for each test as well, put back after it; a postal module that
+# serves binds PORT, which this leaves alone.
+# What this does not reach, each for its reason: a kernel or postal module loaded under another module name (the fixture
+# finds the modules by name); one a test loads or re-loads during the test (setUp or the body run after this fixture, and
+# a load_source re-executes the module and reads the port again); and a bus call made outside the window this fixture
+# holds the dead port for, which opens at its setup, inside the test's own setup, and closes at its teardown. Outside
+# that window a loaded module has its import-time port, 25302, back: setUpModule, setUpClass, a module- or class-scoped
+# fixture, tearDownClass and tearDownModule run before this per-test fixture is set up or after it is torn down, and a
+# thread that outlives its test reads the port put back at the teardown (the verifier's finding on round 2 of fork PR
+# #894; tests/test_hermetic_kernel_postal.py's test_the_dead_bus_port_holds_for_each_test_and_comes_back_after_it reads
+# the port in a probe module's setUpModule, module-scoped fixture, setUpClass, tearDownClass and tearDownModule and in a
+# thread after its test, and each reads the import-time port). The pin (the same module, the affected modules run with
+# a connect and spawn spy in both orders) and the spy's full serial run, which records a connect from any phase and from
+# any thread, are what show that none of those dials the fixed port today.
+DEAD_BUS_PORT = 1
+
+
+def _loaded_kernels():
+    """The kernel modules this process has loaded in-process: every module whose name starts romp_kernel and that has a
+    BUS_PORT, the port its bus calls dial."""
+    return [m for name, m in list(sys.modules.items()) if name.startswith("romp_kernel") and hasattr(m, "BUS_PORT")]
+
+
+def _loaded_postal_clients():
+    """The postal service modules this process has loaded in-process: every module whose name starts romp_postal and
+    that has the client's BASE (the bus URL its _http dials) and the HOST it is built from."""
+    return [m for name, m in list(sys.modules.items()) if name.startswith("romp_postal") and hasattr(m, "BASE") and hasattr(m, "HOST")]
+
+
+@pytest.fixture(autouse=True)
+def _dead_bus_port():
+    saved = [(m, m.BUS_PORT) for m in _loaded_kernels()]
+    saved_base = [(m, m.BASE) for m in _loaded_postal_clients()]
+    for m, _port in saved:
+        m.BUS_PORT = DEAD_BUS_PORT
+    for m, _base in saved_base:
+        m.BASE = "http://%s:%d" % (m.HOST, DEAD_BUS_PORT)
+    yield
+    for m, port in saved:
+        m.BUS_PORT = port
+    for m, base in saved_base:
+        m.BASE = base
 
 
 # No test may reach the REAL `claude` CLI (2026-08-12): _judge_claude_bin honors ROMP_CLAUDE_BIN
@@ -419,10 +1124,18 @@ def _stub_place_llm(monkeypatch):
 # module's km.jd is ONE process-wide object. A test that rebinds jd.STATE to a temp dir and removes
 # that dir in tearDown without restoring the prior value leaves every later STATE reader in the
 # process pointing at a removed directory: a FileNotFoundError on restart-audit.jsonl or
-# timeline-views.json, or a silent empty read where the writer swallows OSError. The postal
-# sessions-file seam has the same shape: postal_service reads ROMP_SESSIONS_FILE from os.environ at
-# call time, so a tearDown that pops it instead of restoring the prior value leaves a later module,
-# which set the seam once at import, resolving no local sessions. Neither shows when the victim runs
+# timeline-views.json, or a silent empty read where the writer swallows OSError. The postal seams
+# have the same shape: postal_service reads the sessions-file seam (ROMP_SESSIONS_FILE) and the
+# bus-name seam (ROMP_POSTAL_HOST, the machine name the bus answers as) from os.environ at call time,
+# so a test that leaves either changed hands its value to every later test in the process and every
+# child they spawn: a sessions file with one live row kept a leaked bus from ever autostopping, and a
+# test's TESTHOST reached a later test's probe subprocess (the reviewer's finding on fork PR #894,
+# round 1). No module writes either at import (the census in tests/test_hermetic_kernel_postal.py
+# forbids it), so this fixture names such a leftover in any run, whenever the value a test leaves
+# differs from the one it found (a leftover equal to what an earlier test had already set is no change
+# here, and the developer's shell never sets one: this file pops each at import); the postal modules
+# set both per test and put them back by cleanups, and tests/test_postal_self_host.py's
+# _HostnameSeams pops and restores the bus name, so each is quiet here. Neither shows when the victim runs
 # alone, and the serial order of the whole suite passes only because a test that loads a kernel
 # between the cause and the victim re-executes judge.py and rebinds the roots; any other order (a
 # subset, another scheduler) fails a module that did nothing wrong. This fixture names the cause
@@ -439,20 +1152,21 @@ def _stub_place_llm(monkeypatch):
 # STATE that is not a directory after a reload is the test's own doing and is still named, and the
 # environment names are still checked. Values of the environment names are never printed (one of
 # them is a credential), only the kind of change.
-_SHARED_JUDGE_PATHS = ("STATE", "PROJECTS")
-_SEAM_ENV_NAMES = ("ROMP_SESSIONS_FILE", "ROMP_SERVE_TOKEN")
+_SEAM_ENV_NAMES = ("ROMP_SESSIONS_FILE", "ROMP_SERVE_TOKEN", "ROMP_POSTAL_HOST")
 
 
 def _shared_judge_paths():
     """({name: (path text or None, is a directory)}, marker) for the shared judge's watched globals,
-    the marker being a function object judge.py defines (a re-execution replaces it); ({}, None) when
-    no module has loaded the judge under its shared name yet."""
+    STATE and PROJECTS, each read by getattr with its own literal name (the conftest reader of
+    tests/test_hermetic_kernel_postal.py admits getattr only with a name it proves to be one fixed
+    string, and a name taken from a loop over a tuple is not one); the marker being a function object
+    judge.py defines (a re-execution replaces it); ({}, None) when no module has loaded the judge
+    under its shared name yet."""
     jd = sys.modules.get("romp_judge")
     if jd is None:
         return {}, None
     out = {}
-    for name in _SHARED_JUDGE_PATHS:
-        p = getattr(jd, name, None)
+    for name, p in (("STATE", getattr(jd, "STATE", None)), ("PROJECTS", getattr(jd, "PROJECTS", None))):
         text = None if p is None else str(p)
         out[name] = (text, text is not None and os.path.isdir(text))
     return out, vars(jd).get("_rebind_state")
@@ -500,6 +1214,93 @@ def restore_env(name, prior):
         os.environ.pop(name, None)
     else:
         os.environ[name] = prior
+
+
+# No module leaves a watched environment name changed after its own teardown (2026-09-23, the reviewer's ruling of round
+# 1 on fork PR #894). The census in tests/test_hermetic_kernel_postal.py reads what executes at IMPORT, and
+# _shared_state_restored above is per test, its snapshot taken after the module's setUpModule, its classes' setUpClass
+# and its module- and class-scoped fixtures have run, so a seam written there with no restore reached every test
+# scheduled after it in the process, and every child those tests spawned, and no test failed. This fixture takes its
+# snapshot before any of those run (an autouse module-scoped fixture of this file is set up before the module's own
+# setUpModule, which pytest runs as a module-scoped autouse fixture registered on the module, after the ones registered
+# here, and before every class-scoped setup) and fails, naming the module, when a watched name differs after the
+# module's teardown (its tearDownModule, tearDownClass and fixtures have run by then). What it names is a write made in
+# the module's own setup, tests or teardown that the module leaves behind for later modules; one made and put back inside
+# the module is quiet. What it does not read, each for its reason: a write made at import, during collection (the
+# census reads that); a write by a session- or package-scoped fixture whose setup runs before this snapshot, which
+# reaches every later module, since the fixture's teardown runs at the end of the session or package, after every
+# module's check. Which check reads such a fixture's write turns on when its setup runs against the two snapshots, not
+# on which test first uses it. A fixture a test requests by name (in its signature, in the signature of a fixture it
+# requests, or as autouse) is set up before the test's module- and function-scoped fixtures, highest scope first: when
+# the first of the module's tests to be set up requests it (an autouse one always does), before this snapshot and every
+# per-test snapshot of _shared_state_restored, so neither check reads it; when a later test is the first to, after this
+# snapshot and before that test's, so this check names the module and the per-test check does not. The first test to be
+# set up need not be the module's first. A test counts as set up once its module-scoped fixtures are set up, this one
+# before the module's own; a test pytest ends before that point sets up none of them, so a fixture requested by name by
+# the first test that is set up is read by neither check, however many tests before it were ended. That rule decides
+# every route; the two lists below name the routes planted, not every route there is. Ended before that point: a test a
+# skip or skipif mark skips, or an xfail mark with run=False ends (pytest's skipping plugin ends it in its setup hook
+# before any fixture is set up; under --runxfail an xfail mark ends nothing, and the test is set up); a test that
+# requests a session- or package-scoped fixture whose setup skips or raises (by name, through a fixture it requests, by
+# a usefixtures mark, or as autouse, which ends every test the fixture reaches), since pytest sets a test's fixtures up
+# highest scope first; and a test a hook skips before pytest's runner sets its fixtures up, as a conftest's
+# pytest_runtest_setup does when it runs before the runner's (a plain one does). Set up: a test skipped in its body, in
+# a module-, class- or function-scoped fixture (setUpModule, which pytest runs as a module-scoped fixture, included), in
+# setUpClass, by one of unittest's skip decorators, or by a conftest's pytest_runtest_setup that runs after the runner's
+# (one marked trylast does). Each route either list names, and the rule's own case, is a plant in
+# test_a_write_by_a_fixture_scoped_above_module_is_named_by_each_check_whose_snapshot_its_setup_follows (the verifier's
+# findings on round 2 of fork PR #894, where this text had counted a skip in a session or package fixture as set up, and
+# then left a conftest's hook out of the lists). A
+# fixture requested at run time (request.getfixturevalue) is set up where the call runs: in a test's body or in a
+# function-scoped fixture the test requests by name, after that test's per-test snapshot, so both checks read it, the
+# per-test one naming the test; in a module-scoped fixture, after this snapshot and before the test's, so only this
+# check does (the verifier's plants on round 2 of fork PR #894, run by tests/test_hermetic_kernel_postal.py; the tree
+# has no fixture scoped above module, which that module holds at none). Also unread: a write by a plugin's own hook or
+# fixture outside the module's setup; and any name the list in the docstring leaves out. Every watched name is popped at
+# this file's import, before collection (the lines above), so nothing the developer's shell carries reaches the check,
+# and it reads the same run on every box.
+MODULE_WATCHED_ENV_NAMES = _SEAM_ENV_NAMES + ("ROMP_POSTAL_PEERS", "ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PORT")
+MODULE_ENV_FLOORS = {"ROMP_POSTAL_PORT": None, "ROMP_POSTAL_CLIENT_ONLY": "1"}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _module_env_restored(request):
+    """Fail naming the module when a watched name differs after the module's teardown from its value before the module's
+    setUpModule, setUpClass and module- and class-scoped fixtures ran (a fixture scoped above module that the first of
+    the module's tests to be set up requests by name has run by then: the comment above says which requests each check
+    reads, and which tests are not set up). The watched names, MODULE_WATCHED_ENV_NAMES: the seams
+    _shared_state_restored watches per test (_SEAM_ENV_NAMES: the sessions file, the serve token and the bus name) and
+    the postal trio (peers, client-only and the port). Not watched: PYTEST_CURRENT_TEST, which pytest writes for every
+    phase, and every name this file re-asserts before every test (the dead ports, the service-env, claude-config,
+    catalog, scope and CLI-binary floors, ROMP_SUPERVISED and the credential names), whose write here would read as a
+    change on the module in whose first test to be set up it ran. The two trio legs this file re-asserts,
+    ROMP_POSTAL_PORT (popped before every test) and ROMP_POSTAL_CLIENT_ONLY (set to "1" before every test since the
+    merge of main that brought fork PR #875), are watched against the value that re-assert gives each, unset and "1"
+    (MODULE_ENV_FLOORS), rather than against the snapshot: a value a module leaves after its teardown reaches the next
+    module's setUpModule, setUpClass and module fixtures, and every child they spawn, before that module's first test
+    to be set up re-asserts it; and against the snapshot, the re-assert's own write would read as a change on the next
+    module (a module that left client-only unset had the module after it named). Every name outside the list is outside
+    this check: a diff of the whole environment reds on the runner's own writes."""
+    before = {name: os.environ.get(name) for name in MODULE_WATCHED_ENV_NAMES}
+    yield
+    left = []
+    for name in MODULE_WATCHED_ENV_NAMES:
+        v0 = MODULE_ENV_FLOORS[name] if name in MODULE_ENV_FLOORS else before[name]
+        v1 = os.environ.get(name)
+        if v0 == v1:
+            continue
+        if v1 is None:
+            left.append("%s was set and is now unset" % name)
+        elif v0 is None:
+            left.append("%s was unset and is now set" % name)
+        else:
+            left.append("%s was changed" % name)
+    if left:
+        pytest.fail("module %s left the environment changed after its teardown: %s. A write the module does not put back "
+                    "(in setUpModule, setUpClass, a module- or class-scoped fixture, or a test) holds for every test "
+                    "scheduled after the module and every child they spawn: save the prior value and put it back in the "
+                    "matching teardown, or set it per test in setUp with a cleanup." % (request.node.nodeid, "; ".join(left)),
+                    pytrace=False)
 
 
 # No test may leave the kernel's backend singleton changed, or over a directory that is gone, and the test
@@ -1686,11 +2487,42 @@ _enumerate = threading.enumerate    # bound at import too: a test's leaked patch
                                     # guard's list, and a test that patches this name reaches the guard alone
 # The tables concurrent.futures' exit hooks join, as (module, attribute). The two hooks are the only functions the
 # standard library registers with threading._register_atexit (3.10 to 3.14), which threading._shutdown calls before it
-# joins the non-daemon threads; each joins every thread in its module's table, whatever the thread's daemon flag.
+# joins the non-daemon threads; each joins every thread in its module's table, whatever the thread's daemon flag. The
+# guard reads each table by its literal module and attribute names (_exit_join_table_reads), and an assertion there ties
+# the LABELS (the pair written beside each read) to this tuple, so a label cannot drift from it; a read's own literal is
+# tied to its label by execution, in tests/test_session_end_thread_guard.py's ExitJoinTables (a stand-in table put under
+# each pair is the one the guard reads), not by the assertion.
 EXIT_JOIN_TABLES = (("concurrent.futures.thread", "_threads_queues"),      # ThreadPoolExecutor workers
                     ("concurrent.futures.process", "_threads_wakeups"))    # ProcessPoolExecutor manager threads
 # The guard's failure, in the stash of the item whose teardown it failed, for _guard_failure_into_report.
 _GUARD_FAILURE = pytest.StashKey()
+
+
+def _exit_join_table_reads():
+    """((module, attribute), the module or None, its table or None) for each exit-join table, in EXIT_JOIN_TABLES' order:
+    each module read from sys.modules by its literal name and each table read from that module by getattr with its
+    literal name, since the conftest reader of tests/test_hermetic_kernel_postal.py admits getattr only with a name it
+    proves to be one fixed string, and a name taken from a loop over EXIT_JOIN_TABLES is not one (the reviewer's ruling
+    of 2026-09-29 09:01Z on round 2 of fork PR #894). The assertion ties those reads to
+    EXIT_JOIN_TABLES, which tests/test_session_end_thread_guard.py pins: the pairs the reads are labelled with, each
+    written beside its read, must equal it, or an AssertionError names both (the check also runs once when this file is
+    imported, below). tests/test_session_end_thread_guard.py's ExitJoinTables ties each label to its read by execution:
+    a stand-in table put under each EXIT_JOIN_TABLES pair is the one the guard reads."""
+    thread_module = sys.modules.get("concurrent.futures.thread")
+    process_module = sys.modules.get("concurrent.futures.process")
+    reads = ((("concurrent.futures.thread", "_threads_queues"), thread_module,
+              getattr(thread_module, "_threads_queues", None)),
+             (("concurrent.futures.process", "_threads_wakeups"), process_module,
+              getattr(process_module, "_threads_wakeups", None)))
+    if tuple(names for names, _module, _table in reads) != EXIT_JOIN_TABLES:
+        raise AssertionError("tests/conftest.py's session-end thread guard reads the exit-join tables %r by their literal "
+                             "names, and EXIT_JOIN_TABLES is %r: the two name different tables. Point both at the same "
+                             "tables (tests/test_session_end_thread_guard.py pins EXIT_JOIN_TABLES)."
+                             % (tuple(names for names, _module, _table in reads), EXIT_JOIN_TABLES))
+    return reads
+
+
+_exit_join_table_reads()     # the tie, checked at import too: a drift fails the run before its first test
 
 
 class _ExitJoinTableKeptChanging(pytest.fail.Exception):
@@ -1701,20 +2533,21 @@ class _ExitJoinTableKeptChanging(pytest.fail.Exception):
 
 def _exit_joined_threads(deadline):
     """The threads concurrent.futures' exit hooks will join, whatever their daemon flags: every thread in the table of
-    each EXIT_JOIN_TABLES module that is loaded. This file imports concurrent.futures.thread, so its table is always
-    read; a process that never loaded concurrent.futures.process has no ProcessPoolExecutor. A loaded module without its
-    table fails the guard, naming the attribute, rather than leaving unguarded the daemon threads that table would list.
-    A read that raises RuntimeError (another thread added to the table while it was read) is retried at once, until a
-    read succeeds or `deadline`, a time on the guard's clock (_monotonic), passes; a read that raises after that fails
-    the guard, naming the table (_ExitJoinTableKeptChanging), so no read is retried after the deadline. A read already
-    running at the deadline finishes, and a table read first after it is read once. A table keeps a thread that has
-    ended until the thread object is collected; the guard asks it only about listed threads, which are alive."""
+    each EXIT_JOIN_TABLES module that is loaded, each module and table read by its literal names
+    (_exit_join_table_reads, whose assertion ties the LABELS beside each read to EXIT_JOIN_TABLES, while
+    tests/test_session_end_thread_guard.py's ExitJoinTables ties each read to its label by execution). This file imports
+    concurrent.futures.thread, so its table is always read; a process that never loaded concurrent.futures.process has
+    no ProcessPoolExecutor. A loaded module without its table fails the guard, naming the attribute, rather than leaving
+    unguarded the daemon threads that table would list. A read that raises RuntimeError (another thread added to the
+    table while it was read) is retried at once, until a read succeeds or `deadline`, a time on the guard's clock
+    (_monotonic), passes; a read that raises after that fails the guard, naming the table (_ExitJoinTableKeptChanging),
+    so no read is retried after the deadline. A read already running at the deadline finishes, and a table read first
+    after it is read once. A table keeps a thread that has ended until the thread object is collected; the guard asks it
+    only about listed threads, which are alive."""
     joined = set()
-    for module, attr in EXIT_JOIN_TABLES:
-        mod = sys.modules.get(module)
+    for (module, attr), mod, table in _exit_join_table_reads():
         if mod is None:
             continue
-        table = getattr(mod, attr, None)
         if table is None:
             pytest.fail("tests/conftest.py's session-end thread guard cannot read %s.%s on this Python (%s): "
                         "that table lists the threads concurrent.futures' exit hook joins at exit whatever their "
