@@ -1139,7 +1139,7 @@ test("every module the page bundles load, read with the compiler: the only write
   // below, which tsconfig's file list (no allowJs; the test helpers under ui/ included) misses, and it leaves out the eight modules in the
   // directory no page loads, which a listing counts. The directory is read too, recursively and through the same partition (the anchor map's
   // fixture directory first, then tests and types, modules and styles, the remainder asserted empty), and the two are tied by EQUALITY both ways,
-  // never a floor: the directory's modules no page bundle loads are exactly the eight named below (reached from tests, from one another and
+  // never a floor: the directory's modules no page bundle loads are exactly the nine named below (reached from tests, from one another and
   // from the viewer bench under tools/, never from a page entry), and the loaded modules outside the directory are exactly the five named
   // below (the timeline panel's prebuilt bundle and four vendored track-changents modules, display.js reached from track-logic.js through
   // the vendored package's own exports map), so a module that starts or stops being loaded, appears outside the directory or leaves it, is
@@ -1191,6 +1191,7 @@ test("every module the page bundles load, read with the compiler: the only write
   const UNLOADED = [   // under ui/webview, loaded by no page bundle: reached from tests, from one another and from the viewer bench under tools/, never from a page entry
     "ui/webview/feed-flip.ts",                   // the feed's FLIP-pass predicate, executed by feed-flip.test.ts
     "ui/webview/file-view-outline-fixture.ts",   // the Outline's synthetic fixture, shared by file-view-outline.test.ts and its browser leg
+    "ui/webview/math-chunk-leg.ts",              // the KaTeX chunk's loading scenes in a served page, for its Chromium and WebKit browser legs
     "ui/webview/md-wiki.ts",                     // wikilink and callout extensions to the markdown grammar, executed by md-wiki.test.ts
     "ui/webview/pane-tree.ts",                   // the pane-docking layout tree (phase one, pure), executed by pane-tree.test.ts
     "ui/webview/real-viewer-leg.ts",             // the real viewer mounted in a served page for the browser legs (*-browser.test.ts), shell-drag-leg and the bench
@@ -1205,7 +1206,7 @@ test("every module the page bundles load, read with the compiler: the only write
     "vendor/track-changents/obsidian/src/track-cm.js",       // imported by editor-chunk.ts and track-decorations.ts
     "vendor/track-changents/obsidian/src/track-logic.js",    // imported by track-decorations.ts
   ];
-  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive; the listing's module class, every suffix the compiler parses, the anchor map's fixture directory and tests and types apart) that no page bundle loads are exactly the eight named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
+  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive; the listing's module class, every suffix the compiler parses, the anchor map's fixture directory and tests and types apart) that no page bundle loads are exactly the nine named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
   assert.deepEqual(loaded.filter((m) => !m.startsWith("ui/webview/")), OUTSIDE, "the modules a page bundle loads from outside ui/webview are exactly the five named: a sixth, or one gone from the bundles, reds here");
   const listedSet = new Set(listed);
   assert.deepEqual(loaded.filter((m) => m.startsWith("ui/webview/") && !listedSet.has(m)), [], "a module under ui/webview that a page bundle loads and the listing's partition files under the anchor map's fixtures or under tests and types (a module-suffix file under the fixture directory, a `.test.ts`, a `.test.tsx`, a `.test.js`, a `.d.ts`): the two equalities above compare the listed modules with the loaded ones, so a production import of a test module or of a fixture is named here or reds (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a))");

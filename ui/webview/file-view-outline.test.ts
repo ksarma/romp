@@ -23,6 +23,7 @@ import { headingSlug, uniqueSlugs } from "./md-links";
 import { OUTLINE_NOTE, OUTLINE_HEADINGS, FOLD_HEADING, MATH_HEADING, CODE_HEADING, QUOTED_HEADING } from "./file-view-outline-fixture";
 import type { FileViewActionCtx, At } from "./file-view";
 import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
+import "./math-chunk";   // KaTeX, installed as the on-demand chunk installs it, so the viewer's fill renders the heading's formula at once (iOS item 6)
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");

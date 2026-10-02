@@ -38,6 +38,7 @@ const KATEX_CSS = fs.readFileSync(path.join(KATEX_DIST, "katex.min.css"), "utf8"
 const ENTRY = `
 import { marked } from "marked";
 import katex from "katex";
+import "./math-chunk";   // KaTeX installed as its on-demand chunk installs it, so the fill renders in the call (iOS item 6)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";
 import { sanitizeMd, registerMdPostPass } from "./md-sanitize";

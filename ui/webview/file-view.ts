@@ -19,6 +19,7 @@ import hljs from "highlight.js/lib/core";
 import { marked, type Token, type Tokens } from "marked";
 import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
+import { onMathSettled, mathPendingIn } from "./math";   // a paint of a note with math waits for the math renderer's arrival (the hold in renderBody)
 import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start tag with no end tag in its block renders as literal text, on this parse's tokens (plans/file-review.md, decision 52)
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
@@ -2499,6 +2500,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // Chooses the body for the current prefs and syncs the buttons. The pressed state flips SYNCHRONOUSLY
   // in the click handler — the immediate acknowledgement ui/CLAUDE.md requires — and so does the content
   // swap, since the text is already in memory.
+  // A Rendered paint of a note with math made before the math renderer is in (math.ts: KaTeX is an on-demand chunk) is HELD:
+  // the body keeps what it shows (the romp loader on an open, the previous paint on a reload) and the renderer's arrival
+  // paints again, so a note's first paint is its final one. One paint, the hooks once, and the anchor map, the reader's place
+  // and the comment paint never meet a formula still waiting for its layout. A failed load paints the same way, each formula
+  // as its source; math.ts's backstop bounds the wait, so the loader cannot trap the reader.
+  let mathHeld = false;
+  closeHooks.push(onMathSettled(() => { if (mathHeld) { mathHeld = false; renderBody(); } }));
   const renderBody = () => {
     const rendered = isMd && fmt.md === "rendered";
     for (const [mode, b] of segBtns) {
@@ -2587,11 +2595,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // the line says why rows show), the Raw click paints rows without the line, the Rendered click tries again. The editor's
     // entry sets fmt.md to raw before its own paint and returns above, so its exit repaints Raw and clears the record as any
     // paint that stands does.
+    let held = false;                         // this paint waits for the math renderer (mathHeld above)
     perfTimed("paint", () => {                // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed)
       if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
       const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
       try {
-        body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+        const block = rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true);   // long lines always soft-wrap (the user 2026-08-24)
+        mathHeld = held = rendered && mathPendingIn(block);   // a formula waiting for the renderer: nothing is swapped, the arrival paints
+        if (held) return;
+        body.replaceChildren(block);
         renderFell = null;
       } catch (err) {
         const fell = fellMessage(err);
@@ -2608,6 +2620,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
       landRemembered();                       // the first text paint of an open with a remembered place seats it (once; RememberedPlace)
     });
+    if (held) return;                         // the heading waits for the paint the renderer's arrival makes
     if ((rendered || !isMd) && pendingHeading !== null) spendHeading();   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
   };
   // Item 4's heading, spent at a paint that can land it (a note's Rendered paint, any text paint of a file that is not markdown)
@@ -3986,6 +3999,8 @@ export function openUrlView(href: string): void {
     else heldPlace = null;
   };
   body.addEventListener("scroll", () => { if (heldPlace && body.scrollTop !== heldScrollTop) heldPlace = null; }, { passive: true });
+  let mathHeld = false;                                // a Rendered paint waiting for the math renderer: the local viewer's hold (renderBody there)
+  closeHooks.push(onMathSettled(() => { if (mathHeld) { mathHeld = false; renderBody(); } }));
   const renderBody = () => {
     for (const [mode, b] of segBtns) {
       const on = fmt.md === mode;
@@ -4002,9 +4017,12 @@ export function openUrlView(href: string): void {
       // throws paints the RENDER_FELL line and the document's text as Raw rows under it, the message recorded once that fallback
       // stands (fellMessage; the local viewer's header), and a throw from that fallback propagates over the previous paint.
       try {
-        body.replaceChildren(fmt.md === "rendered"
+        const block = fmt.md === "rendered"
           ? mdBlock(text, { kind: "url", href: loc })  // relative refs resolve against where it LIVES
-          : codeBlock(text, parts.base, true));        // basename → langFor → markdown highlighting
+          : codeBlock(text, parts.base, true);         // basename → langFor → markdown highlighting
+        mathHeld = fmt.md === "rendered" && mathPendingIn(block);   // a formula waiting for the renderer: nothing is swapped, the arrival paints
+        if (mathHeld) return;
+        body.replaceChildren(block);
         renderFell = null;
       } catch (err) {
         const fell = fellMessage(err);

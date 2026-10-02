@@ -123,6 +123,7 @@ import { apiErrorReason } from "./api-error-reason";
 import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, billingHeld, billingHeldRow, billingHeldSub, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows, the held Billing readings and the menus' marks (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
+import { onMathSettled, mathPendingIn } from "./math";   // the math renderer's arrival: the reader's place kept around the swap (onMathSettled below rerenderAll)
 import { setTip, pruneTip } from "./tip";
 import { MetaKind, MetaHooks, metaButton as buildMetaButton, syncMetaControls as syncMetaControlsWith, ctxBar as buildCtxBar, setCtxBar as setCtxBarWith,
   metaColor, modeIconSvg, riskyMode, prettyMode, prettyFast, fastAvailable, metaCurrent, metaDots, rampOn } from "./status-controls";   // the status line's controls, one renderer for the chat's line, the popovers and the settings card's preview (T415 part two)
@@ -14624,6 +14625,33 @@ function rerenderAll(): void {
   showActive(keep);
   schedulePrebuild(); // rebuild every off-screen view in idle under the new setting, so switches stay instant
 }
+
+// The math renderer's arrival (math.ts: KaTeX is an on-demand chunk, and until it is in a formula shows its TeX in the pending
+// dress). math.ts's fill over the document then swaps every waiting formula for KaTeX's layout IN PLACE, so a formula above the
+// reader changes the transcript's height under them. Chromium's scroll anchoring would absorb that and the phone's WebKit has
+// none, so the place is kept the way rerenderAll keeps it: the reader's anchor turn read before the fill and put back at its
+// offset after it (captureScrollAnchor, restoreScrollAnchor), and a reader at the bottom written to the new bottom. A failed
+// load takes the same road, each formula becoming its source. Then the comment marks go back on every view that held a waiting
+// formula (a mark on math pairs with the rendered .katex root, applyCommentMarks), and a queued group whose cached node held one
+// is marked changed, so its next render rebuilds the node's children with the renderer in (renderPendingGroup).
+onMathSettled(() => {
+  const content = document.getElementById("content");
+  const av = activeId ? views.get(activeId) : null;
+  const live = !!(content && av && av.shown && content.clientHeight > 0);
+  const from = content ? content.scrollTop : 0;
+  const bottom = live && atBottom(content!);
+  const keep = live && !bottom ? captureScrollAnchor(content!, av!) : null;
+  const held = Array.from(views.entries()).filter(([, v]) => mathPendingIn(v.el)).map(([sid]) => sid);
+  for (const g of pendingGroupNode.values()) if (mathPendingIn(g.node)) g.sig = "";
+  return () => {
+    if (live && content && av) {
+      if (bottom) writeScroll(content, content.scrollHeight, "math-fill", true, from);
+      else if (keep) restoreScrollAnchor(content, av, keep, from);
+      av.scrollTop = content.scrollTop;   // the per-view saved position follows
+    }
+    for (const sid of held) applyCommentMarks(sid);
+  };
+});
 
 // Index of the last human-prompt event = start of the current turn, where any
 // in-place mutations (a tool's output arriving, etc.) live. 0 if none.

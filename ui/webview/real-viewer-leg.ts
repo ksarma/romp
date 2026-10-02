@@ -63,7 +63,7 @@ export const STATUS = {
   unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null },
 };
 
-let viewerBundle: string | null = null;
+const viewerBundles = new Map<boolean, string>();
 /** The viewer module as the webview build bundles it, in memory, as window.FV (openUrlView included, for the URL viewer's own swap;
  *  anchor-map's TRIM_STATS too, the trim's own pass counter, which the retrim-events leg reads to count the panel's trim calls;
  *  and preview.ts's heal for markdown-inline pictures, installMdImgHeal with the two retry drivers render.ts calls on a kernel
@@ -72,17 +72,22 @@ let viewerBundle: string | null = null;
  *  mentioned picture, so a leg can drive the chat's own preview under the chat page's sheet, as the svg preview's cue leg does;
  *  and anchor-map's rawRows and rawRowForOffset, the verified Raw row
  *  map the seam's scrollToOffset reads since Slice 7 of plans/markdown-viewer.md, item 7, so the raw-rows leg can ask the map
- *  itself whether the rows it sees match the file's text). */
-export function bundleViewer(): string {
-  if (viewerBundle) return viewerBundle;
+ *  itself whether the rows it sees match the file's text). KaTeX is installed at load, as the on-demand chunk installs it
+ *  (math-chunk.ts, imported first), so a leg's formulas render in the paint they always rendered in; KaTeX left the viewer's
+ *  bundles for that chunk (iOS item 6, 2026-10-02). `engine` false leaves it out, for the leg that loads the chunk the way the
+ *  pages do (file-view-math-hold-browser.test.ts, with the bundle served by src through pageHtml's `bundleSrc`). */
+export function bundleViewer(engine = true): string {
+  const built = viewerBundles.get(engine);
+  if (built) return built;
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS, rawRows, rawRowForOffset } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews, previewFull } from "./preview";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
+    stdin: { contents: (engine ? 'import "./math-chunk"; ' : "") + 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS, rawRows, rawRowForOffset } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews, previewFull } from "./preview";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FV", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
-  viewerBundle = r.outputFiles[0].text as string;
-  return viewerBundle;
+  const js = r.outputFiles[0].text as string;
+  viewerBundles.set(engine, js);
+  return js;
 }
 
 /** A value inlined into the page's script as a JavaScript literal: JSON with every `<` written `\u003c`, so a fixture
@@ -103,8 +108,10 @@ export const scriptLiteral = (x: unknown): string => JSON.stringify(x).replace(/
  *  body, as the kernel answers it. A 404 carries the kernel's one-word cause in X-Romp-Reason, `window.__reason` (the PR
  *  review's round 2): `missing` by default, a file gone from an absolute path, which the viewer's bar reads as a deletion; a
  *  leg sets another cause (`relative`, `detached`) or null for a kernel from before the header. `window.__paints` counts the seam's onRendered (one per text paint, and one per reflow), `window.__reflows` the
- *  reflows among them (`why` "reflow"), so `__paints - __reflows` is the paints proper. */
-export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, theme = ""): string {
+ *  reflows among them (`why` "reflow"), so `__paints - __reflows` is the paints proper. `bundleSrc`, when given, loads the bundle
+ *  from that URL instead of inlining it (the caller serves it), as the kernel's pages load theirs: a chunk the viewer loads on
+ *  demand derives its URL from that tag (chunk-url.ts). */
+export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, theme = "", bundleSrc = ""): string {
   // The sheets in the kernel's order (_chat_page, _feed_page and _files_page in kernel/kernel.py): the surface's sheet (a
   // <link> there), then a <style> holding THEME_CSS and, on the Files pane, files-pane.css after it. `theme` is that
   // inlined CSS; the print leg passes the kernel's own, since a page rule the sheet must outrank sits there and not in any
@@ -113,7 +120,7 @@ export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, t
   const own = mode === "pane" ? "\n" + web("files-pane.css") : "";
   const head = theme ? `<style>${sheet}</style><style>${theme}${own}</style>` : `<style>${sheet}${own}</style>`;
   return `<!DOCTYPE html><html><head><meta charset=utf-8>${head}</head>
-<body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
+<body class="${mode === "pane" ? "fileview-pane" : ""}">${bundleSrc ? `<script src="${bundleSrc}"></script>` : `<script>${bundleViewer()}</script>`}<script>
 window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__utf8 = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__reason = "missing"; window.__fetches = 0; window.__heads = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
 window.fetch = async function (url, init) {
   url = String(url); window.__fetches++;
@@ -195,14 +202,15 @@ export type Served = { status: number; type?: string; body?: string };
  *  `utf8` fills `window.__utf8` before the open: the `X-Romp-Text-Utf8` the stub puts on each named path's text answer ("0"
  *  for a file the kernel decoded as Latin-1; every other path keeps "1"). `waitFor` is the selector the first paint is awaited
  *  on in place of the default (`.fileview-md > p`, or a `.fv-cl` row under `raw`), for a scene whose first paint holds neither:
- *  an empty document's `.fileview-body > .fileview-err` line (Slice 7, item 6), or a pane in place of the file. */
+ *  an empty document's `.fileview-body > .fileview-err` line (Slice 7, item 6), or a pane in place of the file. `bundleSrc` is
+ *  pageHtml's (the bundle loaded by src; `serve` answers it). */
 export async function openViewer(browser: any, mode: Mode, width: number, height: number,
   opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string;
-    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1">; waitFor?: string } = {}): Promise<Opened> {
+    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1">; waitFor?: string; bundleSrc?: string } = {}): Promise<Opened> {
   const page = await browser.newPage({ viewport: { width, height } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
-  const html = pageHtml(mode, opts.docs || { [REPORT]: LONG }, opts.mtime || MT, opts.theme || "");
+  const html = pageHtml(mode, opts.docs || { [REPORT]: LONG }, opts.mtime || MT, opts.theme || "", opts.bundleSrc || "");
   await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
     const a = opts.serve ? opts.serve(new URL(route.request().url())) : null;
     if (a) return route.fulfill({ status: a.status, contentType: a.type, body: a.body ?? "" });

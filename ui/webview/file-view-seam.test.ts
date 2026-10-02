@@ -2343,7 +2343,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /\nexport const SVG_PICTURE_FAILED = "this image failed to load or decode: the connection may have dropped, or the file may be mid-write or truncated";\n/, "the svg sentence's export line, the guide's pin (tests/test_guide_files_failures.py)");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify; no fallback stands between them since Slice 7 of
   // plans/markdown-viewer.md (item 1): a throw propagates to renderBody's try, whose catch paints the failure line over Raw rows
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
+  assert.match(VIEW, /const block = rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
   // code only (codeOnly, below): the order is read off the statements, so a comment quoting the pinned lines above an adopt-first
   // body cannot satisfy it (the fork PR review's pre-answer record built that reversion and every raw-text pin passed on the comment)
@@ -2719,8 +2719,8 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   for (const l of locals) assert.deepEqual(codeOnly(VIEW.split("function " + l + "(")[1].split("\n}\n")[0]).split("\n").filter((x) => RE_PARSE.test(x)), [], l + " re-parses nothing (a style write)");
   const queue = [...modules];
   while (queue.length) { const m = queue.shift() as string; for (const dep of new Set(Object.values(importsOf(web(m))))) if (!modules.has(dep)) { modules.add(dep); queue.push(dep); } }
-  assert.deepEqual([...modules].sort(), ["file-cap.ts", "file-view-links.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-sanitize.ts", "path-links.ts", "url-links.ts"],
-    "the modules a post-adoption pass reaches, transitively over `./` imports (a new import widens this list first; file-cap.ts came in through url-links.ts, whose anchors carry this page's cap, and computes a string)");
+  assert.deepEqual([...modules].sort(), ["chunk-url.ts", "file-cap.ts", "file-view-links.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-sanitize.ts", "path-links.ts", "url-links.ts"],
+    "the modules a post-adoption pass reaches, transitively over `./` imports (a new import widens this list first; file-cap.ts came in through url-links.ts, whose anchors carry this page's cap, and computes a string; chunk-url.ts through math.ts, whose on-demand KaTeX chunk it derives a URL for)");
   for (const m of modules) assert.doesNotMatch(codeOnly(web(m)), NS_OR_DEFAULT_LOCAL, m + ": no namespace or default import from `./` (the resolver would not follow one)");
   for (const m of modules) assert.deepEqual(codeOnly(web(m)).split("\n").filter((l) => RE_PARSE.test(l)), [], m + ": no re-parsing or re-serializing write in a module a post-adoption pass reaches");
   // code-block.ts, the fence pass's module: its one such write is wrapCodeLines's, and the pass that calls it runs before the chain (pinned above)
