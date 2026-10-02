@@ -1333,25 +1333,60 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "read) and through a dict literal's values (refused before its type is read, below: a call inside a lambda's body, a Content-Type write inside one that is no `_send` definition's own write, and a call whose definition binds the parameter one of its own writes names other than as that parameter); the part before any `;`, stripped and lower-cased, is compared with the types a "
                 "browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml` "
                 "suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript, "
-                "application/javascript among them). A script-running route's page body is the call's second positional argument, read only when "
-                "the call passes it positionally, with no starred argument before it and no `**`, and the definition's one output is its one "
-                "`self.wfile.write(<its second positional parameter>)`, with nothing in its signature or body outside the node kinds, in their "
-                "roles, of the kernel's Handler._send: that write, the definition's last statement, directly after its one `self.end_headers()`, "
-                "and before them send_response with its one argument and send_header, called on self as statements; isinstance, str, len, and getattr of self with a string-constant name and a None or bool default, where neither the definition nor the module binds the name, nothing rebinds it (no function binds it under a `global` declaration, no module-level statement writes it, and "
-                "the file does none of the writes listed below that rebind every builtin) and the module holds no star import; the one "
-                "rebinding of the page parameter to itself or to itself encoded by `.encode(\"utf-8\")`, alone or as the branches of "
-                "an `isinstance(<page>, str)` test (`body = body.encode(\"utf-8\") if isinstance(body, str) else body`); a loop over a parameter's items (`for k, v in (headers or "
-                "{}).items():`) and an if on a parameter or on that getattr, each into header calls; header values built from string constants holding no CR or LF, parameters, the loop's targets, attributes read on self, module constants (a name one top-level plain assignment binds and nothing else at module level, that nothing rebinds and no local or parameter of the definition names, in a module with no star import that writes no name of its module namespace through a computed name and may not rewrite it at run time) whose bound text holds no CR or LF as the census reads it (below), str, len and a `%` format on a string constant whose right operand is one of those or a tuple of them; and a signature of positional parameters, none positional-only, with None defaults and no annotation. The definition may run, before that one rebinding of the page, statements that build the page it writes, each read for the text it puts there and refused by name in any other shape: a stamp `<page> = F(<the definition's own parameters, positional, none starred and no keyword>)`, F a bare name the served pass follows only where it proves a module function a plain def and reads its returns; an injection `<page> = <page>.replace(<a string constant>, <value>)`, or with a third argument an int constant, whose value the served pass reads as page text; a name `<name> = <value>` no parameter, the page or self names, read where an injection's value reads it; a flag `<name> = True` or `= False` read only as an if's test, any other assignment of it refused; a non-body header write `<parameter> = <a string constant holding no CR or LF>`; and an if with no else whose test is a flag, a parameter, getattr of self with a string-constant name and a None or bool default, `isinstance(<page>, str)`, `<parameter>.startswith(<a string constant>)`, `<a string constant> in <page>`, or the `and` of those, whose body holds these statements. Any other "
-                "script-running call fails the run by name, "
-                "its reason naming the road (a second write, a write through an alias, a print to a stream and, for any other statement or "
-                "expression, its node kind and line among the reasons), among them a keyword body, a starred or `**` call, a definition whose one "
-                "write is of another parameter, a local or an expression, or that writes nothing, a method's definition that binds self again, in "
-                "any form (a lambda's or a nested def's parameter among them), or declares it global, any other read of an attribute named "
-                "`write`, `writelines`, `send`, `sendall`, `sendfile` or `sendmsg`, called or not, a string constant equal to one of those names, "
-                "a reference to the write's receiver other than as its receiver, and in the definition a statement after the end_headers (which "
-                "writes the header buffer to the stream, so a header call after it would reach the body), a second end_headers or none, any other "
-                "rebinding of the page parameter, another codec name or a second argument to `.encode` (either can name a codec or an error "
-                "handler the file registers at run time), a store or delete of an attribute or a subscript, a read of a name the module binds other than a header value's module constant or in the text the page-building statements read, a module constant as a header value whose bound text holds a CR or LF or reads a name the census does not follow by binding (by name), a call not listed above, and a nested def, class or lambda. The reader governs the definition's own text, and code the definition "
+                "application/javascript among them). "
+                ""
+                "A script-running route's page body is the call's second positional argument, read only when the call passes it positionally, "
+                "with no starred argument before it and no `**`, and the definition's one output is its one `self.wfile.write(<its second "
+                "positional parameter>)`, with a signature of positional parameters, none positional-only, with None defaults and no annotation, "
+                "no node in its body of a kind the kernel's Handler._send holds none of, and every statement of its own body one of that "
+                "definition's statement shapes, which the census lists from it (_SEND_SHAPES): a statement's place in the order, its kind, each "
+                "operator, each attribute's name, the codec's name by its value, and each other operand by its class: self (the method's first "
+                "parameter); the page (its second positional parameter); another parameter; a name a loop's target binds, read in that loop; any "
+                "other name a statement stores that is no parameter, a local (a loop's target among them); a constant by its type (a string, a "
+                "bool, an int, None); a builtin by its name (str, len, isinstance and getattr in the shapes below), where neither the definition "
+                "nor the module binds the name, nothing rebinds it (no function binds it under a `global` declaration, no module-level statement "
+                "writes it, and the file does none of the writes listed below that rebind every builtin) and the module holds no star import; a "
+                "module constant (a name one top-level plain assignment binds and nothing else at module level, that nothing rebinds and no local "
+                "or parameter of the definition names, in a module with no star import that writes no name of its module namespace through a "
+                "computed name and may not rewrite it at run time) whose bound text holds no CR or LF as the census reads it (below); an "
+                "attribute on self other than a header method or wfile, one class whatever its name; and page text, which the served pass reads. "
+                "The shapes, `<str>` a string constant and every if and loop with no else: before the end_headers, any number of each of the "
+                "stamp `<page> = <page text>`; a flag `<flag> = <a bool constant>`; the injection's if, `if getattr(self, <str>, <a bool "
+                "constant>) and isinstance(<page>, str) and <parameter>.startswith(<str>) and <str> in <page>:` whose body is `<text name> = "
+                "<page text>`, then `if getattr(self, <str>, None):` holding `<text name> = <page text>` and `<flag> = <a bool constant>`, then "
+                "`<page> = <page>.replace(<str>, <page text>, <an int constant>)`; the flag's if, `if <flag>: <parameter> = <str>`; the codec, "
+                "`<page> = <page>.encode(\"utf-8\") if isinstance(<page>, str) else <page>`; the response line, "
+                "`self.send_response(<parameter>)`; a header from a parameter, `self.send_header(<str>, <parameter>)`; the length header, "
+                "`self.send_header(<str>, str(len(<page>)))`; a constant header, `self.send_header(<str>, <str>)`; a constant header under a "
+                "getattr test, `if getattr(self, <str>, <a bool constant>): self.send_header(<str>, <str>)`; the headers loop, `for <target>, "
+                "<target> in (<parameter> or {}).items(): self.send_header(<target>, <target>)`, each `<target>` a name the loop's target binds; "
+                "a header under its parameter's test, `if <parameter>: self.send_header(<str>, <parameter>)`; a formatted header under a getattr "
+                "test, `if getattr(self, <str>, None): self.send_header(<str>, <str> % (<module constant>, <attribute on self>))`; and an "
+                "attribute header under a getattr test, `if getattr(self, <str>, None):` holding `self.send_header(<str>, <attribute on self>)` "
+                "then `self.send_header(<str>, <str>)`; directly before the write, the end_headers, `self.end_headers()`; and last, the write, "
+                "`self.wfile.write(<page>)`. The page text is what the statements that build the page put there before the codec, each read for "
+                "the text it puts there: a stamp's `F(<the definition's own parameters, positional, none starred and no keyword>)`, F a bare name "
+                "the served pass follows only where it proves a module function a plain def and reads its returns; an injection's value; and the "
+                "value of a text name, a name no parameter, the page or self names, read where an injection's value reads it. A flag is a name no "
+                "parameter, the page or self names, assigned a bool constant and read only as an if's test, any other assignment of it refused; "
+                "the parameter the flag's if assigns is a non-body header write, neither the page nor self, its string constant holding no CR or "
+                "LF. Any other script-running call fails the run by name, its reason naming the road (a second write, a write through an alias, a "
+                "print to a stream; a node of a kind the shapes hold none of, by its kind and line; any other statement by its kind and line and "
+                "the shape it lacks, named among those the census lists for its kind at its place, or by the order it stands outside; and in a "
+                "statement of a listed shape, a builtin or a module constant whose proof fails, by that proof), among them a keyword body, a "
+                "starred or `**` call, a definition whose one write is of another parameter, a local or an expression, or that writes nothing, a "
+                "method's definition that binds self again, in any form (a lambda's or a nested def's parameter among them), or declares it "
+                "global, any other read of an attribute named `write`, `writelines`, `send`, `sendall`, `sendfile` or `sendmsg`, called or not, a "
+                "string constant equal to one of those names, a reference to the write's receiver other than as its receiver, and in the "
+                "definition a statement after the end_headers (which writes the header buffer to the stream, so a header call after it would "
+                "reach the body), a second end_headers or none, any other rebinding of the page parameter, another codec name or a second "
+                "argument to `.encode` (either can name a codec or an error handler the file registers at run time), a store or delete of an "
+                "attribute or a subscript, a read of a name the module binds other than a module constant in a formatted header's tuple or in "
+                "page text, a module constant there whose bound text holds a CR or LF or reads a name the census does not follow by binding (by "
+                "name), a string constant holding a CR or LF in a header call (by name), a call in no listed shape, and a nested def, class or "
+                "lambda."
+                ""
+                " The reader governs the definition's own text, and code the definition "
                 "runs from outside that text is not read: a header value is not scanned (a module constant used as one is read only for a CR or LF: each string or bytes constant in its value and in the value of each module constant that value names, followed by binding (a method call's receiver, as `T` in `T.lower()`, among the names followed), any other name there refusing it, save a bare name a call calls (`f` in `f(...)`); a CR or LF the value computes at run time, a call's return or a number formatted as a character, is not read, its witnesses a CR LF from chr and one from a `%c` of an int), and a response that a Content-Type in its headers "
                 "argument, passed or defaulted, makes a page is outside the served pass, the call being typed by its content-type argument; nor is "
                 "code the definition runs through an object it is handed (a parameter's methods, its mapping's items, its __str__), code behind a "
@@ -3440,27 +3475,28 @@ BC_PLANT_LINES = (("c1s", '_PROBE_C1S["page"])'), ("c1g", "_PROBE_C1G)"), ("c2ct
                   ("gti", "_PROBE_GTI)"), ("gtf", "_PROBE_GTF)"), ("gtd", "_PROBE_GTD)"), ("gtc", "_PROBE_GTC)"), ("gte", "_PROBE_GTE)"),
                   ("gri", "+ _PROBE_GRI,"), ("grd", "+ _probe_grd(),"), ("grb", '"<p>grb</p>" + hex,'), ("grm", "+ _PROBE_GRM,"))
 
-# A of the seventh round (2026-09-25), the Python readers failing closed, planted in the same pass. The shapes a reader does not
-# read each refuse by name with the reason the ruling's table gives; the two limits each hold a witness at its outcome. In
+# A of the seventh round (2026-09-25), the Python readers failing closed, planted in the same pass. The shapes a reader does not read
+# each refuse by name with the reason the ruling's table gives; the two limits each hold a witness at its outcome. In
 # kernel/kernel.py's text: do_GET branches before the page dispatch (A_ROUTES) with what they read appended at the module's end
 # (A_DEFS): (a) a walrus in each part of a module-level def's or class's header, and in a def inside a module-level if, beside the
 # name's one assignment, as a page's name and as a route's type; (c) a walrus in a nested def's, class's or lambda's header inside a
 # page function (read as a local with its value) and inside do_GET (a route's type unresolved); (d) a callee, a bare name and a
-# receiver the page function's scope binds in a form the reader does not read as the module's (a local, a loop, with or
-# comprehension target, a parameter and an except name sharing a module function's name, a function-level import, a nested class,
-# a nested def beside an assignment, a del, a global, a nonlocal), and a parameter callee sharing no module function's name, which
-# stays a value slot; (e) an import, a def and a class bound once inside a module-level block, in each role; and the cross-file
-# override's witness route. In walked Python files of their own (A_FILES, each a synthetic module under kernel/, since a
-# file-wide refusal (g) or a star import (b) decides every route in its file): (b) a star import's four roles and a bare `_send`
-# call under it; (f) a decorated `_send` at both reaches; (g) a `_send` bound more than once or other than by one def statement;
-# (h) a `_send` definition that writes anything besides its page parameter, each road; the sixth round's c3p and tsd plants, moved
-# here from kernel/kernel.py (a second `_send` there would refuse every route of that file); the limits' witnesses; and, since the
-# seventh round's review, (r) a bare `_send` call a scope around it binds and a call that reaches no definition the census reads, each
-# with a reason true for it, and the receiver bases that are calls (cb). Since the eighth round's review (B_ROADS, B_FILES): (t)
-# and (k) a `_send` definition holding a node outside the kinds and roles of the kernel's Handler._send, (q) a builtin the module
-# binds or a function rebinds, the kernel's shape, and the witnesses of that round's limits. The walrus in an annotation (hda, hdv,
-# hdw, hdr) parses on every interpreter and does not compile on 3.14, where a walrus in an annotation is a syntax error at compile
-# time; the census only parses, so those plants read the same on every cell.
+# receiver the page function's scope binds in a form the reader does not read as the module's (a local, a loop, with or comprehension
+# target, a parameter and an except name sharing a module function's name, a function-level import, a nested class, a nested def
+# beside an assignment, a del, a global, a nonlocal), and a parameter callee sharing no module function's name, which stays a value
+# slot; (e) an import, a def and a class bound once inside a module-level block, in each role; and the cross-file override's witness
+# route. In walked Python files of their own (A_FILES, each a synthetic module under kernel/, since a file-wide refusal (g) or a star
+# import (b) decides every route in its file): (b) a star import's four roles and a bare `_send` call under it; (f) a decorated
+# `_send` at both reaches; (g) a `_send` bound more than once or other than by one def statement; (h) a `_send` definition that writes
+# anything besides its page parameter, each road; the sixth round's c3p and tsd plants, moved here from kernel/kernel.py (a second
+# `_send` there would refuse every route of that file); the limits' witnesses; and, since the seventh round's review, (r) a bare
+# `_send` call a scope around it binds and a call that reaches no definition the census reads, each with a reason true for it, and the
+# receiver bases that are calls (cb). Since the eighth round's review (B_ROADS, B_FILES): (t) and (k) a `_send` definition holding a
+# node outside the kinds and roles of the kernel's Handler._send (since the reviewer's 02:29Z ruling of 2026-10-02 a statement outside
+# that definition's statement shapes, or a statement of a kind outside its kinds), (q) a builtin the module binds or a function
+# rebinds, the kernel's shape, and the witnesses of that round's limits. The walrus in an annotation (hda, hdv, hdw, hdr) parses on
+# every interpreter and does not compile on 3.14, where a walrus in an annotation is a syntax error at compile time; the census only
+# parses, so those plants read the same on every cell.
 A_PAGE_NONE = "<p>none</p>"   # the value a probe name's one assignment binds, beside the binding the reader must not miss
 
 
@@ -3568,6 +3604,33 @@ def _a_extra(tag):
     return '_EXTRA = "%s"' % (FGH_PAGE % (tag + "x"))
 
 
+# The gate's refusal of a statement of the definition's own body in no listed shape (_send_gate, _SEND_SHAPES; the reviewer's 02:29Z
+# ruling of 2026-10-02 made ok() an allowlist of exact statement shapes): its kind and line and the shape it lacks, named among the
+# shapes the census lists for its kind at its place (every statement here stands before the end_headers); a statement outside the
+# order (after the write, or a write with no end_headers directly before it) by the order
+_SHAPE_NAMES = {"Assign": ("the stamp", "a flag", "the codec"),
+                "If": ("the injection's if", "the flag's if", "a constant header under a getattr test", "a header under its parameter's test",
+                       "a formatted header under a getattr test", "an attribute header under a getattr test"),
+                "Expr": ("the response line", "a header from a parameter", "the length header", "a constant header"),
+                "For": ("the headers loop",)}
+
+
+def _no_shape(kind, place="before the end_headers", names=None):
+    """The gate's reason for a statement of `kind` at `place` in no listed shape, with %d for its line."""
+    names = _SHAPE_NAMES[kind] if names is None else names
+    art = "an" if kind[0] in "AEIO" else "a"
+    return "%s %s statement at line %%d in no shape the census lists for %s %s %s (%s)" % (
+        art, kind, art, kind, place, ", ".join(names[:-1]) + " or " + names[-1] if len(names) > 1 else names[0])
+
+
+def _no_order(kind):
+    """The gate's reason for a statement of `kind` outside the order, with %d for its line."""
+    return ("%s %s statement at line %%d outside the order (the write, the definition's last statement, directly after its one "
+            "end_headers, and every other statement before them)" % ("an" if kind[0] in "AEIO" else "a", kind))
+
+
+_B_ASSIGN, _B_EXPR, _B_IF, _B_FOR = (_no_shape(k) for k in ("Assign", "Expr", "If", "For"))
+_B_ORDER = _no_order("Expr")
 A_H_ROADS = (("hw2", "a second write of an expression", "        self.wfile.write(_EXTRA.encode())\n", "", "a second write"),
              ("hwl", "writelines", "        self.wfile.writelines([_EXTRA.encode()])\n", "", "a second write"),
              ("hal", "w = self.wfile.write; w(page)", "        w = self.wfile.write\n        w(_EXTRA.encode())\n", "", "a write through an alias"),
@@ -3578,22 +3641,23 @@ A_H_ROADS = (("hw2", "a second write of an expression", "        self.wfile.writ
              ("hgs", 'getattr(self.connection, "sendall")(page)', '        getattr(self.connection, "sendall")(_EXTRA.encode())\n', "",
               "a write method named by a string"),
              ("hjd", 'json.dump(page, self.request.makefile("w"))', '        json.dump(_EXTRA, self.request.makefile("w"))\n', "import json\n\n",
-              ("an Expr statement outside its listed roles at line %d", "json.dump(")),
+              (_B_EXPR, "json.dump(")),
              ("hcf", "shutil.copyfileobj(src, self.wfile)", '        shutil.copyfileobj(open(__file__, "rb"), self.wfile)\n', "import shutil\n\n",
               "a reference to the write's receiver other than as its receiver"),
              ("hhs", "helper(self, page)", "        _probe_helper(self, _EXTRA)\n", "",
-              ("an Expr statement outside its listed roles at line %d", "_probe_helper(self, _EXTRA)")),
+              (_B_EXPR, "_probe_helper(self, _EXTRA)")),
              ("hhr", "helper(self.request, page)", "        _probe_helper(self.request, _EXTRA)\n", "",
-              ("an Expr statement outside its listed roles at line %d", "_probe_helper(self.request, _EXTRA)")),
+              (_B_EXPR, "_probe_helper(self.request, _EXTRA)")),
              ("hrr", "a reference to the stream beside its write", '        self.send_header("X-Stream", str(self.wfile))\n', "",
               "a reference to the write's receiver other than as its receiver"),
              ("hbs", "len bound at module level", '        self.send_header("Content-Length", str(len(body)))\n', "len = lambda t: 0\n",
-              ("a Name expression outside its listed roles at line %d", "str(len(body))")),
+              (_B_EXPR, "str(len(body))")),
              ("hpb", "a method on a parameter the definition rebinds to the socket", "        cache = self.connection\n        cache.flush_page(_EXTRA)\n", "",
-              ("an Assign statement outside its listed roles at line %d", "cache = self.connection")),
+              (_B_ASSIGN, "cache = self.connection")),
              # a builtin _body_param reads (len, str) bound inside the definition in another form, and a parameter rebound so, each a local
              # or a rebinding the reader counts since the seventh round's review (extra5-1); since the eighth round's review each refuses at
-             # the gate (_send_gate), its reason naming the node kind and its line, found by the anchor after it (_a_why)
+             # the gate (_send_gate), its reason naming the statement's kind and its line (since the reviewer's 02:29Z ruling of
+             # 2026-10-02 hbx's with the shape it lacks), found by the anchor after it (_a_why)
              ("hbi", "len bound by an import in the definition", "        from json import dumps as len\n"
               "        self.send_header(\"Content-Length\", str(len(body)))\n", "", ("an ImportFrom statement at line %d", "from json import dumps as len")),
              ("hbd", "str bound by a def statement in the definition", "        def str(x):\n            return x\n"
@@ -3607,7 +3671,7 @@ A_H_ROADS = (("hw2", "a second write of an expression", "        self.wfile.writ
              ("hbe", "len bound by an except name in the definition", "        try:\n            pass\n        except Exception as len:\n            pass\n"
               "        self.send_header(\"Content-Length\", str(len(body)))\n", "", ("a Try statement at line %d", "try:")),
              ("hbx", "len deleted in the definition", "        self.send_header(\"Content-Length\", str(len(body)))\n        del len\n", "",
-              ("a Name expression outside its listed roles at line %d", "str(len(body))")),
+              (_B_EXPR, "str(len(body))")),
              ("hpi", "a method on a parameter the definition rebinds by an import", "        import json as cache\n        cache.flush_page(_EXTRA)\n", "",
               ("an Import statement at line %d", "import json as cache")),
              ("hpd", "a method on a parameter the definition rebinds by a def statement", "        def cache():\n            pass\n"
@@ -3616,16 +3680,16 @@ A_H_ROADS = (("hw2", "a second write of an expression", "        self.wfile.writ
              # with a default, a keyword-only one, `*args`), and a parameter of the definition rebound by a lambda's parameter or a nested
              # def's `**kwargs` of its name, each counted as the definition's own binding
              ("hla", "len bound by a lambda's parameter in the definition", "        [body].sort(key=lambda x, len=print: len(x))\n", "",
-              ("an Expr statement outside its listed roles at line %d", "lambda x, len=print")),
+              (_B_EXPR, "lambda x, len=print")),
              ("hls", "str bound by a lambda's keyword-only parameter in the definition", "        [body].sort(key=lambda x, *, str=print: str(x))\n", "",
-              ("an Expr statement outside its listed roles at line %d", "lambda x, *, str=print")),
+              (_B_EXPR, "lambda x, *, str=print")),
              ("hdl", "len bound by a nested def's parameter in the definition", "        def _probe_nest(len=print):\n            return len(body)\n",
               "", ("a FunctionDef statement at line %d", "def _probe_nest(len=print):")),
              ("hdi", "isinstance bound by a nested def's *args in the definition", "        def _probe_nest(*isinstance):\n"
               "            return isinstance(body, bytes)\n", "", ("a FunctionDef statement at line %d", "def _probe_nest(*isinstance):")),
              ("hpl", "a method on a parameter a lambda's parameter in the definition rebinds",
               "        [body].sort(key=lambda x, cache=print: cache.flush_page(x))\n", "",
-              ("an Expr statement outside its listed roles at line %d", "lambda x, cache=print")),
+              (_B_EXPR, "lambda x, cache=print")),
              ("hpk", "a method on a parameter a nested def's **kwargs in the definition rebinds", "        def _probe_nest(**cache):\n"
               "            cache.flush_page(_EXTRA)\n", "", ("a FunctionDef statement at line %d", "def _probe_nest(**cache):")),
              # the method's self bound again inside the definition (by an assignment, a lambda's parameter or an import) or declared
@@ -3653,7 +3717,7 @@ A_H_OTHER = (("hnw", "a definition that writes nothing", _a_module("hnw", (A_SEN
               _a_module("hmh", head=_a_extra("hmh") + '\n\n\ndef _send(code, body, ctype, h=None):\n    h.send_header("Content-Type", ctype)\n'
                         "    h.flush_page(_EXTRA)\n    h.wfile.write(body)\n",
                         call='return _send(200, "%s", "text/html", self)' % (FGH_PAGE % "hmh")),
-              ("an Expr statement outside its listed roles at line %d", 'h.send_header("Content-Type", ctype)')))
+              (_B_EXPR, 'h.send_header("Content-Type", ctype)')))
 A_H_HELPERS = {"hhs": "def _probe_helper(h, t):\n    h.wfile.write(t.encode())\n", "hhr": "def _probe_helper(sock, t):\n    sock.sendall(t.encode())\n"}
 # tests-4: tch's served body holds a lone surrogate UTF-8 cannot encode, so `.encode("utf-8", "h")` runs the registered "h" handler
 _A_H_CALL = {"tch": 'return self._send(200, "%s\\udc80", "text/html")' % (FGH_PAGE % "tch")}
@@ -3686,22 +3750,26 @@ def _a_why(why, text):
 
 # The eighth round's review, B and D (correctness-2, extra5-1, extra5-2, extra6-1, extra5-3; extra6-3, correctness-3): a `_send`
 # definition is read only when every node of its signature and body is of a kind, in a role, the kernel's Handler._send holds
-# (_send_gate). Each plant is A_SEND with the lines of `extra` before its end_headers, in a probe module of its own whose `_EXTRA` holds
-# the text the definition would add (a fetch tagged `<tag>x`, never scanned), after `head`: (tag, label, extra, head, the reason at
-# the fix as _a_why reads it). (t) The executed plants of the ruling, each read at the reviewed head, or refused there as "a call the
-# reader does not read" (t11, t14): a rebinding of the page parameter in every form, code a module name, self or the class runs with
-# no call node, a nested def, class or lambda, a global declaration and a return; the codec's name and a second, error-handler
-# argument (tc4's module registers the codec "probe_e4" and tch's the error handler "h"; tch's body holds a lone surrogate so the
-# handler runs); a CR or LF in a header call's string constant and
-# a second argument to send_response (the two closures ruled for header values). (k) One plant per node kind the table excludes that
-# a (t) or (h) plant exercises, holding that kind and nothing else outside the table (its operator, argument list, context or
-# pattern counted with it), its other nodes a parameter, self or a string constant in their listed roles: the plant a mutant that
-# adds the kind reds. (q) The builtin allowance: len rebound under a global declaration in a module function, getattr bound by a
-# module-level def and getattr rebound under a global declaration, each read at the reviewed head, and len in a module that holds a
-# star import, refused there as "a call the reader does not read".
+# (_send_gate); since the reviewer's 02:29Z ruling of 2026-10-02 the roles are that definition's statement shapes (_SEND_SHAPES), a
+# statement in none of them refused by its kind, its line and the shapes the census lists for its kind at its place (_B_ASSIGN,
+# _B_EXPR, _B_IF, _B_FOR), or by the order (_B_ORDER), and a node of another kind still by its kind and line. Each plant is A_SEND
+# with the lines of `extra` before its end_headers, in a probe module of its own whose `_EXTRA` holds the text the definition would
+# add (a fetch tagged `<tag>x`, never scanned), after `head`: (tag, label, extra, head, the reason at the fix as _a_why reads it).
+# (t) The executed plants of the ruling, each read at the reviewed head, or refused there as "a call the reader does not read" (t11,
+# t14): a rebinding of the page parameter in every form, code a module name, self or the class runs with no call node, a nested def,
+# class or lambda, a global declaration and a return; the codec's name and a second, error-handler argument (tc4's module registers
+# the codec "probe_e4" and tch's the error handler "h"; tch's body holds a lone surrogate so the handler runs; each since the
+# reviewer's 02:29Z ruling the codec's if-expression with that one change, a near miss of the codec's shape); a CR or LF in a header
+# call's string constant and a second argument to send_response (the two closures ruled for header values). (k) One plant per node
+# kind the table excludes that a (t) or (h) plant exercises, holding that kind and nothing else outside the table (its operator,
+# argument list, context or pattern counted with it), its other nodes a parameter, self or a string constant in their listed roles:
+# the plant a mutant that adds the kind reds where the statement is of that kind, its refusal moving to the statement's shape; since
+# the reviewer's 02:29Z ruling a kind inside a statement (a BinOp Add, a Compare, an int Constant, JoinedStr, Lambda, List,
+# NamedExpr, Pass in an if's body, Subscript) leaves that statement in no listed shape, refused by its shape, which no added kind
+# changes. (q) The builtin allowance: len rebound under a global declaration in a module function, getattr bound by a module-level
+# def and getattr rebound under a global declaration, each read at the reviewed head, and len in a module that holds a star import,
+# refused there as "a call the reader does not read".
 _B_W = "_W = None\n"   # a module name the plants reach; code the definition ran on it could write more text
-_B_ASSIGN, _B_EXPR = "an Assign statement outside its listed roles at line %d", "an Expr statement outside its listed roles at line %d"
-_B_NAME = "a Name expression outside its listed roles at line %d"
 _B_HDR = '        self.send_header("X-Probe", "1")\n'
 # tests-4 (the eighth round's ruling B, carried out): tc4's module registers the codec "probe_e4", whose encoder returns _EXTRA's bytes, so the
 # encode call in its _send serves the planted fetch; tch's registers the error handler "h", which returns _EXTRA when the served
@@ -3716,11 +3784,11 @@ B_ROADS = (("t01", "the page parameter rebound to a module constant", "        b
            ("t06", "the page parameter rebound by an augmented assignment", "        body += _EXTRA\n", "", ("an AugAssign statement at line %d", "body += _EXTRA")),
            ("t07", "the page parameter rebound by a walrus statement", "        (body := body + _EXTRA)\n", "", (_B_EXPR, "(body := body")),
            ("t08", "the page parameter rebound by a walrus in an if's test", "        if (body := body + _EXTRA):\n    " + _B_HDR, "",
-            ("an If statement outside its listed roles at line %d", "if (body := body")),
+            (_B_IF, "if (body := body")),
            ("t09", "the page parameter rebound by an annotated assignment", "        body: str = body + _EXTRA\n", "",
             ("an AnnAssign statement at line %d", "body: str")),
            ("t10", "the page parameter as a loop target", "        for body in (body + _EXTRA,):\n    " + _B_HDR, "",
-            ("a For statement outside its listed roles at line %d", "for body in")),
+            (_B_FOR, "for body in")),
            ("t11", "the page parameter as a with target", "        with open(__file__) as body:\n    " + _B_HDR, "", ("a With statement at line %d", "as body:")),
            ("t12", "the page parameter rebound to a join", '        body = "".join([body, _EXTRA])\n', "", (_B_ASSIGN, '"".join(')),
            ("t13", "the page parameter encoded by a codec a module constant names", "        body = body.encode(_CODEC)\n", '_CODEC = "probe_t13"\n',
@@ -3735,7 +3803,7 @@ B_ROADS = (("t01", "the page parameter rebound to a module constant", "        b
            ("t19", "a with on a module name", "        with _W:\n    " + _B_HDR, _B_W, ("a With statement at line %d", "with _W:")),
            ("t20", "a with on an attribute of self", "        with self.server.lock:\n    " + _B_HDR, "", ("a With statement at line %d", "with self.server")),
            ("t21", "a loop over a module name", '        for _k in _W:\n            self.send_header("X-Probe", _k)\n', _B_W,
-            ("a For statement outside its listed roles at line %d", "for _k in _W:")),
+            (_B_FOR, "for _k in _W:")),
            ("t22", "an import", "        import json\n", "", ("an Import statement at line %d", "import json")),
            ("t23", "a subscript of a module name", "        _W[code]\n", _B_W, (_B_EXPR, "_W[code]")),
            ("t24", "an attribute read on a module name", "        _W.flush_page\n", _B_W, (_B_EXPR, "_W.flush_page")),
@@ -3757,8 +3825,10 @@ B_ROADS = (("t01", "the page parameter rebound to a module constant", "        b
            ("t38", "a lambda", "        _probe_lambda = lambda: _EXTRA\n", "", (_B_ASSIGN, "_probe_lambda = lambda")),
            ("t39", "a global declaration", "        global _W\n", _B_W, ("a Global statement at line %d", "global _W")),
            ("t40", "a return before the write", '        return ""\n', "", ("a Return statement at line %d", 'return ""')),
-           ("tc4", "a codec name the file registers", '        body = body.encode("probe_e4")\n', _TC4_REG, (_B_ASSIGN, 'body.encode("probe_e4")')),
-           ("tch", "a second, error-handler argument the file registers", '        body = body.encode("utf-8", "h")\n', _TCH_REG, (_B_ASSIGN, 'body.encode("utf-8", "h")')),
+           ("tc4", "a codec name the file registers", '        body = body.encode("probe_e4") if isinstance(body, str) else body\n', _TC4_REG,
+            (_B_ASSIGN, 'body.encode("probe_e4")')),
+           ("tch", "a second, error-handler argument the file registers", '        body = body.encode("utf-8", "h") if isinstance(body, str) else body\n',
+            _TCH_REG, (_B_ASSIGN, 'body.encode("utf-8", "h")')),
            ("tcr", "a CR LF in a header call's string constant", '        self.send_header("X-Probe", "1\\r\\n\\r\\n%s")\n' % (FGH_PAGE % "tcrx"), "",
             ("a Constant holding a CR or LF in a header call at line %d", '"X-Probe", "1\\r\\n')),
            ("tcc", "a lone CR in a header call's string constant", '        self.send_header("X-Probe", "1\\r%s")\n' % (FGH_PAGE % "tccx"), "",
@@ -3766,50 +3836,52 @@ B_ROADS = (("t01", "the page parameter rebound to a module constant", "        b
            ("tcl", "a lone LF in a header call's string constant", '        self.send_header("X-Probe", "1\\n%s")\n' % (FGH_PAGE % "tclx"), "",
             ("a Constant holding a CR or LF in a header call at line %d", '"X-Probe", "1\\n')),
            ("tsr", "a second argument to send_response", '        self.send_response(code, "%s")\n' % (FGH_PAGE % "tsrx"), "",
-            ("a Call expression outside its listed roles at line %d", "self.send_response(code, ")),
+            (_B_EXPR, "self.send_response(code, ")),
            ("kaa", "an AnnAssign alone", '        code: "int" = code\n', "", ("an AnnAssign statement at line %d", 'code: "int" = code')),
            ("kau", "an AugAssign alone", '        code += "1"\n', "", ("an AugAssign statement at line %d", 'code += "1"')),
            ("kad", "a BinOp Add alone", '        self.send_header("X-Probe", ctype + "1")\n', "",
-            ("a BinOp expression outside its listed roles at line %d", 'ctype + "1"')),
+            (_B_EXPR, 'ctype + "1"')),
            ("kcl", "a ClassDef alone", "        class _ProbeNest:\n    " + _B_HDR, "", ("a ClassDef statement at line %d", "class _ProbeNest:")),
-           ("kco", "a Compare alone", '        self.send_header("X-Probe", code == ctype)\n', "", ("a Compare expression outside its listed roles at line %d", "code == ctype")),
+           ("kco", "a Compare alone", '        self.send_header("X-Probe", code == ctype)\n', "", (_B_EXPR, "code == ctype")),
            ("kci", "an int Constant alone", '        self.send_header("X-Probe", 1)\n', "",
-            ("a Constant expression outside its listed roles at line %d", '"X-Probe", 1)')),
+            (_B_EXPR, '"X-Probe", 1)')),
            ("kde", "a Delete alone", "        del code\n", "", ("a Delete statement at line %d", "del code")),
            ("kjs", "a JoinedStr alone (its FormattedValue with it)", '        self.send_header("X-Probe", f"{ctype}")\n', "",
-            ("a JoinedStr expression at line %d", 'f"{ctype}"')),
+            (_B_EXPR, 'f"{ctype}"')),
            ("kfd", "a FunctionDef alone", "        def _probe_nest():\n    " + _B_HDR, "", ("a FunctionDef statement at line %d", "def _probe_nest():")),
            ("kgl", "a Global alone", "        global _probe_g\n", "", ("a Global statement at line %d", "global _probe_g")),
            ("kim", "an Import alone", "        import json\n", "", ("an Import statement at line %d", "import json")),
            ("kif", "an ImportFrom alone", "        from json import dumps\n", "", ("an ImportFrom statement at line %d", "from json import dumps")),
-           ("kla", "a Lambda alone", '        self.send_header("X-Probe", str(lambda: code))\n', "", ("a Lambda expression at line %d", "lambda: code")),
-           ("kli", "a List alone", '        self.send_header("X-Probe", str([ctype]))\n', "", ("a List expression at line %d", "str([ctype])")),
+           ("kla", "a Lambda alone", '        self.send_header("X-Probe", str(lambda: code))\n', "", (_B_EXPR, "lambda: code")),
+           ("kli", "a List alone", '        self.send_header("X-Probe", str([ctype]))\n', "", (_B_EXPR, "str([ctype])")),
            ("kma", "a Match alone", "        match code:\n            case _:\n        " + _B_HDR, "", ("a Match statement at line %d", "match code:")),
-           ("kne", "a NamedExpr alone", '        self.send_header("X-Probe", (_probe_n := ctype))\n', "", ("a NamedExpr expression at line %d", "_probe_n := ctype")),
-           ("kpa", "a Pass alone", "        if code:\n            pass\n", "", ("a Pass statement at line %d", "pass")),
+           ("kne", "a NamedExpr alone", '        self.send_header("X-Probe", (_probe_n := ctype))\n', "", (_B_EXPR, "_probe_n := ctype")),
+           ("kpa", "a Pass alone", "        if code:\n            pass\n", "", (_B_IF, "if code:")),
            ("kre", "a Return alone", "        return code\n", "", ("a Return statement at line %d", "return code")),
-           ("ksu", "a Subscript alone", '        self.send_header("X-Probe", ctype["k"])\n', "", ("a Subscript expression at line %d", 'ctype["k"]')),
+           ("ksu", "a Subscript alone", '        self.send_header("X-Probe", ctype["k"])\n', "", (_B_EXPR, 'ctype["k"]')),
            ("ktr", "a Try alone", "        try:\n    " + _B_HDR + "        finally:\n    " + _B_HDR, "", ("a Try statement at line %d", "try:")),
            ("kwi", "a With alone", "        with ctype:\n    " + _B_HDR, "", ("a With statement at line %d", "with ctype:")),
            ("qgl", "len rebound under a global declaration in a module function", '        self.send_header("Content-Length", str(len(body)))\n',
-            "def _setup():\n    global len\n    len = lambda t: 0\n\n\n", (_B_NAME, "str(len(body))")),
+            "def _setup():\n    global len\n    len = lambda t: 0\n\n\n", (_B_EXPR, "str(len(body))")),
            ("qgd", "getattr bound by a module-level def", '        if getattr(self, "_probe_x", None):\n    ' + _B_HDR,
-            "def getattr(o, n, d=None):\n    o.wfile.write(_EXTRA.encode())\n    return d\n\n\n", (_B_NAME, "if getattr(self")),
+            "def getattr(o, n, d=None):\n    o.wfile.write(_EXTRA.encode())\n    return d\n\n\n", (_B_IF, "if getattr(self")),
            ("qgg", "getattr rebound under a global declaration in a module function", '        if getattr(self, "_probe_x", None):\n    ' + _B_HDR,
             "def _probe_getattr(o, n, d=None):\n    o.wfile.write(_EXTRA.encode())\n    return d\n\n\ndef _setup():\n    global getattr\n"
-            "    getattr = _probe_getattr\n\n\n", (_B_NAME, "if getattr(self")),
+            "    getattr = _probe_getattr\n\n\n", (_B_IF, "if getattr(self")),
            ("qgs", "len in a module that holds a star import", '        self.send_header("Content-Length", str(len(body)))\n', "from .pages import *\n\n\n",
-            (_B_NAME, "str(len(body))")))
-# The kernel's Handler._send in its shape (the codec line, the loop over a headers argument, a cache test and two getattr tests with a
-# `%` format on an attribute of self), with synthetic header names: read at both heads, its page's fetch listed; the witnesses' calls
-# go through it too
+            (_B_EXPR, "str(len(body))")))
+# The kernel's Handler._send in its shapes (the codec line, the loop over a headers argument, a cache test, a getattr test with a bool
+# default guarding a constant header, and a getattr test guarding an attribute of self and a constant header), with synthetic header
+# names: read at both heads, its page's fetch listed; the witnesses' calls go through it too. Its first getattr test formatted an
+# attribute of self by a `%` until the reviewer's 02:29Z ruling of 2026-10-02, a shape the kernel's definition does not hold, so the
+# census, which reads only the kernel's shapes since, would refuse it
 B_KERNEL_SEND = ("    def _send(self, code, body, ctype, cache=None, headers=None):\n"
                  "        body = body.encode(\"utf-8\") if isinstance(body, str) else body\n"
                  "        self.send_response(code)\n        self.send_header(\"Content-Type\", ctype)\n"
                  "        self.send_header(\"Content-Length\", str(len(body)))\n        self.send_header(\"X-Content-Type-Options\", \"nosniff\")\n"
                  "        for k, v in (headers or {}).items():\n            self.send_header(k, v)\n"
                  "        if cache:\n            self.send_header(\"Cache-Control\", cache)\n"
-                 "        if getattr(self, \"_probe_tag\", None):\n            self.send_header(\"X-Probe-Tag\", \"tag=%s; Path=/\" % self._probe_tag)\n"
+                 "        if getattr(self, \"_probe_tag\", False):\n            self.send_header(\"X-Probe-Tag\", \"1\")\n"
                  "        if getattr(self, \"_probe_origin\", None):\n            self.send_header(\"X-Probe-Origin\", self._probe_origin)\n"
                  "            self.send_header(\"Vary\", \"Origin\")\n        self.end_headers()\n        self.wfile.write(body)\n")
 # The probe modules of B's other plants and of the eighth round's limits: (tg2) a signature default holding a CR LF and a fetch, and
@@ -3838,11 +3910,11 @@ B_TG_SEND = A_SEND % ("        for k, v in (headers or {}).items():\n           
 # definition has neither
 B_END = "        self.end_headers()\n        self.wfile.write(body)\n"
 B_ORDER = (("tsa", (A_SEND % "").replace(B_END, '        self.end_headers()  # the first\n        self.send_header("X-Probe", "%s")\n' % (FGH_PAGE % "tsax") + B_END),
-            ("a Call expression outside its listed roles at line %d", "# the first"),
+            (_B_EXPR, "# the first"),
             "(t) a header call and a second end_headers after the end_headers"),
            ("tsw", (A_SEND % "").replace(B_END, B_END + '        self.send_header("X-Probe", "%s")\n        self.end_headers()\n' % (FGH_PAGE % "tswx")),
-            ("an Expr statement outside its listed roles at line %d", 'self.send_header("X-Probe"'), "(t) a header call and an end_headers after the write"),
-           ("tne", (A_SEND % "").replace("        self.end_headers()\n", ""), ("an Expr statement outside its listed roles at line %d", "self.wfile.write(body)"),
+            (_B_ORDER, 'self.send_header("X-Probe"'), "(t) a header call and an end_headers after the write"),
+           ("tne", (A_SEND % "").replace("        self.end_headers()\n", ""), (_B_ORDER, "self.wfile.write(body)"),
             "(t) no end_headers before the write"),
            ("tpo", (A_SEND % "").replace("(self, code, body, ctype)", "(self, code, body, /, ctype)"), ("a positional-only parameter at line %d", "def _send("),
             "(t) a positional-only parameter"),
@@ -4076,7 +4148,10 @@ N_FILES = (("vxa", _n_module("vxa", "def getattr(o, n, d=None):\n    o.wfile.wri
 # __file__ was no value slot, vxk and vxg are refused with no reason, and the rest are read or silent as at the fix's head.
 _S_BUILTINS = '_PROBE_B = __builtins__ if isinstance(__builtins__, dict) else __builtins__.__dict__\n'
 _S_GETATTR = "def _probe_getattr(o, n, d=None):\n    o.wfile.write(_EXTRA.encode())\n    return d\n\n\n"
-_S_TEST = '        if getattr(self, "_probe_x", None):\n            self.send_header("X-Probe", "1")\n'
+# the getattr test of the (s), (u) and (x) gate plants, a constant header under a getattr test with a bool default, a shape the census
+# lists (its default None until the reviewer's 02:29Z ruling of 2026-10-02, a shape the kernel's definition does not hold), so the
+# builtin's proof decides each
+_S_TEST = '        if getattr(self, "_probe_x", False):\n            self.send_header("X-Probe", "1")\n'
 S_FILES = (("vxk", _a_module("vxk", A_SEND % "", head=_a_extra("vxk") + "\n\n\ndef _probe_vxk_other():\n    __file__ = _EXTRA\n    return __file__",
                              call='return self._send(200, "<p>vxk</p>" + __file__, "text/html")')),
            ("vxg", _a_module("vxg", A_SEND % "", head=_a_extra("vxg") + '\nglobals()["__file__"] = _EXTRA',
@@ -8098,7 +8173,7 @@ AW_SEND = ('    def _send(self, code, body, ctype, cache=None):\n'
            '            self.send_header("X-Probe-Mark", "1")\n'
            '        if cache:\n'
            '            self.send_header("Cache-Control", cache)\n'
-           '        if getattr(self, "probe_more", None):\n'
+           '        if getattr(self, "probe_name", None):\n'
            '            self.send_header("X-Probe-Name", "%%s=%%s; Path=/" %% (_PROBE_AWW_NAME, self.probe_more))\n'
            '        self.end_headers()\n'
            '        self.wfile.write(body)\n' % (FGH_PAGE % "awwe"))
@@ -8107,37 +8182,37 @@ AW_PAGE = '<html><head></head><p>%s</p></html>'
 # its line, or ("served", the shown expression, the served pass's reason))
 AW_NEAR = (("awa", "a stamp handed a value other than the definition's own parameters",
             ("        body = _probe_aww_stamp(code, body, ctype)\n", "        body = _probe_aww_stamp(code, _PROBE_AWW_INJ, ctype)\n"),
-            ("an Assign statement outside its listed roles at line %d", "_probe_aww_stamp(code, _PROBE_AWW_INJ")),
+            (_B_ASSIGN, "_probe_aww_stamp(code, _PROBE_AWW_INJ")),
            ("awk", "a stamp handed a keyword",
             ("        body = _probe_aww_stamp(code, body, ctype)\n", "        body = _probe_aww_stamp(code, body, ctype=ctype)\n"),
-            ("an Assign statement outside its listed roles at line %d", "ctype=ctype)")),
+            (_B_ASSIGN, "ctype=ctype)")),
            ("awn", "an injection whose first argument is no string constant",
             ('body.replace("<head>", "<head>" + extra', 'body.replace(ctype, "<head>" + extra'),
-            ("an Assign statement outside its listed roles at line %d", 'extra = ""')),
+            (_B_IF, 'if getattr(self, "probe_ok"')),
            ("awc", "an injection whose count is no int constant",
-            ("+ _PROBE_AWW_INJ, 1)\n", '+ _PROBE_AWW_INJ, "1")\n'), ("an Assign statement outside its listed roles at line %d", 'extra = ""')),
+            ("+ _PROBE_AWW_INJ, 1)\n", '+ _PROBE_AWW_INJ, "1")\n'), (_B_IF, 'if getattr(self, "probe_ok"')),
            ("awr", "an injection on a text other than the page parameter",
-            ('body = body.replace("<head>"', 'body = ctype.replace("<head>"'), ("an Assign statement outside its listed roles at line %d", 'extra = ""')),
+            ('body = body.replace("<head>"', 'body = ctype.replace("<head>"'), (_B_IF, 'if getattr(self, "probe_ok"')),
            ("awl", "the cache header holding a CR LF",
             ('            cache = "no-store"\n', '            cache = "no-store\\r\\nX-Probe: 1"\n'),
-            ("an Assign statement outside its listed roles at line %d", 'cache = "no-store\\r')),
+            (_B_IF, "if flag:")),
            ("awv", "the cache header bound to a parameter, no string constant",
-            ('            cache = "no-store"\n', "            cache = ctype\n"), ("an Assign statement outside its listed roles at line %d", "cache = ctype")),
+            ('            cache = "no-store"\n', "            cache = ctype\n"), (_B_IF, "if flag:")),
            ("awf", "a flag read other than as an if's test",
             ('            self.send_header("X-Probe-Mark", "1")\n', '            self.send_header("X-Probe-Mark", str(flag))\n'),
-            ("an Assign statement outside its listed roles at line %d", "flag = False")),
+            (_B_ASSIGN, "flag = False")),
            ("awt", "a text name read other than in an injection's value",
             ('            self.send_header("X-Probe-Mark", "1")\n', '            self.send_header("X-Probe-Mark", extra)\n'),
-            ("a Name expression outside its listed roles at line %d", '"X-Probe-Mark", extra)')),
+            (_B_IF, 'if getattr(self, "probe_mark"')),
            ("awe", "an if before the codec with an else",
             ("+ _PROBE_AWW_INJ, 1)\n", "+ _PROBE_AWW_INJ, 1)\n        else:\n            flag = False\n"),
-            ("an If statement outside its listed roles at line %d", 'if getattr(self, "probe_ok"')),
+            (_B_IF, 'if getattr(self, "probe_ok"')),
            ("awh", "a header's `%` tuple holding a call",
             ("(_PROBE_AWW_NAME, self.probe_more)", "(_PROBE_AWW_NAME, ctype.lower())"),
-            ("a Call expression outside its listed roles at line %d", "ctype.lower()")),
+            (_B_IF, 'getattr(self, "probe_name"')),
            ("awb", "a getattr test whose default is a string",
             ('if getattr(self, "probe_mark", False):', 'if getattr(self, "probe_mark", ""):'),
-            ("an If statement outside its listed roles at line %d", 'if getattr(self, "probe_mark", ""):')),
+            (_B_IF, 'if getattr(self, "probe_mark", ""):')),
            ("awd", "a stamp through a decorated def, no plain def",
             ("def _probe_aww_stamp(", "def _probe_dec(f):\n    return f\n\n\n@_probe_dec\ndef _probe_aww_stamp("),
             ("served", "_probe_aww_stamp(code, body, ctype)", "a callee whose def statement carries a decorator")),
@@ -8340,9 +8415,11 @@ PC_WITNESSES = (("pcl", "a function the page function defines, reached by locals
 # call's receiver in the constant's value followed by binding like any other name it reads, no callee: aeh, a receiver bound twice,
 # the second binding holding one, and aeg, a receiver a function rebinds under a global declaration to one (each silent were the
 # receiver taken for a callee, a real handler writing the fetch into the response), and aek, a receiver whose literal holds one; aer,
-# the header constant itself rebound under a global declaration, refused as a Name outside its listed roles. The flag role is the
-# assignment's whose value is a bool constant: afs, afc and afa each assign aww's flag once more (a header call, str() of a parameter,
-# an attribute of self), each refused as an Assign outside its listed roles (silent at the reviewed head). The stated limit's
+# the header constant itself rebound under a global declaration, no module constant the census follows, its if refused in no listed
+# shape. The flag role is the assignment's whose value is a bool constant: afs, afc and afa each assign aww's flag once more (a header
+# call, str() of a parameter, an attribute of self), each refused as an Assign in no listed shape (silent at the reviewed head). Since
+# the reviewer's 02:29Z ruling of 2026-10-02 aeb's bare module constant is in no listed shape too (a module constant is a header value
+# only in the formatted header's tuple), its if refused by that shape before the constant's CR or LF read. The stated limit's
 # witnesses (AE_WITNESS), each silent while a real handler writes the fetch into the response: aew, a CR LF a call of chr computes,
 # and aeq, one a `%c` of an int computes.
 _AE_NAME = '_PROBE_AWW_NAME = "probe_aww"'
@@ -8352,7 +8429,8 @@ _AE_BARE = ('self.send_header("X-Probe-Name", "%s=%s; Path=/" % (_PROBE_AWW_NAME
             'self.send_header("X-Probe-Name", _PROBE_AWW_NAME)')
 _AE_GUARD = "the module constant _PROBE_AWW_NAME, whose bound text holds a CR or LF, as a header value at line %d"
 _AE_FOLLOW = "the module constant _PROBE_AWW_NAME, whose bound value reads %s, no module constant the census follows by binding, as a header value at line %%d"
-_AE_FLAG = "an Assign statement outside its listed roles at line %d"
+_AE_FLAG = _B_ASSIGN
+_AE_IF = 'getattr(self, "probe_name"'   # the anchor of the formatted header's if, the statement a refusal in its header names
 
 
 def _ae_module(tag, swaps):
@@ -8369,7 +8447,7 @@ def _ae_module(tag, swaps):
 AE_HEADER = (("aec", "a module constant holding a CR LF in a header's `%` tuple",
               ((_AE_NAME, '_PROBE_AWW_NAME = "probe_aww' + _AE_CRLF + FGH_PAGE % "aec" + '"'),), _AE_HDR, _AE_GUARD),
              ("aeb", "a module constant holding a CR LF as the bare header value",
-              ((_AE_NAME, '_PROBE_AWW_NAME = "probe_aww' + _AE_CRLF + FGH_PAGE % "aeb" + '"'), _AE_BARE), '"X-Probe-Name", _PROBE_AWW_NAME)', _AE_GUARD),
+              ((_AE_NAME, '_PROBE_AWW_NAME = "probe_aww' + _AE_CRLF + FGH_PAGE % "aeb" + '"'), _AE_BARE), _AE_IF, _B_IF),
              ("aet", "a module constant whose value names a module constant holding a CR LF",
               ((_AE_NAME, '_PROBE_AET_TAIL = "' + _AE_CRLF + FGH_PAGE % "aet" + '"\n_PROBE_AWW_NAME = "probe_aww" + _PROBE_AET_TAIL'),), _AE_HDR, _AE_GUARD),
              ("aey", "a bytes constant holding a CR LF, decoded",
@@ -8389,8 +8467,7 @@ AE_HEADER = (("aec", "a module constant holding a CR LF in a header's `%` tuple"
              ("aek", "a module constant whose value calls a method on a module constant holding a CR LF",
               ((_AE_NAME, '_PROBE_AEK_T = "' + _AE_CRLF + FGH_PAGE % "aek" + '"\n_PROBE_AWW_NAME = "probe_aww" + _PROBE_AEK_T.lower()'),), _AE_HDR, _AE_GUARD),
              ("aer", "the header's module constant rebound under a global declaration",
-              ((_AE_NAME, _AE_NAME + '\n\n\ndef _probe_aer_set():\n    global _PROBE_AWW_NAME\n    _PROBE_AWW_NAME = "probe_aer"'),), _AE_HDR,
-              "a Name expression outside its listed roles at line %d"),
+              ((_AE_NAME, _AE_NAME + '\n\n\ndef _probe_aer_set():\n    global _PROBE_AWW_NAME\n    _PROBE_AWW_NAME = "probe_aer"'),), _AE_IF, _B_IF),
              ("afs", "the flag assigned a header call", (("        flag = False\n", '        flag = False\n        flag = self.send_header("X-Probe-Flag", "1")\n'),),
               'flag = self.send_header("X-Probe-Flag"', _AE_FLAG),
              ("afc", "the flag assigned str() of a parameter", (("        flag = False\n", "        flag = False\n        flag = str(ctype)\n"),), "flag = str(ctype)", _AE_FLAG),
@@ -8445,18 +8522,21 @@ AE_FILES += tuple((t, _a_module(t, A_SEND % "", head=head, branches=(branch,))) 
     ("apg", _a_module("apg", A_SEND % "", head=APG_HEAD, branches=(_fo_page("apg", '_PROBE_APG.sub("x", "<p>x</p>")'),))),) + tuple(
     (t, _a_module(t, A_SEND % "", head=head, branches=(_fo_page(t, e),))) for t, head, e, _w in LS_WITNESSES)
 # (ar) the writer proof's roles (rule A of the reviewer's 06:01Z ruling of 2026-10-01): one plant for each conjunct of the stamp, the
-# injection, the text name, the non-body header writes and a preamble if's test that no plant held until a mutant dropped it (the mutants and their reds are
-# in the build record), each aww's module with its swaps (_ae_module), refused at the definition with the gate's reason at its line, or
-# read, its fetch listed. A near shape that leaves aww's text name read in no injection (ard, are, arh, ari, arj) is refused first at
-# the text name's assignment; with the conjunct dropped the shape is taken for an injection, and the refusal moves or goes. ara, a stamp through a method of the page, no bare name; arb, a stamp handed a constant; ard, an injection
-# assigned to two names; are, a text name read only in a replace of the page assigned to another name; arh, an injection handed its
-# count as a keyword; ari, an injection handed a fourth argument; arj, an injection whose value and count are one starred argument;
-# ark, a parameter bound again and read in an injection's value; arl, a text name bound to a module constant, read (its value page
-# text only through the text role); arm, a string constant assigned to a name the definition reads nowhere; arn, the page parameter
-# bound to a string constant holding a fetch (no text the census reads, Python serving the fetch, were it admitted); aro and arp, the
-# cache header holding a CR alone and an LF alone; arq, a header value that is a bool constant; arr, a header value built by a `+`;
-# ars, a header value that is a `%` whose left operand is a parameter; aru, a preamble if whose test is a module constant, which no
-# flag or parameter proof admits (admitting any own name as a truthiness test would pass a name the census never proved safe).
+# injection, the text name, the non-body header writes and a preamble if's test that no plant held until a mutant dropped it (the
+# mutants and their reds are in the build record), each aww's module with its swaps (_ae_module), refused at the definition with the
+# gate's reason at its line, or read, its fetch listed. Since the reviewer's 02:29Z ruling of 2026-10-02 the gate reads each statement
+# against the kernel's definition's shapes, an if with its body one statement, so a near shape inside the injection's if (ard, are,
+# arh, ari, arj, ark) or the flag's if (aro, arp), or in a header under a getattr test (arq, arr, ars), is refused at that if, in no
+# listed shape; until then each was refused at its own node, the injections first at the text name they left unread. ara, a stamp
+# through a method of the page, no bare name; arb, a stamp handed a constant; ard, an injection assigned to two names; are, a text
+# name read only in a replace of the page assigned to another name; arh, an injection handed its count as a keyword; ari, an injection
+# handed a fourth argument; arj, an injection whose value and count are one starred argument; ark, a parameter bound again and read in
+# an injection's value; arl, a text name bound to a module constant, read (its value page text only through the text role); arm, a
+# string constant assigned to a name the definition reads nowhere; arn, the page parameter bound to a string constant holding a fetch
+# (no text the census reads, Python serving the fetch, were it admitted); aro and arp, the cache header holding a CR alone and an LF
+# alone; arq, a header value that is a bool constant; arr, a header value built by a `+`; ars, a header value that is a `%` whose left
+# operand is a parameter; aru, a preamble if whose test is a module constant, which no flag or parameter proof admits (admitting any
+# own name as a truthiness test would pass a name the census never proved safe).
 _AR_STAMP = "        body = _probe_aww_stamp(code, body, ctype)\n"
 _AR_INJ = '            body = body.replace("<head>", "<head>" + extra + _PROBE_AWW_INJ, 1)\n'
 _AR_EXTRA = '            extra = ""\n'
@@ -8467,19 +8547,19 @@ AR_PLANTS = (("ara", "a stamp through a method of the page, no bare name", ((_AR
              ("arb", "a stamp handed a constant", ((_AR_STAMP, '        body = _probe_aww_stamp(code, body, "text/html")\n'),),
               ("gate", '_probe_aww_stamp(code, body, "text/html")', _AE_FLAG)),
              ("ard", "an injection assigned to two names", ((_AR_INJ, _AR_INJ.replace("body = body.replace", "body = done = body.replace")),),
-              ("gate", 'extra = ""', _AE_FLAG)),
+              ("gate", 'if getattr(self, "probe_ok"', _B_IF)),
              ("are", "a text name read only in a replace of the page assigned to another name",
               ((_AR_INJ, '            head = body.replace("<head>", "<head>" + extra, 1)\n            body = body.replace("<head>", head + _PROBE_AWW_INJ, 1)\n'),),
-              ("gate", 'extra = ""', _AE_FLAG)),
+              ("gate", 'if getattr(self, "probe_ok"', _B_IF)),
              ("arh", "an injection handed its count as a keyword", ((_AR_INJ, _AR_INJ.replace("_PROBE_AWW_INJ, 1)", "_PROBE_AWW_INJ, count=1)")),),
-              ("gate", 'extra = ""', _AE_FLAG)),
+              ("gate", 'if getattr(self, "probe_ok"', _B_IF)),
              ("ari", "an injection handed a fourth argument", ((_AR_INJ, _AR_INJ.replace("_PROBE_AWW_INJ, 1)", '_PROBE_AWW_INJ, 1, "x")')),),
-              ("gate", 'extra = ""', _AE_FLAG)),
+              ("gate", 'if getattr(self, "probe_ok"', _B_IF)),
              ("arj", "an injection whose value and count are one starred argument",
-              ((_AR_INJ, _AR_INJ.replace('"<head>" + extra + _PROBE_AWW_INJ, 1)', '*("<head>" + extra + _PROBE_AWW_INJ, 1))')),), ("gate", 'extra = ""', _AE_FLAG)),
+              ((_AR_INJ, _AR_INJ.replace('"<head>" + extra + _PROBE_AWW_INJ, 1)', '*("<head>" + extra + _PROBE_AWW_INJ, 1))')),), ("gate", 'if getattr(self, "probe_ok"', _B_IF)),
              ("ark", "a parameter bound again and read in an injection's value",
               ((_AR_EXTRA, _AR_EXTRA + "            code = int(code)\n"), (_AR_INJ, _AR_INJ.replace("extra + _PROBE_AWW_INJ", "extra + str(code) + _PROBE_AWW_INJ"))),
-              ("gate", "code = int(code)", _AE_FLAG)),
+              ("gate", 'if getattr(self, "probe_ok"', _B_IF)),
              ("arl", "a text name bound to a module constant", ((_AE_NAME, _AE_NAME + '\n_PROBE_ARL_T = "%s"' % (FGH_PAGE % "arl")),
                                                                  (_AR_EXTRA, "            extra = _PROBE_ARL_T\n")), ("read", ("arl",))),
              ("arm", "a string constant assigned to a name the definition reads nowhere", (("        flag = False\n", '        flag = False\n        probe = "x"\n'),),
@@ -8487,22 +8567,85 @@ AR_PLANTS = (("ara", "a stamp through a method of the page, no bare name", ((_AR
              ("arn", "the page parameter bound to a string constant", ((_AR_STAMP, _AR_STAMP + '        body = "%s"\n' % (FGH_PAGE % "arn")),),
               ("gate", "example.invalid/arn", _AE_FLAG)),
              ("aro", "the cache header holding a CR alone", (('            cache = "no-store"\n', '            cache = "no-store\\rX-Probe: 1"\n'),),
-              ("gate", 'cache = "no-store\\r', _AE_FLAG)),
+              ("gate", "if flag:", _B_IF)),
              ("arp", "the cache header holding an LF alone", (('            cache = "no-store"\n', '            cache = "no-store\\nX-Probe: 1"\n'),),
-              ("gate", 'cache = "no-store\\n', _AE_FLAG)),
+              ("gate", "if flag:", _B_IF)),
              ("arq", "a header value that is a bool constant", (('"X-Probe-Mark", "1")', '"X-Probe-Mark", True)'),),
-              ("gate", '"X-Probe-Mark", True)', "a Constant expression outside its listed roles at line %d")),
+              ("gate", 'if getattr(self, "probe_mark"', _B_IF)),
              ("arr", "a header value built by a +", ((_AR_PCT, '"probe_aww=" + self.probe_more'),),
-              ("gate", '"probe_aww=" + self.probe_more', "a BinOp expression outside its listed roles at line %d")),
+              ("gate", _AE_IF, _B_IF)),
              ("ars", "a header value that is a `%` whose left operand is a parameter", ((_AR_PCT, "ctype % code"),),
-              ("gate", '"X-Probe-Name", ctype % code)', "a BinOp expression outside its listed roles at line %d")),
+              ("gate", _AE_IF, _B_IF)),
              ("aru", "a preamble if whose test is a module constant, neither a flag nor a parameter",
               ((_AE_NAME, _AE_NAME + "\n_PROBE_ARU_FLAG = 1"),
                ('        if getattr(self, "probe_ok", False) and isinstance(body, str) and ctype.startswith("text/html") and "<head>" in body:\n',
                 "        if _PROBE_ARU_FLAG:\n")),
-              ("gate", "if _PROBE_ARU_FLAG:", "an If statement outside its listed roles at line %d")))
+              ("gate", "if _PROBE_ARU_FLAG:", _B_IF)))
 AR_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AR_PLANTS)
-AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES
+# (as) the page send's statement shapes (_SEND_SHAPES; the reviewer's 02:29Z ruling of 2026-10-02, which made the gate's ok() an
+# allowlist of exact statement shapes derived from the kernel's Handler._send). Each shape is pinned twice: its live statement matches
+# it (TheSendStatementsAreListedShapes reads kernel/kernel.py's definition through the gate), and its near miss here, aww's module or
+# the kernel's shape (rks's, B_KERNEL_SEND) with one statement changed, is refused at that statement with the gate's reason, which
+# names the shape among those the census lists for the statement's kind at its place. The gate read seven of these near misses before
+# the ruling: asin (the injection's if with its tests in another order), asfi (the flag's if testing a parameter), ascd (the encode
+# alone, no if-expression), ashp (a header whose name is a parameter), aslh (len with no str), asch (a header valued None), ascg (a
+# constant header under a getattr test with a None default), aslp (the headers loop over one target), aspt (a constant header under a
+# parameter's test), asfg (the formatted header's tuple in the other order) and asag (the attribute header's two calls in the other
+# order); the rest it refused, by the node kind and role that held no plant. Four more each hold one operand class of the shapes:
+# aslr, the headers loop's target binding a parameter (a stored name that is a parameter is no local); asbl, len bound by a loop's
+# target, so the length header's len is no builtin; asml, the formatted header's module constant's name bound by a loop's target, so
+# it is no module constant; askw, the response line handed a keyword (a keyword is part of the shape). And aswn, the write inside an
+# if, no statement of the definition's own body: every statement then stands outside the order, the first refused so. (shape, tag,
+# base, (the text it replaces, its replacement), the refused statement's kind, the anchor of its line, its place)
+_AS_BEFORE = "before the end_headers"
+AS_NEAR = (("the stamp", "asst", "aww", ("        body = _probe_aww_stamp(code, body, ctype)\n", "        body = _PROBE_AWW_INJ\n"), "Assign",
+            "body = _PROBE_AWW_INJ", _AS_BEFORE),
+           ("a flag", "asfl", "aww", ("        flag = False\n", "        flag = 0\n"), "Assign", "flag = 0", _AS_BEFORE),
+           ("the injection's if", "asin", "aww", ('if getattr(self, "probe_ok", False) and isinstance(body, str)',
+                                                 'if isinstance(body, str) and getattr(self, "probe_ok", False)'), "If", "if isinstance(body, str) and", _AS_BEFORE),
+           ("the flag's if", "asfi", "aww", ("        if flag:\n", "        if code:\n"), "If", "if code:", _AS_BEFORE),
+           ("the codec", "ascd", "aww", ('        body = body.encode("utf-8") if isinstance(body, str) else body\n', '        body = body.encode("utf-8")\n'),
+            "Assign", 'body = body.encode("utf-8")', _AS_BEFORE),
+           ("the response line", "asrl", "aww", ("        self.send_response(code)\n", "        self.send_response(200)\n"), "Expr", "send_response(200)", _AS_BEFORE),
+           ("a header from a parameter", "ashp", "aww", ('        self.send_header("Content-Type", ctype)\n',
+                                                        '        self.send_header("Content-Type", ctype)\n        self.send_header(code, ctype)\n'),
+            "Expr", "self.send_header(code, ctype)", _AS_BEFORE),
+           ("the length header", "aslh", "rks", ("str(len(body))", "len(body)"), "Expr", "len(body)", _AS_BEFORE),
+           ("a constant header", "asch", "rks", ('"X-Content-Type-Options", "nosniff"', '"X-Content-Type-Options", None'), "Expr", "X-Content-Type-Options", _AS_BEFORE),
+           ("a constant header under a getattr test", "ascg", "aww", ('if getattr(self, "probe_mark", False):', 'if getattr(self, "probe_mark", None):'),
+            "If", 'getattr(self, "probe_mark", None)', _AS_BEFORE),
+           ("the headers loop", "aslp", "rks", ("for k, v in (headers or {}).items():\n            self.send_header(k, v)",
+                                               "for k in (headers or {}).items():\n            self.send_header(k, k)"), "For", "for k in (headers", _AS_BEFORE),
+           ("a header under its parameter's test", "aspt", "aww", ('self.send_header("Cache-Control", cache)', 'self.send_header("Cache-Control", "no-cache")'),
+            "If", "if cache:", _AS_BEFORE),
+           ("a formatted header under a getattr test", "asfg", "aww", (_AE_HDR, "(self.probe_more, _PROBE_AWW_NAME)"), "If", _AE_IF, _AS_BEFORE),
+           ("an attribute header under a getattr test", "asag", "rks",
+            ('self.send_header("X-Probe-Origin", self._probe_origin)\n            self.send_header("Vary", "Origin")',
+             'self.send_header("Vary", "Origin")\n            self.send_header("X-Probe-Origin", self._probe_origin)'), "If", 'getattr(self, "_probe_origin"', _AS_BEFORE),
+           ("the end_headers", "ased", "aww", ("        self.end_headers()\n", "        self.end_headers(code)\n"), "Expr", "self.end_headers(code)", "at the end_headers"),
+           ("the write", "aswr", "aww", ("        self.wfile.write(body)\n", "        self.connection.write(body)\n"), "Expr", "self.connection.write(body)", "at the write"),
+           ("the headers loop", "aslr", "rks", ("for k, v in (headers or {}).items():\n            self.send_header(k, v)",
+                                               "for code, v in (headers or {}).items():\n            self.send_header(v, v)"), "For", "for code, v in", _AS_BEFORE),
+           ("the length header", "asbl", "rks", ("for k, v in (headers or {}).items():\n            self.send_header(k, v)",
+                                                "for len, v in (headers or {}).items():\n            self.send_header(len, v)"), "Expr", "str(len(body))", _AS_BEFORE),
+           ("a formatted header under a getattr test", "asml", "aww",
+            ('        self.send_header("Content-Type", ctype)\n', '        self.send_header("Content-Type", ctype)\n'
+             '        for _PROBE_AWW_NAME, v in (cache or {}).items():\n            self.send_header(_PROBE_AWW_NAME, v)\n'), "If", _AE_IF, _AS_BEFORE),
+           ("the response line", "askw", "aww", ("        self.send_response(code)\n", "        self.send_response(code, message=None)\n"), "Expr", "message=None",
+            _AS_BEFORE),
+           ("the write", "aswn", "aww", ("        self.wfile.write(body)\n", "        if code:\n            self.wfile.write(body)\n"), "Assign",
+            "body = _probe_aww_stamp(", "outside the order"))
+
+
+def _as_module(tag, base, swap):
+    """A near miss's module: aww's (_ae_module) or the kernel's shape (B_KERNEL_SEND, rks's) with its one swap (the anchor once)."""
+    if base == "aww": return _ae_module(tag, (swap,))
+    if B_KERNEL_SEND.count(swap[0]) != 1: raise ValueError("no swap anchor %r" % swap[0])
+    return _a_module(tag, B_KERNEL_SEND.replace(swap[0], swap[1]))
+
+
+AS_FILES = tuple((t, _as_module(t, base, swap)) for _n, t, base, swap, _k, _a, _p in AS_NEAR)
+AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES
 
 
 A_FILES = tuple((_a_rel(tag), text) for tag, text in (
@@ -9123,9 +9266,9 @@ A_REFUSED += tuple(("(n) %s, defined in a function beside the class" % what, tag
     ("(s) a module function rewritten through globals()", "vxn", _A_TEXT % (_a_rel("vxn"), "_probe_page()", _COMPUTED)),
     ("(s) a route's type constant rewritten through globals()", "vxy", _A_TYPE % (_a_rel("vxy"), "_PROBE_VXY")),
     ("(s) getattr written through an alias of __builtins__, in the gate", "vxd",
-     _a_body(_a_rel("vxd"), "Handler._send", _a_why((_B_NAME, "if getattr(self"), S_TEXTS["vxd"]), "Handler.do_GET")),
+     _a_body(_a_rel("vxd"), "Handler._send", _a_why(("getattr at line %%d, %s" % _SHADOWED, "if getattr(self"), S_TEXTS["vxd"]), "Handler.do_GET")),
     ("(s) getattr written through sys.modules[\"builtins\"], in the gate", "vxt",
-     _a_body(_a_rel("vxt"), "Handler._send", _a_why((_B_NAME, "if getattr(self"), S_TEXTS["vxt"]), "Handler.do_GET")),
+     _a_body(_a_rel("vxt"), "Handler._send", _a_why(("getattr at line %%d, %s" % _SHADOWED, "if getattr(self"), S_TEXTS["vxt"]), "Handler.do_GET")),
     ("(s) str written through an alias of __builtins__, in the served pass, refused since the eleventh round's review as a run-time form (a namespace mapping "
      "used other than in a key position the census reads)", "vxs", _A_TEXT % (_a_rel("vxs"), "str(1)", _RUNTIME % (_CK_NS + " at line 1"))),
     ("(s) str written through __builtins__ in a key position, in the served pass", "vxs2", _A_TEXT % (_a_rel("vxs2"), "str(1)", _SHADOWED)),
@@ -9187,7 +9330,7 @@ A_REFUSED += tuple(("(x) a page from %s, the file %s" % (_U_LABEL[k], form or "w
         _a_line(X_TEXTS[g], "if getattr(self"), _RUNTIME_BUILTIN % ("%s at line %d" % (form, _a_line(X_TEXTS[g], anch)))), "Handler.do_GET"))
     for g, (form, anch) in _X_GATE_FORMANCHOR.items()) + (
     ("(x) getattr in the gate, the file writes globals through sys.modules.get(\"builtins\")", "zg2bg", _a_body(_a_rel("zg2bg"), "Handler._send",
-     _a_why((_B_NAME, "if getattr(self"), X_TEXTS["zg2bg"]), "Handler.do_GET")),
+     _a_why(("getattr at line %%d, %s" % _SHADOWED, "if getattr(self"), X_TEXTS["zg2bg"]), "Handler.do_GET")),
     ) + tuple(
     ("(x) a page from %s, a namespace mapping reached through a name, refused since the eleventh round's review as a run-time form (choice 13)" % _U_LABEL[k],
      "xkbn" + k, _A_TEXT % (_a_rel("xkbn"), _U_NAME[k] % "XKBN" if k == "c" else _U_NAME[k],
@@ -9870,7 +10013,7 @@ A_LEXICAL_READ = (("(l) a nested def's free name, reached through a sibling whos
                   ("(l) a depth-2 def's default, reached through a sibling whose parameter shares its name, the sibling's own default a str",
                    "np2", _a_rel("nls")),
                   ("(l) a nested def's free name, reached through a sibling that assigns it", "nn1", _a_rel("nls")))
-# read at the fix: (q)'s control and the kernel's shape, each definition holding only the kernel's kinds in their roles, and the
+# read at the fix: (q)'s control and the kernel's shape, each definition holding only the kernel's statement shapes, and the
 # eighth round's limits' witnesses, each route read while what the definition runs outside its text is not, each fetch UNCLASSIFIED
 B_READ = (("(q) len with nothing binding or rebinding it, the global-len plant's control", "qgc", _a_rel("qgc")),
           ("(t) the kernel's shape: the codec line, the loop over a headers argument and the getattr tests", "rks", _a_rel("rks")),
@@ -10114,7 +10257,9 @@ class TheServedPagesAreScanned(_Scope):
     call omits read (the (p) plants), a widening past that round's rulings that the eighth round's review ruled in, since it reads
     more page text; since the eighth round's review, a followed nested def's names read in the scope its def
     statement stands in (the (l) plants), and a `_send` definition read only when its every node is of a kind, in a role, the
-    kernel's Handler._send holds, any other refused by its kind and line (the (t), (k) and (q) plants), with the kernel's shape
+    kernel's Handler._send holds, any other refused by its kind and line (the (t), (k) and (q) plants; since the reviewer's 02:29Z
+    ruling of 2026-10-02 the roles are that definition's statement shapes, a statement in none of them refused naming the shape it
+    lacks, and since then the (as) plants pin each shape at a near miss), with the kernel's shape
     read and that round's limits held at their witnesses, and a page read only in resolve's read arms, a lambda's body and a path
     join's operands among them, with the value slots the kernel's pages use and any other kind refused by name (the (v) plants),
     and each literal read on its own with the text of each listed join of string constants read beside it (a `.join` over a
@@ -10591,12 +10736,14 @@ class TheServedPagesAreScanned(_Scope):
         case's), and a factory's class, defined in a function body with its one direct def, is typed through that def, its route
         then refused as a definition inside a function (fac, the (n) case's rule, read at the fix before its own checks). (h)
         Since the eighth round's review a `_send` definition is read only when its body and signature hold nothing outside the
-        kernel's kinds and roles, which are, in words: the one write of the page parameter, the definition's last statement,
-        directly after its one `self.end_headers()` (the order, the review's widening of its table, ruled in on tsa and tsw); the
-        header calls on self; isinstance, str, len and getattr of self, unbound and unrebound; the codec rebinding, its one argument
-        "utf-8"; a loop over a parameter's items; tests on a parameter or on getattr of self; and a signature of positional
-        parameters, none positional-only, with None defaults and no annotation. Any other statement or expression refuses by its
-        kind and its line (_send_gate). The reader's stated limits stand beside that rule, each held at its witness: an override
+        kernel's kinds and roles, and since the reviewer's 02:29Z ruling of 2026-10-02 the roles are the kernel's definition's
+        statement shapes (_SEND_SHAPES), in words: the one write of the page parameter, the definition's last statement, directly
+        after its one `self.end_headers()` (the order, the review's widening of its table, ruled in on tsa and tsw); before them,
+        the statements that build the page, the codec rebinding, its one argument "utf-8", inside its isinstance test, the header
+        calls on self, a loop over a parameter's items and the tests on a parameter or on getattr of self, each in one of that
+        definition's shapes, with isinstance, str, len and getattr unbound and unrebound; and a signature of positional
+        parameters, none positional-only, with None defaults and no annotation. Any other statement refuses by its kind, its line
+        and the shape it lacks, and a node of another kind by its kind and its line (_send_gate). The reader's stated limits stand beside that rule, each held at its witness: an override
         of `_send` in a subclass another file defines (probe_lox, the seventh round's limits case); code behind a name the
         definition calls or reads on self, a header method, a property or `__getattr__` and any stream it writes (probe_lgs's
         module-global stream and probe_lse's own end_headers); a `_send` replaced at run time through a name no code spells
@@ -10616,7 +10763,8 @@ class TheServedPagesAreScanned(_Scope):
         getattr naming write or sendall ("a write method named by a
         string"), a print to the stream, json.dump into the request's file, a helper handed self or the request, a builtin the
         module binds and a method on a parameter the definition rebinds to the socket (since the eighth round's review each refused
-        at the gate, _send_gate, its reason naming the node kind and its line), shutil.copyfileobj into the stream and a second
+        at the gate, _send_gate, its reason naming the statement's kind and its line, since the reviewer's 02:29Z ruling of
+        2026-10-02 with the shape it lacks), shutil.copyfileobj into the stream and a second
         reference to the stream ("a reference to the write's receiver other than as its receiver"), a definition that writes
         nothing, one whose one write is a sendall, and a module-level `_send` calling a second method on its handler parameter (at
         the gate too); and, since the seventh round's review, len, str or isinstance bound inside the definition by an import, a def
@@ -10728,11 +10876,13 @@ class TheServedPagesAreScanned(_Scope):
         with self.subTest(plant="no text a reader refuses or does not reach is a site"):
             self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in A_UNREAD_MARKS)], [])
 
-    def test_a_send_definition_outside_the_kernels_kinds_and_roles_refuses_by_kind_and_line(self):
+    def test_a_send_definition_outside_the_kernels_kinds_and_shapes_refuses_by_kind_and_line(self):
         """B and D of the eighth round's review (correctness-2, extra5-1, extra5-2, extra6-1, extra5-3; extra6-3, correctness-3),
         each plant a probe module of its own (B_ROADS, B_FILES) and each a SERVED line at the call's line whose reason names the
-        node kind and its line. _body_param reads a `_send` definition only when every node of its signature and body is of a
-        kind, in a role, the kernel's Handler._send holds (_send_gate, after every named reason the reviewed head gives). (t) The
+        kind and its line. _body_param reads a `_send` definition only when every node of its signature and body is of a
+        kind the kernel's Handler._send holds and, since the reviewer's 02:29Z ruling of 2026-10-02, every statement of its body is
+        in one of that definition's statement shapes, which replaced the roles (_send_gate, after every named reason the reviewed
+        head gives; a refused statement's reason names the shape it lacks among those listed for its kind at its place). (t) The
         ruling's executed plants: the page parameter rebound to a module constant, to itself and a module constant, behind a
         literal prefix, by a replace, to an f-string, by an augmented assignment, a walrus statement, a walrus in an if's test, an
         annotated assignment, a loop target, a with target, a join, an encode through a module constant, an encode joined to
@@ -10742,7 +10892,7 @@ class TheServedPagesAreScanned(_Scope):
         through self.__class__, on the class by name and through an alias of self.__dict__; a nested decorated def, a nested class
         with a metaclass keyword, a lambda, a global declaration and a return; the codec named "probe_e4" and a second,
         error-handler argument (tc4 registers the codec "probe_e4" and tch registers the error handler "h", each named to its
-        encode call, so the one codec admitted is `.encode("utf-8")`; tch's served body holds a character UTF-8 cannot encode, so
+        encode call in the codec's if-expression, so the one codec admitted is `.encode("utf-8")`; tch's served body holds a character UTF-8 cannot encode, so
         the handler runs and adds its markup); a CR or LF in a header call's string constant, both together (tcr) and each alone
         (tcc a lone CR, tcl a lone LF), and a second argument to send_response (tsr), the closures ruled for header values; and the
         signature's forms, a cache default holding a CR LF and a fetch (tg2) and a headers default holding a Content-Type (tg1h, the
@@ -10758,7 +10908,9 @@ class TheServedPagesAreScanned(_Scope):
         into the body); tne and tpo were read under that table too, and the real definition has neither. (k)
         One plant per node kind the table excludes that a (t) or (h) plant exercises, each holding that kind and
         nothing else outside the table: AnnAssign, AugAssign, a BinOp Add, ClassDef, Compare, an int Constant, Delete, JoinedStr,
-        FunctionDef, Global, Import, ImportFrom, Lambda, List, Match, NamedExpr, Pass, Return, Subscript, Try and With. (q) The
+        FunctionDef, Global, Import, ImportFrom, Lambda, List, Match, NamedExpr, Pass, Return, Subscript, Try and With; each a
+        statement of that kind refused by the kind, and each kind inside a statement (a BinOp Add, Compare, an int Constant,
+        JoinedStr, Lambda, List, NamedExpr, Pass in an if's body, Subscript) by that statement's shape. (q) The
         builtin allowance, decided in the gate alone, requires that neither the definition nor the module binds the name, that
         nothing rebinds it and that the module holds no star import (and, since the fix's own checks, that the file names no
         `__builtins__` as a name, imports no builtins module, writes no module that may be the builtins module and writes no name of
@@ -10768,21 +10920,25 @@ class TheServedPagesAreScanned(_Scope):
         (qgl), getattr bound by a module-level def (qgd), getattr rebound under a global declaration (qgg) and len in a module
         that holds a star import (qgs) each refuse at the name. Read, each page's fetch listed: len with nothing binding or
         rebinding it (qgc) and the kernel's shape (rks: the codec line, the loop over a headers argument, a cache test and two
-        getattr tests with a `%` format on an attribute of self). At the reviewed head every refused plant here is read, its
+        getattr tests, one guarding a constant header and one an attribute of self and a constant header). At the reviewed head
+        every refused plant here is read, its
         page's fetch listed and its added text never scanned, but t11, t14 and qgs, which its any-other-call loop refused as "a
         call the reader does not read" (open(), `_EXTRA.encode()` and len under the star import). The arm whose removal reds each:
-        the gate for every (t), (k) and (q) plant (each then read); for each (k) plant a mutant that adds its kind to the table
-        (the target with it, for the four whose target is a store) reads that plant; the CR and LF check for tcr, its CR half for
-        tcc and its LF half for tcl, send_response's one argument for tsr, the signature's None defaults for tg1h and tg2, its
-        `sig` entry for each of tko, tva, tkw, tan, trn and ttp, the codec's one "utf-8" argument for tc4 and tch,
-        end_headers held to the statement before the write for tsa, the other statements held before it for tsw (then refused at
-        its second end_headers; with both removed, read), the write's end_headers before it for tne and the positional-only
-        parameter's refusal for tpo (each then read); the allowance's rebinds
-        condition for qgl and qgg, its module-binding condition for qgd and its star-import condition for qgs."""
+        the gate for every (t), (k) and (q) plant (each then read); for each (k) plant whose statement is of its kind a mutant
+        that adds the kind to the table, which moves its refusal to the statement's shape; the CR and LF check for tcr, its CR half
+        for tcc and its LF half for tcl, the signature's None defaults for tg1h and tg2, its `sig` entry for each of tko, tva, tkw,
+        tan, trn and ttp, the statement's shape for every other (t) plant (the response line's one parameter for tsr, the codec's
+        one "utf-8" argument for tc4 and tch), the place for tsa (an end_headers before the end_headers, in no listed shape there),
+        the order for tne (a write with no end_headers directly before it) and the positional-only parameter's refusal for tpo
+        (each then read), and the order for tsw (a statement after the write: with the order removed, it is refused at its second
+        end_headers, before the end_headers in no listed shape); the builtin class's rebinds condition for qgl and qgg, its
+        module-binding condition for qgd and its star-import condition for qgs (each then a builtin in a listed shape, read). The
+        census module's TheSendStatementsAreListedShapes holds each shape at the kernel's statement, and the landing rulings' (as)
+        plants each at a near miss."""
         self.assertARefused(("(t)", "(k)", "(q)"))
         for plant, tag, rel in B_READ[:2]:
             with self.subTest(plant=plant):
-                self.assertFetchUnclassifiedAt(self.at[tag], tag, "the definition holds only the kernel's kinds in their roles: read", rel)
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, "the definition holds only the kernel's statement shapes: read", rel)
 
     def test_the_eighth_rounds_limits_hold_their_witnesses(self):
         """The limits the eighth round states, each held by a witness at its outcome (the census does not read what the
@@ -14456,8 +14612,9 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
     at run time passes silently, one witness per road (pcl a nested def reached by locals().get, pcm the module object's attribute by
     its literal name, pcg the garbage collector's heap, pci inspect.getmembers). The check's fixes on them, each refusal asserted
     with its reason: a module constant used as a header value refused where its bound text holds a CR or LF or reads a name the
-    census does not follow (aec, aeb, aet, aey, aeu, aez; aeh and aeg a method call's receiver the census does not follow, aek one
-    whose literal holds a CR LF; aer the header constant rebound), with the stated limit's witnesses aew and aeq silent; a flag
+    census does not follow (aec, aet, aey, aeu, aez; aeh and aeg a method call's receiver the census does not follow, aek one whose
+    literal holds a CR LF; and, by the shape of its if, aeb's bare constant, no listed header value, and aer the header constant
+    rebound, no module constant the census follows), with the stated limit's witnesses aew and aeq silent; a flag
     assigned anything but a bool constant refused (afs, afc, afa); the dispatch's every refusal by its reason (abh a table handed to a
     function that stores into it, abm a lambda value, abg a .get with a default among them); agl's refusals by their reasons (agbs a
     strip of no leaf and agk a leaf constant rewritten at run time among them); the leaf's and the pattern's conjuncts by binding (agz
@@ -14465,11 +14622,16 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
     rebound); and the proof by binding's stated limit, silent (lsmh and lsmr a module object stored in sys.modules before the import,
     lsma and lsra an attribute store on the module, hmac's and re's). The writer proof's roles, one plant for each conjunct a mutant
     showed no plant held (AR_PLANTS), each refused at the definition with its reason at its line: ara and arb stamps outside its
-    shape; ard, are, arh, ari and arj injections outside its shape, each refused at the text name its injection then leaves unread; ark
-    a parameter bound again and read in an injection's value; arm a string constant assigned to a name read nowhere; arn the page
-    parameter bound to a string constant; aro and arp the cache header holding a CR or an LF alone; arq, arr and ars header values
-    that are a bool constant, a `+` and a `%` whose left operand is a parameter; aru a preamble if whose test is a module constant,
-    neither a flag nor a parameter; and arl, a text name bound to a module constant, read.
+    shape; ard, are, arh, ari and arj injections outside its shape and ark a parameter bound again and read in an injection's value,
+    each refused at the injection's if, in no listed shape; arm a string constant assigned to a name read nowhere; arn the page
+    parameter bound to a string constant; aro and arp the cache header holding a CR or an LF alone, refused at the flag's if; arq,
+    arr and ars header values that are a bool constant, a `+` and a `%` whose left operand is a parameter, refused at the if around
+    each; aru a preamble if whose test is a module constant, neither a flag nor a parameter; and arl, a text name bound to a module
+    constant, read. The page send's statement shapes (the reviewer's 02:29Z ruling of 2026-10-02, AS_NEAR): each of the sixteen
+    shapes the census lists from the kernel's Handler._send has a near miss, aww's module or the kernel's shape with one statement
+    changed, refused at that statement by a reason that names the shape among those listed for its kind at its place (asst to
+    aswr), four more each refused by an operand's class (aslr, asbl, asml, askw), and aswn, the write inside an if, every statement
+    then outside the order; each shape's live statement is TheSendStatementsAreListedShapes'.
     The reds, each over a mutant of the fix script with one conjunct or arm dropped, are in the build record."""
 
     def setUp(self):
@@ -14588,6 +14750,20 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
                               "refused with its reason at its line")
                 self.assertFalse(self._is_site(tag), "%s's fetch is no site" % tag)
 
+    def test_each_listed_shape_has_a_near_miss_refused_naming_it(self):
+        files = dict(AD_FILES)
+        self.assertEqual({n for n, *_r in AS_NEAR}, set(LIVE_SHAPES), "a near miss for each listed shape")
+        for name, tag, _base, _swap, kind, anchor, place in AS_NEAR:
+            with self.subTest(plant="(as) %s (%s)" % (name, tag)):
+                srv = self._served(tag)
+                why = (_no_order(kind) if place == "outside the order"
+                       else _no_shape(kind, place, None if place == _AS_BEFORE else (name,))) % _a_line(files[tag], anchor)
+                lacks = "the write, the definition's last statement" if place == "outside the order" else name
+                self.assertIn(lacks, why, "the reason names the shape the statement lacks, or the order it stands outside")
+                self.assertEqual(len(srv), 1, "one refusal, at the definition: %r" % srv)
+                self.assertIn("whose page body the census does not read (%s, in Handler.do_GET)" % why, srv[0], "refused with its reason at its line")
+                self.assertFalse(self._is_site(tag), "%s's fetch is no site" % tag)
+
     def test_the_leaf_and_a_compiled_pattern_by_binding_and_the_proofs_stated_limit(self):
         for tag, _head, _branch, what, why in AG_BIND:
             with self.subTest(plant="(ag) %s (%s)" % (what, tag)):
@@ -14599,6 +14775,46 @@ class TheLandingRulingsPlantsAreScanned(_Scope):
             with self.subTest(witness="(ls) %s (%s)" % (road, tag)):
                 self.assertEqual(self._served(tag), [], "the stated limit passes silently: no SERVED line (%r)" % self._served(tag))
                 self.assertFalse(self._is_site(tag), "%s's fetch is no site: the stated limit" % tag)
+
+
+
+# The kernel's Handler._send, statement by statement in its own body's order, by the name of the listed shape each matches
+# (_SEND_SHAPES): the stamp, the flag, the injection's if and the flag's if build the page before the codec; then the headers; then
+# the end_headers and the write
+LIVE_SHAPES = ("the stamp", "a flag", "the injection's if", "the flag's if", "the codec", "the response line", "a header from a parameter",
+               "the length header", "a constant header", "a constant header", "a constant header", "a constant header",
+               "a constant header under a getattr test", "the headers loop", "a header under its parameter's test",
+               "a formatted header under a getattr test", "an attribute header under a getattr test", "the end_headers", "the write")
+
+
+class TheSendStatementsAreListedShapes(unittest.TestCase):
+    """The gate's ok() is an allowlist of exact statement shapes (the reviewer's 02:29Z ruling of 2026-10-02): a statement of a `_send`
+    definition's own body is read only where its place in the order, its kind and its shape (each operator and attribute, page text one
+    leaf and every other leaf its class by binding) are one the census lists, _SEND_SHAPES, which holds the shapes of the kernel's
+    Handler._send and no other. This case is each shape's live pin: kernel/kernel.py's Handler._send is read through the gate
+    (_body_param) with the gate's one lookup (_send_shape_name) recorded from outside the script, and each of its statements matches
+    the shape LIVE_SHAPES names for it, in order, every listed shape matching one. Each shape's near miss, refused naming it, is
+    TheLandingRulingsPlantsAreScanned's (as) plants."""
+
+    def test_each_statement_of_the_kernels_send_matches_its_listed_shape(self):
+        mod, res = script_module(ROOT), _tree().res
+        cls = next(n for n in KERNEL_TREE.body if isinstance(n, ast.ClassDef) and n.name == "Handler")
+        d = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_send")
+        ns = res.ns.get(KERNEL_PATH) or mod._NS_NONE
+        seen, real = [], mod._send_shape_name
+
+        def record(got):
+            seen.append(real(got))
+            return seen[-1]
+        mod._send_shape_name = record
+        try:
+            got = mod._body_param(d, [x.arg for x in d.args.args][1:], "self", KERNEL_TREE, res.rebinds.get(KERNEL_PATH, {}),
+                                  ns["computed"] or ns["builtins"] or ns["runtime"], [])
+        finally:
+            mod._send_shape_name = real
+        self.assertEqual(got, ("body", None), "the kernel's Handler._send is read, its body parameter the page")
+        self.assertEqual(tuple(seen), LIVE_SHAPES, "each statement matches its listed shape, in the definition's order")
+        self.assertEqual(sorted(mod._SEND_SHAPES.values()), sorted(set(LIVE_SHAPES)), "every listed shape is a live statement's, each listed once")
 
 
 if __name__ == "__main__":

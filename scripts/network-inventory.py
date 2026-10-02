@@ -249,45 +249,54 @@ browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, appli
 suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
 application/javascript among them). A script-running route's page body is the call's second positional argument, read only when
 the call passes it positionally, with no starred argument before it and no `**`, and the definition's one output is its one
-`self.wfile.write(<its second positional parameter>)`, with nothing in its signature or body outside the node kinds, in their
-roles, of the kernel's Handler._send: that write, the definition's last statement, directly after its one `self.end_headers()`,
-and before them send_response with its one argument and send_header, called on self as statements; isinstance, str, len, and
-getattr of self with a string-constant name and a None or bool default, where neither the definition nor the module binds the
-name,
-nothing rebinds it (no function binds it under a `global` declaration, no module-level statement writes it, and the file does none
-of the writes listed below that rebind every builtin) and the module holds no star import; the one rebinding of the page parameter
-to itself or to itself encoded by `.encode("utf-8")`, alone or as the branches of an `isinstance(<page>, str)` test (`body =
-body.encode("utf-8") if isinstance(body, str) else body`); a loop over a parameter's items (`for k, v in (headers or
-{}).items():`) and an if on a parameter or on that getattr, each into header calls; header values built from string constants
-holding no CR or LF, parameters, the loop's targets, attributes read on self, module constants (a name one top-level plain
-assignment binds and nothing else at module level, that nothing rebinds and no local or parameter of the definition names, in a
-module with no star import that writes no name of its module namespace through a computed name and may not rewrite it at run time)
-whose bound text holds no CR or LF as the census reads it (below), str, len and a `%` format on a string constant whose right
-operand is one of those or a tuple of them; and a signature of positional parameters, none positional-only, with None defaults and
-no annotation. The definition may run, before
-that one rebinding of the page, statements that build the page it writes, each read for the text it puts there and refused by name
-in any other shape: a stamp `<page> = F(<the definition's own parameters, positional, none starred and no keyword>)`, F a bare
-name the served pass follows only where it proves a module function a plain def and reads its returns; an injection `<page> =
-<page>.replace(<a string constant>, <value>)`, or with a third argument an int constant, whose value the served pass reads as page
-text; a name `<name> = <value>` no parameter, the page or self names, read where an injection's value reads it; a flag `<name> =
-True` or `= False` read only as an if's test, any other assignment of it refused; a non-body header write `<parameter> = <a string
-constant holding no CR or LF>`; and
-an if with no else whose test is a flag, a parameter, getattr of self with a string-constant name and a None or bool default,
-`isinstance(<page>, str)`, `<parameter>.startswith(<a string constant>)`, `<a string constant> in <page>`, or the `and` of those,
-whose body holds these statements. Any other script-running call
-fails the run by name,
-its reason naming the road (a second write, a write through an alias, a print to a stream and, for any other statement or
-expression, its node kind and line among the reasons), among them a keyword body, a starred or `**` call, a definition whose one
-write is of another parameter, a local or an expression, or that writes nothing, a method's definition that binds self again, in
-any form (a lambda's or a nested def's parameter among them), or declares it global, any other read of an attribute named `write`,
-`writelines`, `send`, `sendall`, `sendfile` or `sendmsg`, called or not, a string constant equal to one of those names, a
-reference to the write's receiver other than as its receiver, and in the definition a statement after the end_headers (which
-writes the header buffer to the stream, so a header call after it would reach the body), a second end_headers or none, any other
-rebinding of the page parameter, another codec name or a second argument to `.encode` (either can name a codec or an error handler
-the file registers at run time), a store or delete of an attribute or a subscript, a read of a name the module binds other than a
-header value's module constant or in the text the page-building statements read, a module constant as a header value whose bound
-text holds a CR or LF or reads a name the census does not follow by binding (by name), a call not listed above, and a nested def,
-class or lambda. The reader governs the definition's own text, and code the definition runs from
+`self.wfile.write(<its second positional parameter>)`, with a signature of positional parameters, none positional-only, with None
+defaults and no annotation, no node in its body of a kind the kernel's Handler._send holds none of, and every statement of its own
+body one of that definition's statement shapes, which the census lists from it (_SEND_SHAPES): a statement's place in the order,
+its kind, each operator, each attribute's name, the codec's name by its value, and each other operand by its class: self (the
+method's first parameter); the page (its second positional parameter); another parameter; a name a loop's target binds, read in
+that loop; any other name a statement stores that is no parameter, a local (a loop's target among them); a constant by its type (a
+string, a bool, an int, None); a builtin by its name (str, len, isinstance and getattr in the shapes below), where neither the
+definition nor the module binds the name, nothing rebinds it (no function binds it under a `global` declaration, no module-level
+statement writes it, and the file does none of the writes listed below that rebind every builtin) and the module holds no star
+import; a module constant (a name one top-level plain assignment binds and nothing else at module level, that nothing rebinds and
+no local or parameter of the definition names, in a module with no star import that writes no name of its module namespace through
+a computed name and may not rewrite it at run time) whose bound text holds no CR or LF as the census reads it (below); an
+attribute on self other than a header method or wfile, one class whatever its name; and page text, which the served pass reads.
+The shapes, `<str>` a string constant and every if and loop with no else: before the end_headers, any number of each of the stamp
+`<page> = <page text>`; a flag `<flag> = <a bool constant>`; the injection's if, `if getattr(self, <str>, <a bool constant>) and
+isinstance(<page>, str) and <parameter>.startswith(<str>) and <str> in <page>:` whose body is `<text name> = <page text>`, then
+`if getattr(self, <str>, None):` holding `<text name> = <page text>` and `<flag> = <a bool constant>`, then `<page> =
+<page>.replace(<str>, <page text>, <an int constant>)`; the flag's if, `if <flag>: <parameter> = <str>`; the codec, `<page> =
+<page>.encode("utf-8") if isinstance(<page>, str) else <page>`; the response line, `self.send_response(<parameter>)`; a header
+from a parameter, `self.send_header(<str>, <parameter>)`; the length header, `self.send_header(<str>, str(len(<page>)))`; a
+constant header, `self.send_header(<str>, <str>)`; a constant header under a getattr test, `if getattr(self, <str>, <a bool
+constant>): self.send_header(<str>, <str>)`; the headers loop, `for <target>, <target> in (<parameter> or {}).items():
+self.send_header(<target>, <target>)`, each `<target>` a name the loop's target binds; a header under its parameter's test, `if
+<parameter>: self.send_header(<str>, <parameter>)`; a formatted header under a getattr test, `if getattr(self, <str>, None):
+self.send_header(<str>, <str> % (<module constant>, <attribute on self>))`; and an attribute header under a getattr test, `if
+getattr(self, <str>, None):` holding `self.send_header(<str>, <attribute on self>)` then `self.send_header(<str>, <str>)`;
+directly before the write, the end_headers, `self.end_headers()`; and last, the write, `self.wfile.write(<page>)`. The page text
+is what the statements that build the page put there before the codec, each read for the text it puts there: a stamp's `F(<the
+definition's own parameters, positional, none starred and no keyword>)`, F a bare name the served pass follows only where it
+proves a module function a plain def and reads its returns; an injection's value; and the value of a text name, a name no
+parameter, the page or self names, read where an injection's value reads it. A flag is a name no parameter, the page or self
+names, assigned a bool constant and read only as an if's test, any other assignment of it refused; the parameter the flag's if
+assigns is a non-body header write, neither the page nor self, its string constant holding no CR or LF. Any other script-running
+call fails the run by name, its reason naming the road (a second write, a write through an alias, a print to a stream; a node of a
+kind the shapes hold none of, by its kind and line; any other statement by its kind and line and the shape it lacks, named among
+those the census lists for its kind at its place, or by the order it stands outside; and in a statement of a listed shape, a
+builtin or a module constant whose proof fails, by that proof), among them a keyword body, a starred or `**` call, a definition
+whose one write is of another parameter, a local or an expression, or that writes nothing, a method's definition that binds self
+again, in any form (a lambda's or a nested def's parameter among them), or declares it global, any other read of an attribute
+named `write`, `writelines`, `send`, `sendall`, `sendfile` or `sendmsg`, called or not, a string constant equal to one of those
+names, a reference to the write's receiver other than as its receiver, and in the definition a statement after the end_headers
+(which writes the header buffer to the stream, so a header call after it would reach the body), a second end_headers or none, any
+other rebinding of the page parameter, another codec name or a second argument to `.encode` (either can name a codec or an error
+handler the file registers at run time), a store or delete of an attribute or a subscript, a read of a name the module binds other
+than a module constant in a formatted header's tuple or in page text, a module constant there whose bound text holds a CR or LF or
+reads a name the census does not follow by binding (by name), a string constant holding a CR or LF in a header call (by name), a
+call in no listed shape, and a nested def, class or lambda.
+The reader governs the definition's own text, and code the definition runs from
 outside that text is not read: a header value is not scanned (a module constant used as one is read only for a CR or LF: each
 string or bytes constant in its value and in the value of each module constant that value names, followed by binding (a method
 call's receiver, as `T` in `T.lower()`, among the names followed), any other name there refusing it, save a bare name a call calls
@@ -4172,10 +4181,67 @@ def _is_ctype_write(c):
 
 _WRITE_NAMES = ("write", "writelines", "send", "sendall", "sendfile", "sendmsg")   # the stream and socket methods that put text on the wire
 _HEADER_ARITY = {"send_response": 1, "send_header": 2, "end_headers": 0}          # the header methods a `_send` calls on self, each with its arguments
-_SEND_BUILTINS = ("isinstance", "str", "len", "getattr")                            # the builtins a `_send` may call, where nothing binds or rebinds the name
-# The node kinds of the kernel's Handler._send (kernel/kernel.py), each read only in the roles it takes there (_send_gate). Derived from
-# that definition by a walk of its syntax tree; the fix commit of the eighth round's review records the command.
+# The node kinds of the kernel's Handler._send (kernel/kernel.py): the gate (_send_gate) refuses a node of any other kind by its kind
+# and line, and reads a statement of these only in a listed shape (_SEND_SHAPES). Derived from that definition by a walk of its syntax
+# tree; the fix commit of the eighth round's review records the command.
 _SEND_KINDS = ("Expr", "Assign", "For", "If", "Call", "Attribute", "Name", "Tuple", "Constant", "BinOp", "BoolOp", "Dict", "IfExp", "Compare")
+_SEND_STORES = {"page": "<the page>", "flag": "<a flag>", "textname": "<a text name>", "cache": "<a header parameter>"}   # the names a
+# preamble role binds (_send_preamble), each a class of _send_gate's shapes by its role
+_SEND_OPS = {ast.Mod: "%", ast.In: "in"}   # the operators of the kernel's definition, spelled in _send_gate's shapes (any other by its name)
+# The statement shapes of the kernel's Handler._send (kernel/kernel.py), the one definition that types script-running routes (the
+# reviewer's 02:29Z ruling of 2026-10-02: the gate's ok() an allowlist of exact statement shapes, derived from the live definition):
+# (a statement's place in the order, its kind, its shape) -> the shape's name, which a refusal names. A shape is _send_gate's render of
+# the statement: its kind, each operator, each attribute's name (an attribute on self other than a header method or wfile one class),
+# the codec's name by its value, an if's or a loop's body inside braces, page text one leaf and every other leaf its class by binding.
+# Derived by that render over each statement of the kernel's definition, every one of which matches one shape here and each shape one
+# of them (the census module's live pin, TheSendStatementsAreListedShapes), each shape with a near miss refused naming it (its (as)
+# plants)
+_SEND_SHAPES = {
+    ("before the end_headers", "Assign",
+     "<the page> = <page text>"): "the stamp",
+    ("before the end_headers", "Assign",
+     "<a flag> = <bool>"): "a flag",
+    ("before the end_headers", "If",
+     "if (getattr(<self>, <str>, <bool>) and isinstance(<the page>, str) and <a parameter>.startswith(<str>) and (<str> in "
+     "<the page>)): {<a text name> = <page text>; if getattr(<self>, <str>, <NoneType>): {<a text name> = <page text>; <a "
+     "flag> = <bool>}; <the page> = <the page>.replace(<str>, <page text>, <int>)}"): "the injection's if",
+    ("before the end_headers", "If",
+     "if <a flag>: {<a header parameter> = <str>}"): "the flag's if",
+    ("before the end_headers", "Assign",
+     "<the page> = (<the page>.encode('utf-8') if isinstance(<the page>, str) else <the page>)"): "the codec",
+    ("before the end_headers", "Expr",
+     "<self>.send_response(<a parameter>)"): "the response line",
+    ("before the end_headers", "Expr",
+     "<self>.send_header(<str>, <a parameter>)"): "a header from a parameter",
+    ("before the end_headers", "Expr",
+     "<self>.send_header(<str>, str(len(<the page>)))"): "the length header",
+    ("before the end_headers", "Expr",
+     "<self>.send_header(<str>, <str>)"): "a constant header",
+    ("before the end_headers", "If",
+     "if getattr(<self>, <str>, <bool>): {<self>.send_header(<str>, <str>)}"): "a constant header under a getattr test",
+    ("before the end_headers", "For",
+     "for (<a local>, <a local>,) in (<a parameter> or {}).items(): {<self>.send_header(<a loop target>, <a loop target>)}"):
+    "the headers loop",
+    ("before the end_headers", "If",
+     "if <a parameter>: {<self>.send_header(<str>, <a parameter>)}"): "a header under its parameter's test",
+    ("before the end_headers", "If",
+     "if getattr(<self>, <str>, <NoneType>): {<self>.send_header(<str>, (<str> % (<a module constant>, <an attribute on "
+     "self>,)))}"): "a formatted header under a getattr test",
+    ("before the end_headers", "If",
+     "if getattr(<self>, <str>, <NoneType>): {<self>.send_header(<str>, <an attribute on self>); <self>.send_header(<str>, "
+     "<str>)}"): "an attribute header under a getattr test",
+    ("at the end_headers", "Expr",
+     "<self>.end_headers()"): "the end_headers",
+    ("at the write", "Expr",
+     "<self>.wfile.write(<the page>)"): "the write",
+}
+
+
+def _send_shape_name(got):
+    """The name of the shape the census lists for a statement's (place, kind, shape), or None: _send_gate's one lookup in
+    _SEND_SHAPES, a function so that the census module's live pin reads from outside the script the shape each statement of the
+    kernel's Handler._send matches (as the walks' count pins read their steps)."""
+    return _SEND_SHAPES.get(got)
 
 
 def _send_preamble(d, me, page, params, codec):
@@ -4199,8 +4265,9 @@ def _send_preamble(d, me, page, params, codec):
     - an if with no else, its body these statements, its test a flag, a parameter, getattr of self with a str constant name and a
       None or bool constant default, isinstance(<page>, str), `<parameter>.startswith(<a str constant>)` or `<a str constant> in
       <page>`, or the `and` of those.
-    Each name in a role is the definition's own (a parameter, or a local only these roles bind); the gate (_send_gate) refuses any
-    other node by its kind and line, as it refuses any other statement. Three conjuncts are dominated, kept and argued here (choice 5 of
+    Each name in a role is the definition's own (a parameter, or a local only these roles bind); the gate (_send_gate) reads a
+    statement only in one of the kernel's definition's shapes (_SEND_SHAPES), its page text the text these roles hand the served pass,
+    and refuses any other statement naming the shape it lacks. Three conjuncts are dominated, kept and argued here (choice 5 of
     the eleventh round's rulings): a flag's every load is an if's test, so no flag is read in an injection's value, and neither the
     flag's `t not in read_in` nor the text name's `t not in flags` can decide; and `params` never holds self (the gate drops it), so
     the cache header's `t != me` cannot either, and _body_param refuses a definition that binds self again before the gate reads it."""
@@ -4288,8 +4355,9 @@ _header_step = list   # _header_const's expansion of one module constant, called
 
 
 def _header_const(consts, rebinds, name):
-    """Why a module constant a `_send` definition uses as a header value is refused (_send_gate), or None: the gate's guard on a
-    string constant holding a CR or LF in a header call, applied where the value is bound. The census reads the constant's value
+    """Why a module constant a `_send` definition reads outside its page text is refused (_send_gate, which takes the reason only for
+    a statement in a listed shape, where such a constant is a header value), or None: the gate's guard on a string constant holding a
+    CR or LF in a header call, applied where the value is bound. The census reads the constant's value
     and, through it, the value of each module constant that value names (a name one top-level plain assignment binds and nothing
     else at module level, _module_consts, that nothing rebinds: Result.rebinds), each once, a method call's receiver among those
     names (`_T` in `_T.lower()`, a value the call reads): a string or bytes constant there that holds a CR or LF refuses the header
@@ -4317,73 +4385,46 @@ def _header_const(consts, rebinds, name):
     return None
 
 
-def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, consts=None, out=None):
-    """Why the census does not read a `_send` definition, or None when nothing in its signature or body lies outside the kinds and
-    roles of the kernel's Handler._send (_SEND_KINDS), the one definition that types script-running routes. `me` is a method's self
-    (None for a module function), `page` its second positional parameter, `write` its one write (`<me>.wfile.write(<page>)`), `local`
-    the names the definition binds, `bound` the names the module binds, `rebinds` the names a function binds under a `global`
-    declaration or a module-level statement writes (Result.rebinds), `star` whether the module holds a star import and `shadow`
-    whether the file may write its builtins or its own module namespace through a computed name, or the run-time form by which it
-    may rewrite either (_namespace_flags), which the builtin's refusal then names. The table, by kind and role, with the eighth
-    round's review's widening of that table (its word), ruled in on the evidence of the plants tsa and tsw: the order, since the
-    table as first ruled ordered no statement, so a header call after the end_headers, flushed by a second end_headers, wrote into
-    the response body unscanned (tsa), as did a header call after the write (tsw), and a definition with no end_headers passed;
-    and no positional-only parameter, a signature form the ruled signature does not list and the real definition does not use:
-    - the order: the write is the definition's last statement, and directly before it stands its one `self.end_headers()`; every
-      other statement of its own body stands before that end_headers (end_headers writes the header buffer to the stream, so a
-      header call after it would reach the body);
-    - the signature: positional parameters, none positional-only, whose defaults are None constants, with no annotation;
-    - Expr: a statement whose value is a header call on self, or the write as a statement of the definition's own body;
-    - Assign: one, a statement of the definition's own body, its one target the page parameter by name and its value the codec
-      shape: the page parameter, `.encode("utf-8")` on it with exactly that one argument, or an IfExp whose test is
-      `isinstance(<page>, str)` and whose branches are those (`body = body.encode("utf-8") if isinstance(body, str) else body`);
-      and, before that codec, an assignment in a preamble role (_send_preamble: the stamp, an injection, a text name, a flag
-      assigned a bool constant, the cache header), every node of the stamp's call, of an injection's value and of a text name's
-      value page text the served pass reads;
-    - For: one, a statement of the definition's own body with no else, its target a name or a tuple of names that are no parameter
-      and not self, its iterable `(<a parameter> or {}).items()`;
-    - If: a statement of the definition's own body with no else, its test a parameter or the getattr call below; and a preamble
-      if in its role (_send_preamble);
-    - Call: `send_response` with its one argument and `send_header` with two, called on self as statements, and `end_headers` with
-      none, the one statement above; the write; `isinstance(<page>, str)` as the codec's test; `len(<page>)` and `str(<one value>)` as header values;
-      `getattr(<self>, <a str constant>, None)`, or with a bool constant default, as an if's test; `.encode("utf-8")` in the codec;
-      `.items()` as the loop's iterable; and a preamble role's calls (the stamp, an injection's `.replace`, and a preamble if's
-      getattr, isinstance and `.startswith` tests); none with a keyword;
-    - Attribute, loaded: on self, a header method as its call's callee, `wfile` as the write's receiver and nowhere else, and any
-      other name but a write method's as a header value; `.write` on `self.wfile` as the write's callee; `.encode` on the page
-      parameter and `.items` on the loop's iterable, each its call's callee;
-    - Name: loaded, a parameter; self as an attribute's base or getattr's first argument; the loop's targets inside its body; a
-      builtin above as its call's callee, and `str` as isinstance's second argument, each only where neither the definition nor the
-      module binds the name, nothing rebinds it, the module holds no star import and the file writes no builtin and no name of its
-      module namespace through a computed name and may rewrite neither at run time (`shadow`); a module constant (one top-level
-      plain assignment and nothing else binding it at module level, nothing rebinding it, no local or parameter of its name, in a
-      module with no star import) as a header value, save where its bound text holds a CR or LF or reads a name the census does
-      not follow by binding (_header_const); a flag or a parameter as a preamble if's test; stored, the page parameter as the
-      codec's target, the loop's targets and a name a preamble role binds;
-    - Tuple: stored, the loop's target; loaded, the right operand of a header value's `%` whose left operand is a str constant, its
-      elements header values;
-    - Constant: a str or None, a str in a header call's arguments holding no CR or LF, and a bool only as getattr's default or as
-      a flag's value (`<flag> = True` or `= False`); an int only as an injection's count; and any constant in the page text the
-      preamble's statements build (the stamp's call, an injection's value, a text name's value), which the served pass reads;
-    - BinOp: a `%` whose left operand is a str constant, as a header value; BoolOp: the `or` of a parameter and an empty dict in the
-      loop's iterable, and the `and` of a preamble if's tests; Compare: `<a str constant> in <page>` as a preamble if's test; Dict:
-      that empty dict; IfExp: the codec's value.
-    A header value is an argument of a header call or of str(), the right operand of that `%`, or an element of a tuple that is
-    that right operand. Every other statement or
-    expression refuses by its kind and line ("a With statement at line N", "a Subscript expression at line N"), a listed kind in
-    any other role by its kind and line too ("a Call expression outside its listed roles at line N"), a builtin whose allowance a
-    run-time form of the file takes away by the builtin and that form ("getattr at line N, a builtin in a file that calls exec at
-    line M, which may rewrite the builtins at run time"), a string constant holding a CR or LF in a header call's arguments by
-    name, a module constant used as a header value whose bound text holds a CR or LF, or reads a name the census does not follow,
-    by name and line ("the module constant X, whose bound text holds a CR or LF, as a header value at line N"), and the signature
-    by what it holds, the first in the definition's order. Conjuncts another dominates, kept and argued here (choice 5 of the eleventh
-    round's rulings): the Tuple arm's `%`, its right operand and its string-constant left operand, since a tuple standing anywhere
-    else in a BinOp leaves that BinOp refused by the BinOp arm (a page text's BinOp is in a preamble role, and so is the tuple in it,
-    admitted before either arm); the tuple-element clause's conditions on the tuple's parent, since a loaded tuple other than that
-    `%`'s right operand is refused by the Tuple arm itself; the `n.attr not in _WRITE_NAMES` of an attribute of self, since
-    _body_param refuses an attribute named as a write method other than as the write's callee before the gate reads the definition;
-    and the `value(n, p)` of an attribute of self and of a BinOp, since every parent the gate admits for either, outside a preamble
-    role, takes it as a header value, and any other parent is refused by its own arm."""
+def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, consts=(), out=None):
+    """Why the census does not read a `_send` definition, or None when its signature and every statement of its own body are the
+    kernel's Handler._send's, the one definition that types script-running routes. `me` is a method's self (None for a module
+    function), `page` its second positional parameter, `write` its one write (`<me>.wfile.write(<page>)`), `local` the names the
+    definition binds, `bound` the names the module binds, `rebinds` the names a function binds under a `global` declaration or a
+    module-level statement writes (Result.rebinds), `star` whether the module holds a star import, `shadow` whether the file may
+    write its builtins or its own module namespace through a computed name, or the run-time form by which it may rewrite either
+    (_namespace_flags), which a builtin's refusal then names, and `consts` the module's constants (_module_consts; none where
+    `shadow` holds). The gate reads, in the definition's order:
+    - the signature: positional parameters, none positional-only, whose defaults are None constants, with no annotation; any other
+      form refuses by what it holds ("a keyword-only parameter at line N");
+    - each node of the body: one of a kind the kernel's definition holds none of (_SEND_KINDS) refuses by its kind and line ("a
+      With statement at line N", "a Subscript expression at line N");
+    - each statement of its own body (ok), read only where its place in the order, its kind and its shape are one the census
+      lists (_SEND_SHAPES, through _send_shape_name), the shapes of the kernel's definition and no other: ok() an allowlist of
+      exact statement shapes derived from the live definition (the reviewer's 02:29Z ruling of 2026-10-02). The place: the write,
+      where the one end_headers stands directly before it (end_headers writes the header buffer to the stream, so a header call
+      after it would reach the body); that end_headers; before it; and any other place, outside the order. The shape (shape): the
+      statement's kind, each operator, each attribute's name, the codec's name (`.encode`'s argument) by its value, an if's or a
+      loop's body inside braces, page text (what a preamble role hands the served pass: _send_preamble) one leaf, and every other
+      leaf its class (leaf): self (`me`); the page; another parameter; a name the enclosing loop's target binds, read in that
+      loop; a flag (a preamble if's test that is no parameter); a name a preamble role binds; any other stored name that is no
+      parameter, a local; a constant by its type; a builtin, by its name, where no binding of the definition's or the module's
+      names it, nothing rebinds it and no star import may; a module constant where no local names it, nothing rebinds it and no
+      star import may; an attribute on self other than a header method or wfile, one class whatever its name; and any other name,
+      which no listed shape holds. A statement in a listed shape refuses only where a builtin in it fails its proof (`shadow`:
+      "getattr at line N, a builtin in a file that calls exec at line M, which may rewrite the builtins at run time", or
+      _SHADOWED) or a module constant in it fails its CR or LF read (_header_const: "the module constant X, whose bound text holds
+      a CR or LF, as a header value at line N"), the first in the source's order; any other statement refuses naming the shape it
+      lacks among those the census lists for its kind at its place ("an Expr statement at line N in no shape the census lists for
+      an Expr before the end_headers (the response line, a header from a parameter, the length header or a constant header)"), or
+      the order ("an Expr statement at line N outside the order (...)"). Every node of a statement the gate reads is read in it;
+    - each string constant holding a CR or LF in a header call's arguments, refused by name ("a Constant holding a CR or LF in a
+      header call at line N").
+    The first refusal in the definition's order is the reason, the outer node's at a tie. An attribute on self named as a write
+    method is in the attribute class above, but _body_param refuses any read of an attribute so named, other than as the write's
+    callee, before the gate reads the definition. One conjunct is dominated, kept and argued here (choice 5 of the eleventh round's
+    rulings): the module constant class's `not star`, since a module constant stands in a listed shape only in the formatted header
+    under a getattr test, whose getattr in a module with a star import is no builtin, so that statement is in no listed shape
+    whatever the constant's class."""
     a = d.args
     sig = ([(x, "a positional-only parameter") for x in a.posonlyargs] + [(x, "a keyword-only parameter") for x in a.kwonlyargs]
            + [(x, w) for x, w in ((a.vararg, "a *args parameter"), (a.kwarg, "a **kwargs parameter")) if x is not None]
@@ -4408,13 +4449,6 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, co
             and isinstance(top[widx - 1].value.func, ast.Attribute) and top[widx - 1].value.func.attr == "end_headers"
             and me is not None and isinstance(top[widx - 1].value.func.value, ast.Name) and top[widx - 1].value.func.value.id == me else None)
     limit = widx - 1 if ends is not None else widx
-    fors = [s for s in top if isinstance(s, ast.For)]
-    loop = fors[0] if fors else None
-    # every name under the loop's target: the loop is accepted only where that target is a name or a tuple of names (ok's For arm),
-    # which binds each name here, and with any other target the loop is outside its role, so the gate refuses the definition: a name
-    # the target only reads is never taken for a loop target of a definition the gate accepts
-    targets = {t.id for t in ast.walk(loop.target) if isinstance(t, ast.Name)} if loop else set()
-    in_loop ={id(n) for b in (loop.body if loop else ()) for n in ast.walk(b)}
     params = {x.arg for x in a.args} - {me}
 
     def named(e, i=None):
@@ -4436,11 +4470,6 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, co
         return (isinstance(e, ast.Call) and named(e.func, "isinstance") and len(e.args) == 2 and not e.keywords and named(e.args[0], page)
                 and named(e.args[1], "str"))
 
-    def gets(e):
-        return (me is not None and isinstance(e, ast.Call) and named(e.func, "getattr") and len(e.args) == 3 and not e.keywords
-                and named(e.args[0], me) and isinstance(e.args[1], ast.Constant) and type(e.args[1].value) is str
-                and isinstance(e.args[2], ast.Constant) and (e.args[2].value is None or type(e.args[2].value) is bool))
-
     def codec(e):
         leaf = lambda x: named(x, page) or encode(x)
         return leaf(e) or (isinstance(e, ast.IfExp) and is_str(e.test) and leaf(e.body) and leaf(e.orelse))
@@ -4449,109 +4478,94 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, co
     roles, texts = _send_preamble(d, me, page, params, coded)
     if out is not None: out.extend(texts)
 
-    def value(n, p):   # a header value: an argument of a header call or of str(), the right operand of the `%`, or an element of a
-        # tuple that is that right operand
-        return ((isinstance(p, ast.Call) and any(x is n for x in p.args) and (header(p) or named(p.func, "str")))
-                or (isinstance(p, ast.BinOp) and p.right is n)
-                or (isinstance(p, ast.Tuple) and isinstance(p.ctx, ast.Load) and isinstance(parent.get(id(p)), ast.BinOp)
-                    and parent[id(p)].right is p))
+    def leaf(n, proofs, loop):   # a name's class by binding (`loop` the names an enclosing loop's target binds); a builtin or a module
+        # constant whose proof fails goes into `proofs`, with its reason
+        if not isinstance(n.ctx, ast.Load):   # stored: a name a preamble role binds, the page, or a local that is no parameter
+            if roles.get(id(n)) in _SEND_STORES: return _SEND_STORES[roles[id(n)]]
+            if n.id == page: return "<the page>"
+            return "<a name the census does not prove>" if n.id in params else "<a local>"
+        if n.id == me: return "<self>"
+        if n.id == page: return "<the page>"
+        if n.id in params: return "<a parameter>"
+        if n.id in loop: return "<a loop target>"
+        if roles.get(id(n)) == "test": return "<a flag>"   # a preamble if's test that is no parameter (_send_preamble)
+        if n.id not in local and n.id not in bound and n.id not in rebinds and not star:
+            # a builtin by its name, where no binding of the definition's or the module's names it, nothing rebinds it and no star
+            # import may; its proof that the file may rewrite neither its builtins nor its module namespace (`shadow`, the form named)
+            if shadow:
+                proofs.append((n, "%s at line %d, %s" % (n.id, n.lineno, _RUNTIME_BUILTIN % shadow if isinstance(shadow, str) else _SHADOWED)))
+            return n.id
+        if n.id in consts and n.id not in local and n.id not in rebinds and not star:
+            # a module constant (one top-level plain assignment, nothing rebinding it), its proof the CR or LF read (_header_const)
+            bad_text = _header_const(consts, rebinds, n.id)
+            if bad_text is not None: proofs.append((n, "the module constant %s, %s, as a header value at line %d" % (n.id, bad_text, n.lineno)))
+            return "<a module constant>"
+        return "<a name the census does not prove>"
 
-    def early(n):   # a statement of the body before the end_headers (before the write where there is none)
-        return limit is not None and top.index(n) < limit
+    def shape(e, proofs, loop=frozenset()):   # a node's shape (_SEND_SHAPES): its kind, each operator and attribute, page text one
+        # leaf and every other leaf its class
+        if roles.get(id(e)) == "text": return "<page text>"   # what a preamble role hands the served pass (_send_preamble)
+        if isinstance(e, ast.Expr): return shape(e.value, proofs, loop)
+        if isinstance(e, ast.Assign): return " = ".join(shape(x, proofs, loop) for x in e.targets + [e.value])
+        if isinstance(e, (ast.If, ast.For)):
+            inner = loop | {t.id for t in ast.walk(e.target) if isinstance(t, ast.Name)} if isinstance(e, ast.For) else loop
+            head = ("if " + shape(e.test, proofs, loop) if isinstance(e, ast.If)
+                    else "for %s in %s" % (shape(e.target, proofs, inner), shape(e.iter, proofs, loop)))
+            return "%s: {%s}" % (head, "; ".join(shape(x, proofs, inner) for x in e.body)) + (
+                " else: {%s}" % "; ".join(shape(x, proofs, inner) for x in e.orelse) if e.orelse else "")
+        if isinstance(e, ast.Call):   # a codec's name, `.encode`'s argument, by its value: it names the code that encodes the page
+            lit = isinstance(e.func, ast.Attribute) and e.func.attr == "encode"
+            return "%s(%s)" % (shape(e.func, proofs, loop), ", ".join(
+                [repr(x.value) if lit and isinstance(x, ast.Constant) else shape(x, proofs, loop) for x in e.args]
+                + ["%s=%s" % (k.arg, shape(k.value, proofs, loop)) for k in e.keywords]))
+        if isinstance(e, ast.Attribute):   # an attribute on self other than a header method or wfile is one class
+            if named(e.value) and e.value.id == me and e.attr not in _HEADER_ARITY and e.attr != "wfile": return "<an attribute on self>"
+            return "%s.%s" % (shape(e.value, proofs, loop), e.attr)
+        if isinstance(e, ast.Name): return leaf(e, proofs, loop)
+        if isinstance(e, ast.Constant): return "<%s>" % type(e.value).__name__   # a constant by its type
+        sub = lambda x: shape(x, proofs, loop)
+        if isinstance(e, ast.BinOp): return "(%s %s %s)" % (sub(e.left), _SEND_OPS.get(type(e.op), type(e.op).__name__), sub(e.right))
+        if isinstance(e, ast.BoolOp): return "(%s)" % (" and " if isinstance(e.op, ast.And) else " or ").join(sub(x) for x in e.values)
+        if isinstance(e, ast.Compare):
+            ops = (_SEND_OPS.get(type(o), type(o).__name__) for o in e.ops)
+            return "(%s)" % " ".join([sub(e.left)] + ["%s %s" % (o, sub(c)) for o, c in zip(ops, e.comparators)])
+        if isinstance(e, ast.IfExp): return "(%s if %s else %s)" % (sub(e.body), sub(e.test), sub(e.orelse))
+        if isinstance(e, ast.Tuple): return "(%s)" % "".join(sub(x) + ", " for x in e.elts).rstrip(" ")
+        if isinstance(e, ast.Dict): return "{%s}" % ", ".join("%s: %s" % (sub(k), sub(v)) for k, v in zip(e.keys, e.values))
+        return "<a %s>" % type(e).__name__   # a kind outside the table, which the gate refuses by its kind (below)
 
-    def ok(n):
-        p = parent[id(n)]
-        r = roles.get(id(n))
-        if r == "text": return True   # page text the served pass reads in the definition's scope (_send_preamble), refusing what it cannot
-        if r is not None and not isinstance(n, ast.Name): return True   # a node in a preamble role (_send_preamble)
-        if isinstance(n, ast.Expr):
-            if n is ends or (n.value is write and p is d): return ends is not None
-            return header(n.value) and (p is not d or early(n))
-        if isinstance(n, ast.Assign):
-            return p is d and n is coded and early(n)
-        if isinstance(n, ast.For):
-            it = n.iter
-            return (p is d and n is loop and early(n) and not n.orelse and not targets & (params | {me})
-                    and (named(n.target) or (isinstance(n.target, ast.Tuple) and all(named(t) for t in n.target.elts)))
-                    and isinstance(it, ast.Call) and not it.args and not it.keywords and isinstance(it.func, ast.Attribute)
-                    and it.func.attr == "items" and isinstance(it.func.value, ast.BoolOp) and isinstance(it.func.value.op, ast.Or)
-                    and len(it.func.value.values) == 2 and named(it.func.value.values[0]) and it.func.value.values[0].id in params
-                    and isinstance(it.func.value.values[1], ast.Dict) and not it.func.value.values[1].keys)
-        if isinstance(n, ast.If): return p is d and early(n) and not n.orelse and ((named(n.test) and n.test.id in params) or gets(n.test))
-        if isinstance(n, ast.Call):
-            f = n.func
-            if n.keywords: return False
-            if header(n): return len(n.args) == _HEADER_ARITY[f.attr] and isinstance(p, ast.Expr) and (f.attr != "end_headers" or p is ends)
-            if n is write:
-                return (isinstance(p, ast.Expr) and parent.get(id(p)) is d and me is not None and isinstance(f, ast.Attribute)
-                        and isinstance(f.value, ast.Attribute) and f.value.attr == "wfile" and named(f.value.value, me)
-                        and len(n.args) == 1 and named(n.args[0], page))
-            if is_str(n): return isinstance(p, ast.IfExp) and p.test is n
-            if named(f, "len"): return len(n.args) == 1 and named(n.args[0], page) and value(n, p)
-            if named(f, "str"): return len(n.args) == 1 and value(n, p)
-            if gets(n): return isinstance(p, ast.If) and p.test is n
-            if encode(n): return (isinstance(p, ast.Assign) and p.value is n) or (isinstance(p, ast.IfExp) and (p.body is n or p.orelse is n))
-            return (isinstance(f, ast.Attribute) and f.attr == "items" and isinstance(f.value, ast.BoolOp) and not n.args
-                    and isinstance(p, ast.For) and p.iter is n)
-        if isinstance(n, ast.Attribute):
-            if not isinstance(n.ctx, ast.Load): return False
-            if me is not None and named(n.value, me):
-                if n.attr in _HEADER_ARITY: return isinstance(p, ast.Call) and p.func is n
-                if n.attr == "wfile": return isinstance(p, ast.Attribute) and p.value is n and p.attr == "write" and write.func is p
-                return n.attr not in _WRITE_NAMES and value(n, p)
-            if n.attr == "write": return p is write and write.func is n
-            if n.attr == "encode": return named(n.value, page) and isinstance(p, ast.Call) and p.func is n
-            return n.attr == "items" and isinstance(n.value, ast.BoolOp) and isinstance(p, ast.Call) and p.func is n
-        if isinstance(n, ast.Name):
-            if isinstance(n.ctx, ast.Store):
-                return ((n.id == page and isinstance(p, ast.Assign) and p is coded and any(t is n for t in p.targets))
-                        or (n.id in targets and (p is loop or (isinstance(p, ast.Tuple) and parent.get(id(p)) is loop)))
-                        or r in ("page", "flag", "textname", "cache"))
-            if not isinstance(n.ctx, ast.Load): return False
-            if r == "test": return True   # a flag or a parameter as a preamble if's test
-            if (isinstance(p, ast.Call) and p.func is n) or (is_str(p) and p.args[1] is n):
-                # the builtin allowance, decided here alone: the name is no binding of the definition's or the module's, nothing
-                # rebinds it (a function under `global`, or a module-level statement), no star import may, and the file writes no
-                # builtin and no name of its module namespace through a computed name, nor may rewrite either at run time (`shadow`,
-                # the run-time form named in the reason)
-                allowed = n.id in _SEND_BUILTINS and n.id not in local and n.id not in bound and n.id not in rebinds and not star
-                if allowed and isinstance(shadow, str): run_why[id(n)] = "%s at line %d, %s" % (n.id, n.lineno, _RUNTIME_BUILTIN % shadow)
-                return allowed and not shadow
-            if me is not None and n.id == me: return (isinstance(p, ast.Attribute) and p.value is n) or (gets(p) and p.args[0] is n)
-            # a module constant (one top-level plain assignment, nothing rebinding it) as a header value: a non-body write, refused by
-            # name where its bound text holds a CR or LF or reads a name the census does not follow (_header_const)
-            if (consts and n.id in consts and n.id not in local and n.id not in rebinds and not star and n.id not in params
-                    and value(n, p)):
-                bad_text = _header_const(consts, rebinds, n.id)
-                if bad_text is None: return True
-                run_why[id(n)] = "the module constant %s, %s, as a header value at line %d" % (n.id, bad_text, n.lineno)
-                return False
-            return n.id in params or (n.id in targets and id(n) in in_loop)
-        if isinstance(n, ast.Tuple):
-            if isinstance(n.ctx, ast.Load):   # the right operand of a header value's `%`, its elements header values
-                return (isinstance(p, ast.BinOp) and isinstance(p.op, ast.Mod) and p.right is n and isinstance(p.left, ast.Constant)
-                        and type(p.left.value) is str)
-            return isinstance(n.ctx, ast.Store) and p is loop and loop.target is n
-        if isinstance(n, ast.Constant):   # a str or None; a bool only as getattr's default (gets)
-            return type(n.value) is str or n.value is None or type(n.value) is bool and gets(p) and p.args[2] is n
-        if isinstance(n, ast.BinOp):
-            return isinstance(n.op, ast.Mod) and isinstance(n.left, ast.Constant) and type(n.left.value) is str and value(n, p)
-        if isinstance(n, ast.BoolOp):
-            return (isinstance(n.op, ast.Or) and len(n.values) == 2 and named(n.values[0]) and n.values[0].id in params
-                    and isinstance(n.values[1], ast.Dict) and isinstance(p, ast.Attribute) and p.attr == "items" and p.value is n)
-        if isinstance(n, ast.Dict): return not n.keys and isinstance(p, ast.BoolOp)
-        if isinstance(n, ast.IfExp): return isinstance(p, ast.Assign) and p.value is n and codec(n)
-        return False
+    def place(s):   # a statement's place in the order: the write, the end_headers directly before it, or before them
+        if s is at: return "at the write" if ends is not None else "outside the order"
+        if s is ends: return "at the end_headers"
+        return "before the end_headers" if limit is not None and top.index(s) < limit else "outside the order"
+
+    def verdict(s):   # why the census does not read a statement of the definition's own body, or None when it reads it
+        proofs, where = [], place(s)
+        got = (where, type(s).__name__, shape(s, proofs))
+        if _send_shape_name(got) is not None:   # a listed shape: refused only where a leaf's proof by binding fails, by that proof's reason
+            return proofs[0][1] if proofs else None   # gathered in the source's order, so the first is the earliest
+        art = "an" if got[1][0] in "AEIO" else "a"
+        if where == "outside the order":
+            return ("%s %s statement at line %d outside the order (the write, the definition's last statement, directly after its one "
+                    "end_headers, and every other statement before them)" % (art, got[1], s.lineno))
+        names = [nm for (w, k, _sh), nm in _SEND_SHAPES.items() if (w, k) == got[:2]] or ["none"]
+        return "%s %s statement at line %d in no shape the census lists for %s %s %s (%s)" % (
+            art, got[1], s.lineno, art, got[1], where, ", ".join(names[:-1]) + " or " + names[-1] if len(names) > 1 else names[0])
+
+    top_of = {id(x): s for s in top for x in ast.walk(s)}   # each node's statement of the definition's own body
+    why_of = {id(s): verdict(s) for s in top}   # each such statement's reason, the shape it lacks or the proof a leaf fails, or None
+
+    def ok(n):   # every node of a statement the gate reads is read in it; a refused statement is refused at its own line
+        return n is not top_of[id(n)] or why_of[id(n)] is None
 
     in_header = {id(x) for c in order if header(c) for arg in c.args for x in ast.walk(arg)}
-    run_why = {}   # id(a builtin's Name) -> its reason, where only a run-time form of the file (`shadow`) takes its allowance away
     bad = []   # (line, column, the reason): a decorated statement starts at its first decorator
     for n in order:
         if not isinstance(n, (ast.stmt, ast.expr)): continue   # an operator, a context, an argument list: part of its node's kind
         kind, what = type(n).__name__, "statement" if isinstance(n, ast.stmt) else "expression"
         art, line = "an" if kind[0] in "AEIO" else "a", min([n.lineno] + [x.lineno for x in getattr(n, "decorator_list", ())])
         if kind not in _SEND_KINDS: bad.append((line, n.col_offset, "%s %s %s at line %d" % (art, kind, what, line)))
-        elif not ok(n): bad.append((line, n.col_offset, run_why.get(id(n)) or "%s %s %s outside its listed roles at line %d" % (art, kind, what, line)))
+        elif not ok(n): bad.append((line, n.col_offset, why_of[id(n)]))
         elif isinstance(n, ast.Constant) and type(n.value) is str and ("\r" in n.value or "\n" in n.value) and id(n) in in_header:
             bad.append((line, n.col_offset, "a Constant holding a CR or LF in a header call at line %d" % line))
     return min(bad, key=lambda b: b[:2])[2] if bad else None   # the first in the definition's order; min keeps the outer at a tie
@@ -4560,11 +4574,12 @@ def _send_gate(d, me, page, write, local, bound, rebinds, star, shadow=False, co
 def _body_param(d, pos, me, tree, rebinds=(), shadow=False, texts=None):
     """(the parameter a `_send` definition writes as its page body, None), or (None, why the census does not read it). The body is
     its second positional parameter (`pos`, self dropped for a method; `me` a method's first parameter, and a module function has
-    none), read only when the definition's one output is its one `self.wfile.write(<that parameter>)` and nothing in its signature
-    or body lies outside the kinds and roles of the kernel's Handler._send (_send_gate, which names them): the one write of the
-    page parameter, the definition's last statement, directly after its one `self.end_headers()`, and before them send_response
-    with its one argument and send_header, called on self as statements; isinstance, str, len, and getattr of self with a
-    string-constant name and a None or bool default, each only where neither the definition nor the module binds the name, nothing rebinds
+    none), read only when the definition's one output is its one `self.wfile.write(<that parameter>)` and its signature and every
+    statement of its own body are the kernel's Handler._send's (_send_gate, which reads each statement against the shapes the census
+    lists from that definition, _SEND_SHAPES): a signature of positional parameters, none positional-only, with None defaults and no
+    annotation; no node of a kind that definition holds none of; and each statement in a listed shape at its place, the write last,
+    directly after its one `self.end_headers()`, every other statement before them, the builtins in them (isinstance, str, len and
+    getattr) each only where neither the definition nor the module binds the name, nothing rebinds
     it (no function binds it under a `global` declaration and no module-level statement writes it: Result.rebinds, `rebinds`; and
     the file names no `__builtins__` as a name, imports no builtins module (`import builtins[.x]`, `from builtins[.x] import ...`
     at any level, `from X import builtins` or `from X import __builtins__`, any X at any level), writes no module that may be the
@@ -4585,21 +4600,17 @@ def _body_param(d, pos, me, tree, rebinds=(), shadow=False, texts=None):
     delattr or `__dict__` spelled as a string in a getattr-family, attrgetter/methodcaller or namespace-key position
     (_namespace_flags lists these four ways exactly):
     `shadow`, _namespace_flags) and the
-    module holds no star import; the one rebinding
-    of the page parameter to itself or to itself encoded by `.encode("utf-8")`, alone or as the branches of an
-    `isinstance(<page>, str)` test (`body = body.encode("utf-8") if isinstance(body, str) else body`); a loop over a parameter's items (`for k, v in (headers or {}).items():`) and an if on a
-    parameter or on that getattr, each into header calls; header values built from string constants holding no CR or LF,
-    parameters, the loop's targets, attributes read on self, module constants whose bound text holds no CR or LF and reads no name
-    the census does not follow (_header_const), str, len and a `%` format on a string constant, its right operand one of those or a
-    tuple of them; before the codec, the statements that build the page in their roles (_send_preamble); and a signature of
-    positional parameters, none positional-only, with None defaults and no annotation. Any other statement or expression refuses
-    by its kind and line ("a With statement at line N"; a listed kind in another role, "a Call expression outside its listed roles
-    at line N"): among them a statement after the end_headers (end_headers writes the header buffer to the stream, so a header
-    call after it would reach the body), a second end_headers, a definition with none, and any other rebinding of the page
-    parameter (another assignment, an augmented or annotated assignment, a walrus, a loop or with target, an import, an except
-    name, a del, a match capture, a def, class or nested parameter of its name), another codec name or a second argument to
-    `.encode` (either can name a codec or an error handler the file registers at run time), any store or delete of an attribute or
-    a subscript, any read of a name the module binds, any other call and any nested def, class or lambda. Before that gate the
+    module holds no star import, the module constants in them each one whose bound text holds no CR or LF and reads no name the
+    census does not follow (_header_const), and their page text what the statements that build the page put there before the
+    codec, in their roles (_send_preamble). Any other statement refuses by its kind, its line and the shape it lacks ("an Expr
+    statement at line N in no shape the census lists for an Expr before the end_headers (the response line, ...)"), and a node of
+    another kind by its kind and line ("a With statement at line N"): among them a statement after the end_headers (end_headers
+    writes the header buffer to the stream, so a header call after it would reach the body), a second end_headers, a definition
+    with none, and any other rebinding of the page parameter (another assignment, an augmented or annotated assignment, a walrus,
+    a loop or with target, an import, an except name, a del, a match capture, a def, class or nested parameter of its name),
+    another codec name or a second argument to `.encode` (either can name a codec or an error handler the file registers at run
+    time), any store or delete of an attribute or a subscript, any read of a name the module binds other than a module constant in
+    a formatted header's tuple or in page text, any other call and any nested def, class or lambda. Before that gate the
     named reasons refuse, each with its road: a method's definition that binds self again in any form, as a type parameter
     included, anywhere inside it (an assignment to it, a lambda's or a nested def's parameter named self among them), or declares
     it global there ("a definition that rebinds self", "a definition that declares self global": a header call or a getattr on
@@ -4659,7 +4670,7 @@ def _body_param(d, pos, me, tree, rebinds=(), shadow=False, texts=None):
         return None, "a reference to the write's receiver other than as its receiver"
     if not (len(w.args) == 1 and not w.keywords and isinstance(w.args[0], ast.Name) and len(pos) > 1 and w.args[0].id == pos[1]):
         return None, "the definition's written body is not its second positional parameter"
-    # the gate, after every named reason: the definition's every node of a kind, in a role, the kernel's Handler._send holds
+    # the gate, after every named reason: the definition's every statement in a shape of the kernel's Handler._send (_SEND_SHAPES)
     got = []
     why = _send_gate(d, me, pos[1], w, local, _module_bound(tree), rebinds, _module_info(tree)["star"], shadow,
                      {} if shadow else _module_consts(tree), got)
@@ -5147,16 +5158,13 @@ def routes_of(rel, tree, sc, res):
     route whose text the served pass reads; an unresolved type is a SERVED line. A route's page body is the call's second
     positional argument, read only when the call passes it positionally with no starred argument before it and no `**` and the
     definition's one output is its one write of that parameter, nothing in a method's definition binding self again or declaring it
-    global, and nothing in its signature or body outside the node kinds, in their roles, of the kernel's Handler._send (_body_param,
-    _send_gate, which lists them by kind): the one write of the page parameter, the definition's last statement, directly after its
-    one `self.end_headers()`; the header calls on self, send_response with its one argument and send_header; isinstance, str, len
-    and getattr of self, each unbound and unrebound (the file's Result.rebinds decides with the module's bindings whether a builtin
-    the definition calls is the builtin, and a file that names `__builtins__` as a name, imports the builtins module, writes a
-    module that may be the builtins module, writes its module namespace through a computed name or may rewrite it or the builtins
-    at run time has none, in the forms _namespace_flags lists); the one rebinding of the page parameter to itself or to itself
-    encoded by `.encode("utf-8")`, alone or as the branches of an `isinstance(<page>, str)` test; a loop over a parameter's items; tests
-    on a parameter or on getattr of self; header values built from string constants holding no CR or LF, parameters, the loop's
-    targets, attributes read on self, str, len and a `%` format on a string constant; and a signature of positional parameters,
+    global, and its signature and every statement of its own body the kernel's Handler._send's (_body_param, _send_gate, which reads
+    each statement against the shapes the census lists from that definition, _SEND_SHAPES): the one write of the page parameter, the
+    definition's last statement, directly after its one `self.end_headers()`, every other statement before them in a listed shape,
+    the builtins in them (isinstance, str, len and getattr) each unbound and unrebound (the file's Result.rebinds decides with the
+    module's bindings whether a builtin the definition calls is the builtin, and a file that names `__builtins__` as a name, imports
+    the builtins module, writes a module that may be the builtins module, writes its module namespace through a computed name or may
+    rewrite it or the builtins at run time has none, in the forms _namespace_flags lists); and a signature of positional parameters,
     none positional-only, with None defaults and no annotation. A page function a function encloses, a `_send` in a class a
     function defines, and a `_send` call in a lambda's body (the call in the body of a lambda among _call_scopes, which the walk
     records in Scan.in_lambda), each a SERVED line by name (_ENCLOSED, _LAMBDA: after the bare call's own binding reason and
@@ -5167,9 +5175,9 @@ def routes_of(rel, tree, sc, res):
     form _type_rebinding names, a SERVED line by name before any typing (_TYPE_REBOUND), since the census reads that write's type
     from the call's argument;
     any other script-running call (a keyword body, a starred or `**` call, a definition with any other output, whose written body is
-    another parameter, a local or an expression, or that writes nothing, and a definition holding any other statement or
-    expression, among them a call, a store or a nested def the table does not list) is a SERVED line by name, its reason naming the
-    road or the node kind and its line (_unread_body), and no route. What the definition's text does not hold is not read: a header
+    another parameter, a local or an expression, or that writes nothing, and a definition holding any other statement, among them a
+    call, a store or a nested def in no listed shape) is a SERVED line by name, its reason naming the road, or the statement's kind,
+    its line and the shape it lacks (_unread_body), and no route. What the definition's text does not hold is not read: a header
     value, and a response a Content-Type in the headers argument, passed or defaulted, makes a page (the call is typed by its
     content-type argument);
     code the definition runs through an object it is handed (a parameter's methods, its mapping's items, its __str__); code behind a
