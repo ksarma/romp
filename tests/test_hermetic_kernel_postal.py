@@ -18054,7 +18054,12 @@ class HermeticKernelPostal(unittest.TestCase):
         test_a_name_is_read_through_its_first_binding_alone_and_a_later_binding_or_a_parameter_makes_it_loud). Since the
         verifier's findings on round 2: `environ` after `from os import *` is the mapping (os.__all__ carries it; missed
         silently at round 2's eleventh commit), and a bare annotation of a key (`os.environ[K]: str`), which evaluates the
-        mapping and the key and sets nothing, is no write (recorded as a write of shape "target" at that commit)."""
+        mapping and the key and sets nothing, is no write (recorded as a write of shape "target" at that commit). Since
+        2026-10-02 the helper's root is a symlink the test makes to a directory of its own, so the helper's label (the
+        `via` of each record and the loud message's file) is read where the root's spelling and its realpath differ on
+        every platform: the label is the helper's path relative to the root, however the root is spelled (fork PR 894's
+        macOS runs failed here, where the temp root under /var is a symlink into /private/var and the resolver labelled
+        the helper's realpath against the root as spelled)."""
         for shape in ('os.environ["ROMP_POSTAL_PEERS"] = "0"',
                       'if True:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"',
                       'os.environ.setdefault("ROMP_POSTAL_PEERS", "0")',
@@ -18129,9 +18134,18 @@ class HermeticKernelPostal(unittest.TestCase):
         # through a helper under the root: imported by name, as a module, aliased, with the package prefix, by its dotted
         # name and by a star import (the last two since the third commit of 2026-09-22: both passed the resolver
         # silently); the record names the chain; a class's __init__ is read, and a method on a class of the helper; a
-        # computed key in the helper is loud with both places named
-        root = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, root, True)
+        # computed key in the helper is loud with both places named. The root is a symlink to the directory the helper is
+        # written in, spelled apart from its realpath: the resolver reads an imported module under its realpath, and each
+        # `via` and the loud message below still name the helper by its path relative to the root, however the root is
+        # spelled
+        real = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, real, True)
+        links = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, links, True)
+        root = os.path.join(links, "root")
+        os.symlink(real, root)
+        self.assertEqual((os.path.islink(root), os.path.realpath(root) == root), (True, False),
+                         "the helper's root is a symlink, spelled apart from its realpath")
         with open(os.path.join(root, "planted_helper.py"), "w", encoding="utf-8") as f:
             f.write('import os\ndef floor():\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\ndef restore(name, value):\n    os.environ[name] = value\n'
                     'class Seam:\n    def __init__(self):\n        os.environ["ROMP_X"] = "1"\n'
