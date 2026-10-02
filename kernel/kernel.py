@@ -63,11 +63,13 @@ jd = load_source("romp_judge", HERE / "judge.py")
 # <state>/kernel.lock HERE, before any of it, and holds it until the process exits; an in-process
 # load of this module (a test, a bench) never locks. The lock cannot tell a primary from a second
 # kernel on its root and gives the root to whichever kernel takes it first, so the manager refuses
-# the last three at the source (bin/romp-manager rootConflict: it never starts two kernels on one
-# state root, so a kernels.json profile needs a stateDir no other kernel uses). The lock is the guard
-# where the manager is not the road: a kernel's successor and the kernel draining before it, and the
-# kernels started outside the manager (a kernel started by hand, which needs its own ROMP_STATE_DIR,
-# the far-host fallback, an orphaned kernel, the test labs).
+# the last three at the source (bin/romp-manager rootConflict: a manager from this release never
+# starts two kernels on one state root, so a kernels.json profile needs a stateDir no other kernel
+# uses; a manager not under a supervisor that was started before an update keeps its old spawn logic
+# until it restarts). The lock is the guard where the manager is not the road: a kernel's successor
+# and the kernel draining before it, and the kernels started outside the manager (a kernel started
+# by hand, which needs its own ROMP_STATE_DIR, the far-host fallback, an orphaned kernel, the test
+# labs).
 #
 # The file's one line names the holder: "<pid> serving", rewritten to "<pid> draining <deadline>"
 # (wall-clock epoch seconds) when _drain_and_exit starts. A kernel that finds the lock held by a
@@ -253,18 +255,20 @@ def _kernel_lock_refusal(why):
     """The one stderr line a refused kernel prints: `why` (what holds the lock as its line reads: the owner's pid, a new
     owner that has not yet written its line, or the line itself, quoted (its first 80 characters), when it names no
     owner; and the lock's path), that this kernel wrote nothing, its exit status, and what follows from it on each road.
-    The manager never starts two kernels on one state root (bin/romp-manager rootConflict), so under the manager the
-    holder is the kernel before this one or a kernel started outside the manager, and the manager's crash backoff starts
-    this kernel again. A kernel started by hand is outside the manager's view: a second kernel started by hand on this
-    root needs its own state root, ROMP_STATE_DIR, and a kernels.json profile whose root such a kernel holds needs a
-    stateDir no other kernel uses. Only for a holder: a lock step that failed with an error is _kernel_lock_fault's
-    line."""
-    return ("romp-kernel: %s; this kernel wrote nothing and exits %d. The manager never starts two kernels on one state "
-            "root, so under the manager the holder is the kernel before this one or a kernel started outside the manager, "
-            "and the manager's crash backoff starts this kernel again. A kernel started by hand is outside the manager's "
-            "view: a second kernel started by hand on this root needs its own state root (set ROMP_STATE_DIR), and a "
-            "kernels.json profile whose root such a kernel holds needs a stateDir no other kernel uses.\n"
-            % (why, KERNEL_LOCK_EXIT))
+    A manager from this release never starts two kernels on one state root (bin/romp-manager rootConflict), so under
+    such a manager the holder is the kernel before this one or a kernel started outside the manager, and the manager's
+    crash backoff starts this kernel again. The guarantee is this release's, and the line says so: a manager not under
+    a supervisor that was started before an update keeps its old spawn logic until it restarts, and can start a second
+    kernel on the primary's root (docs/reference.md, One kernel per state root). A kernel started by hand is outside the
+    manager's view: a second kernel started by hand on this root needs its own state root, ROMP_STATE_DIR, and a
+    kernels.json profile whose root such a kernel holds needs a stateDir no other kernel uses. Only for a holder: a lock
+    step that failed with an error is _kernel_lock_fault's line."""
+    return ("romp-kernel: %s; this kernel wrote nothing and exits %d. A manager from this release never starts two kernels "
+            "on one state root, so under such a manager the holder is the kernel before this one or a kernel started "
+            "outside the manager, and the manager's crash backoff starts this kernel again. A kernel started by hand is "
+            "outside the manager's view: a second kernel started by hand on this root needs its own state root (set "
+            "ROMP_STATE_DIR), and a kernels.json profile whose root such a kernel holds needs a stateDir no other kernel "
+            "uses.\n" % (why, KERNEL_LOCK_EXIT))
 
 
 def _kernel_lock_holder_why(path, line):

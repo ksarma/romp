@@ -1913,6 +1913,17 @@ second kernel was started: a `kernels.json` profile needs a `stateDir` no other
 kernel uses, and a kernel you start by hand on a root another kernel serves is
 refused until you give it its own state root with `ROMP_STATE_DIR`.
 
+These are the guarantees of a manager from this release, and a manager keeps
+the spawn logic it started with. A manager not under a supervisor (started in
+the foreground, or by `romp-manager ensure`) that was started before an update
+keeps its old spawn logic until it restarts, and can still start a second
+kernel on the primary kernel's root: a `kernels.json` profile with no
+`stateDir`, or an `/ensure` for a port no profile names. That kernel can take
+the lock first and lock the primary kernel out, whose refusal then names a
+holder that a manager from this release would not have started. After updating,
+restart such a manager. A manager under a supervisor restarts itself with the
+update (the self-restart above).
+
 The dashboard page stays on screen across a restart. Its panes reconnect as they
 do after a dropped socket (the watched tab rebuilt whole, the other tabs as
 skeletons that fill on demand), and a restart onto the same build is invisible

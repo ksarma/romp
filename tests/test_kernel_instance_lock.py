@@ -12,7 +12,9 @@ time into main(), after the bind. An in-process load of the kernel never locks.
 The pins, each red on the kernel before the lock for the reason it names:
   1. a serving holder: exit 75 within the bound; stderr names the holder's pid, the lock path and the remedy on each
      road (a second kernel started by hand needs its own state root, ROMP_STATE_DIR; a kernels.json profile whose root
-     such a kernel holds needs a stateDir no other kernel uses);
+     such a kernel holds needs a stateDir no other kernel uses), and what a manager from this release guarantees (it
+     never starts two kernels on one root, so the holder is the kernel before this one or one started outside the
+     manager, and its crash backoff starts this kernel again), never stated for every manager;
      both roots keep every path's bytes, mode and mtime and the same set of paths (seeded with files the boot passes
      write, sweep or prune, and serve-token left absent so an import-time mint would show as a new path); no connection
      reached the postal listener; no postal/server.pid;
@@ -437,8 +439,19 @@ class SecondKernelIsRefused(_Lab):
         self.assertIn(self.lock_path, err, "the refusal names the lock's path")
         self.assertIn(REMEDY_TEXT, err, "the refusal names the remedy for a second kernel started by hand")
         self.assertIn(PROFILE_REMEDY_TEXT, err, "the refusal names the remedy on the other road, a kernels.json profile")
-        self.assertIn("The manager never starts two kernels on one state root", err,
-                      "the refusal says the manager is not the road a second kernel took")
+        # the guarantee is a manager from this release's, never every manager's: one not under a supervisor that was
+        # started before an update keeps its old spawn logic until it restarts (docs/reference.md, One kernel per state
+        # root)
+        self.assertIn("A manager from this release never starts two kernels on one state root", err,
+                      "the refusal says what a manager from this release guarantees")
+        self.assertNotIn("The manager never starts two kernels on one state root", err,
+                         "the guarantee is scoped to this release's manager, not stated for every manager")
+        # who the holder can be under such a manager: the kernel before this one or one started outside the manager (the
+        # text before named only one kernel's successor meeting the kernel before it)
+        self.assertIn("so under such a manager the holder is the kernel before this one or a kernel started outside the "
+                      "manager", err)
+        self.assertIn("and the manager's crash backoff starts this kernel again", err)
+        self.assertNotIn("successor meeting the kernel before it", err)
         self.assertNotIn("primaries", err, "a profile kernel's successor meets the lock as the primary's does")
         self.assertIn("this kernel wrote nothing", err)
         self.assertEqual(len([ln for ln in err.splitlines() if ln.startswith("romp-kernel:")]), 1,
