@@ -235,11 +235,13 @@ class ShellLivenessMatchesTheShim(unittest.TestCase):
     def test_the_shim_keeps_its_connect_cut_on_its_tick(self):
         # the other half of 1a's re-scope: the shim's connect() arms no timer of its own for the cut (its 15 s cut is the tick
         # arm the agreement above reads), so the shell's per-dial timer is the shell's alone. The pin reads the WHOLE of
-        # connect(): from its head to the next line that opens a function declaration, a span that holds its last handler
-        # (ws.onerror). It finds one setTimeout( there: the onclose redial, setTimeout(connect,d). A per-dial cut written
-        # anywhere in connect() (window.setTimeout( included) makes it two and reddens this; a cut armed through a helper
-        # defined outside connect() is outside what it reads. A fold that brings a per-dial cut into the shim then reconciles
-        # the two copies' agreement on purpose rather than by accident.
+        # connect(): from its head to the next line that opens a function declaration, and the span must END with connect()'s
+        # last handler and closing brace (ws.onerror, then '}'), so a nested declaration on its own line inside connect()
+        # cannot end the read early. It finds one setTimeout( there: the onclose redial, setTimeout(connect,d). A per-dial cut
+        # written anywhere in connect() (window.setTimeout( included) makes it two and reddens this, and a nested declaration
+        # that would hide one reddens the end check; a cut armed through a helper defined outside connect() is outside what
+        # it reads. A fold that brings a per-dial cut into the shim then reconciles the two copies' agreement on purpose
+        # rather than by accident.
         import re
         js = km._shim_core_js("chat")
         head = "function connect(){"
@@ -248,7 +250,8 @@ class ShellLivenessMatchesTheShim(unittest.TestCase):
         nxt = re.search(r"\nfunction \w+\(", js[start:])
         self.assertIsNotNone(nxt, "a function declaration follows connect()")
         dial = js[start:start + nxt.start()]
-        self.assertIn("ws.onerror=function(){try{ws.close();}catch(e){}};", dial, "the span reaches connect()'s last handler")
+        self.assertTrue(dial.rstrip().endswith("ws.onerror=function(){try{ws.close();}catch(e){}};}"),
+                        "the span ends with connect()'s last handler and its closing brace, so a nested declaration did not end the read early: %r" % dial.rstrip()[-120:])
         self.assertEqual(re.findall(r"setTimeout\(", dial), ["setTimeout("],
                          "the whole of the shim's connect() arms one timer, its onclose redial: its connect cut is its watchdog tick's CONNECTING arm")
         self.assertIn("setTimeout(connect,d);", dial, "...and that one timer is the redial")
