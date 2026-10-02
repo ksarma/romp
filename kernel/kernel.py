@@ -310,7 +310,8 @@ def _kernel_lock_acquire(path, now=time.time):
     past its deadline when the owner still holds the lock under its own line, otherwise the kernel that took the lock
     (or a new owner that has not yet written its line). Every other holder is refused at once, before any waiting line,
     with _kernel_lock_refusal: a line that names no live draining owner (_kernel_lock_holder_why), a deadline already
-    past or further ahead than that bound, more than one thread, and a wait whose timer setitimer cannot arm.
+    past or further ahead than that bound, and more than one thread. A wait whose timer setitimer cannot arm is refused
+    with _kernel_lock_refusal too, but after the waiting line: the timer is armed inside the wait the line announces.
 
     The lock step fails with an error instead (the open; the non-blocking flock with any errno but EWOULDBLOCK; the
     blocking flock in the wait; a read of the line, at the start or at the deadline): refused with _kernel_lock_fault,
