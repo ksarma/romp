@@ -1283,9 +1283,10 @@ header:
   a port only, the remedy is to repair that port. Two exceptions predate these
   rules. For any port a running kernel serves, `/ensure` answers for that kernel
   with 200 and `spawned: false`, even when its entry has left the file or has
-  named another kernel's root since it started. And for a port no profile names,
-  if a profile is named `k<port>` (the name `/ensure` gives such a port),
-  `/ensure` answers for that profile, on the profile's own port. The manager
+  named another kernel's root since it started. And for a port no profile names
+  and no running kernel serves, if a profile is named `k<port>` (the name
+  `/ensure` gives such a port), `/ensure` acts on that profile, which runs on its
+  own port. The manager
   never starts a refused profile at boot, on a restart or on a respawn either.
   It logs one line per distinct conflict per manager life (the refused kernel,
   the kernel whose root it is, that root and why), plus one when a refusal ends
@@ -1888,13 +1889,15 @@ A running kernel keeps the root it was started on until it stops, wherever its
 entry sits in the file, so a profile added or edited onto that root is refused
 even when it is listed first; among profiles that are not running, the one
 listed first gets the root. That holds for one manager's life, through the
-kernel's own restarts and crash respawns. A manager restart starts the profiles
+kernel's own restarts and crash respawns on that root; a restart after its entry
+names another `stateDir` is a new start on that other root, where the file's
+order applies. A manager restart starts the profiles
 in the file's order again, so the root can go to a profile listed before the
 kernel that held it. Such a restart includes the self-restart that
 `romp refresh`, a `/restart` or a crash respawn triggers under a supervisor once
 `bin/romp-manager` has changed since the manager started. The manager answers
-`/ensure` for a refused profile, and for a port no profile names, with
-409 (see [The manager's control port](#the-managers-control-port)). The lock
+`/ensure` for a refused profile with 409 (see
+[The manager's control port](#the-managers-control-port)). The lock
 keeps kernels apart in the cases the manager does not decide: a kernel's
 successor and the kernel draining before it, and the kernels started outside
 the manager, which it cannot see (a kernel you start by hand, the far-host

@@ -209,8 +209,8 @@ function copyInstallCommand(): void {
 // manager starts nothing and answers /ensure with 409, whose error the attach toast shows
 // (bin/romp-manager rootConflict). Two exceptions. For any port a running kernel serves, /ensure
 // answers for that kernel with 200 and spawned false, even when its entry has left kernels.json or
-// has named another kernel's root since it started. And for a port no profile names, if a profile
-// is named k<port>, /ensure answers for that profile, on the profile's own port.
+// has named another kernel's root since it started. And for a port no profile names and no running
+// kernel serves, if a profile is named k<port>, /ensure acts on that profile, which runs on its own port.
 function cfgPort(key: "kernelPort" | "managerPort", env: string | undefined, dflt: number): number {
   const v = vscode.workspace.getConfiguration("romp").get<number>(key);
   if (typeof v === "number" && v > 0) return v;

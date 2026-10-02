@@ -33,7 +33,7 @@ kernel is on, and let co-located kernels message each other through the postal f
    decides. That holds for one manager life: a manager restart (a stale manager's self-restart
    under a supervisor included) starts the profiles in the file's order again, so the root can
    go to a profile listed before the kernel that held it.
-   `/ensure` for a refused profile, or for a port no profile names, answers 409
+   `/ensure` for a refused profile answers 409
    (bin/romp-manager `rootConflict`). The kernel's own lock, `kernel.lock`,
    keeps kernels apart in the cases the manager does not decide: a kernel's successor and the
    kernel draining before it, and the kernels started outside the manager (a kernel started by
