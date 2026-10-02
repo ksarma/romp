@@ -3,7 +3,7 @@ title: BatsRoad's timeout test asserts the bound, TERM then KILL to the group an
 status: candidate
 where: tests/test_bats_bare_negation.py (BatsRoad timeout test, renamed; _end_group docstring; BatsRoad.POLL comment), upstream/2026-10-02-tests-batsroad-teardown-is-bats.md (this entry)
 added: 2026-10-02
-pr:
+pr: 946
 tier: docs
 offered:
 closed:
