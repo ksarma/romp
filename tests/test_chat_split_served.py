@@ -48,7 +48,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import tempfile
 import time
@@ -61,6 +60,7 @@ BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
 from romp_load import load_source
 import lab_dist
+import lab_ports
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
@@ -101,14 +101,6 @@ def _rgb(c):
     if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
         return tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
     return c
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _transcript(sid, tag, cwd, pairs):
@@ -744,7 +736,7 @@ class ServedChatSplit(unittest.TestCase):
                 {"sid": sid, "name": name, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid, "alive": True}))
             Path(proj, sid + ".jsonl").write_text(_transcript(sid, tag, cwd, 20))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 100}, "seven_day": {"pct": 10}}))   # park sends
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-chatsplit"
         cls.env = dict(os.environ,
                        XDG_STATE_HOME=os.path.join(cls.lab, "xdg"),
@@ -754,7 +746,7 @@ class ServedChatSplit(unittest.TestCase):
                        ROMP_DIST_DIR=dist, ROMP_MODEL_CATALOG="off",
                        # a postal bus of its own that is never started (the trio kernel_env gives every lab kernel):
                        # the kernel's boot-time ensure must never take the machine's fixed bus port (tests/test_hermetic_kernel_postal.py)
-                       ROMP_POSTAL_PORT=str(_free_port()), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1")
+                       ROMP_POSTAL_PORT=str(lab_ports.reserve(cls.lab)), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1")
         cls.env.pop("ROMP_STATE_DIR", None)
         # a romp session's tool shell carries its own kernel's ROMP_MANAGER_PID and friends; inherited, a stale one has the
         # lab kernel's parent watch drain it seconds after boot (the run reads "never served /healthz"). The lab is nobody's child.
@@ -765,16 +757,10 @@ class ServedChatSplit(unittest.TestCase):
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=cls.env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         cls.result, cls.driver_error = None, None
         cls._drive()
 
@@ -820,6 +806,7 @@ class ServedChatSplit(unittest.TestCase):
             except (ProcessLookupError, PermissionError):
                 pass
             k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _r(self):

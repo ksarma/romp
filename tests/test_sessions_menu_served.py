@@ -22,10 +22,10 @@ Red first per road at the merge base (no menu opens there). Skips loudly without
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -45,14 +45,6 @@ SID_API = "aaaaaaaa-5000-2222-3333-888888888888"
 SID_TESTS = "aaaaaaaa-5000-2222-3333-999999999999"
 OPEN_TOP = "index the notes"
 WEB_TOP = "restyle the landing page"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _transcript(sid, tag, cwd, pairs):
@@ -329,21 +321,15 @@ class SessionsMenuServed(unittest.TestCase):
             {"rompUuid": SID_WEB, "seq": 1, "placementsV": 1, "status": {}, "lastNode": "w1",
              "nodes": {"w1": {"text": WEB_TOP, "t": 1781100000, "mt": 1781100000, "parentId": None}}}))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 100}, "seven_day": {"pct": 10}}))   # park sends
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-sessmenu"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         cls.result, cls.driver_error = None, None
         cls._drive()
 
@@ -384,6 +370,7 @@ class SessionsMenuServed(unittest.TestCase):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def setUp(self):

@@ -24,7 +24,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -33,6 +32,7 @@ import unittest
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -50,14 +50,6 @@ REPLY = "The web session finished the notes-api login flow and every test passes
 EXACT = "finished the notes-api login flow"      # the passage the seeded thread highlights
 W, H = 1200, 800
 TINY_W, TINY_H = 480, 360
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -240,22 +232,16 @@ class ServedCommentPopSize(unittest.TestCase):
         Path(cls.state, "comments", SID + ".json").write_text(json.dumps({"threads": [
             {"tid": TID, "sid": TID, "anchorUuid": A_UUID, "cutUuid": A_UUID, "anchorT": now - 900, "exact": EXACT,
              "status": "open", "createdT": now - 600, "lastSeenT": now - 600, "name": "web-comment-1", "color": "#e8b220"}]}))
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-cmtpopsize"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = open(os.path.join(cls.lab, "kernel.log"), "w")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=cls.klog, stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -264,6 +250,7 @@ class ServedCommentPopSize(unittest.TestCase):
             cls.kernel.wait()
         if getattr(cls, "klog", None):
             cls.klog.close()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _drive(self):

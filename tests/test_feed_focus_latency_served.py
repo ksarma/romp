@@ -52,7 +52,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -61,6 +60,7 @@ import unittest
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -87,14 +87,6 @@ OLD_ANCHOR = "dddddddd-4160-2222-3333-000000000003"
 # repaint lands before the animation frame that follows that signal. A bound in milliseconds (one frame for a click, two
 # for a relay) held here and read 43.6 ms on a loaded CI runner for a repaint the record shows in the relay's own task;
 # the frame clock stretches with the load, the bound did not. The table still prints the milliseconds for the record.
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _transcript(sid, tag, cwd, pairs):
@@ -657,22 +649,16 @@ class FeedFocusLatencyServed(unittest.TestCase):
                     {"sid": sid, "name": name, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid, "alive": True}))
             Path(proj, sid + ".jsonl").write_text(_transcript(sid, tag, cwd, 6))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 100}, "seven_day": {"pct": 10}}))   # park sends
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-feedlat"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         cls.result, cls.driver_error = None, None
         cls._drive()
 
@@ -716,6 +702,7 @@ class FeedFocusLatencyServed(unittest.TestCase):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def setUp(self):

@@ -24,14 +24,13 @@ ride ui/webview/scroll-marks.test.ts. All fixtures synthetic.
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -44,14 +43,6 @@ import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environm
 #                                   imported TestCase would be collected here a second time)
 
 SID = "aaaaaaaa-1111-2222-3333-444444444444"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -171,28 +162,23 @@ class ServedNotchFollowsGrowth(unittest.TestCase):
                      "message": {"role": "assistant", "model": "claude-fable-5-1", "stop_reason": "end_turn",
                                  "content": [{"type": "text", "text": "\n\n".join("Paragraph %d of the reply." % i for i in range(12))}]}})
         Path(proj, SID + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-notchgrowth"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _drive(self, script, name):

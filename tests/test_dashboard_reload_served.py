@@ -22,11 +22,11 @@ Skips LOUDLY when the extension deps or a playwright browser are absent (CI inst
 in node in test_dashboard_auto_reload.py regardless. All fixtures synthetic."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import tempfile
 import time
@@ -43,14 +43,6 @@ import sys
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment and the cfg.relaunch stanza (the module,
 #                                   not its classes: an imported TestCase would be collected here a second time)
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _transcript(cwd, pairs):
@@ -245,7 +237,7 @@ class ServedAutoReload(unittest.TestCase):
         proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
         os.makedirs(proj, exist_ok=True)
         Path(proj, SID + ".jsonl").write_text(_transcript(cwd, 60))   # long: overflows the pane several times over
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-autoreload"
         cls.env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token,
                                   ROMP_WS_KEEPALIVE="2")                       # the dv rides the keepalive: keep the wait short
@@ -256,16 +248,10 @@ class ServedAutoReload(unittest.TestCase):
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=cls.env)
         cls.relaunched_pids = []
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -277,6 +263,7 @@ class ServedAutoReload(unittest.TestCase):
                     pass
         if getattr(cls, "kernel", None):
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_a_newer_build_is_offered_not_now_is_kept_reload_is_a_click_and_a_same_build_restart_is_invisible(self):

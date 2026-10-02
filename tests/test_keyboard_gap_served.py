@@ -36,16 +36,14 @@ its own port; the driver asserts /healthz on that port before any request. Synth
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -70,10 +68,6 @@ DRIVER = os.path.join(HERE, "keyboard_gap_browser.mjs")
 HOST = "TESTHOST"
 LAYOUT_H = 844      # the iPhone 14 descriptor's layout viewport under the shell's viewport meta
 KB_H, KB_PAN = 508, 83   # the visual viewport with the keyboard up, and iOS's pan of it
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def _px(v):
@@ -104,20 +98,15 @@ class KeyboardGap(unittest.TestCase):
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state, claude = _ret._seed(cls.lab)
-        cls.port, cls.token = _free_port(), "testtok-kbgap"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-kbgap"
         seams = {"ROMP_HOST_NAME": HOST}
         cls.env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, **seams)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"),
                                       stderr=subprocess.STDOUT, env=cls.env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -128,6 +117,7 @@ class KeyboardGap(unittest.TestCase):
                 pass
             cls.kernel.wait()
         if cls.lab:
+            lab_ports.release(cls.lab)
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     def _drive(self, engine, context=None, tag=""):

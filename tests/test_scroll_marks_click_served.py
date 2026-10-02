@@ -18,14 +18,13 @@ ui/webview/scroll-marks.test.ts. Pass NOTCH_CLICK_SHOTS=<path-prefix> for PNGs. 
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -42,14 +41,6 @@ PROMPTS = 40                                       # long exchanges — the scro
 DENSE = 2                                          # quick exchanges at the tail — notches a few px apart
 USER_UUID = "11111111-2222-3333-4444-%012d"        # % k → the k-th prompt's uuid
 REPLY_UUID = "22222222-3333-4444-5555-%012d"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -207,28 +198,23 @@ class ServedNotchClickJumps(unittest.TestCase):
                                      "content": [{"type": "text", "text": body}]}})
             prev = a
         Path(proj, SID + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-notchclick"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _drive(self, script, name):

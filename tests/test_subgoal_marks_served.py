@@ -20,13 +20,12 @@ Skips LOUDLY without the extension deps or a Playwright browser, and for nothing
 the skips red where the browser is installed); a build or kernel failure is a failure."""
 import json
 import lab_dist
+import lab_ports
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -39,14 +38,6 @@ import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environm
 SID_WEB = "aaaaaaaa-1111-2222-3333-777777777777"
 ROOT_ID = "cccccccc-1111-2222-3333-000000000021"
 TREE_INDENT_EM = 1.4   # feed.ts TREE_INDENT_EM: one level of the modal outline's indent
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -153,21 +144,15 @@ class ServedSubgoalMarks(unittest.TestCase):
         os.makedirs(state, exist_ok=True)
         with open(os.path.join(state, "session-hosts"), "w") as fh:   # a lab root of its own pins the hosts OFF (CLAUDE.md 2026-09-11)
             fh.write("off\n")
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-subgoalmarks"
         env = _lab.kernel_env(cls.lab, os.path.join(cls.lab, "claude"), dist, cls.port, cls.token)
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(os.path.join(cls.lab, "kernel.log"), "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         cfg = os.path.join(cls.lab, "cfg.json")
         with open(cfg, "w") as f:
             json.dump({"feed": "http://127.0.0.1:%d/feed?token=%s" % (cls.port, cls.token), "web": SID_WEB, "root": ROOT_ID,
@@ -192,6 +177,7 @@ class ServedSubgoalMarks(unittest.TestCase):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     @staticmethod

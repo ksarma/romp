@@ -52,14 +52,13 @@ is a failure. Source pins ride ui/webview/feed-focus-local-switch.test.ts. All f
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -81,14 +80,6 @@ API_ANCHOR = "dddddddd-1111-2222-3333-000000000001"
 WEB_ANCHOR = "dddddddd-1111-2222-3333-000000000002"
 TESTS_ANCHOR = "dddddddd-1111-2222-3333-000000000003"
 PARA_ANCHORS = ["dddddddd-1111-2222-3333-000000000011", "dddddddd-1111-2222-3333-000000000012"]
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -370,28 +361,23 @@ class ServedFocusedSectionJumpScroll(unittest.TestCase):
         os.makedirs(state, exist_ok=True)
         with open(os.path.join(state, "session-hosts"), "w") as fh:   # a lab root of its own pins the hosts OFF (CLAUDE.md 2026-09-11)
             fh.write("off\n")
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-feedfocusscroll"
         env = _lab.kernel_env(cls.lab, os.path.join(cls.lab, "claude"), dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):   # bounded: 60 s of half-second probes
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)   # bounded: 60 s of half-second probes
+        if why:
             cls.kernel.kill()
             cls.kernel.wait()
-            raise AssertionError("hermetic kernel never served /healthz here; log tail:\n" + open(cls.klog).read()[-1500:])
+            raise AssertionError("hermetic kernel never served /healthz here (%s); log tail:\n" % why + open(cls.klog).read()[-1500:])
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_a_summary_click_switches_the_section_and_scrolls_the_feed_to_the_top_at_once(self):
