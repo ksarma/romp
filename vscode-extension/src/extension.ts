@@ -412,8 +412,10 @@ function broadcastColorSync(m: { sid?: unknown; bg?: unknown }, from?: vscode.We
 
 // ---- the kernel: ENSURE-THEN-ATTACH (the manager owns it; we never spawn) ----
 // VS Code does NOT spawn the kernel. It attaches to a manager-owned kernel on romp.kernelPort; if none
-// is there, it asks the `romp up` manager to ENSURE one (the manager spawns + owns it), waits for it,
-// and attaches. A second front-end spawner would fight the manager for the port and re-create the
+// is there, it asks the `romp up` manager to ENSURE one, waits for it, and attaches. The manager spawns
+// and owns it, or answers 409 and starts nothing when that kernel would share another kernel's state
+// root, and the attach toast shows that error (cfgPort's comment above; bin/romp-manager rootConflict).
+// A second front-end spawner would fight the manager for the port and re-create the
 // invisible-orphan problem — so the only spawner is ever the manager (the user's 2026-06-13 ruling).
 // The decision sequence lives in ./kernel-attach (headless-testable); ensureKernel just supplies the
 // VS Code-flavoured deps (real healthz, a manager POST, real sleep) and turns failures into a toast.

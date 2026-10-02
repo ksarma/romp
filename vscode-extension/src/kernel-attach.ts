@@ -3,9 +3,12 @@
 //
 // The rule (the user's 2026-06-13 ruling): a front end NEVER spawns the kernel itself. It attaches to
 // a manager-owned kernel on its configured port; if none is there, it asks the `romp up` manager to
-// ENSURE one (the manager spawns + owns it), then waits for it to come up and attaches. This keeps a
+// ENSURE one, then waits for it to come up and attaches. The manager spawns and owns the kernel for the
+// primary's port or a kernels.json profile's port, and answers 409, starting nothing, when that kernel
+// would share another kernel's state root, as a kernel for a port no profile names would share the
+// primary's (bin/romp-manager rootConflict; attachFailureToast shows the manager's words). This keeps a
 // single owner (no invisible orphans, no two front ends fighting over the port) while still giving the
-// "point a front end at a port and a kernel appears" UX.
+// "point a front end at a configured port and its kernel appears" UX.
 
 import * as http from "http";
 
@@ -13,7 +16,8 @@ import * as http from "http";
 // 2026-09-10): true, the manager took it; false, nothing answered (no manager on the port, or no answer
 // inside the timeout); a refusal, the manager answered 4xx or 5xx, with its own one-line error and the
 // status. 401 is a token the manager does not hold (this window's state root is not the manager's, or
-// it found no token file); 503 is a manager that cannot read its own token file.
+// it found no token file); 503 is a manager that cannot read its own token file; 409 is a kernel the
+// manager will not start, since it would share another kernel's state root.
 export type ManagerRefusal = { refused: string; status: number };
 
 export interface AttachDeps {
@@ -94,7 +98,8 @@ export function warnAfter(consecutiveFailures: number): boolean {
 // kernel-attach.test.ts (extension.ts cannot be imported by node --test: it pulls in `vscode`). /ensure
 // is a state-changing door, so it carries the token the way every kernel request does (the manager gates
 // its writes on X-Romp-Token, bin/romp-manager writeGate). A 4xx or 5xx body is the manager's one-line
-// JSON {error}; it names the header and the manager's token file, never a token.
+// JSON {error}: a 401's names the header and the manager's token file, never a token; a 409's names the
+// kernel, the kernel whose state root it would share, that root and the remedy (rootConflict).
 export function askManagerEnsure(o: { host: string; managerPort: number; port: number; token: string; timeoutMs?: number }):
   Promise<boolean | ManagerRefusal> {
   return new Promise((resolve) => {
@@ -153,6 +158,12 @@ export function attachFailureToast(res: Exclude<AttachResult, { ok: true }>,
   if (res.status === 503) {
     return `romp: the manager on ${mp} cannot read its serve-token file, so it refuses every request. `
       + `Make that file a regular 0600 file that you own, under the manager's state root; the manager log names it. Manager: ${res.detail}`;
+  }
+  if (res.status === 409) {
+    // The manager will not start this kernel: it would share a state root another kernel holds (bin/romp-manager
+    // rootConflict). Its own words name the conflict and the remedy, so they lead. `romp status` lists the running
+    // kernels and never a refused one, so the pointer is the manager log and kernels.json instead.
+    return `romp: the manager on ${mp} will not start a kernel on port ${ctx.port}: ${res.detail} See the manager log and kernels.json.`;
   }
   return `romp: the manager on ${mp} refused to bring up a kernel on port ${ctx.port} (HTTP ${res.status}: ${res.detail}). Check \`romp status\` and the manager log.`;
 }

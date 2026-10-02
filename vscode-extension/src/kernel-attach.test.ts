@@ -209,3 +209,21 @@ test("attachFailureToast: each reason names its own fix; a refusal never sends t
   assert.match(other, /romp status/);
   for (const t of [none, dead, wrong, missing, env, notoken, other]) assert.doesNotMatch(t, /\u2014/, "no em dashes in a toast");
 });
+
+test("attachFailureToast: a 409 leads with the manager's own words and points to the manager log and kernels.json, never `romp status`", () => {
+  // the manager will not start the kernel, since it would share another kernel's state root (bin/romp-manager
+  // rootConflict); its body names the conflict and the remedy, and `romp status` lists no refused kernel
+  const ctx = { port: 29900, managerPort: 7432, tokenFile: "/x/state/serve-token", tokenFromEnv: false, hadToken: true };
+  const words = "kernel 'k29900' (port 29900) is not started: no kernels.json profile names port 29900, so it would run on the "
+    + "primary kernel's state root /m/state, which the primary kernel on port 29855 serves, and one state root serves one kernel. "
+    + "Add a profile for port 29900 with a stateDir no other kernel uses to /m/state/kernels.json. A kernel started by hand, which "
+    + "the manager does not see, needs its own ROMP_STATE_DIR.";
+  const conflict = attachFailureToast({ ok: false, reason: "manager-refused", status: 409, detail: words }, ctx);
+  assert.ok(conflict.startsWith(`romp: the manager on :7432 will not start a kernel on port 29900: ${words}`),
+    `the manager's words lead, the conflict and the remedy whole: ${conflict}`);
+  assert.match(conflict, /See the manager log and kernels\.json\.$/);
+  assert.doesNotMatch(conflict, /romp status/, "`romp status` never shows a refused kernel");
+  assert.doesNotMatch(conflict, /romp up/, "a manager IS running");
+  assert.doesNotMatch(conflict, /HTTP 409/, "the status is the toast's to read, not the user's");
+  assert.doesNotMatch(conflict, /\u2014/, "no em dashes in a toast");
+});
