@@ -70014,7 +70014,9 @@ def _pane_spin(cid, ignore_id=""):
             "function rwait(){return rlk==='down'&&!rpo;}"
             "function rfail(){clearTimeout(bfail);bfail=0;if(rb&&rb.classList.contains('on')&&!rwait())bfail=setTimeout(function(){badge(false);},30000);}"
             "function rset(lk,po){var was=rwait();rlk=lk;rpo=po;if(was!==rwait())rfail();}"
-            "function rpaint(){rh=0;if(!rpend||!rb)return;rpend=false;rb.classList.add('on');rfail();}"
+            # the paint places the badge first (rplace, below): at that moment a shown pane's style and box are real, whatever the
+            # load read and whatever the resize observer has said
+            "function rpaint(){rh=0;if(!rpend||!rb)return;rpend=false;rplace();rb.classList.add('on');rfail();}"
             "function rhold(){clearTimeout(rh);rh=0;rpend=true;if(rb)rb.classList.remove('on');clearTimeout(bfail);bfail=0;if(document.visibilityState!=='hidden'&&!rpk)rh=setTimeout(rpaint,RHOLD);}"
             "window.addEventListener('romp:wsdown',function(){rpo=false;ron=!!(rb&&rb.classList.contains('on'));});"
             # [fork] iOS item 4 (finding of 2026-10-02): the badge sits 8 px below the top of the pane's content container `c`, when
@@ -70028,9 +70030,17 @@ def _pane_spin(cid, ignore_id=""):
             # shrinks, the pane is shown or the window resized), so a ResizeObserver on it and on the page places the badge again;
             # no timer. A container that is not a scroll area keeps upstream's corner. Upstream's CSS rule stays byte for byte (the
             # inline top outranks it).
-            "function rplace(){if(!rb||!c)return;var t=Math.round(c.getBoundingClientRect().top);rb.style.top=((t>0?t:0)+8)+'px';}"
-            "var rsc=false;try{rsc=!!c&&/^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){}"
-            "if(rb&&rsc&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(rplace);rro.observe(c);rro.observe(document.documentElement);}catch(e){}rplace();}"
+            # The scroll-area test is made at each placement, never once at load (finding of 2026-10-02, the served Firefox leg):
+            # Firefox resolves no computed style in a frame that is not rendered, so in the phone's chat iframe, display:none while
+            # another tab shows and loaded that way when the phone opens on the Feed tab, overflow-y read '' at load; the test made
+            # there failed, no observer was made, and the badge painted at upstream's top 8 px over the chat header's session
+            # picker, tag filter and + button. So the observer is made whenever the engine has one (Firefox's, made in the hidden
+            # frame, reports at the frame's first show), and the badge is placed at three events: the load, each resize event, and
+            # its own paint (rpaint, above).
+            "function rscroll(){try{return /^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){return false;}}"
+            "function rplace(){if(!rb||!c||!rscroll())return;var t=Math.round(c.getBoundingClientRect().top);rb.style.top=((t>0?t:0)+8)+'px';}"
+            "if(rb&&c&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(function(){rplace();});rro.observe(c);rro.observe(document.documentElement);}catch(e){}}"
+            "rplace();"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
             # the opaque sheet; the sheet stays for a genuinely empty pane (cold load / never
             # painted), per the loading-states rule.

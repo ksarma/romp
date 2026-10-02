@@ -516,7 +516,22 @@ CONTENT.getBoundingClientRect = () => ({ top: CTOP, left: 0, right: 390, bottom:
 global.getComputedStyle = (el) => ({ overflowY: el === CONTENT ? COVER : 'visible' });
 document.documentElement = { id: 'html' };
 const resize = (top) => task(() => { CTOP = top; ROS.forEach((cb) => cb([])); });
+// the pane's frame starts being rendered (the phone's Chat tab shown): its style resolves and its container gets a box; `notify`
+// says whether the observer's callback runs in that task (the engine's resize event) or not yet
+const render = (top, notify) => task(() => { CTOP = top; COVER = 'scroll'; if (notify) ROS.forEach((cb) => cb([])); });
+const topOf = () => (BADGE.style.top === undefined ? null : BADGE.style.top);
 """
+    # Firefox's frame that is not rendered (finding of 2026-10-02, the served Firefox leg): in an iframe that is display:none, as the
+    # phone's chat is while another tab shows, Firefox resolves no computed style, so overflow-y reads '' there, and the container has
+    # no box. A phone opened on the Feed tab loads the chat that way, so the loader's load-time read sees ''. Probed on Firefox 153 in a
+    # bare page (an iframe display:none since load, then shown, hidden and shown): overflow-y '' and a zero box at load and while
+    # hidden again, and the frame's first show delivers the observer's first callback; Chromium and WebKit resolve 'scroll' at load.
+    _UNRENDERED = ("let CTOP = 44, COVER = 'scroll';", "let CTOP = 0, COVER = '';")
+
+    def _unrendered_pre(self):
+        pre = self._PLACE_PRE.replace(*self._UNRENDERED)
+        self.assertNotEqual(pre, self._PLACE_PRE, "the harness's load state was replaced: style unresolved, no box")
+        return pre
 
     def test_the_badge_sits_below_the_panes_header_and_moves_with_it_on_resize_events(self):
         o = self._run(r"""
@@ -529,14 +544,59 @@ out({ atLoad, pinnedNotes, offScreen, painted1, observed: OBSERVED, observers: R
         self.assertEqual(o["atLoad"], "52px", "at load: 8 px below the transcript's top, clear of the header")
         self.assertEqual(o["pinnedNotes"], "98px", "a resize event places it again under the new top")
         self.assertEqual(o["offScreen"], "8px", "a pane measuring nothing keeps upstream's 8 px until it is shown (its resize event places it)")
-        self.assertEqual(o["painted1"], {"painted": True, "top": "8px"}, "the hold and the paint leave the place alone")
+        self.assertEqual(o["painted1"], {"painted": True, "top": "8px"}, "the paint places it from the box it reads then: a pane still measuring nothing, 8 px")
         self.assertEqual(o["timers"], 0, "no timer places it: only the paint's failsafe stands")
 
     def test_a_content_container_that_is_not_a_scroll_area_keeps_upstreams_corner(self):
         o = self._run(r"""
-out({ top: BADGE.style.top === undefined ? null : BADGE.style.top, observers: ROS.length });""", pre=self._PLACE_PRE.replace("COVER = 'scroll'", "COVER = 'visible'"))
-        self.assertEqual(o["observers"], 0, "no scroll area, no observer")
-        self.assertIsNone(o["top"], "the inline top is never written: upstream's rule places it (top:8px)")
+const atLoad = topOf();
+resize(90); const atResize = topOf();
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = { painted: painted(), top: topOf() };
+out({ atLoad, atResize, atPaint, observers: ROS.length });""", pre=self._PLACE_PRE.replace("COVER = 'scroll'", "COVER = 'visible'"))
+        self.assertEqual(o["observers"], 1, "the observer is made whatever the load read: the scroll-area test is made at each placement")
+        self.assertIsNone(o["atLoad"], "the inline top is never written: upstream's rule places it (top:8px)")
+        self.assertIsNone(o["atResize"], "...nor at a resize event")
+        self.assertEqual(o["atPaint"], {"painted": True, "top": None}, "...nor at the paint")
+
+    def test_a_pane_rendered_after_load_places_its_badge_at_the_paint(self):
+        # THE FIREFOX LEG'S CASE (finding of 2026-10-02): the chat loaded hidden (the phone opened on the Feed tab), so the load read
+        # overflow-y '' and no box. Before this the scroll-area test was made once, there: it failed, no observer was made, and the
+        # badge, painted after the Chat tab was shown, sat at upstream's top 8 px over the chat header's session picker, tag filter
+        # and + button (the served leg: painted at [252, 8, 130, 25]). Here the tab is shown with no resize event reaching the
+        # script before the drop, so only the paint can place it.
+        o = self._run(r"""
+const atLoad = topOf();
+render(45, false);
+fire('romp:wsdown'); after(RHOLD_T - 1); const justBefore = { painted: painted(), top: topOf() };
+after(1); const atPaint = { painted: painted(), top: topOf() };
+out({ atLoad, justBefore, atPaint, timers: live() - (painted() ? 1 : 0) });""", pre=self._unrendered_pre())
+        self.assertIsNone(o["atLoad"], "a frame not rendered resolves no style: nothing is written at load")
+        self.assertEqual(o["justBefore"], {"painted": False, "top": None}, "the hold places nothing: 1 ms before it, still unpainted and unplaced")
+        self.assertEqual(o["atPaint"], {"painted": True, "top": "53px"}, "the paint places it 8 px below the shown transcript's top, clear of the header")
+        self.assertEqual(o["timers"], 0, "no timer places it: only the paint's failsafe stands")
+
+    def test_a_pane_rendered_after_load_is_placed_by_its_resize_events(self):
+        # the same load (style unresolved, no box): the observer is made anyway, so the show's resize event places the badge, and a
+        # later one (the pinned notes strip appearing) places it again
+        o = self._run(r"""
+const atLoad = topOf();
+render(45, true); const atShow = topOf();
+resize(90); const pinnedNotes = topOf();
+out({ atLoad, atShow, pinnedNotes, observed: OBSERVED, observers: ROS.length });""", pre=self._unrendered_pre())
+        self.assertEqual(o["observed"], ["content", "html"], "one observer on the container and the page, made although the load read no style")
+        self.assertIsNone(o["atLoad"])
+        self.assertEqual(o["atShow"], "53px", "the show's resize event places it under the transcript's top")
+        self.assertEqual(o["pinnedNotes"], "98px", "a later resize event places it again")
+
+    def test_a_badge_painted_while_its_pane_is_not_rendered_is_placed_when_the_pane_is_shown(self):
+        # a drop while the chat is still hidden (another tab showing, the pane not parked): the hold paints the badge where nothing
+        # can be read, so it keeps its place; the show's resize event (Firefox's first callback for the frame) places it
+        o = self._run(r"""
+fire('romp:wsdown'); after(RHOLD_T); const hidden = { painted: painted(), top: topOf() };
+render(45, true); const shown = { painted: painted(), top: topOf() };
+out({ hidden, shown });""", pre=self._unrendered_pre())
+        self.assertEqual(o["hidden"], {"painted": True, "top": None}, "painted while nothing can be read: no place written")
+        self.assertEqual(o["shown"], {"painted": True, "top": "53px"}, "the show's resize event places the painted badge")
 
     def test_an_auto_overflow_list_counts_as_a_scroll_area(self):
         # the Outline's, the Feed's and the Waiting pane's lists are overflow-y:auto; the chat's transcript is scroll
