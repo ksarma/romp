@@ -252,16 +252,17 @@ const flip = (hidden) => page.evaluate((h) => {
 }, hidden);
 
 // THE CUE'S FRAME RECORDER (iOS item 4, 2026-10-02), evaluated in one pane document: a requestAnimationFrame loop reads, once per
-// frame, whether the corner badge (#pane-reconn) is painted on and records each change, so a class set and cleared inside one task
-// never reads as painted; a listener stamps each romp:wsfresh (the event that clears the badge). `armed` keeps the badge's class at
-// arming time (a pane off screen paints no frame, so its loop may not run before it is shown).
+// frame, whether the corner badge (#pane-reconn) is painted on and its text (textContent, so a count written through innerHTML or a
+// child node reads too), and records each change of either, so a class set and cleared inside one task never reads as painted; a
+// listener stamps each romp:wsfresh (the event that clears the badge). `armed` keeps the badge's class at arming time (a pane off
+// screen paints no frame, so its loop may not run before it is shown).
 const cueRec = () => {
   const w = window; if (w.__labCue) return "again";
   const b0 = document.getElementById("pane-reconn");
   const c = w.__labCue = { badge: [], fresh: [], frames: 0, lastT: 0, armed: { t: Date.now(), on: !!(b0 && b0.classList.contains("on")) } };
   let last = null;
-  const read = () => { const b = document.getElementById("pane-reconn"); return !!(b && b.classList.contains("on") && getComputedStyle(b).display !== "none"); };
-  const loop = () => { c.frames++; c.lastT = Date.now(); const on = read(); if (on !== last) { c.badge.push({ t: c.lastT, on }); last = on; } requestAnimationFrame(loop); };
+  const read = () => { const b = document.getElementById("pane-reconn"); return { on: !!(b && b.classList.contains("on") && getComputedStyle(b).display !== "none"), text: b ? b.textContent : null }; };
+  const loop = () => { c.frames++; c.lastT = Date.now(); const v = read(), k = v.on + "|" + v.text; if (k !== last) { c.badge.push({ t: c.lastT, on: v.on, text: v.text }); last = k; } requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
   w.addEventListener("romp:wsfresh", () => { c.fresh.push(Date.now()); });
   return "armed";

@@ -3170,6 +3170,18 @@ _SPIN_BEFORE = r"""
 var SPB=new Set(),SPS=new Set();
 function spCls(S){return {add:function(c){S.add(c);},remove:function(c){S.delete(c);},contains:function(c){return S.has(c);},toggle:function(c,on){if(on)S.add(c);else S.delete(c);return !!on;}};}
 var SPEL={"pane-spin":{classList:spCls(SPS)},"pane-reconn":{classList:spCls(SPB)},"content":{children:[{id:"thread-1"}]}};
+// the glance carries no count: any write to the badge's text or children, from the pane's script or from the shell's, is recorded
+// and every case asserts there was none (badgeWrites). The shell reaches the pane's document as a real page's would, through
+// its iframe (document.querySelectorAll or getElementsByTagName), so a shell that wrote a count into the badge is caught here too.
+var BADGEW=[];var SPRB=SPEL["pane-reconn"];
+function spTrap(name){var n={};["nodeValue","textContent","data","innerHTML"].forEach(function(k){Object.defineProperty(n,k,{get:function(){return "reconnecting";},set:function(v){BADGEW.push(name+"."+k+"="+String(v));}});});return n;}
+var SPKIDS=[spTrap("img"),spTrap("text")];
+["textContent","innerHTML","innerText","outerHTML"].forEach(function(k){Object.defineProperty(SPRB,k,{get:function(){return "reconnecting";},set:function(v){BADGEW.push(k+"="+String(v));}});});
+["appendChild","append","prepend","insertBefore","replaceChild","replaceChildren","replaceWith","insertAdjacentHTML","insertAdjacentText","insertAdjacentElement","removeChild","remove","before","after"].forEach(function(k){SPRB[k]=function(){BADGEW.push(k+"("+Array.prototype.map.call(arguments,String).join(",")+")");};});
+[["childNodes",SPKIDS],["children",[SPKIDS[0]]],["firstChild",SPKIDS[0]],["lastChild",SPKIDS[1]],["firstElementChild",SPKIDS[0]],["lastElementChild",SPKIDS[0]]].forEach(function(kv){Object.defineProperty(SPRB,kv[0],{get:function(){return kv[1];}});});
+var SPFRAME={id:"f-test",tagName:"IFRAME",contentDocument:document,contentWindow:window,getAttribute:function(){return null;}};
+global.document.querySelectorAll=function(sel){return /iframe/i.test(String(sel))?[SPFRAME]:[];};
+global.document.getElementsByTagName=function(t){return String(t).toLowerCase()==="iframe"?[SPFRAME]:[];};
 document.getElementById=function(id){return SPEL[id]||null;};
 window.dispatchEvent=function(e){winEvents.push(e.type);(winL[e.type]||[]).forEach(function(f){f(e);});return true;};
 var SNAPS=[];function snap(k){var c=global.cueLine();SNAPS.push({k:k,badge:SPB.has("on"),line:c&&c.shown?c.text:""});}
@@ -3193,7 +3205,9 @@ class ReconnectCueLinked(unittest.TestCase):
     drops again before any fresh frame keeps the badge up throughout."""
 
     def _run(self, scenario):
-        return _run_linked(_spin_script() + "\n" + scenario + "\nout({snaps:SNAPS,holds:liveHolds()});", pre=_CUE_PRE, before=_SPIN_BEFORE)
+        r = _run_linked(_spin_script() + "\n" + scenario + "\nout({snaps:SNAPS,holds:liveHolds(),badgeWrites:BADGEW});", pre=_CUE_PRE, before=_SPIN_BEFORE)
+        self.assertEqual(r["badgeWrites"], [], "nothing, the pane's script or the shell's, writes the badge's text or children: the glance carries no count")
+        return r
 
     def test_a_hung_return_shows_the_cue_through_the_cut_and_past_30s_and_clears_after_link_up(self):
         r = self._run(r"""

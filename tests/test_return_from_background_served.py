@@ -134,6 +134,7 @@ OUT_DIR = os.environ.get("RETURN_HARNESS_OUT", "")
 CUE_WAIT = "Waiting for the kernel to respond. The dashboard updates on its own when it does."
 CUE_HUNG1 = "Trying again: the first try got no response."
 CUE_CONNECT = "could not connect to the kernel."
+BADGE_TEXT = "reconnecting…"   # the glance's whole text whenever it is painted (upstream's word, no count), read off the painted frames
 
 
 def cue_hold_ms():
@@ -468,6 +469,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertGreater(cue.get("frames", 0), 0, where + "the chat's frame loop ran: %r" % ({k: cue.get(k) for k in ("frames", "lastT", "err")},))
         self.assertGreaterEqual(cue.get("lastT", 0), t["fresh"], where + "...through the fresh frame, so 'never painted' was read, not assumed")
         badge = cue.get("badge") or []
+        self._badge_text(where, badge)
         self.assertEqual([b for b in badge if b["on"] and sus <= b["t"] < ret], [], where + "nothing painted while the page read hidden: %r" % (badge,))
         self.assertFalse([b for b in badge if b["t"] < ret] and [b for b in badge if b["t"] < ret][-1]["on"], where + "the badge was off entering the return: %r" % (badge,))
         fresh = [x for x in (cue.get("fresh") or []) if x >= ret]
@@ -508,6 +510,12 @@ class ReturnFromBackground(unittest.TestCase):
         else:
             self.assertTrue([x for x in texts if x and x.endswith(CUE_CONNECT)], where + "a refused try's connect line: %r" % (log,))
 
+    def _badge_text(self, where, badge):
+        """The glance carries no count (romp-manager's rule of 2026-09-18): every frame that painted the badge read exactly BADGE_TEXT
+        (the recorder reads textContent, so a count written through innerHTML or a child text node shows here)."""
+        self.assertTrue(badge and all("text" in b for b in badge), where + "the recorder read the badge's text with each change: %r" % (badge,))
+        self.assertEqual([b for b in badge if b["on"] and b["text"] != BADGE_TEXT], [], where + "the painted badge reads %r and nothing else: %r" % (BADGE_TEXT, badge))
+
     def _tapcue(self, name, r):
         """The pane the return parked, tapped after the return (iOS item 4, finding of 2026-10-02): its corner badge read once per frame
         from the tap through its first fresh frame and a hold past it. The tap is that pane's return for the badge: no frame paints it
@@ -525,6 +533,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertGreater(rec.get("frames", 0), 0, where + "the tapped pane's frame loop ran")
         self.assertGreaterEqual(rec.get("lastT", 0), fresh[0], where + "...through its fresh frame, so 'never painted' was read, not assumed")
         badge = rec.get("badge") or []
+        self._badge_text(where, badge)
         ons = [b["t"] - tap for b in badge if b["on"] and b["t"] >= tap]
         rel_fresh = fresh[0] - tap
         type(self).measurements.setdefault(name, {})["postTapCue"] = {"pane": pt.get("pane"), "holdMs": hold, "armedOn": (rec.get("armed") or {}).get("on"),

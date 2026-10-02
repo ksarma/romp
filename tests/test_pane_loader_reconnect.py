@@ -211,7 +211,7 @@ class PaneLoaderFirstPaintHold(unittest.TestCase):
 
 
 # The reconnect cue's glance (iOS item 4, 2026-10-02): the pane's corner badge under the hold and the failsafe latch, executed.
-# A fake clock whose timers carry their due time, a badge with a class list (its text is watched: nothing may write it), a pane
+# A fake clock whose timers carry their due time, a badge with a class list (its text and children are watched: nothing may write them), a pane
 # with content (a drop raises the badge, not the sheet), a document with a visibility state and listeners, and a window whose
 # dispatches run every listener in registration order as ONE task; after each task the harness records whether the badge is
 # painted, which is what a frame would show (a class set and cleared inside one task never paints).
@@ -227,7 +227,14 @@ const cls = (S) => ({ add: (c) => S.add(c), remove: (c) => S.delete(c), contains
   toggle: (c, on) => { if (on) S.add(c); else S.delete(c); return !!on; } });
 const SHEET = { classList: cls(SHEETCLS) };
 const BADGE = { classList: cls(BADGECLS) };
-Object.defineProperty(BADGE, 'textContent', { get: () => 'reconnecting', set: (v) => TEXTW.push(String(v)) });   // any write is recorded: the glance carries no count
+// the glance carries no count, so ANY write to the badge's text or children is recorded and every case asserts there was none:
+// textContent, innerHTML, innerText or outerHTML set; a child added, moved, replaced or removed; a child node's value or text set
+// (its swirl image and its text node, which a writer could reach as childNodes, firstChild or lastChild)
+const trapNode = (name) => { const n = {}; for (const k of ['nodeValue', 'textContent', 'data', 'innerHTML']) Object.defineProperty(n, k, { get: () => 'reconnecting', set: (v) => TEXTW.push(name + '.' + k + '=' + String(v)) }); return n; };
+const KIDS = [trapNode('img'), trapNode('text')];
+for (const k of ['textContent', 'innerHTML', 'innerText', 'outerHTML']) Object.defineProperty(BADGE, k, { get: () => 'reconnecting', set: (v) => TEXTW.push(k + '=' + String(v)) });
+for (const k of ['appendChild', 'append', 'prepend', 'insertBefore', 'replaceChild', 'replaceChildren', 'replaceWith', 'insertAdjacentHTML', 'insertAdjacentText', 'insertAdjacentElement', 'removeChild', 'remove', 'before', 'after']) BADGE[k] = (...a) => { TEXTW.push(k + '(' + a.map(String).join(',') + ')'); };
+for (const [k, v] of [['childNodes', KIDS], ['children', [KIDS[0]]], ['firstChild', KIDS[0]], ['lastChild', KIDS[1]], ['firstElementChild', KIDS[0]], ['lastElementChild', KIDS[0]]]) Object.defineProperty(BADGE, k, { get: () => v });
 const CONTENT = { children: [{ id: 'thread-1' }] };
 global.document = { visibilityState: 'visible', addEventListener: (t, f) => { (DOCL[t] = DOCL[t] || []).push(f); },
   getElementById: (id) => (id === 'pane-spin' ? SHEET : id === 'pane-reconn' ? BADGE : id === 'content' ? CONTENT : null) };
@@ -275,7 +282,7 @@ class ReconnectBadgeHold(unittest.TestCase):
         shutil.rmtree(fx, ignore_errors=True)
         self.assertEqual(r.returncode, 0, "the loader script threw: " + r.stderr[:800])
         o = json.loads(r.stdout.strip().splitlines()[-1])
-        self.assertEqual(o["textWrites"], [], "nothing writes the badge's text: the glance stays 'reconnecting…', no count, in every state")
+        self.assertEqual(o["textWrites"], [], "nothing writes the badge's text or children: the glance stays 'reconnecting…', no count, in every state")
         return o
 
     def test_the_constant_is_one_second_and_the_badge_markup_carries_no_count(self):
