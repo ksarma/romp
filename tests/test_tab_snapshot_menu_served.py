@@ -28,17 +28,16 @@ import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -53,14 +52,6 @@ COLORS = {"web": ("#9cd2ff", "#0c1a2e"), "api": ("#1EA1EB", "#ffffff"), "tests":
 TAGS = [{"id": "tag-infra", "name": "infra", "color": "#4EC9B0", "members": [SIDS["web"], SIDS["api"]]},
         {"id": "tag-ui", "name": "ui", "color": "#e5a50a", "members": [SIDS["tests"]]}]
 NEW_NAME = "api-two"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -226,20 +217,15 @@ class ServedTabSnapshotMenu(unittest.TestCase):
         # the tags: two, holding three of the four sessions; the fourth is the untagged trail
         Path(cls.state, "timeline-views.json").write_text(json.dumps({"active": "all", "tags": TAGS}))
         Path(cls.state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 10}, "seven_day": {"pct": 10}}))
-        cls.port, cls.token = _free_port(), "testtok-snapmenu"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-snapmenu"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")   # floors the lab root's session-hosts off
         cls.klog = os.path.join(cls.lab, "kernel.log")
         # its own process group: the class ends the kernel WITH every child it spawned (tearDownClass), not the one pid
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env,
                                       start_new_session=True)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def _drive(cls):
@@ -281,6 +267,7 @@ class ServedTabSnapshotMenu(unittest.TestCase):
         k = getattr(cls, "kernel", None)
         if k:
             _end_group(k)
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def setUp(self):

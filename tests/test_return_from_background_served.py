@@ -71,15 +71,14 @@ any request. Synthetic sessions only; no real data.
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 import urllib.error
 import urllib.request
@@ -129,10 +128,6 @@ TRANSCRIPT_SESSIONS = tuple(s for s in SESSIONS if s[2])   # the three with a tr
 DECISIONS = {"keep", "redial-closed", "redial-stale"}
 FULL = os.environ.get("RETURN_HARNESS_FULL") == "1"
 OUT_DIR = os.environ.get("RETURN_HARNESS_OUT", "")
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def _transcript(sid, tag, cwd, pairs):
@@ -323,7 +318,7 @@ class ReturnFromBackground(unittest.TestCase):
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state, claude = _seed(cls.lab)
         cls.diag = os.path.join(cls.state, "client-diag.jsonl")
-        cls.port, cls.token = _free_port(), "testtok-return"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-return"
         # ROMP_WS_KEEPALIVE=2: WS_DEAD_S 6 s, a floor for a socket the driver's close at the suspend misses. The records show
         # none does (every kernel-side leg closed 13 to 25 ms after the suspend, code 1006), so the kernel sees an immediate
         # drop here where the phone's kernel keeps pushing into a dead socket until WS_DEAD_S (review round 1).
@@ -332,14 +327,9 @@ class ReturnFromBackground(unittest.TestCase):
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"),
                                       stderr=subprocess.STDOUT, env=cls.env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -359,6 +349,7 @@ class ReturnFromBackground(unittest.TestCase):
                 pass
             cls.kernel.wait()
         if cls.lab:
+            lab_ports.release(cls.lab)
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----

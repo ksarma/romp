@@ -48,12 +48,10 @@ import os
 import re
 import secrets
 import shutil
-import socket
 import struct
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 import urllib.error
 import urllib.request
@@ -61,6 +59,7 @@ import zlib
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -95,14 +94,6 @@ def _pdf():
     x = len(out)
     out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d 00000 n \n" % o for o in offs)
     return out + b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, x)
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 # The shared head of every driver: the browser, the config, and the helpers each scene uses. A driver reports one
@@ -564,7 +555,7 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
                 raise AssertionError("FILE_CAPS_ENGINE=%s is not installed on this box" % ENGINE)
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         cls.lab = tempfile.mkdtemp(prefix="file-caps-")
-        cls.port, cls.token = _free_port(), secrets.token_urlsafe(24)   # minted at run time, never printed
+        cls.port, cls.token = lab_ports.reserve(cls.lab), secrets.token_urlsafe(24)   # minted at run time, never printed
         origin = "http://127.0.0.1:%d" % cls.port
         dist = os.path.join(cls.lab, "dist")
         cls.dist = dist
@@ -610,20 +601,16 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _klog_tail(self):

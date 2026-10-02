@@ -73,6 +73,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -374,14 +375,14 @@ class _Corner(unittest.TestCase):
             os.makedirs(root, exist_ok=True)
             Path(root, "user-todos-enabled.json").write_text(TODOS_ON)
             Path(root, "update-mode.json").write_text(json.dumps({"mode": "off"}))   # a vintage without ROMP_UPDATE_CHECK reads the file
-        cls.rport, cls.rtoken = _dial._free_port(), "testtok-remote-cn"
-        cls.hport, cls.htoken = _dial._free_port(), "testtok-hub-cn"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-cn"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-cn"
         rp, cls.rlog = _dial._kernel(cls.lab, "testhost", cls.rport, cls.rtoken, [(SID_R0, "api", 1), (SID_R1, "worker", 2)] + EXTRA,
                                      bin_dir=os.path.join(cls.remote_root or ROOT, "bin"))
         cls.procs.append(rp)
         hp, cls.hlog = _dial._kernel(cls.lab, "hub", cls.hport, cls.htoken, [], bin_dir=os.path.join(cls.hub_root or ROOT, "bin"))
         cls.procs.append(hp)
-        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": _dial._free_port(), "token": cls.rtoken}).encode()
+        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": lab_ports.reserve(cls.lab), "token": cls.rtoken}).encode()
         req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (cls.hport, cls.htoken), data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -513,6 +514,7 @@ class _Corner(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     # ---- the readers ----
@@ -1054,17 +1056,17 @@ class TwoHostsBytesByHost(unittest.TestCase):
         _need_browser()
         cls.lab = tempfile.mkdtemp(prefix="federated-two-hosts-")
         lab_dist.copy_dist(os.path.join(cls.lab, "dist"))
-        cls.hport, cls.htoken = _dial._free_port(), "testtok-hub-2h"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-2h"
         cls.remotes = {}
         for host in TWO_HOSTS:
-            port, token = _dial._free_port(), "testtok-%s" % host.lower()
+            port, token = lab_ports.reserve(cls.lab), "testtok-%s" % host.lower()
             proc, _log = _dial._kernel(cls.lab, host.lower(), port, token, [(SID_R0, "api", 1), (SID_R1, "worker", 2)])
             cls.procs.append(proc)
             cls.remotes[host] = (port, token)
         hp, cls.hlog = _dial._kernel(cls.lab, "hub", cls.hport, cls.htoken, [])
         cls.procs.append(hp)
         for host, (port, token) in cls.remotes.items():
-            _dial.checkin(cls.hport, cls.htoken, port, token, host=host)
+            _dial.checkin(cls.hport, cls.htoken, port, token, host=host, lab=cls.lab)
         # the order the hub lists the two (its /tunnels row order): the order the page's first poll opens them in, so the
         # order positions are assigned in; read right before the drive
         with urllib.request.urlopen("http://127.0.0.1:%d/tunnels?token=%s" % (cls.hport, cls.htoken), timeout=5) as r:
@@ -1132,6 +1134,7 @@ class TwoHostsBytesByHost(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     # ---- the readers, each guarded so a derived expectation never rests on nothing ----

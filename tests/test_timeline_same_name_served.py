@@ -25,10 +25,10 @@ Playwright browser, and for nothing else (ROMP_SERVED_TESTS_REQUIRE=1 turns the 
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -51,14 +51,6 @@ SID_R_WEB = "11111111-2222-4333-8444-000000000902"   # "web" on TESTHOST: the sa
 SID_R_API = "11111111-2222-4333-8444-000000000903"   # "api" on TESTHOST: the control lane
 MID = "m-cross-1"                                    # the hub bus's id for the send
 DMID = "m-cross-1-landed"                            # TESTHOST bus's id for the delivered copy (the read receipt's dmid)
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _iso(t):
@@ -105,14 +97,11 @@ def _kernel(lab, name, port, token, sessions, postal_rows=()):
     env = _lab.kernel_env(os.path.join(lab, name), claude, os.path.join(lab, "dist"), port, token, ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
     proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(log, "a"), stderr=subprocess.STDOUT, env=env)
-    for _ in range(120):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
-            return proc, log, state
-        except Exception:
-            time.sleep(0.5)
+    why = lab_ports.wait_owned(proc, env)
+    if not why:
+        return proc, log, state
     proc.kill(); proc.wait()
-    raise unittest.SkipTest("hermetic kernel %s never served /healthz here" % name)
+    raise unittest.SkipTest("hermetic kernel %s never served /healthz here: %s" % (name, why))
 
 
 DRIVER = r"""
@@ -220,8 +209,8 @@ class ServedTimelineSameName(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="tl-same-name-")
         lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
-        cls.rport, cls.rtoken = _free_port(), "testtok-remote-tl"
-        cls.hport, cls.htoken = _free_port(), "testtok-hub-tl"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-tl"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-tl"
         now = int(time.time())
         landed = {"t": now - 880, "ev": "sent", "id": DMID, "from": "web", "from_id": SID_L_WEB, "to_id": SID_R_WEB,
                   "body": "Synthetic heads-up across hosts.", "kind": "coordinate", "from_host": "HUB", "originMid": MID}
@@ -240,7 +229,7 @@ class ServedTimelineSameName(unittest.TestCase):
         receipt = {"t": now - 840, "ev": "exec", "id": MID, "dmid": DMID}
         hp, cls.hlog, cls.hstate = _kernel(cls.lab, "hub", cls.hport, cls.htoken, [(SID_L_WEB, "web", "lw", 6)], postal_rows=[cross, receipt])
         cls.procs.append(hp)
-        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": _free_port(), "token": cls.rtoken}).encode()
+        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": lab_ports.reserve(cls.lab), "token": cls.rtoken}).encode()
         req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (cls.hport, cls.htoken), data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -307,6 +296,7 @@ class ServedTimelineSameName(unittest.TestCase):
                 pr.kill(); pr.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_the_page_threw_nothing_and_every_lane_arrived(self):

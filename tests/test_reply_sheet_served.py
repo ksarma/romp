@@ -91,16 +91,15 @@ kernel uses its own port; the driver asserts /healthz on that port before any re
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -146,10 +145,6 @@ REST_SHARE = 0.348   # the detail's cap at rest: max(12em, 34.8% of the window's
 BOUNDARY = 720   # the stated boundary: the 8-line detail shows in full from a 720px pane (a 751px Safari window)
 # one pixel under each engine's own boundary (720 in Chromium, 717 in WebKit, 718 in Firefox; measured in both panes)
 BELOW_BOUNDARY = {"chromium": 719, "firefox": 717, "webkit": 716}
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def _todo_store(now):
@@ -198,19 +193,14 @@ class ReplySheetServed(unittest.TestCase):
         now = int(time.time())
         Path(cls.state, "user-todos.json").write_text(json.dumps(_todo_store(now)))
         Path(cls.state, "user-todos-enabled.json").write_text(json.dumps({"enabled": True, "gt": now * 1000}))   # the switch, on
-        cls.port, cls.token = _free_port(), "testtok-replysheet"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-replysheet"
         cls.env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME=HOST)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"),
                                       stderr=subprocess.STDOUT, env=cls.env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -221,6 +211,7 @@ class ReplySheetServed(unittest.TestCase):
                 pass
             cls.kernel.wait()
         if cls.lab:
+            lab_ports.release(cls.lab)
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     def _drive(self, engine, pane):

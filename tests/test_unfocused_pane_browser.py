@@ -20,16 +20,14 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -43,10 +41,6 @@ SID_B = "aaaaaaaa-1111-2222-3333-444444444444"
 SID_C = "bbbbbbbb-1111-2222-3333-444444444444"   # a session that appears while the user's tab is away: never adopted
 REMOTE = "REMOTEBOX:cccccccc-1111-2222-3333-444444444444"   # a remote host's session this kernel never lists: the reload road's awaited tab
 PROVISIONAL = "new-" + "docs"   # a provisional create's id (ui/webview/provisional.ts): a persisted choice that can never be listed again
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def _transcript(sid, text):
@@ -361,24 +355,20 @@ class ServedUnfocusedPane(unittest.TestCase):
                 {"sid": sid, "name": name, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid, "alive": True,
                  "model": "claude-opus-5", "liveModel": "Opus 5"}))
             Path(proj, sid + ".jsonl").write_text(_transcript(sid, text))
-        cls.port, cls.token = _free_port(), "testtok-unfocused"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-unfocused"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_the_focused_tab_leaving_on_its_own_unfocuses_the_pane_and_its_return_restores_it(self):

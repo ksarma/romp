@@ -51,13 +51,13 @@ files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a failure ther
 the notes-api demo world, placeholder uuids, host TESTHOST)."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 import urllib.request
 from pathlib import Path
@@ -266,7 +266,7 @@ class SvgPictureUnderThePageKey(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest(SKIP_BROWSER)
         cls.lab = tempfile.mkdtemp(prefix="svg-caps-")
-        cls.port, cls.secret = fc._free_port(), os.urandom(18).hex()   # minted at run time, never printed
+        cls.port, cls.secret = lab_ports.reserve(cls.lab), os.urandom(18).hex()   # minted at run time, never printed
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
@@ -299,20 +299,16 @@ class SvgPictureUnderThePageKey(unittest.TestCase):
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.secret, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _klog_tail(self):
