@@ -3096,8 +3096,9 @@ _Module = collections.namedtuple("_Module", "where tree names defs classes impor
 #   keyed by id(node) since a parsed tree is read-only for every consumer. ROOT is resolved because the resolver reads
 #   each imported module under its realpath (_tests_module_path) and labels it by its path relative to ROOT (_module_at):
 #   a root handed in through a symlink (a synthetic tree under the macOS temp root, /var/folders under /private/var)
-#   labelled the module "../../private/var/.../helper.py" where its name relative to the root was meant (fork PR 894's
-#   macOS runs; the pin: the scan test's helper root, a symlink on every platform)
+#   labelled the module "../../.../private/var/.../helper.py", one ".." per component of the root, where its name
+#   relative to the root was meant (fork PR 894's macOS runs; the pin: the scan test's helper root, a symlink on every
+#   platform)
 
 class _Census(dict):
     """Everything the census holds between its reads in one run of this module, as ONE object that takes a weak reference
