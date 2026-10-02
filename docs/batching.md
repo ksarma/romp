@@ -430,7 +430,14 @@ subject; `verify` refuses the branch otherwise.
    cleanup's checkout of the branch is forced (and in `bisect`'s cleanup after its steps it runs
    before the `git bisect reset`), so the branch's tree is back even when the stop ended a checkout
    after it had written the other commit's files and index and before it moved HEAD; a worktree
-   that had changes to tracked files gets the unforced checkout, which keeps them. A stop that arrives
+   that had changes to tracked files gets the unforced checkout, which keeps them. The batch
+   worktree is `scripts/batch.py`'s own, and that cleanup runs whenever `bisect` ends, stopped or
+   not: when the worktree had no changes to tracked files before those steps, the forced checkout
+   discards every change the test command made to tracked files there, at the base and at each
+   commit the bisect tested. A change the command made in its first run, at the tip, is a change
+   the worktree had before those steps, so the checkout is not forced, and that change and the
+   changes the command made after it are kept.
+   A stop that arrives
    while it starts any of those processes, or the `git` of the sweep's excuse rule that `verify`,
    `plan` and `assemble --repin` run, is held until the process has started and then ends it the
    same way. Each of those processes gets SIGTERM first here too, then SIGKILL 10 s later, so a
@@ -551,7 +558,11 @@ subject; `verify` refuses the branch otherwise.
    `batch` as its one label, so that check is green when the PR opens. It does not run on a push,
    so after a rebuild the new head shows no `PR tier` check until a label changes; nothing gates on
    it, and nothing should (the maintainer section says which checks to require). If CI is red:
-   `scripts/batch.py bisect <name> -- <failing test>` names the member;
+   `scripts/batch.py bisect <name> -- <failing test>` names the member (it runs the test in the
+   batch worktree and, when it ends, checks the branch out there again; when the worktree had no
+   changes to tracked files after the test's first run, at the tip, that checkout discards the
+   changes the test's later runs made to tracked files; the paragraph on stopping
+   `scripts/batch.py`, above, gives the rule);
    `scripts/batch.py pull <name> N` rebuilds without it and says so on the PR.
 6. When a member's owner pushes a fix after the cut (they tell you by postal), run
    `scripts/batch.py assemble <name> --repin N` (re-reads that head and rebuilds the branch;

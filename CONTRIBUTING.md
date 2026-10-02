@@ -250,9 +250,12 @@ without it a relation that did not hold is a diagnostic line in the output.
 Three things about the test environment are worth knowing, because all have
 produced confusing failures:
 
-- The bats suite takes about 26 to 30 minutes on Linux's Run bats step (CI,
-  runs 36807078533 and 36858358700), about 22 on macOS. That is expected, not a
-  hang.
+- The bats suite is slow. In CI, among the finished runs on main, the batch
+  branches and the open PRs whose tests will land (read at 14:44 UTC on
+  2026-10-02), the slowest Run bats step on Linux took 34 min 7 s (run
+  36998140007) and the slowest macOS Shell job took 47 min 39 s (run
+  36998141959). Those are CI's slowest runs, not its typical ones. A run that
+  long is expected, not a hang.
 - On macOS, run the bats suite with a modern bash (`brew install bash`; bats
   picks it up via `env bash` when `/opt/homebrew/bin` precedes `/bin` on PATH).
   The stock `/bin/bash` 3.2 does not fail a test on a mid-test `[[ ]]`

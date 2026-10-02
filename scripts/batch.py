@@ -3396,7 +3396,11 @@ def cmd_bisect(args):
     # 1). So when the worktree has no changes to tracked files before these steps, the cleanup's checkout of the branch
     # is forced, putting the branch's tree back in the index and the files, and the bisect's cleanup runs that forced
     # checkout before its reset, whose own checkout of the branch keeps them too. A worktree that had changes to
-    # tracked files keeps the unforced checkout and the reset alone, so the cleanup discards none of them.
+    # tracked files keeps the unforced checkout and the reset alone, so the cleanup discards none of them. The batch
+    # worktree is this tool's own, and these cleanups run whenever bisect ends, stopped or not: with the worktree clean
+    # here, the forced checkout discards every change the test command made to tracked files at the base and at each
+    # commit the bisect tested (kept, the 21:31Z ruling of 2026-10-02 on PR 926, its item (a); docs/batching.md says
+    # so). A change the command made in its run at the tip is already in the worktree here, so nothing is forced.
     force = ["--force"] if git("status", "--porcelain", "--untracked-files=no", cwd=wt) == "" else []
     try:
         git("checkout", "--quiet", "--detach", base, cwd=wt)
