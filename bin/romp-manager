@@ -108,7 +108,10 @@ function rompServeBin() {
 // kernels with values the disk had long since moved past. A `main` entry may override the primary's
 // port for the same reason — the env-baked default is only as fresh as the manager's own start.
 // Malformed entries are DROPPED with a returned error string (the caller logs it — loud, per the
-// authoritative-sources rule), never silently half-applied.
+// authoritative-sources rule; logSpecErrors says each text once), never silently half-applied.
+// `dropped` lists each dropped entry's id, port as written (a number, NaN when it is not one) and
+// reason, so a refusal of /ensure for that port names the entry instead of saying no profile names the
+// port (rootConflict); a file that is absent or not JSON answers no `dropped` list.
 function loadSpecs(file, mainPort, controlPort) {
   const specs = [{ id: 'main', port: Number(mainPort) }];
   let raw;
@@ -116,11 +119,15 @@ function loadSpecs(file, mainPort, controlPort) {
   let doc;
   try { doc = JSON.parse(raw); } catch (e) { return { specs, errors: ['kernels.json: unreadable JSON — ignoring the whole file: ' + e.message] }; }
   const errors = [];
+  const dropped = [];
   const ids = new Set(['main']);
   const ports = new Set([Number(mainPort), Number(controlPort)]);
   for (const k of (Array.isArray(doc && doc.kernels) ? doc.kernels : [])) {
     const id = String((k && k.id) || '');
-    const bad = (why) => errors.push(`kernels.json: dropped entry ${JSON.stringify(id || k)} — ${why}`);
+    const bad = (why) => {
+      errors.push(`kernels.json: dropped entry ${JSON.stringify(id || k)}: ${why}`);
+      dropped.push({ id, port: Number(k && k.port), why });
+    };
     if (k && id === 'main') {                       // main override: port only (its state root is the primary's)
       const p = Number(k.port);
       const ok = Number.isInteger(p) && p >= 1024 && p <= 65535
@@ -148,7 +155,22 @@ function loadSpecs(file, mainPort, controlPort) {
     if (spec._bad) { bad(`${spec._bad} is malformed`); continue; }
     ids.add(id); ports.add(port); specs.push(spec);
   }
-  return { specs, errors };
+  return { specs, errors, dropped };
+}
+
+// kernels.json's errors (a dropped entry, a file that is not JSON) are logged once per text per manager life. The
+// file is read afresh at every consult that logs them (the boot pass, every spawn, so every respawn and every
+// /ensure that reaches a spawn), and logging each read's errors said the same lines once for the boot pass and
+// again for each spec it spawned, then again at every /ensure retry, so a refused /ensure repeated them per
+// request. A new text (the file edited into another fault) is said when a consult first reads it; a fault the file
+// keeps is not said again, however many reads find it.
+const specErrorsSaid = new Set();
+function logSpecErrors(errors) {
+  for (const e of errors || []) {
+    if (specErrorsSaid.has(e)) continue;
+    specErrorsSaid.add(e);
+    log(e);
+  }
 }
 
 // The per-spec child env (pure, exported for tests): the profile's whole isolation story rides these
@@ -231,12 +253,13 @@ function resolveStateRoot(p) {
 // holds that spec's root, so it counts as started before any spec that is not its own record, and a profile added
 // on its root is refused until it stops. A spec the file does not hold (an /ensure for a port no profile names,
 // whose root is the manager's own and so always main's, or the respawn of such a running kernel) is compared with
-// main and that group only. Each root is read the same way (specStateRoot, then resolveStateRoot). `specs` is the
-// loadSpecs answer the start was resolved from, and `primaryPort` the port its main entry gives. `error` is the
-// whole account, one line: the kernel, why its root is another kernel's, which kernel that is, and the remedy for
-// each road: a kernels.json profile needs a stateDir no other kernel uses, and a kernel started by hand, which the
-// manager cannot see, needs its own ROMP_STATE_DIR.
-function rootConflict(spec, specs) {
+// main and that group only. Each root is read the same way (specStateRoot, then resolveStateRoot). `specs` and
+// `dropped` are the loadSpecs answer the start was resolved from, and `primaryPort` the port its main entry gives.
+// `error` is the whole account, one line: the kernel, why its root is another kernel's (for a port no profile names
+// whose entry kernels.json carried and loadSpecs dropped, that entry and why it was dropped), which kernel that is,
+// and the remedy for each road: a kernels.json profile needs a stateDir no other kernel uses, and a kernel started
+// by hand, which the manager cannot see, needs its own ROMP_STATE_DIR.
+function rootConflict(spec, specs, dropped) {
   if (!spec || spec.id === 'main') return null;
   const list = specs || [];
   const main = list.find((s) => s.id === 'main') || { id: 'main', port: KERNEL_PORT };
@@ -248,17 +271,20 @@ function rootConflict(spec, specs) {
   const root = resolveStateRoot(specStateRoot(spec));
   const holder = before.find((b) => resolveStateRoot(specStateRoot(b.s)) === root);
   if (!holder) return null;
+  const drop = at > 0 || spec.stateDir ? null : (dropped || []).find((d) => d.port === Number(spec.port));
   const why = at > 0
     ? (spec.stateDir ? `its kernels.json profile's stateDir ${JSON.stringify(spec.stateDir)} resolves to`
       : 'its kernels.json profile has no stateDir, so it would run on')
     : spec.stateDir ? `its stateDir ${JSON.stringify(spec.stateDir)}, from a profile kernels.json no longer holds, resolves to`
-      : `no kernels.json profile names port ${spec.port}, so it would run on`;
+      : drop ? `kernels.json's entry for port ${spec.port} was dropped (${drop.why}), so no profile names the port and it would run on`
+        : `no kernels.json profile names port ${spec.port}, so it would run on`;
   const whose = holder.how === 'primary'
     ? `the primary kernel's state root ${root}, which the primary kernel on port ${main.port} serves`
     : `the state root ${root} of kernel '${holder.s.id}' (port ${holder.s.port}), ` +
       (holder.how === 'earlier' ? 'whose profile comes before it in kernels.json' : 'which is running from a profile kernels.json no longer holds');
   const remedy = at > 0 || spec.stateDir ? `Give the profile a stateDir no other kernel uses in ${KERNELS_FILE}.`
-    : `Add a profile for port ${spec.port} with a stateDir no other kernel uses to ${KERNELS_FILE}.`;
+    : drop ? `Repair that entry in ${KERNELS_FILE}, with a stateDir no other kernel uses.`
+      : `Add a profile for port ${spec.port} with a stateDir no other kernel uses to ${KERNELS_FILE}.`;
   return { root, primaryPort: main.port, holder: holder.s.id,
            error: `kernel '${spec.id}' (port ${spec.port}) is not started: ${why} ${whose}, and one state root serves one kernel. ` +
                   `${remedy} A kernel started by hand, which the manager does not see, needs its own ROMP_STATE_DIR.` };
@@ -428,13 +454,13 @@ function spawnKernel(spec) {
   // (and are refused below: with no stateDir, their root is the primary's), and so does a running
   // kernel whose entry left the file.
   const fresh = loadSpecs(KERNELS_FILE, KERNEL_PORT, CONTROL_PORT);
-  for (const e of fresh.errors) log(e);
+  logSpecErrors(fresh.errors);
   spec = fresh.specs.find((s) => s.id === spec.id) || spec;
   const prev = kernels.get(spec.id);
   // One kernel per state root (rootConflict): a kernel whose root resolves to the root of a kernel the manager starts
   // before it is never started, on any road. Returns the refusal so /ensure can answer it; null below once a kernel
   // is spawned.
-  const refused = rootConflict(spec, fresh.specs);
+  const refused = rootConflict(spec, fresh.specs, fresh.dropped);
   if (refused) {
     const key = spec.id + '\n' + refused.error;
     if (prev || !rootRefusalsSaid.has(key)) log(refused.error);
@@ -1255,7 +1281,7 @@ function startManager() {
   server.listen(CONTROL_PORT, HOST, () => {
     log(`up — control :${CONTROL_PORT} · Ctrl+C to stop`);
     const boot = loadSpecs(KERNELS_FILE, KERNEL_PORT, CONTROL_PORT);
-    for (const e of boot.errors) log(e);
+    logSpecErrors(boot.errors);
     for (const spec of boot.specs) spawnKernel(spec);
   });
   process.on('SIGINT', () => shutdownAll(0));

@@ -498,6 +498,37 @@ test('a running kernel whose entry left kernels.json still holds its root: a pro
   } finally { await h.cleanup(); }
 });
 
+test('kernels.json\'s errors are said once per text per manager life, across the boot pass and refused /ensure retries, and /ensure for a dropped entry\'s port says that entry was dropped and why', async () => {
+  const h = await world();
+  try {
+    const [bad, bare, later] = [await freePort(__filename), await freePort(__filename), await freePort(__filename)];
+    h.writeKernels([{ id: 'aux', port: bad, stateDir: 'relative/aux-state' }]);   // a relative stateDir: the entry is dropped
+    await h.start();
+    const dropLines = () => h.log.split('\n').filter((l) => l.includes('kernels.json: dropped entry'));
+    assert.equal(dropLines().length, 1, `the boot pass says the dropped entry once, not once more per spec it spawns:\n${h.log}`);
+    for (let i = 0; i < 5; i++) {
+      for (const port of [bad, bare]) assert.equal((await h.req(`/ensure?port=${port}`, 'POST')).code, 409, `/ensure for ${port}`);
+    }
+    assert.equal(dropLines().length, 1, `ten refused /ensure requests said the dropped entry again:\n${h.log}`);
+    const r = await h.req(`/ensure?port=${bad}`, 'POST');
+    assert.equal(r.code, 409, r.body);
+    const body = JSON.parse(r.body);
+    assert.equal(body.id, `k${bad}`);
+    assert.ok(body.error.includes(`kernel 'k${bad}' (port ${bad}) is not started: kernels.json's entry for port ${bad} was dropped ` +
+                                  '(stateDir is malformed), so no profile names the port and it would run on the primary kernel\'s state root'), body.error);
+    assert.ok(body.error.includes(`Repair that entry in ${path.join(h.state, 'kernels.json')}, with a stateDir no other kernel uses.`), body.error);
+    assert.ok(!body.error.includes(`no kernels.json profile names port ${bad}`), body.error);
+    const plain = JSON.parse((await h.req(`/ensure?port=${bare}`, 'POST')).body);   // a port no entry names keeps the plain account
+    assert.ok(plain.error.includes(`no kernels.json profile names port ${bare}, so it would run on`), plain.error);
+    // a new fault in the file is a new text: said once, at the first read that finds it
+    h.writeKernels([{ id: 'aux', port: bad, stateDir: 'relative/aux-state' }, { id: 'BAD ID', port: later }]);
+    for (let i = 0; i < 3; i++) assert.equal((await h.req(`/ensure?port=${bare}`, 'POST')).code, 409);
+    assert.equal(dropLines().length, 2, `the new fault said once, the old one not again:\n${h.log}`);
+    assert.equal(dropLines().filter((l) => l.includes('"BAD ID"')).length, 1, h.log);
+    assert.deepEqual(h.rows().filter((row) => row.port !== h.mainPort), [], 'a kernel was started for a refused port');
+  } finally { await h.cleanup(); }
+});
+
 test('the harness: the stand-in kernel says so and exits 2, opening nothing, when the root it resolves is outside the test\'s world', async () => {
   const h = await world();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-registry-outside-'));
