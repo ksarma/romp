@@ -78,7 +78,8 @@ jd = load_source("romp_judge", HERE / "judge.py")
 # releases it, which is the event the wait keys on, and one waiting kernel takes it (with two
 # waiting, the other keeps waiting). Any other holder (a serving line, a line naming a pid that is
 # not running, an empty line or one that names no owner, a deadline already past or further ahead
-# than that bound, a wait that reached the deadline or whose timer could not be armed) refuses this
+# than that bound, a draining owner met by a process already running more than one thread, a wait
+# that reached the deadline or whose timer could not be armed) refuses this
 # kernel: one stderr line naming the holder it read (at a wait's deadline, the line read then),
 # then os._exit(KERNEL_LOCK_EXIT) with nothing written, so the manager's crash backoff retries it.
 # A lock step that fails for any other reason refuses the kernel the same way, never with a
@@ -296,8 +297,8 @@ def _kernel_lock_holder_why(path, line):
 
 def _kernel_lock_acquire(path, now=time.time):
     """Take the instance lock at `path`: (fd, None) once held, with "<this pid> serving" written; (None, refusal line)
-    when this kernel must not run. Never raises: every way the lock step can fail ends in a refusal line, which the
-    caller prints before os._exit(KERNEL_LOCK_EXIT) (_kernel_lock_refuse).
+    when this kernel must not run. Every way the lock step can fail ends in a refusal line, never a raise, and the
+    caller prints that line before os._exit(KERNEL_LOCK_EXIT) (_kernel_lock_refuse).
 
     Another process holds the lock (the non-blocking flock's EWOULDBLOCK): when its line names a running owner that is
     draining, with a deadline ahead by no more than EXIT_GRACE_S plus KERNEL_LOCK_DEADLINE_MARGIN_S, and this process

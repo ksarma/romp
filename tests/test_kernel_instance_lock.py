@@ -810,7 +810,10 @@ class LockStepFailures(_Lab):
         os.mkfifo(self.lock_path, 0o600)
         fd = os.open(self.lock_path, os.O_RDWR)       # read and write: neither end blocks, and the kernel's open does not either
         self.addCleanup(os.close, fd)
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)   # held, so the kernel reads the holder's line, which a FIFO cannot give
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)   # held, so the kernel reads the holder's line, which a FIFO cannot give
+        except OSError as e:
+            self.skipTest("this platform cannot flock a FIFO (%s), so no kernel meets one held" % e)
         before = self.snapshot()
         line, _ = self.refused_once(before, (self.lock_path, "reading its line (another process holds it) failed with "
                                                              "ESPIPE (Illegal seek)", FILE_REMEDY_TEXT))
