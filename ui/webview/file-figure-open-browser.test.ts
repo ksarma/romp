@@ -3510,7 +3510,7 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // pointerdown took the focus out of the viewer's window, 66 in all), and a finger's tap during which the mouse moves in the viewer
 // and a mouse click during which a finger resting on the viewer moves (Chromium, touch emulated); and by reading any event the
 // grammar does not name that a real gesture brings into a press or a tap, among them the places below where the incremental reads
-// would open, 21 families of which are measured since, and the device's gestures in Firefox and WebKit; the retired blur's
+// would open, 24 families of which are measured since, and the device's gestures in Firefox and WebKit; the retired blur's
 // rule's own cost, a focus move out of the viewer's window during the viewer's own press or between a tap's pointerup and
 // its compatibility mousedown, refused once, the allowlist pays the same, and the retired leave's arm for no button and
 // mouseout's clear cost nothing measured, no cell of this leg changing under them (file-view.ts's gate comment states each).
@@ -3530,25 +3530,36 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // that refuses its own pointer's click, all five gone changing no click over every recorded row, the gate's own listeners
 // then on six types, and the cells here and in the engines leg that were red under a gate without one of them standing as
 // the allowlist refusing their orders. The allowlist's three measured costs above are the incremental reads' too, the reads
-// the round drafted in its place. It costs more than they do at 21 families of the viewer's own gesture measured in the
-// browser at ff255168f by a probe of these fixes kept out of the tree (Playwright's engines on Linux, the Files pane, touch and pen
-// emulated in Chromium, five of each gesture per engine: each refused 5 of 5 in each engine named, opened 5 of 5 by bef9ff8fc's
+// the round drafted in its place. It costs more than they do at 24 families of the viewer's own gesture measured
+// in the browser at ff255168f or at 7186e10ab, whose gates compile to the same code (at 7186e10ab alone for an element's blur
+// that no focus follows in a tap, the mouse moving with its button held during a finger's tap, the focus leaving after a pen's
+// click's mouseup, the mouse's paths into and out of the viewer during a finger's tap that cross an element's edge, and the chat),
+// by a probe of these fixes kept out of the tree (Playwright's engines on Linux, the Files pane, touch emulated in each engine
+// and pen in Chromium, five of each gesture per engine: each refused 5 of 5 in each engine named, opened 5 of 5 by bef9ff8fc's
 // gate, and opened by those reads replayed over its recorded chain), since they act on a few named events alone: the window's blur
 // alone, with no element's or document's blur before it, at a mouse click's release and in a finger's contact (Chromium and WebKit;
 // Firefox sends the document's blur first there, which the read-outs take, and opens), the focus leaving at a pen's click's release
-// (Chromium), and in Chromium, Firefox and WebKit the focus leaving after a click's mouseup, between a tap's compatibility
-// mousedown and its mouseup or after a tap's mouseup, leaving and coming back at a click's release, leaving twice in a finger's
-// contact, arriving at a click's release, after its mouseup, between a tap's pointerup and its compatibility mousedown or after a
-// tap's mouseup, or moving inside the viewer at a click's release or between a tap's touchend and its compatibility mousedown,
-// and an element's blur that no focus follows at a click's release with the frame shown; on a device with more than one
+// or after its mouseup (Chromium), and in Chromium, Firefox and WebKit the focus leaving after a click's mouseup, between a tap's
+// compatibility mousedown and its mouseup or after a tap's mouseup, leaving and coming back at a click's release, leaving twice in
+// a finger's contact, arriving at a click's release, after its mouseup, between a tap's pointerup and its compatibility mousedown
+// or after a tap's mouseup, or moving inside the viewer at a click's release or between a tap's touchend and its compatibility
+// mousedown, and an element's blur that no focus follows at a click's release, between a tap's compatibility mousedown
+// and its mouseup, or at an instant tap's touchstart or its touchend, with the frame shown; on a device with more than one
 // pointer (Chromium), a resting finger's touch cancelled during a mouse click, as Chromium cancels a resting finger that moves
-// far enough to scroll, a finger moving during a pen's press, the mouse crossing an element's edge during a finger's tap, and a pen
-// hovering during a mouse click or during a finger's tap; and a press past the cap of 1,024 tokens (the three engines). Measured in
+// far enough to scroll, a finger moving during a pen's press, the mouse crossing an element's edge in the viewer during
+// a finger's tap, whether or not it also enters or leaves the viewer, the mouse moving with its button held during a
+// finger's tap, and a pen hovering during a mouse click or during a finger's tap; and a press past the cap of 1,024 tokens
+// (the three engines). Eight of the 24 were also measured in the chat, refused there in the same engines: the window's blur
+// alone at a mouse click's release and in a finger's contact (Chromium and WebKit, Firefox opening), the focus leaving
+// after a mouse click's mouseup and leaving and coming back at a click's release (Chromium, Firefox and WebKit), and
+// the focus leaving at a pen's click's release or after its mouseup, a finger moving during a pen's press, the mouse
+// crossing an element's edge in the viewer during a finger's tap and a pen hovering during a mouse click (Chromium). Measured in
 // Chromium and not costs: a resting finger that leaves the viewer or crosses an element's edge within the touch slop during a mouse
-// click, and the mouse entering or leaving the viewer during a finger's tap, open under both, and a finger lifted during a mouse
-// click opens nothing under either. By reading: the device's gestures in Firefox and WebKit, WebKit's hover update between elements
-// inside a finger's slow tap, a touch-order pen's double tap's second tap, and perhaps a capture handler's focus move that no
-// census drove (file-view.ts's gate comment says why for each). At each the click or the tap opens nothing and reveals the control,
+// click, and the mouse entering or leaving the viewer during a finger's contact on a path that crosses no element's edge
+// in the viewer, open under both, and a finger lifted during a mouse click opens nothing under either. By reading:
+// the device's gestures in Firefox and WebKit, WebKit's hover update between elements inside a finger's slow tap,
+// a touch-order pen's double tap's second tap, and perhaps a capture handler's focus move that no census drove
+// (file-view.ts's gate comment says why for each). At each the click or the tap opens nothing and reveals the control,
 // the next click opening, and the ruling after the focused re-check at ff255168f keeps the allowlist, leaving the choice between
 // it and those reads to the user. The frame-hide cells (the file review's round 19, extra5-1 and extra8-1), on the hybrid page's
 // Files pane in the same shape: a press on the control held while the top page hides the viewer's frame, released at once on the
