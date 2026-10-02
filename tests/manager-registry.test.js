@@ -6,6 +6,8 @@
 // disk had moved past, with everything reporting success). The second half pins one kernel per state
 // root at the source (2026-10-02): the manager never starts a kernel other than main whose state root
 // resolves to the primary's, on any road (the boot pass, the crash respawn, /ensure), and says so once.
+// Those cases run a real manager with HOME and XDG_STATE_HOME floored under a private world (the harness
+// comment below says how, and how the stand-in kernel refuses a root outside it).
 // Run: node --test tests/manager-registry.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -134,6 +136,11 @@ test('fileStamp changes when the file changes — the staleness detector', () =>
 // on kernel.lock under the root kernel/judge.py would resolve from its environment, exit 75 when another
 // process holds it. Python for the flock (node has none); FAKE_LATE_PORT makes one port reach its lock
 // point late, FAKE_CRASH_PORT and FAKE_CRASHES make one port's first starts exit soon after they serve.
+// HOME and XDG_STATE_HOME are floored under the world for the manager and every stand-in it starts (HOME
+// to <world>/home, XDG_STATE_HOME to <world>/home/xdg-state), so a manager that handed a kernel no state
+// root of its own resolves one inside the world, never the runner's own. Behind that floor the stand-in
+// checks the root it resolved: one that is not under the world (FAKE_WORLD) makes it say so on stderr and
+// exit 2 before it opens anything, so no lock file, log row or directory is made there.
 
 const REGISTRY_TOKEN = 'zq9-registry-token-zq9';   // synthetic
 const PY3 = (() => {
@@ -144,6 +151,9 @@ const FAKE_KERNEL = String.raw`
 import fcntl, json, os, sys, time
 env = os.environ
 root = env.get("ROMP_STATE_DIR") or os.path.join(env.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state"), "romp")
+if not env.get("FAKE_WORLD") or not os.path.realpath(root).startswith(os.path.realpath(env["FAKE_WORLD"]) + os.sep):
+    sys.stderr.write("fake kernel: state root %r is outside the test's world %r; exit 2, nothing opened\n" % (root, env.get("FAKE_WORLD")))
+    sys.exit(2)
 port = int(env["ROMP_SERVE_PORT"])
 log = env["FAKE_KERNEL_LOG"]
 
@@ -184,14 +194,14 @@ while True:
 async function world() {
   assert.ok(PY3, 'python3 runs the stand-in kernel (its flock is the kernel lock\'s), and none answered on PATH');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-registry-'));
-  const bin = path.join(dir, 'bin'), state = path.join(dir, 'state');
-  for (const d of [bin, state]) fs.mkdirSync(d);
+  const bin = path.join(dir, 'bin'), state = path.join(dir, 'state'), home = path.join(dir, 'home');
+  for (const d of [bin, state, home]) fs.mkdirSync(d);
   fs.writeFileSync(path.join(state, 'serve-token'), REGISTRY_TOKEN + '\n', { mode: 0o600 });
   const kernelPy = path.join(dir, 'fake_kernel.py');
   fs.writeFileSync(kernelPy, FAKE_KERNEL);
   const serve = path.join(dir, 'fake-serve');
   fs.writeFileSync(serve, `#!/bin/sh\nexec "${PY3}" -I "${kernelPy}" "$@"\n`, { mode: 0o755 });
-  const h = { dir, state, log: '', starts: path.join(dir, 'starts.jsonl'), mgr: null, exited: null,
+  const h = { dir, state, home, log: '', starts: path.join(dir, 'starts.jsonl'), mgr: null, exited: null,
               port: await freePort(__filename), mainPort: await freePort(__filename) };
   h.sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   h.writeKernels = (list) => fs.writeFileSync(path.join(state, 'kernels.json'), JSON.stringify({ kernels: list }));
@@ -218,11 +228,11 @@ async function world() {
   h.refusals = (id) => h.log.split('\n').filter((l) => l.includes(`kernel '${id}' (port `) && l.includes('is not started'));
   h.start = async (extra) => {
     const env = Object.assign({}, process.env, {
-      PATH: bin, ROMP_CLI_SCOPE: '0',
+      PATH: bin, ROMP_CLI_SCOPE: '0', HOME: home, XDG_STATE_HOME: path.join(home, 'xdg-state'),
       ROMP_STATE_DIR: state, ROMP_MANAGER_PORT: String(h.port), ROMP_SERVE_PORT: String(h.mainPort),
-      ROMP_SERVE_BIN: serve, ROMP_SHUTDOWN_GRACE_MS: '500', FAKE_KERNEL_LOG: h.starts,
+      ROMP_SERVE_BIN: serve, ROMP_SHUTDOWN_GRACE_MS: '500', FAKE_KERNEL_LOG: h.starts, FAKE_WORLD: dir,
     }, extra || {});
-    for (const k of ['ROMP_SUPERVISED', 'ROMP_SERVE_TOKEN', 'XDG_STATE_HOME', 'ROMP_KERNEL_PORT']) delete env[k];
+    for (const k of ['ROMP_SUPERVISED', 'ROMP_SERVE_TOKEN', 'ROMP_KERNEL_PORT']) delete env[k];
     h.mgr = spawn(process.execPath, [MGR, 'up'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
     h.mgr.stderr.on('data', (d) => { h.log += d; });
     h.exited = new Promise((resolve) => h.mgr.on('exit', (code, sig) => resolve({ code, sig })));
@@ -387,6 +397,23 @@ test('a profile refused at boot starts once its stateDir is its own, and is not 
     assert.deepEqual((await h.kernels()).map((k) => k.id), ['main'], '/status no longer lists the refused profile');
     assert.equal(h.at(h.mainPort, 'start').length, 1, 'main untouched');
   } finally { await h.cleanup(); }
+});
+
+test('the harness: the stand-in kernel says so and exits 2, opening nothing, when the root it resolves is outside the test\'s world', async () => {
+  const h = await world();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-registry-outside-'));
+  try {
+    const stray = await freePort(__filename);
+    const root = path.join(outside, 'stray-state');           // not under the world, and not made yet
+    h.writeKernels([{ id: 'stray', port: stray, stateDir: root }]);
+    await h.start();
+    await h.until(() => /kernel 'stray' \(pid \d+\) exited .*code=2 /.test(h.log), 10000, 'the stand-in for a root outside the world did not exit 2');
+    assert.ok(h.log.includes(`fake kernel: state root '${root}' is outside the test's world`), h.log);
+    assert.ok(!fs.existsSync(root), 'the stand-in made a state root outside its world');
+    assert.deepEqual(h.at(stray), [], 'the stand-in wrote a row before it checked its root');
+    assert.equal(h.at(h.mainPort, 'serving').length, 1, 'main, inside the world, serves');
+    assert.equal(h.at(h.mainPort, 'serving')[0].root, fs.realpathSync(h.state));
+  } finally { await h.cleanup(); fs.rmSync(outside, { recursive: true, force: true }); }
 });
 
 test('resolveStateRoot: a symlink, a trailing slash, a tail that does not exist yet and a dangling link resolve to the real path the kernel will use', () => {
