@@ -3,7 +3,7 @@ title: tests/gitleaks-config.bats's history case scans the commits a branch adds
 status: candidate
 where: tests/gitleaks-config.bats (history_scan_range, new; the history case, renamed and scoped by it; the section of cases on synthetic repositories, new); upstream/2026-10-02-gitleaks-history-scan-scope.md (this entry)
 added: 2026-10-02
-pr:
+pr: 954
 tier: docs
 offered:
 closed:
