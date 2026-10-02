@@ -10,13 +10,13 @@ import os
 import tempfile
 import unittest
 from romp_load import load_source
+from tests.conftest import restore_env
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-os.environ["ROMP_POSTAL_HOST"] = "TESTHOST"
 WEB = "aaaaaaaa-1111-2222-3333-444444444444"
 API = "abcdefab-5555-6666-7777-888888888888"
 _SESS = os.path.join(os.environ["XDG_STATE_HOME"], "sessions.json")
@@ -24,11 +24,26 @@ Path(_SESS).write_text(json.dumps([
     {"id": WEB, "name": "web", "dir": "/tmp/notes-api", "state": "working", "working": ""},
     {"id": API, "name": "api", "dir": "/tmp/notes-api", "state": "waiting", "working": ""},
 ]))
-os.environ["ROMP_SESSIONS_FILE"] = _SESS
 ps = load_source("romp_postal_agents_render", os.path.join(BIN, "romp-postal-service"))
 
 
-class AgentsRowsDisambiguate(unittest.TestCase):
+class _Seam(unittest.TestCase):
+    """The sessions-file seam, per test (2026-09-22): the bus reads ROMP_SESSIONS_FILE at call time, and until now this
+    module wrote it at import, which held for every test in the process and for every child any test spawned (a real
+    bus started from another module's test inherited such a seam and, with one live row to count, never autostopped:
+    fork PR #813's CI). Set here for each test and put back by a cleanup registered right after the write
+    (tests/README.md; tests/test_hermetic_kernel_postal.py holds the repo-wide rule). ROMP_POSTAL_HOST, the bus's own name, is the same kind of seam and goes the same way."""
+
+    def setUp(self):
+        prior = os.environ.get("ROMP_SESSIONS_FILE")
+        os.environ["ROMP_SESSIONS_FILE"] = _SESS
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", prior)
+        prior_host = os.environ.get("ROMP_POSTAL_HOST")
+        os.environ["ROMP_POSTAL_HOST"] = "TESTHOST"
+        self.addCleanup(restore_env, "ROMP_POSTAL_HOST", prior_host)
+
+
+class AgentsRowsDisambiguate(_Seam):
     def test_every_row_carries_its_short_stable_id(self):
         out = ps.format_agents([{"id": WEB, "name": "web", "state": "working"}], "web", WEB)
         self.assertIn("web (you) · aaaaaaaa", out, "the (you) row keeps its mark and gains the id")
@@ -50,19 +65,7 @@ class AgentsRowsDisambiguate(unittest.TestCase):
         self.assertIn("web-comment-1 (thread of web) · bbbbbbbb", out)
 
 
-class ShortIdAddresses(unittest.TestCase):
-    def setUp(self):
-        # the sessions-file seam is read PER CALL, so a batch run's last-imported module owns the
-        # env — bind OUR file for the duration of each test (the seam's own hermetic idiom)
-        self._saved = os.environ.get("ROMP_SESSIONS_FILE")
-        os.environ["ROMP_SESSIONS_FILE"] = _SESS
-
-    def tearDown(self):
-        if self._saved is None:
-            os.environ.pop("ROMP_SESSIONS_FILE", None)
-        else:
-            os.environ["ROMP_SESSIONS_FILE"] = self._saved
-
+class ShortIdAddresses(_Seam):
     def test_a_unique_id_prefix_resolves_direct(self):
         res = ps.resolve_recipient("abcdefab", "some-other-sender")
         self.assertEqual(res["kind"], "direct")
