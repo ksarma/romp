@@ -62,7 +62,10 @@ The pins, each red on the kernel before the lock for the reason it names:
      waiting line's BrokenPipeError (a sitecustomize hook in the child writes what it raised to a file the message
      quotes); in process, under a stderr that raises, each road with a line of its own (the waiting line with the wait
      reaching its deadline, the waiting and handover lines with the wait taking the lock, and the line saying a held
-     lock's serving line was not written) returns the lock step's answer, never a raise, its line attempted.
+     lock's serving line was not written) returns the lock step's answer, never a raise, its line attempted; and so does
+     a stderr that raises no OSError: a closed stream's ValueError with the wait taking the lock, and sys.stderr None (a
+     process started with descriptor 2 closed, whose writes raise AttributeError) with the wait reaching its deadline;
+     under either, a refusal's line still reaches os._exit(75).
 
 Subprocess pins run bin/romp-kernel under sys.executable in a private lab. The environment comes from kernel_env
 (tests/test_ship_reship_served.py, the safe lab-kernel recipe: named variables only, the lab's roots, session hosts
@@ -1054,26 +1057,42 @@ class StderrWithNoReader(_Lab):
         self.assertEqual(self.connections(), 0, "the refused kernel dialled the postal port")
 
 
-class _BrokenStderr:
-    """A stderr whose every write and flush raises BrokenPipeError, as a pipe whose reader has closed does; it keeps
-    each text it was asked to write, so a pin can tell the line was attempted."""
+def _broken_pipe():
+    return BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE))
 
-    def __init__(self):
+
+def _closed_stream():
+    return ValueError("I/O operation on closed file.")     # what a closed text stream raises on write: not an OSError
+
+
+class _BrokenStderr:
+    """A stderr whose every write and flush raises the exception `error` makes (BrokenPipeError, as a pipe whose reader
+    has closed raises, when not given); it keeps each text it was asked to write, so a pin can tell the line was
+    attempted."""
+
+    def __init__(self, error=_broken_pipe):
         self.attempted = []
+        self.error = error
 
     def write(self, text):
         self.attempted.append(text)
-        raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE))
+        raise self.error()
 
     def flush(self):
-        raise BrokenPipeError(errno.EPIPE, os.strerror(errno.EPIPE))
+        raise self.error()
+
+
+_NO_STDERR = object()    # StderrWithNoReaderInProcess.raising_stderr's stand-in for sys.stderr None
 
 
 class StderrWithNoReaderInProcess(unittest.TestCase):
     """Pin 10 in process, one road per stderr line of the lock step: the waiting line (the wait then reaches its
     deadline), the waiting line and the handover line (the wait then takes the lock), and the line saying a held lock's
     serving line was not written. Under a stderr that raises, each road still returns the lock step's answer, never a
-    raise, and each pin checks its line was attempted, so a road that wrote nothing cannot pass it."""
+    raise, and each pin checks its line was attempted, so a road that wrote nothing cannot pass it. The stderr raises
+    BrokenPipeError on those three roads; a stderr that raises no OSError has pins of its own: a closed stream's
+    ValueError with the wait taking the lock, sys.stderr None with the wait reaching its deadline, and both on the
+    refusal's line before os._exit."""
 
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="kernel-lock-stderr-")
@@ -1090,22 +1109,41 @@ class StderrWithNoReaderInProcess(unittest.TestCase):
         os.pwrite(held, line.encode("ascii"), 0)
         os.ftruncate(held, len(line))
 
-    def acquire(self, **patches):
-        """_kernel_lock_acquire under a stderr that raises, one thread counted, with `patches` on the kernel module:
-        (fd, refusal, the texts it attempted)."""
-        broken = _BrokenStderr()
+    @contextlib.contextmanager
+    def raising_stderr(self, stderr):
+        """Run the block under a stderr that raises: `stderr` is a _BrokenStderr, or _NO_STDERR for sys.stderr None, as
+        Python sets it in a process started with descriptor 2 closed, where a write raises AttributeError. Yields the
+        list the lock step's attempted texts collect in: the _BrokenStderr's own, or with no stderr a spy's, the spy
+        wrapping _kernel_lock_say and calling through to it, so the kernel's own handling of the write is what runs."""
+        if stderr is not _NO_STDERR:
+            with contextlib.redirect_stderr(stderr):
+                yield stderr.attempted
+            return
+        attempted = []
+        say = km._kernel_lock_say
+
+        def spy(text):
+            attempted.append(text)
+            return say(text)
+        with mock.patch.object(km, "_kernel_lock_say", spy), contextlib.redirect_stderr(None):
+            yield attempted
+
+    def acquire(self, stderr=None, **patches):
+        """_kernel_lock_acquire under a stderr that raises (`stderr`, as raising_stderr takes it; a _BrokenStderr
+        raising BrokenPipeError when not given), one thread counted, with `patches` on the kernel module: (fd, refusal,
+        the texts it attempted)."""
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.object(km.threading, "active_count", return_value=1))
             for name, value in patches.items():
                 stack.enter_context(mock.patch.object(km, name, value))
-            stack.enter_context(contextlib.redirect_stderr(broken))
+            attempted = stack.enter_context(self.raising_stderr(_BrokenStderr() if stderr is None else stderr))
             try:
                 fd, refusal = km._kernel_lock_acquire(Path(self.path))
             except Exception as e:      # the defect this class pins: a stderr line that raises out of the lock step
                 self.fail("_kernel_lock_acquire raised %s: %s" % (type(e).__name__, e))
         if fd is not None:
             self.addCleanup(os.close, fd)
-        return fd, refusal, "".join(broken.attempted)
+        return fd, refusal, "".join(attempted)
 
     def test_the_waiting_line_failing_leaves_the_refusal_at_the_deadline(self):
         self.hold_draining()
@@ -1129,6 +1167,40 @@ class StderrWithNoReaderInProcess(unittest.TestCase):
                                                                          "not run")
         self.assertIsNotNone(fd, "a lock taken whose serving line cannot be written still serves: %r" % refusal)
         self.assertIsNone(refusal)
+
+    # A stderr that raises no OSError: a closed stream's ValueError, and sys.stderr None (a process started with
+    # descriptor 2 closed), whose writes raise AttributeError. A lock step that caught only OSError raised these out of
+    # the waiting line, and a kernel with no descriptor 2 then exited 1 instead of waiting and refusing with exit 75.
+
+    def test_a_closed_stderr_raising_valueerror_leaves_the_lock_taken_after_the_wait(self):
+        self.hold_draining()
+        fd, refusal, attempted = self.acquire(_BrokenStderr(_closed_stream),
+                                              _kernel_lock_wait=mock.Mock(return_value=True))
+        self.assertIn(WAITING_TEXT, attempted, "the waiting line was not attempted, so the road did not run")
+        self.assertIn(HANDOVER_TEXT, attempted, "the handover line was not attempted, so the road did not run")
+        self.assertIsNotNone(fd, "the wait took the lock: %r" % refusal)
+        self.assertIsNone(refusal)
+
+    def test_no_stderr_at_all_leaves_the_refusal_at_the_deadline(self):
+        self.hold_draining()
+        fd, refusal, attempted = self.acquire(_NO_STDERR, _kernel_lock_wait=mock.Mock(return_value=False))
+        self.assertIn(WAITING_TEXT, attempted, "the waiting line was not attempted, so the road did not run")
+        self.assertIsNone(fd)
+        self.assertIn(PAST_TEXT, refusal, "the wait reached the deadline with the drainer's line still there")
+
+    def test_a_refusal_printed_to_a_stderr_raising_no_oserror_still_reaches_the_exit(self):
+        refusal = "romp-kernel: a synthetic refusal line\n"
+        for label, stderr in (("a closed stream", lambda: _BrokenStderr(_closed_stream)),
+                              ("no stderr", lambda: _NO_STDERR)):
+            with self.subTest(label):
+                exit_ = mock.Mock()     # os._exit returns here, so _kernel_lock_refuse returns once it has called it
+                with mock.patch.object(km.os, "_exit", exit_), self.raising_stderr(stderr()) as attempted:
+                    try:
+                        km._kernel_lock_refuse(refusal)
+                    except Exception as e:      # the refusal's line raised before the exit
+                        self.fail("_kernel_lock_refuse raised %s: %s" % (type(e).__name__, e))
+                self.assertEqual(attempted, [refusal], "the refusal's line was not attempted")
+                exit_.assert_called_once_with(EXIT_REFUSED)
 
 
 class InProcess(unittest.TestCase):
