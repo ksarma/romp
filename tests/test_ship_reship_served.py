@@ -642,10 +642,11 @@ class LabKernelEnv(unittest.TestCase):
         # public price list on a third party's host when the kernel's in-memory cache is stale, which at boot it always
         # is: without this key their lab kernels fetched it on every run (2026-09-20). tests/test_price_feed_floor.py is
         # the executed proof that off makes the refresh inert; this pins that the lab kernel is handed it.
-        with mock.patch.dict(os.environ, self.FLOOR):
+        # both environments are built through _env, whose cleanup releases the postal port kernel_env reserves
+        with mock.patch.dict(os.environ):
             os.environ.pop("ROMP_PRICE_FEED", None)        # a runner outside pytest: no floor of either switch at all
             os.environ.pop("ROMP_MODEL_CATALOG", None)
-            env = kernel_env(self.LAB, os.path.join(self.LAB, "claude"), os.path.join(self.LAB, "dist"), 4321, "testtok")
+            env = self._env(self.FLOOR)
         self.assertEqual(env.get("ROMP_PRICE_FEED"), "off",
                          "the lab kernel's price feed switch is the lab's own, never the runner's: the served labs that open "
                          "Token usage fetch the feed without it")
@@ -654,8 +655,7 @@ class LabKernelEnv(unittest.TestCase):
         self.assertEqual(relaunch_env(env).get("ROMP_PRICE_FEED"), "off", "the relaunched lab kernel must not fetch either")
         # a runner whose shell exports the switch with another value: the lab's own still wins, since a lab kernel is
         # hermetic by its own environment, never by the developer's
-        with mock.patch.dict(os.environ, dict(self.FLOOR, ROMP_PRICE_FEED="on")):
-            env = kernel_env(self.LAB, os.path.join(self.LAB, "claude"), os.path.join(self.LAB, "dist"), 4321, "testtok")
+        env = self._env(dict(self.FLOOR, ROMP_PRICE_FEED="on"))
         self.assertEqual(env.get("ROMP_PRICE_FEED"), "off", "the runner's value never reaches the lab kernel")
         # the composition: the name and value handed are the ones the kernel reads (a source pin on kernel.py's
         # _price_feed_off; the executed proof that this value makes the refresh inert is tests/test_price_feed_floor.py)
