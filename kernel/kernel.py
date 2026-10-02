@@ -12917,8 +12917,8 @@ def _restart_impact():
 
 def _manager_kernels(timeout=1.0):
     """The kernels the manager's restart-all restarts, as the manager's own registry lists them (its GET
-    /status `kernels`, the live map restartAll loops: kernels.json profiles and /ensure kernels alike),
-    or None when there is no answer to read (nothing answering within `timeout`, a status other than
+    /status `kernels`, the live map restartAll loops: the primary, each kernels.json profile it started,
+    and a running kernel whose entry has since left the file), or None when there is no answer to read (nothing answering within `timeout`, a status other than
     200, a body of another shape). Without a manager (ROMP_MANAGER_PORT absent, empty or not a port:
     _manager_port) the registry is empty: no restart-all reaches this kernel, nothing else restarts with
     it, and the drift door's restart dials nothing on the same absence (review round 5 of the confirm
@@ -12930,8 +12930,10 @@ def _manager_kernels(timeout=1.0):
     this kernel's sessions, the manager restarts each kernel it owns, so a box with more than one
     kernel loses more sessions than the count says, and the label says so when the registry holds
     another kernel. Never a read of kernels.json, which the manager parses on its own terms (it drops a
-    malformed entry) and which never lists a kernel /ensure spawned. A manager on record that does not
-    answer well is said on stderr, once per episode (_manager_read_fault): the banner then says other
+    malformed entry, and refuses a profile whose state root another kernel holds), which lists
+    profiles that are not running, and which no longer lists a running kernel whose entry left it. A
+    manager on record that does not answer well is said on stderr, once per episode
+    (_manager_read_fault): the banner then says other
     kernels MAY restart too, never the single-kernel form, because a manager that missed this 1 s read
     can still take the restart request, which waits up to _RESTART_REQUEST_MAX_S (review round 3)."""
     mport = _manager_port(os.environ.get("ROMP_MANAGER_PORT"))
@@ -82694,7 +82696,8 @@ def _graceful_term(signum, frame):
             # A parked quiet request is delivered by the manager, and the manager notes every kill it sends
             # before sending it. With no note for this pid inside the window and this kernel's lifetime, this
             # SIGTERM is not that delivery: the manager still holds the park for whatever kernel runs at the
-            # quiet window (a dynamic kernel or a stateDir-less aux shares this root and this park). Consuming
+            # quiet window (this kernel's successor, or a kernel started by hand on this root, reads this root
+            # and this park; the manager starts no second kernel on one root). Consuming
             # the park here stamped its t as auditT, which hid it from every reader under the root
             # (_consumed_audit_t), labeled a signal nobody asked for as the deploy, filed no `signal` row,
             # and counted a stray kill as a deploy landing (_last_deploy_restart_t). So the pick is dropped

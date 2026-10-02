@@ -676,8 +676,9 @@ class UnrequestedSignal(unittest.TestCase):
             self.assertEqual(km._parked_quiet_deploy("1111111", now=t), t - 5, "the drift stand-down still holds")
 
     def test_a_sibling_born_after_the_park_files_the_same_row_for_the_stop_of_itself(self):
-        # the same park and stop/stop note read by a kernel started AFTER the park (a dynamic kernel or a
-        # stateDir-less aux under this root; its start sits between the two rows). To this kernel's walk the
+        # the same park and stop/stop note read by a kernel started AFTER the park (the successor of the
+        # kernel that filed it, or a kernel started by hand on this root, since the manager starts no second
+        # kernel on one root; its start sits between the two rows). To this kernel's walk the
         # park is a predecessor's and the note answers, so the cut row names the note, as it did before the
         # change; the kernel that filed the park files the same row now (the case above), so which kernel
         # the manager stopped no longer decides the record, and the park stays visible to the one that filed it
@@ -1169,8 +1170,9 @@ class RequestOnRecord(unittest.TestCase):
         self.assertEqual(self._reason(now=1080, started=1011), "", "nor is one from before this kernel started")
 
     def test_a_quiet_request_survives_a_stop_of_one_other_kernel(self):
-        # POST /stop naming one kernel (a dynamic kernel under this root has no root of its own) writes a
-        # `stop` note with trigger `stop` for that pid and leaves the manager's park armed; the row cannot be
+        # POST /stop naming one kernel writes a `stop` note with trigger `stop` for that pid under the root it
+        # serves (here another pid on this root, which is this kernel's predecessor or successor: the manager
+        # starts no second kernel on one root) and leaves the manager's park armed; the row cannot be
         # told from the stop that took every kernel down, so the park stays on record, and so does a stray
         # kill of the predecessor with the manager alive. The held converge self-heals at the backstop bound;
         # a released one would cut the turns the quiet window was to spare. The row above settles nothing
