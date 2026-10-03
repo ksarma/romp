@@ -69122,7 +69122,9 @@ function netState(s){try{window.__rompLocalUp=(s==="up");if(window.parent!==wind
 // [fork] iOS item 4b (2026-10-03): tells the shell that a dial of this pane's closed without ever opening, the event that says its
 // reconnect FAILED; posted after that close's down word. The shell's Log writes its connection-lost entry on this word (or on the
 // shell's own failed dial, _LANDING_ERRS_JS), never on the down word alone: a socket put down and reopened at once is no outage.
-function netFail(){try{if(window.parent!==window)window.parent.postMessage({romp:"wsFail",app:APP},"*");}catch(e){}}
+// cut: the dial was still CONNECTING past the watchdog's connect bound when it closed, not refused; the Log does not count such a
+// close while another socket of the page is open (its stands(), and why).
+function netFail(cut){try{if(window.parent!==window)window.parent.postMessage({romp:"wsFail",app:APP,cut:!!cut},"*");}catch(e){}}
 // A FILE dragged onto a pane that takes no drops must not navigate the pane to the file — the browser's default for an
 // unhandled drop (the user 2026-09-12: an image dropped beside the chat's box replaced the page with the image). Every
 // pane but the chat refuses it here: a not-allowed cursor over the pane, the drop swallowed. The chat's own document takes
@@ -69403,7 +69405,7 @@ enqueue(msg);};   // the handoff to the bundle is the ONE deferred step (see the
 ws.onclose=function(ev){netState("down");
 if(openSock===this){armFresh();try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected,bundleReady:bundleReady}});}catch(e){}}
 else{if(!failedConnects)firstFailT=Date.now();failedConnects++;}
-if(openSock!==this)netFail();   // [fork] iOS item 4b: a dial that never opened has closed (refused, or cut by the watchdog's CONNECTING arm): this reconnect failed, which is what the shell's Log waits for
+if(openSock!==this)netFail(Date.now()-connT>15000);   // [fork] iOS item 4b: a dial that never opened has closed (refused, or cut by the watchdog's CONNECTING arm): this reconnect failed, which is what the shell's Log waits for. The argument is that arm's own test, read at the close: every close the arm makes reads true here, since it closes only past the bound (its line is upstream's and pinned, so it carries no mark of its own), and a close the browser made past the bound had waited as long, the question the Log asks
 if(stalePending&&openSock===this){var cw=stalePending;stalePending="";raiseStale(cw+"-closed");}   // the reconnected socket died before its resync: nothing is coming on it, and the view IS stale
 try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}
 // a close landing inside the return window: the socket the keep-decision row (and maybe its return-fresh) was written
@@ -70720,14 +70722,22 @@ function paneLabel(k){k=String(k||'');return PN[k]||(k?k.charAt(0).toUpperCase()
 // shell's (window.__rompLinkFailed, called from its socket's close in _LANDING_MOBILE_JS), which fails every waiting entry, because
 // on a return the panes wait for the shell's link and dial nothing while it is down. Before this the transition wrote the entry:
 // every return whose sockets reopened at once (the return's own put-down of a stale socket, or the FIN a thawed page receives)
-// logged "connection lost" for the chat and the Feed and left an unread digit on the Log control, a false interrupt. No timer: a
-// hung dial fails at its connect cut. The entry is written while the pane is still down and shown; a drop on a pane not shown keeps
-// waiting, and one no longer down (parked, or a column closed) is dropped.
+// logged "connection lost" for the chat and the Feed and left an unread digit on the Log control, a false interrupt. The entry is
+// written while the pane is still down and shown; a drop on a pane not shown keeps waiting, and one no longer down (parked, or a
+// column closed) is dropped.
+// The Log keeps no timer of its own, but a dial's connect cut is a timer (15 s: the shim's watchdog, the shell's SH_CONNECT_MS), and a
+// close it made (`cut`, on the word or the call) fails nothing while a socket of this page is open (stands(): the shell's link, a
+// pane's or a column's). The kernel is answering that socket, and Chromium and Firefox hold each WebSocket handshake to a host until
+// the one ahead of it is done (RFC 6455 section 4.1), so on a slow network the dials a return makes together wait in line and the
+// last of them can reach its cut while every handshake is succeeding (the review of item 4b, 2026-10-03: a desktop return at 3.5 s
+// per handshake logged the Files pane at +22 s). A refused dial fails whatever stands; with nothing open, a hung outage, the first
+// cut writes, at 15 s.
 var lost={};
+function stands(){if(window.__rompLink&&window.__rompLink().up)return true;for(var k in st){if(st[k]==='up')return true;}for(var c in stc){if(stc[c]==='up')return true;}return false;}
 function lostFail(k){var x=lost[k];if(!x)return;if((x.col?stc[x.col]:st[x.app])!=='down'){delete lost[k];return;}
 if(!shown(x.app))return;delete lost[k];window.__rompNotify('conn',x.text);}
-window.__rompLinkFailed=function(){for(var k in lost)lostFail(k);};
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsFail')return;
+window.__rompLinkFailed=function(cut){if(cut&&stands())return;for(var k in lost)lostFail(k);};
+window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsFail'||(m.cut&&stands()))return;
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';lostFail(col?'col:'+col:m.app);});
 window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';   // a split column reports under its own key (the sender frame says which)
@@ -73665,7 +73675,7 @@ if(shRestartAnnounced&&Date.now()-shRestartAnnounced<30000)shd=250;   // an anno
 else if(!shOpened&&!shCutHere&&Date.now()-shConnT<SH_CONNECT_MS){shd=SH_LADDER[shRung<SH_LADDER.length?shRung:SH_LADDER.length-1];shRung++;}   // a REFUSED attempt (an onclose within the connect cut that the cut did not make: shCutHere, iOS item 1a, so a timer that fires while the wall clock reads a ms short of SH_CONNECT_MS still paces a hung attempt below): back off on the bounded ladder 1/2/4/4 s, reset by an open, so a fast-refusing path is not a dial storm (the harness baseline: 236 dials/pane in 30 s at 250 ms)
 else if(shInWin)shd=250;   // a HUNG attempt the connect cut paced (the dial's own timer, or the tick's backstop), inside a return window: prompt
 else shd=SH_BLIND_MS;   // the blind cadence for an ordinary drop outside any window (today's shell)
-if(!shOpened)try{window.__rompLinkFailed&&window.__rompLinkFailed();}catch(e){}   // [fork] iOS item 4b (2026-10-03): this dial closed without ever opening (refused, or its connect cut): the page's link failed to come back, and with it the reconnect of every pane waiting on it, so the Log writes the drops it holds (_LANDING_ERRS_JS `lost`). Below the superseded close's return above, so a close delivered after a newer dial fails nothing
+if(!shOpened)try{window.__rompLinkFailed&&window.__rompLinkFailed(shCutHere||Date.now()-shConnT>=SH_CONNECT_MS);}catch(e){}   // [fork] iOS item 4b (2026-10-03): this dial closed without ever opening (refused, or its connect cut): the page's link failed to come back, and with it the reconnect of every pane waiting on it, so the Log writes the drops it holds (_LANDING_ERRS_JS `lost`). Below the superseded close's return above, so a close delivered after a newer dial fails nothing. The argument says the connect cut made this close (its own timer, shCutHere, or the tick's backstop past SH_CONNECT_MS: the ladder's complement of a refusal above), which the Log does not count while a pane's socket is open, since this dial may have waited in line behind theirs
 shTimer=setTimeout(shellWS,shd);};}catch(e){}}   // the one pending redial timer (a dial clears it, shellWS)
 // [fork] D3: the shell's progress watchdog - the shim's three arms with the shell's own copy of the bounds. An OPEN
 // socket quiet past the bound (PROVISIONAL_MS while a resumed keep awaits a confirming frame, STALE_MS otherwise) is
