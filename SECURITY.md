@@ -328,9 +328,14 @@ name bound
 once, by one top-level plain assignment, to a call of `compile` handed a string
 or bytes constant (and at most a flags argument that is an int constant, an
 attribute of that name, or their `|`) on a name the module binds to the standard
-library's `re` by binding is read through its `.sub`, `.search`, `.match`,
-`.fullmatch` and `.findall`, which change nothing, so such a call's arguments
-are the page text and the compiled name holds none of its own; the proof by
+library's `re` by binding is read through its `.search`, `.match`, `.fullmatch`
+and `.findall`, and through its `.sub` where the replacement is a string or
+bytes constant holding no backslash, which change nothing, so such a call's
+arguments are the page text and the compiled name holds none of its own; a
+`.sub` with any other replacement (one holding a backslash, which `re` may
+expand as a template escape or a group reference into text the replacement does
+not spell, a name, a callable, a starred argument or a `**`) is refused by name,
+since the census does not model template expansion; the proof by
 binding is the digest leaf's (below), with its limit, so a module object stored
 in sys.modules under that name before the import binds it, or a function of the
 module replaced by an attribute store, is not seen. The census reads a page only
@@ -345,10 +350,11 @@ in a string or bytes constant, an f-string's literal part or the joined text of
 a join of string constants; a script-running content type whose parameters name
 a charset other than utf-8; and a page's read of a walked browser-text file
 whose text, as the walk decoded it, holds U+FFFD, U+FEFF or a NUL, or declares such a
-charset. A declaration split across texts the census reads apart (a name's text
-among the parts, whether between two literals or as one half, or across bytes
-constants, which the census reads each on its own) is read as each text spells
-it. The routes are derived from
+charset. A declaration split across texts the census reads apart (any part but a
+string constant among its pieces, between two literals or as one half: a name's
+text, a call, a conditional expression or a bytes constant, which the census
+reads each on its own) is read as each text spells it. The routes are derived
+from
 the calls of
 `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through
 a name computed at run time is not read) and every Content-Type header written
@@ -1566,18 +1572,24 @@ by its function and expression, with the number of places the entry covers and
 the reason (the two answers with no body, the CORS preflight's 204 and the
 websocket upgrade's 101, are named there); an entry that names nothing in the
 run, or covers a different number of places, fails the run too. A method call
-the method allowlist refuses whose page is honest is named instead in the served
-listing, SERVED_LISTED, keyed the same way: its place is not excused but listed,
+the method allowlist refuses, or a compiled pattern's `.sub` the replacement
+rule above refuses, whose page is honest is named instead in the served listing,
+SERVED_LISTED, keyed the same way (a compiled pattern's call by its exact call:
+the call with its replacement's bytes, and its pattern's binding, the pattern's
+text with its flags, so a change to either matches no entry): its place is not
+excused but listed,
 one line after the stylesheets the listing names, with the entry's reason, and
 the run does not fail on it; its places are recorded apart from SERVED_ALLOW's,
 and each list's checks read only its own; an entry there that names nothing in
 the run, or covers a different number of places, fails the run too, and so does
-a key both lists hold, since a place is excused or listed, never both. One place
-is so listed:
-`str(app or "").capitalize()` in the kernel's `_pane_label`, called from
-`_shim`, whose callers are the seven page routes, each passing a constant
-lowercase pane key, and `_shim_core_js`, which passes its own parameter (default
-`"test"`). In served
+a key both lists hold, since a place is excused or listed, never both. Three
+places are so listed: `str(app or "").capitalize()` in the kernel's
+`_pane_label`, called from `_shim`, whose callers are the seven page routes,
+each passing a constant lowercase pane key, and `_shim_core_js`, which passes
+its own parameter (default `"test"`); and the two `.sub` calls in the kernel's
+page stamp, `_stamp_served_html`, one on a str page and one on a bytes page,
+whose replacement's group reference re-inserts the matched `<html` tag, a
+template expansion the census does not model. In served
 text every
 `fetch(` and `import(` on a line is read by its own argument, and no
 comment skip applies, since a joined constant is one line whatever it starts
@@ -1892,8 +1904,8 @@ from any page, framed or bare; and a paint request can carry the full page
 address with the serve token in its Referer, but only when the page's own
 address carries `?token=` (a pane page loaded on such an address by a load the
 kernel does not count as a navigation, one whose Sec-Fetch-Dest names neither a
-document nor an iframe or, with no Sec-Fetch headers, whose Accept does not name
-text/html; the shell drops the token from its address before it frames its
+document nor an iframe or, with no Sec-Fetch-Dest header, whose Accept does not
+name text/html; the shell drops the token from its address before it frames its
 panes, and frames
 them without it); these paint requests are the one exception to the trust
 model's sentence on `Referrer-Policy: same-origin` (the response is blocked as

@@ -197,8 +197,11 @@ string constant is scanned whole; a bytes constant whose every byte is ASCII is 
 and one holding a byte past ASCII is refused by name (below); and a name bound once, by
 one top-level plain assignment, to a call of `compile` handed a string or bytes constant (and at most a flags argument that is an
 int constant, an attribute of that name, or their `|`) on a name the module binds to the standard library's `re` by binding is
-read through its `.sub`, `.search`, `.match`, `.fullmatch` and `.findall`, which change nothing, so such a call's arguments are
-the page text and the compiled name holds none of its own; the proof by binding is the digest leaf's (below), with its limit, so a
+read through its `.search`, `.match`, `.fullmatch` and `.findall`, and through its `.sub` where the replacement is a string or
+bytes constant holding no backslash, which change nothing, so such a call's arguments are the page text and the compiled name
+holds none of its own; a `.sub` with any other replacement (one holding a backslash, which `re` may expand as a template escape or
+a group reference into text the replacement does not spell, a name, a callable, a starred argument or a `**`) is refused by name,
+since the census does not model template expansion; the proof by binding is the digest leaf's (below), with its limit, so a
 module object stored in sys.modules under that name before the import binds it, or a function of the module replaced by an
 attribute store, is not seen. The census reads a page only where the bytes a browser decodes are the text it scans, which it reads
 as UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding a byte past ASCII (a byte order mark, whole or
@@ -208,9 +211,10 @@ declaring a charset other than utf-8 (a `charset=` in any case, as a meta elemen
 parameter spell it, or an XML declaration's `encoding=`, followed by any label but utf-8) in a string or bytes constant, an
 f-string's literal part or the joined text of a join of string constants; a script-running content type whose parameters name a
 charset other than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD,
-U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (a name's
-text among the parts, whether between two literals or as one half, or across bytes constants, which the census
-reads each on its own) is read as each text spells it. The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or
+U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (any part but a string
+constant among its pieces, between two literals or as one half: a name's text, a call, a conditional expression or a bytes
+constant, which the census reads each on its own) is read as each text spells it. The routes are derived from the calls of `_send`
+the scan reads (spelled `_send(...)` or
 `<x>._send(...)`; a call through a name
 computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A `_send`
 call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in its
@@ -989,13 +993,17 @@ pass does not read: above), unless the served allowlist, SERVED_ALLOW, names the
 number of places the entry
 covers and the reason (the two answers with no body, the CORS preflight's 204 and the websocket upgrade's 101, are named there);
 an entry that names nothing in the run, or covers a different number of places, fails the run too. A method call the method
-allowlist refuses whose page is honest is named instead in the served listing, SERVED_LISTED, keyed the same way: its place is not
+allowlist refuses, or a compiled pattern's `.sub` the replacement rule above refuses, whose page is honest is named instead in the
+served listing, SERVED_LISTED, keyed the same way (a compiled pattern's call by its exact call: the call with its replacement's
+bytes, and its pattern's binding, the pattern's text with its flags, so a change to either matches no entry): its place is not
 excused but listed, one line after the stylesheets the listing names, with the entry's reason, and the run does not fail on it;
 its places are recorded apart from SERVED_ALLOW's, and each list's checks read only its own; an entry there that names nothing in
 the run, or covers a different number of places, fails the run too, and so does a key both lists hold, since a place is excused or
-listed, never both. One place is so listed:
-`str(app or "").capitalize()` in the kernel's `_pane_label`, called from `_shim`, whose callers are the seven page routes, each
-passing a constant lowercase pane key, and `_shim_core_js`, which passes its own parameter (default `"test"`). In served text
+listed, never both. Three places are so listed: `str(app or "").capitalize()` in the kernel's `_pane_label`, called from `_shim`,
+whose callers are the seven page routes, each passing a constant lowercase pane key, and `_shim_core_js`, which passes its own
+parameter (default `"test"`); and the two `.sub` calls in the kernel's page stamp, `_stamp_served_html`, one on a str page and one
+on a bytes page, whose replacement's group reference re-inserts the matched `<html` tag, a template expansion the census does not
+model. In served text
 every `fetch(`
 and `import(` on a line is read by its own argument, and no comment skip applies, since a joined constant is one line whatever
 it starts with. Each string literal is read on its own, and so is the text of each of these joins of string constants, at its
@@ -1284,7 +1292,7 @@ PAINT_CLAUSE = (PAINT_LIST + "; each such request carries no cookie and carries 
                 "port omitted when it is the scheme's default) in its Origin header; in Chromium a `mask` request can also carry that origin as its Referer, from any page, framed or bare; and "
                 "a paint request can carry the full page address with the serve token in its Referer, but only when the page's own address "
                 "carries `?token=` (a pane page loaded on such an address by a load the kernel does not count as a navigation, one "
-                "whose Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch headers, whose Accept does not "
+                "whose Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch-Dest header, whose Accept does not "
                 "name text/html; the shell drops the token from its address before it "
                 "frames its panes, and frames them without it); these paint requests are the one exception to the trust model's sentence on "
                 "`Referrer-Policy: same-origin` (the response is blocked as cross-origin; the request, with those headers, has reached the host)")
@@ -3456,15 +3464,15 @@ def _pct_fields(fmt):
 # and None, a bool, an int and the empty bytes are value slots (_Served.resolve)
 _CONSTANT_KINDS = {bytes: "a non-empty bytes Constant", float: "a float Constant", complex: "a complex Constant", type(...): "an Ellipsis Constant"}
 # The decoding a served page is read in (item 1 of the reviewer's 13:2xZ ruling of 2026-10-03): the census reads a page only where the
-# bytes a browser decodes are the text it scans, which it reads as UTF-8, so it refuses by name, as a page it cannot read, a page
-# whose bytes may carry a byte order mark or whose type or text names another charset: a bytes constant holding a byte past ASCII
-# (_BYTES_WIDE, resolve), page text holding U+FEFF, which its UTF-8 bytes carry as a byte order mark (_BOM_TEXT, _Served._decoded),
-# page text holding a NUL, by which a browser may read interleaved NULs as UTF-16 and decode the page other than the census scans it
-# (_NUL_TEXT, _Served._decoded; so a page encoded UTF-16 with no byte order mark, whose ASCII bytes the bytes arm would read one to a
-# character, is refused), page text declaring a charset other than utf-8 (_DECLARED, _declared_charset; a join of string constants by its
-# joined text, served_texts), a script-running content type naming one (judge, _ctype_charset), and a walked browser-text file a page
-# reads whose text, as the walk decoded it, holds a byte the walk could not decode as UTF-8, a U+FEFF or a NUL, or declares such a
-# charset (_undecoded, _FILE_UNDECODED)
+# bytes a browser decodes are the text it scans, which it reads as UTF-8, so it refuses by name, as a page it cannot read, a page whose
+# bytes may carry a byte order mark or whose type or text names another charset: a bytes constant holding a byte past ASCII
+# (_BYTES_WIDE, resolve), page text holding U+FEFF, refused on the safe side wherever it stands, since a leading one is a byte order
+# mark (_BOM_TEXT, _Served._decoded), page text holding a NUL, by which a browser may read interleaved NULs as UTF-16 and decode the
+# page other than the census scans it (_NUL_TEXT, _Served._decoded; so a page encoded UTF-16 with no byte order mark, whose ASCII bytes
+# the bytes arm would read one to a character, is refused), page text declaring a charset other than utf-8 (_DECLARED,
+# _declared_charset; a join of string constants by its joined text, served_texts), a script-running content type naming one (judge,
+# _ctype_charset), and a walked browser-text file a page reads whose text, as the walk decoded it, holds a byte the walk could not
+# decode as UTF-8, a U+FEFF or a NUL, or declares such a charset (_undecoded, _FILE_UNDECODED)
 _BYTES_WIDE = "a bytes constant holding a byte past ASCII, which a browser may decode other than one byte to a character"
 _BOM_TEXT = "text holding U+FEFF, refused on the safe side because a leading U+FEFF is a byte order mark the page's UTF-8 bytes carry, by which a browser may decode the page"
 _NUL_TEXT = "text holding a NUL, by which a browser may read interleaved NULs as UTF-16 and decode the page other than the census scans it"
@@ -3477,10 +3485,10 @@ def _declared_charset(text):
     past spaces, by `=`, as a meta element's charset attribute and a content attribute's parameter spell it, and an XML declaration's
     encoding (`encoding=` inside one `<?xml ...>`); the label read after the `=` past spaces, quotes and backslashes, as far as it
     runs in letters, digits, `_`, `.`, `:` and `-`. Any label but utf-8, in any case (another label of UTF-8 and the empty one, where
-    something else follows, among them), is returned. A declaration split across texts the census reads apart (a name's text among the
-    parts, whether between two literals or as one half, or across bytes constants, which the census reads each on its own and does not
-    fold) is read as each text spells it, the literal match's limit; only a declaration a join of string constants folds to one text
-    (served_texts) is caught there."""
+    something else follows, among them), is returned. A declaration split across texts the census reads apart (any part but a string
+    constant among its pieces, between two literals or as one half: a name's text, a call, a conditional expression or a bytes constant,
+    which the census reads each on its own and does not fold) is read as each text spells it, the literal match's limit; only a
+    declaration a join of string constants folds to one text (served_texts) is caught there."""
     for m in _DECLARED_RX.finditer(text):
         if m.group(2).lower() != "utf-8": return "%s=%s" % ("charset" if m.group(1).lower() == "charset" else "encoding", m.group(2))
     return None
@@ -3489,12 +3497,12 @@ def _declared_charset(text):
 def _undecoded(text):
     """Why a walked browser-text file's text, as the walk decoded it (UTF-8, errors replaced), is not what a browser decodes from its
     bytes, or None (item 1 of the reviewer's 13:2xZ ruling of 2026-10-03; served_texts refuses a page's read of such a file by name,
-    _FILE_UNDECODED): it holds U+FFFD, which the walk writes for a byte it cannot decode as UTF-8 (a UTF-16 byte order mark among
-    them), or U+FEFF, a byte order mark, or a NUL, by which a browser may read the file as UTF-16 (a UTF-16 page with no byte order
-    mark, whose ASCII-and-NUL bytes the walk decodes as UTF-8 with no U+FFFD, among them), or it declares a charset other than utf-8
-    (_declared_charset)."""
+    _FILE_UNDECODED): it holds U+FFFD, which the walk writes for a byte it cannot decode as UTF-8 (a UTF-16 byte order mark among them),
+    or U+FEFF anywhere, refused on the safe side (a leading one is a byte order mark), or a NUL, by which a browser may read the file as
+    UTF-16 (a UTF-16 page with no byte order mark, whose ASCII-and-NUL bytes the walk decodes as UTF-8 with no U+FFFD, among them), or
+    it declares a charset other than utf-8 (_declared_charset)."""
     if "\ufffd" in text: return "U+FFFD, which may stand for a byte the walk could not decode as UTF-8"
-    if "\ufeff" in text: return "U+FEFF, a byte order mark"
+    if "\ufeff" in text: return "U+FEFF anywhere, refused on the safe side (a leading one is a byte order mark)"
     if "\x00" in text: return "a NUL, by which a browser may read the file as UTF-16"
     got = _declared_charset(text)
     return "a declaration of %s" % got if got is not None else None
@@ -3588,17 +3596,30 @@ SERVED_ALLOW = {
 }
 # The served pass's listed refusals (the reviewer's 16:33Z ruling, E2, on the precedent of his 04:52Z ruling for the relay's query
 # map): a method call the method allowlist refuses (_Served._undrawn) whose page is honest, keyed as SERVED_ALLOW's entries are,
-# ("file:function", the expression as ast.unparse spells it) -> (the number of places the entry covers, the reason). Such a place is
+# ("file:function", the expression as ast.unparse spells it) -> (the number of places the entry covers, the reason), and a compiled
+# pattern's call the replacement rule refuses (_pattern_repl), the expression there the exact call with its pattern's binding
+# (_Served._pattern_key; the reviewer's 17:0xZ ruling of 2026-10-03, B). Such a place is
 # not excused: it is listed, one line per place with its reason, after the stylesheets the listing names (render_sites), where
 # SERVED_ALLOW's places are not listed; its matches are recorded in a map of their own (Result.listed_hits), which its gates and the
 # listing read, as SERVED_ALLOW's read allow_hits alone; an entry that names nothing in the run, or covers a different number of
 # places (distinct source positions), is a SERVED LISTED line, as a stale SERVED_ALLOW entry is, and so is a key SERVED_ALLOW holds
 # too (a place is excused or listed, never both).
+_STAMP_LISTED = ("a compiled pattern's .sub whose replacement's group reference re-inserts the matched <html tag, the pattern's one "
+                 "group, in any case, a template expansion the census does not model; listed on the exact call, the pattern's text with "
+                 "its flags and the replacement's bytes, so a change to either is refused again")
 SERVED_LISTED = {
  ("kernel/kernel.py:_pane_label", "str(app or '').capitalize()"): (1,
   "a .capitalize() method whose return is not drawn from its receiver's text, on str() of the pane label's parameter: the seven "
   "page routes that call _shim pass constant lowercase pane keys, _shim_core_js passes its own parameter (default \"test\"), and "
   "_pane_label capitalizes a key _PANE_ORDER does not name"),
+ # the kernel's page stamp, its two calls (the reviewer's 17:0xZ ruling of 2026-10-03, B), each refused by the compiled pattern's
+ # replacement rule (_pattern_repl) and listed, keyed on the exact call with its pattern's binding (_Served._pattern_key): a change to
+ # the call, its replacement, the pattern's text or its flags makes the entry match nothing, so the run fails and the change goes back
+ # to a person, while code inserted above the stamp keeps the entry matching
+ ("kernel/kernel.py:_stamp_served_html",
+  r"_STAMP_HTML_TAG.sub('\\1 data-romp-served=200', body, count=1); _STAMP_HTML_TAG = re.compile('(<html)(?=[\\s>])', re.I)"): (1, _STAMP_LISTED),
+ ("kernel/kernel.py:_stamp_served_html",
+  r"_STAMP_HTML_TAG_B.sub(b'\\1 data-romp-served=200', body, count=1); _STAMP_HTML_TAG_B = re.compile(b'(<html)(?=[\\s>])', re.I)"): (1, _STAMP_LISTED),
 }
 # The `_send` definitions that answer no HTTP request: each writes a frame to a session host's Unix socket, so a call to one is no
 # route and has no content type. A `_send` definition a call reaches that writes no Content-Type header and is not named here is
@@ -3831,12 +3852,20 @@ _LEAF_DIGESTMOD = "a digest of hmac's new whose digestmod is no constructor or a
 # string or bytes constant (and at most a flags argument: an int constant, an attribute of re, or their `|`: _re_compile), re bound to
 # the standard library's module by binding, is read through by the methods of _PATTERN_READS, which change nothing: what such a call
 # returns is drawn from its arguments (a substitution's replacement and its subject), which resolve reads as text, so the receiver
-# holds no page text of its own. Scan's module side takes those methods on such a name for no change of it (Scan._pattern_call), and
-# receiver reads the call through where no scope around it binds the name and the file changes the name no other way (_Served._pattern).
+# holds no page text of its own. A substitution's return is drawn from its arguments only where re inserts the replacement as it is
+# spelled, so a .sub is read through only where its replacement is a string or bytes constant holding no backslash (the reviewer's
+# 13:2xZ ruling of 2026-10-03, its 16:5xZ addendum (1)): re expands a backslash in a replacement as a template escape (\0, an octal
+# escape, \n) or a group reference (\1, \g<name>) into text the replacement does not spell, and calls a replacement that is a
+# function, so a .sub handed any other replacement (a backslash anywhere, a name, a callable, a starred argument or a `**`) is refused
+# by name (_pattern_repl, _PATTERN_REPL), the census modelling no template expansion, unless SERVED_LISTED lists the exact call with
+# its pattern's binding (_Served._pattern_key). Scan's module side takes those methods on such a name for no change of it
+# (Scan._pattern_call), and receiver reads the call through where no scope around it binds the name and the file changes the name no
+# other way (_Served._pattern).
 # The proof by binding reads the import statements alone: a module object stored in sys.modules under the name re before the import
 # binds it, or a function of re replaced by an attribute store, is the digest leaf's stated limit (above; its witnesses lsmr, a
 # module object stored in sys.modules under re, and lsra, re's compile replaced by an attribute store on the module object).
 _PATTERN_READS = ("sub", "search", "match", "fullmatch", "findall")
+_PATTERN_REPL = "a compiled pattern's .sub whose replacement is %s, which re may expand into text the replacement does not spell"
 # The text-method arm's shapes (the eleventh round's rulings: the reviewer's 14:42Z item 2, and his 16:33Z E1 and E3): a .replace,
 # .format, .join, .format_map or .encode in a shape _const_text does not fold is refused by name (_text_shape gives the clause), never
 # read as its receiver's text
@@ -4081,6 +4110,21 @@ def _re_compile(v):
     ok = (v.args and isinstance(v.args[0], ast.Constant) and type(v.args[0].value) in (str, bytes) and len(rest) <= 1
           and all(k.arg == "flags" for k in v.keywords) and not any(isinstance(x, ast.Starred) for x in v.args) and all(flag(x) for x in rest))
     return m if ok else None
+
+
+def _pattern_repl(call):
+    """The reason the census refuses the compiled pattern's method call `call`, which receiver would read through (_PATTERN_READS), by
+    its replacement, or None where it reads the call through: a .sub only where its replacement, the first positional argument or the
+    repl keyword, is a string or bytes constant holding no backslash, with no starred argument and no `**` (the reviewer's 13:2xZ
+    ruling of 2026-10-03, its 16:5xZ addendum (1)), since re expands a backslash in a replacement as a template escape or a group
+    reference, and calls a replacement that is a function, into text the replacement does not spell; the other methods of
+    _PATTERN_READS take no replacement."""
+    if call.func.attr != "sub": return None
+    if any(isinstance(a, ast.Starred) for a in call.args) or any(k.arg is None for k in call.keywords):
+        return _PATTERN_REPL % "handed through a starred argument or a `**`"
+    r = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == "repl"), None)
+    if not (isinstance(r, ast.Constant) and type(r.value) in (str, bytes)): return _PATTERN_REPL % "no string or bytes constant"
+    return _PATTERN_REPL % "a constant holding a backslash" if ("\\" if type(r.value) is str else b"\\") in r.value else None
 
 
 def _plain_imports(tree):
@@ -7498,7 +7542,9 @@ class _Served(object):
         ruling of 2026-10-01): the module binds it once, by one top-level plain assignment (_module_consts), to a call of compile on a
         name the module binds to re by binding (_re_compile, _std_module), and the file changes it no other way (a write
         Result.writes records, or a change Scan's module side records, the methods of _PATTERN_READS being none: self.memos,
-        self.cmemos). receiver reads such a call through, its arguments read as text."""
+        self.cmemos). receiver reads such a call through, its arguments read as text, a .sub only where its replacement is a string or
+        bytes constant holding no backslash, any other refused by name (_pattern_repl) unless SERVED_LISTED lists the exact call
+        (_pattern_key)."""
         if name in self.memos or name in self.cmemos: return False
         m = _re_compile(self.consts.get(name))
         return m is not None and self._std_module(m, None) == "re"
@@ -8198,8 +8244,12 @@ class _Served(object):
                 if call and self._undrawn(whole, where): return   # a method whose return is not drawn from the local's text
                 self.resolve(r, ctx, label, done); return
             if v is None and r.id in self.consts and r.id not in params:
-                if call and whole.func.attr in _PATTERN_READS and self._pattern(r.id): return   # a compiled pattern read through: its
-                # call's arguments are read as text where resolve's Call arm reads them (A(i))
+                if call and whole.func.attr in _PATTERN_READS and self._pattern(r.id):   # a compiled pattern read through: its call's
+                    # arguments are read as text where resolve's Call arm reads them (A(i)), a .sub only where re inserts its replacement
+                    # as it is spelled, any other refused by name unless SERVED_LISTED lists the exact call with its pattern (_pattern_key)
+                    why = _pattern_repl(whole)
+                    if why is not None and not self._listed(where, whole, self._pattern_key(r.id, whole)): self._unread(whole, why, where)
+                    return
                 if r.id in self.memos or r.id in self.cmemos: self._memo(r.id, whole, where); return
                 if call and self._undrawn(whole, where): return   # the same on a module constant's
                 self.resolve(r, ctx, label, done); return
@@ -8255,14 +8305,23 @@ class _Served(object):
         b = c.func.value
         return bool(self._chain_args(b) or isinstance(b, ast.Name) and self._base(b, ctx) == ("exempt", "a builtin")) and self._undrawn(c, where, _UNDRAWN_BASE)
 
-    def _listed(self, where, whole):
+    def _listed(self, where, whole, shown=None):
         """Whether SERVED_LISTED names the place of the refused method call `whole` (its function and its expression, as a
-        SERVED_ALLOW key does): then the place is recorded among the run's listed hits (Result.listed_hits, a map of its own:
+        SERVED_ALLOW key does, or `shown` in the expression's place: a compiled pattern's call with its pattern's binding,
+        _pattern_key): then the place is recorded among the run's listed hits (Result.listed_hits, a map of its own:
         problems() reads SERVED_LISTED's gates from it and SERVED_ALLOW's from allow_hits, so no key passes one gate on the other's
         hits), and render_sites lists it with the entry's reason, one line per place; the run does not fail on it."""
-        key = ("%s:%s" % (self.rel, where), ast.unparse(whole))
+        key = ("%s:%s" % (self.rel, where), ast.unparse(whole) if shown is None else shown)
         if key not in SERVED_LISTED: return False
         self.res.listed_hits.setdefault(key, set()).add((whole.lineno, whole.col_offset)); return True
+
+    def _pattern_key(self, name, call):
+        """The expression half of a SERVED_LISTED key for the compiled pattern `name`'s method call `call` that _pattern_repl refuses
+        (the reviewer's 17:0xZ ruling of 2026-10-03, B): the exact call, as ast.unparse spells it (its replacement's exact text or
+        bytes among it), then `; `, the name, ` = ` and the pattern constant's value as ast.unparse spells it (the pattern's text and
+        its flags), so a change to the call, its replacement, the pattern's text or its flags makes the entry match nothing and the
+        call is refused again; no line number is part of it, so code inserted above the call keeps the entry matching."""
+        return "%s; %s = %s" % (ast.unparse(call), name, ast.unparse(self.consts[name]))
 
     @staticmethod
     def _path_attrs(e):
@@ -9226,10 +9285,11 @@ class _Served(object):
             self._unread(e, "a%s %s expression" % ("n" if type(e).__name__[0] in "AEIO" else "", type(e).__name__), where)
 
     def _decoded(self, e, text, where, line=None):
-        """Whether the page text `text`, which the node `e` holds, is one a browser decodes as the text the census scans (item 1 of
-        the reviewer's 13:2xZ ruling of 2026-10-03): False where it holds U+FEFF, which the page's UTF-8 bytes carry as a byte order
-        mark (_BOM_TEXT), a NUL, by which a browser may read interleaved NULs as UTF-16 (_NUL_TEXT), or declares a charset other than
-        utf-8 (_declared_charset, _DECLARED), each refused by name at its line or at `line` (an f-string's part), its text read no further."""
+        """Whether the page text `text`, which the node `e` holds, is one a browser decodes as the text the census scans (item 1 of the
+        reviewer's 13:2xZ ruling of 2026-10-03): False where it holds U+FEFF, wherever it stands, refused on the safe side since a
+        leading one is a byte order mark (_BOM_TEXT), a NUL, by which a browser may read interleaved NULs as UTF-16 (_NUL_TEXT), or
+        declares a charset other than utf-8 (_declared_charset, _DECLARED), each refused by name at its line or at `line` (an f-string's
+        part), its text read no further."""
         why = _BOM_TEXT if "\ufeff" in text else _NUL_TEXT if "\x00" in text else None
         if why is None:
             got = _declared_charset(text)

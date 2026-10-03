@@ -54,6 +54,7 @@ TOK = km.TOKEN
 CN = km._SESSION_COOKIE                       # this kernel's own session-cookie name
 SLOT = km._PAGE_KEY_SLOT                      # this kernel's localStorage slot for the page key (keyed by CN)
 SEED_SET = "localStorage.setItem(" + json.dumps(SLOT)   # how the login seed writes the key into that slot
+DROP_STEP = "searchParams['delete']('token')"   # how the seed and the shell's fallback step drop the parameter from a page's address
 SESS = km._mint_session()                     # one browser's session id (never printed)
 KEY = km._page_key(SESS)                      # its page key K
 SESS2 = km._mint_session()                    # a second browser's session
@@ -724,8 +725,10 @@ class LoginHandoff(_Server):
         # On a page route the token authorizes whatever loads it, but only a navigation (_is_navigation) signs
         # the browser in: a fetch carrying ?token= (Accept */*, no Sec-Fetch-Dest), and a load whose
         # Sec-Fetch-Dest names no document and no iframe (object, embed, frame, or empty), get the page with no
-        # cookie and no seed, so the parameter stays in the page's address; this is the paint clause's case, which
-        # the census's paint pin names this test for. A document navigation signs the browser in and drops it.
+        # cookie and no seed. The pages of /chat and /feed then hold no step that rewrites their address (no
+        # replaceState), so the parameter stays in it: the paint clause's case, which the census's paint pin names
+        # this test for. The shell at / holds its own fallback step, which drops it. A document navigation signs
+        # the browser in and drops it through the seed.
         for path in ("/", "/chat", "/feed"):
             for what, kw in (("a fetch", {"accept": "*/*"}),
                              ("an empty-dest load", {"accept": "text/html", "sec_fetch": "empty"}),
@@ -738,6 +741,10 @@ class LoginHandoff(_Server):
                 self.assertIn("__rompPageKey", text, "%s of %s gets the page" % (what, path))
                 self.assertEqual(self._set_cookies(headers), [], "%s of %s sets no cookie" % (what, path))
                 self.assertNotIn(SEED_SET, text, "%s of %s carries no seed" % (what, path))
+                if path == "/":
+                    self.assertEqual(text.count(DROP_STEP), 1, "%s of the shell gets its own fallback step, which drops the parameter" % what)
+                else:
+                    self.assertNotIn("replaceState", text, "%s of %s gets a page with no step that rewrites its address" % (what, path))
             status, body, headers = self._req(path + "?token=" + TOK, accept="text/html", sec_fetch="document")
             self.assertTrue(km._session_ok(self._session_cookie_value(headers) or ""), "a navigation to %s signs in" % path)
             self.assertIn(SEED_SET, body.decode("utf-8", "replace"), "and seeds the key")
