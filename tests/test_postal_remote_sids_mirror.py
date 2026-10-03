@@ -364,7 +364,7 @@ class Mirror(unittest.TestCase):
             jd.discover = found
         return (v.closed, v.rule, v.why)
 
-    def _notify(self, host, up, port=50002):
+    def _notify(self, host, up, port=1):
         """The kernel's /peer notify for a tunnel transition, through the real handler (peer_update), which writes
         the mirror itself; nothing else writes between the notify and the read that follows it."""
         payload, status = pm.peer_update({"host": host, "port": port, "up": up})
@@ -1686,7 +1686,7 @@ class Mirror(unittest.TestCase):
         this then writes the mirror once when the seed applied a link, as serve() does after its bind (round 7 of fork PR
         #897, the reviewer's round-6 ruling R4 on kernel-1: until then the seed's peer_update wrote the mirror for each
         link, before serve()'s bind). The transport is put back as found."""
-        body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": st} for h, st in links],
+        body = json.dumps({"tunnels": [{"host": h, "busPort": 1, "status": st} for h, st in links],
                            "known": [{"host": h, "trust": "trusted"} for h in known]}).encode()
 
         class Answer:
@@ -2165,7 +2165,7 @@ class Mirror(unittest.TestCase):
         _LoopbackServer subclass that records its bind and returns from serve_forever at once, or None for the real class).
         Returns (serve()'s return, the events). The dialer, the monitor and the retry loop are not under test."""
         events = []
-        body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": "up"} for h in links], "known": []}).encode()
+        body = json.dumps({"tunnels": [{"host": h, "busPort": 1, "status": "up"} for h in links], "known": []}).encode()
 
         class Answer:
             def read(self):
@@ -2244,7 +2244,7 @@ class Mirror(unittest.TestCase):
         self.assertEqual((rc, events), (0, ["bind", "write", "serve_forever"]),
                          "the control: the bound serve() writes the mirror once, after its bind and before it serves")
         self.assertEqual(({h: [r.get("port"), r.get("up")] for h, r in pm.PEERS.items()}, pm._PEERS_SEEDED[0],
-                          self.path.exists()), ({HOST: [50002, True]}, True, True),
+                          self.path.exists()), ({HOST: [1, True]}, True, True),
                          "the one write follows the seed: HOST linked, the seed flag set, the mirror written")
 
     def test_a_standing_mark_survives_a_mark_of_another_shape_and_a_stray_byte_inside_a_top_level_key(self):
