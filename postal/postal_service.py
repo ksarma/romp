@@ -2993,8 +2993,19 @@ class Handler(BaseHTTPRequestHandler):
             # the inbound link's out-parameter (_inbound_links, 2026-10-02): the handler files the arrival in the row's
             # hold and writes "host" and "n" here; the finally below ends it on every exit path, once
             link = {"conn": conn} if conn is not None else None
-            host, declared, link_ok = None, None, False
+            host, named, declared, link_ok = None, None, None, False
             try:
+                # the names a close of this dial reaches, read BEFORE the handler runs (2026-10-03), so a dial the handler
+                # refuses or raises on before its arrival closes the links they name (the OUTCOME bullet at
+                # _inbound_links): the name it declares, uncanonicalized, and the name it resolves to, in a hold of its
+                # own, guarded, since a read that raises must not keep the handler from running (the declared name
+                # alone then matches)
+                declared = str((data or {}).get("host") or "").strip()
+                try:
+                    with _PEER_STATE_LOCK:
+                        named = _exchange_peer_name(data)
+                except Exception:
+                    named = None
                 payload, status = peer_exchange_handle(data, flight=flight, link=link)
                 # The relays in a 200 leave with this write (2026-09-08): _send writes through the handler's
                 # unbuffered wfile (wbufsize 0, so sendall), so a return means the socket took the bytes and a
@@ -3004,7 +3015,6 @@ class Handler(BaseHTTPRequestHandler):
                 # does not re-enter), since the canonicalization reads every row (round 6 of fork PR #897)
                 with _PEER_STATE_LOCK:
                     host = _exchange_peer_name(data)
-                declared = str((data or {}).get("host") or "").strip()   # the name it declared, uncanonicalized
                 try:
                     # the pre-write probe sits inside this try, so a probe that raises frees the flights too
                     dialer_left = _inbound_pre_write(link) if link is not None else False
@@ -3019,10 +3029,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             finally:
                 if link is not None:
-                    # a dial the handler refused before its arrival closes the link of the name this route resolved
-                    # above, and each link whose arrivals declared the name it declares, whatever the bus ids
-                    # (2026-10-03): the OUTCOME bullet at _inbound_links says why, and what that costs
-                    _inbound_outcome(link, link_ok, refused_host=host, refused_declared=declared)
+                    # a dial the handler refused, or raised on, before its arrival closes the link of the name this route
+                    # resolved before the handler ran, and each link whose arrivals declared the name it declares,
+                    # whatever the bus ids (2026-10-03): the OUTCOME bullet at _inbound_links says why, and what that costs
+                    _inbound_outcome(link, link_ok, refused_host=named, refused_declared=declared)
         if u.path == "/send":
             to = data.get("to", "")
             frm, frm_id = data.get("from", "unknown"), data.get("from_id", "")
@@ -3140,21 +3150,23 @@ class Handler(BaseHTTPRequestHandler):
                 if PEERS.get(phost, {}).get("up"):
                     return self._send({"ok": True, "id": mid,
                                        "note": "relaying to '%s' on %s%s" % (hit.get("name") or to, phost, tnote)})
-                if _inbound_open(phost):
-                    # a host this bus does not dial up but that dials us on an open link (2026-10-02): the mail
-                    # leaves on its next exchange here, so it is queued, not unreachable, and no redial is asked
-                    # for. The note makes no time claim (the residue at _inbound_links); "parked" stays the key
-                    # the kernel reads for the host the mail waits on
-                    return self._send({"ok": True, "id": mid, "parked": phost,
-                                       "note": "queued for '%s' on %s: it goes out on %s's next poll of this machine%s"
-                                               % (hit.get("name") or to, phost, phost, tnote)})
                 if (PEERS.get(phost) or {}).get("port"):
                     _kernel_post("/redial", {"host": phost})   # parking IS demand: ask the kernel to
                     #                                             re-dial the host's tunnel now instead of
-                    #                                             waiting out its backoff (the user 2026-08-16);
+                    #                                             waiting out its backoff (the user 2026-08-16),
+                    #                                             whatever the host's inbound link says (2026-10-03):
+                    #                                             the link changes only the note and the receipt;
                     #                                             only for a port row, the kernel holding no
                     #                                             tunnel for no row or a portless one, where the
                     #                                             poke was a silent no-op (2026-10-02)
+                if _inbound_open(phost):
+                    # a host this bus does not dial up but that dials us on an open link (2026-10-02): the mail
+                    # leaves on its next exchange here, so it is queued, not unreachable. The note makes no time
+                    # claim (the residue at _inbound_links); "parked" stays the key the kernel reads for the host
+                    # the mail waits on
+                    return self._send({"ok": True, "id": mid, "parked": phost,
+                                       "note": "queued for '%s' on %s: it goes out on %s's next poll of this machine%s"
+                                               % (hit.get("name") or to, phost, phost, tnote)})
                 return self._send({"ok": True, "id": mid, "parked": phost,
                                    "note": _parked_note(phost, frm_id) + tnote})
             a0 = res["agent"]
@@ -6202,11 +6214,12 @@ _PEER_STATE_LOCK = threading.Lock()        # PEER_STATE's one lock (round 6 of f
 #                                            read-modify-write of the table holds it: each recorder from its canonicalization (the
 #                                            handler) or its previous-row read (the fold) through the row's store and
 #                                            _drop_peer_name_dupes, the down notify's membership test and mark, the dialer's drift and
-#                                            refusal notes, and the /peer-exchange route's canonicalization, and a function holding one
+#                                            refusal notes, and the /peer-exchange route's canonicalization holds (one before the
+#                                            handler runs and one after it returns), and a function holding one
 #                                            of those writes, and whatever it reaches outside the lock, reads the table only under it;
 #                                            every iteration of the table runs under it: the two that read every row in place,
 #                                            _canon_peer_name and _peer_name_dupes, run inside the recorders' holds or the /peer-exchange
-#                                            route's canonicalization hold, and the mirror's snapshot and every other iteration take
+#                                            route's canonicalization holds, and the mirror's snapshot and every other iteration take
 #                                            their copy under it; and one mirror write reads the table only through its one copy, each
 #                                            row's link mark and seenAt included (_remote_sids_document; round 6 of fork PR #897, the
 #                                            reviewer's verifier at the fiftieth commit, by execution), and the link state, each host's
@@ -6264,23 +6277,43 @@ _inflight = {}                             # host -> {flight id: {mid}}: the rec
 #                                            still holds. Memory only: a restart ends every exchange, so it empties itself
 _flight_seq = itertools.count(1)           # flight ids, minted under _outbox_lock (_relays_for)
 _inbound_links = {}                        # host -> {"live": {n: {"conn": socket, "writing": bool}}, "ok": n, "closed": n,
-#                                            "declared": {name}}: the INBOUND EXCHANGE LINK of a host that dials this bus
-#                                            (2026-10-02). A host this bus does not dial up (no PEERS row, a portless
-#                                            originOnly row, or a port row held down) still takes our mail: it parks in the
-#                                            outbox and leaves on that host's next exchange here, so /send and the receipts
-#                                            read this link beside PEERS (_inbound_open). Keyed on the name the handler
-#                                            files the dialer under, its PEER_STATE key, which is what peer_route answers
-#                                            and outbox_put wakes. The state moves on EVENTS only, n being the exchange's
-#                                            arrival number (_inbound_seq), or, for a dial refused before any arrival, a
-#                                            number minted at its outcome:
+#                                            "superseded": n, "declared": {name}, "busIds": {busId}}: the INBOUND EXCHANGE
+#                                            LINK of a host that dials this bus (2026-10-02). A host this bus does not dial
+#                                            up (no PEERS row, a portless originOnly row, or a port row held down) still
+#                                            takes our mail: it parks in the outbox and leaves on that host's next exchange
+#                                            here, so /send and the receipts read this link beside PEERS (_inbound_open).
+#                                            Keyed on the name the handler files the dialer under, its PEER_STATE key, which
+#                                            is what peer_route answers and outbox_put wakes. The state moves on EVENTS only,
+#                                            n being the exchange's arrival number (_inbound_seq), or, for a dial with no
+#                                            arrival, a number minted at its outcome:
 #                                            - ARRIVAL: in the handler, in the hold that stores the row, just before the
 #                                              store, and only when the /peer-exchange route passes its `link` out-parameter
 #                                              carrying the exchange's socket (a direct call of the handler records nothing,
-#                                              so no entry is left that nobody ends). The exchange is live and not writing,
-#                                              and the name the dial declared, before the canonicalization, joins `declared`,
-#                                              a set: the declared names are bounded by the distinct names the host's dials
-#                                              declare; a dialer past the token gate can grow them, the same trust class as
-#                                              PEER_STATE's own growth.
+#                                              so no entry is left that nobody ends). The exchange is live and not writing;
+#                                              the name the dial declared, before the canonicalization, joins `declared`,
+#                                              and the busId it carried joins `busIds` (2026-10-03). An arrival that brings
+#                                              a name the entry has not seen and a busId the entry has not seen, or none,
+#                                              resets both sets to its own first, newest wins: another machine is behind the
+#                                              entry's name now (an alias the kernel pointed elsewhere), so a refusal from
+#                                              the machine that was there no longer closes this link; a newer process of the
+#                                              same machine re-declares a name already in the set, so the drift close below
+#                                              still reaches its link. Both sets are bounded by the distinct names and busIds
+#                                              the host's dials carry (one busId per dialer process); a dialer past the token
+#                                              gate can grow them, the same trust class as PEER_STATE's own growth. The
+#                                              arrival then SUPERSEDES every other entry whose `declared` holds the name it
+#                                              declares, whatever the busIds (that entry's bus, a newer process of it, or a
+#                                              namesake dials under another name now: a second dialable name for the same
+#                                              bus, or an alias the kernel pointed at another machine while the machine it
+#                                              reached keeps dialing under the name it declares), and every other entry whose
+#                                              `busIds` hold its busId, when it carries one (the same process declares
+#                                              another name now: a rename while it runs, since self_host reads the hostname
+#                                              live), so its dials stop carrying that entry's outbox. A restarted process
+#                                              whose busId no longer resolves to the alias its old process was filed under
+#                                              (the alias held down, so no dial of this bus refreshed its row) is filed under
+#                                              the name it declares, and its dials never carry the alias's outbox, so the
+#                                              alias's link must stop reading open on the old process's last exchange or its
+#                                              parked dial (2026-10-03). A namesake's arrival supersedes too, though the
+#                                              entry's own bus may still dial (THE NAMESAKE COST below).
 #                                            - PRE-WRITE: the route, after the handler returned and before its write, probes
 #                                              the socket (_peer_conn_closed). The dialer's EOF or reset is a close; else
 #                                              the exchange is marked writing and never probed again, since after the write
@@ -6289,8 +6322,9 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                            - OUTCOME: the route's finally, once. A live exchange leaves `live` as ok when
 #                                              the pre-write probe saw no EOF, the write returned and the status was 200,
 #                                              and as closed otherwise (a raised write, any exception after the arrival). A
-#                                              refusal before the arrival closes the link of the name the route resolved and
-#                                              each link whose `declared` holds the name the refused dial declares, whatever
+#                                              dial with no arrival, one the handler refused before it or raised on before
+#                                              it, supersedes the link of the name the route resolved before the handler
+#                                              ran and each link whose `declared` holds the name the dial declares, whatever
 #                                              the bus ids. The handler refuses there with a 400 for a missing host (which
 #                                              the canonicalization can resolve to an alias by busId), a 409 for protocol
 #                                              drift, and a 400 for an unsafe name (which has no link of its own). The bus
@@ -6302,17 +6336,28 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                              EOF this side saw (THE RESIDUE's first shape), /send would say queued for the
 #                                              whole drift. The declared names are matched because that newer busId cannot
 #                                              resolve to an alias the busId fold filed the old process's dials under, so
-#                                              the drifted dial resolves to the name it declares, not to the alias. The
+#                                              the drifted dial resolves to the name it declares, not to the alias. They
+#                                              are the names of the machine the entry reaches now (the ARRIVAL's reset), so
+#                                              a refusal from a machine an alias used to reach closes nothing there. The
 #                                              cost: a second bus declaring the same name, refused, closes the healthy link
 #                                              of the name's own bus (THE NAMESAKE COST below). That close's number is
 #                                              minted at its outcome, so it outranks every exchange that arrived before
 #                                              then.
 #                                            - FOLD: _drop_peer_name_dupes forgets the entry of each name it forgets.
-#                                            The newest evidence by n decides: ok is open, closed is closed, a live exchange
-#                                            is open while writing or while its socket shows no EOF. No entry is closed: a
-#                                            restarted bus starts closed, and with PEER_STATE empty /send cannot route there
-#                                            anyway. Never stored in PEER_STATE's rows, never a PEERS row, and the deadness
-#                                            mirror's _link_up / _link_down do not read it.
+#                                            READ (_inbound_open): a live exchange newer than `superseded` keeps the link
+#                                            open while it is writing or while its socket shows no EOF, whatever a newer
+#                                            exchange says: the pre-write probe's close and the outcome's close end their own
+#                                            exchange alone while another exchange under the name is live, since a dialer
+#                                            that left says nothing of another dial, so an older live dial, a namesake's or
+#                                            a second one from the same bus, still carries the mail and the link reads open
+#                                            (2026-10-03). A supersession outranks every exchange that arrived before it.
+#                                            Otherwise, once no live exchange reads open, the newest number decides among
+#                                            ok, closed, superseded and the live exchanges at EOF: open when it is ok. So a
+#                                            newer dial's close outranks an older exchange's ok that lands after it, and the
+#                                            link reads closed until the next arrival under the name.
+#                                            No entry is closed: a restarted bus starts closed, and with PEER_STATE empty
+#                                            /send cannot route there anyway. Never stored in PEER_STATE's rows, never a
+#                                            PEERS row, and the deadness mirror's _link_up / _link_down do not read it.
 #                                            THE RESIDUE, disclosed and not closed: in these shapes no event this side can
 #                                            attribute to the host reaches it, so the link reads open while no exchange will
 #                                            deliver the mail, and /send says queued.
@@ -6320,7 +6365,10 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                              between exchanges; its bus dies between exchanges, after a returned write; or
 #                                              its kernel marks this machine down while leaving the tunnel up, as during a
 #                                              restart of this machine's kernel that the dialer's kernel's poll catches: a
-#                                              dial parked then still ends ok, and no dial follows.
+#                                              dial parked then still ends ok, and no dial follows. A dial parked when its
+#                                              dialer went that way keeps the link open while it stays parked (up to
+#                                              EXCHANGE_WAIT), even after a newer exchange under the name ended with its
+#                                              dialer leaving.
 #                                            - A dialer that leaves after the pre-write probe, with a FIN or a half-close:
 #                                              the gap opens at the probe and includes the write, and such a dialer, through
 #                                              sshd's half-close, still ends ok.
@@ -6329,26 +6377,54 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                            - A write blocked on a stalled peer keeps its exchange writing, so the link
 #                                              reads open while the write blocks.
 #                                            Each is a delay, not a loss: the mail stays in the outbox and crosses on that
-#                                            host's next exchange. It stays recallable, except mail a parked exchange took
-#                                            in the first two shapes: that write returned, so the record is marked carried
-#                                            and the recall refuses it (the false carried mark, a listed follow-up).
+#                                            host's next exchange filed under the same name. It stays recallable, except mail
+#                                            a parked exchange took in the first two shapes: that write returned, so the
+#                                            record is marked carried and the recall refuses it (the false carried mark, a
+#                                            listed follow-up). When the host's dials move to another name, the first arrival
+#                                            there supersedes the link (ARRIVAL above) if it declares a name the link's
+#                                            arrivals declared, as for a link filed under an alias whose host restarted under
+#                                            the name it declares, the same bus under a second dialable name, or an alias
+#                                            pointed at another machine while the machine it reached keeps dialing; or if it
+#                                            carries a busId the link holds, as for a process renamed while it runs. From
+#                                            then the mail reads unreachable and waits for the alias's own tunnel, which
+#                                            every send to it asks the kernel to redial (the /send relay leg posts /redial
+#                                            for every port row, whatever the link says). Two moves share neither: a host
+#                                            whose next process declares another name under a new busId (renamed and
+#                                            restarted), and an older peer that sends no busId and declares another name.
+#                                            Either is filed under the new name, and when its old process left no EOF this
+#                                            side saw (the first shape above) or the move came between exchanges, no event
+#                                            reaches the link it left, which reads open on the last exchange there, so /send
+#                                            says queued while the mail waits for a dial filed under the link's name again,
+#                                            or for that name's own tunnel when it has a port row (each send asks the kernel
+#                                            to redial it).
 #                                            THE NAMESAKE COST, disclosed: the other way round, the link can read closed
-#                                            while a dial carries the mail. A second bus declaring the same name whose dial
-#                                            is refused closes the healthy link of the name's own bus, filed under that name
-#                                            or under an alias whose arrivals declared it, so /send says unreachable while
-#                                            that bus's parked dial still carries the mail; the link reads open again when
-#                                            that bus's next dial arrives, and closes again at each of the namesake's
-#                                            refused dials (its drift wait is a minute). Two buses under one name already
-#                                            collide in PEER_STATE, which keeps one row per name. The table is in memory
-#                                            only, gone with the process
+#                                            while a dial carries the mail, when a second bus declares the same name as the
+#                                            name's own bus. Refused, the namesake's dial supersedes that bus's link, filed
+#                                            under the name or under an alias whose arrivals declared it, until that bus's
+#                                            next dial arrives, and again at each refused dial (its drift wait is a minute).
+#                                            Dialing with success under another name than that bus's (the namesake under
+#                                            the name and the bus under an alias, or the other way round), each arrival of
+#                                            either supersedes the other's link, so each reads closed from the other's
+#                                            arrival until its own next one. Either way /send says unreachable while that
+#                                            bus's parked dial still carries the mail. A namesake's dial under the same name
+#                                            that leaves (EOF, reset or a raised write) while that bus is between exchanges
+#                                            reads the link closed until that bus's next arrival, which its dialer makes at
+#                                            once after an ok exchange (READ above). A namesake that dialed under the name
+#                                            leaves its busId in the link's set, since that bus's arrivals re-declare a name
+#                                            already there and reset nothing; after the namesake dials under another name
+#                                            (its machine renamed while its process runs), each of its arrivals supersedes
+#                                            the link through that busId, that bus's parked dial included, until that bus's
+#                                            next arrival, one way only and for as long as the namesake's process runs. Two
+#                                            buses under one name already collide in PEER_STATE, which keeps one row per
+#                                            name. The table is in memory only, gone with the process
 _inbound_links_lock = threading.Lock()     # _inbound_links' own LEAF lock: every read and write of the table and of
 #                                            _inbound_seq holds it, and its holder takes no other lock (it reads and writes
 #                                            the table and probes a socket without blocking, nothing else). Lock order:
 #                                            _PEER_STATE_LOCK, then this one (the arrival in the handler's hold, the fold's
 #                                            forget); never the other way. tests/test_postal_peers.py InboundLinkLockDiscipline
 #                                            pins both rules by AST, with plants it refuses
-_inbound_seq = itertools.count(1)          # the exchanges' arrival numbers, and a pre-arrival refusal's close at its
-#                                            outcome, minted under _inbound_links_lock
+_inbound_seq = itertools.count(1)          # the exchanges' arrival numbers, and the supersession by a dial with no arrival
+#                                            (refused or raised on before it) at its outcome, minted under the leaf lock
 
 def _host_name_candidates():
     """Raw machine-name candidates for the self_host fallback, most meaningful first. macOS keeps
@@ -7297,7 +7373,8 @@ def _canon_peer_name(host, bus_id):
     notifies, the dialer runs on, and the user tiered — so it wins over a self-declared hostname. No
     bus_id (older peer) → the declared name stands, exactly as before. It reads every row, so it runs under
     _PEER_STATE_LOCK, held by each caller of _exchange_peer_name (the handler through its row's store; the
-    /peer-exchange route in a hold of its own; round 6 of fork PR #897)."""
+    /peer-exchange route in holds of its own, one before the handler runs and one after it returns; round 6 of fork
+    PR #897, and _inbound_links)."""
     if not bus_id or (PEERS.get(host) or {}).get("port"):
         return host   # a dialable name stands as itself; two dialable names is the kernel's dedupe
     for k, st in PEER_STATE.items():
@@ -7431,21 +7508,34 @@ def _peer_conn_closed(conn):
         return True
 
 
-def _inbound_arrived(host, link, declared):
-    """ARRIVAL of one exchange from `host` (_inbound_links): mints its arrival number and files it live, adds
-    `declared`, the name the dial declared before the canonicalization, to the entry's declared names, then hands
-    `host` and the number back in `link` at once, so the route ends the exchange even if the handler raises later. Called
-    in the handler, in the hold that stores the row, just before the store, so a /send that routes on the new row reads
-    the link open; takes the leaf lock inside that hold (the order is _PEER_STATE_LOCK, then the leaf).
-    A `link` carrying no socket files nothing and hands nothing back: an entry with no socket could not be probed."""
+def _inbound_arrived(host, link, declared, bus_id):
+    """ARRIVAL of one exchange from `host` (_inbound_links): mints its arrival number and files it live, and records
+    `declared`, the name the dial declared before the canonicalization, and `bus_id`, the busId it carried, in the
+    entry's declared names and busIds, both reset to this arrival's first when it brings a name the entry has not seen
+    and a busId the entry has not seen, or none (another machine is behind the entry's name now). Then it supersedes
+    every OTHER entry whose declared names hold `declared`, whatever the busIds (that entry's bus, a newer process of it,
+    or a namesake dials under another name now), and every OTHER entry whose busIds hold a non-empty `bus_id` (the same
+    process declares another name now: a rename while it runs). Last it hands `host` and the number back in `link`, so
+    the route ends the exchange even if the handler raises later. Called in the handler, in the hold that stores the row,
+    just before the store, so a /send that routes on the new row reads the link open; takes the leaf lock inside that
+    hold (the order is _PEER_STATE_LOCK, then the leaf). A `link` carrying no socket files nothing and hands nothing
+    back: an entry with no socket could not be probed."""
     if link.get("conn") is None:
         return
     with _inbound_links_lock:
         n = next(_inbound_seq)
-        ent = _inbound_links.setdefault(host, {"live": {}, "ok": 0, "closed": 0, "declared": set()})
+        ent = _inbound_links.setdefault(host, {"live": {}, "ok": 0, "closed": 0, "superseded": 0,
+                                               "declared": set(), "busIds": set()})
         ent["live"][n] = {"conn": link.get("conn"), "writing": False}
+        if declared not in ent["declared"] and bus_id not in ent["busIds"]:
+            ent["declared"], ent["busIds"] = set(), set()
         if declared:
             ent["declared"].add(declared)
+        if bus_id:
+            ent["busIds"].add(bus_id)
+        for h, other in _inbound_links.items():
+            if h != host and (declared in other["declared"] or (bus_id and bus_id in other["busIds"])):
+                other["superseded"] = max(other["superseded"], n)
         link["host"], link["n"] = host, n
 
 
@@ -7472,12 +7562,13 @@ def _inbound_pre_write(link):
 
 def _inbound_outcome(link, ok, refused_host=None, refused_declared=None):
     """OUTCOME, from the route's finally, once (_inbound_links). An exchange still live leaves `live`: ok when `ok` (the
-    pre-write probe saw no EOF, the write returned and the status was 200), closed otherwise. One the pre-write probe
-    already closed, or whose name the fold forgot, is left as it is. An exchange the handler refused before its arrival
-    (no arrival number: its 400 for a missing host, which the canonicalization can resolve to an alias by busId; its 409
-    drift; its 400 for an unsafe name, which has no link of its own) is a close of the link of `refused_host`, the name
-    the route resolved, and of each link whose declared names hold `refused_declared`, the name the refused dial
-    declares, whatever the bus ids (links that do not exist are closed already), numbered at this outcome."""
+    pre-write probe saw no EOF, the write returned and the status was 200), closed otherwise, a close of its own
+    exchange alone. One the pre-write probe already closed, or whose name the fold forgot, is left as it is. An exchange
+    with no arrival number, one the handler refused before its arrival (its 400 for a missing host, which the
+    canonicalization can resolve to an alias by busId; its 409 drift; its 400 for an unsafe name, which has no link of
+    its own) or raised on before it, supersedes the link of `refused_host`, the name the route resolved before the
+    handler ran, and each link whose declared names hold `refused_declared`, the name the dial declares, whatever the
+    bus ids (links that do not exist are closed already), numbered at this outcome."""
     host, n = link.get("host"), link.get("n")
     with _inbound_links_lock:
         if n is None:
@@ -7488,7 +7579,7 @@ def _inbound_outcome(link, ok, refused_host=None, refused_declared=None):
                 if hit:
                     c = next(_inbound_seq)
                     for ent in hit:
-                        ent["closed"] = max(ent["closed"], c)
+                        ent["superseded"] = max(ent["superseded"], c)
             return
         ent = _inbound_links.get(host)
         if ent is None or ent["live"].pop(n, None) is None:
@@ -7506,19 +7597,26 @@ def _inbound_forget(host):
 
 
 def _inbound_open(host):
-    """Whether `host`'s inbound exchange link is OPEN (_inbound_links): the newest evidence decides.
-    ok is open and closed is closed; a live exchange is open while its response is being written, else open unless its
-    socket shows the dialer's EOF or reset (_peer_conn_closed). No entry is closed. Probes at most one socket, the
-    newest live exchange's, under the leaf lock, so the route cannot end the exchange and close its socket mid-probe."""
+    """Whether `host`'s inbound exchange link is OPEN (_inbound_links). A live exchange newer than the entry's superseded
+    number keeps it open while its response is being written, or while its socket shows no EOF or reset from the dialer
+    (_peer_conn_closed), whatever a newer exchange's close says: a close by a dialer that left ends its own exchange
+    alone while another is live. Otherwise the newest evidence decides among ok, closed, superseded and the live
+    exchanges at EOF: open when it is ok, so a newer close outranks an older ok that lands after it. No entry is closed.
+    Probes the live exchanges newer than the superseded number, newest first, until one reads open, under the leaf lock,
+    so the route cannot end an exchange and close its socket mid-probe."""
     with _inbound_links_lock:
         ent = _inbound_links.get(host)
         if not ent:
             return False
-        newest = max(ent["live"], default=0)
-        if newest > max(ent["ok"], ent["closed"]):
-            ex = ent["live"][newest]
-            return ex["writing"] or not _peer_conn_closed(ex["conn"])
-        return ent["ok"] > ent["closed"]
+        newest_close = max(ent["closed"], ent["superseded"])
+        for n in sorted(ent["live"], reverse=True):
+            if n <= ent["superseded"]:
+                break
+            ex = ent["live"][n]
+            if ex["writing"] or not _peer_conn_closed(ex["conn"]):
+                return True
+            newest_close = max(newest_close, n)
+        return ent["ok"] > newest_close
 
 
 def _exchange_peer_name(data):
@@ -7603,8 +7701,9 @@ def peer_exchange_handle(data, flight=None, link=None):
         _heard_answering(row)                        # the far bus ids this roster shows answering (the reviewer's round-5
         #                                              ruling B), in the hold that stores the row, before the fold
         if link is not None:
-            _inbound_arrived(host, link, declared)   # the inbound link's ARRIVAL, in the hold that stores the row: a /send
-            #                                          that routes on the row reads the link open (_inbound_links)
+            _inbound_arrived(host, link, declared, bus_id)   # the inbound link's ARRIVAL, in the hold that stores the row:
+            #                                                  a /send that routes on the row reads the link open
+            #                                                  (_inbound_links)
         PEER_STATE[host] = row
         if bus_id:
             _drop_peer_name_dupes(host, bus_id)

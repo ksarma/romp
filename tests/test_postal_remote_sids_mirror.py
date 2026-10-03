@@ -4250,8 +4250,8 @@ class PeerStateLock(unittest.TestCase):
     store lost a far host's unanswered word, and a session whose mail rode it answered rule 5 while another row vouched
     (every vote of the round reproduced it through the real recorders). _PEER_STATE_LOCK is held by every read-modify-write
     of the table and every iteration runs under it: the two that read every row in place (_canon_peer_name and
-    _peer_name_dupes) inside the recorders' holds or the /peer-exchange route's canonicalization hold, and every other
-    iteration on its copy taken under it. The census (_peer_state_lock_census) derives both populations
+    _peer_name_dupes) inside the recorders' holds or the /peer-exchange route's canonicalization holds (before and after
+    the handler), and every other iteration on its copy taken under it. The census (_peer_state_lock_census) derives both populations
     from the bus's source by AST and refuses a node outside the lock, a re-entry and a lock-order inversion; the
     interleavings through the real recorders are tests/test_dead_session_staleness.py ReaderFollowsTheWriter's
     test_the_recorders_race_* witnesses (executed, the reader's answer). Each census rule has a plant here that it refuses by
@@ -4317,9 +4317,11 @@ class PeerStateLock(unittest.TestCase):
                         "the census derived its populations from the source: an empty one proves nothing (%r)" % got)
         self.assertTrue(any(fn != "<module>" for fn, _, _ in got["writers"]), "writers beyond the module's declaration")
         self.assertIn("_exchange_peer_name", got["protected"],
-                      "the ruled reader: the canonicalization reads every row, and both of _exchange_peer_name's call sites "
-                      "(the handler and the /peer-exchange route) hold the lock")
-        self.assertGreaterEqual(got["callSites"].get("_exchange_peer_name", 0), 2, "both call sites were derived: %r" % got)
+                      "the ruled reader: the canonicalization reads every row, and every call site of _exchange_peer_name "
+                      "(the handler, and the /peer-exchange route before and after the handler) holds the lock")
+        self.assertGreaterEqual(got["callSites"].get("_exchange_peer_name", 0), 2,
+                                "the census derived the call sites of _exchange_peer_name (the handler, and the "
+                                "/peer-exchange route before and after the handler), at least two: %r" % got)
         self.assertIn("_canon_peer_name", got["protected"], "reached only through _exchange_peer_name")
         self.assertEqual(sorted({fn for fn, _, _ in got["answered"]}), ["_heard_answering", "_via_held"],
                          "THE ANSWERED SET's population, derived from the source: the recorders' note and the release's "
