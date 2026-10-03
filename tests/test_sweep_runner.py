@@ -5346,19 +5346,28 @@ except sweep.GitBound as e:
     # run's git status, which compares the index with HEAD's tree, and by check's rev-parse of the commit.
     # (where the pytest leg plants the FIFO, the planting run's exit, its invalid mark or None, the call the next run is
     # refused at, (check's exit, the call it is refused at or None)). The planting run's one call that meets the plant,
-    # for alternates, is the next job's checkout after the pytest leg (PLANTING_CALL); the normal checkout before it
-    # keeps the runner's bound.
+    # for alternates, is the next job's first git call after the pytest leg that reads an object (PLANTING_CALL): the
+    # update-ref that writes origin/main into its checkout (main_snapshot), or, where the batcher has no origin/main
+    # (the "no origin/main" case, its ref removed before the run), the checkout; the same calls of the first job's
+    # checkout, before the plant, keep the runner's bound.
     CHECKOUT = "-c core.hooksPath=/dev/null checkout"
+    UPDATE_REF = "-c core.logAllRefUpdates=false update-ref"
+    FRESH_CHECKOUT_BOUND = (r"the fresh checkout for .* cannot be used \(git %s in \S+ did not end within 3 s and was killed\); "
+                            r"the legs after it did not run")
     BATCHER_FIFOS = (
         ("config", 0, None, DISCOVERY, (2, DISCOVERY)),
         ("HEAD", 0, None, DISCOVERY, (2, DISCOVERY)),
         ("index", 0, None, STATUS, (0, None)),
         ("info/exclude", 0, None, STATUS, (0, None)),
-        ("objects/info/alternates", 3, r"the fresh checkout for .* cannot be used \(git -c core\.hooksPath=/dev/null checkout -q "
-                                       r"--detach [0-9a-f]{40} in \S+ did not end within 3 s and was killed\); the legs after "
-                                       r"it did not run", STATUS, (2, "rev-parse --verify HEAD^{commit}")),
+        ("objects/info/alternates", 3, FRESH_CHECKOUT_BOUND % (r"-c core\.logAllRefUpdates=false update-ref "
+                                                               r"refs/remotes/origin/main [0-9a-f]{40}"),
+         STATUS, (2, "rev-parse --verify HEAD^{commit}")),
+        ("objects/info/alternates (no origin/main)", 3, FRESH_CHECKOUT_BOUND % r"-c core\.hooksPath=/dev/null checkout -q "
+                                                                               r"--detach [0-9a-f]{40}",
+         STATUS, (2, "rev-parse --verify HEAD^{commit}")),
     )
-    PLANTING_CALL = {"objects/info/alternates": (CHECKOUT, PYTEST_LEG)}
+    PLANTING_CALL = {"objects/info/alternates": (UPDATE_REF, PYTEST_LEG),
+                     "objects/info/alternates (no origin/main)": (CHECKOUT, PYTEST_LEG)}
 
     def test_a_fifo_a_leg_plants_in_the_batchers_repository_ends_that_run_or_the_next_naming_the_call(self):
         """The closing check wf_bbe8b843-8bf, its finding 1 (config, HEAD, objects/info/alternates) and its third medium
@@ -5371,7 +5380,9 @@ except sweep.GitBound as e:
             with self.subTest(where=where):
                 w = self.world()
                 tree, sha = os.path.realpath(w.tree), w.head()     # read before the FIFO: the World's own git reads it too
-                w.ctl({"action": {PYTEST_LEG: "special"}, "special": {"where": "batcher:" + where, "kind": "fifo"}})
+                if where.endswith(" (no origin/main)"):
+                    w.git("update-ref", "-d", "refs/remotes/origin/main")
+                w.ctl({"action": {PYTEST_LEG: "special"}, "special": {"where": "batcher:" + where.split(" (")[0], "kind": "fifo"}})
                 rc, out, err = self.bounded(w, planted=[self.PLANTING_CALL[where]] if where in self.PLANTING_CALL else [])
                 self.assertEqual(rc, rc_plant, out + err)
                 if mark is None:
