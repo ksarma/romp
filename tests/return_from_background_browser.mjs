@@ -62,7 +62,7 @@ catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const result = async (extra) => {
   Object.assign(out, extra || {});
   if (cfg.resultPath) { try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { out.resultWriteError = String(e).slice(0, 200); } }
-  const compact = { ...out, dials: undefined, dialsN: out.dials.length, wsWords: undefined, vis: undefined, resultPath: cfg.resultPath || null };
+  const compact = { ...out, dials: undefined, dialsN: out.dials.length, wsWords: undefined, vis: undefined, cue: undefined, postTap: undefined, resultPath: cfg.resultPath || null };   // the cue's records (every painted frame's chrome) ride the full result alone
   fs.writeSync(1, "RESULT:" + JSON.stringify(compact) + "\n");
   try { await browser.close(); } catch (e) { /* closing */ }
   process.exit(0);
@@ -256,9 +256,17 @@ const flip = (hidden) => page.evaluate((h) => {
 // child node reads too), and records each change of either, so a class set and cleared inside one task never reads as painted; a
 // listener stamps each romp:wsfresh (the event that clears the badge). `armed` keeps the badge's class at arming time (a pane off
 // screen paints no frame, so its loop may not run before it is shown). Each record of a painted badge also carries its box and the
-// box of every visible control in the pane's chrome, the document outside the pane's content container (the chat's transcript, the
-// Outline's, the Feed's and the Waiting pane's lists), so the test can say the painted badge covers none of them (finding of
-// 2026-10-02: at top:8px it hid the chat header's tag filter and + button, and the Outline's tag filter and search).
+// box of every visible control in the pane's chrome, so the test can say the painted badge covers none of them (finding of
+// 2026-10-02: at top:8px it hid the chat header's tag filter and + button, and the Outline's tag filter and search). The chrome is
+// what stays put when the content scrolls: the document outside the pane's content container (the chat's transcript, the Outline's,
+// the Feed's and the Waiting pane's lists), and, inside it, every sticky or fixed element and what it holds (round 1 of the review,
+// 2026-10-03: the subagent viewer's sticky header and its pin, and the Feed's sticky column heads and their drag chips, sit inside
+// the container, and the recorder skipped them). A control is a link, button, form field, label, summary, an element with a button
+// role, an action (data-act), a tabindex or draggable=true, the strip's resize handle, or anything drawn with a pointer or grab
+// cursor (the Feed's drag chip and the chat's landing notice have their cursor and nothing else). While the badge is painted, a
+// change to the page (a MutationObserver on the body) or to the badge's box adds a record to `moves` at the next frame, with the
+// badge's box and the chrome then, so a control that appears under a painted badge (the landing notice shown during the wait) is
+// measured as well as the badge's place at its paint.
 // THE HOLD'S TIMER, as events (`hold`, in the order they ran in this document): the badge paints only from its hold's timer
 // (_pane_spin's setTimeout(rpaint, RHOLD)), so the recorder wraps this window's setTimeout and logs each arm of a callback named
 // rpaint ("arm") and each run of one ("fire", with whether the badge was on after it), beside each romp:wsfresh ("fresh"); every
@@ -270,7 +278,7 @@ const flip = (hidden) => page.evaluate((h) => {
 const cueRec = () => {
   const w = window; if (w.__labCue) return "again";
   const b0 = document.getElementById("pane-reconn");
-  const c = w.__labCue = { badge: [], fresh: [], hold: [], frames: 0, lastT: 0, armed: { t: Date.now(), on: !!(b0 && b0.classList.contains("on")) } };
+  const c = w.__labCue = { badge: [], moves: [], fresh: [], hold: [], frames: 0, lastT: 0, armed: { t: Date.now(), on: !!(b0 && b0.classList.contains("on")) } };
   const st = w.setTimeout;
   w.setTimeout = function (fn, ms) {
     if (typeof fn !== "function" || fn.name !== "rpaint") return st.apply(w, arguments);
@@ -283,20 +291,37 @@ const cueRec = () => {
   const box = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
   // the pane's content container, the id each pane page hands _pane_spin: the chat's transcript, else the pane's list (<pane>-list)
   const content = document.getElementById(location.pathname === "/chat" ? "content" : location.pathname.slice(1) + "-list");
+  const CONTROL = "button, a[href], [role=button], [data-act], input, textarea, select, [tabindex], #tabbar-resize, [draggable=true], summary, label";
   const chrome = () => {
-    const out = [], b = document.getElementById("pane-reconn");
-    const els = Array.from(document.querySelectorAll("button, a[href], [role=button], [data-act], input, textarea, select, [tabindex], #tabbar-resize"));
-    for (const el of els) {
-      if (el === b || (b && b.contains(el)) || (content && content.contains(el))) continue;   // the content scrolls under the badge; the chrome does not
-      const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    const out = [], b = document.getElementById("pane-reconn"), stuck = [];
+    for (const el of Array.from(document.body.getElementsByTagName("*"))) {
+      if (el === b || (b && b.contains(el)) || el === content) continue;
+      const cs = getComputedStyle(el);
+      const within = !!content && content.contains(el);
+      // inside the content container only what a sticky or fixed element holds stays put; the rest scrolls under the badge
+      if (within && (cs.position === "sticky" || cs.position === "fixed")) stuck.push(el);
+      if (within && !stuck.some((p) => p.contains(el))) continue;
+      if (!el.matches(CONTROL) && !/^(pointer|grab|grabbing)$/.test(cs.cursor)) continue;
+      const r = el.getBoundingClientRect();
       if (!r.width || !r.height || cs.visibility === "hidden" || cs.display === "none") continue;
-      out.push({ el: el.tagName.toLowerCase() + (el.id ? "#" + el.id : ""), label: (el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "").trim().slice(0, 30), box: box(el) });
+      const cls = typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split(/\s+/)[0] : "";
+      out.push({ el: el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + cls, label: (el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "").trim().slice(0, 30), box: box(el), inContent: within });
     }
     return out;
   };
+  let dirty = false, lastBox = "", lastSig = "";
+  const sig = (bx, ch) => JSON.stringify(bx) + JSON.stringify(ch.map((x) => x.box));
+  try { new MutationObserver(() => { dirty = true; }).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true }); } catch (e) { /* no observer */ }
   const loop = () => { c.frames++; c.lastT = Date.now(); const v = read(), k = v.on + "|" + v.text; if (k !== last) { const e = { t: c.lastT, on: v.on, text: v.text };
-    if (v.on) { e.box = box(document.getElementById("pane-reconn")); e.chrome = chrome(); e.content = !!content; }
-    c.badge.push(e); last = k; } requestAnimationFrame(loop); };
+    if (v.on) { e.box = box(document.getElementById("pane-reconn")); e.chrome = chrome(); e.content = !!content; lastBox = JSON.stringify(e.box); lastSig = sig(e.box, e.chrome); }
+    c.badge.push(e); last = k; dirty = false; }
+    else if (v.on) {
+      // a move is recorded only while the badge is drawn (a pane hidden by another tab draws nothing: a zero box) and only when its
+      // box or the chrome's boxes changed, so a page that keeps mutating without moving anything adds no record
+      const bb = box(document.getElementById("pane-reconn")), bx = JSON.stringify(bb);
+      if (bb[2] && bb[3] && (dirty || bx !== lastBox) && c.moves.length < 200) { const ch = chrome(), sg = sig(bb, ch); if (sg !== lastSig) { c.moves.push({ t: c.lastT, on: true, box: bb, chrome: ch, content: !!content }); lastSig = sg; } }
+      lastBox = bx; dirty = false; }
+    requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
   w.addEventListener("romp:wsfresh", () => { const t = Date.now(); c.fresh.push(t); c.hold.push({ k: "fresh", t, f: c.frames }); });
   return "armed";
@@ -659,9 +684,28 @@ try {
   // each romp:wsfresh (the event that clears the badge). In the shell a MutationObserver over the Log panel records each change
   // of the cue's live line (#rerr-live: shown, and its text). Armed after the boot, any tap and the settle, before the suspend.
   out.t.cueArmed = now();
-  const cueChat = page.frames().find((f) => { try { return new URL(f.url()).pathname === "/chat"; } catch (e) { return false; } });
+  // cfg.cueApp names the pane whose badge is read (the visible chat by default; the Feed for the desktop Feed leg)
+  const cueApp = cfg.cueApp || "chat";
+  const frameOf = (app) => page.frames().find((f) => { try { return new URL(f.url()).pathname === "/" + app; } catch (e) { return false; } });
+  const cueChat = frameOf(cueApp);
+  // THE SUBAGENT VIEWER (round 1 of the review, 2026-10-03): cfg.subView opens the viewer in the chat before the suspend, from the
+  // open control on the active session's Agent head (the lab's `tests` session carries one synthetic agent), and waits for its
+  // sticky header, so the badge paints over a chat whose list holds that header and its pin
+  if (cfg.subView) {
+    const cf = frameOf("chat");
+    out.subView = cf ? await cf.evaluate(async () => {
+      const wait = async (f) => { for (let i = 0; i < 100; i++) { const v = f(); if (v) return v; await new Promise((r) => setTimeout(r, 100)); } return null; };
+      const open = await wait(() => document.querySelector(".tool-open-agent"));
+      if (!open) return { opened: false };
+      open.click();
+      const head = await wait(() => document.getElementById("sub-head"));
+      const pin = head && head.querySelector("[role=button]");
+      return { opened: !!head, pin: !!pin };
+    }).catch((e) => ({ err: String(e).slice(0, 120) })) : { err: "no-chat-frame" };
+    await sleep(800);
+  }
   out.cueArm = {
-    chat: cueChat ? await cueChat.evaluate(cueRec).catch((e) => "ERR:" + String(e).slice(0, 80)) : "no-chat-frame",
+    pane: cueChat ? await cueChat.evaluate(cueRec).catch((e) => "ERR:" + String(e).slice(0, 80)) : "no-pane-frame",
     shell: await page.evaluate(() => {
       const w = window; if (w.__labCueLog) return "again";
       const c = w.__labCueLog = [];
@@ -715,6 +759,21 @@ try {
     out.t.postTapDone = now();
     await page.click("#mtabs button[data-pane=chat]");
   })().catch((e) => { out.postTapError = String(e).slice(0, 200); });
+  // THE LANDING NOTICE OVER A PAINTED BADGE (round 1 of the review, 2026-10-03): cfg.noticeAfterPaint waits for the cue pane's badge
+  // to paint, then shows the chat's landing notice (its on-demand hook, window.__rompLoadingPill, the real showLandingNotice) while
+  // the outage holds, so a control appears under the painted badge. Started at the return's flip; awaited after the fresh wait.
+  const noticeDone = !cfg.noticeAfterPaint ? null : (async () => {
+    const deadline = now() + (cfg.outageMs || 0);
+    while (now() < deadline) {
+      const on = await cueChat.evaluate(() => { const c = window.__labCue; return !!(c && c.badge.length && c.badge[c.badge.length - 1].on); }).catch(() => false);
+      if (on) break;
+      await sleep(50);
+    }
+    await sleep(300);
+    out.t.notice = now();
+    out.notice = await frameOf("chat").evaluate(() => { if (typeof window.__rompLoadingPill !== "function") return { hook: false };
+      window.__rompLoadingPill(true); const n = document.querySelector(".tx-landing-notice"); return { hook: true, shown: !!n && getComputedStyle(n).display !== "none" }; }).catch((e) => ({ err: String(e).slice(0, 120) }));
+  })().catch((e) => { out.noticeError = String(e).slice(0, 200); });
   if (cfg.shots) page.screenshot({ path: cfg.shots + "-returned.png" }).catch(() => {});
   await sleep(Math.max(0, out.t.return + cfg.outageMs - now()));
   state.phase = "after";
@@ -741,6 +800,7 @@ try {
   out.freshSeenMsAfterOutage = freshSeen;   // wall clock at which the driver first saw each pane's row, from the outage's end
   out.t.fresh = now();
   if (postTapDone) await postTapDone;   // the tap after the return (below the return's flip) finishes before the settle
+  if (noticeDone) await noticeDone;
   await sleep(cfg.settleMs || 1500);       // wsconnfail rides the next open; the perf minute rows flush on their own clock
   // the chain after the return (the owner's answer, 2026-09-19): the chat's background asks (needFull why=prefetch) on the dials
   // made from the return on. On the phone the redial reloads the visible tab alone; the desktop's chain runs as before.
@@ -752,7 +812,7 @@ try {
   out.wsNow = await page.evaluate(() => window.__labWsNow || {});
   out.overrideErrors = await page.evaluate(() => window.__labErrors || []);
   out.cue = {   // the reconnect cue's record (iOS item 4): the chat's painted badge changes, its fresh stamps, its frame loop, the Log line's changes
-    ...(cueChat ? await cueChat.evaluate(() => { const c = window.__labCue || {}; return { badge: c.badge || [], fresh: c.fresh || [], hold: c.hold || [], frames: c.frames || 0, lastT: c.lastT || 0 }; }).catch((e) => ({ err: String(e).slice(0, 80) })) : {}),
+    ...(cueChat ? await cueChat.evaluate(() => { const c = window.__labCue || {}; return { badge: c.badge || [], moves: c.moves || [], fresh: c.fresh || [], hold: c.hold || [], frames: c.frames || 0, lastT: c.lastT || 0 }; }).catch((e) => ({ err: String(e).slice(0, 80) })) : {}),
     log: await page.evaluate(() => window.__labCueLog || []).catch(() => null),
   };
   out.liveAtEnd = live.size;

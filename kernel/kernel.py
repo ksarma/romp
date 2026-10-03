@@ -70016,31 +70016,74 @@ def _pane_spin(cid, ignore_id=""):
             # even when the link had come up at once (finding of 2026-10-02: a 286 ms flash at a tap 2 s after a healthy return).
             "var RHOLD=" + str(_RECONN_BADGE_HOLD_MS) + ",rh=0,rpend=false,ron=false,rsh=false,rpk=false;"
             "function rfail(){clearTimeout(bfail);bfail=0;if(rb&&rb.classList.contains('on')&&!rsh)bfail=setTimeout(function(){badge(false);},30000);}"
-            # the paint places the badge first (rplace, below): at that moment a shown pane's style and box are real, whatever the
-            # load read and whatever the resize observer has said
-            "function rpaint(){rh=0;if(!rpend||!rb)return;rpend=false;rplace();rb.classList.add('on');rfail();}"
+            # the paint places the badge in the same turn as it turns it on (rplace, below), so no frame shows it anywhere else: at
+            # that moment a shown pane's style and box are real, whatever the load read and whatever the resize observer has said,
+            # and the badge has its size, which the search for a clear place needs; then it watches for what could move it (rwatch)
+            "function rpaint(){rh=0;if(!rpend||!rb)return;rpend=false;rb.classList.add('on');rplace();rwatch(true);rfail();}"
             "function rhold(){clearTimeout(rh);rh=0;rpend=true;if(rb)rb.classList.remove('on');clearTimeout(bfail);bfail=0;if(document.visibilityState!=='hidden'&&!rpk)rh=setTimeout(rpaint,RHOLD);}"
             "window.addEventListener('romp:wsdown',function(){ron=!!(rb&&rb.classList.contains('on'));});"
-            # [fork] iOS item 4 (finding of 2026-10-02): the badge sits 8 px below the top of the pane's content container `c`, when
-            # that container is the pane's own scroll area (overflow-y auto or scroll), so it covers none of the controls in the
-            # chrome above it. Every pane page lays out that way, a header over a scrolling list: the chat (#content under the tab
-            # strip or the phone's session header, the strip's resize handle and the pinned notes), the Outline (its list under
-            # its search and tag filter), the Feed and the Waiting pane. Upstream's rule puts the badge at top:8px over the header's
-            # right end, where it hid the phone chat's tag filter and + button, the desktop strip's tag filter and gear, and the
-            # phone Outline's tag filter and search, for the whole wait, which since the failsafe latch can outlast 30 s. A scroll
-            # area's box does not move when it scrolls; its top moves only with a size change (the chrome above it grows or
-            # shrinks, the pane is shown or the window resized), so a ResizeObserver on it and on the page places the badge again;
-            # no timer. A container that is not a scroll area keeps upstream's corner. Upstream's CSS rule stays byte for byte (the
-            # inline top outranks it).
+            # [fork] iOS item 4 (findings of 2026-10-02 and of round 1, 2026-10-03): where the badge sits. Its first place is 8 px
+            # below the top of the pane's content container `c` when that container is the pane's own scroll area (overflow-y auto
+            # or scroll), at upstream's right 8 px: below the chrome above the list (the chat's tab strip or the phone's session
+            # header, the strip's resize handle and the pinned notes; the Outline's search and tag filter; the Waiting pane's
+            # header). Upstream's top:8px sat over that chrome's right end, where it hid the phone chat's tag filter and + button,
+            # the desktop strip's tag filter and gear, and the phone Outline's tag filter and search, for the whole wait. The Feed
+            # shows no header above its list (its #feed-head is hidden), so the list's top is the page's and its first place is
+            # upstream's 8 px.
+            # The first place alone still covered controls that do not scroll with the content (round 1): the subagent viewer's
+            # sticky header and its 'keep this tab' pin, the chat's landing notice (the only cancel for a jump), and the Feed's
+            # sticky column heads with their drag chips. So while the badge is painted it moves to the nearest place that covers
+            # nothing that stays put when the content scrolls and holds a control (rfit, robs): a control outside the container
+            # (the chrome, and what is drawn over the container from outside it, such as the landing notice and the scroll marks),
+            # and inside it the whole box of a sticky or fixed element that is or holds a control (the viewer's header, a Feed
+            # column head), so the badge goes below such a header, never onto it. From the first place it steps down below what it
+            # would cover, or left of it when that is the shorter move (a narrow control at the right edge, a scroll mark); if no
+            # place above the container's visible bottom is clear, it keeps the first place. A control is anything RCTL matches or
+            # anything drawn with a pointer or grab cursor (the Feed's drag chip has its cursor and nothing else). Controls in the
+            # content itself (the top row of messages or cards) are not avoided: they scroll out from under the badge, and taps
+            # pass through it (ruling 9 of round 0).
+            # When: the badge is placed at load and at each resize event of the container or the page (a scroll area's box moves
+            # only with a size change: the chrome above grows or shrinks, the pane is shown, the window is resized); at its paint;
+            # and while it is painted, at each change to the page's elements (a MutationObserver on the body: the viewer opened,
+            # the notice shown) and at each scroll (a sticky element moving into its place), so a control that appears or moves
+            # under it moves it on (a scroll re-reads the boxes the last scan found; a change scans again). No timer. The search
+            # runs only while the badge is painted (rwatch starts at the paint and stops at the first change or scroll after the
+            # badge is down), so a healthy page scans nothing. Upstream's CSS rule stays
+            # byte for byte (the inline top and right outrank it). A container that is not a scroll area keeps upstream's corner.
             # The scroll-area test is made at each placement, never once at load (finding of 2026-10-02, the served Firefox leg):
             # Firefox resolves no computed style in a frame that is not rendered, so in the phone's chat iframe, display:none while
             # another tab shows and loaded that way when the phone opens on the Feed tab, overflow-y read '' at load; the test made
             # there failed, no observer was made, and the badge painted at upstream's top 8 px over the chat header's session
             # picker, tag filter and + button. So the observer is made whenever the engine has one (Firefox's, made in the hidden
-            # frame, reports at the frame's first show), and the badge is placed at three events: the load, each resize event, and
-            # its own paint (rpaint, above).
+            # frame, reports at the frame's first show), and the badge is placed at the load, each resize event and its own paint.
             "function rscroll(){try{return /^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){return false;}}"
-            "function rplace(){if(!rb||!c||!rscroll())return;var t=Math.round(c.getBoundingClientRect().top);rb.style.top=((t>0?t:0)+8)+'px';}"
+            "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true]',rmo=null,rsc=false,rob=null;"
+            "function rctl(e,s){return (e.matches&&e.matches(RCTL))||/^(pointer|grab|grabbing)$/.test(s.cursor);}"
+            # what the badge must not cover, as elements: each control outside the container, and inside it each sticky or fixed
+            # element (the outermost, when they nest) that is or holds a control, whole: a header the badge goes below, not onto
+            "function robs(){var o=[],d=document.body,pin=[];if(!d||!d.getElementsByTagName)return o;var a=d.getElementsByTagName('*');"
+            "for(var i=0;i<a.length;i++){var e=a[i];if(e===c||e===rb||rb.contains(e))continue;var s=getComputedStyle(e);"
+            "if(c.contains(e)){if(s.position==='sticky'||s.position==='fixed')pin.push(e);for(var j=0;j<pin.length;j++){if(pin[j].contains(e)){if(o.indexOf(pin[j])<0&&rctl(e,s))o.push(pin[j]);break;}}continue;}"
+            "if(rctl(e,s)&&s.visibility!=='hidden'&&s.display!=='none')o.push(e);}return o;}"
+            # the nearest clear place from the first one: past the boxes it would cover, down below them or left of them, whichever
+            # is the shorter move; the first place when none is clear above the container's visible bottom. `again` (a scroll)
+            # re-reads the boxes of the elements the last scan found: a scroll of the container moves only what is inside it
+            "function rfit(y0,again){var b=rb.getBoundingClientRect(),w=b.width,h=b.height,de=document.documentElement,W=de.clientWidth,H,o=[],y=y0,x=8;"
+            "if(!w||!h||!W)return [y0,8];H=Math.min(de.clientHeight||1e9,c.getBoundingClientRect().bottom);if(!again||!rob)rob=robs();"
+            "for(var i=0;i<rob.length;i++){var q=rob[i].getBoundingClientRect();if(q.width>0&&q.height>0)o.push(q);}"
+            "for(var k=0;k<64;k++){var L=W-x-w,R=W-x,n=0,hl=W,hb=y;"
+            "for(i=0;i<o.length;i++){var r=o[i];if(r.left<R&&r.right>L&&r.top<y+h&&r.bottom>y){n++;if(r.left<hl)hl=r.left;if(r.bottom>hb)hb=r.bottom;}}"
+            "if(!n)return [y,x];var nx=Math.ceil(W-hl)+8,ny=Math.ceil(hb)+8;if(W-nx-w>=8&&nx-x<=ny-y)x=nx;else y=ny;if(y+h>H-8)break;}"
+            "return [y0,8];}"
+            "function rplace(again){if(!rb||!c||!rscroll())return;var t=Math.round(c.getBoundingClientRect().top),y=(t>0?t:0)+8,x=8;"
+            "if(rb.classList.contains('on')){var f=rfit(y,again===true);y=f[0];x=f[1];}"
+            "var ty=y+'px',tx=x===8?'':x+'px';if(rb.style.top!==ty)rb.style.top=ty;if(rb.style.right!==tx)rb.style.right=tx;}"
+            "function rnudge(e){if(rb.classList.contains('on'))rplace(!!e&&e.type==='scroll');else rwatch(false);}"
+            "function rwatch(on){try{if(on){if(!rmo&&typeof MutationObserver==='function'&&document.body){"
+            "rmo=new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var g=rs[i].target;if(g!==rb&&!rb.contains(g)){rnudge();return;}}if(!rb.classList.contains('on'))rwatch(false);});"
+            "rmo.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','hidden']});}"
+            "if(!rsc&&document.addEventListener){document.addEventListener('scroll',rnudge,true);rsc=true;}}"
+            "else{rob=null;if(rmo){rmo.disconnect();rmo=null;}if(rsc){document.removeEventListener('scroll',rnudge,true);rsc=false;}}}catch(e){}}"
             "if(rb&&c&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(function(){rplace();});rro.observe(c);rro.observe(document.documentElement);}catch(e){}}"
             "rplace();"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not

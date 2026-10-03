@@ -226,11 +226,18 @@ global.clearTimeout = (id) => { for (const t of TIMERS) if (t.id === id) t.live 
 // an interval is a timer too (live() counts it, and the clock re-arms it after each run), so a clear on any repeating clock shows
 global.setInterval = (fn, ms) => { const id = nextId++; TIMERS.push({ id, fn, ms, at: NOW + ms, live: true, every: ms }); return id; };
 global.clearInterval = global.clearTimeout;
-global.MutationObserver = class { constructor() {} observe() {} };
+// the placement's watch (rwatch) makes one observer at the paint and disconnects it when the badge is down; MOS keeps each made
+// observer's callback, target and state so the fit cases can deliver a change to the page as the engine would
+const MOS = [];
+global.MutationObserver = class { constructor(cb) { this.cb = cb; this.on = false; MOS.push(this); } observe(t, o) { this.on = true; this.target = t; this.opts = o; } disconnect() { this.on = false; } };
 const cls = (S) => ({ add: (c) => S.add(c), remove: (c) => S.delete(c), contains: (c) => S.has(c),
   toggle: (c, on) => { if (on) S.add(c); else S.delete(c); return !!on; } });
 const SHEET = { classList: cls(SHEETCLS) };
-const BADGE = { classList: cls(BADGECLS), style: {} };
+const BADGE = { classList: cls(BADGECLS), style: {}, contains: (n) => n === BADGE || KIDS.indexOf(n) >= 0,
+  getBoundingClientRect: () => (BADGECLS.has('on') ? BADGE_BOX() : { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }) };
+// the painted badge's box as the engine would lay it out: fixed, right 8 px (or its inline right), at its inline top, 134 x 25
+let BADGE_W = 134, BADGE_H = 25, VIEW_W = 390;
+const BADGE_BOX = () => { const r = VIEW_W - (parseInt(BADGE.style.right, 10) || 8), t = parseInt(BADGE.style.top, 10) || 8; return { left: r - BADGE_W, right: r, top: t, bottom: t + BADGE_H, width: BADGE_W, height: BADGE_H }; };
 // the glance carries no count, so ANY write to the badge's text or children is recorded and every case asserts there was none:
 // textContent, innerHTML, innerText or outerHTML set; a child added, moved, replaced or removed; a child node's value or text set
 // (its swirl image and its text node, which a writer could reach as childNodes, firstChild or lastChild)
@@ -241,6 +248,7 @@ for (const k of ['appendChild', 'append', 'prepend', 'insertBefore', 'replaceChi
 for (const [k, v] of [['childNodes', KIDS], ['children', [KIDS[0]]], ['firstChild', KIDS[0]], ['lastChild', KIDS[1]], ['firstElementChild', KIDS[0]], ['lastElementChild', KIDS[0]]]) Object.defineProperty(BADGE, k, { get: () => v });
 const CONTENT = { children: [{ id: 'thread-1' }] };
 global.document = { visibilityState: 'visible', addEventListener: (t, f) => { (DOCL[t] = DOCL[t] || []).push(f); },
+  removeEventListener: (t, f) => { DOCL[t] = (DOCL[t] || []).filter((g) => g !== f); },
   getElementById: (id) => (id === 'pane-spin' ? SHEET : id === 'pane-reconn' ? BADGE : id === 'content' ? CONTENT : null) };
 global.window = global;
 global.addEventListener = (t, f) => { (WIN[t] = WIN[t] || []).push(f); };
@@ -729,6 +737,124 @@ fire('romp:wsdown'); after(RHOLD_T);
 out({ atLoad, atPaint: { painted: painted(), top: topOf() } });""", pre=self._PLACE_PRE)
         self.assertEqual(o["atLoad"], "52px")
         self.assertEqual(o["atPaint"], {"painted": True, "top": "8px"}, "the paint reads the -30 px top and clamps it: 8 px")
+
+    # The clear place (round 1, 2026-10-03: regression-1, extra5-1, correctness-1, correctness-2). The first place alone covered
+    # controls that stay put when the content scrolls: the subagent viewer's sticky header and its pin, the chat's landing notice,
+    # the Feed's sticky column heads and their drag chips. While painted the badge moves to the nearest place that covers none:
+    # a control outside the list, or a sticky or fixed element in the list that is or holds a control, whole (rfit, robs). These
+    # cases run the search over a page of fake elements: each has a box, a computed style, a parent, and answers matches() for the
+    # one selector entry it carries (so the product's RCTL list must name it) or its cursor. The served legs measure real engines.
+    _FIT_PRE = r"""
+document.documentElement = { id: 'html', clientWidth: 390, clientHeight: 844 };
+const ALL = [CONTENT];                                                // the body's elements in document order
+document.body = { getElementsByTagName: (t) => (t === '*' ? ALL : []) };
+let STYLE_READS = 0;
+global.getComputedStyle = (el) => { STYLE_READS++; return el === CONTENT ? { overflowY: COVER, position: 'static', cursor: 'auto', visibility: 'visible', display: 'block' } : el.cs; };
+const inside = (anc, n) => { for (let e = n; e; e = e.parent) if (e === anc) return true; return false; };
+CONTENT.contains = (n) => inside(CONTENT, n);
+// add(parent, box [left, top, width, height], { position, cursor, sel }): an element under `parent` (null: the body, outside the list)
+const add = (parent, box, o) => { const e = { parent, box: box.slice(), sel: (o && o.sel) || '',
+  cs: { position: (o && o.position) || 'static', cursor: (o && o.cursor) || 'auto', visibility: 'visible', display: 'block', overflowY: 'visible' },
+  getBoundingClientRect() { const [l, t, w, h] = this.box; return { left: l, top: t, right: l + w, bottom: t + h, width: w, height: h }; },
+  contains(n) { return inside(this, n); }, matches(list) { return !!this.sel && list.split(',').indexOf(this.sel) >= 0; } };
+  const at = parent ? ALL.lastIndexOf(ALL.filter((x) => inside(parent, x)).pop()) + 1 : ALL.length; ALL.splice(at, 0, e); return e; };
+const rightOf = () => (BADGE.style.right ? BADGE.style.right : '8px');
+const at = () => ({ top: topOf(), right: rightOf(), painted: painted() });
+const mo = () => MOS.filter((m) => m.on && m.target === document.body).length;   // the badge's watch (the sheet's own observer watches the list)
+const change = (target) => task(() => MOS.filter((m) => m.on && m.target === document.body).forEach((m) => m.cb([{ type: 'childList', target }])));
+const scroll = () => task(() => (DOCL.scroll || []).slice().forEach((f) => f({ type: 'scroll' })));
+"""
+
+    def _fit(self, scenario):
+        return self._run(scenario, pre=self._PLACE_PRE + self._FIT_PRE)
+
+    def test_a_painted_badge_goes_below_a_sticky_header_in_the_list_that_holds_a_control(self):
+        # the subagent viewer: a sticky line at the list's top (#sub-head, 8 px down) with its pin, a role=button, at the right end
+        o = self._fit(r"""
+const head = add(CONTENT, [0, 52, 390, 31], { position: 'sticky' });
+add(head, [360, 58, 20, 20], { sel: '[role=button]' });
+const atLoad = at();
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+out({ atLoad, atPaint, watching: mo() });""")
+        self.assertEqual(o["atLoad"], {"top": "52px", "right": "8px", "painted": False}, "unpainted, the first place: no search on a healthy page")
+        self.assertEqual(o["atPaint"], {"top": "91px", "right": "8px", "painted": True}, "painted below the header (52 + 31 + 8), not on it")
+        self.assertEqual(o["watching"], 1, "and watching the page for what could move it")
+
+    def test_a_control_drawn_over_the_list_from_outside_it_moves_the_badge_below_it_when_it_appears(self):
+        # the landing notice: outside the list, drawn over its top, a pointer cursor and nothing else, shown after the paint
+        o = self._fit(r"""
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+const notice = add(null, [42, 54, 307, 29], { cursor: 'pointer' });
+change(BADGE); const ownChange = at();                                 // a change to the badge alone (its own place written) moves nothing
+change(notice); const shown = at();
+out({ atPaint, ownChange, shown });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True})
+        self.assertEqual(o["ownChange"], {"top": "52px", "right": "8px", "painted": True}, "the badge's own mutations are not a change to the page")
+        self.assertEqual(o["shown"], {"top": "91px", "right": "8px", "painted": True}, "the notice shown under it moves it below the notice (54 + 29 + 8)")
+
+    def test_a_narrow_control_at_the_right_edge_moves_the_badge_left_of_it(self):
+        # a scroll mark: an 8 x 2 link (data-act) at the list's right edge, outside the list; left is the shorter move
+        o = self._fit(r"""
+add(null, [381, 60, 8, 2], { sel: '[data-act]' });
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "17px", "painted": True}, "9 px left (390 - 381 + 8), not 18 px down")
+
+    def test_the_feed_column_heads_send_the_badge_below_their_row(self):
+        # the desktop Feed: no header above the list (its top is the page's), three sticky column heads at its top, each with a drag
+        # chip that has a grab cursor and nothing else; the badge's first place (8 px) is on the second and third heads
+        o = self._fit(r"""
+resize(0);
+for (const [l, w] of [[12, 120], [140, 120], [268, 110]]) { const h = add(CONTENT, [l, 12, w, 29], { position: 'sticky' }); add(h, [l + 2, 14, 68, 20], { cursor: 'grab' }); }
+const atLoad = at();
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atLoad, atPaint: at() });""")
+        self.assertEqual(o["atLoad"], {"top": "8px", "right": "8px", "painted": False})
+        self.assertEqual(o["atPaint"], {"top": "49px", "right": "8px", "painted": True}, "below the heads' row (12 + 29 + 8): left of them would not fit")
+
+    def test_what_scrolls_with_the_list_or_holds_no_control_is_not_avoided(self):
+        # a button in a message (content: it scrolls out from under the badge, ruling 9 of round 0) and a sticky element in the list
+        # with no control in it (the chat's gap glyph) leave the badge in its first place
+        o = self._fit(r"""
+const row = add(CONTENT, [0, 50, 390, 80]); add(row, [300, 55, 60, 20], { sel: 'button' });
+add(CONTENT, [0, 52, 390, 40], { position: 'sticky' });
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True})
+
+    def test_a_scroll_while_painted_moves_the_badge_off_a_sticky_header_scrolling_into_its_place(self):
+        o = self._fit(r"""
+const head = add(CONTENT, [0, 300, 390, 29], { position: 'sticky' }); add(head, [10, 304, 60, 20], { sel: 'button' });
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+head.box[1] = 60; ALL[2].box[1] = 64;                                 // the list scrolls: the header comes up under the badge
+scroll(); const scrolled = at();
+const reads = STYLE_READS; scroll(); const rereads = STYLE_READS - reads;
+fire('romp:wsfresh'); const cleared = { painted: painted(), watching: mo(), scrollListeners: (DOCL.scroll || []).length };
+change(head); const afterChange = { watching: mo(), scrollListeners: (DOCL.scroll || []).length };
+out({ atPaint, scrolled, rereads, cleared, afterChange });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True})
+        self.assertEqual(o["scrolled"], {"top": "97px", "right": "8px", "painted": True}, "the scroll moves it below the header (60 + 29 + 8)")
+        self.assertLessEqual(o["rereads"], 1, "a scroll re-reads the boxes the last scan found; it does not scan the page's styles again")
+        self.assertIs(o["cleared"]["painted"], False)
+        self.assertEqual(o["afterChange"], {"watching": 0, "scrollListeners": 0}, "with the badge down, the next change ends the watch: no observer, no scroll listener")
+
+    def test_with_no_clear_place_the_badge_keeps_its_first_place(self):
+        o = self._fit(r"""
+add(null, [0, 0, 390, 844], { cursor: 'pointer' });                  // a control over the whole page
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True}, "nowhere above the list's bottom is clear: the first place, not off the page")
+
+    def test_the_search_runs_only_while_the_badge_is_painted(self):
+        o = self._fit(r"""
+const head = add(CONTENT, [0, 52, 390, 31], { position: 'sticky' }); add(head, [360, 58, 20, 20], { sel: '[role=button]' });
+let reads = STYLE_READS; resize(44); const unpainted = { reads: STYLE_READS - reads, top: topOf() };
+fire('romp:wsdown'); after(RHOLD_T); const painted1 = topOf();
+fire('romp:wsfresh'); reads = STYLE_READS; resize(44); const after1 = { reads: STYLE_READS - reads, top: topOf() };
+out({ unpainted, painted1, after1 });""")
+        self.assertEqual(o["unpainted"], {"reads": 1, "top": "52px"}, "a resize event on a healthy page reads the list's own style alone (the scroll-area test) and writes the first place")
+        self.assertEqual(o["painted1"], "91px")
+        self.assertEqual(o["after1"], {"reads": 1, "top": "52px"}, "after the fresh frame the badge is down, and the next resize event goes back to the first place without a search")
 
     def test_an_auto_overflow_list_counts_as_a_scroll_area(self):
         # the Outline's, the Feed's and the Waiting pane's lists are overflow-y:auto; the chat's transcript is scroll

@@ -167,8 +167,44 @@ def _transcript(sid, tag, cwd, pairs):
     return "".join(json.dumps(r) + "\n" for r in out)
 
 
+# one synthetic subagent under the `tests` session (round 1 of the review, 2026-10-03): an Agent turn closing its transcript and the
+# agent's own transcript and sidecar beside it, as the CLI writes them (plans/subagent-transcripts.md), so a leg can open the chat's
+# subagent viewer, whose sticky header and pin sit inside the transcript's container. Placeholder ids; invented text.
+SUB_SID, SUB_AGENT, SUB_TOOL = "11111111-2222-4333-8444-000000000103", "a0123456789abcdef", "toolu_11112222333344445555"
+
+
+def _subagent(proj, cwd):
+    sid, aid = SUB_SID, SUB_AGENT
+    turn = [{"type": "user", "uuid": "t-u90", "parentUuid": "t-a05", "sessionId": sid, "cwd": cwd, "timestamp": "2024-01-01T00:20:00Z", "promptSource": "typed",
+             "message": {"role": "user", "content": "turn 6: check the notes-api tokenizer fixtures"}},
+            {"type": "assistant", "uuid": "t-a90", "parentUuid": "t-u90", "sessionId": sid, "cwd": cwd, "timestamp": "2024-01-01T00:20:10Z",
+             "message": {"role": "assistant", "model": "claude-opus-5", "stop_reason": "tool_use",
+                         "content": [{"type": "tool_use", "id": SUB_TOOL, "name": "Agent", "input": {"description": "Check fixtures", "prompt": "Read the tokenizer fixtures and list gaps.", "subagent_type": "general-purpose"}}]}},
+            {"type": "user", "uuid": "t-u91", "parentUuid": "t-a90", "sessionId": sid, "cwd": cwd, "timestamp": "2024-01-01T00:21:00Z",
+             "toolUseResult": {"agentId": aid, "content": [{"type": "text", "text": "The fixtures cover hyphens and quotes."}], "totalDurationMs": 50000},
+             "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": SUB_TOOL, "content": [{"type": "text", "text": "The fixtures cover hyphens and quotes."}]}]}},
+            {"type": "assistant", "uuid": "t-a91", "parentUuid": "t-u91", "sessionId": sid, "cwd": cwd, "timestamp": "2024-01-01T00:21:10Z",
+             "message": {"role": "assistant", "model": "claude-opus-5", "stop_reason": "end_turn", "content": [{"type": "text", "text": "The fixture set already covers both edge cases."}]}}]
+    with open(os.path.join(proj, sid + ".jsonl"), "a") as f:
+        f.write("".join(json.dumps(r) + "\n" for r in turn))
+    sub, parent = [], None
+    for i in range(14):
+        u, a = "s-u%02d" % i, "s-a%02d" % i
+        for rec in ({"type": "user", "uuid": u, "parentUuid": parent, "message": {"role": "user", "content": "step %d: read the next tokenizer fixture" % i}},
+                    {"type": "assistant", "uuid": a, "parentUuid": u, "message": {"role": "assistant", "model": "claude-opus-5", "stop_reason": "end_turn",
+                                                                                   "content": [{"type": "text", "text": "Fixture %d covers hyphenated words in the notes-api search index." % i}]}}):
+            rec.update(isSidechain=True, agentId=aid, sessionId=sid, cwd=cwd, timestamp="2024-01-01T00:20:%02dZ" % (11 + i))
+            sub.append(rec)
+        parent = a
+    sd = os.path.join(proj, sid, "subagents")
+    os.makedirs(sd, exist_ok=True)
+    Path(sd, "agent-%s.jsonl" % aid).write_text("".join(json.dumps(r) + "\n" for r in sub))
+    Path(sd, "agent-%s.meta.json" % aid).write_text(json.dumps({"agentType": "general-purpose", "description": "Check fixtures", "spawnDepth": 1, "toolUseId": SUB_TOOL}))
+
+
 def _seed(lab):
-    """The lab's state root and Claude config dir, with the three synthetic sessions of the notes-api demo."""
+    """The lab's state root and Claude config dir, with the three synthetic sessions of the notes-api demo (the `tests` session
+    with one synthetic subagent, _subagent)."""
     state = os.path.join(lab, "xdg", "romp")
     claude = os.path.join(lab, "claude")
     cwd = os.path.join(lab, "proj")
@@ -185,6 +221,8 @@ def _seed(lab):
             {"sid": sid, "name": sname, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid, "alive": True}))
         if tag:   # the transcript-less `docs` session has a name and a live registration and no .jsonl (a session created and not yet spoken to)
             Path(proj, sid + ".jsonl").write_text(_transcript(sid, tag, cwd, 6))
+    assert SESSIONS[2][0] == SUB_SID and SESSIONS[2][2] == "t", "the subagent's parent is the `tests` session"
+    _subagent(proj, cwd)
     return state, claude
 
 
@@ -375,11 +413,13 @@ class ReturnFromBackground(unittest.TestCase):
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
-    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False, post_tap=None):
+    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False, post_tap=None,
+               cue_app=None, sub_view=False, notice_after_paint=False):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds%s%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "", "-posttap-" + post_tap if post_tap else "")
+        name = "%s-%s-%s-%ds%s%s%s%s%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "", "-posttap-" + post_tap if post_tap else "",
+                                                     "-cue-" + cue_app if cue_app else "", "-subview" if sub_view else "", "-notice" if notice_after_paint else "")
         eager = _eager(shell, None if unmarked else tap)   # a tapped pane's document is loaded before the suspend (on the re-tap, under abort or denied); an unmarked document runs no shim, so the tapped pane never joins the eager set (pass 5, the author's label, taking the reviewer's round-4 finding tests-1)
         # a derived set that came out empty would hand the driver a boot wait and a fresh wait that end at once with nothing witnessed
         # (review round 2, 2026-09-19: every derived expectation must fail when the derivation yields nothing)
@@ -401,7 +441,8 @@ class ReturnFromBackground(unittest.TestCase):
                # A leg names its own (active_sid); the boot-tab legs default to web, the held-full leg to web too (the kernel's one full is what is held)
                "activeSid": active_sid if active_sid is not None else (SESSIONS[0][0] if (boot_tab or hold_active_full_ms) else ""),
                "holdActiveFullMs": hold_active_full_ms,   # fresh-2 (review round 3): the driver's proxy holds the boot chat dial's frames naming the active tab for this long
-               "postTap": post_tap or "", "postTapMs": 2000, "cueHoldMs": cue_hold_ms() if post_tap else 0,   # iOS item 4: the tap after the return, 2 s on (inside the badge's 30 s failsafe, where the off-screen paint showed)
+               "postTap": post_tap or "", "postTapMs": 2000, "cueHoldMs": cue_hold_ms() if post_tap else 0,
+               "cueApp": cue_app or "chat", "subView": bool(sub_view), "noticeAfterPaint": bool(notice_after_paint),   # round 1 of the review (2026-10-03): the pane whose badge is read, the subagent viewer opened before the suspend, the landing notice shown over the painted badge   # iOS item 4: the tap after the return, 2 s on (inside the badge's 30 s failsafe, where the off-screen paint showed)
                "showFilesControl": tap == "files",   # extra9-2 (review round 3): the Files tab exists only with the gear's Files control on (romp:settings.showFilesControl, the literal true); the install seeds it before the shell parses
                "shots": os.path.join(self.lab, "return-harness-" + name) if os.environ.get("RETURN_HARNESS_SHOTS") else ""}
         cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the full result; the RESULT: line is a compact copy
@@ -464,7 +505,7 @@ class ReturnFromBackground(unittest.TestCase):
         after the outage's end; in a hung outage past the connect cut it shows the cut's line; in a refused one the connect line."""
         where = name + ": "
         hold = cue_hold_ms()
-        self.assertEqual(r.get("cueArm"), {"chat": "armed", "shell": "armed"}, where + "both cue recorders armed: %r" % (r.get("cueArm"),))
+        self.assertEqual(r.get("cueArm"), {"pane": "armed", "shell": "armed"}, where + "both cue recorders armed: %r" % (r.get("cueArm"),))
         cue = r.get("cue") or {}
         t = r["t"]
         ret, end, sus = t["return"], t["outageEnd"], t["suspend"]
@@ -472,7 +513,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertGreaterEqual(cue.get("lastT", 0), t["fresh"], where + "...through the fresh frame, so 'never painted' was read, not assumed")
         badge = cue.get("badge") or []
         self._badge_text(where, badge)
-        self._badge_clear_of_chrome(where, badge)
+        self._badge_clear_of_chrome(where, badge, moves=cue.get("moves"))
         self.assertEqual([b for b in badge if b["on"] and sus <= b["t"] < ret], [], where + "nothing painted while the page read hidden: %r" % (badge,))
         self.assertFalse([b for b in badge if b["t"] < ret] and [b for b in badge if b["t"] < ret][-1]["on"], where + "the badge was off entering the return: %r" % (badge,))
         fresh = [x for x in (cue.get("fresh") or []) if x >= ret]
@@ -517,14 +558,18 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertTrue(badge and all("text" in b for b in badge), where + "the recorder read the badge's text with each change: %r" % (badge,))
         self.assertEqual([b for b in badge if b["on"] and b["text"] != BADGE_TEXT], [], where + "the painted badge reads %r and nothing else: %r" % (BADGE_TEXT, badge))
 
-    def _badge_clear_of_chrome(self, where, badge, need_controls=True):
+    def _badge_clear_of_chrome(self, where, badge, need_controls=True, moves=None):
         """A painted badge covers none of the controls in the pane's chrome, the document outside its content container (finding of
         2026-10-02): at upstream's top:8px the chat's covered 78 percent of the phone header's tag filter and of its + button and the
         desktop strip's tag filter and gear, and the phone Outline's covered its tag filter and search, for the whole wait. Each
         painted record carries the badge's box and every visible chrome control's box (the recorder's chrome()); the overlap must be
         zero for each. need_controls: the pane's chrome holds controls (the chat's and the Outline's do), so a list read as empty
-        fails instead of passing by default."""
-        painted = [b for b in badge if b["on"]]
+        fails instead of passing by default. The chrome counts what stays put when the content scrolls: the document outside the
+        content container, and the sticky or fixed elements inside it with what they hold (round 1 of the review, 2026-10-03: the
+        subagent viewer's header and pin, the Feed's column heads and drag chips); `moves` are the records a change to the page or
+        to the badge's box added while it was painted (the recorder's), each checked the same way, so a control that appears under
+        a painted badge is measured too."""
+        painted = [b for b in badge if b["on"]] + list(moves or [])
         for b in painted:
             self.assertIn("box", b, where + "the painted badge's box was read: %r" % (b,))
             self.assertTrue(b.get("content"), where + "the recorder found the pane's content container: %r" % (b,))
@@ -559,7 +604,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertNotIn("postTapError", r, where + "the tap after the return ran: %r" % (r.get("postTapError"),))
         badge = rec.get("badge") or []
         self._badge_text(where, badge)
-        self._badge_clear_of_chrome(where, badge, need_controls)
+        self._badge_clear_of_chrome(where, badge, need_controls, moves=rec.get("moves"))
         ons = [b["t"] - tap for b in badge if b["on"] and b["t"] >= tap]
         rel_fresh = fresh[0] - tap
         type(self).measurements.setdefault(name, {})["postTapCue"] = {"pane": pt.get("pane"), "holdMs": hold, "armedOn": (rec.get("armed") or {}).get("on"),
@@ -1086,6 +1131,52 @@ class ReturnFromBackground(unittest.TestCase):
 
     def test_webkit_phone_healthy_return_paints_no_badge(self):
         self._healthy("webkit")
+
+    # Round 1 of the review (2026-10-03: regression-1, extra5-1, correctness-1, correctness-2): three surfaces of controls that do not
+    # scroll with the content, where the badge's first place (8 px below the content container's top) painted over a control. Each
+    # leg is a short hung outage (the badge paints at the hold and clears at the pane's first fresh frame after it), read by the
+    # pane's frame recorder, whose chrome counts sticky and fixed elements inside the container and what they hold
+    # (_badge_clear_of_chrome), with a witness that the surface's control was in the chrome read beside the painted badge.
+    def _chrome_witness(self, where, r, pred, what):
+        cue = r.get("cue") or {}
+        recs = [b for b in (cue.get("badge") or []) if b["on"]] + list(cue.get("moves") or [])
+        self.assertTrue(any(pred(c) for b in recs for c in (b.get("chrome") or [])), where + "the recorder read %s as chrome beside the painted badge: %r" % (what, recs[:2]))
+        return recs
+
+    def _surface(self, name, r):
+        Path(os.path.join(self.lab, "return-harness-%s.json" % name)).write_text(json.dumps(type(self).measurements.get(name, {}), indent=1, sort_keys=True))
+
+    # the subagent viewer's sticky header (#sub-head) inside the transcript's container, its pin (role=button) at the right end:
+    # opened before the suspend from the Agent head of the `tests` session (_subagent)
+    def test_phone_hung_4s_the_subagent_viewers_header_and_its_pin_stay_clear_of_the_badge(self):
+        name, r = self._drive("phone", "hung", 4, "chromium", active_sid=SUB_SID, sub_view=True)
+        where = name + ": "
+        self.assertEqual(r.get("subView"), {"opened": True, "pin": True}, where + "the viewer opened and its header holds the pin: %r" % (r.get("subView"),))
+        self._cue(name, r, "hung", 4)
+        self._chrome_witness(where, r, lambda c: c.get("inContent") and c["el"].startswith("span.sub-head-pin"), "the viewer's pin, inside the container")
+        self._surface(name, r)
+
+    # the chat's landing notice ("Going to the message from ..., click to stay here", the only cancel for a jump), drawn over the
+    # transcript's top from outside its container, shown after the badge has painted (its on-demand hook): the badge must move off it
+    def test_phone_hung_4s_a_landing_notice_shown_under_the_painted_badge_moves_it_clear(self):
+        name, r = self._drive("phone", "hung", 4, "chromium", notice_after_paint=True)
+        where = name + ": "
+        self.assertNotIn("noticeError", r, where + "the notice step ran: %r" % (r.get("noticeError"),))
+        self.assertEqual(r.get("notice"), {"hook": True, "shown": True}, where + "the notice was shown during the wait: %r" % (r.get("notice"),))
+        self._cue(name, r, "hung", 4)
+        recs = self._chrome_witness(where, r, lambda c: ".tx-landing-notice" in c["el"], "the landing notice")
+        self.assertTrue([b for b in recs if b["t"] >= r["t"]["notice"]], where + "a record of the painted badge after the notice showed: %r" % (recs,))
+        self._surface(name, r)
+
+    # the desktop Feed: no header above its list, three column heads sticky at the list's top, each with its drag chip (a grab cursor
+    # and nothing else); the badge's first place, 8 px down at the right, was on the third head's chip at this width (the Feed pane at
+    # 636 px in the 1600 px window, three columns)
+    def test_desktop_hung_4s_the_feeds_column_heads_and_drag_chips_stay_clear_of_the_badge(self):
+        name, r = self._drive("desktop", "hung", 4, "chromium", cue_app="feed")
+        where = name + ": "
+        self._cue(name, r, "hung", 4)
+        self._chrome_witness(where, r, lambda c: c.get("inContent") and c["el"].startswith("span.feed-col-name"), "a column head's drag chip, inside the list")
+        self._surface(name, r)
 
     def test_phone_hung_12s(self):
         self._leg("phone", "hung", 12)
