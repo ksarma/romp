@@ -102,17 +102,30 @@ trigger.
 The token-exempt routes are the no-side-effect liveness probes (`/healthz`,
 `/version` and `/busy` on the kernel, `/ping` on the bus), the sign-in page
 (`/login`, a static form that reads no state), the push worker's
-acknowledgement (`POST /push/ack`, admitted only by the push's own unguessable
-id: it records that push's delivery, marks the same device's older unanswered
-notifications for that session as replaced, and fills in the device's origin
-when it is missing) and the install files:
-`/manifest.webmanifest` and the three home-screen icons under `/media/`
-(`romp-touch-180.png`, `romp-app-192.png`, `romp-app-512.png`, a fixed allowlist
-of names, not a path prefix). A browser fetches those with credentials omitted
-when the dashboard is added to a home screen, so a token gate there would break
-the install. They are static and read no session state: the manifest is a
-fixed JSON literal (app name and short name, display mode, colors, start URL
-and icon list) and the icons are three PNG files.
+acknowledgement (`POST /push/ack`, admitted by the push's own id in place of
+the token) and the install files: `/manifest.webmanifest` and the three
+home-screen icons under `/media/` (`romp-touch-180.png`, `romp-app-192.png`,
+`romp-app-512.png`, a fixed allowlist of names, not a path prefix). A browser
+fetches those with credentials omitted when the dashboard is added to a home
+screen, so a token gate there would break the install. They are static and read
+no session state: the manifest is a fixed JSON literal (app name and short
+name, display mode, colors, start URL and icon list) and the icons are three
+PNG files. A `GET /` with no token and no sign-in is answered with the sign-in
+page instead of a 403.
+
+The push acknowledgement, the push worker's report that a notification was
+shown or tapped, runs ahead of the token check and is authenticated by the
+per-push id instead: 128 random bits the kernel minted for one notification and
+handed only to the device it went to. A valid id reaches that device's push
+state. The acknowledgement stamps the row's shown or tapped time (the first
+stamp stands) and records the worker's build string, which every report
+rewrites. A shown report marks the older unsettled, untapped pushes for the
+same session on that device superseded. The request's origin, read from its
+`Origin` header, else its `Referer`, else the forwarded headers or `Host`, is
+recorded on that device's subscription when none is on file; the `navigate` URL
+of the device's next declarative Apple push is built on that recorded origin. A
+recorded origin stands and a conflicting one is logged. An unknown id gets a
+404, and the body is capped at 2 KB before it is read.
 
 ### What a browser sign-in costs, and how it ends
 

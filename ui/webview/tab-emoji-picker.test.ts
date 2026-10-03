@@ -16,7 +16,10 @@ import { parseTabGroups, planStrip, setSectionCollapsed, homeSectionOf } from ".
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
 const CSS = ui("webview", "styles.css");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's emoji paragraph, the user-level account, leads docs/reference.md's "### A session's tab emoji" since the front
+// pages became the project's (CLAUDE.md "The documentation front pages"; fold 4 moved it out of docs/guide.md).
+const EMOJI_DOC = ((r: string) => r.slice(r.indexOf("\n### A session's tab emoji\n"), r.indexOf("\n- **The tab.**", r.indexOf("\n### A session's tab emoji\n"))))(
+  fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8"));
 
 function slice(from: string, to: string): string {
   const i = RENDER.indexOf(from);
@@ -180,8 +183,8 @@ test("Clear: present in the footer, disabled and dressed as disabled with nothin
   assert.match(CSS, /\.picker-action:disabled \{ opacity: 0\.55; cursor: default; \}/);
 });
 
-test("the guide's emoji paragraph names the picker: search, the Recent row, the categories, or type or paste one", () => {
-  assert.match(GUIDE, /choose \*\*Emoji…\*\*\s+to open a picker: search by name or keyword, reuse one from the \*\*Recent\*\* row,\s+browse the categories, or type or paste one the list does not have\./);
+test("the docs' emoji paragraph names the picker: search, the Recent row, the categories, or type or paste one", () => {
+  assert.match(EMOJI_DOC, /choose \*\*Emoji…\*\*\s+to open a picker: search by name or keyword, reuse one from the \*\*Recent\*\* row,\s+browse the categories, or type or paste one the list does not have\./);
 });
 
 test("the reference describes the picker, not the one-field dialog: every sender, the hint ABOVE the field, the Recent row, the local empty-Set refusal", () => {

@@ -14,14 +14,16 @@
 # in no writer of this name. The first slice of fold 4 of the project's changes (2026-10-02) took in the writers of six
 # of the seven modules the project added in it (test_autocompact_status.py, test_chat_notices.py,
 # test_codex_slash_guard.py, test_drain_held_working.py, test_needfull_no_dedup.py and test_usage_by_account_served.py);
-# the seventh, test_model_switches_kernel.py, writes ROMP_KERNEL_NO_OPEN alone.
+# the seventh, test_model_switches_kernel.py, writes ROMP_KERNEL_NO_OPEN alone. The second slice of fold 4 (2026-10-03)
+# took in the writers of the four modules the project added in it that write the name (test_artifacts_list.py,
+# test_codex_clear_route.py, test_codex_postal_tools.py and test_pane_registry.py).
 # The census pin compares it with the census by equality (_writer_set_faults): a module that writes the name and is
 # not here faults as a new writer, and a module here that no longer writes it faults until its line is removed.
 # Lines leave as writers migrate; a new writer is not added (omit the write or move it to the conftest floor),
 # except as a rename of a line here; the first two landing merges' lines were added on the reviewer's rulings of
 # round 2 on fork PR #894, which had the file derived again at each merge, and the fifth's, the sixth's, the seventh's
 # and the eighth's by the same derivation, which at the third, the fourth and the ninth took in none; fold 4's first
-# slice added its lines by the same derivation, since the project's modules come in as it shipped them.
+# and second slices added their lines by the same derivation, since the project's modules come in as they shipped them.
 permission_ask_feeder_drive.py
 test_anchor_mints.py
 test_api_error_tail.py
@@ -32,6 +34,7 @@ test_api_health_hover.py
 test_api_health_hover_browser.py
 test_api_health_rail.py
 test_api_retry_backoff.py
+test_artifacts_list.py
 test_ask_unit_cards.py
 test_asm_checkpoint.py
 test_auto_nudge_every_kernel.py
@@ -69,10 +72,12 @@ test_client_diag_capped_shape.py
 test_client_diag_reconnect_stamp.py
 test_client_diag_rotation.py
 test_close_confirm.py
+test_codex_clear_route.py
 test_codex_echo_merge.py
 test_codex_launch_error_card.py
 test_codex_models_frame.py
 test_codex_models_route.py
+test_codex_postal_tools.py
 test_codex_slash_guard.py
 test_cold_tab_gate.py
 test_color_route.py
@@ -332,6 +337,7 @@ test_pane_gutters.py
 test_pane_hidden_word_browser.py
 test_pane_loader_reconnect.py
 test_pane_order_parity.py
+test_pane_registry.py
 test_pane_shim_return.py
 test_pane_state_broadcast.py
 test_parked_cue.py

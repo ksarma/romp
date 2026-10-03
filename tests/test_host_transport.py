@@ -1033,8 +1033,8 @@ class LeaseClassification(unittest.TestCase):
 class FakeHost:
     """An asyncio Unix server speaking the host's frames from a scripted journal. `echo_turns`: the CLI behind it runs
     a one-step turn per fed user text (its own user record back, then the turn's result), the frames the backend's
-    one-fed-text-at-a-time hold (SdkSession._untaken, 2026-09-08) releases on; a host that echoes nothing holds every
-    text after the first for good."""
+    one-fed-text-at-a-time hold (SdkSession._untaken) releases on; a host that echoes nothing holds every text after
+    the first for good."""
 
     def __init__(self, path, records, busy=False, exit_after=None, answer_init=None, echo_turns=False):
         self.path, self.records, self.busy, self.exit_after = path, records, busy, exit_after
@@ -4494,8 +4494,8 @@ class AttachStandDown(unittest.TestCase):
 
     def test_four_unanswered_attaches_stand_the_session_down_once_until_a_send(self):
         # echo_turns: the backend feeds one text at a time and waits for the CLI to take it (SdkSession._untaken), so
-        # the three texts asserted below reach this host only if it answers each with a turn (upstream's fake echoes
-        # none and upstream has no hold)
+        # the three texts asserted below reach this host only if it answers each with a turn; a host that echoes
+        # nothing would hold the second and third for good
         self._serve(answer_init=lambda n: False, echo_turns=True)
         self.assertTrue(self.be.send(self.sid, "hello"))
         self._wait(lambda: "host.attach-failed" in self._kinds(), timeout=40, what="the stand-down row")

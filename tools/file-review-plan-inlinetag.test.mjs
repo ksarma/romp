@@ -25,7 +25,9 @@ const flat = (s) => s.replace(/\s+/g, ' ');
 
 const plan = read('plans', 'file-review.md');
 const viewerPlan = flat(read('plans', 'markdown-viewer.md'));
-const guide = flat(read('docs', 'guide.md'));
+// the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front
+// pages are the project's, CLAUDE.md "The documentation front pages"), so `guide` reads the reference and the pins hold there
+const guide = flat(read('docs', 'reference.md'));
 const mod = read('ui', 'webview', 'md-literal-tags.ts');
 const view = read('ui', 'webview', 'file-view.ts');
 const map = read('ui', 'webview', 'anchor-map.ts');

@@ -293,7 +293,12 @@ ROWS = [
 # population: upstream PR 1849's three re-exec problem rows in kernel/sdk_backend.py (problem_row sites 14 to 17,
 # door-value sites 21 to 24), upstream PR 1876's two held-working rows through _spend_guard_row in kernel/kernel.py
 # (_spend_guard_row sites 2 to 4), and the slice's other writer calls (calls reaching the writer 359 to 384: self 202 to
-# 210, typed 109 to 126): doors 443 to 476, functions 3316 to 3409, and no other entry moved). Until round 8 these were FLOORS, and a floor
+# 210, typed 109 to 126): doors 443 to 476, functions 3316 to 3409, and no other entry moved; re-derived at fold 4 slice
+# 2's merge of upstream cbc1de1e3 into slice 1's head 815badebb, where upstream PR 1889 (this fork's queued-sends offer,
+# landed) added two writer calls in kernel/sdk_backend.py, SdkSession._release_hold_at_exit's row for a thread exit the CLI
+# survives under its host and SdkSession._run's row for a failed exit release (calls reaching the writer 384 to 386: typed
+# 126 to 128; neither env-tainted, so content rows stay 13), and the slice's upstream side added 53 kernel/kernel.py
+# functions, named on the functions entry: doors 476 to 478, functions 3409 to 3462, and no other entry moved). Until round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
 # 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
 # head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
@@ -305,10 +310,10 @@ ROWS = [
 #   print(json.dumps(c.counts, sort_keys=True)); print(json.dumps(c.by_kind, sort_keys=True))
 #   print(len(c.existence_rows), len(c.mods["credentials.py"].fns))'
 COUNTS = {
-    "doors": 476,                  # 1 appender + 384 calls reaching it + 52 conduit and feeder call sites (_log_quietly 21,
+    "doors": 478,                  # 1 appender + 386 calls reaching it + 52 conduit and feeder call sites (_log_quietly 21,
     #                                problem_row 17, _sdk_problem 8, _spend_guard_row 4, _note_ws_drop 2) + 24 door-as-argument
     #                                sites + 10 parameter-bound functions + 2 feeder appends + 3 merge reads
-    "calls_reaching_writer": 384,  # self._log in SdkBackend 210, another receiver 126, ApiHealth's bound self._log 7,
+    "calls_reaching_writer": 386,  # self._log in SdkBackend 210, another receiver 128, ApiHealth's bound self._log 7,
     #                                a log= parameter 36, a local alias 5
     "log_param_fns": 10,           # problem_row, ApiHealth.__init__, flag_settings_path, cli_scope_supported, cli_scope_limits and
     #                                its pass-through _cli_scope_settle, helper_fast_org_env and its pass-through key_fast_org_env,
@@ -327,7 +332,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3409,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3462,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -371,9 +376,26 @@ COUNTS = {
     #                                no other entry moved; then at fold 4 slice 1's merge of upstream 944537e9f into fork main
     #                                919fde73b as 3409, the upstream side's net 63 in kernel/kernel.py (2554 to 2617) and 30 in
     #                                kernel/sdk_backend.py (734 to 764), the census's own derivation on the merged tree;
-    #                                credentials.py did not move, and no other entry moved
+    #                                credentials.py did not move, and no other entry moved; then at fold 4 slice 2's merge of
+    #                                upstream cbc1de1e3 into slice 1's head 815badebb as 3462, the upstream side's 53 in
+    #                                kernel/kernel.py (2617 to 2670), each a function cbc1de1e3 has and 944537e9f lacks: PR 1911's
+    #                                _artifacts_items, _artifacts_list, _artifacts_page, _artifacts_walk and its nested absolute;
+    #                                PR 1925's _artifacts_mentions, _artifacts_signal and _artifacts_version; PR 1951's
+    #                                _active_chat_audience, _artifacts_admit and the artifactsSignal job's lambda in
+    #                                _pusher_cycle_jobs; the lambdas in _artifacts_items and _artifacts_mentions; PR 1919's
+    #                                _data_pane_css, _data_pane_markup, _data_panes, _pane_check, _pane_dir, _pane_order,
+    #                                _pane_path, _pane_served_src, _pane_source_kind, _panes_attr, _panes_data, _panes_rev,
+    #                                _panes_snapshot, define_pane and remove_pane; PR 1922's _data_pane_mobile_css and
+    #                                _generic_panes; PR 1867's _codex_agents_text, _codex_hhmm, _codex_inbox_text,
+    #                                _codex_postal_call, _codex_postal_fault, _codex_postal_http, _codex_postal_log,
+    #                                _codex_postal_send, _codex_postal_tools_on, _codex_recall_text, _codex_receipts_text and
+    #                                _codex_sender_disp; PR 1880's _codex_clear_command, _parked_clear_op and _slash_alone; PR
+    #                                1958's _chat_delivery and _note_chat_handed; PR 1954's _chat_prior_n and
+    #                                _PerfStats.build_chat_baseline_raced and build_chat_baseline_repaired; PR 1912's
+    #                                _key_in_transcript; PR 1910's _scoped_pin_after and _unpin_to_synchronized; none removed;
+    #                                sdk_backend.py (764) and credentials.py did not move, and no other entry moved
 }
-CALLS_BY_KIND = {"self": 210, "typed": 126, "bound-self": 7, "param": 36, "alias": 5}   # the 384's derivation, an equality each
+CALLS_BY_KIND = {"self": 210, "typed": 128, "bound-self": 7, "param": 36, "alias": 5}   # the 386's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
 #                          re-derived unchanged at both round-8 merges of main; the vocabulary test holds the count exactly (a
 #                          floor of 20 stood here until round 8)

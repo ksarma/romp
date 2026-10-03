@@ -35,7 +35,9 @@ const FILES = read("files.ts");
 const FEED = read("feed.ts");
 const CHAT_CSS = read("styles.css");
 const KERNEL = fs.readFileSync(path.resolve(EXT, "..", "kernel", "kernel.py"), "utf8");
-const GUIDE = fs.readFileSync(path.resolve(EXT, "..", "docs", "guide.md"), "utf8");
+// the fork's Files pane paragraph lives in docs/reference.md ("The Files pane") since the front pages became the project's
+// (CLAUDE.md "The documentation front pages"; fold 4 moved every fork paragraph there), so the pin reads it there
+const REF = fs.readFileSync(path.resolve(EXT, "..", "docs", "reference.md"), "utf8");
 
 const SID = "11111111-2222-3333-4444-555555555555";       // a session on the tab strip, named and coloured
 const SID_TAB = "11111111-2222-3333-4444-666666666666";   // a session the tab set names but the session list does not
@@ -333,8 +335,8 @@ test("the viewer's title bar wraps in every sheet: the path and its directory li
   }
 });
 
-test("the guide names the folder link and where its listing opens", () => {
-  assert.match(GUIDE, /The folder under the chat \(the session's working directory\) opens a\s+listing of that folder by the same rule/);
+test("the reference names the folder link and where its listing opens", () => {
+  assert.match(REF, /The folder under the chat \(the session's working directory\) opens a\s+listing of that folder by the same rule/);
 });
 
 // ── the browser module's host contract, executed over a DOM stand-in ───────────────────────────────
@@ -626,17 +628,25 @@ test("BrowseHost, executed: a plain click on a file row goes to the host's openF
 // the kernel's shell scripts, verbatim: plain JS in a non-raw Python string, so a backslash would mean the
 // Python text and the served text differ; checked, so the slice can be trusted
 function collapseJs(): string {
-  const at = KERNEL.indexOf("_PANE_ORDER = (");
-  assert.ok(at > 0, "_PANE_ORDER not found in kernel.py: re-anchor");
-  const keys = Array.from(KERNEL.slice(at, KERNEL.indexOf("\n\n", at)).matchAll(/\("(\w+)", "/g)).map((m) => m[1]);
-  assert.ok(keys.includes("feed") && keys.includes("files"), "the pane keys parsed from _PANE_ORDER: " + keys.join(","));
+  // the keys the kernel splices in, `[k for k, _ in _PANE_ORDER if k in _HAND_PANES]`: since the project's panes-as-data change
+  // _PANE_ORDER is built from the shipped records in _CODE_PANES, so the keys are those records' ids in order, kept when the
+  // hand-written tuple _HAND_PANES names them (the generic panes join from body[data-panes] at run time, absent here)
+  assert.ok(KERNEL.includes('_PANE_ORDER = (*((p["id"], p["title"]) for p in _CODE_PANES),)'), "_PANE_ORDER is no longer built from _CODE_PANES: re-anchor");
+  const at = KERNEL.indexOf("_CODE_PANES = tuple(");
+  assert.ok(at > 0, "_CODE_PANES not found in kernel.py: re-anchor");
+  const ids = Array.from(KERNEL.slice(at, KERNEL.indexOf("\n))\n", at)).matchAll(/\{"id": "(\w+)"/g)).map((m) => m[1]);
+  const hand = KERNEL.match(/^_HAND_PANES = \(([^)]*)\)/m);
+  assert.ok(hand, "_HAND_PANES not found in kernel.py: re-anchor");
+  const handIds = Array.from(hand[1].matchAll(/"(\w+)"/g)).map((m) => m[1]);
+  const keys = ids.filter((k) => handIds.includes(k));
+  assert.ok(keys.includes("feed") && keys.includes("files"), "the pane keys parsed from _CODE_PANES and _HAND_PANES: " + keys.join(","));
   // the pane keys are spliced into the script inline (kernel.py: `""" + json.dumps([...]) + """`, the placeholder-free form the
   // 2026-09-15 pull-in took): the two literal halves around the splice, the keys parsed above between them
   const open = '_LANDING_COLLAPSE_JS = """';
   const at2 = KERNEL.indexOf(open);
   assert.ok(at2 > 0, "_LANDING_COLLAPSE_JS not found in kernel.py: re-anchor");
   const start = at2 + open.length;
-  const splice = '""" + json.dumps([k for k, _ in _PANE_ORDER]) + """';
+  const splice = '""" + json.dumps([k for k, _ in _PANE_ORDER if k in _HAND_PANES]) + """';
   const cut = KERNEL.indexOf(splice, start);
   assert.ok(cut > start, "the pane-keys splice in _LANDING_COLLAPSE_JS moved: re-anchor (the inline json.dumps of _PANE_ORDER)");
   const rest = cut + splice.length;

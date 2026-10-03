@@ -149,6 +149,8 @@ export const BOOKKEEPING: ReadonlyMap<string, (m: any) => string | null> = new M
   ["cardOpened",     ()  => "cardOpened"],                         // feed.ts: the open-metric row
   ["locateDiag",     ()  => "locateDiag"],                         // render.ts: a chat landing attempt's audit row
   ["orderAudit",     ()  => "orderAudit"],                         // render.ts auditTabOrder: a tab-order permutation's audit row
+  ["watchArtifacts", (m) => "watchArtifacts" + K + m.sid],         // artifacts.ts: the one session the pane watches on its host (an unwatch under the same key: the last word wins)
+  ["listArtifacts",  (m) => "listArtifacts" + K + m.sid],          // artifacts.ts: the listing asked before the host's relay opened rides its open (its reply carries reqId; a stale one is dropped there)
 ]);
 
 /** The key a held bookkeeping message dedupes under on the conn's queue, or null when the message is a
@@ -426,9 +428,23 @@ export function routeOutbound(msg: any, knownHosts?: ReadonlySet<string>): Route
   // "remote" to every attached host, so a kernel whose user PINNED the store on that machine can stand a remote
   // click down (a settingStale frame, why pinned) while its own dashboard's click still applies. A message without
   // the field is read as remote by the kernel, the conservative reading for a dashboard from before this change.
-  if (KERNEL_SETTING.has(msg.type)) return [LOCAL, ...(knownHosts || [])].map((h) => ({ host: h, msg: { ...msg, origin: h === LOCAL ? "local" : "remote" } }));
-  // a PIN is per machine (one A): this dashboard's own kernel alone, stamped local, the one origin its kernel takes a pin from
-  if (msg.type === "setSettingPin") return [{ host: LOCAL, msg: { ...msg, origin: "local" } }];
+  // Phase two (the settings' machine selector): a kernel setting with a `hosts` list is SCOPED to those kernels alone, each
+  // copy with its origin and `scope: "pinned"`, the explicit intent a pinned store's gate honours and which pins the store
+  // there; a broadcast (no list) never carries the scope, so nothing changes for a kernel the selector never named.
+  if (KERNEL_SETTING.has(msg.type) && Array.isArray(msg.hosts) && msg.hosts.length) {
+    const { hosts, scope: _scope, ...rest } = msg;
+    return hosts.map((h: string) => ({ host: h || LOCAL, msg: { ...rest, origin: (h || LOCAL) === LOCAL ? "local" : "remote", scope: "pinned" } }));
+  }
+  // an EMPTY or malformed hosts list is no scope: the broadcast, with the field stripped (round two, low e: an empty list routed to nobody)
+  if (KERNEL_SETTING.has(msg.type)) { const { scope: _scope, hosts: _hosts, ...rest } = msg; return [LOCAL, ...(knownHosts || [])].map((h) => ({ host: h, msg: { ...rest, origin: h === LOCAL ? "local" : "remote" } })); }
+  // a PIN is per machine (one A): this dashboard's own kernel alone, stamped local, the one origin its kernel takes a pin from;
+  // phase two: addressed to the picked kernels (`hosts`), each copy with its origin and the scope, so the arm accepts an
+  // explicit pin or un-pin from another machine's dashboard
+  if (msg.type === "setSettingPin") {
+    const { hosts, scope: _scope, ...rest } = msg;
+    const targets: string[] = Array.isArray(hosts) && hosts.length ? hosts : [LOCAL];
+    return targets.map((h) => ({ host: h || LOCAL, msg: { ...rest, origin: (h || LOCAL) === LOCAL ? "local" : "remote", ...(Array.isArray(hosts) && hosts.length ? { scope: "pinned" } : {}) } }));
+  }
 
   // The BOARD-WIDE Clear all (the feed footer's, T286; the session header's Clear all is askClearMany, routed
   // by its session id below) carries no session id, so it fell through to the local kernel alone and a merged
@@ -1277,6 +1293,9 @@ export class FederationManager {
       // panel says "loading sessions…" from the same set
       pending: () => this.pendingFor(),
       lastSeen: (h: string) => this.lastSeen[h] || 0,
+      // does this page hold a conn for the host yet (dialed or dialing)? A pane's bookkeeping sent before then has nothing to
+      // ride and is dropped (sendRemote, no-conn); the Artifacts pane defers its first ask to the relay's open instead
+      hasConn: (h: string) => this.conns.has(h),
       // is a dial attempt to this host in flight right now? The host-down notice's swirl spins on exactly
       // this (host-prefix.ts hostDialLive: the socket's CONNECTING state), and romp:hostDial below says
       // when it changes — on the dial, the open and the close, never on a timer

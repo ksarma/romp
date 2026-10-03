@@ -318,7 +318,7 @@ class LandingShell(unittest.TestCase):
         self.assertLess(js.index("lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');"), js.index("var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);"))
         self.assertIn("var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},EPI={},TOK={},PEND={},DEAD={};", js)   # + the promoted urls, the failure count per episode (review round 3; the page-life count left with its row in the reviewer's round 7), and the promotion tokens (HIGH 2, review round 1)
         self.assertNotIn("__rompPanePromote", js, "no window export of promote() (review round 3, fresh-3): no production code called it; the three promotion roads (show(), the boot block, the lazyFlip listener) call the local promote() directly, and a re-add would be an unused seam commented as a road")
-        self.assertIn("if(en){if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));", km._LANDING_COLLAPSE_JS, "the controller's promotion line is untouched")
+        self.assertIn("if(en){if(!(k in DPX)&&f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));", km._LANDING_COLLAPSE_JS, "the controller's promotion line is upstream's, untouched by the lazy panes (since PR 1922 a generic pane, DPX, loads only when it comes on screen, the apply's rule)")
 
     def test_the_seven_lazy_pane_diag_keys_are_withheld_from_the_allowlist(self):
         # the absence pin of the reviewer's round-7 ruling on regression-1 (_DIAG_KEYS_WITHHELD above says why and how it reverts)
@@ -647,6 +647,7 @@ _FIT_HARNESS = r"""
 const PROPS = {}, SETS = [], RAF = [], WIN = {}, DOC = {}, VV = {}, CHAT = {}, LOADS = [];
 const on = (book) => (k, f) => { (book[k] = book[k] || []).push(f); };
 global.window = global;
+window.__rompPaneSourceOk = () => true;   // the shell's source check (the boot script's, plans/panes-as-data.md): this stub's posts stand for a protocol pane's
 global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0;
 global.scrollTo = () => {};
 global.matchMedia = () => ({ matches: true });                 // a coarse pointer: the phone
@@ -2314,6 +2315,7 @@ back.append(pop); body.append(back);
 const WIN = {}, WSS = [], POSTS = [];
 const on = (book) => (k, f) => { (book[k] = book[k] || []).push(f); };
 global.window = global;
+window.__rompPaneSourceOk = () => true;   // the shell's source check (the boot script's, plans/panes-as-data.md): this stub's posts stand for a protocol pane's
 global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0; global.scrollTo = () => {};
 global.matchMedia = () => ({ matches: true });
 global.requestAnimationFrame = () => 1;
@@ -3048,6 +3050,10 @@ let TABNOW = null; const BODYCLS = new Set();
 global.document.body = { setAttribute: (x, v) => { if (x === 'data-tab') TABNOW = v; }, getAttribute: (x) => (x === 'data-tab' ? TABNOW : null),
   classList: { toggle: (c, on) => { if (on) BODYCLS.add(c); else BODYCLS.delete(c); }, contains: (c) => BODYCLS.has(c) } };
 global.__rompPaneEnabled = () => true;   // the head script's reader: every pane shown
+// the phone's tab bar: one button per pane, as the served markup has it. Since PR 1922 show() sends a pane with NO tab button to the chat
+// (an experimental record, a stale remembered key), so a bar with no buttons would turn every tap here into the chat's
+const TABBTNS = ['chat', 'fleet', 'feed', 'timeline', 'waiting', 'files'].map((k) => ({ hidden: false, getAttribute: (x) => (x === 'data-pane' ? k : null), classList: { toggle() {} }, addEventListener() {} }));
+BAR.querySelectorAll = (sel) => (sel === 'button[data-pane]' ? TABBTNS : []);
 global.lazySnap = () => ({ src: Object.fromEntries(Object.keys(ATTRS).map((id) => [id, ATTRS[id].src || null])), lazy: Object.fromEntries(Object.keys(ATTRS).map((id) => [id, ATTRS[id]['data-lazy-src'] || null])), sets: SRCSETS.slice() });
 """
 # the pane reads the shell's REAL layout probe (as _LINK_GLUE points it at the shell's real link)
@@ -3298,6 +3304,134 @@ class NotifiedSessionSeed(unittest.TestCase):
         self.assertLess(seed, head.index("searchParams['delete']('token')"), "before the token scrub, as a statement of its own")
         self.assertEqual(html.count("<script>"), 22, "no new script element: the seed is a statement of the head script")
         self.assertLess(html.index("searchParams.get('push-reveal')"), html.index("<iframe"), "ahead of the first pane iframe, whose shim reads the blob at its parse")
+
+
+# ── the two scripts together, executed: the mobile switcher's boot restore, then the pane controller ───────────────────────
+# A phone shows a pane by its TAB (the 1922 read): the mobile script parses BEFORE the pane controller and restores the remembered
+# tab then, so its copy of data-src to src used to run before the gear had ruled and in every layout; the controller's apply copied a
+# generic pane's src by the desktop flag into a frame the phone never shows. Both scripts run here, in the boot's order, over a DOM
+# stub of the phone's shell: the tab bar (one button per NON-experimental pane, as _mtab_buttons_html renders it), the frames with
+# data-src, the body, the store, a media query the seed flips.
+_TWO_HARNESS = r"""
+'use strict';
+const ATTR = __ATTR__, STORE = __STORE__; let MQ_ON = __MOBILE__;
+const SETS = {};
+function el(id, attrs) { const a = Object.assign({}, attrs || {}); const cls = new Set(); return { id, hidden: false, offsetHeight: 40, title: '',
+  getAttribute: (k) => (k in a ? a[k] : null), setAttribute: (k, v) => { a[k] = v; if (k === 'src') SETS[id] = (SETS[id] || 0) + 1; }, removeAttribute: (k) => { delete a[k]; },
+  classList: { toggle: (c, on) => { if (on === undefined) on = !cls.has(c); if (on) cls.add(c); else cls.delete(c); return on; }, add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c) },
+  style: { setProperty() {}, removeProperty() {}, getPropertyValue: () => '' }, addEventListener() {}, removeEventListener() {}, querySelectorAll: () => [], querySelector: () => null, focus() {},
+  contentWindow: { postMessage() {} }, getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 40, right: 390, bottom: 40 }) }; }
+const HAND = ['chat', 'timeline', 'fleet', 'feed', 'files'];
+const KEYS = HAND.concat(ATTR.map((p) => p.id));
+const frames = {}; KEYS.forEach((k) => { frames['f-' + k] = el('f-' + k, (k === 'chat' || k === 'files') ? { src: '/' + k } : { 'data-src': '/' + k }); });
+const TABS = HAND.concat(ATTR.filter((p) => !p.experimental).map((p) => p.id));   // an experimental record has no phone tab
+const buttons = TABS.map((k) => el('mtab-' + k, { 'data-pane': k }));
+const railBtns = KEYS.map((k) => el('rail-' + k, { 'data-pane': k }));
+const bar = el('mtabs'); bar.querySelectorAll = (sel) => (sel === 'button[data-pane]' ? buttons : []);
+const BODY_ATTR = { 'data-panes': JSON.stringify(ATTR) }; const bodyCls = new Set(['po-chat', 'po-feed', 'po-timeline']);
+const body = { getAttribute: (k) => (k in BODY_ATTR ? BODY_ATTR[k] : null), setAttribute: (k, v) => { BODY_ATTR[k] = v; }, removeAttribute: (k) => { delete BODY_ATTR[k]; },
+  classList: { toggle: (c, on) => { if (on === undefined) on = !bodyCls.has(c); if (on) bodyCls.add(c); else bodyCls.delete(c); return on; }, contains: (c) => bodyCls.has(c), add: (c) => bodyCls.add(c), remove: (c) => bodyCls.delete(c) },
+  appendChild() {}, style: { setProperty() {}, removeProperty() {} } };
+global.window = global;
+global.document = { body, documentElement: { style: { setProperty() {}, removeProperty() {} }, scrollTop: 0, clientWidth: 390 }, visibilityState: 'visible', hasFocus: () => true,
+  getElementById: (id) => (id === 'mtabs' ? bar : frames[id] || null), addEventListener() {}, removeEventListener() {},
+  querySelectorAll: (sel) => { if (sel === '.rail-btn[data-pane]') return railBtns; const m = /data-pane=([\w-]+)/.exec(sel); if (!m) return []; return railBtns.concat(buttons).filter((b) => b.getAttribute('data-pane') === m[1]); },
+  querySelector: () => null, createElement: () => el('x'), activeElement: null };
+global.localStorage = { getItem: (k) => (k in STORE ? STORE[k] : null), setItem: (k, v) => { STORE[k] = String(v); }, removeItem: (k) => { delete STORE[k]; } };
+global.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+global.location = { search: '', pathname: '/', origin: 'http://TESTHOST:7432', reload() {} };
+global.URLSearchParams = class { get() { return null; } };
+global.Event = class { constructor(t) { this.type = t; } };
+const MQ = { get matches() { return MQ_ON; }, _ls: [], addEventListener: (t, f) => { MQ._ls.push(f); }, addListener: (f) => { MQ._ls.push(f); } };
+global.matchMedia = () => MQ;
+Object.defineProperty(global, 'navigator', { configurable: true, value: { userAgent: 'test' } });   // node's own navigator is getter-only
+global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0; global.scrollTo = () => {};
+global.requestAnimationFrame = () => 0; global.cancelAnimationFrame = () => {};
+global.setTimeout = () => 0; global.clearTimeout = () => {}; global.setInterval = () => 0; global.clearInterval = () => {};
+global.addEventListener = () => {}; global.removeEventListener = () => {}; global.dispatchEvent = () => true;
+global.fetch = () => new Promise(() => {});
+global.WebSocket = class { constructor() { this.readyState = 0; } send() {} close() {} addEventListener() {} };   // the shell socket the mobile script dials (node 22 has a real one, whose failed connection would crash the run)
+global.MessageChannel = class { constructor() { this.port1 = { postMessage() {}, onmessage: null }; this.port2 = { postMessage() {}, onmessage: null }; } };
+// `sets`: the src writes to the GENERIC panes' frames (the hand-written optional panes, timeline, fleet and feed, load by their flag on every layout, as before)
+const generic = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => ['f-chat', 'f-timeline', 'f-fleet', 'f-feed', 'f-files'].indexOf(k) < 0));
+const snap = () => ({ tab: BODY_ATTR['data-tab'] || null, remembered: STORE['romp-mobile-tab'] || null, sets: generic(SETS),
+  src: Object.fromEntries(KEYS.map((k) => [k, frames['f-' + k].getAttribute('src')])), shown: KEYS.filter((k) => frames['f-' + k].classList.contains('m-on')), po: [...bodyCls].filter((c) => c.indexOf('po-') === 0).sort() });
+const out = {};
+"""
+_TWO_MIDDLE = r"""
+out.afterMobile = snap();   // the mobile script parsed and restored the remembered tab; the pane controller has not parsed yet
+"""
+_TWO_DRIVER = r"""
+out.afterBoot = snap();     // both scripts parsed: the controller's boot reconcile and apply have run
+MQ_ON = !MQ_ON; MQ._ls.forEach((f) => f({ matches: MQ_ON }));   // the layout flips (a rotation across the breakpoint): the media query's change event
+out.afterFlip = snap();
+console.log(JSON.stringify(out));
+"""
+
+
+def _head_pane_enabled():
+    """The head script's reader of the gear's Panes setting (window.__rompPaneEnabled), lifted whole from the served landing. On the
+    page it is defined before either script runs, and the fork's lazy panes read it: their promote() refuses a pane the gear has off
+    (the stage 0 loader in _LANDING_MOBILE_JS), so a stub world without it would load a gear-disabled tab the page never loads."""
+    html = km._landing()
+    i = html.index("window.__rompPaneEnabled=function(k){")
+    return html[i:html.index("};", i) + 2]
+
+
+def _run_two(rows, store, mobile):
+    js = (_TWO_HARNESS.replace("__ATTR__", json.dumps(rows)).replace("__STORE__", json.dumps({k: json.dumps(v) if not isinstance(v, str) else v for k, v in store.items()}))
+          .replace("__MOBILE__", "true" if mobile else "false") + _head_pane_enabled() + "\n" + km._LANDING_MOBILE_JS + _TWO_MIDDLE + km._LANDING_COLLAPSE_JS + _TWO_DRIVER)
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(js)
+        path = f.name
+    try:
+        r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+    finally:
+        os.unlink(path)
+    assert r.returncode == 0, "the scripts threw: " + r.stderr[-1200:]
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+_ART = {"id": "artifacts", "title": "Artifacts", "protocol": "romp", "experimental": True, "on": False, "builtin": True}
+_NOTES = {"id": "notes", "title": "Notes", "protocol": "romp", "experimental": False, "on": True, "builtin": False}
+_DOCS = {"id": "docs", "title": "Docs", "protocol": "none", "experimental": False, "on": True, "builtin": False}
+
+
+class TheMobileSwitcherAndThePaneControllerBoot(unittest.TestCase):
+    def test_a_remembered_tab_of_a_pane_with_no_tab_falls_to_the_chat_and_loads_nothing(self):
+        # a stale artifacts key with the gear on: the pane is enabled but has no tab, so the chat shows, its key is repaired, nothing loads
+        r = _run_two([_ART, _NOTES, _DOCS], {"romp-mobile-tab": "artifacts", "romp:settings": {"panes": {"artifacts": True}}, "romp-panes": {"artifacts": True}}, mobile=True)
+        m, b = r["afterMobile"], r["afterBoot"]
+        self.assertEqual((m["tab"], m["remembered"]), ("chat", "chat"), "the restore falls to the chat and repairs the key: %r" % m)
+        self.assertEqual(m["sets"], {}, "no src copied by the restore")
+        self.assertEqual((b["tab"], b["src"]["artifacts"], b["shown"]), ("chat", None, ["chat"]), "after the controller: still the chat, the Artifacts page never loaded: %r" % b)
+        self.assertIn("po-artifacts", b["po"], "the pane's flag stands for the desktop")
+        self.assertEqual(r["afterFlip"]["src"]["artifacts"], "/artifacts", "the layout flipped to the desktop: the flag loads it there, where it shows")
+
+    def test_a_remembered_tab_of_a_pane_the_gear_disabled_never_loads_and_the_controller_reroutes_to_the_chat(self):
+        r = _run_two([_ART, _NOTES, _DOCS], {"romp-mobile-tab": "notes", "romp:settings": {"panes": {"notes": False}}}, mobile=True)
+        m, b = r["afterMobile"], r["afterBoot"]
+        self.assertEqual((m["tab"], m["src"]["notes"]), ("notes", None), "the restore shows the remembered tab but copies no src before the controller has ruled: %r" % m)
+        self.assertEqual((b["tab"], b["src"]["notes"]), ("chat", None), "the controller hides the gear-disabled pane's tab and reroutes to the chat; nothing loaded: %r" % b)
+        self.assertEqual(b["sets"], {}, "no src written at all")
+
+    def test_a_remembered_narrow_layout_key_on_a_desktop_boot_loads_nothing_off_screen(self):
+        r = _run_two([_ART, _NOTES, _DOCS], {"romp-mobile-tab": "notes", "romp-panes": {"notes": False, "docs": False}}, mobile=False)
+        m, b = r["afterMobile"], r["afterBoot"]
+        self.assertEqual(m["src"]["notes"], None, "a desktop boot copies nothing for the remembered tab: %r" % m)
+        self.assertEqual((b["src"]["notes"], b["src"]["docs"]), (None, None), "the desktop loads by the flag alone; both off: nothing: %r" % b)
+        self.assertEqual(b["sets"], {})
+
+    def test_on_a_phone_the_current_tab_loads_on_the_controllers_apply_and_the_flip_loads_the_rest(self):
+        r = _run_two([_ART, _NOTES, _DOCS], {"romp-mobile-tab": "notes", "romp-panes": {"notes": False}}, mobile=True)
+        m, b, f = r["afterMobile"], r["afterBoot"], r["afterFlip"]
+        # the fork's lazy panes (stage 0, _LANDING_MOBILE_JS): the boot's show(last) promotes the enabled stored tab at the restore, through
+        # promote() and the head's gear reader, with the loader and the load verdict; upstream's restore copies nothing and leaves the frame
+        # to the controller's boot apply. Either way the frame is set ONCE and only for a tab the gear shows (the case above)
+        self.assertEqual((m["tab"], m["src"]["notes"], m["sets"]), ("notes", "/notes", {"f-notes": 1}), "the restore: the tab, its frame promoted by the lazy panes: %r" % m)
+        self.assertEqual((b["tab"], b["src"]["notes"], b["sets"]), ("notes", "/notes", {"f-notes": 1}), "after the controller's boot apply the CURRENT tab's frame is loaded, once (its key is in the dashboard): %r" % b)
+        self.assertEqual(b["src"]["docs"], None, "the docs pane (flag on, not the current tab) is not loaded into a frame the phone never shows")
+        self.assertEqual((f["src"]["docs"], f["sets"]), ("/docs", {"f-notes": 1, "f-docs": 1}), "the layout flipped to the desktop: the flag loads the docs pane; the notes frame is not re-assigned: %r" % f)
 
 
 if __name__ == "__main__":

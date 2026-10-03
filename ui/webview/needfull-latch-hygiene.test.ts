@@ -39,10 +39,10 @@ function liftLatch(closingTabs: Map<string, number> = new Map()): { api: LatchAp
   const js = requireCjs("esbuild").transformSync(RENDER.slice(a, b), { loader: "ts" }).code;
   const posts: Posted[] = [];
   const vscodeApi = { postMessage: (m: Posted) => { posts.push(m); } };
-  const make = new Function("vscodeApi", "hostOf", "isProvisionalId", "closingTabs", js + `
+  const make = new Function("vscodeApi", "hostOf", "isProvisionalId", "closingTabs", "sessions", "keyOf", js + `
     return { requestFullSession, awaitingFull, pendingFullWhy,
-             clearAsksForHost: typeof clearAsksForHost === "function" ? clearAsksForHost : undefined };`) as (v: unknown, h: unknown, p: unknown, c: unknown) => LatchApi;
-  return { api: make(vscodeApi, hostOf, isProvisionalId, closingTabs), posts };
+             clearAsksForHost: typeof clearAsksForHost === "function" ? clearAsksForHost : undefined };`) as (v: unknown, h: unknown, p: unknown, c: unknown, s: unknown, k: unknown) => LatchApi;
+  return { api: make(vscodeApi, hostOf, isProvisionalId, closingTabs, new Map(), () => undefined), posts };
 }
 
 const WEB = "web", API = "api";

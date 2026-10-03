@@ -769,7 +769,11 @@ test("a save refused by the OWNING kernel's edit gate re-offers the consent and 
   assert.match(KERNEL, /dashboard file editing is off on this machine/);
   const FED = web("federation.ts");
   assert.ok(FED.includes('"setFileEditing"'), "setFileEditing is a KERNEL_SETTING…");
-  assert.match(FED, /if \(KERNEL_SETTING\.has\(msg\.type\)\) return \[LOCAL, \.\.\.\(knownHosts \|\| \[\]\)\]/,
+  // The unscoped arm, the one a post with no `hosts` list takes (the helper's opt-in above carries none); the scoped arm
+  // above it (the settings' machine selector, a `hosts` list) is `KERNEL_SETTING.has(msg.type) && ...` and does not match.
+  // This pin says where the broadcast lives; the executed routing of setFileEditing to every attached kernel is
+  // multi-kernel-merge.test.ts's "the gear's kernel-side settings reach EVERY attached kernel".
+  assert.match(FED, /if \(KERNEL_SETTING\.has\(msg\.type\)\) \{[^\n]*return \[LOCAL, \.\.\.\(knownHosts \|\| \[\]\)\]/,
     "…and KERNEL_SETTING broadcasts to every attached kernel");
 });
 

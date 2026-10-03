@@ -183,6 +183,12 @@ def _number_word(n):
 # from this tuple, still turns the counting sentence red.
 _PASS_JOBS_AFTER_ATTRIBUTION = ("retryUpgrade", "heldWorking")
 
+# The cycle jobs that joined _pusher_cycle_jobs after the same change: the docs' stages_ms entry names the nine cycle jobs whose rows
+# MOVED to pusher.cycleJobsMs on 2026-09-18, and a job born on the pusher after it moved nothing. One so far, with the upstream fold of
+# 2026-10-03: artifactsSignal (upstream PR 1911, on the pusher per PR 1951). Each must still be a cycle job (_moved_cycle_jobs reds
+# otherwise), and a cycle job added later and absent here still turns the naming check red.
+_CYCLE_JOBS_AFTER_ATTRIBUTION = ("artifactsSignal",)
+
 
 def _kept_pass_jobs():
     """The pass jobs whose container rows the docs count as keeping their values across the 2026-09-18 change."""
@@ -191,6 +197,15 @@ def _kept_pass_jobs():
     if gone:
         raise AssertionError("_PASS_JOBS_AFTER_ATTRIBUTION names %r, no longer a pass job: drop or rename it there" % gone)
     return [j for j in km._PerfStats.PASS_JOBS if j not in later]
+
+
+def _moved_cycle_jobs():
+    """The cycle jobs whose rows the docs name as moved to pusher.cycleJobsMs by the 2026-09-18 change."""
+    later = set(_CYCLE_JOBS_AFTER_ATTRIBUTION)
+    gone = sorted(later - set(km._PerfStats.CYCLE_JOBS))
+    if gone:
+        raise AssertionError("_CYCLE_JOBS_AFTER_ATTRIBUTION names %r, no longer a cycle job: drop or rename it there" % gone)
+    return [j for j in km._PerfStats.CYCLE_JOBS if j not in later]
 
 
 # Wordings about the stage routing that a review round retired, assembled from parts so this file does not carry them as
@@ -343,7 +358,7 @@ class Collector(unittest.TestCase):
         self.assertEqual(p["ring_n"], 0)
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
         # the pusher's nine cycle jobs left stages_ms on 2026-09-18 (stage attribution): a `jobs.<job>` row there is the jobs
-        # thread's own, the cycle jobs' rows are pusher.cycleJobsMs, seeded with the nine names, and a fresh snapshot has
+        # thread's own, the cycle jobs' rows are pusher.cycleJobsMs, seeded with the cycle jobs' names, and a fresh snapshot has
         # no foreign write (a `jobs.` stage from a thread owning neither loop)
         self.assertFalse({"jobs." + j for j in km._PerfStats.CYCLE_JOBS} & set(snap["stages_ms"]), "no cycle job's row in stages_ms")
         self.assertTrue({"jobs." + j for j in km._PerfStats.PASS_JOBS} <= set(snap["stages_ms"]), "every pass job's row, at zero")
@@ -360,10 +375,11 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson", "thread"})   # thread: the comment popover's build (2026-09-08)
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
         self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved",
-                                                       "coldSkipped", "bySession"},
+                                                       "coldSkipped", "baselineRaced", "baselineRepaired", "bySession"},
                          "the chat builder carries the active/background split, the miss attribution (round-4 P3), "
                          "the builds left uncached because their signature moved (P4), the skeleton-held tabs the cold-tab "
-                         "gate skipped (coldSkipped, upstream #1659) and the per-session timer (bySession)")
+                         "gate skipped (coldSkipped, upstream #1659), the delta baseline's detector and its repair "
+                         "(baselineRaced, baselineRepaired, upstream #1954) and the per-session timer (bySession)")
         self.assertEqual(set(snap["builds"]["chat"]["bg_miss"]), set(km._PerfStats.CHAT_MISS))
         self.assertEqual(km._PerfStats.CHAT_MISS, km._CHAT_SIG_LABELS + ("cold", "nosig"),
                          "one counter per labelled signature component, plus the two no-signature cases")
@@ -1150,7 +1166,8 @@ class Collector(unittest.TestCase):
         # chat also carries the watched/background split and the per-component attribution (2026-09-09); the
         # plain writer counts the build and attributes nothing
         self.assertEqual(snap["builds"]["chat"], {"cached": 1, "built": 1, "ms": 40.0, "active_built": 0, "bg_built": 0,
-                                                  "moved": 0, "coldSkipped": 0, "bg_miss": {k: 0 for k in km._PerfStats.CHAT_MISS},
+                                                  "moved": 0, "coldSkipped": 0, "baselineRaced": 0, "baselineRepaired": 0,
+                                                  "bg_miss": {k: 0 for k in km._PerfStats.CHAT_MISS},
                                                   "bySession": []})                   # the per-session timer (2026-09-14): no sid handed in, no row
         self.assertEqual(snap["builds"]["feed"]["built"], 1)
         self.assertEqual(snap["builds"]["timeline"], {"cached": 0, "built": 0, "ms": 0.0})
@@ -1484,7 +1501,7 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["cycles"], 0)
         self.assertEqual(snap["http"], {})
         self.assertGreater(snap["since"], before)
-        # the two owner-routed blocks start over with the rest (2026-09-18): the foreign block empty, the pusher's the nine at zero
+        # the two owner-routed blocks start over with the rest (2026-09-18): the foreign block empty, the pusher's cycle jobs at zero
         self.assertEqual(snap["stagesForeign"], {})
         self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS})
         self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "the connect table too")
@@ -1503,6 +1520,29 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["sends"]["full"]["chat"]["count"], 16000)
         self.assertEqual(snap["pusher"]["chatFullWhy"], {"noBase": 16000})
         self.assertEqual(snap["http"]["GET /p"]["count"], 16000)
+
+    def test_every_feed_memo_report_key_is_in_the_references_memo_passage(self):
+        """docs/reference.md's builds.feed.memo passage names every key _feed_memo_report returns (2026-09-21, from the
+        post-merge review of #1820, which found `coldLive`, `coldFlip`, `failed` and `failing` absent, so a standing
+        cold-by-design `coldLive` count read as a fault; the chatFullWhy gloss test above is the precedent), so a renamed or
+        added counter reaches the doc or fails here. The slice runs from the `memo` phrase to the `sends` bullet, not the
+        whole `builds` bullet, so a `failed` mentioned elsewhere cannot satisfy it; the keys are the runtime report's unioned
+        with every counter literal the kernel's source passes to _feed_memo_count and every literal it subscripts the stats
+        dict with directly or seeds through setdefault, each read in either quote style (the failed count's shape, 2026-09-21, from the
+        post-merge reviews of #1938 and #1945: a counter written that way with no seed reaches neither the report nor the
+        helper scan, and a scan keyed on one quote style would miss the other), so a counter minted at a site this process never
+        exercises still has to reach the doc, which is what makes that claim hold by mechanism; the floor keeps a shrunken
+        report from passing vacuously."""
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        i = doc.index("`memo`, the per-session card memo inside `build_feed`")
+        para = doc[i:doc.index("\n- `sends`:", i)]
+        src = inspect.getsource(km)
+        keys = (set(km._feed_memo_report()) | set(re.findall(r'''_feed_memo_count\(\s*["'](\w+)["']''', src))
+                | set(re.findall(r'''_FEED_MEMO_STATS(?:\[|\.setdefault\()\s*["'](\w+)["']''', src)))
+        self.assertGreaterEqual(len(keys), 13, sorted(keys))
+        self.assertEqual(sorted(k for k in keys if "`%s`" % k not in para), [],
+                         "memo counters the reference's passage never backticks (the review found coldFlip, coldLive, "
+                         "failed and failing missing)")
 
 
 class ContainerKidsCache(unittest.TestCase):
@@ -1558,13 +1598,14 @@ class ContainerKidsCache(unittest.TestCase):
 
 
 class JobRowsByOwner(unittest.TestCase):
-    """A `jobs.<job>` stage is written from two threads under one prefix: nine jobs in _pusher_cycle_jobs on the pusher and
+    """A `jobs.<job>` stage is written from two threads under one prefix: ten jobs in _pusher_cycle_jobs on the pusher (nine at
+    the change, ten since artifactsSignal joined: _CYCLE_JOBS_AFTER_ATTRIBUTION) and
     the rest in _jobs_pass on the jobs thread (nineteen at the change, twenty-one since retryUpgrade and heldWorking joined:
     _PASS_JOBS_AFTER_ATTRIBUTION), plus a job's parts from _sub_stage. Until 2026-09-18 stage() added every
     writer's wall to the one flat row, so a row said which thread's time it held only by the lists in the source, and a
     job that changed lists, or a test driving both loops on one thread, merged the two silently. Now stage() routes a
     dotted `jobs.` write by the WRITER'S OWNER: the jobs thread's to the flat row (stages_ms), the pusher's to
-    pusher.cycleJobsMs under the job's name (the nine seeded at zero), and a thread owning neither loop's to stagesForeign
+    pusher.cycleJobsMs under the job's name (the cycle jobs seeded at zero), and a thread owning neither loop's to stagesForeign
     under the stage name, counted rather than dropped. No stage name, mark, split row or boot row changes; three call
     sites did: the nudge walk's looks computation, a per-thread parse tally since the flat parse row moves for the jobs
     owner alone, and the two loop bodies' owner guards, which open the loop's own cycle on a thread that owns the other
@@ -1622,7 +1663,7 @@ class JobRowsByOwner(unittest.TestCase):
         self.assertAlmostEqual(snap["stages_ms"]["jobs"], 2.0, msg="the containers are not dotted: the flat row as before")
         self.assertAlmostEqual(snap["stages_ms"]["jobsPass"], 3.0)
         for j in km._PerfStats.CYCLE_JOBS:
-            self.assertIn(j, snap["pusher"]["cycleJobsMs"], "the nine are always present: %s" % j)
+            self.assertIn(j, snap["pusher"]["cycleJobsMs"], "the cycle jobs are always present: %s" % j)
         self.assertIn(self.NAME[len("jobs."):], km._PerfStats.CYCLE_JOBS, "premise: the name is a cycle job's")
 
     # The two roll-up sums take the JOB rows alone, by a dot-free key, whoever wrote them (2026-09-18 review). The documented
@@ -1722,7 +1763,7 @@ class JobRowsByOwner(unittest.TestCase):
 
     def test_a_pusher_write_under_a_name_outside_the_nine_still_lands_in_its_block(self):
         """A job's part (jobs.autoNudge.snapshot, _sub_stage) or a job that moved lists, written by the pusher's owner: the
-        block takes the name as it comes, so nothing is dropped and the seeded nine are not a filter."""
+        block takes the name as it comes, so nothing is dropped and the seeded cycle jobs are not a filter."""
         st = km._PerfStats()
         st.cycle_begin()
         st.stage("jobs.autoNudge.snapshot", 0.001); st.stage("jobs.autoNudge", 0.004)
@@ -1738,7 +1779,7 @@ class JobRowsByOwner(unittest.TestCase):
     def test_the_census_is_the_two_lists_and_the_flat_seed_is_the_pass_list(self):
         P = km._PerfStats
         self.assertEqual(P.JOBS, P.CYCLE_JOBS + P.PASS_JOBS, "JOBS stays the census")
-        self.assertEqual(len(P.CYCLE_JOBS), 9)
+        self.assertEqual(len(P.CYCLE_JOBS), 10)   # artifactsSignal joined the pusher's cycle (upstream PR 1911, census per PR 1951)
         self.assertFalse(set(P.CYCLE_JOBS) & set(P.PASS_JOBS), "no job on both lists")
         self.assertEqual(len(P.JOBS), len(set(P.JOBS)), "no name twice")
         self.assertTrue({"jobs." + j for j in P.PASS_JOBS} <= set(P.STAGES), "the flat seed lists every pass job")
@@ -1807,7 +1848,9 @@ class JobRowsByOwner(unittest.TestCase):
         self.assertRegex(para, r"moved.{0,120}`pusher\.connectPush\.stagesMs", "the connect pushes' part of the push rows moved to the connect table")
         self.assertRegex(para, r"not compar(e|able)", "the discontinuity: the moved rows are not comparable across the change")
         self.assertNotIn("count every push", para, "the fold sentence is gone")
-        for j in km._PerfStats.CYCLE_JOBS:
+        moved = _moved_cycle_jobs()   # the cycle jobs less those born on the pusher after the change (_CYCLE_JOBS_AFTER_ATTRIBUTION)
+        self.assertEqual(len(moved), 9, "nine cycle jobs moved on 2026-09-18")
+        for j in moved:
             self.assertIn("`%s`" % j, para, "the nine are named: %s" % j)
         # The rows that keep their values are the pass jobs' container rows, counted from PASS_JOBS less the jobs that joined
         # after the change (_kept_pass_jobs), with the reason (the act-now pass closes no `jobs.<job>` container) and the

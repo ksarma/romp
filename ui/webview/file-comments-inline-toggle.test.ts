@@ -24,7 +24,10 @@ import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../tes
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
 const SETTINGS = web("settings.ts");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's Files section lives in docs/reference.md ("## The Files pane", up to the Artifacts pane) since the front pages
+// became the project's (CLAUDE.md "The documentation front pages"; fold 4 moved every fork paragraph there).
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const REF_FILES = ((at: number) => REF.slice(at, REF.indexOf("\n## The Artifacts pane", at)))(REF.indexOf("\n## The Files pane\n"));
 const PLAN = fs.readFileSync(path.resolve(process.cwd(), "..", "plans", "file-review.md"), "utf8");
 
 // ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
@@ -614,7 +617,7 @@ test("pins: the delegate action, the header's order, the store's key and default
   assert.doesNotMatch(literal[0].replace("changesInline: true", "changesInline: false"), DEFAULT_ON, "…and a flipped default turns it red");
   assert.match(SETTINGS, /const KEY = "romp:settings";/, "the store this suite's stub localStorage holds");
   // the guide: both views, both marks, the toggle by its label
-  const files = GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")).replace(/\s+/g, " ");
+  const files = REF_FILES.replace(/\s+/g, " ");
   for (const phrase of ["**Show changes inline**", "in both views", "deletion is struck", "insertion is tinted", "**Reveal**"]) assert.ok(files.includes(phrase), "guide: " + phrase);
   assert.doesNotMatch(files, /A deletion has nothing to mark in the Rendered view/, "the old sentence is gone");
   // the plan: the follow-on note beside the Slice 2 build note, the exclusion gone, the toggle in the UX paragraph

@@ -40,7 +40,10 @@ SENTENCE_2 = ("In a project that tracks files, a shell write whose target Romp c
 # installer's section on the tooling it puts in ~/.claude/. It stays clear of the words CONTEXT.md avoids for the comments log
 # (LOG_WORDS), and of the verbs its About entry avoids in this paragraph (the thirty-fifth commit's "links" turned the vocabulary
 # module red; the thirty-sixth names the section without it).
-POINTER = ("What a shell command can still do to a tracked file is set out in full in [Install](install.md), in its section "
+# Fold 4 moved both the Files section and the installer's section out of docs/guide.md and docs/install.md into
+# docs/reference.md (the front pages are the project's, CLAUDE.md "The documentation front pages"), so the pointer names this
+# reference instead of linking install.md; still no link, so the words its pins bar stay out of the prose.
+POINTER = ("What a shell command can still do to a tracked file is set out in full in this reference, in its section "
            "on the tooling the installer puts in `~/.claude/`.")
 # the names CONTEXT.md's About entry avoids for a comment about a change, as they show up in prose (the Files section's paragraphs
 # are held to them by tests/test_guide_files_about_vocabulary.py, which reads the entry; held here too, so a pointer that
@@ -59,6 +62,24 @@ def _read(*parts):
         return f.read()
 
 
+def _ref_section(md, heading):
+    """The body of the `## ` or `### ` heading `heading` in docs/reference.md, up to the next `## ` or `### ` heading."""
+    m = re.search(r"^#{2,3} " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} |\Z)", md, re.S | re.M)
+    assert m, "docs/reference.md has no section %r" % heading
+    return m.group(1)
+
+
+def _files_section():
+    """The guide's Files section as docs/reference.md holds it since fold 4 moved the fork's paragraphs out of docs/guide.md
+    (the front pages are the project's, CLAUDE.md "The documentation front pages"): the body of "## The Files pane", then the
+    paragraphs of the three viewer sections the reference keeps with the chat pane ("Links inside a file", "Text size and
+    width", "A file's own HTML"), which sat in the guide's Files section on this fork."""
+    ref = _read("docs", "reference.md")
+    parts = [_ref_section(ref, "The Files pane").strip("\n")]
+    parts += [_ref_section(ref, h).strip("\n") for h in ("Links inside a file", "Text size and width", "A file's own HTML")]
+    return "\n\n".join(parts) + "\n"
+
+
 def _flat(text):
     return re.sub(r"\s+", " ", text).strip()
 
@@ -71,7 +92,7 @@ def _section(md, heading):
 
 class TrackChangesParagraphNamesTheRefusal(unittest.TestCase):
     def setUp(self):
-        self.files = _flat(_section(_read("docs", "guide.md"), "Files"))
+        self.files = _flat(_files_section())
         self.hook = _read("hooks", "romp-track-bash-guard.mjs")
 
     def test_the_sentence_follows_the_figures_sentence(self):
@@ -85,15 +106,18 @@ class TrackChangesParagraphNamesTheRefusal(unittest.TestCase):
         self.assertIn("Spell the path out", self.hook)
 
     def test_the_pointer_follows_them_and_install_md_carries_the_statement_it_points_at(self):
-        # the pointer sits right after SENTENCE and SENTENCE_2, and the section it names in docs/install.md holds the full statement
+        # the pointer sits right after SENTENCE and SENTENCE_2, and the section it names (install.md's, in docs/reference.md
+        # since fold 4) holds the full statement
         self.assertIn(SENTENCE + " " + SENTENCE_2 + " " + POINTER, self.files)
-        install = _section(_read("docs", "install.md"), "What the installer links into `~/.claude/`")
+        install = _ref_section(_read("docs", "reference.md"), "What the installer links into `~/.claude/`")
         self.assertIn("THE RESIDUAL PROPERTY. The guard refuses a write only when", install)
         self.assertIn("A shape outside these classes that reaches a tracked file is a rule to state, not a residual.", _flat(install))
 
     def test_the_guide_carries_no_copy_of_the_developer_paragraph(self):
-        # round 6's heading and its verbatim paragraph are gone from the whole guide, not moved inside another section
-        guide = _read("docs", "guide.md")
+        # round 6's heading and its verbatim paragraph are gone from the whole guide, not moved inside another section; the
+        # guide's Files text is docs/reference.md's Files pane since fold 4, so both are read (the reference's installer
+        # section carries the developer paragraph on purpose, and is not read here)
+        guide = _read("docs", "guide.md") + "\n\n" + _files_section()
         self.assertNotIn("### The write guard on tracked files", guide)
         for text in ("residual property", "THE RESIDUAL PROPERTY", "extract's switch", "RESIDUAL TABLE", "B2 as ruled",
                      "stated since the first commit of this round"):

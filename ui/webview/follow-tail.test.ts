@@ -23,7 +23,7 @@ test("the harness case: 60 px above the bottom, a frame that adds nothing → no
 });
 
 test("render.ts appendActive measures before the rebuild and pins only when followTail says so", () => {
-  assert.match(RENDER, /import \{ followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink, followRebuiltTail, reshowStick \} from "\.\/scroll-keep";/);   // + followRebuiltTail (PR E: a re-windowed follow-mode reader follows the rebuilt rows' settling)
+  assert.match(RENDER, /import \{ followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink, followRebuiltTail, reshowStick, atBottomBeforeGrowth \} from "\.\/scroll-keep";/);   // + followRebuiltTail (PR E: a re-windowed follow-mode reader follows the rebuilt rows' settling) and atBottomBeforeGrowth (the box-below observer's pre-growth read)
   const m = RENDER.match(/^function appendActive\(\) \{([\s\S]*?)\n\}/m);
   assert.ok(m, "appendActive");
   const body = m![1];

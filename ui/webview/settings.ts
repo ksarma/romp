@@ -89,11 +89,17 @@ export type ChatScheme = "default" | "high-contrast" | "solarized-dark";
 // The optional panes and whether each is shown. Normalization idiom: only an explicit stored `false`
 // hides a pane; a missing key, a store from before the setting, or a corrupt value all read as shown,
 // so a bad entry may cost the preference, never a pane. Every key is always present after loadSettings.
-export type PaneSet = { timeline: boolean; fleet: boolean; feed: boolean };
-export const OPTIONAL_PANES: ReadonlyArray<keyof PaneSet> = ["timeline", "fleet", "feed"];
+// The optional panes' membership in this browser: the three shipped optional keys always present (only an explicit
+// false hides one), and any REGISTRY pane's key kept as stored (plans/panes-as-data.md: a data pane's availability rides
+// this store under its id; absent means on for a normal pane and off for an experimental one, which the shell decides
+// from the pane's record, so this reader keeps only explicit booleans for keys it does not know).
+export type PaneSet = { timeline: boolean; fleet: boolean; feed: boolean; [pane: string]: boolean };
+export const OPTIONAL_PANES: ReadonlyArray<"timeline" | "fleet" | "feed"> = ["timeline", "fleet", "feed"];
 export function paneSet(v: unknown): PaneSet {
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
-  return { timeline: o.timeline !== false, fleet: o.fleet !== false, feed: o.feed !== false };
+  const out: PaneSet = { timeline: o.timeline !== false, fleet: o.fleet !== false, feed: o.feed !== false };
+  for (const [k, val] of Object.entries(o)) if (!(k in out) && typeof val === "boolean") out[k] = val;
+  return out;
 }
 export type ChatTabTheme = "classic" | "yatharth";
 export function chatTabTheme(v: unknown): ChatTabTheme {
@@ -144,6 +150,7 @@ export function loadSettings(): RompSettings {
       s.paneDocking = s.paneDocking === true;   // the pane docking kit opt-in (fresh key): only the literal true turns it on; a store from before the key, or any other value, reads OFF
 
       delete (s as Record<string, unknown>).filesControl;   // the T317-era key (merged in by that gear's whole-object save): never read, gone on the next save
+      delete (s as Record<string, unknown>).showArtifactsControl;   // the Artifacts control's key, retired by panes-as-data phase three (the pane is an experimental record; the gear's Panes row is its control): never read, gone on the next save
       s.chatScheme = chatScheme(s.chatScheme);   // unknown/legacy values normalize to "default"
       s.commentsFilter = commentsFilter(s.commentsFilter);   // foreign values read as "all"
       s.figureHosts = figureHosts(s.figureHosts);   // a list of host names; a store from before the setting reads as the default list

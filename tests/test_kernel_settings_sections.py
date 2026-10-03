@@ -70,7 +70,7 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertIn("+ SHORTCUT_ROWS +", panes["general"])
         # Panes (the user 2026-09-10): three rows, one hint each, Sessions before Outline before Feed; the chat is required, Files keeps its rail toggle
         pn = panes["general"]   # the Panes section moved to General (T400)
-        self.assertEqual(pn.count('<label class="rs-row rs-panes-row">'), 5)   # Sessions, Outline, Feed, the Files row since the T404 tidy, and the Pane docking switch (plans/pane-docking.md phase two: a Panes row, so the off-dashboard hide takes it)
+        self.assertEqual(pn.count('<label class="rs-row rs-panes-row">'), 5)   # the Artifacts pane's row is the generic registry row (plans/panes-as-data.md phase three), rendered at open, not in the markup   # Sessions, Outline, Feed, the Files row since the T404 tidy, and the Pane docking switch (plans/pane-docking.md phase two: a Panes row, so the off-dashboard hide takes it)
         self.assertLess(pn.index("<b>Sessions</b>"), pn.index("<b>Outline</b>"))
         self.assertLess(pn.index("<b>Outline</b>"), pn.index("<b>Feed</b>"))
         self.assertNotIn("id=rs-pane-waiting", h, "this fork's Waiting pane keeps its rail toggle and has no Panes row (the 2026-09-15 pull-in's ruling)")
@@ -88,7 +88,7 @@ class SettingsSectionsTest(unittest.TestCase):
         # button before the version (T290)
         ge = panes["general"]
         self.assertTrue(ge.index(">Account<") < ge.index("id=rs-login-btn") < ge.index("id=rs-panes-sec") < ge.index("id=rs-pane-feed") < ge.index("id=rs-filesctl")
-                        < ge.index("id=rs-panedock")   # the Pane docking switch, a Panes row, closes the Panes section
+                        < ge.index("id=rs-panes-data") < ge.index("id=rs-panedock")   # the registry rows (plans/panes-as-data.md), then the Pane docking switch, a Panes row, closes the Panes section
                         < ge.index("data-section=files>Files<") < ge.index("id=rs-figurehosts") < ge.index("id=rs-filecomments")   # this fork's Files section, right after Panes
                         < ge.index("data-section=appearance>Appearance<") < ge.index("id=rs-theme") < ge.index("id=rs-pal") < ge.index(">Permissions<") < ge.index("id=rs-fileedit")
                         < ge.index(">This machine<") < ge.index("id=rs-conserve") < ge.index("id=rs-updates") < ge.index(">Keyboard shortcuts<"))
