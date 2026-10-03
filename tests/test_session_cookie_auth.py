@@ -722,11 +722,16 @@ class LoginHandoff(_Server):
 
     def test_a_token_on_a_page_route_signs_in_a_navigation_alone(self):
         # On a page route the token authorizes whatever loads it, but only a navigation (_is_navigation) signs
-        # the browser in: a fetch of / or /chat carrying ?token= (Accept */*, no Sec-Fetch-Dest), and a load
-        # whose Sec-Fetch-Dest names no document, get the page with no cookie and no seed.
-        for path in ("/", "/chat"):
+        # the browser in: a fetch carrying ?token= (Accept */*, no Sec-Fetch-Dest), and a load whose
+        # Sec-Fetch-Dest names no document and no iframe (object, embed, frame, or empty), get the page with no
+        # cookie and no seed, so the parameter stays in the page's address; this is the paint clause's case, which
+        # the census's paint pin names this test for. A document navigation signs the browser in and drops it.
+        for path in ("/", "/chat", "/feed"):
             for what, kw in (("a fetch", {"accept": "*/*"}),
-                             ("a load that is not a document", {"accept": "text/html", "sec_fetch": "empty"})):
+                             ("an empty-dest load", {"accept": "text/html", "sec_fetch": "empty"}),
+                             ("an object load", {"accept": "text/html", "sec_fetch": "object"}),
+                             ("an embed load", {"accept": "text/html", "sec_fetch": "embed"}),
+                             ("a frame load", {"accept": "text/html", "sec_fetch": "frame"})):
                 status, body, headers = self._req(path + "?token=" + TOK, **kw)
                 text = body.decode("utf-8", "replace")
                 self.assertEqual(status, 200, "%s of %s is authorized by the token" % (what, path))
