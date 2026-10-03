@@ -20,10 +20,10 @@ notes-api world. Skips LOUDLY without the extension deps or a Playwright browser
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -41,14 +41,6 @@ import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environm
 
 SID_R0 = "11111111-2222-4333-8444-000000000801"   # "api" on TESTHOST
 HOST = "TESTHOST"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _transcript(sid, tag, cwd, pairs):
@@ -86,14 +78,11 @@ def _kernel(lab, name, port, token, sessions):
     env = _lab.kernel_env(os.path.join(lab, name), claude, os.path.join(lab, "dist"), port, token, ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
     proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(log, "a"), stderr=subprocess.STDOUT, env=env)
-    for _ in range(120):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
-            return proc, log
-        except Exception:
-            time.sleep(0.5)
+    why = lab_ports.wait_owned(proc, env)
+    if not why:
+        return proc, log
     proc.kill(); proc.wait()
-    raise unittest.SkipTest("hermetic kernel %s never served /healthz here" % name)
+    raise unittest.SkipTest("hermetic kernel %s never served /healthz here: %s" % (name, why))
 
 
 def _tunnel_row(hport, htoken):
@@ -195,13 +184,13 @@ class ServedRemotesPanelLoading(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="remotes-panel-loading-")
         lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
-        cls.rport, cls.rtoken = _free_port(), "testtok-remote-panel"
-        cls.hport, cls.htoken = _free_port(), "testtok-hub-panel"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-panel"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-panel"
         rp, cls.rlog = _kernel(cls.lab, "testhost", cls.rport, cls.rtoken, [(SID_R0, "api", 1)])
         cls.procs.append(rp)
         hp, cls.hlog = _kernel(cls.lab, "hub", cls.hport, cls.htoken, [])
         cls.procs.append(hp)
-        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": _free_port(), "token": cls.rtoken}).encode()
+        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": lab_ports.reserve(cls.lab), "token": cls.rtoken}).encode()
         req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (cls.hport, cls.htoken), data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -272,6 +261,7 @@ class ServedRemotesPanelLoading(unittest.TestCase):
                 pr.kill(); pr.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def setUp(self):

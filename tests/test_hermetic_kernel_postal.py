@@ -362,6 +362,7 @@ else:                                  # nor its derived() (module_level_env_cen
     import parse_cache as PC           # noqa: E402
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
+import lab_ports   # noqa: E402  kernel_env reserves the lab's postal port there; the one test that calls it releases it
 if __package__:                        # fork PR #916's evaluator of CI's Run pytest step, its one copy (_proof_options):
     from .test_ci_pytest_workers import command_on, matrix_os_labels, python_job_steps, worker_counts
 else:                                  # the functions, not its classes, so pytest collects no test of it here
@@ -6635,15 +6636,15 @@ _ANYIO_DIRECT_WHOLESALE = {**_ANYIO_INTROSPECTION, **_ANYIO_REACHERS, **_ANYIO_W
 _ANYIO_DIRECT_ALLOWED = frozenset({'AttributeError', 'Exception', 'IndexError', 'KeyError', 'LINEAGE', 'OSError',
     'PARENT_ROOT', 'ProcessLookupError', 'STATE_DIR', 'SYSTEM_TMPDIR', 'TEST_ROOT_CHILDREN', 'TEST_ROOT_OWNER_MARKER',
     'TEST_ROOT_PREFIX', 'TMP_ROOT', 'TypeError', 'ValueError', '_HANDED', '_MADE_DIRS', '_REAL_MKDTEMP', '_above',
-    '_env_ring_census', '_fs_clock', '_git_fixture', '_lab_dist', '_lab_dist_stub', '_pid_alive', '_romp_load',
-    '_sdk_blocker', '_tracked_mkdtemp', 'a', 'above', 'abspath', 'all', 'append', 'argv', 'atexit', 'basename',
-    'child', 'clear', 'd', 'depth', 'dict', 'dir', 'dirname', 'dumps', 'encoding', 'env_ring_census', 'environ',
-    'fh', 'fromkeys', 'fs_clock', 'get', 'getattr', 'getpid', 'gettempdir', 'git_fixture', 'handed',
+    '_env_ring_census', '_fs_clock', '_git_fixture', '_lab_dist', '_lab_dist_stub', '_lab_ports', '_pid_alive',
+    '_romp_load', '_sdk_blocker', '_tracked_mkdtemp', 'a', 'above', 'abspath', 'all', 'append', 'argv', 'atexit',
+    'basename', 'child', 'clear', 'd', 'depth', 'dict', 'dir', 'dirname', 'dumps', 'encoding', 'env_ring_census',
+    'environ', 'fh', 'fromkeys', 'fs_clock', 'get', 'getattr', 'getpid', 'gettempdir', 'git_fixture', 'handed',
     'ignore_errors', 'int', 'isdir', 'isinstance', 'islink', 'join', 'json', 'k', 'kill', 'lab_dist',
-    'lab_dist_stub', 'line', 'lineage', 'lines', 'list', 'load', 'loads', 'mint_root', 'mkdtemp', 'modules', 'open',
-    'os', 'out', 'p', 'parent', 'parent_root', 'path', 'pid', 'pop', 'prefix', 'r', 'read', 'realpath', 'rec',
-    'record_child_root', 'register', 'remove_dead_children', 'remove_made_dirs', 'remove_tmp_root', 'reversed',
-    'rindex', 'rmtree', 'romp_load', 'romp_tracked', 'root', 'root_lineage', 'rp', 'sdk_blocker', 'sep',
+    'lab_dist_stub', 'lab_ports', 'line', 'lineage', 'lines', 'list', 'load', 'loads', 'mint_root', 'mkdtemp',
+    'modules', 'open', 'os', 'out', 'p', 'parent', 'parent_root', 'path', 'pid', 'pop', 'prefix', 'r', 'read',
+    'realpath', 'rec', 'record_child_root', 'register', 'remove_dead_children', 'remove_made_dirs', 'remove_tmp_root',
+    'reversed', 'rindex', 'rmtree', 'romp_load', 'romp_tracked', 'root', 'root_lineage', 'rp', 'sdk_blocker', 'sep',
     'setdefault', 'shutil', 'split', 'splitlines', 'startswith', 'stat', 'state', 'str', 'survivors', 'sys',
     'system', 'tempdir', 'tempfile', 'time', 'write', 'write_owner_marker'})
 #   THE POSITIVE ALLOWLIST (the reviewer's ruling of 2026-09-29 15:08Z on round 2 of fork PR #894, its first medium): a
@@ -11732,6 +11733,7 @@ def tearDownModule():
 
 class HermeticKernelPostal(unittest.TestCase):
     def test_kernel_env_gives_every_lab_kernel_its_own_never_started_bus(self):
+        self.addCleanup(lab_ports.release, "/tmp/lab")   # the stand-in lab's postal port, held until the test ends
         env = _lab.kernel_env("/tmp/lab", "/tmp/lab/claude", "/tmp/lab/dist", 1, "tok")
         self.assertEqual(env.get("ROMP_POSTAL_CLIENT_ONLY"), "1", "the kernel's ensure starts no bus")
         self.assertEqual(env.get("ROMP_POSTAL_PEERS"), "0")

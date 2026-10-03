@@ -339,6 +339,11 @@ sys.modules.setdefault("romp_load", _romp_load)
 from . import lab_dist as _lab_dist  # noqa: E402
 sys.modules.setdefault("lab_dist", _lab_dist)
 
+# `import lab_ports` in the served-lab modules (tests/lab_ports.py, the one door to a lab kernel's ports and its
+# readiness wait) resolves the same way: most of them import it at the top, before they put tests/ on sys.path.
+from . import lab_ports as _lab_ports  # noqa: E402
+sys.modules.setdefault("lab_ports", _lab_ports)
+
 # `import lab_dist_stub` in the two real-tree pins (tests/lab_dist_stub.py, the node preload standing in for the bare
 # packages a checkout without the extension's node_modules lacks) resolves the same way.
 from . import lab_dist_stub as _lab_dist_stub  # noqa: E402

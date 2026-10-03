@@ -63,15 +63,14 @@ All fixtures synthetic.
 import base64
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -151,14 +150,6 @@ class SourcePins(unittest.TestCase):
                         "the loss toast first, then what the last page was saying")
 
 
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
-
-
 # A lab kernel's environment is built from names (kernel_env), never from a copy of the runner's. A run from a
 # session on a machine running romp carries the live kernel's exports, and a lab kernel that inherited them exited
 # when the live manager restarted (ROMP_MANAGER_PID, which kernel.py's _parent_watch reads), bound where the live
@@ -171,8 +162,9 @@ def _free_port():
 # developer's git configuration, and the four ROMP_ names of its floor the lab does not set itself:
 # ROMP_SERVICE_ENV_FILE and ROMP_SERVICE_ENV (no real service.env), ROMP_CLAUDE_BIN (no real claude CLI) and
 # ROMP_CLI_SCOPE (no systemd-run). The lab's own names go over those, and a postal bus of its own: ROMP_POSTAL_PORT
-# at a free port with ROMP_POSTAL_PEERS=0 and ROMP_POSTAL_CLIENT_ONLY=1, so the kernel's boot-time ensure starts
-# nothing there (client-only applies in the legacy singleton scheme alone, postal_service.is_client_only).
+# at a port reserved for the lab (tests/lab_ports.py: never the lab kernel's serve port, held until the lab releases it)
+# with ROMP_POSTAL_PEERS=0 and ROMP_POSTAL_CLIENT_ONLY=1, so the kernel's boot-time ensure starts nothing there
+# (client-only applies in the legacy singleton scheme alone, postal_service.is_client_only).
 # The environment the driver hands the kernel it relaunches rides the lab's cfg.json, a file, so it is narrowed once
 # more (relaunch_env) to the ROMP_* and XDG_* names, CLAUDE_CONFIG_DIR, PATH and HOME and the three conftest names:
 # never anything else a lab put in its kernel's environment, such as the probe the served legs plant, and never a
@@ -189,10 +181,12 @@ KERNEL_ENV_NAMES = RELAUNCH_ENV_NAMES | frozenset(("ROMP_SERVICE_ENV_FILE", "ROM
 def kernel_env(lab, claude, dist, port, token, **seams):
     """A lab kernel's environment: the runner's KERNEL_ENV_NAMES and XDG_* names; over them the lab's roots
     (XDG_STATE_HOME under `lab`, CLAUDE_CONFIG_DIR `claude`, ROMP_DIST_DIR `dist`), its serve `port` and `token`, the
-    seams every lab kernel runs with, a postal bus of its own that is never started, and any `seams` the lab adds
-    by name. The kernel the lab starts gets it by process; the driver's relaunch gets relaunch_env() of it, through
-    the stanza relaunch_cfg() writes to the lab's cfg.json. Floors the lab root's `session-hosts` off when the lab exists
-    and wrote no toggle of its own (T348; the runner's root is floored by tests/conftest.py, a lab's is its own)."""
+    seams every lab kernel runs with, a postal bus of its own that is never started (its port reserved under `lab`
+    through tests/lab_ports.py, so lab_ports.release of the lab, or of a lab above it, frees it), and any `seams` the
+    lab adds by name. The kernel the lab starts gets it by process; the driver's relaunch gets relaunch_env() of it,
+    through the stanza relaunch_cfg() writes to the lab's cfg.json. Floors the lab root's `session-hosts` off when the
+    lab exists and wrote no toggle of its own (T348; the runner's root is floored by tests/conftest.py, a lab's is its
+    own)."""
     env = {k: v for k, v in os.environ.items() if k in KERNEL_ENV_NAMES or k.startswith("XDG_")}
     env.setdefault("ROMP_CLAUDE_BIN", "/bin/false")   # the conftest floor for a bare run: a lab kernel's judges never reach a real CLI
     env.update(XDG_STATE_HOME=os.path.join(lab, "xdg"), CLAUDE_CONFIG_DIR=claude,
@@ -202,7 +196,7 @@ def kernel_env(lab, claude, dist, port, token, **seams):
                ROMP_MODEL_CATALOG="off",     # hermetic: the T222 catalog fetch must never reach the network
                ROMP_UPDATE_CHECK="off",      # hermetic: the update check reads the release remote's tags over the network, and a
                #   newer release raises the shell's update banner over the page under test (CI, 2026-09-13)
-               ROMP_POSTAL_PORT=str(_free_port()), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1",
+               ROMP_POSTAL_PORT=str(lab_ports.reserve(lab)), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1",
                ROMP_POSTAL_HERMETIC="1")   # the port above is this run's own: the bus honours it under a test (2026-09-11)
     env.update(seams)
     # T348: hosts are on by default, so a lab root with no `session-hosts` file would spawn a real bin/romp-session-host at
@@ -431,6 +425,7 @@ class _ShipLab(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served wedge needs them")
         cls.lab = tempfile.mkdtemp(prefix="ship-reship-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
@@ -466,7 +461,7 @@ class _ShipLab(unittest.TestCase):
                                     "stop_reason": "end_turn"}}) + "\n")
         cls.png = os.path.join(cls.lab, "shot.png")
         Path(cls.png).write_bytes(PNG)
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-reship"
         cls.env = kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         # a name outside the relaunch list, planted in the lab kernel's environment so _run_driver's check on the
@@ -476,16 +471,10 @@ class _ShipLab(unittest.TestCase):
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=cls.env)
         cls.kernel2_pid = None
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -498,6 +487,7 @@ class _ShipLab(unittest.TestCase):
                     pass
         if getattr(cls, "kernel", None):
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _run_driver(self, driver_src, cfg_obj, timeout=300):
@@ -546,6 +536,12 @@ class RelaunchEnv(unittest.TestCase):
     holds it for the run. Its waitFree program blocks on a held instance lock and returns once the lock is free. No
     kernel and no browser, so this runs everywhere; the served legs check the written file itself (_run_driver)."""
 
+    def _env(self, lab):
+        """kernel_env over the stand-in lab, whose postal port reservation is released when the test ends: the lab is a
+        path no kernel runs in, so nothing else would release it before the process exits."""
+        self.addCleanup(lab_ports.release, lab)
+        return kernel_env(lab, os.path.join(lab, "claude"), os.path.join(lab, "dist"), 4321, "testtok")
+
     def test_a_planted_name_never_reaches_the_relaunch_env_and_the_kernels_names_do(self):
         lab = os.path.join(os.sep, "lab")
         # the runner's shell: a live kernel's state export (it outranks the XDG root; kernel_env never takes it) and
@@ -555,7 +551,7 @@ class RelaunchEnv(unittest.TestCase):
                   "TMPDIR": os.path.join(lab, "tmp"),
                   "GIT_CONFIG_GLOBAL": os.path.join(lab, "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"}
         with mock.patch.dict(os.environ, runner):
-            env = kernel_env(lab, os.path.join(lab, "claude"), os.path.join(lab, "dist"), 4321, "testtok")
+            env = self._env(lab)
         env["RUNNER_SECRET_PROBE"] = "abc"       # a name outside the relaunch list, planted as the served labs do
         cfg = relaunch_cfg(env, os.path.join(lab, "kernel.log"))
         self.assertEqual(cfg["cmd"], os.path.join(BIN, "romp-kernel"))
@@ -582,7 +578,7 @@ class RelaunchEnv(unittest.TestCase):
                     "ROMP_SESSION_NAME": "web", "ROMP_BIN": os.path.join(lab, "bin", "romp")}
         runner = dict(identity, ROMP_TESTS_PROBE=os.path.join(lab, "probe"))
         with mock.patch.dict(os.environ, runner):
-            env = kernel_env(lab, os.path.join(lab, "claude"), os.path.join(lab, "dist"), 4321, "testtok")
+            env = self._env(lab)
         names = sorted(env)
         for name in runner:
             self.assertNotIn(name, names, "the runner's %s must never reach a lab kernel" % name)
@@ -655,6 +651,7 @@ class LabKernelEnv(unittest.TestCase):
     MACHINE_BUS_PORT = "25302"
 
     def _env(self, runner, **seams):
+        self.addCleanup(lab_ports.release, self.LAB)   # the stand-in lab's postal port, held until the test ends
         with mock.patch.dict(os.environ, runner):
             if "ROMP_POSTAL_PORT" not in runner:
                 os.environ.pop("ROMP_POSTAL_PORT", None)
