@@ -2381,6 +2381,35 @@ class _ParkSeen(threading.Event):
         super().set()
 
 
+class _WatchedLock:
+    """A stand-in for B's _PEER_STATE_LOCK (pmb._PEER_STATE_LOCK, which peer_update, the handler and the mirror name at
+    call time): the real lock does the locking; `before` runs ahead of each acquisition and `after` once each release
+    has run, each on the thread that takes the lock, so a test can act at an exact entry to a hold or exit from one.
+    The test that installs it puts the real lock back in a cleanup."""
+
+    def __init__(self, real, before=None, after=None):
+        self.real, self.before, self.after = real, before or (lambda: None), after or (lambda: None)
+
+    def acquire(self, *a, **k):
+        self.before()
+        return self.real.acquire(*a, **k)
+
+    def release(self):
+        self.real.release()
+        self.after()
+
+    def locked(self):
+        return self.real.locked()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
 class AHostThatDialsUsIsReachedOnItsNextExchange(_TwoBusHarness):
     """A host this bus does not dial up but that dials it (2026-10-02). B serves its real Handler on 127.0.0.1 port 0
     (the stand-in for the -L forward A's kernel holds to B), B holds NO tunnel row for A (a test that needs one sets
@@ -2538,6 +2567,18 @@ class AHostThatDialsUsIsReachedOnItsNextExchange(_TwoBusHarness):
         with urllib.request.urlopen(req, timeout=10) as r:
             self.assertEqual((r.status, json.loads(r.read()).get("ok")), (200, True), "B's /peer route took the notify")
         self.assertIs(pmb.PEERS[host]["up"], False, "the row is down")
+
+    def _up_notify_on_b(self, host="hosta"):
+        """B's kernel's up notify for the port row `host` (A's, hosta, unless a test names another): the body kernel.py
+        _notify_bus_peer posts, over B's served /peer route, which runs peer_update. It asserts nothing, so a stub that
+        runs on one of B's handler threads can send it; returns the route's status and its ok."""
+        req = urllib.request.Request("http://127.0.0.1:%d/peer" % self.port,
+                                     data=json.dumps({"host": host, "port": 1, "up": True, "token": "",
+                                                      "trust": "trusted"}).encode(),
+                                     headers={"Content-Type": "application/json", "X-Romp-Token": pmb.SERVE_TOKEN},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read()).get("ok")
 
     def _check_sent_on_b(self, mid):
         """check_sent's line for `mid`, built as the tool builds it: B's served GET /sent for beta's session, then
@@ -3327,6 +3368,212 @@ class AHostThatDialsUsIsReachedOnItsNextExchange(_TwoBusHarness):
                          "the arrival replaced the row after the mark: %r" % status)
         self._assert_queued(self._send_on_b("is the export done?"),
                             "the arrival is newer than the close: the link is open (%r)" % status)
+
+    def test_a_send_racing_the_down_notify_answers_as_before_it_or_as_after_it(self):
+        """THE ROW'S STORE COMES AFTER THE CLOSE (DOWN NOTIFY at _inbound_links). B holds a port row for A, up, and A's
+        exchange ended ok. A send reads PEERS and then the link, with no lock held across the two reads (the link read
+        takes only the leaf lock), so it must not read the notify's row down beside a link the notify's close has not
+        reached yet: that answer, queued, is neither the one from before the notify (relaying) nor the one from after it
+        (unreachable). The test holds a down notify at its close, inside its hold, while the send reads PEERS (and, with
+        the row stored before the close, the link), the close waiting for the send's answer: a wrapper around B's
+        outbox_put, which the send calls after it resolved the recipient and before it reads PEERS, starts B's kernel's
+        down notify over B's /peer route and returns once the notify has reached its close, which a wrapper around
+        _inbound_link_down holds there until the send has answered. peer_update stores the notify's row after the close,
+        in the same hold, so the send reads the row from before the notify and answers relaying, with no /redial;
+        released, the notify ends, and the next send answers unreachable. Red at fork main at its precondition (no link
+        table there); a guard against the row's store before the close, before the hold or inside it, under which the
+        send read the row down and the link open, answered queued and posted /redial."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the link is open")
+        real_put, real_close = pmb.outbox_put, pmb._inbound_link_down
+        at_close, answered, held, notified = threading.Event(), threading.Event(), [], []
+
+        def notify():
+            try:
+                self._down_notify_on_b()
+                notified.append("ok")
+            except BaseException as e:                # recorded, asserted below
+                notified.append(repr(e))
+
+        t = threading.Thread(target=notify, daemon=True)
+
+        def put_then_notify(host, msg):
+            ok = real_put(host, msg)
+            if not held:                              # the first send only
+                t.start()
+                held.append(at_close.wait(10))        # the notify is in its hold, at its close
+            return ok
+
+        def close_after_the_answer(host):
+            at_close.set()
+            held.append(answered.wait(10))            # the close waits for the send's answer
+            return real_close(host)
+
+        pmb.outbox_put, pmb._inbound_link_down = put_then_notify, close_after_the_answer
+        self.addCleanup(setattr, pmb, "outbox_put", real_put)
+        self.addCleanup(setattr, pmb, "_inbound_link_down", real_close)
+
+        def end():                                    # on every exit path: release the close, wait for the notify
+            answered.set()
+            if t.is_alive():
+                t.join(10)
+        self.addCleanup(end)
+        resp = self._send_on_b("is the export done?")
+        answered.set()
+        t.join(10)
+        self.assertFalse(t.is_alive(), "the notify ended")
+        self.assertEqual(held, [True, True], "the send waited for the notify to reach its close, and the close for the "
+                         "send's answer: the notify was held at its close, inside its hold, while the send read PEERS")
+        note = resp.get("note", "")
+        self.assertNotIn("queued", note, "the send read the notify's row down beside a link the close had not reached")
+        self.assertTrue(note.startswith("relaying to 'alpha' on hosta"), "the row from before the notify: %r" % resp)
+        self.assertNotIn("parked", resp, "the relaying answer carries no parked key")
+        self.assertEqual(self.posted, [], "no /redial: the send read the row up")
+        self.assertEqual(notified, ["ok"], "B's /peer route took the notify, and the row is down")
+        self._assert_unreachable(self._send_on_b("and the reindex?"), "after the notify: the row down, the link closed")
+
+    def test_an_up_notify_between_a_send_s_row_read_and_its_link_read_closes_nothing(self):
+        """AN UP NOTIFY CLOSES NOTHING (DOWN NOTIFY at _inbound_links: every down notify closes the link, and no up
+        notify does). B's port row for A is held down and A's exchange ended ok, so the link is open. A send reads the
+        row down and posts /redial for its tunnel before it reads the link, and the kernel's tunnel pass that post wakes
+        can bring the row's up notify in between; the test makes it do so, through a stub of B's _kernel_post that sends
+        B's kernel's up notify over B's /peer route (peer_update) when the send posts /redial. The notify does not close
+        the link, so the send answers queued, as it does with no notify, and the next send answers relaying (the row is
+        up). B's dialer, which an up notify starts, is not under test (it would dial a port nothing listens on), so
+        peer_update's _peer_threads_reconcile is stubbed here. Red at fork main at its precondition (no link table
+        there); a guard against a close at every notify, the up notify's included, under which the up notify superseded
+        the link between the send's two reads and the send answered unreachable."""
+        pmb.PEERS["hosta"] = {"port": 1, "up": False, "token": "", "trust": "trusted"}
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the row is down and the link open")
+        reconcile, post = pmb._peer_threads_reconcile, pmb._kernel_post
+        notified = []
+
+        def redial_brings_the_up_notify(path, body, timeout=2):
+            post(path, body, timeout)                 # the setUp's stub records the path
+            if path == "/redial" and not notified:
+                try:
+                    notified.append(self._up_notify_on_b())
+                except Exception as e:                # recorded, asserted below
+                    notified.append(repr(e))
+
+        pmb._peer_threads_reconcile, pmb._kernel_post = (lambda host: None), redial_brings_the_up_notify
+        self.addCleanup(setattr, pmb, "_peer_threads_reconcile", reconcile)
+        self.addCleanup(setattr, pmb, "_kernel_post", post)
+        resp = self._send_on_b("is the export done?")
+        self.assertEqual(notified, [(200, True)], "the up notify landed between the send's row read and its link read")
+        self.assertIs(pmb.PEERS["hosta"]["up"], True, "the row is up")
+        self._assert_queued(resp, "an up notify closes nothing: the link the send read after it is open")
+        self.assertEqual(self.posted, ["/redial"], "the send read the row held down and asked for its tunnel")
+        relay = self._send_on_b("and the reindex?")
+        self.assertTrue(relay.get("note", "").startswith("relaying to 'alpha' on hosta"), "the row is up: %r" % relay)
+
+    def test_an_arrival_at_the_down_notify_s_second_lock_entry_stores_a_row_the_notify_does_not_mark(self):
+        """THE MARK AND THE STORE SHARE THE CLOSE'S HOLD (DOWN NOTIFY at _inbound_links). B holds a port row for A, up,
+        and A's exchange ended ok. While B's kernel's down notify runs, an exchange from A arrives at the notify
+        thread's second entry to _PEER_STATE_LOCK: a _WatchedLock in the lock's place, at that entry and before it
+        acquires, starts A's exchange through B's real route and waits for a wrapper around _inbound_arrived to say the
+        arrival is filed. peer_update takes the lock once, for the mark, the close and the store, so that entry comes
+        after its hold (the mirror's snapshot in _write_remote_sids), and the arrival, numbered after the close,
+        replaces the marked row: the row it stored carries no linkDown mark, the link reads open, and with the row down
+        a send is queued. Red at fork main at its precondition (no link table there); a guard against the close in a
+        first hold and the mark and the store in a second, under which the arrival landed between the two holds and the
+        second hold marked the row it stored."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the link is open")
+        found = pmb.PEER_STATE["hosta"]               # the row the notify finds and marks
+        real_lock, real_update, real_arrived = pmb._PEER_STATE_LOCK, pmb.peer_update, pmb._inbound_arrived
+        notify_thread, entries, arrived, fired, status = [], [0], threading.Event(), [], []
+
+        def exchange():
+            try:
+                pm._peer_http(self.port, pm.build_exchange_request("srv", wait=False), token=pmb.SERVE_TOKEN)
+                status.append(200)
+            except Exception as e:                    # recorded, asserted below
+                status.append(repr(e))
+
+        ex = threading.Thread(target=exchange, daemon=True)
+
+        def before():                                 # on every entry to the lock, ahead of the acquisition
+            if notify_thread and threading.current_thread() is notify_thread[0]:
+                entries[0] += 1
+                if entries[0] == 2:                   # the notify thread's second entry: A's exchange arrives now
+                    ex.start()
+                    fired.append(arrived.wait(10))
+
+        def update(data, write=True):
+            if data.get("host") == "hosta" and data.get("up") is False and not notify_thread:
+                notify_thread.append(threading.current_thread())
+            return real_update(data, write)
+
+        def arrived_then_say_so(*a, **k):
+            r = real_arrived(*a, **k)
+            arrived.set()
+            return r
+
+        pmb._PEER_STATE_LOCK = _WatchedLock(real_lock, before=before)
+        pmb.peer_update, pmb._inbound_arrived = update, arrived_then_say_so
+        self.addCleanup(setattr, pmb, "_PEER_STATE_LOCK", real_lock)
+        self.addCleanup(setattr, pmb, "peer_update", real_update)
+        self.addCleanup(setattr, pmb, "_inbound_arrived", real_arrived)
+        self.addCleanup(lambda: ex.join(10) if ex.ident is not None else None)
+        self._down_notify_on_b()
+        self.assertEqual(fired, [True], "A's exchange arrived at the notify thread's second entry to the lock")
+        ex.join(10)
+        self.assertFalse(ex.is_alive(), "A's exchange returned")
+        self.assertEqual(status, [200], "A's exchange ended ok")
+        self.assertTrue(self._exchanges_ended(2), "B's route ended A's exchange")
+        self.assertIsNot(pmb.PEER_STATE["hosta"], found, "A's arrival stored a row of its own")
+        self.assertNotIn("linkDown", pmb.PEER_STATE["hosta"],
+                         "the row A's arrival stored after the close carries no mark")
+        self._assert_queued(self._send_on_b("is the export done?"),
+                            "the arrival is newer than the close: the link is open")
+
+    def test_a_holder_of_the_lock_after_the_down_notify_s_hold_sees_its_row_mark_and_close_together(self):
+        """EVERY HOLDER OF _PEER_STATE_LOCK SEES THE ROW, THE MARK AND THE CLOSE AS ONE STEP (_PEER_STATE_LOCK's
+        comment; peer_update's hold). B holds a port row for A, up, and A's exchange ended ok. A _WatchedLock in the
+        lock's place runs a check each time the down notify's thread releases the lock while peer_update runs: the check
+        takes the lock and reads, together, the up of A's PEERS row, the linkDown mark on A's row in the table and
+        whether the link reads open. The mark, the close and the store share one hold, so each check reads the state
+        after the whole notify: the row down, the mark, the link closed. Red at fork main at its precondition (no link
+        table there); a guard against the store after the hold, outside the lock or in a second hold, under which the
+        check at the hold's release read the row still up beside the mark and the closed link."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the link is open")
+        real_lock, real_update = pmb._PEER_STATE_LOCK, pmb.peer_update
+        notify_thread, seen = [], []
+
+        def check():                                  # once each release has run, on the thread that released
+            if notify_thread and threading.current_thread() is notify_thread[0]:
+                try:
+                    with real_lock:
+                        seen.append((pmb.PEERS.get("hosta", {}).get("up"),
+                                     pmb.PEER_STATE.get("hosta", {}).get("linkDown") is True,
+                                     pmb._inbound_open("hosta")))
+                except Exception as e:                # recorded, asserted below
+                    seen.append(repr(e))
+
+        def update(data, write=True):
+            mine = data.get("host") == "hosta" and data.get("up") is False and not notify_thread
+            if mine:
+                notify_thread.append(threading.current_thread())
+            try:
+                return real_update(data, write)
+            finally:
+                if mine:
+                    notify_thread[0] = None           # the checks run while peer_update runs, and no longer
+
+        pmb._PEER_STATE_LOCK = _WatchedLock(real_lock, after=check)
+        pmb.peer_update = update
+        self.addCleanup(setattr, pmb, "_PEER_STATE_LOCK", real_lock)
+        self.addCleanup(setattr, pmb, "peer_update", real_update)
+        self._down_notify_on_b()
+        self.assertTrue(seen, "the check ran at the notify thread's release of the lock")
+        self.assertEqual([s for s in seen if s != (False, True, False)], [],
+                         "each check read A's row down, its mark and the link closed, as one step: %r" % seen)
 
     def test_the_close_keeps_the_link_s_busids_so_a_renamed_old_process_supersedes_the_reopened_link(self):
         """A DISCLOSED COST the close keeps (DOWN NOTIFY at _inbound_links: the close changes only the link's reading

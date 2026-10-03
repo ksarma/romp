@@ -3887,8 +3887,6 @@ def peer_update(data, write=True):
     up, uerr = _as_bool(data.get("up"), "up")
     if uerr:                                           # a string here marked a DOWN tunnel up
         return {"error": uerr}, 400
-    PEERS[host] = {"port": port, "up": up, "at": int(time.time()),
-                   "token": tok, "trust": trust}
     with _PEER_STATE_LOCK:                           # the membership test and the mark, one step (round 6 of fork PR #897)
         if not up and host in PEER_STATE:
             # Heard before the link dropped: the roster its last exchange reported is not the host's word for
@@ -3900,6 +3898,16 @@ def peer_update(data, write=True):
             # The same event closes the host's inbound link, in the same hold (2026-10-03): only its next arrival,
             # numbered after this close, reopens it, as only its next exchange clears the mark (_inbound_links)
             _inbound_link_down(host)
+        # The row's store comes last, in the same hold (2026-10-03): /send and the receipts read PEERS, then the
+        # link, with no lock held across the two reads (the link read takes only the leaf lock), so one that reads
+        # the notify's row down reads the link after the close: none reads the notify's row down beside a link the
+        # close has not reached yet (DOWN NOTIFY at _inbound_links). One that reads the row from before the notify
+        # answers as before it when that row was up (relaying, with no link read); when that row was down,
+        # portless or absent (a re-tell, or the host's first port-row tell), it reads the link before or after the
+        # close and answers as before or as after it. Each holder of this lock sees the row, the mark and the
+        # close as one step
+        PEERS[host] = {"port": port, "up": up, "at": int(time.time()),
+                       "token": tok, "trust": trust}
     _peer_threads_reconcile(host)                    # an up peer gets its dialer; a down one is woken to exit
     if write:                                        # the seed's rows write nothing here: serve() writes once after its bind
         _write_remote_sids()                         # the link state gates reachability: the mirror follows the notify at once
@@ -5876,8 +5884,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     #                                                   LINK STATE is copied in the same hold: each host's port and up from
     #                                                   PEERS (_link_down, _link_up) and the seed flag (the lost-carry
     #                                                   clear's list of links), and every read of either below is a read of
-    #                                                   these copies. The kernel's notify writes PEERS outside this lock
-    #                                                   (peer_update), but the table cannot change during the hold, so the
+    #                                                   these copies. A port-row notify stores its PEERS row inside this
+    #                                                   lock, after a down notify's mark and close (peer_update); an
+    #                                                   origin-only notify still writes PEERS outside it; the table cannot
+    #                                                   change during the hold and PEERS is copied in one step, so the
     #                                                   copies are one moment of both. Read live after the copy, a host's
     #                                                   row from the copy met a link state from after it: B's answered
     #                                                   dial, heard while the kernel held B down and so carrying no mark,
@@ -6240,7 +6250,14 @@ _PEER_STATE_LOCK = threading.Lock()        # PEER_STATE's one lock (round 6 of f
 #                                            then this one; a holder of this one never takes _REMOTE_SIDS_LOCK, never calls
 #                                            _write_remote_sids and never takes this one again (it does not re-enter). It may take
 #                                            _inbound_links_lock, a leaf, inside its hold (the handler's arrival, the fold's forget,
-#                                            the down notify's close).
+#                                            the down notify's close). A port-row notify's hold (peer_update) runs a down notify's
+#                                            membership test and mark, then its close, then the store of the notify's PEERS row (an up
+#                                            notify's, the store alone; 2026-10-03): /send and the receipts read PEERS and then the
+#                                            inbound link with no lock held across the two reads (the link read takes only the leaf
+#                                            lock), so a send that reads the notify's row down reads the link after the close, never
+#                                            beside a link the close has not reached yet; and every holder of this lock, the mirror's
+#                                            snapshot of the table and of the link state included, sees the row, the mark and the close
+#                                            as one step.
 #                                            tests/test_postal_remote_sids_mirror.py PeerStateLock derives the populations by AST and
 #                                            checks, each rule with plants it refuses by name (_peer_state_lock_census states each rule
 #                                            and its limits): every writer and every iteration of the table sits under the lock,
@@ -6400,7 +6417,20 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                              this bus, since the kernel's first sighting of a bus process re-tells every
 #                                              row; the re-send of a notify the bus did not acknowledge within the kernel's
 #                                              2 s timeout; a check-in row's re-check-in), with the notifies at the attach
-#                                              dedupe's absorption of an alias and at a detach.
+#                                              dedupe's absorption of an alias and at a detach. The order in peer_update's
+#                                              hold: the mark, the close, then the store of the notify's PEERS row. /send and
+#                                              the receipts read PEERS and then the link with no lock held across the two
+#                                              reads (the link read takes only the leaf lock), so a send that reads the
+#                                              notify's row reads the link after the close: none reads the notify's row
+#                                              beside a link the close has not reached yet. One that reads the row from
+#                                              before the notify answers as before it when that row was up (relaying, with no
+#                                              link read); when that row was down, portless or absent (a re-tell, or the
+#                                              host's first port-row tell), it reads the link before or after the close and
+#                                              answers as before or as after it. An up notify closes nothing, so a send whose
+#                                              PEERS read comes before it and whose link read comes after it (the /send leg's
+#                                              /redial post sits between the two reads, and the tunnel pass that post wakes
+#                                              in the kernel can bring the up notify) reads the link as it would with no up
+#                                              notify: the up notify changes nothing there.
 #                                            READ (_inbound_open): a live exchange newer than `superseded` keeps the link
 #                                            open while it is writing or while its socket shows no EOF, whatever a newer
 #                                            exchange says: the pre-write probe's close and the outcome's close end their own
@@ -7702,8 +7732,9 @@ def _inbound_link_down(host):
     supersedes the entry at a number minted now, so it outranks every exchange that arrived before the notify, a parked
     dial that ends ok after it included, and only the host's next arrival reopens the link, as only the host's next
     exchange clears the row's linkDown mark. No entry is nothing: no link, nothing to close. Called in peer_update's
-    _PEER_STATE_LOCK hold, beside that mark; takes the leaf lock inside it (the order is _PEER_STATE_LOCK, then the
-    leaf)."""
+    _PEER_STATE_LOCK hold, after that mark and before the hold stores the notify's PEERS row, so a /send that reads the
+    notify's row down reads the link after this close; takes the leaf lock inside it (the order is _PEER_STATE_LOCK,
+    then the leaf)."""
     with _inbound_links_lock:
         ent = _inbound_links.get(host)
         if ent is not None:
