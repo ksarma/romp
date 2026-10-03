@@ -6293,8 +6293,8 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                              the name the dial declared, before the canonicalization, joins `declared`,
 #                                              and the busId it carried joins `busIds` (2026-10-03). An arrival that brings
 #                                              a name the entry has not seen and a busId the entry has not seen, or none,
-#                                              resets both sets to its own first, newest wins: another machine is behind the
-#                                              entry's name now (an alias the kernel pointed elsewhere), so a refusal from
+#                                              resets both sets to its own first, newest wins: as when the kernel points an
+#                                              alias elsewhere, or the same machine renamed and restarted, a refusal from
 #                                              the machine that was there no longer closes this link; a newer process of the
 #                                              same machine re-declares a name already in the set, so the drift close below
 #                                              still reaches its link. Both sets are bounded by the distinct names and busIds
@@ -6385,12 +6385,13 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                            arrivals declared, as for a link filed under an alias whose host restarted under
 #                                            the name it declares, the same bus under a second dialable name, or an alias
 #                                            pointed at another machine while the machine it reached keeps dialing; or if it
-#                                            carries a busId the link holds, as for a process renamed while it runs. From
-#                                            then the mail reads unreachable and waits for the alias's own tunnel, which
-#                                            every send to it asks the kernel to redial (the /send relay leg posts /redial
-#                                            for every port row, whatever the link says). Two moves share neither: a host
-#                                            whose next process declares another name under a new busId (renamed and
-#                                            restarted), and an older peer that sends no busId and declares another name.
+#                                            carries a busId the link holds, as for a process renamed while it runs.
+#                                            From then the mail reads unreachable; it waits for a dial filed under that
+#                                            name again, or for that name's own tunnel when it has a port row (the /send
+#                                            relay leg posts /redial for every port row, whatever the link says). Two
+#                                            moves share neither: a host whose next process declares another name under
+#                                            a new busId (renamed and restarted), and an older peer that sends no busId
+#                                            and declares another name.
 #                                            Either is filed under the new name, and when its old process left no EOF this
 #                                            side saw (the first shape above) or the move came between exchanges, no event
 #                                            reaches the link it left, which reads open on the last exchange there, so /send
@@ -7512,7 +7513,8 @@ def _inbound_arrived(host, link, declared, bus_id):
     """ARRIVAL of one exchange from `host` (_inbound_links): mints its arrival number and files it live, and records
     `declared`, the name the dial declared before the canonicalization, and `bus_id`, the busId it carried, in the
     entry's declared names and busIds, both reset to this arrival's first when it brings a name the entry has not seen
-    and a busId the entry has not seen, or none (another machine is behind the entry's name now). Then it supersedes
+    and a busId the entry has not seen, or none (an alias the kernel pointed elsewhere, or a machine renamed and
+    restarted). Then it supersedes
     every OTHER entry whose declared names hold `declared`, whatever the busIds (that entry's bus, a newer process of it,
     or a namesake dials under another name now), and every OTHER entry whose busIds hold a non-empty `bus_id` (the same
     process declares another name now: a rename while it runs). Last it hands `host` and the number back in `link`, so
