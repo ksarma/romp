@@ -69993,32 +69993,34 @@ def _pane_spin(cid, ignore_id=""):
             # the badge's own failsafe, armed per SHOW like the sheet's (2026-09-07): it now waits for
             # fresh DATA (below), which over a dead tunnel may never come — 30s only ever fires then.
             "function badge(on){if(rb)rb.classList.toggle('on',!!on);clearTimeout(bfail);if(on)bfail=setTimeout(function(){badge(false);},30000);}"
-            # [fork] iOS item 4 (2026-10-02): two latches on the badge, written as listeners around upstream's, whose lines stay
-            # byte for byte. (1) The no-flash hold: a badge a drop newly raises is pulled back in the same dispatch (the listener
-            # after upstream's wsdown, below), so it never paints, and it paints only if no fresh frame has come RHOLD ms after
-            # the later of the drop and the page turning visible. A healthy return then shows nothing (the lab measured a 386 ms
-            # flash). The hold is a time because no event tells a hung first try from a slow good one: a hung dial is silent
-            # until its cut, 15 s on. It delays the first paint and never clears anything: romp:wsfresh still clears, and a
-            # painted badge stays painted on a repeat drop (no flicker); hiding the page cancels a pending hold, and turning
-            # visible re-holds a pending or painted badge. (2) The 30 s failsafe stands down while the page's link is down and
-            # this pane's own socket is not open: the shell's link word (link:'down', the panes word or the link word the
-            # shim's await also hears) says romp is still dialing, so the badge stays true past 30 s (before this it hid at
-            # 30 s and the page sat stale with no cue until the link came up). The link word 'up' or this pane's own reopen
-            # (romp:wsup) restarts the failsafe from that moment. A page with no shell hears no link word and keeps upstream's
-            # failsafe. This listener runs before upstream's wsdown line and records whether the badge was already painted.
+            # [fork] iOS item 4 (2026-10-02): latches on the badge, written as listeners around upstream's, whose lines stay byte
+            # for byte. (1) The no-flash hold: a badge a drop newly raises is pulled back in the same dispatch (the listener after
+            # upstream's wsdown, below), so it never paints, and it paints only if no fresh frame has come RHOLD ms after the drop
+            # that started the hold, the page turning visible or a parked pane's tap, whichever is latest; a repeat drop while the
+            # hold is pending does not move it, so a link that keeps dropping cannot put the cue off. A healthy return then shows
+            # nothing (the lab measured a 386 ms flash). The hold is a time because no event tells a hung first try from a slow
+            # good one: a hung dial is silent until its cut, 15 s on. It delays the first paint and never clears anything:
+            # romp:wsfresh still clears, and a painted badge stays painted on a repeat drop (no flicker); hiding the page cancels a
+            # pending hold, and turning visible re-holds a pending or painted badge. (2) On a page with a shell, upstream's 30 s
+            # failsafe never runs: a painted badge stays until this pane's first fresh frame, however long the wait. The page has a
+            # shell once it hears the shell's link word (link:'up' or 'down', in the panes word or in the link word a frame that
+            # hears no panes word gets: the words the shim's await also hears), which the shell sends at each frame's load (rsh).
+            # Before this the failsafe hid the badge at 30 s while romp was still dialing, and after round 1 of its review
+            # (ruling B, 2026-10-03) it no longer restarts at the link-up word or at this pane's own reopen either, so no timer
+            # takes a painted badge down before the fresh frame. A page with no shell hears no link word and keeps upstream's
+            # failsafe: 30 s from the paint, restarted by a repeat drop as upstream's wsdown line restarts it. This listener runs
+            # before upstream's wsdown line and records whether the badge was already painted.
             # (3) A parked pane (the phone's off-screen tabs at a return, the shim's park) holds its badge with no timer, and its
             # tap starts the hold: the shim's romp:parked and romp:unpark (rpk). Before this the hold ran off screen, where no
             # fresh frame can come until the tap, so the badge painted there and the tap showed it until that pane's first frame
             # even when the link had come up at once (finding of 2026-10-02: a 286 ms flash at a tap 2 s after a healthy return).
-            "var RHOLD=" + str(_RECONN_BADGE_HOLD_MS) + ",rh=0,rpend=false,ron=false,rlk='',rpo=false,rpk=false;"
-            "function rwait(){return rlk==='down'&&!rpo;}"
-            "function rfail(){clearTimeout(bfail);bfail=0;if(rb&&rb.classList.contains('on')&&!rwait())bfail=setTimeout(function(){badge(false);},30000);}"
-            "function rset(lk,po){var was=rwait();rlk=lk;rpo=po;if(was!==rwait())rfail();}"
+            "var RHOLD=" + str(_RECONN_BADGE_HOLD_MS) + ",rh=0,rpend=false,ron=false,rsh=false,rpk=false;"
+            "function rfail(){clearTimeout(bfail);bfail=0;if(rb&&rb.classList.contains('on')&&!rsh)bfail=setTimeout(function(){badge(false);},30000);}"
             # the paint places the badge first (rplace, below): at that moment a shown pane's style and box are real, whatever the
             # load read and whatever the resize observer has said
             "function rpaint(){rh=0;if(!rpend||!rb)return;rpend=false;rplace();rb.classList.add('on');rfail();}"
             "function rhold(){clearTimeout(rh);rh=0;rpend=true;if(rb)rb.classList.remove('on');clearTimeout(bfail);bfail=0;if(document.visibilityState!=='hidden'&&!rpk)rh=setTimeout(rpaint,RHOLD);}"
-            "window.addEventListener('romp:wsdown',function(){rpo=false;ron=!!(rb&&rb.classList.contains('on'));});"
+            "window.addEventListener('romp:wsdown',function(){ron=!!(rb&&rb.classList.contains('on'));});"
             # [fork] iOS item 4 (finding of 2026-10-02): the badge sits 8 px below the top of the pane's content container `c`, when
             # that container is the pane's own scroll area (overflow-y auto or scroll), so it covers none of the controls in the
             # chrome above it. Every pane page lays out that way, a header over a scrolling list: the chat (#content under the tab
@@ -70065,13 +70067,13 @@ def _pane_spin(cid, ignore_id=""):
             "window.addEventListener('romp:firstpaintreleased',function(){held=false;arm();});"
             "window.addEventListener('romp:wsdown',function(){if(held)clearTimeout(fail);});"
             "window.addEventListener('romp:wsup',function(){if(held)o.classList.remove('gone');});"
-            # [fork] iOS item 4: the hold's and the failsafe latch's listeners, after upstream's (registration order). A badge
-            # upstream's wsdown just raised is pulled back and held; one already painted keeps painting under the latch's
-            # failsafe; a repeat drop during a pending hold keeps that hold's first deadline.
+            # [fork] iOS item 4: the hold's and the shell latch's listeners, after upstream's (registration order). A badge
+            # upstream's wsdown just raised is pulled back and held; one already painted keeps painting (rfail: no failsafe on a
+            # page with a shell, upstream's restarted one on a page without); a repeat drop during a pending hold keeps that
+            # hold's first deadline. A link word makes the page a shell page and stands down a failsafe a paint armed before it.
             "window.addEventListener('romp:wsdown',function(){if(!rb||!rb.classList.contains('on'))return;if(ron){rfail();return;}if(rpend){rb.classList.remove('on');clearTimeout(bfail);bfail=0;return;}rhold();});"
-            "window.addEventListener('romp:wsup',function(){rset(rlk,true);});"
             "window.addEventListener('romp:wsfresh',function(){clearTimeout(rh);rh=0;rpend=false;});"
-            "window.addEventListener('message',function(e){var m=e&&e.data;if(m&&(m.romp==='panes'||m.romp==='link')&&(m.link==='up'||m.link==='down'))rset(m.link,rpo);});"
+            "window.addEventListener('message',function(e){var m=e&&e.data;if(m&&(m.romp==='panes'||m.romp==='link')&&(m.link==='up'||m.link==='down')){rsh=true;rfail();}});"
             "document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden'){clearTimeout(rh);rh=0;return;}if(rpend||(rb&&rb.classList.contains('on')))rhold();});"
             # the park pulls a pending or painted badge back and holds it with no timer; the unpark holds it from that moment,
             # as turning visible does (the shim dispatches each before its wsdown, so that drop finds the hold pending)

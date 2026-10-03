@@ -173,7 +173,7 @@ class PaneLoaderFirstPaintHold(unittest.TestCase):
     def test_the_held_first_paint_stands_the_sheet_down_from_its_timer_and_the_release_re_arms_it(self):
         o = self._run()
         self.assertEqual(o["boot"], {"live30": 1, "gone": False, "listeners": ["message", "romp:firstpaintheld", "romp:firstpaintreleased", "romp:parked", "romp:unpark", "romp:wsdown", "romp:wsfresh", "romp:wsup"]},
-                         "at load the sheet is up with its 30 s failsafe armed, and the two hold events are listened for beside the socket's (wsdown and wsup each carry a second, fork listener since pass 3: the latch; the shell's link word, `message`, and two more socket listeners since iOS item 4: the badge's hold and failsafe latch; the shim's park and unpark since the parked-pane fix of 2026-10-02)")
+                         "at load the sheet is up with its 30 s failsafe armed, and the two hold events are listened for beside the socket's (wsdown and wsup each carry a second, fork listener since pass 3: the latch; the shell's link word, `message`, and two more wsdown listeners since iOS item 4: the badge's hold; the shim's park and unpark since the parked-pane fix of 2026-10-02)")
         self.assertEqual(o["held"], {"live30": 0, "gone": False}, "the hold clears the failsafe: the sheet stands with no timer")
         self.assertFalse(o["after30"]["gone"], "30 s later the sheet is still up (before this the failsafe faded it over the empty list, and the tap revealed a blank pane)")
         self.assertEqual(o["released"], {"live30": 1, "gone": False}, "the release re-arms the 30 s backstop; the render's first child, not this event, retires the sheet (the observer)")
@@ -204,9 +204,10 @@ class PaneLoaderFirstPaintHold(unittest.TestCase):
         self.assertLess(js.index("window.addEventListener('romp:wsup',function(){hide();});"), js.index("var held=false;"), "after the wsup line")
         self.assertLess(js.index("romp:firstpaintheld"), js.index("window.addEventListener('romp:wsdown',function(){if(held)"), "the hold word's listener, then the fork's two socket listeners")
         self.assertLess(js.index("window.addEventListener('romp:wsup',function(){if(held)"), js.index("window.addEventListener('romp:wsfresh'"), "before the wsfresh line: the upstream lines are inserted around, not changed")
-        # four wsdown listeners and three wsup listeners since iOS item 4 (2026-10-02): upstream's, the sheet's held latch, and
-        # the badge's hold (a wsdown before upstream's line and one after it) and failsafe latch (a wsup); ReconnectBadgeHold below
-        self.assertEqual(js.count("addEventListener('romp:wsdown'"), 4); self.assertEqual(js.count("addEventListener('romp:wsup'"), 3)
+        # four wsdown listeners since iOS item 4 (2026-10-02): upstream's, the sheet's held latch, and the badge's hold (a wsdown
+        # before upstream's line and one after it); two wsup listeners, upstream's and the sheet's held latch (the badge's wsup
+        # listener went with ruling B of round 1, 2026-10-03: the pane's reopen no longer restarts its failsafe); ReconnectBadgeHold below
+        self.assertEqual(js.count("addEventListener('romp:wsdown'"), 4); self.assertEqual(js.count("addEventListener('romp:wsup'"), 2)
 
 
 
@@ -260,14 +261,16 @@ const out = (o) => console.log(JSON.stringify(Object.assign(o, { textWrites: TEX
 
 
 class ReconnectBadgeHold(unittest.TestCase):
-    """iOS item 4 (2026-10-02): the reconnect cue's glance is the pane's corner badge, 'reconnecting…', with no count. Two
-    latches around upstream's badge lines, executed over the script _pane_spin returns. (1) The no-flash hold: a drop's badge
-    paints only if no fresh frame has come _RECONN_BADGE_HOLD_MS after the later of the drop and the page turning visible, so a
-    healthy return shows nothing (the lab measured a 386 ms flash on the phone at 919fde73b); the hold delays the first paint
-    and never clears anything. (2) The failsafe latch: while the shell's link word says down and this pane's own socket is not
-    open, the badge's 30 s failsafe stands down (romp is still dialing); the link word 'up' or the pane's own reopen restarts it.
-    A page with no shell hears no link word and keeps upstream's failsafe. The hold reads the constant from the kernel when it
-    has one and 1000 ms otherwise, so a run at a head without the hold fails on the behaviour, not on a missing name."""
+    """iOS item 4 (2026-10-02): the reconnect cue's glance is the pane's corner badge, 'reconnecting…', with no count. Latches
+    around upstream's badge lines, executed over the script _pane_spin returns. (1) The no-flash hold: a drop's badge paints only
+    if no fresh frame has come _RECONN_BADGE_HOLD_MS after the drop that started the hold, the page turning visible or a parked
+    pane's tap, whichever is latest (a repeat drop while the hold is pending does not move it), so a healthy return shows nothing
+    (the lab measured a 386 ms flash on the phone at 919fde73b); the hold delays the first paint and never clears anything.
+    (2) The shell latch: on a page with a shell (it has heard the shell's link word) upstream's 30 s failsafe never runs, so a
+    painted badge stays until the pane's first fresh frame (ruling B of round 1, 2026-10-03: before it the failsafe stood down
+    while the link word said down and restarted at the link-up word and at the pane's own reopen). A page with no shell hears no
+    link word and keeps upstream's failsafe, from the paint. The hold reads the constant from the kernel when it has one and
+    1000 ms otherwise, so a run at a head without the hold fails on the behaviour, not on a missing name."""
 
     HOLD = getattr(km, "_RECONN_BADGE_HOLD_MS", 1000)
 
@@ -324,9 +327,11 @@ out({ justBefore, atHold, atHoldTimers, afterFresh: painted(), liveEnd: live(), 
         self.assertEqual(o["liveEnd"], 0, "no timer left: the clearing was the event, not a timer")
         self.assertEqual(o["runs"], [{"t": self.HOLD, "on": True}, {"t": self.HOLD + 5000, "on": False}], "one paint, one clear")
 
-    def test_the_badge_stays_past_30s_while_the_link_is_down_and_the_link_up_word_restarts_the_failsafe(self):
-        # S2: a return into a down link. Before the latch the badge's 30 s failsafe hid it while romp was still dialing, and the
-        # page sat stale with no cue until the link came up (the lab's 45 s hung leg at 919fde73b: hidden at +30.09 s, link at +45 s).
+    def test_on_a_page_with_a_shell_the_badge_stays_past_30s_through_the_link_up_word_and_the_reopen_until_the_fresh_frame(self):
+        # S2 then S3: a return into a down link. Before the latch the badge's 30 s failsafe hid it while romp was still dialing, and
+        # the page sat stale with no cue until the link came up (the lab's 45 s hung leg at 919fde73b: hidden at +30.09 s, link at
+        # +45 s). Since ruling B of round 1 (2026-10-03) neither the link-up word nor the pane's own reopen arms the failsafe either:
+        # the badge is read painted 40 s after each of them, at the deadline a restarted failsafe would have had and past it
         o = self._run(r"""
 msg({ romp: 'panes', on: {}, link: 'up' });                           // boot: the shell's link is up
 vis('hidden'); fire('romp:wsdown');                                   // the socket dies in the background
@@ -336,17 +341,21 @@ const atReturn = painted();
 after(RHOLD_T); const s1 = { painted: painted(), timers: live() };
 after(45000); const past30 = { painted: painted(), timers: live() };  // 46 s after the return, the link still down
 msg({ romp: 'link', link: 'up' });                                    // the shell's socket opens (the link word, the other form)
-const atLinkUp = { painted: painted(), failsafe: live(30000), timers: live() };
-fire('romp:wsup');                                                    // the pane's own socket opens: no second failsafe
-const atOpen = live();
+const atLinkUp = { painted: painted(), timers: live() };
+after(40000); const linkUp40 = { painted: painted(), timers: live() };
+fire('romp:wsup');                                                    // the pane's own socket opens, and no frame comes yet
+const atOpen = { painted: painted(), timers: live() };
+after(40000); const open40 = { painted: painted(), timers: live() };
 fire('romp:wsfresh');
-out({ atReturn, s1, past30, atLinkUp, atOpen, afterFresh: painted(), liveEnd: live(), runs: runs() });""")
+out({ atReturn, s1, past30, atLinkUp, linkUp40, atOpen, open40, afterFresh: painted(), liveEnd: live(), runs: runs() });""")
         self.assertIs(o["atReturn"], False, "the return holds the badge")
-        self.assertEqual(o["s1"], {"painted": True, "timers": 0}, "painted at the hold, with no timer of any length while the link is down (nothing clears it but an event)")
+        self.assertEqual(o["s1"], {"painted": True, "timers": 0}, "painted at the hold, with no timer of any length (nothing clears it but the fresh frame)")
         self.assertEqual(o["past30"], {"painted": True, "timers": 0}, "still painted 46 s after the return, still with no timer: romp is still dialing (before the latch the failsafe hid it at 30 s)")
-        self.assertEqual(o["atLinkUp"], {"painted": True, "failsafe": 1, "timers": 1}, "the link-up word restarts the 30 s failsafe from that moment, the one timer; the badge waits for fresh data")
-        self.assertEqual(o["atOpen"], 1, "the pane's own reopen while the link is up arms no second timer")
-        self.assertIs(o["afterFresh"], False)
+        self.assertEqual(o["atLinkUp"], {"painted": True, "timers": 0}, "the link-up word arms nothing (before ruling B it restarted the 30 s failsafe here)")
+        self.assertEqual(o["linkUp40"], {"painted": True, "timers": 0}, "40 s after the link-up word: still painted, so no timer took it down")
+        self.assertEqual(o["atOpen"], {"painted": True, "timers": 0}, "the pane's own reopen arms nothing either")
+        self.assertEqual(o["open40"], {"painted": True, "timers": 0}, "40 s after the reopen with no fresh frame: still painted")
+        self.assertIs(o["afterFresh"], False, "the pane's first fresh frame clears it")
         self.assertEqual(o["liveEnd"], 0)
         self.assertEqual([r["on"] for r in o["runs"]], [True, False], "one paint, one clear: no flap across the wait")
 
@@ -395,18 +404,18 @@ out({ atHide, whileHidden, atVisible, justBefore, atHold: painted() });""")
         self.assertIs(o["justBefore"], False)
         self.assertIs(o["atHold"], True)
 
-    def test_a_repeat_drop_while_painted_under_a_down_link_leaves_no_failsafe(self):
-        # upstream's wsdown line re-arms the 30 s failsafe on every drop over content; under a down link the listener after it
-        # stands it down again, so a pane that drops again while the shell is still dialing keeps its badge past 30 s
+    def test_a_repeat_drop_while_painted_on_a_page_with_a_shell_leaves_no_failsafe(self):
+        # upstream's wsdown line re-arms the 30 s failsafe on every drop over content; on a page with a shell the listener after it
+        # stands it down again, so a pane that drops again keeps its badge past 30 s
         o = self._run(r"""
 msg({ romp: 'panes', on: {}, link: 'down' });
 fire('romp:wsdown'); after(RHOLD_T);
-fire('romp:wsup'); const opened = live(30000);                       // the pane's own socket opens: the failsafe runs
+fire('romp:wsup'); const opened = live(30000);                       // the pane's own socket opens: no failsafe (ruling B)
 fire('romp:wsdown'); const redropped = live();                       // and drops again with the link still down
 after(45000); const after45timers = live();
 out({ opened, redropped, after45: painted(), after45timers });""")
-        self.assertEqual(o["opened"], 1)
-        self.assertEqual(o["redropped"], 0, "the repeat drop under a down link leaves no timer of any length")
+        self.assertEqual(o["opened"], 0, "the reopen arms no failsafe on a page with a shell")
+        self.assertEqual(o["redropped"], 0, "the repeat drop leaves no timer of any length (upstream's line armed one in the same dispatch)")
         self.assertEqual(o["after45timers"], 0)
         self.assertIs(o["after45"], True)
 
@@ -434,31 +443,71 @@ out({ s1, after30: painted(), runs: runs() });""")
         self.assertEqual(o["s1"], {"painted": True, "failsafe": 1, "timers": 1}, "painted at the hold with upstream's 30 s failsafe, and no other timer")
         self.assertIs(o["after30"], False, "30 s after the paint the failsafe hides it, as upstream's does")
 
-    def test_the_panes_own_reopen_under_a_down_link_restarts_the_failsafe(self):
-        # a dead shell loop: the pane's 25 s link backstop dials on its own; once its own socket is open the badge waits for fresh
-        # data under the failsafe again, so a socket that opens and never delivers cannot keep the badge up for good
+    def test_on_a_page_with_a_shell_the_panes_own_reopen_under_a_down_link_arms_nothing(self):
+        # a dead shell loop: the pane's 25 s link backstop dials on its own. Before ruling B of round 1 (2026-10-03) its reopen
+        # restarted the failsafe, so a timer took the badge down 30 s later with no fresh frame; now only the fresh frame clears it
         o = self._run(r"""
 msg({ romp: 'panes', on: {}, link: 'down' });
 fire('romp:wsdown'); after(RHOLD_T);
 after(40000); const waiting = { painted: painted(), timers: live() };
-fire('romp:wsup'); const opened = live(30000);
-after(30000);
-out({ waiting, opened, after30: painted() });""")
+fire('romp:wsup'); const opened = live();
+after(30000); const after30 = painted();
+fire('romp:wsfresh');
+out({ waiting, opened, after30, afterFresh: painted() });""")
         self.assertEqual(o["waiting"], {"painted": True, "timers": 0}, "41 s into a down-link wait: painted, with no timer of any length")
-        self.assertEqual(o["opened"], 1, "the pane's own open restarts the failsafe")
-        self.assertIs(o["after30"], False)
+        self.assertEqual(o["opened"], 0, "the pane's own open arms nothing")
+        self.assertIs(o["after30"], True, "30 s after the reopen, with no fresh frame, still painted")
+        self.assertIs(o["afterFresh"], False)
+
+    def test_on_a_page_with_no_shell_the_panes_reopen_leaves_upstreams_failsafe_where_the_paint_set_it(self):
+        # fresh-3 of round 1: upstream's failsafe on a page with no shell runs 30 s from the paint (a repeat drop restarts it, as
+        # upstream's own wsdown line does); the pane's reopen is not a show and must not restart it. Read at the deadline the paint
+        # set, so a restart shows as a badge still painted there (a count of live timers cannot see one: the restart clears the old
+        # timer before it arms the new one)
+        o = self._run(r"""
+fire('romp:wsdown'); after(RHOLD_T);                                  // painted at the hold, failsafe due 30 s on
+after(20000); fire('romp:wsup');                                      // the pane's own socket opens 20 s later, no fresh frame
+after(10000 - 1); const justBefore = painted();
+after(1); const atDeadline = painted();
+out({ justBefore, atDeadline, runs: runs() });""")
+        self.assertIs(o["justBefore"], True, "1 ms before the paint's deadline: painted")
+        self.assertIs(o["atDeadline"], False, "30 s after the paint the failsafe hides it: the reopen did not restart it")
+        self.assertEqual(o["runs"], [{"t": self.HOLD, "on": True}, {"t": self.HOLD + 30000, "on": False}])
+
+    def test_on_a_page_with_a_shell_no_link_word_or_reopen_arms_a_failsafe(self):
+        # ruling B of round 1 (2026-10-03), the no-re-arm rule: whatever the shell's words say and however often, and whether the
+        # pane's own socket opens, a painted badge on a page with a shell has no timer; it is read painted well past every moment a
+        # failsafe could have been armed
+        o = self._run(r"""
+msg({ romp: 'panes', on: {}, link: 'up' });                           // a pane in the shell, the link up: the pane alone drops
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = { painted: painted(), timers: live() };
+const seen = [];
+for (const m of [{ romp: 'panes', on: {}, link: 'up' }, { romp: 'link', link: 'up' }, { romp: 'panes', on: {}, link: 'down' }, { romp: 'link', link: 'up' }]) {
+  msg(m); seen.push(live()); after(10000);
+}
+fire('romp:wsup'); seen.push(live()); after(10000);
+msg({ romp: 'link', link: 'up' }); seen.push(live());
+after(40000);
+out({ atPaint, seen, after: { painted: painted(), timers: live() } });""")
+        self.assertEqual(o["atPaint"], {"painted": True, "timers": 0}, "a pane-only drop under an up link paints with no failsafe (before ruling B the paint armed one)")
+        self.assertEqual(o["seen"], [0, 0, 0, 0, 0, 0], "no timer after any link word, repeated or not, or after the reopen")
+        self.assertEqual(o["after"], {"painted": True, "timers": 0}, "90 s on, with no fresh frame: still painted")
 
     def test_the_latch_reads_the_link_field_of_both_shell_words_and_nothing_else(self):
-        o = self._run(r"""
-msg({ romp: 'other', link: 'down' }); msg({ romp: 'panes', on: {} }); msg(null);
+        # the page has a shell once a panes word or a link word carries link 'up' or 'down'; a word of another kind, a panes word
+        # with no link field and a null message leave it a page with no shell, whose painted badge keeps upstream's failsafe. The
+        # first link word stands a failsafe the paint armed down
+        for word in ("{ romp: 'panes', on: {}, link: 'down' }", "{ romp: 'link', link: 'up' }"):
+            with self.subTest(word=word):
+                o = self._run(r"""
+msg({ romp: 'other', link: 'down' }); msg({ romp: 'panes', on: {} }); msg({ romp: 'panes', on: {}, link: 'sideways' }); msg(null);
 fire('romp:wsdown'); after(RHOLD_T);
 const noWord = live(30000);
-msg({ romp: 'panes', on: {}, link: 'down' }); const panesDown = live();
-msg({ romp: 'link', link: 'up' }); const linkUp = live(30000);
-msg({ romp: 'link', link: 'down' }); const linkDown = live();
-out({ noWord, panesDown, linkUp, linkDown });""")
-        self.assertEqual(o, {"noWord": 1, "panesDown": 0, "linkUp": 1, "linkDown": 0, "textWrites": []},
-                         "only a panes or link word's link field moves the latch")
+msg(%s); const firstWord = { timers: live(), painted: painted() };
+after(40000); const later = painted();
+out({ noWord, firstWord, later });""" % word)
+                self.assertEqual(o, {"noWord": 1, "firstWord": {"timers": 0, "painted": True}, "later": True, "textWrites": []},
+                                 "no word, no shell: the paint armed upstream's failsafe; the first link word stands it down and the badge stays")
 
     # A parked pane (the shim's park: the phone's off-screen tabs at a return, D2) gets no fresh frame until its tap, so a hold run
     # there painted the badge off screen and the tap showed it until that pane's first frame, on a healthy link too (finding of
@@ -637,7 +686,7 @@ out({ top: BADGE.style.top, observers: ROS.length });""", pre=self._PLACE_PRE.re
         up_fresh = "window.addEventListener('romp:wsfresh',function(){badge(false);});})();"
         for line in (up_badge, up_down, up_fresh):
             self.assertEqual(js.count(line), 1, line)
-        before = "window.addEventListener('romp:wsdown',function(){rpo=false;ron=!!(rb&&rb.classList.contains('on'));});"
+        before = "window.addEventListener('romp:wsdown',function(){ron=!!(rb&&rb.classList.contains('on'));});"
         afterl = "window.addEventListener('romp:wsdown',function(){if(!rb||!rb.classList.contains('on'))return;if(ron){rfail();return;}"
         self.assertLess(js.index(up_badge), js.index(before), "the fork's state reads bfail and rb, declared on upstream's lines")
         self.assertLess(js.index(before), js.index(up_down), "the recording listener runs before upstream's wsdown line (registration order)")
